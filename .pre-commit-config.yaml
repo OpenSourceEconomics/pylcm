@@ -87,12 +87,13 @@ repos:
       - id: mypy
         files: src|tests
         additional_dependencies:
-          - jax>=0.4.34,<0.5
+          - dags>=0.3.0
+          - jax>=0.5.1
           - numpy
           - packaging
           - pandas-stubs
-          - scipy-stubs
           - pytest
+          - scipy-stubs
         args:
           - --config=pyproject.toml
 ci:

@@ -147,7 +147,7 @@ def get_Q_and_F_non_terminal(
 
         return Q_arr, F_arr
 
-    return Q_and_F
+    return Q_and_F  # type: ignore[return-value]
 
 
 def get_Q_and_F_terminal(
@@ -199,7 +199,7 @@ def get_Q_and_F_terminal(
             params=params,
         )
 
-    return Q_and_F
+    return Q_and_F  # type: ignore[return-value]
 
 
 # ======================================================================================

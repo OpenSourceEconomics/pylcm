@@ -7,8 +7,8 @@ name = "pylcm"
 description = "Specification, solution, and simulation of finite-horizon dynamic choice models."
 requires-python = ">=3.12"
 dependencies = [
-    "dags",
-    "numpy",
+    "dags>=0.3.0",
+    "jax>=0.5.1",
     "pandas",
 ]
 dynamic = ["version"]
@@ -91,26 +91,25 @@ platforms = ["linux-64", "osx-64", "osx-arm64", "win-64"]
 # --------------------------------------------------------------------------------------
 
 [tool.pixi.dependencies]
-python = ">=3.12,<3.13"
-scipy = "<=1.13"
-pybaum = "*"
+python = "~=3.12"
 jupyterlab = "*"
-plotly = ">=5.24,<6"
-pre-commit = "*"
-snakeviz = "*"
 memory_profiler = "*"
+numpy = ">=2.2"
+plotly = ">=5.24"
+pre-commit = ">=4.1"
+pybaum = "*"
+scipy = ">=1.13"
+snakeviz = "*"
 
 [tool.pixi.target.unix.dependencies]
-jax = ">=0.4.34,<0.5"
-jaxlib = ">=0.4.34,<0.5"
+jaxlib = ">=0.5.1"
 
 [tool.pixi.pypi-dependencies]
 pylcm = {path = ".", editable = true}
 pdbp = "*"
 
 [tool.pixi.target.win-64.pypi-dependencies]
-jax = ">=0.4.34,<0.5"
-jaxlib = ">=0.4.34,<0.5"
+jaxlib = ">=0.5.1"
 
 # Features and Tasks
 # --------------------------------------------------------------------------------------
@@ -120,9 +119,8 @@ platforms = ["linux-64"]
 system-requirements = {cuda = "12"}
 
 [tool.pixi.feature.cuda.target.linux-64.dependencies]
-cuda-nvcc = ">=12"
-jax = ">=0.4.34,<0.5"
-jaxlib = { version = ">=0.4.34,<0.5", build = "cuda12*" }
+cuda-nvcc = "~=12"
+jaxlib = { version = ">=0.5.1", build = "cuda12*" }
 
 [tool.pixi.feature.testing.dependencies]
 pytest = "*"
@@ -251,5 +249,5 @@ module = [
 ignore_errors = true
 
 [[tool.mypy.overrides]]
-module = ["dags", "dags.signature", "pybaum", "pdbp"]
+module = ["pybaum", "pdbp"]
 ignore_missing_imports = true
