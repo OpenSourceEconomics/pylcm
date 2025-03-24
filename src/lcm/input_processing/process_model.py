@@ -210,4 +210,4 @@ def _get_stochastic_weight_function(
         args = all_as_args(args, kwargs, arg_names=new_kwargs)
         return params["shocks"][name][*args]
 
-    return weight_func
+    return cast(InternalUserFunction, weight_func)
