@@ -7,7 +7,7 @@ name = "pylcm"
 description = "Specification, solution, and simulation of finite-horizon dynamic choice models."
 requires-python = ">=3.12"
 dependencies = [
-    "dags",
+    "dags>=0.3.0",
     "jax>=0.5.1",
     "pandas",
 ]
@@ -249,5 +249,5 @@ module = [
 ignore_errors = true
 
 [[tool.mypy.overrides]]
-module = ["dags", "dags.signature", "pybaum", "pdbp"]
+module = ["pybaum", "pdbp"]
 ignore_missing_imports = true
