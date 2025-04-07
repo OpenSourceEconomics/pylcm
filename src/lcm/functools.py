@@ -76,7 +76,7 @@ def allow_only_kwargs(func: Callable[..., ReturnType]) -> Callable[..., ReturnTy
     # TODO(@timmens): Remove this cast once we find an explicit way to specify the
     # change from positional to keyword-only parameter in the function signature
     # https://github.com/opensourceeconomics/pylcm/issues/80.
-    return cast(Callable[..., ReturnType], func_with_only_kwargs)
+    return cast("Callable[..., ReturnType]", func_with_only_kwargs)
 
 
 def allow_args(func: Callable[..., ReturnType]) -> Callable[..., ReturnType]:
@@ -152,7 +152,7 @@ def allow_args(func: Callable[..., ReturnType]) -> Callable[..., ReturnType]:
     # TODO(@timmens): Remove this cast once we find an explicit way to specify the
     # change from positional to keyword-only parameter in the function signature
     # https://github.com/opensourceeconomics/pylcm/issues/80.
-    return cast(Callable[..., ReturnType], allow_args_wrapper)
+    return cast("Callable[..., ReturnType]", allow_args_wrapper)
 
 
 def get_union_of_arguments(list_of_functions: list[Callable[..., Any]]) -> set[str]:

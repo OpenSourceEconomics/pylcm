@@ -100,7 +100,7 @@ def _get_internal_functions(
         is_weight_next_function = func_name.startswith("weight_next_")
 
         if is_weight_next_function:
-            processed_func = cast(InternalUserFunction, func)
+            processed_func = cast("InternalUserFunction", func)
 
         # params[name] contains the dictionary of parameters for the function, which
         # is empty if the function does not depend on any model parameters.
@@ -210,4 +210,4 @@ def _get_stochastic_weight_function(
         args = all_as_args(args, kwargs, arg_names=new_kwargs)
         return params["shocks"][name][*args]
 
-    return cast(InternalUserFunction, weight_func)
+    return cast("InternalUserFunction", weight_func)
