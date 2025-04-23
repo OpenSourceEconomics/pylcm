@@ -63,7 +63,7 @@ def simulation_spacemap(
     # https://github.com/python/mypy/issues/12472
     vmapped.__signature__ = inspect.signature(mappable_func)  # type: ignore[attr-defined]
 
-    return cast(FunctionWithArrayReturn, allow_only_kwargs(vmapped))
+    return cast("FunctionWithArrayReturn", allow_only_kwargs(vmapped))
 
 
 def vmap_1d(
@@ -132,7 +132,7 @@ def vmap_1d(
             "('only_args', 'only_kwargs')",
         )
 
-    return cast(FunctionWithArrayReturn, out)
+    return cast("FunctionWithArrayReturn", out)
 
 
 def productmap(
@@ -174,7 +174,7 @@ def productmap(
     # https://github.com/python/mypy/issues/12472
     vmapped.__signature__ = inspect.signature(func_callable_with_args)  # type: ignore[attr-defined]
 
-    return cast(FunctionWithArrayReturn, allow_only_kwargs(vmapped))
+    return cast("FunctionWithArrayReturn", allow_only_kwargs(vmapped))
 
 
 def _base_productmap(

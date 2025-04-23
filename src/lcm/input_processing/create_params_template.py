@@ -80,7 +80,7 @@ def _create_function_params(model: Model) -> dict[str, dict[str, float]]:
     for name, func in model.functions.items():
         arguments = set(inspect.signature(func).parameters)
         params = sorted(arguments.difference(variables))
-        function_params[name] = {p: jnp.nan for p in params}
+        function_params[name] = dict.fromkeys(params, jnp.nan)
 
     return function_params
 
