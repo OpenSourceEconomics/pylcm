@@ -106,7 +106,7 @@ jaxlib = ">=0.5.1"
 
 [tool.pixi.pypi-dependencies]
 pylcm = {path = ".", editable = true}
-dags = {path = "../dags", editable = true}
+dags = { git = "https://github.com/OpenSourceEconomics/dags.git", branch = "updates"}
 pdbp = "*"
 
 [tool.pixi.target.win-64.pypi-dependencies]
