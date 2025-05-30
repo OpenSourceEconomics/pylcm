@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 import functools
 import inspect
 from copy import deepcopy
 from typing import cast
 
 import pandas as pd
+from dags import get_annotations
 from dags.signature import with_signature
 from jax import Array
 
@@ -122,23 +125,25 @@ def _get_internal_functions(
 def _replace_func_parameters_by_params(
     func: UserFunction, params: ParamsDict, name: str
 ) -> InternalUserFunction:
-    old_signature = list(inspect.signature(func).parameters)
-    new_kwargs = [p for p in old_signature if p not in params[name]] + ["params"]
+    annotations = {
+        k: v for k, v in get_annotations(func).items() if k not in params[name]
+    }
+    annotations_with_params = annotations | {"params": "ParamsDict"}
+    return_annotation = annotations_with_params.pop("return")
 
-    @with_signature(args=new_kwargs)
+    @with_signature(args=annotations_with_params, return_annotation=return_annotation)
     @functools.wraps(func)
-    def processed_func(*args: Scalar, params: ParamsDict, **kwargs: Scalar) -> Scalar:
+    def processed_func(*args, params: ParamsDict, **kwargs):
         return func(*args, **kwargs, **params[name])
 
     return processed_func
 
 
 def _add_dummy_params_argument(func: UserFunction) -> InternalUserFunction:
-    old_signature = list(inspect.signature(func).parameters)
+    annotations = get_annotations(func) | {"params": "ParamsDict"}
+    return_annotation = annotations.pop("return")
 
-    new_kwargs = [*old_signature, "params"]
-
-    @with_signature(args=new_kwargs)
+    @with_signature(args=annotations, return_annotation=return_annotation)
     @functools.wraps(func)
     def processed_func(*args: Scalar, params: ParamsDict, **kwargs: Scalar) -> Scalar:  # noqa: ARG001
         return func(*args, **kwargs)
@@ -147,8 +152,12 @@ def _add_dummy_params_argument(func: UserFunction) -> InternalUserFunction:
 
 
 def _get_stochastic_next_function(raw_func: UserFunction, grid: Array) -> UserFunction:
+    annotations = get_annotations(raw_func)
+    return_annotation = annotations.pop("return")
+
+    @with_signature(args=annotations, return_annotation=return_annotation)
     @functools.wraps(raw_func)
-    def next_func(*args: Scalar, **kwargs: Scalar) -> Array:  # noqa: ARG001
+    def next_func(*args, **kwargs) -> Array:  # noqa: ARG001
         return grid
 
     return next_func
@@ -203,11 +212,12 @@ def _get_stochastic_weight_function(
             f"but {name} depends on {invalid}.",
         )
 
-    new_kwargs = [*function_parameters, "params"]
+    annotations = get_annotations(raw_func) | {"params": "ParamsDict"}
+    return_annotation = annotations.pop("return", "Array")
 
-    @with_signature(args=new_kwargs)
+    @with_signature(args=annotations, return_annotation=return_annotation)
     def weight_func(*args: Array, params: ParamsDict, **kwargs: Array) -> Array:
-        args = all_as_args(args, kwargs, arg_names=new_kwargs)
+        args = all_as_args(args, kwargs, arg_names=function_parameters)
         return params["shocks"][name][*args]
 
     return cast("InternalUserFunction", weight_func)

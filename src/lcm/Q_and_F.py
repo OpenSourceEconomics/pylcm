@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections.abc import Callable
 from typing import Any
 
@@ -176,7 +178,13 @@ def get_Q_and_F_terminal(
         exclude={"_period"},
     )
 
-    @with_signature(args=arg_names_of_Q_and_F)
+    args = dict.fromkeys(arg_names_of_Q_and_F, "Scalar")
+    args["params"] = "ParamsDict"
+    args["next_V_arr"] = "Array"
+
+    @with_signature(
+        args=arg_names_of_Q_and_F, return_annotation="tuple[Scalar, Scalar]"
+    )
     def Q_and_F(
         params: ParamsDict,
         next_V_arr: Array,  # noqa: ARG001
@@ -275,6 +283,7 @@ def _get_U_and_F(model: InternalModel) -> Callable[..., tuple[Scalar, Scalar]]:
         functions=functions,
         targets=["utility", "feasibility"],
         enforce_signature=False,
+        set_annotations=True,
     )
 
 
@@ -295,7 +304,12 @@ def _get_feasibility(model: InternalModel) -> InternalUserFunction:
             functions=model.functions,
             targets=constraints,
             aggregator=jnp.logical_and,
+            set_annotations=True,
         )
+        # set annotations does not set the return type when concatenate_functions is
+        # called with an aggregator
+        combined_constraint.__annotations__["return"] = "Feasibility"
+
     else:
 
         def combined_constraint(**kwargs: Scalar) -> bool:  # noqa: ARG001

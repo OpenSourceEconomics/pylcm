@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import dataclasses
 from collections.abc import Mapping
 
@@ -53,7 +55,7 @@ class StateActionSpace:
         states: dict[str, Array] | None = None,
         discrete_actions: dict[str, Array] | None = None,
         continuous_actions: dict[str, Array] | None = None,
-    ) -> "StateActionSpace":
+    ) -> StateActionSpace:
         """Replace the states or actions in the state-action space.
 
         Args:

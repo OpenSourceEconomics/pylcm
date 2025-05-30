@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections.abc import Callable
 from typing import cast
 
@@ -126,6 +128,7 @@ def get_value_function_representation(
     return concatenate_functions(
         functions=funcs,
         targets="__fval__",
+        set_annotations=True,
     )
 
 
@@ -147,7 +150,7 @@ def _get_label_translator(
 
     """
 
-    @with_signature(args=[in_name])
+    @with_signature(args=dict.fromkeys([in_name], "Scalar"), return_annotation="Scalar")
     def translate_label(*args: Scalar, **kwargs: Scalar) -> Scalar:
         kwargs = all_as_kwargs(args, kwargs, arg_names=[in_name])
         return kwargs[in_name]
@@ -172,7 +175,7 @@ def _get_lookup_function(
     """
     arg_names = [*axis_names, array_name]
 
-    @with_signature(args=arg_names)
+    @with_signature(args=dict.fromkeys(arg_names, "Scalar"), return_annotation="Scalar")
     def lookup_wrapper(*args: Scalar, **kwargs: Scalar) -> Scalar:
         kwargs = all_as_kwargs(args, kwargs, arg_names=arg_names)
         positions = tuple(kwargs[var] for var in axis_names)
@@ -203,7 +206,7 @@ def _get_coordinate_finder(
 
     """
 
-    @with_signature(args=[in_name])
+    @with_signature(args=dict.fromkeys([in_name], "Scalar"), return_annotation="Scalar")
     def find_coordinate(*args: Scalar, **kwargs: Scalar) -> Scalar:
         kwargs = all_as_kwargs(args, kwargs, arg_names=[in_name])
         return grid.get_coordinate(kwargs[in_name])
@@ -229,7 +232,7 @@ def _get_interpolator(
     """
     arg_names = [name_of_values_on_grid, *axis_names]
 
-    @with_signature(args=arg_names)
+    @with_signature(args=dict.fromkeys(arg_names, "Scalar"), return_annotation="Scalar")
     def interpolate(*args: Scalar, **kwargs: Scalar) -> Scalar:
         kwargs = all_as_kwargs(args, kwargs, arg_names=arg_names)
         coordinates = jnp.array([kwargs[var] for var in axis_names])

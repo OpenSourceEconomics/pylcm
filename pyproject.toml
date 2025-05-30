@@ -7,7 +7,7 @@ name = "pylcm"
 description = "Specification, solution, and simulation of finite-horizon dynamic choice models."
 requires-python = ">=3.12"
 dependencies = [
-    "dags>=0.3.0",
+    # "dags>=0.3.0",
     "jax>=0.5.1",
     "pandas",
 ]
@@ -106,6 +106,7 @@ jaxlib = ">=0.5.1"
 
 [tool.pixi.pypi-dependencies]
 pylcm = {path = ".", editable = true}
+dags = {path = "../dags", editable = true}
 pdbp = "*"
 
 [tool.pixi.target.win-64.pypi-dependencies]

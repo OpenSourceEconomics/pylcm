@@ -1,5 +1,7 @@
 """Create a parameter template for a model specification."""
 
+from __future__ import annotations
+
 import inspect
 
 import jax.numpy as jnp

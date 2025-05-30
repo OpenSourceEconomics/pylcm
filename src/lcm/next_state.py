@@ -1,5 +1,7 @@
 """Generate function that compute the next states for solution and simulation."""
 
+from __future__ import annotations
+
 from collections.abc import Callable
 
 from dags import concatenate_functions
@@ -44,6 +46,7 @@ def get_next_state_function(
         targets=targets,
         return_type="dict",
         enforce_signature=False,
+        set_annotations=True,
     )
 
 
@@ -69,6 +72,7 @@ def get_next_stochastic_weights_function(
         targets=targets,
         return_type="dict",
         enforce_signature=False,
+        set_annotations=True,
     )
 
 
@@ -130,7 +134,10 @@ def _create_stochastic_next_func(name: str, labels: Array) -> StochasticNextFunc
 
     """
 
-    @with_signature(args=[f"weight_{name}", "keys"])
+    @with_signature(
+        args={f"weight_{name}": "Array", "keys": "dict[str, Array]"},
+        return_annotation="DiscreteState",
+    )
     def next_stochastic_state(keys: dict[str, Array], **kwargs: Array) -> Array:
         return random_choice(
             labels=labels,

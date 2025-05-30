@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import pandas as pd
 from dags import get_ancestors
 from jax import Array

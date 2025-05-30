@@ -9,12 +9,23 @@ See also the specifications in tests/test_models/deterministic.py.
 
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 import jax.numpy as jnp
 
 import lcm
 from lcm import DiscreteGrid, LinspaceGrid, Model
+from lcm.typing import (
+    AuxiliaryVariable,
+    ConstraintMask,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteAction,
+    DiscreteState,
+    Utility,
+)
 
 # ======================================================================================
 # Model functions
@@ -46,30 +57,35 @@ class WorkingStatus:
 # Utility function
 # --------------------------------------------------------------------------------------
 def utility(
-    consumption,
-    working,
-    health,
+    consumption: ContinuousAction,
+    working: DiscreteAction,
+    health: DiscreteState,
     # Temporary workaround for bug described in issue #30, which requires us to pass
     # all state variables to the utility function.
     # TODO(@timmens): Remove function arguments once #30 is fixed.
     # https://github.com/opensourceeconomics/pylcm/issues/30
-    partner,  # noqa: ARG001
-    disutility_of_work,
-):
+    partner: DiscreteState,  # noqa: ARG001
+    disutility_of_work: float,
+) -> Utility:
     return jnp.log(consumption) - (1 - health / 2) * disutility_of_work * working
 
 
 # --------------------------------------------------------------------------------------
 # Auxiliary variables
 # --------------------------------------------------------------------------------------
-def labor_income(working, wage):
+def labor_income(working: DiscreteAction, wage: AuxiliaryVariable) -> AuxiliaryVariable:
     return working * wage
 
 
 # --------------------------------------------------------------------------------------
 # Deterministic state transitions
 # --------------------------------------------------------------------------------------
-def next_wealth(wealth, consumption, labor_income, interest_rate):
+def next_wealth(
+    wealth: ContinuousState,
+    consumption: ContinuousAction,
+    labor_income: AuxiliaryVariable,
+    interest_rate: float,
+) -> ContinuousState:
     return (1 + interest_rate) * (wealth - consumption) + labor_income
 
 
@@ -77,19 +93,23 @@ def next_wealth(wealth, consumption, labor_income, interest_rate):
 # Stochastic state transitions
 # --------------------------------------------------------------------------------------
 @lcm.mark.stochastic
-def next_health(health, partner):
+def next_health(health: DiscreteState, partner: DiscreteState) -> DiscreteState:
     pass
 
 
 @lcm.mark.stochastic
-def next_partner(_period, working, partner):
+def next_partner(
+    _period: int, working: DiscreteAction, partner: DiscreteState
+) -> DiscreteState:
     pass
 
 
 # --------------------------------------------------------------------------------------
 # Constraints
 # --------------------------------------------------------------------------------------
-def consumption_constraint(consumption, wealth):
+def consumption_constraint(
+    consumption: ContinuousAction, wealth: ContinuousState
+) -> ConstraintMask:
     return consumption <= wealth
 
 
