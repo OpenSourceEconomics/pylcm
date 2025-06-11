@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import inspect
 
 import jax.numpy as jnp
@@ -107,6 +109,7 @@ def _compute_targets(
         functions=model_functions,
         targets=targets,
         return_type="dict",
+        set_annotations=True,
     )
 
     # get list of variables over which we want to vectorize the target function

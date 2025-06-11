@@ -226,7 +226,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zeromq-4.3.5-h3b0a872_7.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-3.21.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zstandard-0.23.0-py312h66e93f0_1.conda
-      - pypi: https://files.pythonhosted.org/packages/50/08/7acb9d35c4a193a14fafdf4dbf0d1240dc3f74a8961fa46f3544a80c1f6b/dags-0.3.0-py3-none-any.whl
+      - pypi: git+https://github.com/OpenSourceEconomics/dags.git?branch=updates#e1bf8bd38b6683a7bb1a21e8ae6b3ba670a4e7b1
       - pypi: https://files.pythonhosted.org/packages/43/f5/ee39c6e92acc742c052f137b47c210cd0a1b72dcd3f98495528bb4d27761/flatten_dict-0.4.2-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/77/6f/0da6e0bc90e738fc63c584d65bef326f76a6550343ae1c243647bd1880fd/jax-0.5.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/b9/54/dd730b32ea14ea797530a4479b2ed46a6fb250f682a9cfb997e968bf0261/networkx-3.4.2-py3-none-any.whl
@@ -415,7 +415,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zeromq-4.3.5-h3b0a872_7.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-3.21.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zstandard-0.23.0-py312h66e93f0_1.conda
-      - pypi: https://files.pythonhosted.org/packages/50/08/7acb9d35c4a193a14fafdf4dbf0d1240dc3f74a8961fa46f3544a80c1f6b/dags-0.3.0-py3-none-any.whl
+      - pypi: git+https://github.com/OpenSourceEconomics/dags.git?branch=updates#e1bf8bd38b6683a7bb1a21e8ae6b3ba670a4e7b1
       - pypi: https://files.pythonhosted.org/packages/43/f5/ee39c6e92acc742c052f137b47c210cd0a1b72dcd3f98495528bb4d27761/flatten_dict-0.4.2-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/77/6f/0da6e0bc90e738fc63c584d65bef326f76a6550343ae1c243647bd1880fd/jax-0.5.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/b9/54/dd730b32ea14ea797530a4479b2ed46a6fb250f682a9cfb997e968bf0261/networkx-3.4.2-py3-none-any.whl
@@ -590,7 +590,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-64/zeromq-4.3.5-h7130eaa_7.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-3.21.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/zstandard-0.23.0-py312h01d7ebd_1.conda
-      - pypi: https://files.pythonhosted.org/packages/50/08/7acb9d35c4a193a14fafdf4dbf0d1240dc3f74a8961fa46f3544a80c1f6b/dags-0.3.0-py3-none-any.whl
+      - pypi: git+https://github.com/OpenSourceEconomics/dags.git?branch=updates#e1bf8bd38b6683a7bb1a21e8ae6b3ba670a4e7b1
       - pypi: https://files.pythonhosted.org/packages/43/f5/ee39c6e92acc742c052f137b47c210cd0a1b72dcd3f98495528bb4d27761/flatten_dict-0.4.2-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/77/6f/0da6e0bc90e738fc63c584d65bef326f76a6550343ae1c243647bd1880fd/jax-0.5.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/b9/54/dd730b32ea14ea797530a4479b2ed46a6fb250f682a9cfb997e968bf0261/networkx-3.4.2-py3-none-any.whl
@@ -765,7 +765,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zeromq-4.3.5-hc1bb282_7.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-3.21.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstandard-0.23.0-py312hea69d52_1.conda
-      - pypi: https://files.pythonhosted.org/packages/50/08/7acb9d35c4a193a14fafdf4dbf0d1240dc3f74a8961fa46f3544a80c1f6b/dags-0.3.0-py3-none-any.whl
+      - pypi: git+https://github.com/OpenSourceEconomics/dags.git?branch=updates#e1bf8bd38b6683a7bb1a21e8ae6b3ba670a4e7b1
       - pypi: https://files.pythonhosted.org/packages/43/f5/ee39c6e92acc742c052f137b47c210cd0a1b72dcd3f98495528bb4d27761/flatten_dict-0.4.2-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/77/6f/0da6e0bc90e738fc63c584d65bef326f76a6550343ae1c243647bd1880fd/jax-0.5.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/b9/54/dd730b32ea14ea797530a4479b2ed46a6fb250f682a9cfb997e968bf0261/networkx-3.4.2-py3-none-any.whl
@@ -936,7 +936,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/win-64/zeromq-4.3.5-ha9f60a1_7.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-3.21.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/zstandard-0.23.0-py312h4389bb4_1.conda
-      - pypi: https://files.pythonhosted.org/packages/50/08/7acb9d35c4a193a14fafdf4dbf0d1240dc3f74a8961fa46f3544a80c1f6b/dags-0.3.0-py3-none-any.whl
+      - pypi: git+https://github.com/OpenSourceEconomics/dags.git?branch=updates#e1bf8bd38b6683a7bb1a21e8ae6b3ba670a4e7b1
       - pypi: https://files.pythonhosted.org/packages/43/f5/ee39c6e92acc742c052f137b47c210cd0a1b72dcd3f98495528bb4d27761/flatten_dict-0.4.2-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/77/6f/0da6e0bc90e738fc63c584d65bef326f76a6550343ae1c243647bd1880fd/jax-0.5.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/b8/3b/68981550dc34b86deb8e50b8cb14fd8bd620876276cfce2218ef7f11be90/jaxlib-0.5.1-cp312-cp312-win_amd64.whl
@@ -1235,7 +1235,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-3.21.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zstandard-0.23.0-py312h66e93f0_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zstd-1.5.7-hb8e6e7a_1.conda
-      - pypi: https://files.pythonhosted.org/packages/50/08/7acb9d35c4a193a14fafdf4dbf0d1240dc3f74a8961fa46f3544a80c1f6b/dags-0.3.0-py3-none-any.whl
+      - pypi: git+https://github.com/OpenSourceEconomics/dags.git?branch=updates#e1bf8bd38b6683a7bb1a21e8ae6b3ba670a4e7b1
       - pypi: https://files.pythonhosted.org/packages/43/f5/ee39c6e92acc742c052f137b47c210cd0a1b72dcd3f98495528bb4d27761/flatten_dict-0.4.2-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/77/6f/0da6e0bc90e738fc63c584d65bef326f76a6550343ae1c243647bd1880fd/jax-0.5.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/b9/54/dd730b32ea14ea797530a4479b2ed46a6fb250f682a9cfb997e968bf0261/networkx-3.4.2-py3-none-any.whl
@@ -1455,7 +1455,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-3.21.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/zstandard-0.23.0-py312h01d7ebd_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-64/zstd-1.5.7-h8210216_1.conda
-      - pypi: https://files.pythonhosted.org/packages/50/08/7acb9d35c4a193a14fafdf4dbf0d1240dc3f74a8961fa46f3544a80c1f6b/dags-0.3.0-py3-none-any.whl
+      - pypi: git+https://github.com/OpenSourceEconomics/dags.git?branch=updates#e1bf8bd38b6683a7bb1a21e8ae6b3ba670a4e7b1
       - pypi: https://files.pythonhosted.org/packages/43/f5/ee39c6e92acc742c052f137b47c210cd0a1b72dcd3f98495528bb4d27761/flatten_dict-0.4.2-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/77/6f/0da6e0bc90e738fc63c584d65bef326f76a6550343ae1c243647bd1880fd/jax-0.5.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/b9/54/dd730b32ea14ea797530a4479b2ed46a6fb250f682a9cfb997e968bf0261/networkx-3.4.2-py3-none-any.whl
@@ -1675,7 +1675,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-3.21.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstandard-0.23.0-py312hea69d52_1.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/zstd-1.5.7-h6491c7d_1.conda
-      - pypi: https://files.pythonhosted.org/packages/50/08/7acb9d35c4a193a14fafdf4dbf0d1240dc3f74a8961fa46f3544a80c1f6b/dags-0.3.0-py3-none-any.whl
+      - pypi: git+https://github.com/OpenSourceEconomics/dags.git?branch=updates#e1bf8bd38b6683a7bb1a21e8ae6b3ba670a4e7b1
       - pypi: https://files.pythonhosted.org/packages/43/f5/ee39c6e92acc742c052f137b47c210cd0a1b72dcd3f98495528bb4d27761/flatten_dict-0.4.2-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/77/6f/0da6e0bc90e738fc63c584d65bef326f76a6550343ae1c243647bd1880fd/jax-0.5.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/b9/54/dd730b32ea14ea797530a4479b2ed46a6fb250f682a9cfb997e968bf0261/networkx-3.4.2-py3-none-any.whl
@@ -1913,7 +1913,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-3.21.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/zstandard-0.23.0-py312h4389bb4_1.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/zstd-1.5.7-hbeecb71_1.conda
-      - pypi: https://files.pythonhosted.org/packages/50/08/7acb9d35c4a193a14fafdf4dbf0d1240dc3f74a8961fa46f3544a80c1f6b/dags-0.3.0-py3-none-any.whl
+      - pypi: git+https://github.com/OpenSourceEconomics/dags.git?branch=updates#e1bf8bd38b6683a7bb1a21e8ae6b3ba670a4e7b1
       - pypi: https://files.pythonhosted.org/packages/43/f5/ee39c6e92acc742c052f137b47c210cd0a1b72dcd3f98495528bb4d27761/flatten_dict-0.4.2-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/77/6f/0da6e0bc90e738fc63c584d65bef326f76a6550343ae1c243647bd1880fd/jax-0.5.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/b8/3b/68981550dc34b86deb8e50b8cb14fd8bd620876276cfce2218ef7f11be90/jaxlib-0.5.1-cp312-cp312-win_amd64.whl
@@ -2259,7 +2259,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/zipp-3.21.0-pyhd8ed1ab_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zstandard-0.23.0-py312h66e93f0_1.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/zstd-1.5.7-hb8e6e7a_1.conda
-      - pypi: https://files.pythonhosted.org/packages/50/08/7acb9d35c4a193a14fafdf4dbf0d1240dc3f74a8961fa46f3544a80c1f6b/dags-0.3.0-py3-none-any.whl
+      - pypi: git+https://github.com/OpenSourceEconomics/dags.git?branch=updates#e1bf8bd38b6683a7bb1a21e8ae6b3ba670a4e7b1
       - pypi: https://files.pythonhosted.org/packages/43/f5/ee39c6e92acc742c052f137b47c210cd0a1b72dcd3f98495528bb4d27761/flatten_dict-0.4.2-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/77/6f/0da6e0bc90e738fc63c584d65bef326f76a6550343ae1c243647bd1880fd/jax-0.5.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/b9/54/dd730b32ea14ea797530a4479b2ed46a6fb250f682a9cfb997e968bf0261/networkx-3.4.2-py3-none-any.whl
@@ -3444,10 +3444,9 @@ packages:
   purls: []
   size: 219527
   timestamp: 1690061203707
-- pypi: https://files.pythonhosted.org/packages/50/08/7acb9d35c4a193a14fafdf4dbf0d1240dc3f74a8961fa46f3544a80c1f6b/dags-0.3.0-py3-none-any.whl
+- pypi: git+https://github.com/OpenSourceEconomics/dags.git?branch=updates#e1bf8bd38b6683a7bb1a21e8ae6b3ba670a4e7b1
   name: dags
-  version: 0.3.0
-  sha256: d47025019bf72d4261c9df6f73d3402568feaafba2d44a17206b74dfc0e7e8bb
+  version: 0.3.1.dev9+ge1bf8bd
   requires_dist:
   - flatten-dict
   - networkx
@@ -8618,10 +8617,9 @@ packages:
   timestamp: 1736243563082
 - pypi: .
   name: pylcm
-  version: 0.1.dev190+gd5f74a3.d20250324
-  sha256: 17363a1863ae7d124026e432c4c803e63dcaca0debd811db5916afc2c5ccf885
+  version: 0.0.2.dev4+g7f7cc47.d20250530
+  sha256: bef7c35513430ff1bdf2340fbd56189130a1014767919647d6eebbe26f7676e5
   requires_dist:
-  - dags>=0.3.0
   - jax>=0.5.1
   - pandas
   requires_python: '>=3.12'

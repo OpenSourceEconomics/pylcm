@@ -1,7 +1,26 @@
 from enum import Enum
-from typing import Any, Protocol
+from typing import Any, Generic, Protocol, TypeVar
 
 from jax import Array
+
+T = TypeVar("T")
+
+
+class Param(Generic[T]):
+    def __init__(self, value: T):
+        self.value = value
+
+    def get(self) -> T:
+        return self.value
+
+
+type ContinuousState = Array
+type ContinuousAction = Array
+type DiscreteState = Array
+type DiscreteAction = Array
+type AuxiliaryVariable = Array
+type ConstraintMask = Array
+type Utility = Array
 
 # Many JAX functions are designed to work with scalar numerical values. This also
 # includes zero dimensional jax arrays.

@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 import re
 from dataclasses import make_dataclass
 from functools import partial
 
 import jax.numpy as jnp
 import pytest
+from dags.exceptions import InvalidFunctionArgumentsError
 
 from lcm import LinspaceGrid
 from lcm.dispatchers import productmap
@@ -161,7 +164,7 @@ def test_get_label_translator_wrong_kwarg():
         in_name="schooling",
     )
     with pytest.raises(
-        TypeError,
+        InvalidFunctionArgumentsError,
         match=re.escape("translate_label() got unexpected keyword argument health"),
     ):
         func(health=1)
