@@ -1,5 +1,7 @@
 """Create a state space for a given model."""
 
+from __future__ import annotations
+
 import pandas as pd
 from jax import Array
 

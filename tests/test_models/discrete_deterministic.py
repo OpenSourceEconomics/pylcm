@@ -8,11 +8,20 @@ continuous version.
 
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 import jax.numpy as jnp
 
 from lcm import DiscreteGrid, Model
+from lcm.typing import (
+    AuxiliaryVariable,
+    ConstraintMask,
+    DiscreteAction,
+    DiscreteState,
+    Utility,
+)
 from tests.test_models.deterministic import (
     RetirementStatus,
     labor_income,
@@ -45,7 +54,11 @@ class WealthStatus:
 # --------------------------------------------------------------------------------------
 # Utility functions
 # --------------------------------------------------------------------------------------
-def utility_discrete(consumption, working, disutility_of_work):
+def utility_discrete(
+    consumption: DiscreteAction,
+    working: AuxiliaryVariable,
+    disutility_of_work: float,
+) -> Utility:
     # In the discrete model, consumption is defined as "low" or "high". This can be
     # translated to the levels 1 and 2.
     consumption_level = 1 + (consumption == ConsumptionChoice.high)
@@ -55,7 +68,12 @@ def utility_discrete(consumption, working, disutility_of_work):
 # --------------------------------------------------------------------------------------
 # State transitions
 # --------------------------------------------------------------------------------------
-def next_wealth_discrete(wealth, consumption, labor_income, interest_rate):
+def next_wealth_discrete(
+    wealth: DiscreteState,
+    consumption: DiscreteAction,
+    labor_income: AuxiliaryVariable,
+    interest_rate: float,
+) -> DiscreteState:
     # For discrete state variables, we need to assure that the next state is also a
     # valid state, i.e., it is a member of the discrete grid.
     continuous = next_wealth(wealth, consumption, labor_income, interest_rate)
@@ -67,7 +85,9 @@ def next_wealth_discrete(wealth, consumption, labor_income, interest_rate):
 # --------------------------------------------------------------------------------------
 # Constraints
 # --------------------------------------------------------------------------------------
-def consumption_constraint(consumption, wealth):
+def consumption_constraint(
+    consumption: DiscreteAction, wealth: DiscreteState
+) -> ConstraintMask:
     return consumption <= wealth
 
 

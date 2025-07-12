@@ -1,5 +1,7 @@
 """Collection of classes that are used by the user to define the model and grids."""
 
+from __future__ import annotations
+
 import dataclasses as dc
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields, is_dataclass
@@ -93,7 +95,7 @@ class ContinuousGrid(Grid, ABC):
     def get_coordinate(self, value: Scalar) -> Scalar:
         """Get the generalized coordinate of a value in the grid."""
 
-    def replace(self, **kwargs: Any) -> "ContinuousGrid":  # noqa: ANN401
+    def replace(self, **kwargs: Any) -> ContinuousGrid:  # noqa: ANN401
         """Replace the attributes of the grid.
 
         Args:

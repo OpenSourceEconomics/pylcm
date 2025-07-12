@@ -1,5 +1,7 @@
 """Test analytical solution and simulation with only discrete actions."""
 
+from __future__ import annotations
+
 from copy import deepcopy
 from dataclasses import dataclass
 
@@ -13,6 +15,14 @@ from pandas.testing import assert_frame_equal
 import lcm
 from lcm import DiscreteGrid, LinspaceGrid, Model
 from lcm.entry_point import get_lcm_function
+from lcm.typing import (
+    ConstraintMask,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteAction,
+    DiscreteState,
+    Utility,
+)
 
 
 # ======================================================================================
@@ -36,15 +46,24 @@ class HealthStatus:
     good: int = 1
 
 
-def utility(consumption, working, wealth, health):  # noqa: ARG001
+def utility(
+    consumption: ContinuousAction,
+    working: DiscreteAction,
+    wealth: ContinuousState,
+    health: DiscreteState,
+) -> Utility:
     return jnp.log(1 + health * consumption) - 0.5 * working
 
 
-def next_wealth(wealth, consumption, working):
+def next_wealth(
+    wealth: ContinuousState, consumption: ContinuousAction, working: DiscreteAction
+) -> ContinuousState:
     return wealth - consumption + working
 
 
-def consumption_constraint(consumption, wealth):
+def consumption_constraint(
+    consumption: ContinuousAction, wealth: ContinuousState
+) -> ConstraintMask:
     return consumption <= wealth
 
 

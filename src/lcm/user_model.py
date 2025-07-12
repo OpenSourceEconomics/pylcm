@@ -1,5 +1,7 @@
 """Collection of classes that are used by the user to define the model and grids."""
 
+from __future__ import annotations
+
 import dataclasses as dc
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any
@@ -35,7 +37,7 @@ class Model:
         _validate_attribute_types(self)
         _validate_logical_consistency(self)
 
-    def replace(self, **kwargs: Any) -> "Model":  # noqa: ANN401
+    def replace(self, **kwargs: Any) -> Model:  # noqa: ANN401
         """Replace the attributes of the model.
 
         Args:

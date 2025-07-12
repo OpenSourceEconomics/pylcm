@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+
 class ModelInitilizationError(Exception):
     """Raised when there is an error in the model initialization."""
 
