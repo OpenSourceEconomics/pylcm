@@ -78,7 +78,7 @@ def as_panel(processed: dict[str, Array], n_periods: int) -> pd.DataFrame:
     """
     n_initial_states = len(processed["value"]) // n_periods
     index = pd.MultiIndex.from_product(
-        [range(n_periods), range(n_initial_states)],
+        [list(range(n_periods)), list(range(n_initial_states))],
         names=["period", "initial_state_id"],
     )
     return pd.DataFrame(processed, index=index)
