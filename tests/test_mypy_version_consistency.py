@@ -1,7 +1,9 @@
 """Test mypy version consistency.
 
-Ensure that the mypy version specified in pyproject.toml (pixi testing environment)
-matches the one in .pre-commit-config.yaml.
+Ensures that the mypy version specified in pyproject.toml (pixi testing environment)
+matches the one in .pre-commit-config.yaml. This is important to avoid
+inconsistencies and potential issues when running type checks across different
+environments.
 
 """
 
