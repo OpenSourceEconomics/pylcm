@@ -180,6 +180,7 @@ extend-ignore = [
     "SIM105",  # Use `contextlib.suppress(ImportError)` instead of `try`-`except`-`pass`
     "SLF001",  # Private member accessed: `_stochastic_info`
     "TRY003",  # long messages outside the exception class
+    "UP047",  # Checks for standalone type variables in generic functions
     # Rules ignored to avoid conflict with formatter
     # ----------------------------------------------------------------------------------
     "COM812",
