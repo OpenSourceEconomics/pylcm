@@ -9779,8 +9779,8 @@ packages:
   timestamp: 1736243563082
 - pypi: ./
   name: pylcm
-  version: 0.0.2.dev7+ge6126d8.d20250712
-  sha256: b15bf4ec85fb3e921020e92a882121941559102a92083098d43e0fa888f9f9eb
+  version: 0.0.2.dev8+gccd3ad1.d20250712
+  sha256: c20e8425ba3ee7415f84208fe7a180c2a39ac4d9f1f56e9fe1ed6c62a6c21ffb
   requires_dist:
   - dags>=0.3.0
   - jax>=0.5.1
