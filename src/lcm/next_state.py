@@ -135,7 +135,7 @@ def _create_stochastic_next_func(name: str, labels: Array) -> StochasticNextFunc
     """
 
     @with_signature(
-        args={f"weight_{name}": "Array", "keys": "dict[str, Array]"},
+        args={f"weight_{name}": "DerivedFloat", "keys": "dict[str, Array]"},
         return_annotation="DiscreteState",
     )
     def next_stochastic_state(keys: dict[str, Array], **kwargs: Array) -> Array:

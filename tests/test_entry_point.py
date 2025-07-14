@@ -12,6 +12,7 @@ from lcm.max_Q_over_c import (
 )
 from lcm.Q_and_F import get_Q_and_F
 from lcm.state_action_space import create_state_space_info
+from lcm.typing import DerivedBool, DerivedInt, DiscreteAction, DiscreteState
 from tests.test_models import get_model_config
 from tests.test_models.deterministic import RetirementStatus
 from tests.test_models.deterministic import utility as iskhakov_et_al_2017_utility
@@ -363,7 +364,11 @@ def test_argmax_and_max_Q_over_c_with_discrete_model():
 def test_get_lcm_function_with_period_argument_in_constraint():
     model = get_model_config("iskhakov_et_al_2017", n_periods=3)
 
-    def absorbing_retirement_constraint(retirement, lagged_retirement, _period):
+    def absorbing_retirement_constraint(
+        retirement: DiscreteAction,
+        lagged_retirement: DiscreteState,
+        _period: DerivedInt,
+    ) -> DerivedBool:
         return jnp.logical_or(
             retirement == RetirementStatus.retired,
             lagged_retirement == RetirementStatus.working,

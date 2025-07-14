@@ -2,6 +2,7 @@ from enum import Enum
 from typing import Any, Generic, Protocol, TypeVar
 
 from jax import Array
+from jaxtyping import Bool, Float, Int, Scalar
 
 T = TypeVar("T")
 
@@ -14,18 +15,13 @@ class Param(Generic[T]):
         return self.value
 
 
-type ContinuousState = Array
-type ContinuousAction = Array
-type DiscreteState = Array
-type DiscreteAction = Array
-type AuxiliaryVariable = Array
-type ConstraintMask = Array
-type Utility = Array
-
-# Many JAX functions are designed to work with scalar numerical values. This also
-# includes zero dimensional jax arrays.
-Scalar = int | float | Array
-
+type ContinuousState = Float[Array, "..."]
+type ContinuousAction = Float[Array, "..."]
+type DiscreteState = Int[Array, "..."]
+type DiscreteAction = Int[Array, "..."]
+type DerivedFloat = Float[Array, "..."]
+type DerivedInt = Int[Array, "..."]
+type DerivedBool = Bool[Array, "..."]
 
 ParamsDict = dict[str, Any]
 

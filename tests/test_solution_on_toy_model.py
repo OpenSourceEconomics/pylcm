@@ -16,12 +16,11 @@ import lcm
 from lcm import DiscreteGrid, LinspaceGrid, Model
 from lcm.entry_point import get_lcm_function
 from lcm.typing import (
-    ConstraintMask,
-    ContinuousAction,
     ContinuousState,
+    DerivedBool,
+    DerivedFloat,
     DiscreteAction,
     DiscreteState,
-    Utility,
 )
 
 
@@ -47,23 +46,23 @@ class HealthStatus:
 
 
 def utility(
-    consumption: ContinuousAction,
+    consumption: DiscreteAction,
     working: DiscreteAction,
     wealth: ContinuousState,
     health: DiscreteState,
-) -> Utility:
+) -> DerivedFloat:
     return jnp.log(1 + health * consumption) - 0.5 * working
 
 
 def next_wealth(
-    wealth: ContinuousState, consumption: ContinuousAction, working: DiscreteAction
+    wealth: ContinuousState, consumption: DiscreteAction, working: DiscreteAction
 ) -> ContinuousState:
     return wealth - consumption + working
 
 
 def consumption_constraint(
-    consumption: ContinuousAction, wealth: ContinuousState
-) -> ConstraintMask:
+    consumption: DiscreteAction, wealth: ContinuousState
+) -> DerivedBool:
     return consumption <= wealth
 
 
@@ -89,7 +88,7 @@ DETERMINISTIC_MODEL = Model(
 
 
 @lcm.mark.stochastic
-def next_health(health):
+def next_health(health: DiscreteState) -> DiscreteState:
     pass
 
 

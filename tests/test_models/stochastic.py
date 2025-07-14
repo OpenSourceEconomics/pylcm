@@ -18,13 +18,13 @@ import jax.numpy as jnp
 import lcm
 from lcm import DiscreteGrid, LinspaceGrid, Model
 from lcm.typing import (
-    AuxiliaryVariable,
-    ConstraintMask,
     ContinuousAction,
     ContinuousState,
+    DerivedBool,
+    DerivedFloat,
+    DerivedInt,
     DiscreteAction,
     DiscreteState,
-    Utility,
 )
 
 # ======================================================================================
@@ -66,14 +66,14 @@ def utility(
     # https://github.com/opensourceeconomics/pylcm/issues/30
     partner: DiscreteState,  # noqa: ARG001
     disutility_of_work: float,
-) -> Utility:
+) -> DerivedFloat:
     return jnp.log(consumption) - (1 - health / 2) * disutility_of_work * working
 
 
 # --------------------------------------------------------------------------------------
 # Auxiliary variables
 # --------------------------------------------------------------------------------------
-def labor_income(working: DiscreteAction, wage: AuxiliaryVariable) -> AuxiliaryVariable:
+def labor_income(working: DiscreteAction, wage: DerivedFloat) -> DerivedFloat:
     return working * wage
 
 
@@ -83,7 +83,7 @@ def labor_income(working: DiscreteAction, wage: AuxiliaryVariable) -> AuxiliaryV
 def next_wealth(
     wealth: ContinuousState,
     consumption: ContinuousAction,
-    labor_income: AuxiliaryVariable,
+    labor_income: DerivedFloat,
     interest_rate: float,
 ) -> ContinuousState:
     return (1 + interest_rate) * (wealth - consumption) + labor_income
@@ -99,7 +99,7 @@ def next_health(health: DiscreteState, partner: DiscreteState) -> DiscreteState:
 
 @lcm.mark.stochastic
 def next_partner(
-    _period: int, working: DiscreteAction, partner: DiscreteState
+    _period: DerivedInt, working: DiscreteAction, partner: DiscreteState
 ) -> DiscreteState:
     pass
 
@@ -109,7 +109,7 @@ def next_partner(
 # --------------------------------------------------------------------------------------
 def consumption_constraint(
     consumption: ContinuousAction, wealth: ContinuousState
-) -> ConstraintMask:
+) -> DerivedBool:
     return consumption <= wealth
 
 

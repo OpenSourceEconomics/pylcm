@@ -16,10 +16,10 @@ import jax.numpy as jnp
 
 from lcm import DiscreteGrid, Model
 from lcm.typing import (
-    AuxiliaryVariable,
+    DerivedFloat,
+    DerivedInt,
     DiscreteAction,
     DiscreteState,
-    Utility,
 )
 from tests.test_models.deterministic import (
     RetirementStatus,
@@ -56,9 +56,9 @@ class WealthStatus:
 # --------------------------------------------------------------------------------------
 def utility_discrete(
     consumption: DiscreteAction,
-    working: AuxiliaryVariable,
+    working: DerivedInt,
     disutility_of_work: float,
-) -> Utility:
+) -> DerivedFloat:
     # In the discrete model, consumption is defined as "low" or "high". This can be
     # translated to the levels 1 and 2.
     consumption_level = 1 + (consumption == ConsumptionChoice.high)
@@ -71,7 +71,7 @@ def utility_discrete(
 def next_wealth_discrete(
     wealth: DiscreteState,
     consumption: DiscreteAction,
-    labor_income: AuxiliaryVariable,
+    labor_income: DerivedFloat,
     interest_rate: float,
 ) -> DiscreteState:
     # For discrete state variables, we need to assure that the next state is also a

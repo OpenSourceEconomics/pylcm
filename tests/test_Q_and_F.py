@@ -14,7 +14,7 @@ from lcm.Q_and_F import (
     get_Q_and_F,
 )
 from lcm.state_action_space import create_state_space_info
-from lcm.typing import ParamsDict, ShockType
+from lcm.typing import DerivedInt, DiscreteAction, DiscreteState, ParamsDict, ShockType
 from tests.test_models import get_model_config
 from tests.test_models.deterministic import utility
 
@@ -70,23 +70,23 @@ def test_get_Q_and_F_function():
 
 @pytest.fixture
 def internal_model_illustrative():
-    def age(period: int) -> int:
+    def age(period: DerivedInt) -> DerivedInt:
         return period + 18
 
     def mandatory_retirement_constraint(
-        retirement: Array, age: int, params: ParamsDict
+        retirement: DiscreteAction, age: DerivedInt, params: ParamsDict
     ):
         # Individuals must be retired from age 65 onwards
         return jnp.logical_or(retirement == 1, age < 65)
 
     def mandatory_lagged_retirement_constraint(
-        lagged_retirement: Array, age: int, params: ParamsDict
+        lagged_retirement: DiscreteState, age: DerivedInt, params: ParamsDict
     ):
         # Individuals must have been retired last year from age 66 onwards
         return jnp.logical_or(lagged_retirement == 1, age < 66)
 
     def absorbing_retirement_constraint(
-        retirement: Array, lagged_retirement: Array, params: ParamsDict
+        retirement: DiscreteAction, lagged_retirement: DiscreteState, params: ParamsDict
     ):
         # If an individual was retired last year, it must be retired this year
         return jnp.logical_or(retirement == 1, lagged_retirement == 0)

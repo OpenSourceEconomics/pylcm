@@ -100,6 +100,7 @@ pre-commit = ">=4.1"
 pybaum = "*"
 scipy = ">=1.13"
 snakeviz = "*"
+jaxtyping = ">=0.3.2,<0.4"
 
 [tool.pixi.target.unix.dependencies]
 jaxlib = ">=0.5.1"

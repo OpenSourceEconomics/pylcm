@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import dataclasses as dc
+import dataclasses
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields, is_dataclass
 from typing import Any
@@ -95,7 +95,7 @@ class ContinuousGrid(Grid, ABC):
     def get_coordinate(self, value: Scalar) -> Scalar:
         """Get the generalized coordinate of a value in the grid."""
 
-    def replace(self, **kwargs: Any) -> ContinuousGrid:  # noqa: ANN401
+    def replace(self, **kwargs: float) -> ContinuousGrid:
         """Replace the attributes of the grid.
 
         Args:
@@ -106,7 +106,7 @@ class ContinuousGrid(Grid, ABC):
 
         """
         try:
-            return dc.replace(self, **kwargs)
+            return dataclasses.replace(self, **kwargs)  # type: ignore[arg-type]
         except TypeError as e:
             raise GridInitializationError(
                 f"Failed to replace attributes of the grid. The error was: {e}"

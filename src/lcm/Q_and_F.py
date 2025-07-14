@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable
 from typing import Any
 
 import jax.numpy as jnp
 from dags import concatenate_functions
+from dags.dag import DagsWarning
 from dags.signature import with_signature
 from jax import Array
 
@@ -300,14 +302,16 @@ def _get_feasibility(model: InternalModel) -> InternalUserFunction:
     constraints = model.function_info.query("is_constraint").index.tolist()
 
     if constraints:
-        combined_constraint = concatenate_functions(
-            functions=model.functions,
-            targets=constraints,
-            aggregator=jnp.logical_and,
-            set_annotations=True,
-        )
-        # set annotations does not set the return type when concatenate_functions is
-        # called with an aggregator
+        with warnings.catch_warnings():
+            # set annotations does not set the return type when concatenate_functions is
+            # called with an aggregator and raises a warning.
+            warnings.simplefilter("ignore", category=DagsWarning)
+            combined_constraint = concatenate_functions(
+                functions=model.functions,
+                targets=constraints,
+                aggregator=jnp.logical_and,
+                set_annotations=True,
+            )
         combined_constraint.__annotations__["return"] = "Feasibility"
 
     else:
