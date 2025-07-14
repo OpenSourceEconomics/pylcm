@@ -18,7 +18,7 @@ import jax.numpy as jnp
 from lcm import DiscreteGrid, Model
 from tests.test_models.deterministic import (
     RetirementStatus,
-    consumption_constraint,
+    borrowing_constraint,
     labor_income,
     next_wealth,
     utility,
@@ -97,7 +97,7 @@ ISKHAKOV_ET_AL_2017_DISCRETE = Model(
     functions={
         "utility": utility_discrete,
         "next_wealth": next_wealth_discrete,
-        "consumption_constraint": consumption_constraint,
+        "borrowing_constraint": borrowing_constraint,
         "labor_income": labor_income,
         "working": working,
     },

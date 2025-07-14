@@ -63,7 +63,7 @@ def next_wealth(
     return wealth - consumption + working
 
 
-def consumption_constraint(
+def borrowing_constraint(
     consumption: DiscreteAction, wealth: ContinuousState
 ) -> DerivedBool:
     return consumption <= wealth
@@ -73,7 +73,7 @@ DETERMINISTIC_MODEL = Model(
     functions={
         "utility": utility,
         "next_wealth": next_wealth,
-        "consumption_constraint": consumption_constraint,
+        "borrowing_constraint": borrowing_constraint,
     },
     n_periods=2,
     actions={

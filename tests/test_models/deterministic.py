@@ -101,7 +101,7 @@ def next_lagged_retirement(retirement: DiscreteAction) -> DiscreteState:
 # --------------------------------------------------------------------------------------
 # Constraints
 # --------------------------------------------------------------------------------------
-def consumption_constraint(
+def borrowing_constraint(
     consumption: ContinuousAction | DiscreteAction, wealth: ContinuousState
 ) -> DerivedBool:
     return consumption <= wealth
@@ -131,7 +131,7 @@ ISKHAKOV_ET_AL_2017 = Model(
         "utility": utility_with_constraint,
         "next_wealth": next_wealth,
         "next_lagged_retirement": next_lagged_retirement,
-        "consumption_constraint": consumption_constraint,
+        "borrowing_constraint": borrowing_constraint,
         "absorbing_retirement_constraint": absorbing_retirement_constraint,
         "labor_income": labor_income,
         "working": working,
@@ -164,7 +164,7 @@ ISKHAKOV_ET_AL_2017_STRIPPED_DOWN = Model(
     functions={
         "utility": utility,
         "next_wealth": next_wealth,
-        "consumption_constraint": consumption_constraint,
+        "borrowing_constraint": borrowing_constraint,
         "labor_income": labor_income,
         "working": working,
         "wage": wage,

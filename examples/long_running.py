@@ -56,7 +56,7 @@ def next_health(health, exercise, working):
 # --------------------------------------------------------------------------------------
 # Constraints
 # --------------------------------------------------------------------------------------
-def consumption_constraint(consumption, wealth, labor_income):
+def borrowing_constraint(consumption, wealth, labor_income):
     return consumption <= wealth + labor_income
 
 
@@ -72,7 +72,7 @@ MODEL_CONFIG = Model(
         "utility": utility,
         "next_wealth": next_wealth,
         "next_health": next_health,
-        "consumption_constraint": consumption_constraint,
+        "borrowing_constraint": borrowing_constraint,
         "labor_income": labor_income,
         "wage": wage,
         "age": age,

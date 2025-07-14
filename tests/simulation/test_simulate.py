@@ -133,7 +133,7 @@ def test_simulate_using_get_lcm_function(
         initial_states={
             "wealth": jnp.array([20.0, 150, 250, 320]),
         },
-        additional_targets=["utility", "consumption_constraint"],
+        additional_targets=["utility", "borrowing_constraint"],
     )
 
     assert {
@@ -143,7 +143,7 @@ def test_simulate_using_get_lcm_function(
         "consumption",
         "wealth",
         "utility",
-        "consumption_constraint",
+        "borrowing_constraint",
     } == set(res.columns)
 
     # assert that everyone retires in the last period

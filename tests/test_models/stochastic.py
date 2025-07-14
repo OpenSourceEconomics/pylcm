@@ -110,7 +110,7 @@ def next_partner(  # type: ignore[empty-body]
 # --------------------------------------------------------------------------------------
 # Constraints
 # --------------------------------------------------------------------------------------
-def consumption_constraint(
+def borrowing_constraint(
     consumption: ContinuousAction, wealth: ContinuousState
 ) -> DerivedBool:
     return consumption <= wealth
@@ -132,7 +132,7 @@ ISKHAKOV_ET_AL_2017_STOCHASTIC = Model(
         "next_wealth": next_wealth,
         "next_health": next_health,
         "next_partner": next_partner,
-        "consumption_constraint": consumption_constraint,
+        "borrowing_constraint": borrowing_constraint,
         "labor_income": labor_income,
     },
     actions={
