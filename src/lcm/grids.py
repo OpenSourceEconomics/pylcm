@@ -5,15 +5,17 @@ from __future__ import annotations
 import dataclasses
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields, is_dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 from jax import Array
 
 from lcm import grid_helpers
 from lcm.exceptions import GridInitializationError, format_messages
-from lcm.typing import Scalar
 from lcm.utils import find_duplicates
+
+if TYPE_CHECKING:
+    from lcm.typing import Scalar
 
 
 class Grid(ABC):

@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import logging
-from collections.abc import Callable
 from functools import partial
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
-import pandas as pd
 from jax import Array, vmap
 
 from lcm.dispatchers import simulation_spacemap, vmap_1d
@@ -19,7 +17,14 @@ from lcm.max_Qc_over_d import get_argmax_and_max_Qc_over_d
 from lcm.random import draw_random_seed, generate_simulation_keys
 from lcm.simulation.processing import as_panel, process_simulated_data
 from lcm.state_action_space import create_state_action_space
-from lcm.typing import ArgmaxQOverCFunction, ParamsDict
+
+if TYPE_CHECKING:
+    import logging
+    from collections.abc import Callable
+
+    import pandas as pd
+
+    from lcm.typing import ArgmaxQOverCFunction, ParamsDict
 
 
 def solve_and_simulate(

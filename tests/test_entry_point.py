@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import jax.numpy as jnp
 import pytest
 from pybaum import tree_equal, tree_map
@@ -12,11 +14,13 @@ from lcm.max_Q_over_c import (
 )
 from lcm.Q_and_F import get_Q_and_F
 from lcm.state_action_space import create_state_space_info
-from lcm.typing import DerivedBool, DerivedInt, DiscreteAction, DiscreteState
 from tests.test_models import get_model_config
 from tests.test_models.deterministic import RetirementStatus
 from tests.test_models.deterministic import utility as iskhakov_et_al_2017_utility
 from tests.test_models.discrete_deterministic import ConsumptionChoice
+
+if TYPE_CHECKING:
+    from lcm.typing import DerivedBool, DerivedInt, DiscreteAction, DiscreteState
 
 # ======================================================================================
 # Test cases

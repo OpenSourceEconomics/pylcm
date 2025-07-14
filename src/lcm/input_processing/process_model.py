@@ -3,12 +3,10 @@ from __future__ import annotations
 import functools
 import inspect
 from copy import deepcopy
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
-import pandas as pd
 from dags import get_annotations
 from dags.signature import with_signature
-from jax import Array
 
 from lcm.functools import convert_kwargs_to_args
 from lcm.input_processing.create_params_template import create_params_template
@@ -30,7 +28,12 @@ from lcm.typing import (
     ShockType,
     UserFunction,
 )
-from lcm.user_model import Model
+
+if TYPE_CHECKING:
+    import pandas as pd
+    from jax import Array
+
+    from lcm.user_model import Model
 
 
 def process_model(model: Model) -> InternalModel:
@@ -167,7 +170,7 @@ def _get_stochastic_next_function(raw_func: UserFunction, grid: Array) -> UserFu
 
     @with_signature(args=annotations, return_annotation=return_annotation)
     @functools.wraps(raw_func)
-    def next_func(**kwargs: Any) -> Array:  # noqa: ARG001
+    def next_func(**kwargs: Any) -> Array:  # noqa: ARG001, ANN401
         return grid
 
     return next_func

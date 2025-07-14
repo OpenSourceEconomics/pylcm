@@ -81,19 +81,25 @@ def internal_model_illustrative():
         return period + 18
 
     def mandatory_retirement_constraint(
-        retirement: DiscreteAction, age: DerivedInt, params: ParamsDict
+        retirement: DiscreteAction,
+        age: DerivedInt,
+        params: ParamsDict,  # noqa: ARG001
     ) -> DerivedBool:
         # Individuals must be retired from age 65 onwards
         return jnp.logical_or(retirement == 1, age < 65)
 
     def mandatory_lagged_retirement_constraint(
-        lagged_retirement: DiscreteState, age: DerivedInt, params: ParamsDict
+        lagged_retirement: DiscreteState,
+        age: DerivedInt,
+        params: ParamsDict,  # noqa: ARG001
     ) -> DerivedBool:
         # Individuals must have been retired last year from age 66 onwards
         return jnp.logical_or(lagged_retirement == 1, age < 66)
 
     def absorbing_retirement_constraint(
-        retirement: DiscreteAction, lagged_retirement: DiscreteState, params: ParamsDict
+        retirement: DiscreteAction,
+        lagged_retirement: DiscreteState,
+        params: ParamsDict,  # noqa: ARG001
     ) -> DerivedBool:
         # If an individual was retired last year, it must be retired this year
         return jnp.logical_or(retirement == 1, lagged_retirement == 0)

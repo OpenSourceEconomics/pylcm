@@ -12,20 +12,23 @@ See also the specifications in tests/test_models/deterministic.py.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
 import lcm
 from lcm import DiscreteGrid, LinspaceGrid, Model
-from lcm.typing import (
-    ContinuousAction,
-    ContinuousState,
-    DerivedBool,
-    DerivedFloat,
-    DerivedInt,
-    DiscreteAction,
-    DiscreteState,
-)
+
+if TYPE_CHECKING:
+    from lcm.typing import (
+        ContinuousAction,
+        ContinuousState,
+        DerivedBool,
+        DerivedFloat,
+        DerivedInt,
+        DiscreteAction,
+        DiscreteState,
+    )
 
 # ======================================================================================
 # Model functions

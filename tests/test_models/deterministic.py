@@ -10,19 +10,22 @@ https://doi.org/10.3982/QE643).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
 from lcm import DiscreteGrid, LinspaceGrid, Model
-from lcm.typing import (
-    ContinuousAction,
-    ContinuousState,
-    DerivedBool,
-    DerivedFloat,
-    DerivedInt,
-    DiscreteAction,
-    DiscreteState,
-)
+
+if TYPE_CHECKING:
+    from lcm.typing import (
+        ContinuousAction,
+        ContinuousState,
+        DerivedBool,
+        DerivedFloat,
+        DerivedInt,
+        DiscreteAction,
+        DiscreteState,
+    )
 
 # ======================================================================================
 # Model functions

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import functools
 import inspect
-from collections.abc import Callable
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
-from lcm.typing import Scalar
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from lcm.typing import Scalar
 
 ReturnType = TypeVar("ReturnType")
 

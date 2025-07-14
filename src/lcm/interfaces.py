@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
-import pandas as pd
-from jax import Array
-
-from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
-from lcm.typing import InternalUserFunction, ParamsDict, ShockType
 from lcm.utils import first_non_none
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    import pandas as pd
+    from jax import Array
+
+    from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
+    from lcm.typing import InternalUserFunction, ParamsDict, ShockType
 
 
 @dataclasses.dataclass(frozen=True)

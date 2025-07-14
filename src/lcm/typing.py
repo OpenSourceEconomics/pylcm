@@ -1,20 +1,9 @@
 from enum import Enum
-from typing import Any, Generic, Protocol, TypeVar
+from typing import Any, Protocol
 
 from jax import Array
 from jaxtyping import Bool, Float, Int
 from jaxtyping import Scalar as ScalarArray
-
-T = TypeVar("T")
-
-
-class Param(Generic[T]):
-    def __init__(self, value: T):
-        self.value = value
-
-    def get(self) -> T:
-        return self.value
-
 
 type ContinuousState = Float[Array, "..."]
 type ContinuousAction = Float[Array, "..."]

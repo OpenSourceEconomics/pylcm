@@ -11,16 +11,11 @@ continuous version.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
 from lcm import DiscreteGrid, Model
-from lcm.typing import (
-    DerivedFloat,
-    DerivedInt,
-    DiscreteAction,
-    DiscreteState,
-)
 from tests.test_models.deterministic import (
     RetirementStatus,
     consumption_constraint,
@@ -29,6 +24,14 @@ from tests.test_models.deterministic import (
     utility,
     working,
 )
+
+if TYPE_CHECKING:
+    from lcm.typing import (
+        DerivedFloat,
+        DerivedInt,
+        DiscreteAction,
+        DiscreteState,
+    )
 
 # ======================================================================================
 # Model functions

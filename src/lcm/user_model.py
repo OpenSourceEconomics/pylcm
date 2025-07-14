@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import dataclasses as dc
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from lcm.exceptions import ModelInitilizationError, format_messages
 from lcm.grids import Grid
-from lcm.typing import UserFunction
+
+if TYPE_CHECKING:
+    from lcm.typing import UserFunction
 
 
 @dataclass(frozen=True)

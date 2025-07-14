@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from functools import partial
+from typing import TYPE_CHECKING
 
 import jax
-import pandas as pd
 from jax import Array
 
 from lcm.argmax import argmax_and_max
@@ -13,6 +13,9 @@ from lcm.typing import (
     ParamsDict,
     ShockType,
 )
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 def get_max_Qc_over_d(

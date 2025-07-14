@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
@@ -15,13 +16,15 @@ from pandas.testing import assert_frame_equal
 import lcm
 from lcm import DiscreteGrid, LinspaceGrid, Model
 from lcm.entry_point import get_lcm_function
-from lcm.typing import (
-    ContinuousState,
-    DerivedBool,
-    DerivedFloat,
-    DiscreteAction,
-    DiscreteState,
-)
+
+if TYPE_CHECKING:
+    from lcm.typing import (
+        ContinuousState,
+        DerivedBool,
+        DerivedFloat,
+        DiscreteAction,
+        DiscreteState,
+    )
 
 
 # ======================================================================================
@@ -48,7 +51,7 @@ class HealthStatus:
 def utility(
     consumption: DiscreteAction,
     working: DiscreteAction,
-    wealth: ContinuousState,
+    wealth: ContinuousState,  # noqa: ARG001
     health: DiscreteState,
 ) -> DerivedFloat:
     return jnp.log(1 + health * consumption) - 0.5 * working

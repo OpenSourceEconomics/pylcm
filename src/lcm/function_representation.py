@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
 from dags import concatenate_functions
@@ -9,10 +8,14 @@ from dags.signature import with_signature
 from jax import Array
 
 from lcm.functools import all_as_kwargs
-from lcm.grids import ContinuousGrid
-from lcm.interfaces import StateSpaceInfo
 from lcm.ndimage import map_coordinates
-from lcm.typing import Scalar
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from lcm.grids import ContinuousGrid
+    from lcm.interfaces import StateSpaceInfo
+    from lcm.typing import Scalar
 
 
 def get_value_function_representation(

@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from functools import partial
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import jax
-import pandas as pd
 from jax import Array
 
 from lcm.input_processing import process_model
@@ -33,7 +31,13 @@ from lcm.typing import (
     ParamsDict,
     Target,
 )
-from lcm.user_model import Model
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    import pandas as pd
+
+    from lcm.user_model import Model
 
 
 def get_lcm_function(

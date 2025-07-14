@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-import logging
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 from jax import Array
 
-from lcm.interfaces import StateActionSpace
-from lcm.typing import MaxQcOverDFunction, MaxQOverCFunction, ParamsDict
+if TYPE_CHECKING:
+    import logging
+
+    from lcm.interfaces import StateActionSpace
+    from lcm.typing import MaxQcOverDFunction, MaxQOverCFunction, ParamsDict
 
 
 def solve(

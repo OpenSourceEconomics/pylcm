@@ -26,10 +26,13 @@ it easy to call functions interchangeably.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import jax.numpy as jnp
 from jax import Array
 
-from lcm.typing import Scalar
+if TYPE_CHECKING:
+    from lcm.typing import Scalar
 
 
 def linspace(start: Scalar, stop: Scalar, n_points: int) -> Array:

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-import pandas as pd
-from jax import Array
+from typing import TYPE_CHECKING
 
 from lcm.grids import ContinuousGrid, DiscreteGrid
 from lcm.interfaces import InternalModel, StateActionSpace, StateSpaceInfo
+
+if TYPE_CHECKING:
+    import pandas as pd
+    from jax import Array
 
 
 def create_state_action_space(

@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import inspect
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
-import pandas as pd
 from jax import Array
 
 from lcm.input_processing.util import get_grids, get_variable_info
-from lcm.typing import ParamsDict
-from lcm.user_model import Model
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+    from lcm.typing import ParamsDict
+    from lcm.user_model import Model
 
 
 def create_params_template(
