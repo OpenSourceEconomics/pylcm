@@ -2,7 +2,8 @@ from enum import Enum
 from typing import Any, Generic, Protocol, TypeVar
 
 from jax import Array
-from jaxtyping import Bool, Float, Int, Scalar
+from jaxtyping import Bool, Float, Int
+from jaxtyping import Scalar as ScalarArray
 
 T = TypeVar("T")
 
@@ -24,6 +25,10 @@ type DerivedInt = Int[Array, "..."]
 type DerivedBool = Bool[Array, "..."]
 
 ParamsDict = dict[str, Any]
+
+# Many JAX functions are designed to work with scalar numerical values. This also
+# includes zero dimensional jax arrays.
+Scalar = int | float | ScalarArray
 
 
 class UserFunction(Protocol):

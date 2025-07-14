@@ -88,7 +88,7 @@ DETERMINISTIC_MODEL = Model(
 
 
 @lcm.mark.stochastic
-def next_health(health: DiscreteState) -> DiscreteState:
+def next_health(health: DiscreteState) -> DiscreteState:  # type: ignore[empty-body]
     pass
 
 

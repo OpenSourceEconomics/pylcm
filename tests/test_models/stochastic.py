@@ -93,12 +93,12 @@ def next_wealth(
 # Stochastic state transitions
 # --------------------------------------------------------------------------------------
 @lcm.mark.stochastic
-def next_health(health: DiscreteState, partner: DiscreteState) -> DiscreteState:
+def next_health(health: DiscreteState, partner: DiscreteState) -> DiscreteState:  # type: ignore[empty-body]
     pass
 
 
 @lcm.mark.stochastic
-def next_partner(
+def next_partner(  # type: ignore[empty-body]
     _period: DerivedInt, working: DiscreteAction, partner: DiscreteState
 ) -> DiscreteState:
     pass

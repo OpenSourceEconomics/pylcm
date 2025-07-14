@@ -3,7 +3,7 @@ from __future__ import annotations
 import functools
 import inspect
 from copy import deepcopy
-from typing import cast
+from typing import Any, cast
 
 import pandas as pd
 from dags import get_annotations
@@ -143,7 +143,7 @@ def _replace_func_parameters_by_params(
 
     @with_signature(args=annotations_with_params, return_annotation=return_annotation)
     @functools.wraps(func)
-    def processed_func(*args, params: ParamsDict, **kwargs):
+    def processed_func(*args: Scalar, params: ParamsDict, **kwargs: Scalar) -> Scalar:
         return func(*args, **kwargs, **params[name])
 
     return processed_func
@@ -167,7 +167,7 @@ def _get_stochastic_next_function(raw_func: UserFunction, grid: Array) -> UserFu
 
     @with_signature(args=annotations, return_annotation=return_annotation)
     @functools.wraps(raw_func)
-    def next_func(**kwargs) -> Array:  # noqa: ARG001
+    def next_func(**kwargs: Any) -> Array:  # noqa: ARG001
         return grid
 
     return next_func
@@ -241,7 +241,7 @@ def _get_stochastic_weight_function(
     else:
 
         @with_signature(args=annotations, return_annotation="DerivedFloat")
-        def weight_func(
+        def weight_func(  # type: ignore[misc]
             params: ParamsDict, **kwargs: DiscreteState | DiscreteAction
         ) -> DerivedFloat:
             args = convert_kwargs_to_args(kwargs, parameters=function_parameters)
