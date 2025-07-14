@@ -17,13 +17,13 @@ import jax.numpy as jnp
 from lcm import DiscreteGrid, Model
 from lcm.typing import (
     AuxiliaryVariable,
-    ConstraintMask,
     DiscreteAction,
     DiscreteState,
     Utility,
 )
 from tests.test_models.deterministic import (
     RetirementStatus,
+    consumption_constraint,
     labor_income,
     next_wealth,
     utility,
@@ -80,15 +80,6 @@ def next_wealth_discrete(
     return jnp.clip(jnp.rint(continuous), WealthStatus.low, WealthStatus.high).astype(
         jnp.int32
     )
-
-
-# --------------------------------------------------------------------------------------
-# Constraints
-# --------------------------------------------------------------------------------------
-def consumption_constraint(
-    consumption: DiscreteAction, wealth: DiscreteState
-) -> ConstraintMask:
-    return consumption <= wealth
 
 
 # ======================================================================================
