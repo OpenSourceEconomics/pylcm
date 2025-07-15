@@ -25,6 +25,7 @@ if TYPE_CHECKING:
         DerivedInt,
         DiscreteAction,
         DiscreteState,
+        IntArray1D,
     )
 
 # ======================================================================================
@@ -66,7 +67,7 @@ def utility_with_constraint(
 # --------------------------------------------------------------------------------------
 # Auxiliary variables
 # --------------------------------------------------------------------------------------
-def labor_income(working: DerivedInt, wage: DerivedFloat) -> DerivedFloat:
+def labor_income(working: DerivedInt, wage: float | DerivedFloat) -> DerivedFloat:
     return working * wage
 
 
@@ -74,11 +75,11 @@ def working(retirement: DiscreteAction) -> DerivedInt:
     return 1 - retirement
 
 
-def wage(age: DerivedInt) -> DerivedFloat:
+def wage(age: int | DerivedInt) -> float | DerivedFloat:
     return 1 + 0.1 * age
 
 
-def age(_period: DerivedInt) -> DerivedInt:
+def age(_period: int | IntArray1D) -> int | DerivedInt:
     return _period + 18
 
 

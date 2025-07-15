@@ -16,7 +16,6 @@ from lcm.Q_and_F import (
 from lcm.state_action_space import create_state_space_info
 from lcm.typing import (
     DerivedBool,
-    DerivedInt,
     DiscreteAction,
     DiscreteState,
     ParamsDict,
@@ -77,12 +76,12 @@ def test_get_Q_and_F_function():
 
 @pytest.fixture
 def internal_model_illustrative():
-    def age(period: DerivedInt) -> DerivedInt:
+    def age(period: int) -> int:
         return period + 18
 
     def mandatory_retirement_constraint(
         retirement: DiscreteAction,
-        age: DerivedInt,
+        age: int,
         params: ParamsDict,  # noqa: ARG001
     ) -> DerivedBool:
         # Individuals must be retired from age 65 onwards
@@ -90,7 +89,7 @@ def internal_model_illustrative():
 
     def mandatory_lagged_retirement_constraint(
         lagged_retirement: DiscreteState,
-        age: DerivedInt,
+        age: int,
         params: ParamsDict,  # noqa: ARG001
     ) -> DerivedBool:
         # Individuals must have been retired last year from age 66 onwards

@@ -20,7 +20,7 @@ from tests.test_models.deterministic import utility as iskhakov_et_al_2017_utili
 from tests.test_models.discrete_deterministic import ConsumptionChoice
 
 if TYPE_CHECKING:
-    from lcm.typing import DerivedBool, DerivedInt, DiscreteAction, DiscreteState
+    from lcm.typing import DerivedBool, DiscreteAction, DiscreteState
 
 # ======================================================================================
 # Test cases
@@ -371,7 +371,7 @@ def test_get_lcm_function_with_period_argument_in_constraint():
     def absorbing_retirement_constraint(
         retirement: DiscreteAction,
         lagged_retirement: DiscreteState,
-        _period: DerivedInt,
+        _period: int,
     ) -> DerivedBool:
         return jnp.logical_or(
             retirement == RetirementStatus.retired,
