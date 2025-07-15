@@ -15,7 +15,13 @@ if TYPE_CHECKING:
     from jax import Array
 
     from lcm.interfaces import InternalModel
-    from lcm.typing import ContinuousState, DiscreteState, StochasticNextFunction, Target, FloatND
+    from lcm.typing import (
+        ContinuousState,
+        DiscreteState,
+        FloatND,
+        StochasticNextFunction,
+        Target,
+    )
 
 
 def get_next_state_function(

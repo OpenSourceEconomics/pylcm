@@ -19,11 +19,11 @@ from lcm.entry_point import get_lcm_function
 
 if TYPE_CHECKING:
     from lcm.typing import (
-        ContinuousState,
         BoolND,
-        FloatND,
+        ContinuousState,
         DiscreteAction,
         DiscreteState,
+        FloatND,
     )
 
 

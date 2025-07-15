@@ -22,19 +22,17 @@ if TYPE_CHECKING:
     import pandas as pd
     from jax import Array
 
-    from lcm.user_model import Model
     from lcm.typing import (
-        FloatND,
-        Float1D,
-        Int1D,
-        IntND,
         DiscreteAction,
         DiscreteState,
+        Float1D,
+        Int1D,
         InternalUserFunction,
         ParamsDict,
         ShockType,
         UserFunction,
     )
+    from lcm.user_model import Model
 
 
 def process_model(model: Model) -> InternalModel:

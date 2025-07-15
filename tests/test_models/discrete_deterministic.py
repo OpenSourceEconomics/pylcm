@@ -27,10 +27,10 @@ from tests.test_models.deterministic import (
 
 if TYPE_CHECKING:
     from lcm.typing import (
-        FloatND,
-        IntND,
         DiscreteAction,
         DiscreteState,
+        FloatND,
+        IntND,
     )
 
 # ======================================================================================

@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     import logging
 
     from lcm.interfaces import StateActionSpace
-    from lcm.typing import MaxQcOverDFunction, MaxQOverCFunction, ParamsDict, FloatND
+    from lcm.typing import FloatND, MaxQcOverDFunction, MaxQOverCFunction, ParamsDict
 
 
 def solve(

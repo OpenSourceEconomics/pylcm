@@ -18,7 +18,14 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from lcm.interfaces import InternalModel, StateSpaceInfo
-    from lcm.typing import Float1D, InternalUserFunction, ParamsDict, Target, FloatND, IntND, BoolND
+    from lcm.typing import (
+        BoolND,
+        Float1D,
+        FloatND,
+        InternalUserFunction,
+        ParamsDict,
+        Target,
+    )
 
 
 def get_Q_and_F(
@@ -95,7 +102,9 @@ def get_Q_and_F_non_terminal(
         exclude={"_period"},
     )
 
-    @with_signature(args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]")
+    @with_signature(
+        args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
+    )
     def Q_and_F(
         params: ParamsDict, next_V_arr: FloatND, **states_and_actions: Array
     ) -> tuple[FloatND, BoolND]:
@@ -187,7 +196,9 @@ def get_Q_and_F_terminal(
     args["params"] = "ParamsDict"
     args["next_V_arr"] = "FloatND"
 
-    @with_signature(args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]")
+    @with_signature(
+        args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
+    )
     def Q_and_F(
         params: ParamsDict,
         next_V_arr: FloatND,  # noqa: ARG001

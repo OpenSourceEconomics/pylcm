@@ -18,14 +18,14 @@ from lcm import DiscreteGrid, LinspaceGrid, Model
 
 if TYPE_CHECKING:
     from lcm.typing import (
+        BoolND,
         ContinuousAction,
         ContinuousState,
-        BoolND,
-        FloatND,
-        IntND,
         DiscreteAction,
         DiscreteState,
+        FloatND,
         Int1D,
+        IntND,
     )
 
 # ======================================================================================
