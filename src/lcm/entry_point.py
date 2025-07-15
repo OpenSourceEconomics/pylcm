@@ -156,7 +156,7 @@ def get_lcm_function(
         simulate,
         argmax_and_max_Q_over_c_functions=argmax_and_max_Q_over_c_functions,
         model=internal_model,
-        next_state=next_state_simulate,  # type: ignore[arg-type]
+        next_state=next_state_simulate,
         logger=logger,
     )
 
@@ -164,7 +164,7 @@ def get_lcm_function(
         solve_and_simulate,
         argmax_and_max_Q_over_c_functions=argmax_and_max_Q_over_c_functions,
         model=internal_model,
-        next_state=next_state_simulate,  # type: ignore[arg-type]
+        next_state=next_state_simulate,
         logger=logger,
         solve_model=solve_model,
     )

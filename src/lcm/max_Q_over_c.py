@@ -12,7 +12,7 @@ from lcm.dispatchers import productmap
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from lcm.typing import ArgmaxQOverCFunction, MaxQOverCFunction, ParamsDict, Scalar
+    from lcm.typing import ArgmaxQOverCFunction, MaxQOverCFunction, ParamsDict
 
 
 def get_max_Q_over_c(
@@ -59,7 +59,7 @@ def get_max_Q_over_c(
         )
 
     @functools.wraps(Q_and_F)
-    def max_Q_over_c(next_V_arr: Array, params: ParamsDict, **kwargs: Scalar) -> Array:
+    def max_Q_over_c(next_V_arr: Array, params: ParamsDict, **kwargs: Array) -> Array:
         Q_arr, F_arr = Q_and_F(params=params, next_V_arr=next_V_arr, **kwargs)
         return Q_arr.max(where=F_arr, initial=-jnp.inf)
 
@@ -110,7 +110,7 @@ def get_argmax_and_max_Q_over_c(
 
     @functools.wraps(Q_and_F)
     def argmax_and_max_Q_over_c(
-        next_V_arr: Array, params: ParamsDict, **kwargs: Scalar
+        next_V_arr: Array, params: ParamsDict, **kwargs: Array
     ) -> tuple[Array, Array]:
         Q_arr, F_arr = Q_and_F(params=params, next_V_arr=next_V_arr, **kwargs)
         return argmax_and_max(Q_arr, where=F_arr, initial=-jnp.inf)

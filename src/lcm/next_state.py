@@ -8,7 +8,7 @@ from dags import concatenate_functions
 from dags.signature import with_signature
 
 from lcm.random import random_choice
-from lcm.typing import Scalar, StochasticNextFunction, Target
+from lcm.typing import ContinuousState, DiscreteState, StochasticNextFunction, Target
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 def get_next_state_function(
     model: InternalModel,
     target: Target,
-) -> Callable[..., dict[str, Scalar]]:
+) -> Callable[..., dict[str, DiscreteState | ContinuousState]]:
     """Get function that computes the next states during the solution.
 
     Args:
@@ -83,7 +83,7 @@ def get_next_stochastic_weights_function(
 
 def _extend_functions_dict_for_simulation(
     model: InternalModel,
-) -> dict[str, Callable[..., Scalar]]:
+) -> dict[str, Callable[..., Array]]:
     """Extend the functions dictionary for the simulation target.
 
     Args:

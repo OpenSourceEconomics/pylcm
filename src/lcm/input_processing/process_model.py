@@ -19,12 +19,10 @@ from lcm.input_processing.util import (
 from lcm.interfaces import InternalModel
 from lcm.typing import (
     DerivedFloat,
-    DerivedInt,
     DiscreteAction,
     DiscreteState,
     InternalUserFunction,
     ParamsDict,
-    Scalar,
     ShockType,
     UserFunction,
 )
@@ -146,10 +144,10 @@ def _replace_func_parameters_by_params(
 
     @with_signature(args=annotations_with_params, return_annotation=return_annotation)
     @functools.wraps(func)
-    def processed_func(*args: Scalar, params: ParamsDict, **kwargs: Scalar) -> Scalar:
+    def processed_func(*args: Array, params: ParamsDict, **kwargs: Array) -> Array:
         return func(*args, **kwargs, **params[name])
 
-    return processed_func
+    return cast("InternalUserFunction", processed_func)
 
 
 def _add_dummy_params_argument(func: UserFunction) -> InternalUserFunction:
@@ -158,10 +156,10 @@ def _add_dummy_params_argument(func: UserFunction) -> InternalUserFunction:
 
     @with_signature(args=annotations, return_annotation=return_annotation)
     @functools.wraps(func)
-    def processed_func(*args: Scalar, params: ParamsDict, **kwargs: Scalar) -> Scalar:  # noqa: ARG001
+    def processed_func(*args: Array, params: ParamsDict, **kwargs: Array) -> Array:  # noqa: ARG001
         return func(*args, **kwargs)
 
-    return processed_func
+    return cast("InternalUserFunction", processed_func)
 
 
 def _get_stochastic_next_function(raw_func: UserFunction, grid: Array) -> UserFunction:
@@ -228,26 +226,11 @@ def _get_stochastic_weight_function(
     annotations = get_annotations(raw_func) | {"params": "ParamsDict"}
     annotations.pop("return")
 
-    if "_period" in function_parameters:
-
-        @with_signature(args=annotations, return_annotation="DerivedFloat")
-        def weight_func(
-            _period: DerivedInt,
-            params: ParamsDict,
-            **kwargs: DiscreteState | DiscreteAction,
-        ) -> DerivedFloat:
-            args = convert_kwargs_to_args(
-                kwargs | {"_period": _period}, parameters=function_parameters
-            )
-            return params["shocks"][name][*args]
-
-    else:
-
-        @with_signature(args=annotations, return_annotation="DerivedFloat")
-        def weight_func(  # type: ignore[misc]
-            params: ParamsDict, **kwargs: DiscreteState | DiscreteAction
-        ) -> DerivedFloat:
-            args = convert_kwargs_to_args(kwargs, parameters=function_parameters)
-            return params["shocks"][name][*args]
+    @with_signature(args=annotations, return_annotation="DerivedFloat")
+    def weight_func(
+        params: ParamsDict, **kwargs: DiscreteState | DiscreteAction | int
+    ) -> DerivedFloat:
+        args = convert_kwargs_to_args(kwargs, parameters=function_parameters)
+        return params["shocks"][name][*args]
 
     return cast("InternalUserFunction", weight_func)

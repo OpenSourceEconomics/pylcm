@@ -12,7 +12,17 @@ if TYPE_CHECKING:
     from jax import Array
 
     from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
-    from lcm.typing import InternalUserFunction, ParamsDict, ShockType
+    from lcm.typing import (
+        ContinuousAction,
+        ContinuousState,
+        DiscreteAction,
+        DiscreteState,
+        FloatArray1D,
+        IntArray1D,
+        InternalUserFunction,
+        ParamsDict,
+        ShockType,
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -49,16 +59,16 @@ class StateActionSpace:
 
     """
 
-    states: dict[str, Array]
-    discrete_actions: dict[str, Array]
-    continuous_actions: dict[str, Array]
+    states: dict[str, ContinuousState | DiscreteState]
+    discrete_actions: dict[str, DiscreteAction]
+    continuous_actions: dict[str, ContinuousAction]
     states_and_discrete_actions_names: tuple[str, ...]
 
     def replace(
         self,
-        states: dict[str, Array] | None = None,
-        discrete_actions: dict[str, Array] | None = None,
-        continuous_actions: dict[str, Array] | None = None,
+        states: dict[str, ContinuousState | DiscreteState] | None = None,
+        discrete_actions: dict[str, DiscreteAction] | None = None,
+        continuous_actions: dict[str, ContinuousAction] | None = None,
     ) -> StateActionSpace:
         """Replace the states or actions in the state-action space.
 
@@ -133,7 +143,7 @@ class InternalModel:
 
     """
 
-    grids: dict[str, Array]
+    grids: dict[str, FloatArray1D | IntArray1D]
     gridspecs: dict[str, Grid]
     variable_info: pd.DataFrame
     functions: dict[str, InternalUserFunction]

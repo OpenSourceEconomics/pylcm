@@ -2,8 +2,7 @@ from enum import Enum
 from typing import Any, Protocol
 
 from jax import Array
-from jaxtyping import Bool, Float, Int
-from jaxtyping import Scalar as ScalarArray
+from jaxtyping import Bool, Float, Int, Scalar
 
 type ContinuousState = Float[Array, "..."]
 type ContinuousAction = Float[Array, "..."]
@@ -13,11 +12,17 @@ type DerivedFloat = Float[Array, "..."]
 type DerivedInt = Int[Array, "..."]
 type DerivedBool = Bool[Array, "..."]
 
+type FloatArray1D = Float[Array, "..."]
+type IntArray1D = Int[Array, "..."]
+type IntArray = Int[Array, "..."]
+
+
 ParamsDict = dict[str, Any]
 
 # Many JAX functions are designed to work with scalar numerical values. This also
 # includes zero dimensional jax arrays.
-Scalar = int | float | ScalarArray
+ScalarInt = int | Int[Scalar, ""]
+ScalarFloat = float | Float[Scalar, ""]
 
 
 class UserFunction(Protocol):
@@ -38,8 +43,8 @@ class InternalUserFunction(Protocol):
     """
 
     def __call__(  # noqa: D102
-        self, *args: Scalar, params: ParamsDict, **kwargs: Scalar
-    ) -> Scalar: ...
+        self, *args: Array | int, params: ParamsDict, **kwargs: Array | int
+    ) -> Array: ...
 
 
 class MaxQOverCFunction(Protocol):
@@ -53,7 +58,7 @@ class MaxQOverCFunction(Protocol):
     """
 
     def __call__(  # noqa: D102
-        self, next_V_arr: Array, params: ParamsDict, **kwargs: Scalar
+        self, next_V_arr: Array, params: ParamsDict, **kwargs: Array
     ) -> Array: ...
 
 
@@ -68,7 +73,7 @@ class ArgmaxQOverCFunction(Protocol):
     """
 
     def __call__(  # noqa: D102
-        self, next_V_arr: Array, params: ParamsDict, **kwargs: Scalar
+        self, next_V_arr: Array, params: ParamsDict, **kwargs: Array
     ) -> tuple[Array, Array]: ...
 
 

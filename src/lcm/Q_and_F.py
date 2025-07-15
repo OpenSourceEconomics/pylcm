@@ -13,7 +13,7 @@ from lcm.dispatchers import productmap
 from lcm.function_representation import get_value_function_representation
 from lcm.functools import get_union_of_arguments
 from lcm.next_state import get_next_state_function, get_next_stochastic_weights_function
-from lcm.typing import InternalUserFunction, ParamsDict, Scalar, Target
+from lcm.typing import FloatArray1D, InternalUserFunction, ParamsDict, Target
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -97,8 +97,8 @@ def get_Q_and_F_non_terminal(
 
     @with_signature(args=arg_names_of_Q_and_F)
     def Q_and_F(
-        params: ParamsDict, next_V_arr: Array, **states_and_actions: Scalar
-    ) -> tuple[Scalar, Scalar]:
+        params: ParamsDict, next_V_arr: Array, **states_and_actions: Array
+    ) -> tuple[Array, Array]:
         """Calculate the state-action value and feasibility for a non-terminal period.
 
         Args:
@@ -154,7 +154,7 @@ def get_Q_and_F_non_terminal(
 
         return Q_arr, F_arr
 
-    return Q_and_F  # type: ignore[return-value]
+    return Q_and_F
 
 
 def get_Q_and_F_terminal(
@@ -183,18 +183,16 @@ def get_Q_and_F_terminal(
         exclude={"_period"},
     )
 
-    args = dict.fromkeys(arg_names_of_Q_and_F, "Scalar")
+    args = dict.fromkeys(arg_names_of_Q_and_F, "Array")
     args["params"] = "ParamsDict"
     args["next_V_arr"] = "Array"
 
-    @with_signature(
-        args=arg_names_of_Q_and_F, return_annotation="tuple[Scalar, Scalar]"
-    )
+    @with_signature(args=arg_names_of_Q_and_F, return_annotation="tuple[Array, Array]")
     def Q_and_F(
         params: ParamsDict,
         next_V_arr: Array,  # noqa: ARG001
-        **states_and_actions: Scalar,
-    ) -> tuple[Scalar, Scalar]:
+        **states_and_actions: Array,
+    ) -> tuple[Array, Array]:
         """Calculate the state-action values and feasibilities for the terminal period.
 
         Args:
@@ -212,7 +210,7 @@ def get_Q_and_F_terminal(
             params=params,
         )
 
-    return Q_and_F  # type: ignore[return-value]
+    return Q_and_F
 
 
 # ======================================================================================
@@ -261,14 +259,14 @@ def _get_joint_weights_function(
     arg_names = [f"weight_next_{var}" for var in stochastic_variables]
 
     @with_signature(args=arg_names)
-    def _outer(**kwargs: Array) -> Array:
+    def _outer(**kwargs: FloatArray1D) -> Array:
         weights = jnp.array(list(kwargs.values()))
         return jnp.prod(weights)
 
     return productmap(_outer, variables=tuple(arg_names))
 
 
-def _get_U_and_F(model: InternalModel) -> Callable[..., tuple[Scalar, Scalar]]:
+def _get_U_and_F(model: InternalModel) -> Callable[..., tuple[Array, Array]]:
     """Get the instantaneous utility and feasibility function.
 
     Note:
@@ -319,7 +317,7 @@ def _get_feasibility(model: InternalModel) -> InternalUserFunction:
 
     else:
 
-        def combined_constraint(**kwargs: Scalar) -> bool:  # noqa: ARG001
+        def combined_constraint(**kwargs: Any) -> bool:  # noqa: ARG001, ANN401
             """Dummy feasibility function that always returns True."""
             return True
 

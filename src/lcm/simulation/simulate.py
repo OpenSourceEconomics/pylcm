@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
     import pandas as pd
 
-    from lcm.typing import ArgmaxQOverCFunction, ParamsDict
+    from lcm.typing import ArgmaxQOverCFunction, IntArray, ParamsDict
 
 
 def solve_and_simulate(
@@ -223,8 +223,8 @@ def simulate(
 
 @partial(vmap_1d, variables=("indices_argmax_Q_over_c", "discrete_argmax"))
 def _lookup_optimal_continuous_actions(
-    indices_argmax_Q_over_c: Array,
-    discrete_argmax: Array,
+    indices_argmax_Q_over_c: IntArray,
+    discrete_argmax: IntArray,
     discrete_actions_grid_shape: tuple[int, ...],
 ) -> Array:
     """Look up the optimal continuous action index given index of discrete action.
@@ -244,8 +244,8 @@ def _lookup_optimal_continuous_actions(
 
 
 def _lookup_actions_from_indices(
-    indices_optimal_discrete_actions: Array,
-    indices_optimal_continuous_actions: Array,
+    indices_optimal_discrete_actions: IntArray,
+    indices_optimal_continuous_actions: IntArray,
     discrete_actions_grid_shape: tuple[int, ...],
     continuous_actions_grid_shape: tuple[int, ...],
     state_action_space: StateActionSpace,
@@ -279,7 +279,7 @@ def _lookup_actions_from_indices(
 
 
 def _lookup_values_from_indices(
-    flat_indices: Array,
+    flat_indices: IntArray,
     grids: dict[str, Array],
     grids_shapes: tuple[int, ...],
 ) -> dict[str, Array]:

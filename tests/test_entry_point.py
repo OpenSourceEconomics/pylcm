@@ -214,8 +214,8 @@ def test_get_max_Q_over_c():
         next_V_arr=jnp.empty(0),
     )
     assert val == iskhakov_et_al_2017_utility(
-        consumption=30.0,  # type: ignore[arg-type]
-        working=RetirementStatus.working,  # type: ignore[arg-type]
+        consumption=30.0,
+        working=RetirementStatus.working,
         disutility_of_work=1.0,
     )
 
@@ -259,8 +259,8 @@ def test_get_max_Q_over_c_with_discrete_model():
         next_V_arr=jnp.empty(0),
     )
     assert val == iskhakov_et_al_2017_utility(
-        consumption=2,  # type: ignore[arg-type]
-        working=RetirementStatus.working,  # type: ignore[arg-type]
+        consumption=2,
+        working=RetirementStatus.working,
         disutility_of_work=1.0,
     )
 
@@ -309,8 +309,8 @@ def test_argmax_and_max_Q_over_c():
     )
     assert policy == 2
     assert val == iskhakov_et_al_2017_utility(
-        consumption=30.0,  # type: ignore[arg-type]
-        working=RetirementStatus.working,  # type: ignore[arg-type]
+        consumption=30.0,
+        working=RetirementStatus.working,
         disutility_of_work=1.0,
     )
 
@@ -354,8 +354,8 @@ def test_argmax_and_max_Q_over_c_with_discrete_model():
     )
     assert _argmax == 1
     assert _max == iskhakov_et_al_2017_utility(
-        consumption=2,  # type: ignore[arg-type]
-        working=RetirementStatus.working,  # type: ignore[arg-type]
+        consumption=2,
+        working=RetirementStatus.working,
         disutility_of_work=1.0,
     )
 

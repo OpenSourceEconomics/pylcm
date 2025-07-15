@@ -205,5 +205,5 @@ def test_get_combined_constraint():
         n_periods=0,
     )
     combined_constraint = _get_feasibility(model)
-    feasibility: Array = combined_constraint(params={})  # type: ignore[assignment]
+    feasibility: Array = combined_constraint(params={})
     assert feasibility.item() is False

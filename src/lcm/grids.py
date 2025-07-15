@@ -8,21 +8,20 @@ from dataclasses import dataclass, fields, is_dataclass
 from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
-from jax import Array
 
 from lcm import grid_helpers
 from lcm.exceptions import GridInitializationError, format_messages
 from lcm.utils import find_duplicates
 
 if TYPE_CHECKING:
-    from lcm.typing import Scalar
+    from lcm.typing import FloatArray1D, IntArray1D, ScalarFloat
 
 
 class Grid(ABC):
     """LCM Grid base class."""
 
     @abstractmethod
-    def to_jax(self) -> Array:
+    def to_jax(self) -> IntArray1D | FloatArray1D:
         """Convert the grid to a Jax array."""
 
 
@@ -69,7 +68,7 @@ class DiscreteGrid(Grid):
         """Get the list of category codes."""
         return self.__codes
 
-    def to_jax(self) -> Array:
+    def to_jax(self) -> IntArray1D:
         """Convert the grid to a Jax array."""
         return jnp.array(self.codes)
 
@@ -90,11 +89,11 @@ class ContinuousGrid(Grid, ABC):
         )
 
     @abstractmethod
-    def to_jax(self) -> Array:
+    def to_jax(self) -> FloatArray1D:
         """Convert the grid to a Jax array."""
 
     @abstractmethod
-    def get_coordinate(self, value: Scalar) -> Scalar:
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
         """Get the generalized coordinate of a value in the grid."""
 
     def replace(self, **kwargs: float) -> ContinuousGrid:
@@ -129,11 +128,11 @@ class LinspaceGrid(ContinuousGrid):
 
     """
 
-    def to_jax(self) -> Array:
+    def to_jax(self) -> FloatArray1D:
         """Convert the grid to a Jax array."""
         return grid_helpers.linspace(self.start, self.stop, self.n_points)
 
-    def get_coordinate(self, value: Scalar) -> Scalar:
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
         """Get the generalized coordinate of a value in the grid."""
         return grid_helpers.get_linspace_coordinate(
             value, self.start, self.stop, self.n_points
@@ -154,11 +153,11 @@ class LogspaceGrid(ContinuousGrid):
 
     """
 
-    def to_jax(self) -> Array:
+    def to_jax(self) -> FloatArray1D:
         """Convert the grid to a Jax array."""
         return grid_helpers.logspace(self.start, self.stop, self.n_points)
 
-    def get_coordinate(self, value: Scalar) -> Scalar:
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
         """Get the generalized coordinate of a value in the grid."""
         return grid_helpers.get_logspace_coordinate(
             value, self.start, self.stop, self.n_points
