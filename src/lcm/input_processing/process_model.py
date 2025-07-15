@@ -17,21 +17,24 @@ from lcm.input_processing.util import (
     get_variable_info,
 )
 from lcm.interfaces import InternalModel
-from lcm.typing import (
-    DerivedFloat,
-    DiscreteAction,
-    DiscreteState,
-    InternalUserFunction,
-    ParamsDict,
-    ShockType,
-    UserFunction,
-)
 
 if TYPE_CHECKING:
     import pandas as pd
     from jax import Array
 
     from lcm.user_model import Model
+    from lcm.typing import (
+        FloatND,
+        Float1D,
+        Int1D,
+        IntND,
+        DiscreteAction,
+        DiscreteState,
+        InternalUserFunction,
+        ParamsDict,
+        ShockType,
+        UserFunction,
+    )
 
 
 def process_model(model: Model) -> InternalModel:
@@ -162,13 +165,13 @@ def _add_dummy_params_argument(func: UserFunction) -> InternalUserFunction:
     return cast("InternalUserFunction", processed_func)
 
 
-def _get_stochastic_next_function(raw_func: UserFunction, grid: Array) -> UserFunction:
+def _get_stochastic_next_function(raw_func: UserFunction, grid: Int1D) -> UserFunction:
     annotations = get_annotations(raw_func)
-    return_annotation = annotations.pop("return")
+    annotations.pop("return")
 
-    @with_signature(args=annotations, return_annotation=return_annotation)
+    @with_signature(args=annotations, return_annotation="Int1D")
     @functools.wraps(raw_func)
-    def next_func(**kwargs: Any) -> Array:  # noqa: ARG001, ANN401
+    def next_func(**kwargs: Any) -> Int1D:  # noqa: ARG001, ANN401
         return grid
 
     return next_func
@@ -226,10 +229,10 @@ def _get_stochastic_weight_function(
     annotations = get_annotations(raw_func) | {"params": "ParamsDict"}
     annotations.pop("return")
 
-    @with_signature(args=annotations, return_annotation="DerivedFloat")
+    @with_signature(args=annotations, return_annotation="Float1D")
     def weight_func(
         params: ParamsDict, **kwargs: DiscreteState | DiscreteAction | int
-    ) -> DerivedFloat:
+    ) -> Float1D:
         args = convert_kwargs_to_args(kwargs, parameters=function_parameters)
         return params["shocks"][name][*args]
 

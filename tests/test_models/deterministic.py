@@ -20,12 +20,12 @@ if TYPE_CHECKING:
     from lcm.typing import (
         ContinuousAction,
         ContinuousState,
-        DerivedBool,
-        DerivedFloat,
-        DerivedInt,
+        BoolND,
+        FloatND,
+        IntND,
         DiscreteAction,
         DiscreteState,
-        IntArray1D,
+        Int1D,
     )
 
 # ======================================================================================
@@ -46,40 +46,40 @@ class RetirementStatus:
 # Utility functions
 # --------------------------------------------------------------------------------------
 def utility(
-    consumption: ContinuousAction, working: DerivedInt, disutility_of_work: float
-) -> DerivedFloat:
+    consumption: ContinuousAction, working: IntND, disutility_of_work: float
+) -> FloatND:
     return jnp.log(consumption) - disutility_of_work * working
 
 
 def utility_with_constraint(
     consumption: ContinuousAction,
-    working: DerivedInt,
+    working: IntND,
     disutility_of_work: float,
     # Temporary workaround for bug described in issue #30, which requires us to pass
     # all state variables to the utility function.
     # TODO(@timmens): Remove function once #30 is fixed (re-use "utility").
     # https://github.com/opensourceeconomics/pylcm/issues/30
     lagged_retirement: DiscreteState,  # noqa: ARG001
-) -> DerivedFloat:
+) -> FloatND:
     return utility(consumption, working, disutility_of_work)
 
 
 # --------------------------------------------------------------------------------------
 # Auxiliary variables
 # --------------------------------------------------------------------------------------
-def labor_income(working: DerivedInt, wage: float | DerivedFloat) -> DerivedFloat:
+def labor_income(working: IntND, wage: float | FloatND) -> FloatND:
     return working * wage
 
 
-def working(retirement: DiscreteAction) -> DerivedInt:
+def working(retirement: DiscreteAction) -> IntND:
     return 1 - retirement
 
 
-def wage(age: int | DerivedInt) -> float | DerivedFloat:
+def wage(age: int | IntND) -> float | FloatND:
     return 1 + 0.1 * age
 
 
-def age(_period: int | IntArray1D) -> int | DerivedInt:
+def age(_period: int | Int1D) -> int | IntND:
     return _period + 18
 
 
@@ -89,7 +89,7 @@ def age(_period: int | IntArray1D) -> int | DerivedInt:
 def next_wealth(
     wealth: ContinuousState,
     consumption: ContinuousAction,
-    labor_income: DerivedFloat,
+    labor_income: FloatND,
     interest_rate: float,
 ) -> ContinuousState:
     return (1 + interest_rate) * (wealth - consumption) + labor_income
@@ -104,13 +104,13 @@ def next_lagged_retirement(retirement: DiscreteAction) -> DiscreteState:
 # --------------------------------------------------------------------------------------
 def borrowing_constraint(
     consumption: ContinuousAction | DiscreteAction, wealth: ContinuousState
-) -> DerivedBool:
+) -> BoolND:
     return consumption <= wealth
 
 
 def absorbing_retirement_constraint(
     retirement: DiscreteAction, lagged_retirement: DiscreteState
-) -> DerivedBool:
+) -> BoolND:
     return jnp.logical_or(
         retirement == RetirementStatus.retired,
         lagged_retirement == RetirementStatus.working,

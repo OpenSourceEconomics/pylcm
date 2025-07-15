@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
     import pandas as pd
 
-    from lcm.typing import ArgmaxQOverCFunction, IntArray, ParamsDict
+    from lcm.typing import ArgmaxQOverCFunction, IntND, ParamsDict, FloatND
 
 
 def solve_and_simulate(
@@ -34,7 +34,7 @@ def solve_and_simulate(
     model: InternalModel,
     next_state: Callable[..., dict[str, Array]],
     logger: logging.Logger,
-    solve_model: Callable[..., dict[int, Array]],
+    solve_model: Callable[..., dict[int, FloatND]],
     *,
     additional_targets: list[str] | None = None,
     seed: int | None = None,
@@ -223,8 +223,8 @@ def simulate(
 
 @partial(vmap_1d, variables=("indices_argmax_Q_over_c", "discrete_argmax"))
 def _lookup_optimal_continuous_actions(
-    indices_argmax_Q_over_c: IntArray,
-    discrete_argmax: IntArray,
+    indices_argmax_Q_over_c: IntND,
+    discrete_argmax: IntND,
     discrete_actions_grid_shape: tuple[int, ...],
 ) -> Array:
     """Look up the optimal continuous action index given index of discrete action.
@@ -244,8 +244,8 @@ def _lookup_optimal_continuous_actions(
 
 
 def _lookup_actions_from_indices(
-    indices_optimal_discrete_actions: IntArray,
-    indices_optimal_continuous_actions: IntArray,
+    indices_optimal_discrete_actions: IntND,
+    indices_optimal_continuous_actions: IntND,
     discrete_actions_grid_shape: tuple[int, ...],
     continuous_actions_grid_shape: tuple[int, ...],
     state_action_space: StateActionSpace,
@@ -279,7 +279,7 @@ def _lookup_actions_from_indices(
 
 
 def _lookup_values_from_indices(
-    flat_indices: IntArray,
+    flat_indices: IntND,
     grids: dict[str, Array],
     grids_shapes: tuple[int, ...],
 ) -> dict[str, Array]:

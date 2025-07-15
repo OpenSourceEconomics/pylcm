@@ -20,8 +20,8 @@ from lcm.entry_point import get_lcm_function
 if TYPE_CHECKING:
     from lcm.typing import (
         ContinuousState,
-        DerivedBool,
-        DerivedFloat,
+        BoolND,
+        FloatND,
         DiscreteAction,
         DiscreteState,
     )
@@ -53,7 +53,7 @@ def utility(
     working: DiscreteAction,
     wealth: ContinuousState,  # noqa: ARG001
     health: DiscreteState,
-) -> DerivedFloat:
+) -> FloatND:
     return jnp.log(1 + health * consumption) - 0.5 * working
 
 
@@ -65,7 +65,7 @@ def next_wealth(
 
 def borrowing_constraint(
     consumption: DiscreteAction, wealth: ContinuousState
-) -> DerivedBool:
+) -> BoolND:
     return consumption <= wealth
 
 

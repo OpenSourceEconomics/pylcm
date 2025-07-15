@@ -8,21 +8,22 @@ type ContinuousState = Float[Array, "..."]
 type ContinuousAction = Float[Array, "..."]
 type DiscreteState = Int[Array, "..."]
 type DiscreteAction = Int[Array, "..."]
-type DerivedFloat = Float[Array, "..."]
-type DerivedInt = Int[Array, "..."]
-type DerivedBool = Bool[Array, "..."]
 
-type FloatArray1D = Float[Array, "..."]
-type IntArray1D = Int[Array, "..."]
-type IntArray = Int[Array, "..."]
+type FloatND = Float[Array, "..."]
+type IntND = Int[Array, "..."]
+type BoolND = Bool[Array, "..."]
 
-
-ParamsDict = dict[str, Any]
+type Float1D = Float[Array, "_"]
+type Int1D = Int[Array, "_"]
+type Bool1D = Bool[Array, "_"]
 
 # Many JAX functions are designed to work with scalar numerical values. This also
 # includes zero dimensional jax arrays.
-ScalarInt = int | Int[Scalar, ""]
-ScalarFloat = float | Float[Scalar, ""]
+type ScalarInt = int | Int[Scalar, ""]
+type ScalarFloat = float | Float[Scalar, ""]
+
+
+ParamsDict = dict[str, Any]
 
 
 class UserFunction(Protocol):

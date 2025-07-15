@@ -31,10 +31,10 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 
 if TYPE_CHECKING:
-    from lcm.typing import FloatArray1D, ScalarFloat
+    from lcm.typing import Float1D, ScalarFloat
 
 
-def linspace(start: ScalarFloat, stop: ScalarFloat, n_points: int) -> FloatArray1D:
+def linspace(start: ScalarFloat, stop: ScalarFloat, n_points: int) -> Float1D:
     """Wrapper around jnp.linspace.
 
     Returns a linearly spaced grid between start and stop with n_points, including both
@@ -55,7 +55,7 @@ def get_linspace_coordinate(
     return (value - start) / step_length
 
 
-def logspace(start: ScalarFloat, stop: ScalarFloat, n_points: int) -> FloatArray1D:
+def logspace(start: ScalarFloat, stop: ScalarFloat, n_points: int) -> Float1D:
     """Wrapper around jnp.logspace.
 
     Returns a logarithmically spaced grid between start and stop with n_points,

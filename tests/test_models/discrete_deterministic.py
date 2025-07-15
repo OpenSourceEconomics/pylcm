@@ -27,8 +27,8 @@ from tests.test_models.deterministic import (
 
 if TYPE_CHECKING:
     from lcm.typing import (
-        DerivedFloat,
-        DerivedInt,
+        FloatND,
+        IntND,
         DiscreteAction,
         DiscreteState,
     )
@@ -59,9 +59,9 @@ class WealthStatus:
 # --------------------------------------------------------------------------------------
 def utility_discrete(
     consumption: DiscreteAction,
-    working: DerivedInt,
+    working: IntND,
     disutility_of_work: float,
-) -> DerivedFloat:
+) -> FloatND:
     # In the discrete model, consumption is defined as "low" or "high". This can be
     # translated to the levels 1 and 2.
     consumption_level = 1 + (consumption == ConsumptionChoice.high)
@@ -74,7 +74,7 @@ def utility_discrete(
 def next_wealth_discrete(
     wealth: DiscreteState,
     consumption: DiscreteAction,
-    labor_income: DerivedFloat,
+    labor_income: FloatND,
     interest_rate: float,
 ) -> DiscreteState:
     # For discrete state variables, we need to assure that the next state is also a

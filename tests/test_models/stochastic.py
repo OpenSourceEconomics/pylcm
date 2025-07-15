@@ -23,11 +23,11 @@ if TYPE_CHECKING:
     from lcm.typing import (
         ContinuousAction,
         ContinuousState,
-        DerivedBool,
-        DerivedFloat,
+        BoolND,
+        FloatND,
         DiscreteAction,
         DiscreteState,
-        IntArray1D,
+        Int1D,
     )
 
 # ======================================================================================
@@ -69,14 +69,14 @@ def utility(
     # https://github.com/opensourceeconomics/pylcm/issues/30
     partner: DiscreteState,  # noqa: ARG001
     disutility_of_work: float,
-) -> DerivedFloat:
+) -> FloatND:
     return jnp.log(consumption) - (1 - health / 2) * disutility_of_work * working
 
 
 # --------------------------------------------------------------------------------------
 # Auxiliary variables
 # --------------------------------------------------------------------------------------
-def labor_income(working: DiscreteAction, wage: DerivedFloat) -> DerivedFloat:
+def labor_income(working: DiscreteAction, wage: FloatND) -> FloatND:
     return working * wage
 
 
@@ -86,7 +86,7 @@ def labor_income(working: DiscreteAction, wage: DerivedFloat) -> DerivedFloat:
 def next_wealth(
     wealth: ContinuousState,
     consumption: ContinuousAction,
-    labor_income: DerivedFloat,
+    labor_income: FloatND,
     interest_rate: float,
 ) -> ContinuousState:
     return (1 + interest_rate) * (wealth - consumption) + labor_income
@@ -102,7 +102,7 @@ def next_health(health: DiscreteState, partner: DiscreteState) -> DiscreteState:
 
 @lcm.mark.stochastic
 def next_partner(  # type: ignore[empty-body]
-    _period: int | IntArray1D, working: DiscreteAction, partner: DiscreteState
+    _period: int | Int1D, working: DiscreteAction, partner: DiscreteState
 ) -> DiscreteState:
     pass
 
@@ -112,7 +112,7 @@ def next_partner(  # type: ignore[empty-body]
 # --------------------------------------------------------------------------------------
 def borrowing_constraint(
     consumption: ContinuousAction, wealth: ContinuousState
-) -> DerivedBool:
+) -> BoolND:
     return consumption <= wealth
 
 

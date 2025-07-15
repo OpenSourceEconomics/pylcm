@@ -14,14 +14,14 @@ from lcm.exceptions import GridInitializationError, format_messages
 from lcm.utils import find_duplicates
 
 if TYPE_CHECKING:
-    from lcm.typing import FloatArray1D, IntArray1D, ScalarFloat
+    from lcm.typing import Float1D, Int1D, ScalarFloat
 
 
 class Grid(ABC):
     """LCM Grid base class."""
 
     @abstractmethod
-    def to_jax(self) -> IntArray1D | FloatArray1D:
+    def to_jax(self) -> Int1D | Float1D:
         """Convert the grid to a Jax array."""
 
 
@@ -68,7 +68,7 @@ class DiscreteGrid(Grid):
         """Get the list of category codes."""
         return self.__codes
 
-    def to_jax(self) -> IntArray1D:
+    def to_jax(self) -> Int1D:
         """Convert the grid to a Jax array."""
         return jnp.array(self.codes)
 
@@ -89,7 +89,7 @@ class ContinuousGrid(Grid, ABC):
         )
 
     @abstractmethod
-    def to_jax(self) -> FloatArray1D:
+    def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
 
     @abstractmethod
@@ -128,7 +128,7 @@ class LinspaceGrid(ContinuousGrid):
 
     """
 
-    def to_jax(self) -> FloatArray1D:
+    def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
         return grid_helpers.linspace(self.start, self.stop, self.n_points)
 
@@ -153,7 +153,7 @@ class LogspaceGrid(ContinuousGrid):
 
     """
 
-    def to_jax(self) -> FloatArray1D:
+    def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
         return grid_helpers.logspace(self.start, self.stop, self.n_points)
 

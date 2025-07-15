@@ -8,7 +8,6 @@ from dags import concatenate_functions
 from dags.signature import with_signature
 
 from lcm.random import random_choice
-from lcm.typing import ContinuousState, DiscreteState, StochasticNextFunction, Target
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -16,6 +15,7 @@ if TYPE_CHECKING:
     from jax import Array
 
     from lcm.interfaces import InternalModel
+    from lcm.typing import ContinuousState, DiscreteState, StochasticNextFunction, Target, FloatND
 
 
 def get_next_state_function(
@@ -140,10 +140,10 @@ def _create_stochastic_next_func(name: str, labels: Array) -> StochasticNextFunc
     """
 
     @with_signature(
-        args={f"weight_{name}": "DerivedFloat", "keys": "dict[str, Array]"},
+        args={f"weight_{name}": "FloatND", "keys": "dict[str, Array]"},
         return_annotation="DiscreteState",
     )
-    def next_stochastic_state(keys: dict[str, Array], **kwargs: Array) -> Array:
+    def next_stochastic_state(keys: dict[str, Array], **kwargs: FloatND) -> Array:
         return random_choice(
             labels=labels,
             probs=kwargs[f"weight_{name}"],

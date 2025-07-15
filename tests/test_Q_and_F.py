@@ -15,7 +15,7 @@ from lcm.Q_and_F import (
 )
 from lcm.state_action_space import create_state_space_info
 from lcm.typing import (
-    DerivedBool,
+    BoolND,
     DiscreteAction,
     DiscreteState,
     ParamsDict,
@@ -83,7 +83,7 @@ def internal_model_illustrative():
         retirement: DiscreteAction,
         age: int,
         params: ParamsDict,  # noqa: ARG001
-    ) -> DerivedBool:
+    ) -> BoolND:
         # Individuals must be retired from age 65 onwards
         return jnp.logical_or(retirement == 1, age < 65)
 
@@ -91,7 +91,7 @@ def internal_model_illustrative():
         lagged_retirement: DiscreteState,
         age: int,
         params: ParamsDict,  # noqa: ARG001
-    ) -> DerivedBool:
+    ) -> BoolND:
         # Individuals must have been retired last year from age 66 onwards
         return jnp.logical_or(lagged_retirement == 1, age < 66)
 
@@ -99,7 +99,7 @@ def internal_model_illustrative():
         retirement: DiscreteAction,
         lagged_retirement: DiscreteState,
         params: ParamsDict,  # noqa: ARG001
-    ) -> DerivedBool:
+    ) -> BoolND:
         # If an individual was retired last year, it must be retired this year
         return jnp.logical_or(retirement == 1, lagged_retirement == 0)
 

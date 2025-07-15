@@ -17,8 +17,8 @@ if TYPE_CHECKING:
         ContinuousState,
         DiscreteAction,
         DiscreteState,
-        FloatArray1D,
-        IntArray1D,
+        Float1D,
+        Int1D,
         InternalUserFunction,
         ParamsDict,
         ShockType,
@@ -143,7 +143,7 @@ class InternalModel:
 
     """
 
-    grids: dict[str, FloatArray1D | IntArray1D]
+    grids: dict[str, Float1D | Int1D]
     gridspecs: dict[str, Grid]
     variable_info: pd.DataFrame
     functions: dict[str, InternalUserFunction]
