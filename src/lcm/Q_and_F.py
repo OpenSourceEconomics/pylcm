@@ -1,24 +1,39 @@
-from collections.abc import Callable
-from typing import Any
+from __future__ import annotations
+
+import warnings
+from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 from dags import concatenate_functions
+from dags.dag import DagsWarning
 from dags.signature import with_signature
-from jax import Array
 
 from lcm.dispatchers import productmap
 from lcm.function_representation import get_value_function_representation
 from lcm.functools import get_union_of_arguments
-from lcm.interfaces import InternalModel, StateSpaceInfo
+from lcm.interfaces import Target
 from lcm.next_state import get_next_state_function, get_next_stochastic_weights_function
-from lcm.typing import InternalUserFunction, ParamsDict, Scalar, Target
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from jax import Array
+
+    from lcm.interfaces import InternalModel, StateSpaceInfo
+    from lcm.typing import (
+        BoolND,
+        Float1D,
+        FloatND,
+        InternalUserFunction,
+        ParamsDict,
+    )
 
 
 def get_Q_and_F(
     model: InternalModel,
     next_state_space_info: StateSpaceInfo,
     period: int,
-) -> Callable[..., tuple[Array, Array]]:
+) -> Callable[..., tuple[FloatND, BoolND]]:
     """Get the state-action (Q) and feasibility (F) function for a given period.
 
     Args:
@@ -47,7 +62,7 @@ def get_Q_and_F_non_terminal(
     model: InternalModel,
     next_state_space_info: StateSpaceInfo,
     period: int,
-) -> Callable[..., tuple[Array, Array]]:
+) -> Callable[..., tuple[FloatND, BoolND]]:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
     Args:
@@ -88,10 +103,12 @@ def get_Q_and_F_non_terminal(
         exclude={"_period"},
     )
 
-    @with_signature(args=arg_names_of_Q_and_F)
+    @with_signature(
+        args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
+    )
     def Q_and_F(
-        params: ParamsDict, next_V_arr: Array, **states_and_actions: Scalar
-    ) -> tuple[Scalar, Scalar]:
+        params: ParamsDict, next_V_arr: FloatND, **states_and_actions: Array
+    ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action value and feasibility for a non-terminal period.
 
         Args:
@@ -147,13 +164,13 @@ def get_Q_and_F_non_terminal(
 
         return Q_arr, F_arr
 
-    return Q_and_F  # type: ignore[return-value]
+    return Q_and_F
 
 
 def get_Q_and_F_terminal(
     model: InternalModel,
     period: int,
-) -> Callable[..., tuple[Array, Array]]:
+) -> Callable[..., tuple[FloatND, BoolND]]:
     """Get the state-action (Q) and feasibility (F) function for the terminal period.
 
     Args:
@@ -176,12 +193,18 @@ def get_Q_and_F_terminal(
         exclude={"_period"},
     )
 
-    @with_signature(args=arg_names_of_Q_and_F)
+    args = dict.fromkeys(arg_names_of_Q_and_F, "Array")
+    args["params"] = "ParamsDict"
+    args["next_V_arr"] = "FloatND"
+
+    @with_signature(
+        args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
+    )
     def Q_and_F(
         params: ParamsDict,
-        next_V_arr: Array,  # noqa: ARG001
-        **states_and_actions: Scalar,
-    ) -> tuple[Scalar, Scalar]:
+        next_V_arr: FloatND,  # noqa: ARG001
+        **states_and_actions: Array,
+    ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action values and feasibilities for the terminal period.
 
         Args:
@@ -199,7 +222,7 @@ def get_Q_and_F_terminal(
             params=params,
         )
 
-    return Q_and_F  # type: ignore[return-value]
+    return Q_and_F
 
 
 # ======================================================================================
@@ -230,7 +253,7 @@ def _get_arg_names_of_Q_and_F(
 
 def _get_joint_weights_function(
     stochastic_variables: list[str],
-) -> Callable[..., Array]:
+) -> Callable[..., FloatND]:
     """Get function that calculates the joint weights.
 
     This function takes the weights of the individual stochastic variables and
@@ -248,14 +271,14 @@ def _get_joint_weights_function(
     arg_names = [f"weight_next_{var}" for var in stochastic_variables]
 
     @with_signature(args=arg_names)
-    def _outer(**kwargs: Array) -> Array:
+    def _outer(**kwargs: Float1D) -> FloatND:
         weights = jnp.array(list(kwargs.values()))
         return jnp.prod(weights)
 
     return productmap(_outer, variables=tuple(arg_names))
 
 
-def _get_U_and_F(model: InternalModel) -> Callable[..., tuple[Scalar, Scalar]]:
+def _get_U_and_F(model: InternalModel) -> Callable[..., tuple[FloatND, BoolND]]:
     """Get the instantaneous utility and feasibility function.
 
     Note:
@@ -275,6 +298,7 @@ def _get_U_and_F(model: InternalModel) -> Callable[..., tuple[Scalar, Scalar]]:
         functions=functions,
         targets=["utility", "feasibility"],
         enforce_signature=False,
+        set_annotations=True,
     )
 
 
@@ -291,14 +315,21 @@ def _get_feasibility(model: InternalModel) -> InternalUserFunction:
     constraints = model.function_info.query("is_constraint").index.tolist()
 
     if constraints:
-        combined_constraint = concatenate_functions(
-            functions=model.functions,
-            targets=constraints,
-            aggregator=jnp.logical_and,
-        )
+        with warnings.catch_warnings():
+            # set annotations does not set the return type when concatenate_functions is
+            # called with an aggregator and raises a warning.
+            warnings.simplefilter("ignore", category=DagsWarning)
+            combined_constraint = concatenate_functions(
+                functions=model.functions,
+                targets=constraints,
+                aggregator=jnp.logical_and,
+                set_annotations=True,
+            )
+        combined_constraint.__annotations__["return"] = "Feasibility"
+
     else:
 
-        def combined_constraint(**kwargs: Scalar) -> bool:  # noqa: ARG001
+        def combined_constraint(**kwargs: Any) -> bool:  # noqa: ARG001, ANN401
             """Dummy feasibility function that always returns True."""
             return True
 

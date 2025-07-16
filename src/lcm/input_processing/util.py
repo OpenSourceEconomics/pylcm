@@ -1,10 +1,17 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import pandas as pd
 from dags import get_ancestors
-from jax import Array
 
 from lcm.grids import ContinuousGrid, Grid
-from lcm.typing import UserFunction
-from lcm.user_model import Model
+
+if TYPE_CHECKING:
+    from jax import Array
+
+    from lcm.typing import UserFunction
+    from lcm.user_model import Model
 
 
 def get_function_info(model: Model) -> pd.DataFrame:

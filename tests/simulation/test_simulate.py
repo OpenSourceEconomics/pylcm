@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
@@ -6,6 +8,7 @@ from numpy.testing import assert_array_almost_equal, assert_array_equal
 
 from lcm.entry_point import get_lcm_function
 from lcm.input_processing import process_model
+from lcm.interfaces import Target
 from lcm.logging import get_logger
 from lcm.max_Q_over_c import (
     get_argmax_and_max_Q_over_c,
@@ -18,7 +21,6 @@ from lcm.simulation.simulate import (
     simulate,
 )
 from lcm.state_action_space import create_state_space_info
-from lcm.typing import Target
 from tests.test_models import (
     get_model_config,
     get_params,
@@ -131,7 +133,7 @@ def test_simulate_using_get_lcm_function(
         initial_states={
             "wealth": jnp.array([20.0, 150, 250, 320]),
         },
-        additional_targets=["utility", "consumption_constraint"],
+        additional_targets=["utility", "borrowing_constraint"],
     )
 
     assert {
@@ -141,7 +143,7 @@ def test_simulate_using_get_lcm_function(
         "consumption",
         "wealth",
         "utility",
-        "consumption_constraint",
+        "borrowing_constraint",
     } == set(res.columns)
 
     # assert that everyone retires in the last period

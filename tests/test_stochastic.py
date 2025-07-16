@@ -1,13 +1,19 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import jax.numpy as jnp
 import pandas as pd
 import pytest
-from jax import Array
 
 import lcm
 from lcm.entry_point import (
     get_lcm_function,
 )
 from tests.test_models import get_model_config, get_params
+
+if TYPE_CHECKING:
+    from lcm.typing import FloatND
 
 # ======================================================================================
 # Simulate
@@ -111,8 +117,8 @@ def test_compare_deterministic_and_stochastic_results_value_function(model_and_p
         targets="solve",
     )
 
-    solution_deterministic: dict[int, Array] = solve_model_deterministic(params)  # type: ignore[assignment]
-    solution_stochastic: dict[int, Array] = solve_model_stochastic(params)  # type: ignore[assignment]
+    solution_deterministic: dict[int, FloatND] = solve_model_deterministic(params)  # type: ignore[assignment]
+    solution_stochastic: dict[int, FloatND] = solve_model_stochastic(params)  # type: ignore[assignment]
 
     assert jnp.array_equal(
         jnp.array(list(solution_deterministic.values())),

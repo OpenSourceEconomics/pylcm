@@ -7,6 +7,8 @@ https://doi.org/10.3982/QE643).
 
 """
 
+from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -18,7 +20,7 @@ from lcm.entry_point import get_lcm_function
 from tests.test_models import get_model_config, get_params
 
 if TYPE_CHECKING:
-    from jax import Array
+    from lcm.typing import FloatND
 
 # ======================================================================================
 # Model specifications
@@ -68,7 +70,7 @@ def test_analytical_solution(model_name, model_and_params):
     # ==================================================================================
     solve_model, _ = get_lcm_function(model=model_and_params["model"], targets="solve")
 
-    V_arr_dict: dict[int, Array] = solve_model(params=model_and_params["params"])  # type: ignore[assignment]
+    V_arr_dict: dict[int, FloatND] = solve_model(params=model_and_params["params"])  # type: ignore[assignment]
     V_arr_list = list(dict(sorted(V_arr_dict.items(), key=lambda x: x[0])).values())
 
     _numerical = np.stack(V_arr_list)

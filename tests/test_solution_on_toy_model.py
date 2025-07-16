@@ -1,7 +1,10 @@
 """Test analytical solution and simulation with only discrete actions."""
 
+from __future__ import annotations
+
 from copy import deepcopy
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
@@ -13,6 +16,15 @@ from pandas.testing import assert_frame_equal
 import lcm
 from lcm import DiscreteGrid, LinspaceGrid, Model
 from lcm.entry_point import get_lcm_function
+
+if TYPE_CHECKING:
+    from lcm.typing import (
+        BoolND,
+        ContinuousState,
+        DiscreteAction,
+        DiscreteState,
+        FloatND,
+    )
 
 
 # ======================================================================================
@@ -36,15 +48,24 @@ class HealthStatus:
     good: int = 1
 
 
-def utility(consumption, working, wealth, health):  # noqa: ARG001
+def utility(
+    consumption: DiscreteAction,
+    working: DiscreteAction,
+    wealth: ContinuousState,  # noqa: ARG001
+    health: DiscreteState,
+) -> FloatND:
     return jnp.log(1 + health * consumption) - 0.5 * working
 
 
-def next_wealth(wealth, consumption, working):
+def next_wealth(
+    wealth: ContinuousState, consumption: DiscreteAction, working: DiscreteAction
+) -> ContinuousState:
     return wealth - consumption + working
 
 
-def consumption_constraint(consumption, wealth):
+def borrowing_constraint(
+    consumption: DiscreteAction, wealth: ContinuousState
+) -> BoolND:
     return consumption <= wealth
 
 
@@ -52,7 +73,7 @@ DETERMINISTIC_MODEL = Model(
     functions={
         "utility": utility,
         "next_wealth": next_wealth,
-        "consumption_constraint": consumption_constraint,
+        "borrowing_constraint": borrowing_constraint,
     },
     n_periods=2,
     actions={
@@ -70,7 +91,7 @@ DETERMINISTIC_MODEL = Model(
 
 
 @lcm.mark.stochastic
-def next_health(health):
+def next_health(health: DiscreteState) -> DiscreteState:  # type: ignore[empty-body]
     pass
 
 

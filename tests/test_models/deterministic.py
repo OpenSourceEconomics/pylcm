@@ -7,11 +7,26 @@ https://doi.org/10.3982/QE643).
 
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
 from lcm import DiscreteGrid, LinspaceGrid, Model
+
+if TYPE_CHECKING:
+    from lcm.typing import (
+        BoolND,
+        ContinuousAction,
+        ContinuousState,
+        DiscreteAction,
+        DiscreteState,
+        FloatND,
+        Int1D,
+        IntND,
+    )
 
 # ======================================================================================
 # Model functions
@@ -30,57 +45,72 @@ class RetirementStatus:
 # --------------------------------------------------------------------------------------
 # Utility functions
 # --------------------------------------------------------------------------------------
-def utility(consumption, working, disutility_of_work):
+def utility(
+    consumption: ContinuousAction, working: IntND, disutility_of_work: float
+) -> FloatND:
     return jnp.log(consumption) - disutility_of_work * working
 
 
 def utility_with_constraint(
-    consumption,
-    working,
-    disutility_of_work,
+    consumption: ContinuousAction,
+    working: IntND,
+    disutility_of_work: float,
     # Temporary workaround for bug described in issue #30, which requires us to pass
     # all state variables to the utility function.
     # TODO(@timmens): Remove function once #30 is fixed (re-use "utility").
     # https://github.com/opensourceeconomics/pylcm/issues/30
-    lagged_retirement,  # noqa: ARG001
-):
+    lagged_retirement: DiscreteState,  # noqa: ARG001
+) -> FloatND:
     return utility(consumption, working, disutility_of_work)
 
 
 # --------------------------------------------------------------------------------------
 # Auxiliary variables
 # --------------------------------------------------------------------------------------
-def labor_income(working, wage):
+def labor_income(working: IntND, wage: float | FloatND) -> FloatND:
     return working * wage
 
 
-def working(retirement):
+def working(retirement: DiscreteAction) -> IntND:
     return 1 - retirement
 
 
-def wage(age):
+def wage(age: int | IntND) -> float | FloatND:
     return 1 + 0.1 * age
 
 
-def age(_period):
+def age(_period: int | Int1D) -> int | IntND:
     return _period + 18
 
 
 # --------------------------------------------------------------------------------------
 # State transitions
 # --------------------------------------------------------------------------------------
-def next_wealth(wealth, consumption, labor_income, interest_rate):
+def next_wealth(
+    wealth: ContinuousState,
+    consumption: ContinuousAction,
+    labor_income: FloatND,
+    interest_rate: float,
+) -> ContinuousState:
     return (1 + interest_rate) * (wealth - consumption) + labor_income
+
+
+def next_lagged_retirement(retirement: DiscreteAction) -> DiscreteState:
+    return retirement
 
 
 # --------------------------------------------------------------------------------------
 # Constraints
 # --------------------------------------------------------------------------------------
-def consumption_constraint(consumption, wealth):
+def borrowing_constraint(
+    consumption: ContinuousAction | DiscreteAction, wealth: ContinuousState
+) -> BoolND:
     return consumption <= wealth
 
 
-def absorbing_retirement_constraint(retirement, lagged_retirement):
+def absorbing_retirement_constraint(
+    retirement: DiscreteAction, lagged_retirement: DiscreteState
+) -> BoolND:
     return jnp.logical_or(
         retirement == RetirementStatus.retired,
         lagged_retirement == RetirementStatus.working,
@@ -101,8 +131,8 @@ ISKHAKOV_ET_AL_2017 = Model(
     functions={
         "utility": utility_with_constraint,
         "next_wealth": next_wealth,
-        "next_lagged_retirement": lambda retirement: retirement,
-        "consumption_constraint": consumption_constraint,
+        "next_lagged_retirement": next_lagged_retirement,
+        "borrowing_constraint": borrowing_constraint,
         "absorbing_retirement_constraint": absorbing_retirement_constraint,
         "labor_income": labor_income,
         "working": working,
@@ -135,7 +165,7 @@ ISKHAKOV_ET_AL_2017_STRIPPED_DOWN = Model(
     functions={
         "utility": utility,
         "next_wealth": next_wealth,
-        "consumption_constraint": consumption_constraint,
+        "borrowing_constraint": borrowing_constraint,
         "labor_income": labor_income,
         "working": working,
         "wage": wage,

@@ -1,10 +1,14 @@
-import logging
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
-from jax import Array
 
-from lcm.interfaces import StateActionSpace
-from lcm.typing import MaxQcOverDFunction, MaxQOverCFunction, ParamsDict
+if TYPE_CHECKING:
+    import logging
+
+    from lcm.interfaces import StateActionSpace
+    from lcm.typing import FloatND, MaxQcOverDFunction, MaxQOverCFunction, ParamsDict
 
 
 def solve(
@@ -13,7 +17,7 @@ def solve(
     max_Q_over_c_functions: dict[int, MaxQOverCFunction],
     max_Qc_over_d_functions: dict[int, MaxQcOverDFunction],
     logger: logging.Logger,
-) -> dict[int, Array]:
+) -> dict[int, FloatND]:
     """Solve a model using grid search.
 
     Args:

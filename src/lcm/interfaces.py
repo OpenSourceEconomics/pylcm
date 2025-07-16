@@ -1,12 +1,28 @@
+from __future__ import annotations
+
 import dataclasses
-from collections.abc import Mapping
+from enum import Enum
+from typing import TYPE_CHECKING
 
-import pandas as pd
-from jax import Array
-
-from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
-from lcm.typing import InternalUserFunction, ParamsDict, ShockType
 from lcm.utils import first_non_none
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    import pandas as pd
+    from jax import Array
+
+    from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
+    from lcm.typing import (
+        ContinuousAction,
+        ContinuousState,
+        DiscreteAction,
+        DiscreteState,
+        Float1D,
+        Int1D,
+        InternalUserFunction,
+        ParamsDict,
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -43,17 +59,17 @@ class StateActionSpace:
 
     """
 
-    states: dict[str, Array]
-    discrete_actions: dict[str, Array]
-    continuous_actions: dict[str, Array]
+    states: dict[str, ContinuousState | DiscreteState]
+    discrete_actions: dict[str, DiscreteAction]
+    continuous_actions: dict[str, ContinuousAction]
     states_and_discrete_actions_names: tuple[str, ...]
 
     def replace(
         self,
-        states: dict[str, Array] | None = None,
-        discrete_actions: dict[str, Array] | None = None,
-        continuous_actions: dict[str, Array] | None = None,
-    ) -> "StateActionSpace":
+        states: dict[str, ContinuousState | DiscreteState] | None = None,
+        discrete_actions: dict[str, DiscreteAction] | None = None,
+        continuous_actions: dict[str, ContinuousAction] | None = None,
+    ) -> StateActionSpace:
         """Replace the states or actions in the state-action space.
 
         Args:
@@ -97,6 +113,13 @@ class StateSpaceInfo:
     continuous_states: Mapping[str, ContinuousGrid]
 
 
+class ShockType(Enum):
+    """Type of shocks."""
+
+    EXTREME_VALUE = "extreme_value"
+    NONE = None
+
+
 @dataclasses.dataclass(frozen=True)
 class InternalModel:
     """Internal representation of a user model.
@@ -127,7 +150,7 @@ class InternalModel:
 
     """
 
-    grids: dict[str, Array]
+    grids: dict[str, Float1D | Int1D]
     gridspecs: dict[str, Grid]
     variable_info: pd.DataFrame
     functions: dict[str, InternalUserFunction]
@@ -145,3 +168,10 @@ class InternalSimulationPeriodResults:
     value: Array
     actions: dict[str, Array]
     states: dict[str, Array]
+
+
+class Target(Enum):
+    """Target of the function."""
+
+    SOLVE = "solve"
+    SIMULATE = "simulate"

@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 import functools
 import inspect
-from collections.abc import Callable
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
-from lcm.typing import Scalar
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 
 ReturnType = TypeVar("ReturnType")
 
@@ -34,7 +37,7 @@ def allow_only_kwargs(func: Callable[..., ReturnType]) -> Callable[..., ReturnTy
     new_signature = signature.replace(parameters=new_parameters)
 
     @functools.wraps(func)
-    def func_with_only_kwargs(*args: Scalar, **kwargs: Scalar) -> ReturnType:
+    def func_with_only_kwargs(*args: Any, **kwargs: Any) -> ReturnType:
         if args:
             raise ValueError(
                 (
@@ -113,7 +116,7 @@ def allow_args(func: Callable[..., ReturnType]) -> Callable[..., ReturnType]:
     new_signature = signature.replace(parameters=new_parameters)
 
     @functools.wraps(func)
-    def allow_args_wrapper(*args: Scalar, **kwargs: Scalar) -> ReturnType:
+    def allow_args_wrapper(*args: Any, **kwargs: Any) -> ReturnType:
         # Check if the total number of arguments matches the function signature
         if len(args) + len(kwargs) != len(parameters):
             too_many = len(args) + len(kwargs) > len(parameters)

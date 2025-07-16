@@ -1,13 +1,18 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import jax.numpy as jnp
 import pandas as pd
-from jax import Array
 from pybaum import tree_equal
 
 from lcm.input_processing import process_model
-from lcm.interfaces import InternalModel
+from lcm.interfaces import InternalModel, ShockType, Target
 from lcm.next_state import _create_stochastic_next_func, get_next_state_function
-from lcm.typing import ParamsDict, Scalar, ShockType, Target
 from tests.test_models import get_model_config
+
+if TYPE_CHECKING:
+    from lcm.typing import ContinuousState, FloatND, ParamsDict
 
 
 def test_get_next_state_function_with_solve_target():
@@ -32,13 +37,13 @@ def test_get_next_state_function_with_solve_target():
 
 
 def test_get_next_state_function_with_simulate_target():
-    def f_a(state: Array, params: ParamsDict) -> Scalar:  # noqa: ARG001
+    def f_a(state: ContinuousState, params: ParamsDict) -> ContinuousState:  # noqa: ARG001
         return state[0]
 
-    def f_b(state: Scalar, params: ParamsDict) -> Scalar:  # noqa: ARG001
+    def f_b(state: ContinuousState, params: ParamsDict) -> ContinuousState:  # noqa: ARG001
         return None  # type: ignore[return-value]
 
-    def f_weight_b(state: Scalar, params: ParamsDict) -> Array:  # noqa: ARG001
+    def f_weight_b(state: ContinuousState, params: ParamsDict) -> FloatND:  # noqa: ARG001
         return jnp.array([[0.0, 1.0]])
 
     functions = {

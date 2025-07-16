@@ -13,14 +13,18 @@
 # limitations under the License.
 #
 # Modifications made by Tim Mensinger, 2024
+from __future__ import annotations
 
 import functools
 import itertools
 import operator
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 from jax import Array, jit, lax, util
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 @jit

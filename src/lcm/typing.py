@@ -1,11 +1,25 @@
-from enum import Enum
 from typing import Any, Protocol
 
 from jax import Array
+from jaxtyping import Bool, Float, Int, Scalar
+
+type ContinuousState = Float[Array, "..."]
+type ContinuousAction = Float[Array, "..."]
+type DiscreteState = Int[Array, "..."]
+type DiscreteAction = Int[Array, "..."]
+
+type FloatND = Float[Array, "..."]
+type IntND = Int[Array, "..."]
+type BoolND = Bool[Array, "..."]
+
+type Float1D = Float[Array, "_"]  # noqa: F821
+type Int1D = Int[Array, "_"]  # noqa: F821
+type Bool1D = Bool[Array, "_"]  # noqa: F821
 
 # Many JAX functions are designed to work with scalar numerical values. This also
 # includes zero dimensional jax arrays.
-Scalar = int | float | Array
+type ScalarInt = int | Int[Scalar, ""]  # noqa: F722
+type ScalarFloat = float | Float[Scalar, ""]  # noqa: F722
 
 
 ParamsDict = dict[str, Any]
@@ -29,8 +43,8 @@ class InternalUserFunction(Protocol):
     """
 
     def __call__(  # noqa: D102
-        self, *args: Scalar, params: ParamsDict, **kwargs: Scalar
-    ) -> Scalar: ...
+        self, *args: Array | int, params: ParamsDict, **kwargs: Array | int
+    ) -> Array: ...
 
 
 class MaxQOverCFunction(Protocol):
@@ -44,7 +58,7 @@ class MaxQOverCFunction(Protocol):
     """
 
     def __call__(  # noqa: D102
-        self, next_V_arr: Array, params: ParamsDict, **kwargs: Scalar
+        self, next_V_arr: Array, params: ParamsDict, **kwargs: Array
     ) -> Array: ...
 
 
@@ -59,7 +73,7 @@ class ArgmaxQOverCFunction(Protocol):
     """
 
     def __call__(  # noqa: D102
-        self, next_V_arr: Array, params: ParamsDict, **kwargs: Scalar
+        self, next_V_arr: Array, params: ParamsDict, **kwargs: Array
     ) -> tuple[Array, Array]: ...
 
 
@@ -99,17 +113,3 @@ class StochasticNextFunction(Protocol):
     """
 
     def __call__(self, keys: dict[str, Array], **kwargs: Array) -> Array: ...  # noqa: D102
-
-
-class ShockType(Enum):
-    """Type of shocks."""
-
-    EXTREME_VALUE = "extreme_value"
-    NONE = None
-
-
-class Target(Enum):
-    """Target of the function."""
-
-    SOLVE = "solve"
-    SIMULATE = "simulate"

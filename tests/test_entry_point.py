@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import jax.numpy as jnp
 import pytest
 from pybaum import tree_equal, tree_map
@@ -14,6 +18,9 @@ from tests.test_models import get_model_config
 from tests.test_models.deterministic import RetirementStatus
 from tests.test_models.deterministic import utility as iskhakov_et_al_2017_utility
 from tests.test_models.discrete_deterministic import ConsumptionChoice
+
+if TYPE_CHECKING:
+    from lcm.typing import BoolND, DiscreteAction, DiscreteState
 
 # ======================================================================================
 # Test cases
@@ -361,7 +368,11 @@ def test_argmax_and_max_Q_over_c_with_discrete_model():
 def test_get_lcm_function_with_period_argument_in_constraint():
     model = get_model_config("iskhakov_et_al_2017", n_periods=3)
 
-    def absorbing_retirement_constraint(retirement, lagged_retirement, _period):
+    def absorbing_retirement_constraint(
+        retirement: DiscreteAction,
+        lagged_retirement: DiscreteState,
+        _period: int,
+    ) -> BoolND:
         return jnp.logical_or(
             retirement == RetirementStatus.retired,
             lagged_retirement == RetirementStatus.working,

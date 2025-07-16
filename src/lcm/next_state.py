@@ -1,20 +1,33 @@
 """Generate function that compute the next states for solution and simulation."""
 
-from collections.abc import Callable
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from dags import concatenate_functions
 from dags.signature import with_signature
-from jax import Array
 
-from lcm.interfaces import InternalModel
+from lcm.interfaces import Target
 from lcm.random import random_choice
-from lcm.typing import Scalar, StochasticNextFunction, Target
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from jax import Array
+
+    from lcm.interfaces import InternalModel
+    from lcm.typing import (
+        ContinuousState,
+        DiscreteState,
+        FloatND,
+        StochasticNextFunction,
+    )
 
 
 def get_next_state_function(
     model: InternalModel,
     target: Target,
-) -> Callable[..., dict[str, Scalar]]:
+) -> Callable[..., dict[str, DiscreteState | ContinuousState]]:
     """Get function that computes the next states during the solution.
 
     Args:
@@ -44,6 +57,7 @@ def get_next_state_function(
         targets=targets,
         return_type="dict",
         enforce_signature=False,
+        set_annotations=True,
     )
 
 
@@ -69,12 +83,13 @@ def get_next_stochastic_weights_function(
         targets=targets,
         return_type="dict",
         enforce_signature=False,
+        set_annotations=True,
     )
 
 
 def _extend_functions_dict_for_simulation(
     model: InternalModel,
-) -> dict[str, Callable[..., Scalar]]:
+) -> dict[str, Callable[..., Array]]:
     """Extend the functions dictionary for the simulation target.
 
     Args:
@@ -112,7 +127,9 @@ def _extend_functions_dict_for_simulation(
     return model.functions | stochastic_next | stochastic_weights
 
 
-def _create_stochastic_next_func(name: str, labels: Array) -> StochasticNextFunction:
+def _create_stochastic_next_func(
+    name: str, labels: DiscreteState
+) -> StochasticNextFunction:
     """Get function that simulates the next state of a stochastic variable.
 
     Args:
@@ -130,8 +147,13 @@ def _create_stochastic_next_func(name: str, labels: Array) -> StochasticNextFunc
 
     """
 
-    @with_signature(args=[f"weight_{name}", "keys"])
-    def next_stochastic_state(keys: dict[str, Array], **kwargs: Array) -> Array:
+    @with_signature(
+        args={f"weight_{name}": "FloatND", "keys": "dict[str, Array]"},
+        return_annotation="DiscreteState",
+    )
+    def next_stochastic_state(
+        keys: dict[str, Array], **kwargs: FloatND
+    ) -> DiscreteState:
         return random_choice(
             labels=labels,
             probs=kwargs[f"weight_{name}"],

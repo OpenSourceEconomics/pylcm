@@ -1,10 +1,10 @@
-import logging
-from collections.abc import Callable
+from __future__ import annotations
+
 from functools import partial
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
-import pandas as pd
 from jax import Array, vmap
 
 from lcm.dispatchers import simulation_spacemap, vmap_1d
@@ -17,7 +17,14 @@ from lcm.max_Qc_over_d import get_argmax_and_max_Qc_over_d
 from lcm.random import draw_random_seed, generate_simulation_keys
 from lcm.simulation.processing import as_panel, process_simulated_data
 from lcm.state_action_space import create_state_action_space
-from lcm.typing import ArgmaxQOverCFunction, ParamsDict
+
+if TYPE_CHECKING:
+    import logging
+    from collections.abc import Callable
+
+    import pandas as pd
+
+    from lcm.typing import ArgmaxQOverCFunction, FloatND, IntND, ParamsDict
 
 
 def solve_and_simulate(
@@ -27,7 +34,7 @@ def solve_and_simulate(
     model: InternalModel,
     next_state: Callable[..., dict[str, Array]],
     logger: logging.Logger,
-    solve_model: Callable[..., dict[int, Array]],
+    solve_model: Callable[..., dict[int, FloatND]],
     *,
     additional_targets: list[str] | None = None,
     seed: int | None = None,
@@ -58,7 +65,7 @@ def simulate(
     model: InternalModel,
     next_state: Callable[..., dict[str, Array]],
     logger: logging.Logger,
-    V_arr_dict: dict[int, Array],
+    V_arr_dict: dict[int, FloatND],
     *,
     additional_targets: list[str] | None = None,
     seed: int | None = None,
@@ -216,10 +223,10 @@ def simulate(
 
 @partial(vmap_1d, variables=("indices_argmax_Q_over_c", "discrete_argmax"))
 def _lookup_optimal_continuous_actions(
-    indices_argmax_Q_over_c: Array,
-    discrete_argmax: Array,
+    indices_argmax_Q_over_c: IntND,
+    discrete_argmax: IntND,
     discrete_actions_grid_shape: tuple[int, ...],
-) -> Array:
+) -> IntND:
     """Look up the optimal continuous action index given index of discrete action.
 
     Args:
@@ -237,8 +244,8 @@ def _lookup_optimal_continuous_actions(
 
 
 def _lookup_actions_from_indices(
-    indices_optimal_discrete_actions: Array,
-    indices_optimal_continuous_actions: Array,
+    indices_optimal_discrete_actions: IntND,
+    indices_optimal_continuous_actions: IntND,
     discrete_actions_grid_shape: tuple[int, ...],
     continuous_actions_grid_shape: tuple[int, ...],
     state_action_space: StateActionSpace,
@@ -272,7 +279,7 @@ def _lookup_actions_from_indices(
 
 
 def _lookup_values_from_indices(
-    flat_indices: Array,
+    flat_indices: IntND,
     grids: dict[str, Array],
     grids_shapes: tuple[int, ...],
 ) -> dict[str, Array]:
