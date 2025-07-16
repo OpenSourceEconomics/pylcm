@@ -7,7 +7,6 @@ import jax.numpy as jnp
 from dags import concatenate_functions
 from dags.dag import DagsWarning
 from dags.signature import with_signature
-from jax import Array
 
 from lcm.dispatchers import productmap
 from lcm.function_representation import get_value_function_representation
@@ -17,6 +16,8 @@ from lcm.typing import Target
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from jax import Array
 
     from lcm.interfaces import InternalModel, StateSpaceInfo
     from lcm.typing import (

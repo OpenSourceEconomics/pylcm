@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
     from lcm.grids import ContinuousGrid
     from lcm.interfaces import StateSpaceInfo
-    from lcm.typing import ScalarFloat, ScalarInt
+    from lcm.typing import FloatND, ScalarFloat, ScalarInt
 
 
 def get_value_function_representation(
@@ -23,7 +23,7 @@ def get_value_function_representation(
     *,
     input_prefix: str = "next_",
     name_of_values_on_grid: str = "next_V_arr",
-) -> Callable[..., Array]:
+) -> Callable[..., FloatND]:
     """Create a function representation of the next value function array.
 
     The returned function
@@ -86,7 +86,7 @@ def get_value_function_representation(
     # ==================================================================================
     funcs: dict[
         str,
-        Callable[..., ScalarInt] | Callable[..., ScalarFloat] | Callable[..., Array],
+        Callable[..., ScalarInt] | Callable[..., ScalarFloat] | Callable[..., FloatND],
     ] = {}
 
     for var in state_space_info.discrete_states:

@@ -127,7 +127,9 @@ def _extend_functions_dict_for_simulation(
     return model.functions | stochastic_next | stochastic_weights
 
 
-def _create_stochastic_next_func(name: str, labels: Array) -> StochasticNextFunction:
+def _create_stochastic_next_func(
+    name: str, labels: DiscreteState
+) -> StochasticNextFunction:
     """Get function that simulates the next state of a stochastic variable.
 
     Args:
@@ -149,7 +151,9 @@ def _create_stochastic_next_func(name: str, labels: Array) -> StochasticNextFunc
         args={f"weight_{name}": "FloatND", "keys": "dict[str, Array]"},
         return_annotation="DiscreteState",
     )
-    def next_stochastic_state(keys: dict[str, Array], **kwargs: FloatND) -> Array:
+    def next_stochastic_state(
+        keys: dict[str, Array], **kwargs: FloatND
+    ) -> DiscreteState:
         return random_choice(
             labels=labels,
             probs=kwargs[f"weight_{name}"],

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import dataclasses as dc
+import dataclasses
 from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -50,7 +50,7 @@ class Model:
 
         """
         try:
-            return dc.replace(self, **kwargs)
+            return dataclasses.replace(self, **kwargs)
         except TypeError as e:
             raise ModelInitilizationError(
                 f"Failed to replace attributes of the model. The error was: {e}"
