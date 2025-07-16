@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import jax.numpy as jnp
 import pandas as pd
 import pytest
-from jax import Array
 from numpy.testing import assert_array_equal
 
 from lcm.input_processing import process_model
@@ -14,15 +15,12 @@ from lcm.Q_and_F import (
     get_Q_and_F,
 )
 from lcm.state_action_space import create_state_space_info
-from lcm.typing import (
-    BoolND,
-    DiscreteAction,
-    DiscreteState,
-    ParamsDict,
-    ShockType,
-)
+from lcm.typing import ShockType
 from tests.test_models import get_model_config
 from tests.test_models.deterministic import utility
+
+if TYPE_CHECKING:
+    from lcm.typing import BoolND, DiscreteAction, DiscreteState, ParamsDict
 
 
 @pytest.mark.illustrative
@@ -204,5 +202,5 @@ def test_get_combined_constraint():
         n_periods=0,
     )
     combined_constraint = _get_feasibility(model)
-    feasibility: Array = combined_constraint(params={})
+    feasibility: BoolND = combined_constraint(params={})
     assert feasibility.item() is False

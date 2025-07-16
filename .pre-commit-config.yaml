@@ -56,6 +56,7 @@ repos:
           - jupyter
         args:
           - --fix
+          - --unsafe-fixes
       # Run the formatter.
       - id: ruff-format
         types_or:

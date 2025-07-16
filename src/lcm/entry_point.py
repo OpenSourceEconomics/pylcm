@@ -24,19 +24,19 @@ from lcm.state_action_space import (
     create_state_action_space,
     create_state_space_info,
 )
-from lcm.typing import (
-    ArgmaxQOverCFunction,
-    MaxQcOverDFunction,
-    MaxQOverCFunction,
-    ParamsDict,
-    Target,
-)
+from lcm.typing import Target
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     import pandas as pd
 
+    from lcm.typing import (
+        ArgmaxQOverCFunction,
+        MaxQcOverDFunction,
+        MaxQOverCFunction,
+        ParamsDict,
+    )
     from lcm.user_model import Model
 
 

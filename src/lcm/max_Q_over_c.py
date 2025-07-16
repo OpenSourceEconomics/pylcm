@@ -12,11 +12,18 @@ from lcm.dispatchers import productmap
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from lcm.typing import ArgmaxQOverCFunction, MaxQOverCFunction, ParamsDict
+    from lcm.typing import (
+        ArgmaxQOverCFunction,
+        BoolND,
+        FloatND,
+        IntND,
+        MaxQOverCFunction,
+        ParamsDict,
+    )
 
 
 def get_max_Q_over_c(
-    Q_and_F: Callable[..., tuple[Array, Array]],
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
     continuous_actions_names: tuple[str, ...],
     states_and_discrete_actions_names: tuple[str, ...],
 ) -> MaxQOverCFunction:
@@ -59,7 +66,9 @@ def get_max_Q_over_c(
         )
 
     @functools.wraps(Q_and_F)
-    def max_Q_over_c(next_V_arr: Array, params: ParamsDict, **kwargs: Array) -> Array:
+    def max_Q_over_c(
+        next_V_arr: FloatND, params: ParamsDict, **kwargs: Array
+    ) -> FloatND:
         Q_arr, F_arr = Q_and_F(params=params, next_V_arr=next_V_arr, **kwargs)
         return Q_arr.max(where=F_arr, initial=-jnp.inf)
 
@@ -67,7 +76,7 @@ def get_max_Q_over_c(
 
 
 def get_argmax_and_max_Q_over_c(
-    Q_and_F: Callable[..., tuple[Array, Array]],
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
     continuous_actions_names: tuple[str, ...],
 ) -> ArgmaxQOverCFunction:
     r"""Get the function returning the arguments maximizing Q over continuous actions.
@@ -110,8 +119,8 @@ def get_argmax_and_max_Q_over_c(
 
     @functools.wraps(Q_and_F)
     def argmax_and_max_Q_over_c(
-        next_V_arr: Array, params: ParamsDict, **kwargs: Array
-    ) -> tuple[Array, Array]:
+        next_V_arr: FloatND, params: ParamsDict, **kwargs: Array
+    ) -> tuple[IntND, FloatND]:
         Q_arr, F_arr = Q_and_F(params=params, next_V_arr=next_V_arr, **kwargs)
         return argmax_and_max(Q_arr, where=F_arr, initial=-jnp.inf)
 

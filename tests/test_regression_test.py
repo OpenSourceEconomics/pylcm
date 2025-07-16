@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import jax.numpy as jnp
 import pandas as pd
-from jax import Array
 from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
 from lcm._config import TEST_DATA
 from lcm.entry_point import get_lcm_function
 from tests.test_models import get_model_config, get_params
+
+if TYPE_CHECKING:
+    from lcm.typing import FloatND
 
 
 def test_regression_test():
@@ -34,7 +38,7 @@ def test_regression_test():
         disutility_of_work=1.0,
         interest_rate=0.05,
     )
-    got_solve: dict[int, Array] = solve(params)  # type: ignore[assignment]
+    got_solve: dict[int, FloatND] = solve(params)  # type: ignore[assignment]
 
     solve_and_simulate, _ = get_lcm_function(
         model=model_config,

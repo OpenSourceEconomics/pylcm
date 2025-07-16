@@ -13,14 +13,14 @@ type FloatND = Float[Array, "..."]
 type IntND = Int[Array, "..."]
 type BoolND = Bool[Array, "..."]
 
-type Float1D = Float[Array, "_"]
-type Int1D = Int[Array, "_"]
-type Bool1D = Bool[Array, "_"]
+type Float1D = Float[Array, "_"]  # noqa: F821
+type Int1D = Int[Array, "_"]  # noqa: F821
+type Bool1D = Bool[Array, "_"]  # noqa: F821
 
 # Many JAX functions are designed to work with scalar numerical values. This also
 # includes zero dimensional jax arrays.
-type ScalarInt = int | Int[Scalar, ""]
-type ScalarFloat = float | Float[Scalar, ""]
+type ScalarInt = int | Int[Scalar, ""]  # noqa: F722
+type ScalarFloat = float | Float[Scalar, ""]  # noqa: F722
 
 
 ParamsDict = dict[str, Any]

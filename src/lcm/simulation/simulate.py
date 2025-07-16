@@ -65,7 +65,7 @@ def simulate(
     model: InternalModel,
     next_state: Callable[..., dict[str, Array]],
     logger: logging.Logger,
-    V_arr_dict: dict[int, Array],
+    V_arr_dict: dict[int, FloatND],
     *,
     additional_targets: list[str] | None = None,
     seed: int | None = None,
@@ -226,7 +226,7 @@ def _lookup_optimal_continuous_actions(
     indices_argmax_Q_over_c: IntND,
     discrete_argmax: IntND,
     discrete_actions_grid_shape: tuple[int, ...],
-) -> Array:
+) -> IntND:
     """Look up the optimal continuous action index given index of discrete action.
 
     Args:

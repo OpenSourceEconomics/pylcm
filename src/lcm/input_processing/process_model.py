@@ -17,6 +17,7 @@ from lcm.input_processing.util import (
     get_variable_info,
 )
 from lcm.interfaces import InternalModel
+from lcm.typing import ShockType
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -25,11 +26,10 @@ if TYPE_CHECKING:
     from lcm.typing import (
         DiscreteAction,
         DiscreteState,
-        Float1D,
+        FloatND,
         Int1D,
         InternalUserFunction,
         ParamsDict,
-        ShockType,
         UserFunction,
     )
     from lcm.user_model import Model
@@ -227,10 +227,10 @@ def _get_stochastic_weight_function(
     annotations = get_annotations(raw_func) | {"params": "ParamsDict"}
     annotations.pop("return")
 
-    @with_signature(args=annotations, return_annotation="Float1D")
+    @with_signature(args=annotations, return_annotation="FloatND")
     def weight_func(
         params: ParamsDict, **kwargs: DiscreteState | DiscreteAction | int
-    ) -> Float1D:
+    ) -> FloatND:
         args = convert_kwargs_to_args(kwargs, parameters=function_parameters)
         return params["shocks"][name][*args]
 
