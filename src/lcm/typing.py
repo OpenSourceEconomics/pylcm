@@ -1,4 +1,3 @@
-from enum import Enum
 from typing import Any, Protocol
 
 from jax import Array
@@ -114,17 +113,3 @@ class StochasticNextFunction(Protocol):
     """
 
     def __call__(self, keys: dict[str, Array], **kwargs: Array) -> Array: ...  # noqa: D102
-
-
-class ShockType(Enum):
-    """Type of shocks."""
-
-    EXTREME_VALUE = "extreme_value"
-    NONE = None
-
-
-class Target(Enum):
-    """Target of the function."""
-
-    SOLVE = "solve"
-    SIMULATE = "simulate"

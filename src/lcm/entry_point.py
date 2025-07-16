@@ -7,7 +7,7 @@ import jax
 from jax import Array
 
 from lcm.input_processing import process_model
-from lcm.interfaces import StateActionSpace, StateSpaceInfo
+from lcm.interfaces import StateActionSpace, StateSpaceInfo, Target
 from lcm.logging import get_logger
 from lcm.max_Q_over_c import (
     get_argmax_and_max_Q_over_c,
@@ -24,7 +24,6 @@ from lcm.state_action_space import (
     create_state_action_space,
     create_state_space_info,
 )
-from lcm.typing import Target
 
 if TYPE_CHECKING:
     from collections.abc import Callable

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+from enum import Enum
 from typing import TYPE_CHECKING
 
 from lcm.utils import first_non_none
@@ -21,7 +22,6 @@ if TYPE_CHECKING:
         Int1D,
         InternalUserFunction,
         ParamsDict,
-        ShockType,
     )
 
 
@@ -113,6 +113,13 @@ class StateSpaceInfo:
     continuous_states: Mapping[str, ContinuousGrid]
 
 
+class ShockType(Enum):
+    """Type of shocks."""
+
+    EXTREME_VALUE = "extreme_value"
+    NONE = None
+
+
 @dataclasses.dataclass(frozen=True)
 class InternalModel:
     """Internal representation of a user model.
@@ -161,3 +168,10 @@ class InternalSimulationPeriodResults:
     value: Array
     actions: dict[str, Array]
     states: dict[str, Array]
+
+
+class Target(Enum):
+    """Target of the function."""
+
+    SOLVE = "solve"
+    SIMULATE = "simulate"

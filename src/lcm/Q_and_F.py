@@ -11,8 +11,8 @@ from dags.signature import with_signature
 from lcm.dispatchers import productmap
 from lcm.function_representation import get_value_function_representation
 from lcm.functools import get_union_of_arguments
+from lcm.interfaces import Target
 from lcm.next_state import get_next_state_function, get_next_stochastic_weights_function
-from lcm.typing import Target
 
 if TYPE_CHECKING:
     from collections.abc import Callable

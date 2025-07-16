@@ -9,6 +9,7 @@ requires-python = ">=3.12"
 dependencies = [
     # "dags>=0.3.0",
     "jax>=0.5.1",
+    "jaxtyping>=0.3.2",
     "pandas",
 ]
 dynamic = ["version"]
@@ -131,7 +132,6 @@ mypy = "==1.16.1"
 pandas-stubs = "*"
 matplotlib = "*"  # required because of pandas
 scipy-stubs = "*"
-jaxtyping = ">=0.3.2,<0.4"
 
 [tool.pixi.feature.testing.tasks]
 tests = "pytest tests"

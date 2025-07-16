@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
+from lcm.interfaces import ShockType
 from lcm.max_Qc_over_d import (
     _determine_discrete_action_axes_simulation,
     _determine_discrete_action_axes_solution,
@@ -12,7 +13,6 @@ from lcm.max_Qc_over_d import (
     _max_Qc_over_d_no_shocks,
     get_max_Qc_over_d,
 )
-from lcm.typing import ShockType
 
 # ======================================================================================
 # Illustrative

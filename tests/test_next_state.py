@@ -7,13 +7,12 @@ import pandas as pd
 from pybaum import tree_equal
 
 from lcm.input_processing import process_model
-from lcm.interfaces import InternalModel
+from lcm.interfaces import InternalModel, ShockType, Target
 from lcm.next_state import _create_stochastic_next_func, get_next_state_function
-from lcm.typing import ContinuousState, FloatND, ParamsDict, ShockType, Target
 from tests.test_models import get_model_config
 
 if TYPE_CHECKING:
-    from lcm.typing import FloatND
+    from lcm.typing import ContinuousState, FloatND, ParamsDict
 
 
 def test_get_next_state_function_with_solve_target():

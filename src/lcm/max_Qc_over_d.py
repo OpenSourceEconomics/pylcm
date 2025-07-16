@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import jax
 
 from lcm.argmax import argmax_and_max
-from lcm.typing import ShockType
+from lcm.interfaces import ShockType
 
 if TYPE_CHECKING:
     import pandas as pd

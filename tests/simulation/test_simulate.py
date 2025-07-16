@@ -8,6 +8,7 @@ from numpy.testing import assert_array_almost_equal, assert_array_equal
 
 from lcm.entry_point import get_lcm_function
 from lcm.input_processing import process_model
+from lcm.interfaces import Target
 from lcm.logging import get_logger
 from lcm.max_Q_over_c import (
     get_argmax_and_max_Q_over_c,
@@ -20,7 +21,6 @@ from lcm.simulation.simulate import (
     simulate,
 )
 from lcm.state_action_space import create_state_space_info
-from lcm.typing import Target
 from tests.test_models import (
     get_model_config,
     get_params,

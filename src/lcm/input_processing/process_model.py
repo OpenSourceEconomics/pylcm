@@ -16,8 +16,7 @@ from lcm.input_processing.util import (
     get_gridspecs,
     get_variable_info,
 )
-from lcm.interfaces import InternalModel
-from lcm.typing import ShockType
+from lcm.interfaces import InternalModel, ShockType
 
 if TYPE_CHECKING:
     import pandas as pd

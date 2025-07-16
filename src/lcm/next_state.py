@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING
 from dags import concatenate_functions
 from dags.signature import with_signature
 
+from lcm.interfaces import Target
 from lcm.random import random_choice
-from lcm.typing import Target
 
 if TYPE_CHECKING:
     from collections.abc import Callable

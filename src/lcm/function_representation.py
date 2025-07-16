@@ -185,8 +185,7 @@ def _get_lookup_function(
     def lookup_wrapper(*args: Array, **kwargs: Array) -> Array:
         kwargs = all_as_kwargs(args, kwargs, arg_names=arg_names)
         positions = tuple(kwargs[var] for var in axis_names)
-        arr = kwargs[array_name]
-        return arr[positions]
+        return kwargs[array_name][positions]
 
     return lookup_wrapper
 

@@ -1,10 +1,24 @@
 """Example specification for a consumption-savings model with health and exercise."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
 from lcm import DiscreteGrid, LinspaceGrid, Model
+
+if TYPE_CHECKING:
+    from lcm.typing import (
+        BoolND,
+        ContinuousAction,
+        ContinuousState,
+        DiscreteAction,
+        FloatND,
+        Int1D,
+        IntND,
+    )
 
 # ======================================================================================
 # Model functions
@@ -23,40 +37,59 @@ class WorkingStatus:
 # --------------------------------------------------------------------------------------
 # Utility function
 # --------------------------------------------------------------------------------------
-def utility(consumption, working, health, exercise, disutility_of_work):
+def utility(
+    consumption: ContinuousAction,
+    working: DiscreteAction,
+    health: ContinuousState,
+    exercise: ContinuousAction,
+    disutility_of_work: ContinuousAction,
+) -> FloatND:
     return jnp.log(consumption) - (disutility_of_work - health) * working - exercise
 
 
 # --------------------------------------------------------------------------------------
 # Auxiliary variables
 # --------------------------------------------------------------------------------------
-def labor_income(wage, working):
+def labor_income(wage: float | FloatND, working: DiscreteAction) -> FloatND:
     return wage * working
 
 
-def wage(age):
+def wage(age: int | IntND) -> float | FloatND:
     return 1 + 0.1 * age
 
 
-def age(_period):
+def age(_period: int | Int1D) -> int | IntND:
     return _period + 18
 
 
 # --------------------------------------------------------------------------------------
 # State transitions
 # --------------------------------------------------------------------------------------
-def next_wealth(wealth, consumption, labor_income, interest_rate):
+def next_wealth(
+    wealth: ContinuousState,
+    consumption: ContinuousAction,
+    labor_income: FloatND,
+    interest_rate: float,
+) -> ContinuousState:
     return (1 + interest_rate) * (wealth + labor_income - consumption)
 
 
-def next_health(health, exercise, working):
+def next_health(
+    health: ContinuousState,
+    exercise: ContinuousAction,
+    working: DiscreteAction,
+) -> ContinuousState:
     return health * (1 + exercise - working / 2)
 
 
 # --------------------------------------------------------------------------------------
 # Constraints
 # --------------------------------------------------------------------------------------
-def borrowing_constraint(consumption, wealth, labor_income):
+def borrowing_constraint(
+    consumption: ContinuousAction,
+    wealth: ContinuousState,
+    labor_income: FloatND,
+) -> BoolND:
     return consumption <= wealth + labor_income
 
 
