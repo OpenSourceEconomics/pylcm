@@ -21,7 +21,7 @@ import operator
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
-from jax import Array, jit, lax, util
+from jax import Array, jit, lax
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -57,12 +57,12 @@ def map_coordinates(
 
     interpolation_data = [
         _compute_indices_and_weights(coordinate, size)
-        for coordinate, size in util.safe_zip(coordinates, input.shape)
+        for coordinate, size in zip(coordinates, input.shape, strict=True)
     ]
 
     interpolation_values = []
     for indices_and_weights in itertools.product(*interpolation_data):
-        indices, weights = util.unzip2(indices_and_weights)
+        indices, weights = zip(*indices_and_weights, strict=True)
         contribution = input[indices]
         weighted_value = _multiply_all(weights) * contribution
         interpolation_values.append(weighted_value)
