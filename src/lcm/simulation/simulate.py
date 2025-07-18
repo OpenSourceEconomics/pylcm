@@ -13,7 +13,6 @@ from lcm.interfaces import (
     InternalSimulationPeriodResults,
     StateActionSpace,
 )
-from lcm.max_Qc_over_d import get_argmax_and_max_Qc_over_d
 from lcm.random import draw_random_seed, generate_simulation_keys
 from lcm.simulation.processing import as_panel, process_simulated_data
 from lcm.state_action_space import create_state_action_space
@@ -55,6 +54,7 @@ def simulate(
     params: ParamsDict,
     initial_states: dict[str, Array],
     argmax_and_max_Q_over_c_functions: dict[int, ArgmaxQOverCFunction],
+    argmax_and_max_Qc_over_d_functions: dict[int, ArgmaxQOverCFunction],
     model: InternalModel,
     next_state: Callable[..., dict[str, Array]],
     logger: logging.Logger,
@@ -71,6 +71,8 @@ def simulate(
             observed dataset.
         argmax_and_max_Q_over_c_functions: Dict of functions of length n_periods. Each
             function calculates the argument maximizing Q over the continuous actions.
+        argmax_and_max_Qc_over_d_functions: Dict of functions of length n_periods. Each
+            function calculates the argument maximizing Qc over the discrete actions.
         next_state: Function that returns the next state given the current
             state and action variables. For stochastic variables, it returns a random
             draw from the distribution of the next state.
@@ -99,10 +101,6 @@ def simulate(
     state_action_space = create_state_action_space(
         model=model,
         initial_states=initial_states,
-    )
-
-    argmax_and_max_Qc_over_d = get_argmax_and_max_Qc_over_d(
-        variable_info=model.variable_info
     )
 
     # The following variables are updated during the forward simulation
@@ -151,9 +149,9 @@ def simulate(
         # actions are taken. To find the optimal discrete action, we therefore only need
         # to maximize the Qc-function values over the discrete actions.
         # ------------------------------------------------------------------------------
-        indices_optimal_discrete_actions, V_arr = argmax_and_max_Qc_over_d(
-            Qc_arr, params=params
-        )
+        indices_optimal_discrete_actions, V_arr = argmax_and_max_Qc_over_d_functions[
+            period
+        ](Qc_arr, params=params)
 
         # Look up the continuous actions index from the above set given the optimal
         # discrete actions.
