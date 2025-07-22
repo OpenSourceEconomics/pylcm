@@ -9,10 +9,10 @@ from lcm.dispatchers import productmap
 from lcm.typing import ArgmaxQOverCFunction, MaxQOverCFunction, ParamsDict, Scalar
 
 
-def get_max_Q_over_a(
+def get_max_Q_over_c(
     Q_and_F: Callable[..., tuple[Array, Array]],
-    actions_names: tuple[str, ...],
-    states_names: tuple[str, ...],
+    continuous_actions_names: tuple[str, ...],
+    states_and_discrete_actions_names: tuple[str, ...],
 ) -> MaxQOverCFunction:
     r"""Get the function returning the maximum of Q over continuous actions.
 
@@ -37,26 +37,27 @@ def get_max_Q_over_a(
         Q_and_F: A function that takes a state-action combination and returns the action
             value of that combination and whether the state-action combination is
             feasible.
-        actions_names: Tuple of action variable names.
-        states_names: Tuple of state names.
+        continuous_actions_names: Tuple of action variable names that are continuous.
+        states_and_discrete_actions_names: Tuple of state and discrete action variable
+            names.
 
     Returns:
         Qc, i.e., the function that calculates the maximum of the Q-function over the
         feasible continuous actions.
 
     """
-    if actions_names:
+    if continuous_actions_names:
         Q_and_F = productmap(
             func=Q_and_F,
-            variables=actions_names,
+            variables=continuous_actions_names,
         )
 
     @functools.wraps(Q_and_F)
-    def max_Q_over_a(next_V_arr: Array, params: ParamsDict, **kwargs: Scalar) -> Array:
+    def max_Q_over_c(next_V_arr: Array, params: ParamsDict, **kwargs: Scalar) -> Array:
         Q_arr, F_arr = Q_and_F(params=params, next_V_arr=next_V_arr, **kwargs)
         return Q_arr.max(where=F_arr, initial=-jnp.inf)
 
-    return productmap(max_Q_over_a, variables=states_names)
+    return productmap(max_Q_over_c, variables=states_and_discrete_actions_names)
 
 
 def get_argmax_and_max_Q_over_c(
