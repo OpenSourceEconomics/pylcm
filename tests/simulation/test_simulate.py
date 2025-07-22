@@ -11,7 +11,10 @@ from lcm.input_processing import process_model
 from lcm.interfaces import Target
 from lcm.logging import get_logger
 from lcm.max_Q_over_c import (
-    get_argmax_and_max_Q_over_c,
+    get_argmax_and_max_Q_over_c
+)
+from lcm.max_Qc_over_d import (
+    get_argmax_and_max_Qc_over_d
 )
 from lcm.next_state import get_next_state_function
 from lcm.Q_and_F import get_Q_and_F
@@ -49,6 +52,7 @@ def simulate_inputs():
     )
 
     argmax_and_max_Q_over_c_functions = []
+    argmax_and_max_Qc_over_D_functions = []
     for period in range(model.n_periods):
         Q_and_F = get_Q_and_F(
             model=model,
@@ -59,10 +63,15 @@ def simulate_inputs():
             Q_and_F=Q_and_F,
             continuous_actions_names=("consumption",),
         )
+        argmax_and_max_Qc_over_d = get_argmax_and_max_Qc_over_d(
+            variable_info=model.variable_info
+        )
         argmax_and_max_Q_over_c_functions.append(argmax_and_max_Q_over_c)
+        argmax_and_max_Qc_over_D_functions.append(argmax_and_max_Qc_over_d)
 
     return {
         "argmax_and_max_Q_over_c_functions": argmax_and_max_Q_over_c_functions,
+        "argmax_and_max_Qc_over_d_functions": argmax_and_max_Qc_over_D_functions,
         "model": model,
         "next_state": get_next_state_function(model, target=Target.SIMULATE),
     }
