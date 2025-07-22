@@ -40,7 +40,6 @@ if TYPE_CHECKING:
     from lcm.user_model import Model
 
 
-
 def get_lcm_function(
     model: Model,
     *,
