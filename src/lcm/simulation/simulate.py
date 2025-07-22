@@ -23,7 +23,13 @@ if TYPE_CHECKING:
 
     import pandas as pd
 
-    from lcm.typing import ArgmaxQOverCFunction, FloatND, IntND, ParamsDict
+    from lcm.typing import (
+        ArgmaxQcOverDFunction,
+        ArgmaxQOverCFunction,
+        FloatND,
+        IntND,
+        ParamsDict,
+    )
 
 
 def solve_and_simulate(
