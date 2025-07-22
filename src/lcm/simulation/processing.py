@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import inspect
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 import pandas as pd
@@ -6,8 +9,10 @@ from dags import concatenate_functions
 from jax import Array
 
 from lcm.dispatchers import vmap_1d
-from lcm.interfaces import InternalModel, InternalSimulationPeriodResults
-from lcm.typing import InternalUserFunction, ParamsDict
+
+if TYPE_CHECKING:
+    from lcm.interfaces import InternalModel, InternalSimulationPeriodResults
+    from lcm.typing import InternalUserFunction, ParamsDict
 
 
 def process_simulated_data(
@@ -78,7 +83,7 @@ def as_panel(processed: dict[str, Array], n_periods: int) -> pd.DataFrame:
     """
     n_initial_states = len(processed["value"]) // n_periods
     index = pd.MultiIndex.from_product(
-        [range(n_periods), range(n_initial_states)],
+        [list(range(n_periods)), list(range(n_initial_states))],
         names=["period", "initial_state_id"],
     )
     return pd.DataFrame(processed, index=index)
@@ -107,6 +112,7 @@ def _compute_targets(
         functions=model_functions,
         targets=targets,
         return_type="dict",
+        set_annotations=True,
     )
 
     # get list of variables over which we want to vectorize the target function

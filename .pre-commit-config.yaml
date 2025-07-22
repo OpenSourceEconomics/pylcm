@@ -42,11 +42,11 @@ repos:
       - id: check-ast
       - id: check-docstring-first
   - repo: https://github.com/adrienverge/yamllint.git
-    rev: v1.37.0
+    rev: v1.37.1
     hooks:
       - id: yamllint
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.4
+    rev: v0.12.3
     hooks:
       # Run the linter.
       - id: ruff
@@ -82,13 +82,14 @@ repos:
           - --drop-empty-cells
           - --keep-output
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.15.0
+    rev: v1.16.1
     hooks:
       - id: mypy
         files: src|tests
         additional_dependencies:
-          - dags>=0.3.0
+          - git+https://github.com/OpenSourceEconomics/dags.git@main
           - jax>=0.5.1
+          - jaxtyping>=0.3.2
           - numpy
           - packaging
           - pandas-stubs

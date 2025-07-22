@@ -8,18 +8,30 @@ continuous version.
 
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
 from lcm import DiscreteGrid, Model
 from tests.test_models.deterministic import (
     RetirementStatus,
+    borrowing_constraint,
     labor_income,
     next_wealth,
     utility,
     working,
 )
+
+if TYPE_CHECKING:
+    from lcm.typing import (
+        DiscreteAction,
+        DiscreteState,
+        FloatND,
+        IntND,
+    )
 
 # ======================================================================================
 # Model functions
@@ -45,7 +57,11 @@ class WealthStatus:
 # --------------------------------------------------------------------------------------
 # Utility functions
 # --------------------------------------------------------------------------------------
-def utility_discrete(consumption, working, disutility_of_work):
+def utility_discrete(
+    consumption: DiscreteAction,
+    working: IntND,
+    disutility_of_work: float,
+) -> FloatND:
     # In the discrete model, consumption is defined as "low" or "high". This can be
     # translated to the levels 1 and 2.
     consumption_level = 1 + (consumption == ConsumptionChoice.high)
@@ -55,20 +71,18 @@ def utility_discrete(consumption, working, disutility_of_work):
 # --------------------------------------------------------------------------------------
 # State transitions
 # --------------------------------------------------------------------------------------
-def next_wealth_discrete(wealth, consumption, labor_income, interest_rate):
+def next_wealth_discrete(
+    wealth: DiscreteState,
+    consumption: DiscreteAction,
+    labor_income: FloatND,
+    interest_rate: float,
+) -> DiscreteState:
     # For discrete state variables, we need to assure that the next state is also a
     # valid state, i.e., it is a member of the discrete grid.
     continuous = next_wealth(wealth, consumption, labor_income, interest_rate)
     return jnp.clip(jnp.rint(continuous), WealthStatus.low, WealthStatus.high).astype(
         jnp.int32
     )
-
-
-# --------------------------------------------------------------------------------------
-# Constraints
-# --------------------------------------------------------------------------------------
-def consumption_constraint(consumption, wealth):
-    return consumption <= wealth
 
 
 # ======================================================================================
@@ -83,7 +97,7 @@ ISKHAKOV_ET_AL_2017_DISCRETE = Model(
     functions={
         "utility": utility_discrete,
         "next_wealth": next_wealth_discrete,
-        "consumption_constraint": consumption_constraint,
+        "borrowing_constraint": borrowing_constraint,
         "labor_income": labor_income,
         "working": working,
     },

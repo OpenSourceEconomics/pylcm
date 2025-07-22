@@ -26,7 +26,7 @@ jobs:
           - '3.12'
     steps:
       - uses: actions/checkout@v4
-      - uses: prefix-dev/setup-pixi@v0.8.4
+      - uses: prefix-dev/setup-pixi@v0.8.12
         with:
           pixi-version: v0.41.4
           cache: true
@@ -52,7 +52,7 @@ jobs:
       fail-fast: false
     steps:
       - uses: actions/checkout@v4
-      - uses: prefix-dev/setup-pixi@v0.8.4
+      - uses: prefix-dev/setup-pixi@v0.8.12
         with:
           pixi-version: v0.41.4
           cache: true
@@ -67,7 +67,7 @@ jobs:
   #   runs-on: ubuntu-latest
   #   steps:
   #     - uses: actions/checkout@v4
-  #     - uses: prefix-dev/setup-pixi@v0.8.4
+  #     - uses: prefix-dev/setup-pixi@v0.8.12
   #       with:
   #         pixi-version: v0.41.4
   #         cache: true

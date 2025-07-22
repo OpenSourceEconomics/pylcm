@@ -1,16 +1,23 @@
+from __future__ import annotations
+
 from functools import partial
+from typing import TYPE_CHECKING
 
 import jax
-import pandas as pd
-from jax import Array
 
 from lcm.argmax import argmax_and_max
-from lcm.typing import (
-    ArgmaxQcOverDFunction,
-    MaxQcOverDFunction,
-    ParamsDict,
-    ShockType,
-)
+from lcm.interfaces import ShockType
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+    from lcm.typing import (
+        ArgmaxQcOverDFunction,
+        FloatND,
+        IntND,
+        MaxQcOverDFunction,
+        ParamsDict,
+    )
 
 
 def get_max_Qc_over_d(
@@ -113,10 +120,10 @@ def get_argmax_and_max_Qc_over_d(
     discrete_action_axes = _determine_discrete_action_axes_simulation(variable_info)
 
     def argmax_and_max_Qc_over_d(
-        Qc_arr: Array,
+        Qc_arr: FloatND,
         discrete_action_axes: tuple[int, ...],
         params: ParamsDict,  # noqa: ARG001
-    ) -> tuple[Array, Array]:
+    ) -> tuple[IntND, FloatND]:
         return argmax_and_max(Qc_arr, axis=discrete_action_axes)
 
     return partial(argmax_and_max_Qc_over_d, discrete_action_axes=discrete_action_axes)
@@ -128,10 +135,10 @@ def get_argmax_and_max_Qc_over_d(
 
 
 def _max_Qc_over_d_no_shocks(
-    Qc_arr: Array,
+    Qc_arr: FloatND,
     discrete_action_axes: tuple[int, ...],
     params: ParamsDict,  # noqa: ARG001
-) -> Array:
+) -> FloatND:
     """Take the maximum of the Qc-function over the discrete actions.
 
     Args:
@@ -157,8 +164,8 @@ def _max_Qc_over_d_no_shocks(
 
 
 def _max_Qc_over_d_extreme_value_shocks(
-    Qc_arr: Array, discrete_action_axes: tuple[int, ...], params: ParamsDict
-) -> Array:
+    Qc_arr: FloatND, discrete_action_axes: tuple[int, ...], params: ParamsDict
+) -> FloatND:
     """Take the expected maximum of the Qc-function over the discrete actions.
 
     Args:

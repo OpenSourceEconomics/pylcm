@@ -1,5 +1,6 @@
-from collections.abc import Callable
-from typing import cast
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 from dags import concatenate_functions
@@ -7,10 +8,14 @@ from dags.signature import with_signature
 from jax import Array
 
 from lcm.functools import all_as_kwargs
-from lcm.grids import ContinuousGrid
-from lcm.interfaces import StateSpaceInfo
 from lcm.ndimage import map_coordinates
-from lcm.typing import Scalar
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from lcm.grids import ContinuousGrid
+    from lcm.interfaces import StateSpaceInfo
+    from lcm.typing import FloatND, ScalarFloat, ScalarInt
 
 
 def get_value_function_representation(
@@ -18,7 +23,7 @@ def get_value_function_representation(
     *,
     input_prefix: str = "next_",
     name_of_values_on_grid: str = "next_V_arr",
-) -> Callable[..., Array]:
+) -> Callable[..., FloatND]:
     """Create a function representation of the next value function array.
 
     The returned function
@@ -79,7 +84,10 @@ def get_value_function_representation(
     # ==================================================================================
     # create functions to look up position of discrete variables from labels
     # ==================================================================================
-    funcs = {}
+    funcs: dict[
+        str,
+        Callable[..., ScalarInt] | Callable[..., ScalarFloat] | Callable[..., FloatND],
+    ] = {}
 
     for var in state_space_info.discrete_states:
         funcs[f"__{var}_pos__"] = _get_label_translator(
@@ -126,12 +134,13 @@ def get_value_function_representation(
     return concatenate_functions(
         functions=funcs,
         targets="__fval__",
+        set_annotations=True,
     )
 
 
 def _get_label_translator(
     in_name: str,
-) -> Callable[..., Scalar]:
+) -> Callable[..., ScalarInt]:
     """Create a function that translates a label into a position in a list of labels.
 
     Currently, only labels are supported that are themselves indices. The label
@@ -147,8 +156,8 @@ def _get_label_translator(
 
     """
 
-    @with_signature(args=[in_name])
-    def translate_label(*args: Scalar, **kwargs: Scalar) -> Scalar:
+    @with_signature(args=dict.fromkeys([in_name], "Array"), return_annotation="Array")
+    def translate_label(*args: Array, **kwargs: Array) -> Array:
         kwargs = all_as_kwargs(args, kwargs, arg_names=[in_name])
         return kwargs[in_name]
 
@@ -158,7 +167,7 @@ def _get_label_translator(
 def _get_lookup_function(
     array_name: str,
     axis_names: list[str],
-) -> Callable[..., Scalar]:
+) -> Callable[..., Array]:
     """Create a function that emulates indexing into an array via named axes.
 
     Args:
@@ -172,12 +181,11 @@ def _get_lookup_function(
     """
     arg_names = [*axis_names, array_name]
 
-    @with_signature(args=arg_names)
-    def lookup_wrapper(*args: Scalar, **kwargs: Scalar) -> Scalar:
+    @with_signature(args=dict.fromkeys(arg_names, "Array"), return_annotation="Array")
+    def lookup_wrapper(*args: Array, **kwargs: Array) -> Array:
         kwargs = all_as_kwargs(args, kwargs, arg_names=arg_names)
         positions = tuple(kwargs[var] for var in axis_names)
-        arr = cast("Array", kwargs[array_name])
-        return arr[positions]
+        return kwargs[array_name][positions]
 
     return lookup_wrapper
 
@@ -185,7 +193,7 @@ def _get_lookup_function(
 def _get_coordinate_finder(
     in_name: str,
     grid: ContinuousGrid,
-) -> Callable[..., Scalar]:
+) -> Callable[..., Array]:
     """Create a function that translates a value into coordinates on a grid.
 
     The resulting coordinates can be used to do linear interpolation via
@@ -203,10 +211,10 @@ def _get_coordinate_finder(
 
     """
 
-    @with_signature(args=[in_name])
-    def find_coordinate(*args: Scalar, **kwargs: Scalar) -> Scalar:
+    @with_signature(args=dict.fromkeys([in_name], "Array"), return_annotation="Array")
+    def find_coordinate(*args: Array, **kwargs: Array) -> Array:
         kwargs = all_as_kwargs(args, kwargs, arg_names=[in_name])
-        return grid.get_coordinate(kwargs[in_name])
+        return grid.get_coordinate(kwargs[in_name])  # type: ignore[return-value]
 
     return find_coordinate
 
@@ -214,7 +222,7 @@ def _get_coordinate_finder(
 def _get_interpolator(
     name_of_values_on_grid: str,
     axis_names: list[str],
-) -> Callable[..., Scalar]:
+) -> Callable[..., Array]:
     """Create a function interpolator via named axes.
 
     Args:
@@ -229,8 +237,8 @@ def _get_interpolator(
     """
     arg_names = [name_of_values_on_grid, *axis_names]
 
-    @with_signature(args=arg_names)
-    def interpolate(*args: Scalar, **kwargs: Scalar) -> Scalar:
+    @with_signature(args=dict.fromkeys(arg_names, "Array"), return_annotation="Array")
+    def interpolate(*args: Array, **kwargs: Array) -> Array:
         kwargs = all_as_kwargs(args, kwargs, arg_names=arg_names)
         coordinates = jnp.array([kwargs[var] for var in axis_names])
         return map_coordinates(

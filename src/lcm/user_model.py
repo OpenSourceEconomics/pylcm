@@ -1,12 +1,16 @@
 """Collection of classes that are used by the user to define the model and grids."""
 
-import dataclasses as dc
+from __future__ import annotations
+
+import dataclasses
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from lcm.exceptions import ModelInitilizationError, format_messages
 from lcm.grids import Grid
-from lcm.typing import UserFunction
+
+if TYPE_CHECKING:
+    from lcm.typing import UserFunction
 
 
 @dataclass(frozen=True)
@@ -35,7 +39,7 @@ class Model:
         _validate_attribute_types(self)
         _validate_logical_consistency(self)
 
-    def replace(self, **kwargs: Any) -> "Model":  # noqa: ANN401
+    def replace(self, **kwargs: Any) -> Model:  # noqa: ANN401
         """Replace the attributes of the model.
 
         Args:
@@ -46,7 +50,7 @@ class Model:
 
         """
         try:
-            return dc.replace(self, **kwargs)
+            return dataclasses.replace(self, **kwargs)
         except TypeError as e:
             raise ModelInitilizationError(
                 f"Failed to replace attributes of the model. The error was: {e}"

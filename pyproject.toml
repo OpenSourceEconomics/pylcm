@@ -7,8 +7,9 @@ name = "pylcm"
 description = "Specification, solution, and simulation of finite-horizon dynamic choice models."
 requires-python = ">=3.12"
 dependencies = [
-    "dags>=0.3.0",
+    # "dags>=0.3.0",
     "jax>=0.5.1",
+    "jaxtyping>=0.3.2",
     "pandas",
 ]
 dynamic = ["version"]
@@ -106,6 +107,7 @@ jaxlib = ">=0.5.1"
 
 [tool.pixi.pypi-dependencies]
 pylcm = {path = ".", editable = true}
+dags = { git = "https://github.com/OpenSourceEconomics/dags.git", branch = "main"}
 pdbp = "*"
 
 [tool.pixi.target.win-64.pypi-dependencies]
@@ -126,7 +128,7 @@ jaxlib = { version = ">=0.5.1", build = "cuda12*" }
 pytest = "*"
 pytest-cov = "*"
 pytest-xdist = "*"
-mypy = "==1.15.0"
+mypy = "==1.16.1"
 pandas-stubs = "*"
 matplotlib = "*"  # required because of pandas
 scipy-stubs = "*"
@@ -180,6 +182,7 @@ extend-ignore = [
     "SIM105",  # Use `contextlib.suppress(ImportError)` instead of `try`-`except`-`pass`
     "SLF001",  # Private member accessed: `_stochastic_info`
     "TRY003",  # long messages outside the exception class
+    "UP047",  # Checks for standalone type variables in generic functions
     # Rules ignored to avoid conflict with formatter
     # ----------------------------------------------------------------------------------
     "COM812",
@@ -190,6 +193,7 @@ extend-ignore = [
 "**/*.ipynb" = ["D101", "E402", "FBT003"]
 "examples/*" = ["D101", "INP001"]
 "explanations/*" = ["B018", "E402", "INP001", "PD008", "T201"]
+"src/lcm/functools.py" = ["ANN401"]
 "src/lcm/Q_and_F.py" = ["N999"]
 "src/lcm/max_Q_over_c.py" = ["N999"]
 "src/lcm/max_Qc_over_d.py" = ["N999"]
@@ -249,5 +253,9 @@ module = [
 ignore_errors = true
 
 [[tool.mypy.overrides]]
-module = ["pybaum", "pdbp"]
+module = "tests.test_entry_point"
+disable_error_code = ["arg-type"]
+
+[[tool.mypy.overrides]]
+module = ["pybaum", "pdbp", "yaml"]
 ignore_missing_imports = true

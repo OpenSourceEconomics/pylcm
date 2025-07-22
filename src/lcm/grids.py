@@ -1,24 +1,27 @@
 """Collection of classes that are used by the user to define the model and grids."""
 
-import dataclasses as dc
+from __future__ import annotations
+
+import dataclasses
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields, is_dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
-from jax import Array
 
 from lcm import grid_helpers
 from lcm.exceptions import GridInitializationError, format_messages
-from lcm.typing import Scalar
 from lcm.utils import find_duplicates
+
+if TYPE_CHECKING:
+    from lcm.typing import Float1D, Int1D, ScalarFloat
 
 
 class Grid(ABC):
     """LCM Grid base class."""
 
     @abstractmethod
-    def to_jax(self) -> Array:
+    def to_jax(self) -> Int1D | Float1D:
         """Convert the grid to a Jax array."""
 
 
@@ -65,7 +68,7 @@ class DiscreteGrid(Grid):
         """Get the list of category codes."""
         return self.__codes
 
-    def to_jax(self) -> Array:
+    def to_jax(self) -> Int1D:
         """Convert the grid to a Jax array."""
         return jnp.array(self.codes)
 
@@ -86,14 +89,14 @@ class ContinuousGrid(Grid, ABC):
         )
 
     @abstractmethod
-    def to_jax(self) -> Array:
+    def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
 
     @abstractmethod
-    def get_coordinate(self, value: Scalar) -> Scalar:
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
         """Get the generalized coordinate of a value in the grid."""
 
-    def replace(self, **kwargs: Any) -> "ContinuousGrid":  # noqa: ANN401
+    def replace(self, **kwargs: float) -> ContinuousGrid:
         """Replace the attributes of the grid.
 
         Args:
@@ -104,7 +107,7 @@ class ContinuousGrid(Grid, ABC):
 
         """
         try:
-            return dc.replace(self, **kwargs)
+            return dataclasses.replace(self, **kwargs)  # type: ignore[arg-type]
         except TypeError as e:
             raise GridInitializationError(
                 f"Failed to replace attributes of the grid. The error was: {e}"
@@ -125,11 +128,11 @@ class LinspaceGrid(ContinuousGrid):
 
     """
 
-    def to_jax(self) -> Array:
+    def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
         return grid_helpers.linspace(self.start, self.stop, self.n_points)
 
-    def get_coordinate(self, value: Scalar) -> Scalar:
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
         """Get the generalized coordinate of a value in the grid."""
         return grid_helpers.get_linspace_coordinate(
             value, self.start, self.stop, self.n_points
@@ -150,11 +153,11 @@ class LogspaceGrid(ContinuousGrid):
 
     """
 
-    def to_jax(self) -> Array:
+    def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
         return grid_helpers.logspace(self.start, self.stop, self.n_points)
 
-    def get_coordinate(self, value: Scalar) -> Scalar:
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
         """Get the generalized coordinate of a value in the grid."""
         return grid_helpers.get_logspace_coordinate(
             value, self.start, self.stop, self.n_points

@@ -1,5 +1,12 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import jax.numpy as jnp
 from jax import Array
+
+if TYPE_CHECKING:
+    from lcm.typing import IntND
 
 # ======================================================================================
 # argmax
@@ -11,7 +18,7 @@ def argmax_and_max(
     axis: int | tuple[int, ...] | None = None,
     initial: float | None = None,
     where: Array | None = None,
-) -> tuple[Array, Array]:
+) -> tuple[IntND, Array]:
     """Compute the argmax of an n-dim array along axis.
 
     If multiple maxima exist, the first index will be selected.

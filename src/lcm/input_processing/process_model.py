@@ -1,13 +1,14 @@
+from __future__ import annotations
+
 import functools
 import inspect
 from copy import deepcopy
-from typing import cast
+from typing import TYPE_CHECKING, Any, cast
 
-import pandas as pd
+from dags import get_annotations
 from dags.signature import with_signature
-from jax import Array
 
-from lcm.functools import all_as_args
+from lcm.functools import convert_kwargs_to_args
 from lcm.input_processing.create_params_template import create_params_template
 from lcm.input_processing.util import (
     get_function_info,
@@ -15,9 +16,22 @@ from lcm.input_processing.util import (
     get_gridspecs,
     get_variable_info,
 )
-from lcm.interfaces import InternalModel
-from lcm.typing import InternalUserFunction, ParamsDict, Scalar, ShockType, UserFunction
-from lcm.user_model import Model
+from lcm.interfaces import InternalModel, ShockType
+
+if TYPE_CHECKING:
+    import pandas as pd
+    from jax import Array
+
+    from lcm.typing import (
+        DiscreteAction,
+        DiscreteState,
+        FloatND,
+        Int1D,
+        InternalUserFunction,
+        ParamsDict,
+        UserFunction,
+    )
+    from lcm.user_model import Model
 
 
 def process_model(model: Model) -> InternalModel:
@@ -122,33 +136,39 @@ def _get_internal_functions(
 def _replace_func_parameters_by_params(
     func: UserFunction, params: ParamsDict, name: str
 ) -> InternalUserFunction:
-    old_signature = list(inspect.signature(func).parameters)
-    new_kwargs = [p for p in old_signature if p not in params[name]] + ["params"]
+    annotations = {
+        k: v for k, v in get_annotations(func).items() if k not in params[name]
+    }
+    annotations_with_params = annotations | {"params": "ParamsDict"}
+    return_annotation = annotations_with_params.pop("return")
 
-    @with_signature(args=new_kwargs)
+    @with_signature(args=annotations_with_params, return_annotation=return_annotation)
     @functools.wraps(func)
-    def processed_func(*args: Scalar, params: ParamsDict, **kwargs: Scalar) -> Scalar:
+    def processed_func(*args: Array, params: ParamsDict, **kwargs: Array) -> Array:
         return func(*args, **kwargs, **params[name])
 
-    return processed_func
+    return cast("InternalUserFunction", processed_func)
 
 
 def _add_dummy_params_argument(func: UserFunction) -> InternalUserFunction:
-    old_signature = list(inspect.signature(func).parameters)
+    annotations = get_annotations(func) | {"params": "ParamsDict"}
+    return_annotation = annotations.pop("return")
 
-    new_kwargs = [*old_signature, "params"]
-
-    @with_signature(args=new_kwargs)
+    @with_signature(args=annotations, return_annotation=return_annotation)
     @functools.wraps(func)
-    def processed_func(*args: Scalar, params: ParamsDict, **kwargs: Scalar) -> Scalar:  # noqa: ARG001
+    def processed_func(*args: Array, params: ParamsDict, **kwargs: Array) -> Array:  # noqa: ARG001
         return func(*args, **kwargs)
 
-    return processed_func
+    return cast("InternalUserFunction", processed_func)
 
 
-def _get_stochastic_next_function(raw_func: UserFunction, grid: Array) -> UserFunction:
+def _get_stochastic_next_function(raw_func: UserFunction, grid: Int1D) -> UserFunction:
+    annotations = get_annotations(raw_func)
+    annotations.pop("return")
+
+    @with_signature(args=annotations, return_annotation="Int1D")
     @functools.wraps(raw_func)
-    def next_func(*args: Scalar, **kwargs: Scalar) -> Array:  # noqa: ARG001
+    def next_func(**kwargs: Any) -> Int1D:  # noqa: ARG001, ANN401
         return grid
 
     return next_func
@@ -203,11 +223,14 @@ def _get_stochastic_weight_function(
             f"but {name} depends on {invalid}.",
         )
 
-    new_kwargs = [*function_parameters, "params"]
+    annotations = get_annotations(raw_func) | {"params": "ParamsDict"}
+    annotations.pop("return")
 
-    @with_signature(args=new_kwargs)
-    def weight_func(*args: Array, params: ParamsDict, **kwargs: Array) -> Array:
-        args = all_as_args(args, kwargs, arg_names=new_kwargs)
+    @with_signature(args=annotations, return_annotation="FloatND")
+    def weight_func(
+        params: ParamsDict, **kwargs: DiscreteState | DiscreteAction | int
+    ) -> FloatND:
+        args = convert_kwargs_to_args(kwargs, parameters=function_parameters)
         return params["shocks"][name][*args]
 
     return cast("InternalUserFunction", weight_func)

@@ -1,13 +1,13 @@
-from collections.abc import Callable
+from __future__ import annotations
+
 from functools import partial
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import jax
-import pandas as pd
 from jax import Array
 
 from lcm.input_processing import process_model
-from lcm.interfaces import StateActionSpace, StateSpaceInfo
+from lcm.interfaces import StateActionSpace, StateSpaceInfo, Target
 from lcm.logging import get_logger
 from lcm.max_Q_over_c import (
     get_argmax_and_max_Q_over_c,
@@ -24,15 +24,21 @@ from lcm.state_action_space import (
     create_state_action_space,
     create_state_space_info,
 )
-from lcm.typing import (
-    ArgmaxQcOverDFunction,
-    ArgmaxQOverCFunction,
-    MaxQcOverDFunction,
-    MaxQOverCFunction,
-    ParamsDict,
-    Target,
-)
-from lcm.user_model import Model
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    import pandas as pd
+
+    from lcm.typing import (
+        ArgmaxQcOverDFunction,
+        ArgmaxQOverCFunction,
+        MaxQcOverDFunction,
+        MaxQOverCFunction,
+        ParamsDict,
+    )
+    from lcm.user_model import Model
+
 
 
 def get_lcm_function(
@@ -164,7 +170,7 @@ def get_lcm_function(
         argmax_and_max_Q_over_c_functions=argmax_and_max_Q_over_c_functions,
         argmax_and_max_Qc_over_d_functions=argmax_and_max_Qc_over_d_functions,
         model=internal_model,
-        next_state=next_state_simulate,  # type: ignore[arg-type]
+        next_state=next_state_simulate,
         logger=logger,
     )
 
@@ -173,7 +179,7 @@ def get_lcm_function(
         argmax_and_max_Q_over_c_functions=argmax_and_max_Q_over_c_functions,
         argmax_and_max_Qc_over_d_functions=argmax_and_max_Qc_over_d_functions,
         model=internal_model,
-        next_state=next_state_simulate,  # type: ignore[arg-type]
+        next_state=next_state_simulate,
         logger=logger,
         solve_model=solve_model,
     )

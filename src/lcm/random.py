@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 from functools import partial
 
@@ -6,10 +8,10 @@ from jax import Array
 
 
 def random_choice(
-    labels: jax.Array,
-    probs: jax.Array,
-    key: jax.Array,
-) -> jax.Array:
+    labels: Array,
+    probs: Array,
+    key: Array,
+) -> Array:
     """Draw multiple random choices.
 
     Args:
@@ -27,7 +29,7 @@ def random_choice(
 
 
 @partial(jax.vmap, in_axes=(0, 0, None))
-def _vmapped_choice(key: jax.Array, probs: jax.Array, labels: jax.Array) -> jax.Array:
+def _vmapped_choice(key: Array, probs: Array, labels: Array) -> Array:
     return jax.random.choice(key, a=labels, p=probs)
 
 
