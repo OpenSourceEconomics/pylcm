@@ -47,7 +47,7 @@ def solve_and_simulate(
 ) -> pd.DataFrame:
     """First solve the model and then simulate the model forward in time.
 
-    Same docstring as `simulate` mutatis mutandis. TEST
+    Same docstring as `simulate` mutatis mutandis.
 
     """
     V_arr_dict = solve_model(params)
