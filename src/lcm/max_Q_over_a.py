@@ -50,9 +50,8 @@ def get_max_Q_over_a(
         Q_and_F: A function that takes a state-action combination and returns the action
             value of that combination and whether the state-action combination is
             feasible.
-        continuous_actions_names: Tuple of action variable names that are continuous.
-        states_and_discrete_actions_names: Tuple of state and discrete action variable
-            names.
+        actions_names: Tuple of action variable names.
+        states_names: Tuple of state names.
 
     Returns:
         Qc, i.e., the function that calculates the maximum of the Q-function over the
@@ -101,7 +100,7 @@ def get_argmax_and_max_Q_over_a(
         Q_and_F: A function that takes a state-action combination and returns the action
             value of that combination and whether the state-action combination is
             feasible.
-        continuous_actions_names: Tuple of action variable names that are continuous.
+        actions_names: Tuple of action variable names.
 
     Returns:
         Function that calculates the argument maximizing Q over the feasible continuous

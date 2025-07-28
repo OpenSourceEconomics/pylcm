@@ -10,12 +10,8 @@ from lcm.entry_point import get_lcm_function
 from lcm.input_processing import process_model
 from lcm.interfaces import Target
 from lcm.logging import get_logger
-from lcm.max_Q_over_c import (
-    get_argmax_and_max_Q_over_c
-)
-from lcm.max_Qc_over_d import (
-    get_argmax_and_max_Qc_over_d
-)
+from lcm.max_Q_over_c import get_argmax_and_max_Q_over_c
+from lcm.max_Qc_over_d import get_argmax_and_max_Qc_over_d
 from lcm.next_state import get_next_state_function
 from lcm.Q_and_F import get_Q_and_F
 from lcm.simulation.simulate import (

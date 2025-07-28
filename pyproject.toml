@@ -196,6 +196,7 @@ extend-ignore = [
 "src/lcm/functools.py" = ["ANN401"]
 "src/lcm/Q_and_F.py" = ["N999"]
 "src/lcm/max_Q_over_c.py" = ["N999"]
+"src/lcm/max_Q_over_a.py" = ["N999"]
 "src/lcm/max_Qc_over_d.py" = ["N999"]
 "src/lcm/ndimage.py" = ["A002"]
 "tests/*" = ["D101", "PLR2004"]

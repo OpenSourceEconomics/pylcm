@@ -35,7 +35,8 @@ if TYPE_CHECKING:
 def solve_and_simulate(
     params: ParamsDict,
     initial_states: dict[str, Array],
-    argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverCFunction],
+    argmax_and_max_Q_over_c_functions: dict[int, ArgmaxQOverCFunction],
+    argmax_and_max_Qc_over_d_functions: dict[int, ArgmaxQcOverDFunction],
     model: InternalModel,
     next_state: Callable[..., dict[str, Array]],
     logger: logging.Logger,
@@ -53,7 +54,8 @@ def solve_and_simulate(
     return simulate(
         params=params,
         initial_states=initial_states,
-        argmax_and_max_Q_over_c_functions=argmax_and_max_Q_over_a_functions,
+        argmax_and_max_Q_over_c_functions=argmax_and_max_Q_over_c_functions,
+        argmax_and_max_Qc_over_d_functions=argmax_and_max_Qc_over_d_functions,
         model=model,
         next_state=next_state,
         logger=logger,
@@ -66,7 +68,8 @@ def solve_and_simulate(
 def simulate(
     params: ParamsDict,
     initial_states: dict[str, Array],
-    argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverCFunction],
+    argmax_and_max_Q_over_c_functions: dict[int, ArgmaxQOverCFunction],
+    argmax_and_max_Qc_over_d_functions: dict[int, ArgmaxQcOverDFunction],
     model: InternalModel,
     next_state: Callable[..., dict[str, Array]],
     logger: logging.Logger,
@@ -81,8 +84,10 @@ def simulate(
         params: Dict of model parameters.
         initial_states: List of initial states to start from. Typically from the
             observed dataset.
-        argmax_and_max_Q_over_a_functions: Dict of functions of length n_periods. Each
-            function calculates the argument maximizing Q over all actions.
+        argmax_and_max_Q_over_c_functions: Dict of functions of length n_periods. Each
+            function calculates the argument maximizing Q over the continuous actions.
+        argmax_and_max_Qc_over_d_functions: Dict of functions of length n_periods. Each
+            function calculates the argument maximizing Qc over the discrete actions.
         next_state: Function that returns the next state given the current
             state and action variables. For stochastic variables, it returns a random
             draw from the distribution of the next state.
@@ -139,7 +144,7 @@ def simulate(
         next_V_arr = V_arr_dict.get(period + 1, jnp.empty(0))
 
         argmax_and_max_Q_over_c = simulation_spacemap(
-            argmax_and_max_Q_over_a_functions[period],
+            argmax_and_max_Q_over_c_functions[period],
             actions_names=tuple(state_action_space.discrete_actions),
             states_names=tuple(state_action_space.states),
         )
