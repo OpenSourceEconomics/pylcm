@@ -8,13 +8,13 @@ if TYPE_CHECKING:
     import logging
 
     from lcm.interfaces import StateActionSpace
-    from lcm.typing import FloatND, MaxQOverCFunction, ParamsDict
+    from lcm.typing import FloatND, MaxQOverAFunction, ParamsDict
 
 
 def solve(
     params: ParamsDict,
     state_action_spaces: dict[int, StateActionSpace],
-    max_Q_over_a_functions: dict[int, MaxQOverCFunction],
+    max_Q_over_a_functions: dict[int, MaxQOverAFunction],
     logger: logging.Logger,
 ) -> dict[int, FloatND]:
     """Solve a model using grid search.

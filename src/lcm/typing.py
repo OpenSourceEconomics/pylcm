@@ -77,6 +77,36 @@ class ArgmaxQOverCFunction(Protocol):
     ) -> tuple[Array, Array]: ...
 
 
+class MaxQOverAFunction(Protocol):
+    """The function that maximizes Q over all actions.
+
+    Q is the state-action value function. The MaxQOverCFunction returns the maximum of Q
+    over all actions.
+
+    Only used for type checking.
+
+    """
+
+    def __call__(  # noqa: D102
+        self, next_V_arr: Array, params: ParamsDict, **kwargs: Array
+    ) -> Array: ...
+
+
+class ArgmaxQOverAFunction(Protocol):
+    """The function that finds the argmax of Q over all actions.
+
+    Q is the state-action value function. The ArgmaxQOverCFunction returns the argmax
+    and the maximum of Q over all actions.
+
+    Only used for type checking.
+
+    """
+
+    def __call__(  # noqa: D102
+        self, next_V_arr: Array, params: ParamsDict, **kwargs: Array
+    ) -> tuple[Array, Array]: ...
+
+
 class MaxQcOverDFunction(Protocol):
     """The function that maximizes Qc over the discrete actions.
 
