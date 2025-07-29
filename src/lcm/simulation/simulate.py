@@ -143,8 +143,8 @@ def simulate(
             states_names=tuple(state_action_space.states),
         )
         # The Q-function values contain the information of how much value each action
-        # combination is worth. To find the optimal discrete action, we therefore only need
-        # to maximize the Q-function values over all actions.
+        # combination is worth. To find the optimal discrete action, we therefore only
+        # need to maximize the Q-function values over all actions.
         # ------------------------------------------------------------------------------
         indices_optimal_actions, V_arr = argmax_and_max_Q_over_a(
             **state_action_space.states,
