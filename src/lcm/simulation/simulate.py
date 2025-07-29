@@ -130,7 +130,7 @@ def simulate(
             len(grid) for grid in state_action_space.continuous_actions.values()
         )
         actions_grid_shape = discrete_actions_grid_shape + continuous_actions_grid_shape
-        # Compute optimal actions 
+        # Compute optimal actions
         # ------------------------------------------------------------------------------
         # We need to pass the value function array of the next period to the
         # argmax_and_max_Q_over_a function, as the current Q-function requires the next
@@ -142,7 +142,7 @@ def simulate(
             actions_names=(),
             states_names=tuple(state_action_space.states),
         )
-        # The Q-function values contain the information of how much value each action 
+        # The Q-function values contain the information of how much value each action
         # combination is worth. To find the optimal discrete action, we therefore only need
         # to maximize the Q-function values over all actions.
         # ------------------------------------------------------------------------------
