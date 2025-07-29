@@ -46,7 +46,7 @@ repos:
     hooks:
       - id: yamllint
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.12.3
+    rev: v0.12.5
     hooks:
       # Run the linter.
       - id: ruff
@@ -82,13 +82,13 @@ repos:
           - --drop-empty-cells
           - --keep-output
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.16.1
+    rev: v1.17.0
     hooks:
       - id: mypy
         files: src|tests
         additional_dependencies:
-          - git+https://github.com/OpenSourceEconomics/dags.git@main
-          - jax>=0.5.1
+          - dags>=0.4.1
+          - jax>=0.7
           - jaxtyping>=0.3.2
           - numpy
           - packaging
