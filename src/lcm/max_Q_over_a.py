@@ -27,7 +27,7 @@ def get_max_Q_over_a(
     actions_names: tuple[str, ...],
     states_names: tuple[str, ...],
 ) -> MaxQOverCFunction:
-    r"""Get the function returning the maximum of Q over continuous actions.
+    r"""Get the function returning the maximum of Q over all actions.
 
     The state-action value function $Q$ is defined as:
 
@@ -37,11 +37,11 @@ def get_max_Q_over_a(
     with $H(U, v) = u + \beta \cdot v$ as the leading case (which is the only one that
     is pre-implemented in LCM).
 
-    Fixing a state and discrete action, maximizing over the feasible continuous actions,
-    we get the $Q^c$ function:
+    Fixing a state, maximizing over all feasible actions,
+    we get the $V$ function:
 
     ```{math}
-    Q^{c}(x, a^d) = \max_{a^c} Q(x, a^d, a^c).
+    V(x) = \max_{a} Q(x, a).
     ```
 
     This last step is handled by the function returned here.
@@ -54,8 +54,8 @@ def get_max_Q_over_a(
         states_names: Tuple of state names.
 
     Returns:
-        Qc, i.e., the function that calculates the maximum of the Q-function over the
-        feasible continuous actions.
+        V, i.e., the function that calculates the maximum of the Q-function over all
+        feasible actions.
 
     """
     Q_and_F = productmap(
@@ -77,7 +77,7 @@ def get_argmax_and_max_Q_over_a(
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
     actions_names: tuple[str, ...],
 ) -> ArgmaxQOverCFunction:
-    r"""Get the function returning the arguments maximizing Q over continuous actions.
+    r"""Get the function returning the arguments maximizing Q over all actions.
 
     The state-action value function $Q$ is defined as:
 
@@ -87,11 +87,11 @@ def get_argmax_and_max_Q_over_a(
     with $H(U, v) = u + \beta \cdot v$ as the leading case (which is the only one that
     is pre-implemented in LCM).
 
-    Fixing a state and discrete action but choosing the feasible continuous actions that
-    maximizes Q, we get
+    Fixing a state but choosing the feasible actions that maximize Q, we get the optimal
+    policy
 
     ```{math}
-    \pi^{c}(x, a^d) = \argmax_{a^c} Q(x, a^d, a^c).
+    \pi(x) = \argmax_{a} Q(x, a).
     ```
 
     This last step is handled by the function returned here.

@@ -43,8 +43,7 @@ def solve(
 
         max_Q_over_a = max_Q_over_a_functions[period]
 
-        # evaluate Q-function on states and actions, and maximize over
-        # actions
+        # evaluate Q-function on states and actions, and maximize over actions
         V_arr = max_Q_over_a(
             **state_action_space.states,
             **state_action_space.discrete_actions,
