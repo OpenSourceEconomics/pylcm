@@ -13,7 +13,7 @@ from lcm.max_Q_over_c import (
     get_argmax_and_max_Q_over_c,
     get_max_Q_over_c,
 )
-from lcm.max_Qc_over_d import get_max_Qc_over_d
+from lcm.max_Qc_over_d import get_argmax_and_max_Qc_over_d, get_max_Qc_over_d
 from lcm.next_state import get_next_state_function
 from lcm.Q_and_F import (
     get_Q_and_F,
@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     import pandas as pd
 
     from lcm.typing import (
+        ArgmaxQcOverDFunction,
         ArgmaxQOverCFunction,
         MaxQcOverDFunction,
         MaxQOverCFunction,
@@ -87,6 +88,7 @@ def get_lcm_function(
     max_Q_over_c_functions: dict[int, MaxQOverCFunction] = {}
     argmax_and_max_Q_over_c_functions: dict[int, ArgmaxQOverCFunction] = {}
     max_Qc_over_d_functions: dict[int, MaxQcOverDFunction] = {}
+    argmax_and_max_Qc_over_d_functions: dict[int, ArgmaxQcOverDFunction] = {}
 
     for period in reversed(range(internal_model.n_periods)):
         is_last_period = period == last_period
@@ -129,11 +131,22 @@ def get_lcm_function(
             is_last_period=is_last_period,
         )
 
+        argmax_and_max_Qc_over_d = get_argmax_and_max_Qc_over_d(
+            variable_info=internal_model.variable_info
+        )
+
         state_action_spaces[period] = state_action_space
         state_space_infos[period] = state_space_info
-        max_Q_over_c_functions[period] = max_Q_over_c
-        argmax_and_max_Q_over_c_functions[period] = argmax_and_max_Q_over_c
-        max_Qc_over_d_functions[period] = max_Qc_over_d
+        max_Q_over_c_functions[period] = jax.jit(max_Q_over_c) if jit else max_Q_over_c
+        argmax_and_max_Q_over_c_functions[period] = (
+            jax.jit(argmax_and_max_Q_over_c) if jit else argmax_and_max_Q_over_c
+        )
+        max_Qc_over_d_functions[period] = (
+            jax.jit(max_Qc_over_d) if jit else max_Qc_over_d
+        )
+        argmax_and_max_Qc_over_d_functions[period] = (
+            jax.jit(argmax_and_max_Qc_over_d) if jit else argmax_and_max_Qc_over_d
+        )
 
     # ==================================================================================
     # select requested solver and partial arguments into it
@@ -154,6 +167,7 @@ def get_lcm_function(
     simulate_model = partial(
         simulate,
         argmax_and_max_Q_over_c_functions=argmax_and_max_Q_over_c_functions,
+        argmax_and_max_Qc_over_d_functions=argmax_and_max_Qc_over_d_functions,
         model=internal_model,
         next_state=next_state_simulate,
         logger=logger,
@@ -162,6 +176,7 @@ def get_lcm_function(
     solve_and_simulate_model = partial(
         solve_and_simulate,
         argmax_and_max_Q_over_c_functions=argmax_and_max_Q_over_c_functions,
+        argmax_and_max_Qc_over_d_functions=argmax_and_max_Qc_over_d_functions,
         model=internal_model,
         next_state=next_state_simulate,
         logger=logger,
