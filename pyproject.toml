@@ -196,6 +196,7 @@ extend-ignore = [
 "tests/*" = ["D101", "PLR2004"]
 "tests/test_Q_and_F.py" = ["N999"]
 "tests/test_max_Qc_over_d.py" = ["N999"]
+"tests/test_max_Q_over_a.py" = ["N999"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
