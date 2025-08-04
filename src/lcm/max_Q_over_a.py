@@ -13,11 +13,11 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from lcm.typing import (
-        ArgmaxQOverCFunction,
+        ArgmaxQOverAFunction,
         BoolND,
         FloatND,
         IntND,
-        MaxQOverCFunction,
+        MaxQOverAFunction,
         ParamsDict,
     )
 
@@ -26,7 +26,7 @@ def get_max_Q_over_a(
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
     actions_names: tuple[str, ...],
     states_names: tuple[str, ...],
-) -> MaxQOverCFunction:
+) -> MaxQOverAFunction:
     r"""Get the function returning the maximum of Q over all actions.
 
     The state-action value function $Q$ is defined as:
@@ -65,9 +65,9 @@ def get_max_Q_over_a(
 
     @functools.wraps(Q_and_F)
     def max_Q_over_a(
-        next_V_arr: FloatND, params: ParamsDict, **kwargs: Array
+        next_V_arr: FloatND, params: ParamsDict, **states_and_actions: Array
     ) -> FloatND:
-        Q_arr, F_arr = Q_and_F(params=params, next_V_arr=next_V_arr, **kwargs)
+        Q_arr, F_arr = Q_and_F(params=params, next_V_arr=next_V_arr, **states_and_actions)
         return Q_arr.max(where=F_arr, initial=-jnp.inf)
 
     return productmap(max_Q_over_a, variables=states_names)
@@ -76,7 +76,7 @@ def get_max_Q_over_a(
 def get_argmax_and_max_Q_over_a(
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
     actions_names: tuple[str, ...],
-) -> ArgmaxQOverCFunction:
+) -> ArgmaxQOverAFunction:
     r"""Get the function returning the arguments maximizing Q over all actions.
 
     The state-action value function $Q$ is defined as:
@@ -116,9 +116,9 @@ def get_argmax_and_max_Q_over_a(
 
     @functools.wraps(Q_and_F)
     def argmax_and_max_Q_over_a(
-        next_V_arr: FloatND, params: ParamsDict, **kwargs: Array
+        next_V_arr: FloatND, params: ParamsDict, **states_and_actions: Array
     ) -> tuple[IntND, FloatND]:
-        Q_arr, F_arr = Q_and_F(params=params, next_V_arr=next_V_arr, **kwargs)
+        Q_arr, F_arr = Q_and_F(params=params, next_V_arr=next_V_arr, **states_and_actions)
         return argmax_and_max(Q_arr, where=F_arr, initial=-jnp.inf)
 
     return argmax_and_max_Q_over_a
