@@ -128,7 +128,7 @@ jaxlib = { version = ">=0.5.1", build = "cuda12*" }
 pytest = "*"
 pytest-cov = "*"
 pytest-xdist = "*"
-mypy = "==1.16.1"
+mypy = "==1.17.1"
 pandas-stubs = "*"
 matplotlib = "*"  # required because of pandas
 scipy-stubs = "*"
