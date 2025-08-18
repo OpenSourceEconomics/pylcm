@@ -51,7 +51,6 @@ def test_regression_test():
             "wealth": jnp.array([5.0, 20, 40, 70]),
         },
     )
-
     # Compare
     # ==================================================================================
     aaae(expected_solve, list(got_solve.values()), decimal=5)
