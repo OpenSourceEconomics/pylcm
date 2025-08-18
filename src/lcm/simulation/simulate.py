@@ -24,8 +24,7 @@ if TYPE_CHECKING:
     import pandas as pd
 
     from lcm.typing import (
-        ArgmaxQcOverDFunction,
-        ArgmaxQOverCFunction,
+        ArgmaxQOverAFunction,
         FloatND,
         IntND,
         ParamsDict,
@@ -35,8 +34,7 @@ if TYPE_CHECKING:
 def solve_and_simulate(
     params: ParamsDict,
     initial_states: dict[str, Array],
-    argmax_and_max_Q_over_c_functions: dict[int, ArgmaxQOverCFunction],
-    argmax_and_max_Qc_over_d_functions: dict[int, ArgmaxQcOverDFunction],
+    argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction],
     model: InternalModel,
     next_state: Callable[..., dict[str, Array]],
     logger: logging.Logger,
@@ -54,8 +52,7 @@ def solve_and_simulate(
     return simulate(
         params=params,
         initial_states=initial_states,
-        argmax_and_max_Q_over_c_functions=argmax_and_max_Q_over_c_functions,
-        argmax_and_max_Qc_over_d_functions=argmax_and_max_Qc_over_d_functions,
+        argmax_and_max_Q_over_a_functions=argmax_and_max_Q_over_a_functions,
         model=model,
         next_state=next_state,
         logger=logger,
@@ -68,8 +65,7 @@ def solve_and_simulate(
 def simulate(
     params: ParamsDict,
     initial_states: dict[str, Array],
-    argmax_and_max_Q_over_c_functions: dict[int, ArgmaxQOverCFunction],
-    argmax_and_max_Qc_over_d_functions: dict[int, ArgmaxQcOverDFunction],
+    argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction],
     model: InternalModel,
     next_state: Callable[..., dict[str, Array]],
     logger: logging.Logger,
@@ -84,10 +80,8 @@ def simulate(
         params: Dict of model parameters.
         initial_states: List of initial states to start from. Typically from the
             observed dataset.
-        argmax_and_max_Q_over_c_functions: Dict of functions of length n_periods. Each
-            function calculates the argument maximizing Q over the continuous actions.
-        argmax_and_max_Qc_over_d_functions: Dict of functions of length n_periods. Each
-            function calculates the argument maximizing Qc over the discrete actions.
+        argmax_and_max_Q_over_a_functions: Dict of functions of length n_periods. Each
+            function calculates the argument maximizing Q over all actions.
         next_state: Function that returns the next state given the current
             state and action variables. For stochastic variables, it returns a random
             draw from the distribution of the next state.
@@ -135,23 +129,24 @@ def simulate(
         continuous_actions_grid_shape = tuple(
             len(grid) for grid in state_action_space.continuous_actions.values()
         )
-
-        # Compute optimal continuous actions conditional on discrete actions
+        actions_grid_shape = discrete_actions_grid_shape + continuous_actions_grid_shape
+        # Compute optimal actions
         # ------------------------------------------------------------------------------
         # We need to pass the value function array of the next period to the
-        # argmax_and_max_Q_over_c function, as the current Q-function requires the next
+        # argmax_and_max_Q_over_a function, as the current Q-function requires the next
         # periods's value funciton. In the last period, we pass an empty array.
         next_V_arr = V_arr_dict.get(period + 1, jnp.empty(0))
 
-        argmax_and_max_Q_over_c = simulation_spacemap(
-            argmax_and_max_Q_over_c_functions[period],
-            actions_names=tuple(state_action_space.discrete_actions),
+        argmax_and_max_Q_over_a = simulation_spacemap(
+            argmax_and_max_Q_over_a_functions[period],
+            actions_names=(),
             states_names=tuple(state_action_space.states),
         )
-
-        # Returns the optimal continuous action index conditional on the states and
-        # discrete actions, as well as the maximum value.
-        indices_argmax_Q_over_c, Qc_arr = argmax_and_max_Q_over_c(
+        # The Q-function values contain the information of how much value each action
+        # combination is worth. To find the optimal discrete action, we therefore only
+        # need to maximize the Q-function values over all actions.
+        # ------------------------------------------------------------------------------
+        indices_optimal_actions, V_arr = argmax_and_max_Q_over_a(
             **state_action_space.states,
             **state_action_space.discrete_actions,
             **state_action_space.continuous_actions,
@@ -159,31 +154,11 @@ def simulate(
             params=params,
         )
 
-        # The Qc-function values contain the information of how much value each discrete
-        # action combination is worth, assuming the corresponding optimal continuous
-        # actions are taken. To find the optimal discrete action, we therefore only need
-        # to maximize the Qc-function values over the discrete actions.
-        # ------------------------------------------------------------------------------
-        indices_optimal_discrete_actions, V_arr = argmax_and_max_Qc_over_d_functions[
-            period
-        ](Qc_arr, params=params)
-
-        # Look up the continuous actions index from the above set given the optimal
-        # discrete actions.
-        # ------------------------------------------------------------------------------
-        indices_optimal_continuous_actions = _lookup_optimal_continuous_actions(
-            indices_argmax_Q_over_c=indices_argmax_Q_over_c,
-            discrete_argmax=indices_optimal_discrete_actions,
-            discrete_actions_grid_shape=discrete_actions_grid_shape,
-        )
-
         # Convert action indices to action values
         # ------------------------------------------------------------------------------
         optimal_actions = _lookup_actions_from_indices(
-            indices_optimal_discrete_actions=indices_optimal_discrete_actions,
-            indices_optimal_continuous_actions=indices_optimal_continuous_actions,
-            discrete_actions_grid_shape=discrete_actions_grid_shape,
-            continuous_actions_grid_shape=continuous_actions_grid_shape,
+            indices_optimal_actions=indices_optimal_actions,
+            actions_grid_shape=actions_grid_shape,
             state_action_space=state_action_space,
         )
 
@@ -250,38 +225,27 @@ def _lookup_optimal_continuous_actions(
 
 
 def _lookup_actions_from_indices(
-    indices_optimal_discrete_actions: IntND,
-    indices_optimal_continuous_actions: IntND,
-    discrete_actions_grid_shape: tuple[int, ...],
-    continuous_actions_grid_shape: tuple[int, ...],
+    indices_optimal_actions: IntND,
+    actions_grid_shape: tuple[int, ...],
     state_action_space: StateActionSpace,
 ) -> dict[str, Array]:
     """Lookup optimal actions from indices.
 
     Args:
-        indices_optimal_discrete_actions: Indices of optimal discrete actions.
-        indices_optimal_continuous_actions: Indices of optimal continuous actions.
-        discrete_actions_grid_shape: Shape of the discrete actions grid.
-        continuous_actions_grid_shape: Shape of the continuous actions grid.
+        indices_optimal_actions: Indices of optimal actions.
+        actions_grid_shape: Shape of the actions grid.
         state_action_space: StateActionSpace instance.
 
     Returns:
         Dictionary of optimal actions.
 
     """
-    optimal_discrete_actions = _lookup_values_from_indices(
-        flat_indices=indices_optimal_discrete_actions,
-        grids=state_action_space.discrete_actions,
-        grids_shapes=discrete_actions_grid_shape,
+    return _lookup_values_from_indices(
+        flat_indices=indices_optimal_actions,
+        grids=state_action_space.discrete_actions
+        | state_action_space.continuous_actions,
+        grids_shapes=actions_grid_shape,
     )
-
-    optimal_continuous_actions = _lookup_values_from_indices(
-        flat_indices=indices_optimal_continuous_actions,
-        grids=state_action_space.continuous_actions,
-        grids_shapes=continuous_actions_grid_shape,
-    )
-
-    return optimal_discrete_actions | optimal_continuous_actions
 
 
 def _lookup_values_from_indices(

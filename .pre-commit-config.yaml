@@ -87,8 +87,8 @@ repos:
       - id: mypy
         files: src|tests
         additional_dependencies:
-          - git+https://github.com/OpenSourceEconomics/dags.git@main
-          - jax>=0.5.1
+          - dags>=0.4.1
+          - jax>=0.7
           - jaxtyping>=0.3.2
           - numpy
           - packaging

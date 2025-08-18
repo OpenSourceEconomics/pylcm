@@ -6,7 +6,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm.interfaces import StateActionSpace
 from lcm.logging import get_logger
-from lcm.max_Q_over_c import get_max_Q_over_c
+from lcm.max_Q_over_a import get_max_Q_over_a
 from lcm.ndimage import map_coordinates
 from lcm.solution.solve_brute import solve
 
@@ -69,23 +69,13 @@ def test_solve_brute():
 
         return Q_arr, F_arr
 
-    max_Q_over_c = get_max_Q_over_c(
+    max_Q_over_a = get_max_Q_over_a(
         Q_and_F=_Q_and_F,
-        continuous_actions_names=("consumption",),
-        states_and_discrete_actions_names=("lazy", "working", "wealth"),
+        actions_names=("consumption", "working"),
+        states_names=("lazy", "wealth"),
     )
 
-    max_Q_over_c_functions = {0: max_Q_over_c, 1: max_Q_over_c}
-
-    # ==================================================================================
-    # create max_Qc_over_d functions
-    # ==================================================================================
-
-    def max_Qc_over_d(Qc_arr, params):  # noqa: ARG001
-        """Take max over axis that corresponds to working."""
-        return Qc_arr.max(axis=1)
-
-    max_Qc_over_d_functions = {0: max_Qc_over_d, 1: max_Qc_over_d}
+    max_Q_over_a_functions = {0: max_Q_over_a, 1: max_Q_over_a}
 
     # ==================================================================================
     # call solve function
@@ -94,8 +84,7 @@ def test_solve_brute():
     solution = solve(
         params=params,
         state_action_spaces=state_action_spaces,
-        max_Q_over_c_functions=max_Q_over_c_functions,
-        max_Qc_over_d_functions=max_Qc_over_d_functions,
+        max_Q_over_a_functions=max_Q_over_a_functions,
         logger=get_logger(debug_mode=False),
     )
 
@@ -121,10 +110,10 @@ def test_solve_brute_single_period_Qc_arr():
         feasib = d <= a + b + c
         return util, feasib
 
-    max_Q_over_c = get_max_Q_over_c(
+    max_Q_over_a = get_max_Q_over_a(
         Q_and_F=_Q_and_F,
-        continuous_actions_names=("d",),
-        states_and_discrete_actions_names=("a", "b", "c"),
+        actions_names=("d",),
+        states_names=("a", "b", "c"),
     )
 
     expected = np.array([[[6.0, 7, 8], [7, 8, 9]], [[7, 8, 9], [8, 9, 10]]])
@@ -134,8 +123,7 @@ def test_solve_brute_single_period_Qc_arr():
     got = solve(
         params={},
         state_action_spaces={0: state_action_space},
-        max_Q_over_c_functions={0: max_Q_over_c},
-        max_Qc_over_d_functions={0: lambda x, params: x},  # noqa: ARG005
+        max_Q_over_a_functions={0: max_Q_over_a},
         logger=get_logger(debug_mode=False),
     )
 
