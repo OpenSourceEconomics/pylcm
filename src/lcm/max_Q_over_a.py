@@ -13,21 +13,21 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from lcm.typing import (
-        ArgmaxQOverCFunction,
+        ArgmaxQOverAFunction,
         BoolND,
         FloatND,
         IntND,
-        MaxQOverCFunction,
+        MaxQOverAFunction,
         ParamsDict,
     )
 
 
-def get_max_Q_over_c(
+def get_max_Q_over_a(
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
-    continuous_actions_names: tuple[str, ...],
-    states_and_discrete_actions_names: tuple[str, ...],
-) -> MaxQOverCFunction:
-    r"""Get the function returning the maximum of Q over continuous actions.
+    actions_names: tuple[str, ...],
+    states_names: tuple[str, ...],
+) -> MaxQOverAFunction:
+    r"""Get the function returning the maximum of Q over all actions.
 
     The state-action value function $Q$ is defined as:
 
@@ -37,11 +37,11 @@ def get_max_Q_over_c(
     with $H(U, v) = u + \beta \cdot v$ as the leading case (which is the only one that
     is pre-implemented in LCM).
 
-    Fixing a state and discrete action, maximizing over the feasible continuous actions,
-    we get the $Q^c$ function:
+    Fixing a state, maximizing over all feasible actions,
+    we get the $V$ function:
 
     ```{math}
-    Q^{c}(x, a^d) = \max_{a^c} Q(x, a^d, a^c).
+    V(x) = \max_{a} Q(x, a).
     ```
 
     This last step is handled by the function returned here.
@@ -50,23 +50,21 @@ def get_max_Q_over_c(
         Q_and_F: A function that takes a state-action combination and returns the action
             value of that combination and whether the state-action combination is
             feasible.
-        continuous_actions_names: Tuple of action variable names that are continuous.
-        states_and_discrete_actions_names: Tuple of state and discrete action variable
-            names.
+        actions_names: Tuple of action variable names.
+        states_names: Tuple of state names.
 
     Returns:
-        Qc, i.e., the function that calculates the maximum of the Q-function over the
-        feasible continuous actions.
+        V, i.e., the function that calculates the maximum of the Q-function over all
+        feasible actions.
 
     """
-    if continuous_actions_names:
-        Q_and_F = productmap(
-            func=Q_and_F,
-            variables=continuous_actions_names,
-        )
+    Q_and_F = productmap(
+        func=Q_and_F,
+        variables=actions_names,
+    )
 
     @functools.wraps(Q_and_F)
-    def max_Q_over_c(
+    def max_Q_over_a(
         next_V_arr: FloatND, params: ParamsDict, **states_and_actions: Array
     ) -> FloatND:
         Q_arr, F_arr = Q_and_F(
@@ -74,14 +72,14 @@ def get_max_Q_over_c(
         )
         return Q_arr.max(where=F_arr, initial=-jnp.inf)
 
-    return productmap(max_Q_over_c, variables=states_and_discrete_actions_names)
+    return productmap(max_Q_over_a, variables=states_names)
 
 
-def get_argmax_and_max_Q_over_c(
+def get_argmax_and_max_Q_over_a(
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
-    continuous_actions_names: tuple[str, ...],
-) -> ArgmaxQOverCFunction:
-    r"""Get the function returning the arguments maximizing Q over continuous actions.
+    actions_names: tuple[str, ...],
+) -> ArgmaxQOverAFunction:
+    r"""Get the function returning the arguments maximizing Q over all actions.
 
     The state-action value function $Q$ is defined as:
 
@@ -91,11 +89,11 @@ def get_argmax_and_max_Q_over_c(
     with $H(U, v) = u + \beta \cdot v$ as the leading case (which is the only one that
     is pre-implemented in LCM).
 
-    Fixing a state and discrete action but choosing the feasible continuous actions that
-    maximizes Q, we get
+    Fixing a state but choosing the feasible actions that maximize Q, we get the optimal
+    policy
 
     ```{math}
-    \pi^{c}(x, a^d) = \argmax_{a^c} Q(x, a^d, a^c).
+    \pi(x) = \argmax_{a} Q(x, a).
     ```
 
     This last step is handled by the function returned here.
@@ -104,7 +102,7 @@ def get_argmax_and_max_Q_over_c(
         Q_and_F: A function that takes a state-action combination and returns the action
             value of that combination and whether the state-action combination is
             feasible.
-        continuous_actions_names: Tuple of action variable names that are continuous.
+        actions_names: Tuple of action variable names.
 
     Returns:
         Function that calculates the argument maximizing Q over the feasible continuous
@@ -113,14 +111,13 @@ def get_argmax_and_max_Q_over_c(
         actions. The maximum corresponds to the Qc-function.
 
     """
-    if continuous_actions_names:
-        Q_and_F = productmap(
-            func=Q_and_F,
-            variables=continuous_actions_names,
-        )
+    Q_and_F = productmap(
+        func=Q_and_F,
+        variables=actions_names,
+    )
 
     @functools.wraps(Q_and_F)
-    def argmax_and_max_Q_over_c(
+    def argmax_and_max_Q_over_a(
         next_V_arr: FloatND, params: ParamsDict, **states_and_actions: Array
     ) -> tuple[IntND, FloatND]:
         Q_arr, F_arr = Q_and_F(
@@ -128,4 +125,4 @@ def get_argmax_and_max_Q_over_c(
         )
         return argmax_and_max(Q_arr, where=F_arr, initial=-jnp.inf)
 
-    return argmax_and_max_Q_over_c
+    return argmax_and_max_Q_over_a

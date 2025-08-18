@@ -9,11 +9,7 @@ from jax import Array
 from lcm.input_processing import process_model
 from lcm.interfaces import StateActionSpace, StateSpaceInfo, Target
 from lcm.logging import get_logger
-from lcm.max_Q_over_c import (
-    get_argmax_and_max_Q_over_c,
-    get_max_Q_over_c,
-)
-from lcm.max_Qc_over_d import get_argmax_and_max_Qc_over_d, get_max_Qc_over_d
+from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a, get_max_Q_over_a
 from lcm.next_state import get_next_state_function
 from lcm.Q_and_F import (
     get_Q_and_F,
@@ -31,10 +27,8 @@ if TYPE_CHECKING:
     import pandas as pd
 
     from lcm.typing import (
-        ArgmaxQcOverDFunction,
-        ArgmaxQOverCFunction,
-        MaxQcOverDFunction,
-        MaxQOverCFunction,
+        ArgmaxQOverAFunction,
+        MaxQOverAFunction,
         ParamsDict,
     )
     from lcm.user_model import Model
@@ -85,10 +79,8 @@ def get_lcm_function(
     # ==================================================================================
     state_action_spaces: dict[int, StateActionSpace] = {}
     state_space_infos: dict[int, StateSpaceInfo] = {}
-    max_Q_over_c_functions: dict[int, MaxQOverCFunction] = {}
-    argmax_and_max_Q_over_c_functions: dict[int, ArgmaxQOverCFunction] = {}
-    max_Qc_over_d_functions: dict[int, MaxQcOverDFunction] = {}
-    argmax_and_max_Qc_over_d_functions: dict[int, ArgmaxQcOverDFunction] = {}
+    max_Q_over_a_functions: dict[int, MaxQOverAFunction] = {}
+    argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction] = {}
 
     for period in reversed(range(internal_model.n_periods)):
         is_last_period = period == last_period
@@ -114,38 +106,24 @@ def get_lcm_function(
             period=period,
         )
 
-        max_Q_over_c = get_max_Q_over_c(
+        max_Q_over_a = get_max_Q_over_a(
             Q_and_F=Q_and_F,
-            continuous_actions_names=tuple(state_action_space.continuous_actions),
-            states_and_discrete_actions_names=state_action_space.states_and_discrete_actions_names,
+            actions_names=tuple(state_action_space.continuous_actions)
+            + tuple(state_action_space.discrete_actions),
+            states_names=tuple(state_action_space.states),
         )
 
-        argmax_and_max_Q_over_c = get_argmax_and_max_Q_over_c(
+        argmax_and_max_Q_over_a = get_argmax_and_max_Q_over_a(
             Q_and_F=Q_and_F,
-            continuous_actions_names=tuple(state_action_space.continuous_actions),
-        )
-
-        max_Qc_over_d = get_max_Qc_over_d(
-            random_utility_shock_type=internal_model.random_utility_shocks,
-            variable_info=internal_model.variable_info,
-            is_last_period=is_last_period,
-        )
-
-        argmax_and_max_Qc_over_d = get_argmax_and_max_Qc_over_d(
-            variable_info=internal_model.variable_info
+            actions_names=tuple(state_action_space.discrete_actions)
+            + tuple(state_action_space.continuous_actions),
         )
 
         state_action_spaces[period] = state_action_space
         state_space_infos[period] = state_space_info
-        max_Q_over_c_functions[period] = jax.jit(max_Q_over_c) if jit else max_Q_over_c
-        argmax_and_max_Q_over_c_functions[period] = (
-            jax.jit(argmax_and_max_Q_over_c) if jit else argmax_and_max_Q_over_c
-        )
-        max_Qc_over_d_functions[period] = (
-            jax.jit(max_Qc_over_d) if jit else max_Qc_over_d
-        )
-        argmax_and_max_Qc_over_d_functions[period] = (
-            jax.jit(argmax_and_max_Qc_over_d) if jit else argmax_and_max_Qc_over_d
+        max_Q_over_a_functions[period] = jax.jit(max_Q_over_a) if jit else max_Q_over_a
+        argmax_and_max_Q_over_a_functions[period] = (
+            jax.jit(argmax_and_max_Q_over_a) if jit else argmax_and_max_Q_over_a
         )
 
     # ==================================================================================
@@ -154,8 +132,7 @@ def get_lcm_function(
     solve_model = partial(
         solve,
         state_action_spaces=state_action_spaces,
-        max_Q_over_c_functions=max_Q_over_c_functions,
-        max_Qc_over_d_functions=max_Qc_over_d_functions,
+        max_Q_over_a_functions=max_Q_over_a_functions,
         logger=logger,
     )
 
@@ -165,8 +142,7 @@ def get_lcm_function(
     next_state_simulate = jax.jit(_next_state_simulate) if jit else _next_state_simulate
     simulate_model = partial(
         simulate,
-        argmax_and_max_Q_over_c_functions=argmax_and_max_Q_over_c_functions,
-        argmax_and_max_Qc_over_d_functions=argmax_and_max_Qc_over_d_functions,
+        argmax_and_max_Q_over_a_functions=argmax_and_max_Q_over_a_functions,
         model=internal_model,
         next_state=next_state_simulate,
         logger=logger,
@@ -174,8 +150,7 @@ def get_lcm_function(
 
     solve_and_simulate_model = partial(
         solve_and_simulate,
-        argmax_and_max_Q_over_c_functions=argmax_and_max_Q_over_c_functions,
-        argmax_and_max_Qc_over_d_functions=argmax_and_max_Qc_over_d_functions,
+        argmax_and_max_Q_over_a_functions=argmax_and_max_Q_over_a_functions,
         model=internal_model,
         next_state=next_state_simulate,
         logger=logger,
