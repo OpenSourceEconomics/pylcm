@@ -54,5 +54,5 @@ def test_regression_test():
 
     # Compare
     # ==================================================================================
-    aaae(expected_solve[::-1], list(got_solve.values()), decimal=5)
+    aaae(expected_solve, list(got_solve.values()), decimal=5)
     assert_frame_equal(expected_simulate, got_simulate)  # type: ignore[arg-type]
