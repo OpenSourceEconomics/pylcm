@@ -151,14 +151,13 @@ def get_lcm_function(
     # ==================================================================================
     # select requested solver and partial arguments into it
     # ==================================================================================
-    _solve_model = partial(
+    solve_model = partial(
         solve,
         state_action_spaces=state_action_spaces,
         max_Q_over_c_functions=max_Q_over_c_functions,
         max_Qc_over_d_functions=max_Qc_over_d_functions,
         logger=logger,
     )
-    solve_model = jax.jit(_solve_model) if jit else _solve_model
 
     _next_state_simulate = get_next_state_function(
         model=internal_model, target=Target.SIMULATE
