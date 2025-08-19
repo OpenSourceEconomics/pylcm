@@ -332,3 +332,31 @@ def test_fail_if_interpolation_axes_are_not_last_illustrative(dummy_continuous_g
 
     with pytest.raises(ValueError, match="Continuous variables need to be the last"):
         _fail_if_interpolation_axes_are_not_last(state_space_info)
+
+
+def test_function_evaluator_performs_linear_extrapolation():
+    wealth_grid = LinspaceGrid(start=0, stop=3, n_points=7)
+
+    state_space_info = StateSpaceInfo(
+        states_names=("wealth",),
+        discrete_states={},
+        continuous_states={
+            "wealth": wealth_grid,
+        },
+    )
+
+    next_V_arr = jnp.pi * wealth_grid.to_jax() + 2
+
+    # create the evaluator
+    evaluator = get_value_function_representation(state_space_info)
+
+    # partial the function values into the evaluator
+    func = partial(evaluator, next_V_arr=next_V_arr)
+
+    # test the evaluator on values outside the grid
+    wealth_outside_of_grid = [-0.5, 3.5, 10]
+    # We expect linear extrapolation
+    expected = jnp.pi * jnp.array(wealth_outside_of_grid) + 2
+
+    got = jnp.array([func(next_wealth=w) for w in wealth_outside_of_grid])
+    assert jnp.allclose(got, expected)
