@@ -12,14 +12,15 @@ from lcm.interfaces import (
     InternalModel,
     InternalSimulationPeriodResults,
     StateActionSpace,
+    Target,
 )
+from lcm.next_state import get_next_state_function
 from lcm.random import draw_random_seed, generate_simulation_keys
 from lcm.simulation.processing import as_panel, process_simulated_data
 from lcm.state_action_space import create_state_action_space
 
 if TYPE_CHECKING:
     import logging
-    from collections.abc import Callable
 
     import pandas as pd
 
@@ -36,7 +37,6 @@ def simulate(
     initial_states: dict[str, Array],
     argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction],
     model: InternalModel,
-    next_state: Callable[..., dict[str, Array]],
     logger: logging.Logger,
     V_arr_dict: dict[int, FloatND],
     *,
@@ -76,11 +76,6 @@ def simulate(
     n_periods = len(V_arr_dict)
     n_initial_states = len(next(iter(initial_states.values())))
 
-    state_action_space = create_state_action_space(
-        model=model,
-        initial_states=initial_states,
-    )
-
     # The following variables are updated during the forward simulation
     states = initial_states
     key = jax.random.key(seed=seed)
@@ -89,8 +84,29 @@ def simulate(
     # ----------------------------------------------------------------------------------
     simulation_results = {}
 
+    last_period = n_periods - 1
+
     for period in range(n_periods):
-        state_action_space = state_action_space.replace(states)
+        logger.info("Period: %s", period)
+
+        is_last_period = period == last_period
+
+        # In the last period, we must remove auxiliary states from the
+        # state-action-space
+        if is_last_period:
+            states_for_state_action_space = {
+                k: v
+                for k, v in states.items()
+                if not model.variable_info.loc[k].is_auxiliary
+            }
+        else:
+            states_for_state_action_space = states
+
+        state_action_space = create_state_action_space(
+            model=model,
+            initial_states=states_for_state_action_space,
+            is_last_period=is_last_period,
+        )
 
         discrete_actions_grid_shape = tuple(
             len(grid) for grid in state_action_space.discrete_actions.values()
@@ -139,27 +155,32 @@ def simulate(
             states=states,
         )
 
-        # Update states
-        # ------------------------------------------------------------------------------
-        key, stochastic_variables_keys = generate_simulation_keys(
-            key=key,
-            ids=model.function_info.query("is_stochastic_next").index.tolist(),
-        )
+        if not is_last_period:
+            # Update states
+            # --------------------------------------------------------------------------
+            key, stochastic_variables_keys = generate_simulation_keys(
+                key=key,
+                ids=model.function_info.query("is_stochastic_next").index.tolist(),
+            )
 
-        states_with_next_prefix = next_state(
-            **states,
-            **optimal_actions,
-            _period=jnp.repeat(period, n_initial_states),
-            params=params,
-            keys=stochastic_variables_keys,
-        )
-        # 'next_' prefix is added by the next_state function, but needs to be removed
-        # because in the next period, next states will be current states.
-        states = {
-            k.removeprefix("next_"): v for k, v in states_with_next_prefix.items()
-        }
+            next_state = get_next_state_function(
+                model=model,
+                next_states=tuple(state_action_space.states),
+                target=Target.SIMULATE,
+            )
 
-        logger.info("Period: %s", period)
+            states_with_next_prefix = next_state(
+                **states,
+                **optimal_actions,
+                _period=jnp.repeat(period, n_initial_states),
+                params=params,
+                keys=stochastic_variables_keys,
+            )
+            # 'next_' prefix is added by the next_state function, but needs to be
+            # removed because in the next period, next states will be current states.
+            states = {
+                k.removeprefix("next_"): v for k, v in states_with_next_prefix.items()
+            }
 
     processed = process_simulated_data(
         simulation_results,

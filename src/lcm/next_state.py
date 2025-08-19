@@ -26,12 +26,16 @@ if TYPE_CHECKING:
 
 def get_next_state_function(
     model: InternalModel,
+    *,
+    next_states: tuple[str, ...],
     target: Target,
 ) -> Callable[..., dict[str, DiscreteState | ContinuousState]]:
     """Get function that computes the next states during the solution.
 
     Args:
         model: Internal model instance.
+        next_states: Names of the next states to compute. These states are relevant for
+            the next state space.
         target: Whether to generate the function for the solve or simulate target.
 
     Returns:
@@ -41,8 +45,6 @@ def get_next_state_function(
         corresponds to the names of stochastic next functions.
 
     """
-    targets = model.function_info.query("is_next").index.tolist()
-
     if target == Target.SOLVE:
         functions_dict = model.functions
     elif target == Target.SIMULATE:
@@ -52,9 +54,15 @@ def get_next_state_function(
     else:
         raise ValueError(f"Invalid target: {target}")
 
+    requested_next_states = [
+        next_state
+        for next_state in model.function_info.query("is_next").index
+        if next_state.replace("next_", "") in next_states
+    ]
+
     return concatenate_functions(
         functions=functions_dict,
-        targets=targets,
+        targets=requested_next_states,
         return_type="dict",
         enforce_signature=False,
         set_annotations=True,
@@ -63,20 +71,20 @@ def get_next_state_function(
 
 def get_next_stochastic_weights_function(
     model: InternalModel,
+    next_stochastic_variables: tuple[str, ...],
 ) -> Callable[..., dict[str, Array]]:
     """Get function that computes the weights for the next stochastic states.
 
     Args:
         model: Internal model instance.
+        next_stochastic_variables: Names of the stochastic variables for which to
+            compute the weights. These variables are relevant for the next state space.
 
     Returns:
         Function that computes the weights for the next stochastic states.
 
     """
-    targets = [
-        f"weight_{name}"
-        for name in model.function_info.query("is_stochastic_next").index.tolist()
-    ]
+    targets = [f"weight_next_{name}" for name in next_stochastic_variables]
 
     return concatenate_functions(
         functions=model.functions,

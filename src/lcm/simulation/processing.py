@@ -46,11 +46,14 @@ def process_simulated_data(
     n_periods = len(results)
     n_initial_states = len(results[0].value)
 
+    nan_array = jnp.full(n_initial_states, jnp.nan, dtype=jnp.float64)
+
     list_of_dicts = [
         {"value": d.value, **d.actions, **d.states} for d in results.values()
     ]
     dict_of_lists = {
-        key: [d[key] for d in list_of_dicts] for key in list(list_of_dicts[0])
+        key: [d.get(key, nan_array) for d in list_of_dicts]
+        for key in list(list_of_dicts[0])
     }
     out = {key: jnp.concatenate(values) for key, values in dict_of_lists.items()}
     out["_period"] = jnp.repeat(jnp.arange(n_periods), n_initial_states)

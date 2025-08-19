@@ -19,7 +19,11 @@ def test_get_next_state_function_with_solve_target():
     model = process_model(
         get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=3),
     )
-    got_func = get_next_state_function(model, target=Target.SOLVE)
+    got_func = get_next_state_function(
+        model,
+        next_states=("wealth",),
+        target=Target.SOLVE,
+    )
 
     params = {
         "beta": 1.0,
@@ -73,7 +77,9 @@ def test_get_next_state_function_with_simulate_target():
         n_periods=1,
     )
 
-    got_func = get_next_state_function(model, target=Target.SIMULATE)
+    got_func = get_next_state_function(
+        model, next_states=("a", "b"), target=Target.SIMULATE
+    )
 
     keys = {"b": jnp.arange(2, dtype="uint32")}
     got = got_func(state=jnp.arange(2), keys=keys, params={})

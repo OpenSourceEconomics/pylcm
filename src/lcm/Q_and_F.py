@@ -76,6 +76,11 @@ def get_Q_and_F_non_terminal(
 
     """
     stochastic_variables = model.variable_info.query("is_stochastic").index.tolist()
+    # As we compute the expecation of the next period's value function, we only need the
+    # stochastic variables that are relevant for the next state space.
+    next_stochastic_variables = tuple(
+        set(stochastic_variables) & set(next_state_space_info.states_names)
+    )
 
     # ----------------------------------------------------------------------------------
     # Generate dynamic functions
@@ -85,13 +90,19 @@ def get_Q_and_F_non_terminal(
     U_and_F = _get_U_and_F(model)
 
     # Functions required to calculate the expected continuation values
-    state_transition = get_next_state_function(model, target=Target.SOLVE)
-    next_stochastic_states_weights = get_next_stochastic_weights_function(model)
-    joint_weights_from_marginals = _get_joint_weights_function(stochastic_variables)
+    state_transition = get_next_state_function(
+        model, next_states=next_state_space_info.states_names, target=Target.SOLVE
+    )
+    next_stochastic_states_weights = get_next_stochastic_weights_function(
+        model, next_stochastic_variables=next_stochastic_variables
+    )
+    joint_weights_from_marginals = _get_joint_weights_function(
+        next_stochastic_variables
+    )
     _scalar_next_V = get_value_function_representation(next_state_space_info)
     next_V = productmap(
         _scalar_next_V,
-        variables=tuple(f"next_{var}" for var in stochastic_variables),
+        variables=tuple(f"next_{var}" for var in next_stochastic_variables),
     )
 
     # ----------------------------------------------------------------------------------
@@ -252,7 +263,7 @@ def _get_arg_names_of_Q_and_F(
 
 
 def _get_joint_weights_function(
-    stochastic_variables: list[str],
+    stochastic_variables: tuple[str, ...],
 ) -> Callable[..., FloatND]:
     """Get function that calculates the joint weights.
 

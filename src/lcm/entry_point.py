@@ -9,10 +9,9 @@ import pandas as pd
 from jax import Array
 
 from lcm.input_processing import process_model
-from lcm.interfaces import StateActionSpace, StateSpaceInfo, Target
+from lcm.interfaces import StateActionSpace, StateSpaceInfo
 from lcm.logging import get_logger
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a, get_max_Q_over_a
-from lcm.next_state import get_next_state_function
 from lcm.Q_and_F import (
     get_Q_and_F,
 )
@@ -155,15 +154,10 @@ def get_lcm_function(
         logger=logger,
     )
 
-    _next_state_simulate = get_next_state_function(
-        model=internal_model, target=Target.SIMULATE
-    )
-    next_state_simulate = jax.jit(_next_state_simulate) if jit else _next_state_simulate
     simulate_model = partial(
         simulate,
         argmax_and_max_Q_over_a_functions=argmax_and_max_Q_over_a_functions,
         model=internal_model,
-        next_state=next_state_simulate,
         logger=logger,
     )
 
