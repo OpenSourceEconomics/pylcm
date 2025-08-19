@@ -10,6 +10,7 @@ import lcm
 from lcm.entry_point import (
     get_lcm_function,
 )
+from lcm.typing import DiscreteState
 from tests.test_models import get_model_config, get_params
 
 if TYPE_CHECKING:
@@ -48,6 +49,43 @@ def test_get_lcm_function_with_simulate_target():
     )
 
 
+def test_get_lcm_function_with_simulate_target_and_independent_partner():
+    model = get_model_config("iskhakov_et_al_2017_stochastic", n_periods=2)
+
+    @lcm.mark.stochastic
+    def next_partner(partner: DiscreteState) -> DiscreteState:
+        pass
+
+    model.functions["next_partner"] = next_partner
+
+    params = get_params(partner_transition=jnp.array([[0, 1], [0, 1]]))
+
+    simulate_model, _ = get_lcm_function(
+        model=model,
+        targets="solve_and_simulate",
+        jit=False,
+    )
+
+    res: pd.DataFrame = simulate_model(  # type: ignore[assignment]
+        params=params,
+        initial_states={
+            "health": jnp.array([1, 1, 0, 0]),
+            "partner": jnp.array([0, 0, 1, 0]),
+            "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
+        },
+    )
+
+    # This is derived from the partner transition in params.
+    expected_next_partner = pd.Series([1, 1, 1, 1])
+
+    pd.testing.assert_series_equal(
+        res["partner"].loc[1:],
+        expected_next_partner,
+        check_index=False,
+        check_names=False,
+    )
+
+
 # ======================================================================================
 # Solve
 # ======================================================================================
@@ -59,6 +97,24 @@ def test_get_lcm_function_with_solve_target():
         targets="solve",
     )
     solve_model(params=get_params())
+
+
+def test_get_lcm_function_with_solve_target_and_independent_partner():
+    model = get_model_config("iskhakov_et_al_2017_stochastic", n_periods=2)
+
+    @lcm.mark.stochastic
+    def next_partner() -> DiscreteState:
+        pass
+
+    model.functions["next_partner"] = next_partner
+
+    params = get_params(partner_transition=jnp.array([0.0, 1.0]))
+
+    solve_model, _ = get_lcm_function(
+        model=model,
+        targets="solve",
+    )
+    solve_model(params)
 
 
 # ======================================================================================

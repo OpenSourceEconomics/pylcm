@@ -223,14 +223,18 @@ def _get_stochastic_weight_function(
             f"but {name} depends on {invalid}.",
         )
 
-    annotations = get_annotations(raw_func) | {"params": "ParamsDict"}
+    annotations = get_annotations(raw_func)
     annotations.pop("return")
 
-    @with_signature(args=annotations, return_annotation="FloatND")
+    @with_signature(
+        args=annotations | {"params": "ParamsDict"}, return_annotation="FloatND"
+    )
     def weight_func(
-        params: ParamsDict, **kwargs: DiscreteState | DiscreteAction | int
+        params: ParamsDict, **discrete_variables: DiscreteState | DiscreteAction | int
     ) -> FloatND:
-        args = convert_kwargs_to_args(kwargs, parameters=function_parameters)
-        return params["shocks"][name][*args]
+        _discrete_variables = convert_kwargs_to_args(
+            discrete_variables, parameters=function_parameters
+        )
+        return params["shocks"][name][*_discrete_variables]
 
     return cast("InternalUserFunction", weight_func)
