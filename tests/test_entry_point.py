@@ -383,3 +383,32 @@ def test_get_lcm_function_with_period_argument_in_constraint():
     solve_model, params_template = get_lcm_function(model=model, targets="solve")
     params = tree_map(lambda _: 0.2, params_template)
     solve_model(params)
+
+
+# ======================================================================================
+# Test that order of states / actions does not matter
+# ======================================================================================
+
+
+def _reverse_dict(d: dict) -> dict:
+    """Reverse the order of keys in a dictionary."""
+    return {k: d[k] for k in reversed(list(d))}
+
+
+def test_order_of_states_and_actions_does_not_matter():
+    model = get_model_config("iskhakov_et_al_2017", n_periods=3)
+
+    # Create a new model with the order of states and actions swapped
+    model_swapped = model.replace(
+        states=_reverse_dict(model.states),
+        actions=_reverse_dict(model.actions),
+    )
+
+    solve_model, params_template = get_lcm_function(model=model, targets="solve")
+    params = tree_map(lambda _: 0.2, params_template)
+    V_arr_dict = solve_model(params)
+
+    solve_model_swapped, _ = get_lcm_function(model=model_swapped, targets="solve")
+    V_arr_dict_swapped = solve_model_swapped(params)
+
+    assert tree_equal(V_arr_dict, V_arr_dict_swapped)
