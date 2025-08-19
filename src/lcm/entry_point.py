@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import partial
 from typing import TYPE_CHECKING, Literal
 
 import jax
+import pandas as pd
 from jax import Array
 
 from lcm.input_processing import process_model
@@ -14,12 +16,13 @@ from lcm.next_state import get_next_state_function
 from lcm.Q_and_F import (
     get_Q_and_F,
 )
-from lcm.simulation.simulate import simulate, solve_and_simulate
+from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
 from lcm.state_action_space import (
     create_state_action_space,
     create_state_space_info,
 )
+from lcm.typing import ArgmaxQOverAFunction, ParamsDict
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -55,12 +58,28 @@ def get_lcm_function(
         targets: The requested function types. Currently only "solve", "simulate" and
             "solve_and_simulate" are supported.
         debug_mode: Whether to log debug messages.
-        jit: Whether to jit the returned function.
+        jit: Whether to jit the internal functions.
 
     Returns:
-        - A function that takes params (and possibly other arguments, such as initial
-          states in the simulate case) and returns the requested targets.
-        - A parameter dictionary where all parameter values are initialized to NaN.
+        - A function that can be used to solve and/or simulate the model (see below).
+        - A dictionary with the parameters that the function expects.
+
+        For targets = "solve":
+        ----------------------
+        A function that takes params and returns the solution of the model, that is, a
+        dictionary mapping model period to the respective value function array.
+
+        For targets = "simulate":
+        -------------------------
+        A function that takes params, a dictionary of initial states, and a model
+        solution in form of a value function array, and returns the simulated
+        trajectories in a pandas DataFrame, where the multi-index is the combination of
+        period and initial-state-ID, and the columns are the optimal actions.
+
+        For targets = "solve_and_simulate":
+        -----------------------------------
+        The same as targets = "simulate", but with the solution step partialled in, such
+        that the function does not require the solution as an argument.
 
     """
     # ==================================================================================
@@ -148,15 +167,24 @@ def get_lcm_function(
         logger=logger,
     )
 
-    solve_and_simulate_model = partial(
-        solve_and_simulate,
-        argmax_and_max_Q_over_a_functions=argmax_and_max_Q_over_a_functions,
-        model=internal_model,
-        next_state=next_state_simulate,
-        logger=logger,
-        solve_model=solve_model,
-    )
+    def solve_and_simulate_model(
+        params: ParamsDict,
+        initial_states: dict[str, Array],
+        *,
+        additional_targets: list[str] | None = None,
+        seed: int | None = None,
+    ) -> pd.DataFrame:
+        """First solve the model and then simulate the model forward in time."""
+        V_arr_dict = solve_model(params)
+        return simulate_model(
+            params=params,
+            initial_states=initial_states,
+            V_arr_dict=V_arr_dict,
+            additional_targets=additional_targets,
+            seed=seed,
+        )
 
+    # Repeat the target function signature to satisfy type checkers.
     target_func: Callable[..., dict[int, Array] | pd.DataFrame]
 
     if targets == "solve":

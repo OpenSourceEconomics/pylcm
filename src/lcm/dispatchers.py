@@ -49,6 +49,9 @@ def simulation_spacemap(
         described above but there might be additional dimensions.
 
     """
+    # The model creation process ensures that in a user-created model the following
+    # cannot happen. We double-check here to ensure that the post-processing does not
+    # accidentally create such a situation.
     if duplicates := find_duplicates(actions_names, states_names):
         msg = (
             "Same argument provided more than once in actions or states variables, "
