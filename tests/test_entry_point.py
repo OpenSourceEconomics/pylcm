@@ -20,6 +20,8 @@ from tests.test_models.deterministic import utility as iskhakov_et_al_2017_utili
 from tests.test_models.discrete_deterministic import ConsumptionChoice
 
 if TYPE_CHECKING:
+    from typing import Any
+
     from lcm.typing import BoolND, DiscreteAction, DiscreteState
 
 # ======================================================================================
@@ -390,7 +392,7 @@ def test_get_lcm_function_with_period_argument_in_constraint():
 # ======================================================================================
 
 
-def _reverse_dict(d: dict) -> dict:
+def _reverse_dict(d: dict[str, Any]) -> dict[str, Any]:
     """Reverse the order of keys in a dictionary."""
     return {k: d[k] for k in reversed(list(d))}
 
