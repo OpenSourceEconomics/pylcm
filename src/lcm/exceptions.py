@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 
-class ModelInitilizationError(Exception):
+class PyLCMError(Exception):
+    """Base class for all PyLCM exceptions."""
+
+
+class InvalidValueFunctionError(PyLCMError):
+    """Raised when the value function array is invalid."""
+
+
+class ModelInitilizationError(PyLCMError):
     """Raised when there is an error in the model initialization."""
 
 
-class GridInitializationError(Exception):
+class GridInitializationError(PyLCMError):
     """Raised when there is an error in the grid initialization."""
 
 
