@@ -329,7 +329,7 @@ def _get_feasibility(model: InternalModel) -> InternalUserFunction:
 
     else:
 
-        def combined_constraint(**kwargs: Any) -> bool:  # noqa: ARG001, ANN401
+        def combined_constraint() -> bool:
             """Dummy feasibility function that always returns True."""
             return True
 

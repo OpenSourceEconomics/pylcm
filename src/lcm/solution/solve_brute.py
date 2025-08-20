@@ -54,7 +54,9 @@ def solve(
             params=params,
         )
 
-        validate_value_function_array_integrity(V_arr, state_action_space)
+        validate_value_function_array_integrity(
+            V_arr=V_arr, state_action_space=state_action_space, period=period
+        )
 
         solution[period] = V_arr
         next_V_arr = V_arr

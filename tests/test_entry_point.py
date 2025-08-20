@@ -22,11 +22,7 @@ from tests.test_models.discrete_deterministic import ConsumptionChoice
 if TYPE_CHECKING:
     from typing import Any
 
-    from lcm.typing import (
-        BoolND,
-        DiscreteAction,
-        DiscreteState,
-    )
+    from lcm.typing import BoolND, DiscreteAction, DiscreteState
 
 # ======================================================================================
 # Test cases

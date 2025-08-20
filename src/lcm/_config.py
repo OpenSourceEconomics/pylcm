@@ -13,7 +13,6 @@ def get_log_dir() -> Path:
     If the directory does not exist, it will be created.
 
     """
-    # Find project root: assume current working dir if not configured
     project_root = Path.cwd()
     log_dir = project_root / LOG_DIRECTORY
     log_dir.mkdir(parents=True, exist_ok=True)
