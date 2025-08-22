@@ -75,7 +75,7 @@ def test_get_lcm_function_with_simulation_target_simple_stripped_down():
     simulate(
         params,
         initial_states={
-            "wealth": jnp.array([0.0, 10.0, 50.0]),
+            "wealth": jnp.array([1.0, 10.0, 50.0]),
         },
         additional_targets=["age"] if "age" in model.functions else None,
     )
@@ -93,7 +93,7 @@ def test_get_lcm_function_with_simulation_target_simple_fully_discrete():
     simulate(
         params,
         initial_states={
-            "wealth": jnp.array([0.0, 10.0, 50.0]),
+            "wealth": jnp.array([1.0, 10.0, 50.0]),
         },
         additional_targets=["age"] if "age" in model.functions else None,
     )
@@ -121,7 +121,7 @@ def test_get_lcm_function_with_simulation_is_coherent(model):
         params,
         V_arr_dict=V_arr_dict,
         initial_states={
-            "wealth": jnp.array([0.0, 10.0, 50.0]),
+            "wealth": jnp.array([1.0, 10.0, 50.0]),
         },
     )
 
@@ -135,7 +135,7 @@ def test_get_lcm_function_with_simulation_is_coherent(model):
     solve_and_simulate = solve_and_simulate_model(
         params,
         initial_states={
-            "wealth": jnp.array([0.0, 10.0, 50.0]),
+            "wealth": jnp.array([1.0, 10.0, 50.0]),
         },
     )
 
@@ -150,7 +150,7 @@ def test_get_lcm_function_with_simulation_is_coherent(model):
 def test_get_lcm_function_with_simulation_target_iskhakov_et_al_2017(model):
     # solve model
     solve_model, params_template = get_lcm_function(model=model, targets="solve")
-    params = tree_map(lambda _: 0.2, params_template)
+    params = tree_map(lambda _: 0.4, params_template)
     V_arr_dict = solve_model(params)
 
     # simulate using solution
@@ -160,7 +160,7 @@ def test_get_lcm_function_with_simulation_target_iskhakov_et_al_2017(model):
         params,
         V_arr_dict=V_arr_dict,
         initial_states={
-            "wealth": jnp.array([10.0, 10.0, 20.0]),
+            "wealth": jnp.array([40.0, 40.0, 50.0]),
             "lagged_retirement": jnp.array(
                 [
                     RetirementStatus.working,

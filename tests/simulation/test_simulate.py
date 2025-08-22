@@ -50,6 +50,7 @@ def simulate_inputs():
         is_last_period=False,
     )
     argmax_and_max_Q_over_a_functions = []
+    state_space_infos = []
     for period in range(model.n_periods):
         Q_and_F = get_Q_and_F(
             model=model,
@@ -61,11 +62,13 @@ def simulate_inputs():
             actions_names=(*state_action_space.discrete_actions, "consumption"),
         )
         argmax_and_max_Q_over_a_functions.append(argmax_and_max_Q_over_a)
+        state_space_infos.append(state_space_info)
 
     return {
         "argmax_and_max_Q_over_a_functions": argmax_and_max_Q_over_a_functions,
         "model": model,
         "next_state": get_next_state_function(model, target=Target.SIMULATE),
+        "state_space_infos": state_space_infos,
     }
 
 
@@ -202,7 +205,7 @@ def test_effect_of_beta_on_last_period():
     # ==================================================================================
     simulate_model, _ = get_lcm_function(model=model_config, targets="simulate")
 
-    initial_wealth = jnp.array([20.0, 50, 70])
+    initial_wealth = jnp.array([122.0, 122, 200])
 
     res_low: pd.DataFrame = simulate_model(  # type: ignore[assignment]
         params_low,

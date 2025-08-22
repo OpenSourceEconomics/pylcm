@@ -4,7 +4,8 @@ import jax.numpy as jnp
 import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm.interfaces import StateActionSpace
+from lcm.grids import LinspaceGrid
+from lcm.interfaces import StateActionSpace, StateSpaceInfo
 from lcm.logging import get_logger
 from lcm.max_Q_over_a import get_max_Q_over_a
 from lcm.ndimage import map_coordinates
@@ -44,7 +45,12 @@ def test_solve_brute():
         states_and_discrete_actions_names=("lazy", "working", "wealth"),
     )
     state_action_spaces = {0: _scs, 1: _scs}
-
+    state_space_info = StateSpaceInfo(
+        states_names=tuple("wealth"),
+        discrete_states={},
+        continuous_states={"wealth": LinspaceGrid(start=0, stop=2, n_points=3)},
+    )
+    state_space_infos = {0: state_space_info, 1: state_space_info}
     # ==================================================================================
     # create the Q_and_F functions
     # ==================================================================================
@@ -84,6 +90,7 @@ def test_solve_brute():
     solution = solve(
         params=params,
         state_action_spaces=state_action_spaces,
+        state_space_infos=state_space_infos,
         max_Q_over_a_functions=max_Q_over_a_functions,
         logger=get_logger(debug_mode=False),
     )
@@ -104,6 +111,9 @@ def test_solve_brute_single_period_Qc_arr():
         states={},
         states_and_discrete_actions_names=("a", "b", "c"),
     )
+    state_space_info = StateSpaceInfo(
+        states_names=(), continuous_states={}, discrete_states={}
+    )
 
     def _Q_and_F(a, c, b, d, next_V_arr, params):  # noqa: ARG001
         util = d
@@ -123,6 +133,7 @@ def test_solve_brute_single_period_Qc_arr():
     got = solve(
         params={},
         state_action_spaces={0: state_action_space},
+        state_space_infos={0: state_space_info},
         max_Q_over_a_functions={0: max_Q_over_a},
         logger=get_logger(debug_mode=False),
     )
