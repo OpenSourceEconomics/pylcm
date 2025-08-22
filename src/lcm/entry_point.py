@@ -151,6 +151,7 @@ def get_lcm_function(
     solve_model = partial(
         solve,
         state_action_spaces=state_action_spaces,
+        state_space_infos=state_space_infos,
         max_Q_over_a_functions=max_Q_over_a_functions,
         logger=logger,
     )
@@ -163,6 +164,7 @@ def get_lcm_function(
         simulate,
         argmax_and_max_Q_over_a_functions=argmax_and_max_Q_over_a_functions,
         model=internal_model,
+        state_space_infos=state_space_infos,
         next_state=next_state_simulate,
         logger=logger,
     )
