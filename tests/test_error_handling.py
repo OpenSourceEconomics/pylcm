@@ -193,3 +193,25 @@ def test_simulate_model_with_invalid_value_function_array(
         }
     )
     pd.testing.assert_frame_equal(got, exp, check_dtype=False)
+
+
+def test_simulate_model_with_subotimal_actions(valid_model: Model) -> None:
+    simulate_model, _ = get_lcm_function(
+        model=valid_model,
+        targets="solve_and_simulate",
+    )
+
+    # With an initial wealth of 2 the agent should be able to consume 1 in both
+    # periods and never enter the state where he has no valid consuption choices.
+    # Instead he consumes his wealth in the first period and transitions to a
+    # state where he has no valid actions. This is because during the solution
+    # the extrapolation made him believe the state he transitions to does not
+    # have -inf as a value but instead some small positive value.
+    initial_states = {
+        "wealth": jnp.array([2.0]),
+        "health": jnp.array([0.5]),
+    }
+
+    # Assert that the correct error is raised
+    with pytest.raises(InvalidValueFunctionError):
+        simulate_model({"beta": 0.1}, initial_states=initial_states)
