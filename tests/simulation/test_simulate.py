@@ -202,7 +202,7 @@ def test_effect_of_beta_on_last_period():
     # ==================================================================================
     simulate_model, _ = get_lcm_function(model=model_config, targets="simulate")
 
-    initial_wealth = jnp.array([122.0, 122, 200])
+    initial_wealth = jnp.array([122, 200])
 
     res_low: pd.DataFrame = simulate_model(  # type: ignore[assignment]
         params_low,
