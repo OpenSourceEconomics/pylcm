@@ -7,14 +7,13 @@ from jax import Array
 
 from lcm._config import get_log_dir
 from lcm.exceptions import InvalidValueFunctionError
-from lcm.interfaces import StateActionSpace, StateSpaceInfo
+from lcm.interfaces import StateActionSpace
 
 
 def validate_value_function_array_integrity(
     V_arr: Array,
     state_action_space: StateActionSpace,
     period: int,
-    state_space_info: StateSpaceInfo,
 ) -> None:
     """Validate the value function array for NaN and infinity values.
 
@@ -25,7 +24,6 @@ def validate_value_function_array_integrity(
     Args:
         V_arr: The value function array to validate.
         state_action_space: The state-action space to check against.
-        state_space_info: The state space info to check against.
         period: The period for which the value function is being validated.
 
     Raises:
@@ -44,30 +42,10 @@ def validate_value_function_array_integrity(
         states=state_action_space.states,
         period=period,
     )
-    extrapolation = False
-    if state_space_info.continuous_states is not None:
-        for key in state_space_info.continuous_states:
-            if (
-                invalid_states[key]
-                < state_space_info.continuous_states[key].to_jax()[0]
-            ).any() or (
-                invalid_states[key]
-                > state_space_info.continuous_states[key].to_jax()[-1]
-            ).any():
-                extrapolation = True
     log_dir = get_log_dir()
     file_path = log_dir / f"invalid_states_{_generate_unique_suffix()}.csv"
 
     invalid_states.to_csv(file_path, index=False, header=True)
-    if extrapolation:
-        raise InvalidValueFunctionError(
-            f"The value function array in period {period} contains NaN or infinite "
-            f"values. This might occur because the value function is extrapolated "
-            f"without considering the constraints. Check if your simulated agents "
-            f"take actions that transition them to states outside of the specified "
-            f"grid that have no valid actions. \n\n Invalid state combinations "
-            f"were logged to:\n {file_path}"
-        )
     raise InvalidValueFunctionError(
         f"The value function array in period {period} contains NaN or infinite values."
         f"\n\n Invalid state combinations were logged to:\n {file_path}"

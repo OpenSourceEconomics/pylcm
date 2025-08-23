@@ -50,7 +50,6 @@ def simulate_inputs():
         is_last_period=False,
     )
     argmax_and_max_Q_over_a_functions = []
-    state_space_infos = []
     for period in range(model.n_periods):
         Q_and_F = get_Q_and_F(
             model=model,
@@ -62,13 +61,11 @@ def simulate_inputs():
             actions_names=(*state_action_space.discrete_actions, "consumption"),
         )
         argmax_and_max_Q_over_a_functions.append(argmax_and_max_Q_over_a)
-        state_space_infos.append(state_space_info)
 
     return {
         "argmax_and_max_Q_over_a_functions": argmax_and_max_Q_over_a_functions,
         "model": model,
         "next_state": get_next_state_function(model, target=Target.SIMULATE),
-        "state_space_infos": state_space_infos,
     }
 
 

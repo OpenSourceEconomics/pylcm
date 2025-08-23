@@ -13,7 +13,6 @@ from lcm.interfaces import (
     InternalModel,
     InternalSimulationPeriodResults,
     StateActionSpace,
-    StateSpaceInfo,
 )
 from lcm.random import draw_random_seed, generate_simulation_keys
 from lcm.simulation.processing import as_panel, process_simulated_data
@@ -39,7 +38,6 @@ def simulate(
     argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction],
     model: InternalModel,
     next_state: Callable[..., dict[str, Array]],
-    state_space_infos: dict[int, StateSpaceInfo],
     logger: logging.Logger,
     V_arr_dict: dict[int, FloatND],
     *,
@@ -57,7 +55,6 @@ def simulate(
         next_state: Function that returns the next state given the current
             state and action variables. For stochastic variables, it returns a random
             draw from the distribution of the next state.
-        state_space_infos: Dict with one state_space_info per period.
         model: Model instance.
         logger: Logger that logs to stdout.
         V_arr_dict: Dict of value function arrays of length n_periods.
@@ -128,7 +125,6 @@ def simulate(
         validate_value_function_array_integrity(
             V_arr=V_arr,
             state_action_space=state_action_space,
-            state_space_info=state_space_infos[period],
             period=period,
         )
 

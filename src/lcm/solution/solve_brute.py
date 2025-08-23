@@ -9,14 +9,13 @@ from lcm.error_handling import validate_value_function_array_integrity
 if TYPE_CHECKING:
     import logging
 
-    from lcm.interfaces import StateActionSpace, StateSpaceInfo
+    from lcm.interfaces import StateActionSpace
     from lcm.typing import FloatND, MaxQOverAFunction, ParamsDict
 
 
 def solve(
     params: ParamsDict,
     state_action_spaces: dict[int, StateActionSpace],
-    state_space_infos: dict[int, StateSpaceInfo],
     max_Q_over_a_functions: dict[int, MaxQOverAFunction],
     logger: logging.Logger,
 ) -> dict[int, FloatND]:
@@ -25,7 +24,6 @@ def solve(
     Args:
         params: Dict of model parameters.
         state_action_spaces: Dict with one state_action_space per period.
-        state_space_infos: Dict with one state_space_info per period.
         max_Q_over_a_functions: Dict with one function per period. The functions
             calculate the maximum of the Q-function over all actions. The
             result corresponds to the Q-function of that period.
@@ -59,7 +57,6 @@ def solve(
         validate_value_function_array_integrity(
             V_arr=V_arr,
             state_action_space=state_action_space,
-            state_space_info=state_space_infos[period],
             period=period,
         )
 
