@@ -56,7 +56,6 @@ def solve(
 
         validate_value_function_array_integrity(
             V_arr=V_arr,
-            state_action_space=state_action_space,
             period=period,
         )
 
