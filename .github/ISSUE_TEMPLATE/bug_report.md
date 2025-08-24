@@ -2,7 +2,7 @@
 name: Bug Report
 about: Create a bug report to help us improve PyLCM
 title: "BUG:"
-labels: "bug"
+type: "Bug"
 ---
 
 - [ ] I have checked that this issue has not already been reported.

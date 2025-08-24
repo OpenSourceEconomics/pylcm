@@ -31,37 +31,6 @@ if TYPE_CHECKING:
     )
 
 
-def solve_and_simulate(
-    params: ParamsDict,
-    initial_states: dict[str, Array],
-    argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction],
-    model: InternalModel,
-    next_state: Callable[..., dict[str, Array]],
-    logger: logging.Logger,
-    solve_model: Callable[..., dict[int, FloatND]],
-    *,
-    additional_targets: list[str] | None = None,
-    seed: int | None = None,
-) -> pd.DataFrame:
-    """First solve the model and then simulate the model forward in time.
-
-    Same docstring as `simulate` mutatis mutandis.
-
-    """
-    V_arr_dict = solve_model(params)
-    return simulate(
-        params=params,
-        initial_states=initial_states,
-        argmax_and_max_Q_over_a_functions=argmax_and_max_Q_over_a_functions,
-        model=model,
-        next_state=next_state,
-        logger=logger,
-        V_arr_dict=V_arr_dict,
-        additional_targets=additional_targets,
-        seed=seed,
-    )
-
-
 def simulate(
     params: ParamsDict,
     initial_states: dict[str, Array],
