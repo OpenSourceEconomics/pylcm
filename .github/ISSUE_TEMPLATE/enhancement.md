@@ -2,8 +2,16 @@
 name: Enhancement
 about: Suggest an idea for PyLCM
 title: "ENH:"
-labels: "enhancement"
 ---
+
+> [!IMPORTANT]
+> Select **one** of the following types to describe your enhancement:
+> - **Feature**: A new feature or capability
+> - **Task**: A task that needs to be done (e.g., fix typos in the documentation)
+>
+> If your enhancement is related to the documentation, select the label
+> **documentation**.
+
 
 #### Is your feature request related to a problem?
 
