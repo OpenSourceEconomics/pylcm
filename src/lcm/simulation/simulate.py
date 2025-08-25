@@ -85,26 +85,22 @@ def simulate(
     # ----------------------------------------------------------------------------------
     simulation_results = {}
 
-    last_period = n_periods - 1
-
     for period in range(n_periods):
         logger.info("Period: %s", period)
 
-        is_last_period = period == last_period
+        is_last_period = period == n_periods - 1
 
-        relevant_states = model.variable_info.query(
-            "is_state and enters_concurrent_valuation"
-        ).index.tolist()
-        if not is_last_period:
-            relevant_states += model.variable_info.query(
-                "is_state and enters_transition"
-            ).index.tolist()
-
-        states_for_state_action_space = {n: states[n] for n in set(relevant_states)}
+        if is_last_period:
+            query = "is_state and enters_concurrent_valuation"
+        else:
+            query = "is_state and (enters_concurrent_valuation | enters_transition)"
+        states_for_state_action_space = {
+            n: states[n] for n in model.variable_info.query(query).index
+        }
 
         state_action_space = create_state_action_space(
             model=model,
-            initial_states=states_for_state_action_space,
+            states=states_for_state_action_space,
             is_last_period=is_last_period,
         )
 
@@ -182,7 +178,8 @@ def simulate(
                 keys=stochastic_variables_keys,
             )
             # 'next_' prefix is added by the next_state function, but needs to be
-            # removed because in the next period, next states will be current states.
+            # removed for the next iteration of the loop, where these will be the
+            # current states.
             states = {
                 k.removeprefix("next_"): v for k, v in states_with_next_prefix.items()
             }

@@ -71,20 +71,20 @@ def get_next_state_function(
 
 def get_next_stochastic_weights_function(
     model: InternalModel,
-    next_stochastic_variables: tuple[str, ...],
+    next_stochastic_states: tuple[str, ...],
 ) -> Callable[..., dict[str, Array]]:
     """Get function that computes the weights for the next stochastic states.
 
     Args:
         model: Internal model instance.
-        next_stochastic_variables: Names of the stochastic variables for which to
-            compute the weights. These variables are relevant for the next state space.
+        next_stochastic_states: Names of the stochastic states for which to compute the
+            weights. These variables are relevant for the next state space.
 
     Returns:
         Function that computes the weights for the next stochastic states.
 
     """
-    targets = [f"weight_next_{name}" for name in next_stochastic_variables]
+    targets = [f"weight_next_{name}" for name in next_stochastic_states]
 
     return concatenate_functions(
         functions=model.functions,

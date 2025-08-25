@@ -70,21 +70,17 @@ def get_variable_info(model: Model) -> pd.DataFrame:
         for var in variables
     ]
 
-    enter_concurrent_valuation = _get_variables_that_enter_concurrent_valuation(
+    info["enters_concurrent_valuation"] = _indicator_enters_concurrent_valuation(
         states_and_actions_names=list(variables),
         function_info=function_info,
         user_functions=model.functions,
     )
-    info["enters_concurrent_valuation"] = [
-        var in enter_concurrent_valuation for var in variables
-    ]
 
-    enter_transition = _get_variables_that_enter_transition(
+    info["enters_transition"] = _indicator_enters_transition(
         states_and_actions_names=list(variables),
         function_info=function_info,
         user_functions=model.functions,
     )
-    info["enters_transition"] = [var in enter_transition for var in variables]
 
     order = info.query("is_discrete & is_state").index.tolist()
     order += info.query("is_discrete & is_action").index.tolist()
@@ -97,16 +93,16 @@ def get_variable_info(model: Model) -> pd.DataFrame:
     return info.loc[order]
 
 
-def _get_variables_that_enter_concurrent_valuation(
+def _indicator_enters_concurrent_valuation(
     states_and_actions_names: list[str],
     function_info: pd.DataFrame,
     user_functions: dict[str, UserFunction],
-) -> list[str]:
-    """Get variables that enter the concurrent valuation.
+) -> pd.Series[bool]:
+    """Determine which states and actions enter the concurrent valuation.
 
     The concurrent valuation is the evaluation of the Q_and_F function. Hence, all
-    variables that influence the "utility" (Q), as well as the constraints (F), count
-    as relevant for the concurrent valuation.
+    variables that (directly or indirectly) influence the "utility" (Q) or the
+    constraints (F), count as relevant for the concurrent valuation.
 
     Special variables such as the "_period" or parameters will be ignored.
 
@@ -120,15 +116,18 @@ def _get_variables_that_enter_concurrent_valuation(
         targets=enters_Q_and_F_fn_names,
         include_targets=False,
     )
-    return list(set(states_and_actions_names).intersection(set(ancestors)))
+    return pd.Series(
+        [var in ancestors for var in states_and_actions_names],
+        index=states_and_actions_names,
+    )
 
 
-def _get_variables_that_enter_transition(
+def _indicator_enters_transition(
     states_and_actions_names: list[str],
     function_info: pd.DataFrame,
     user_functions: dict[str, UserFunction],
-) -> list[str]:
-    """Get state and action variables that enter the transition functions.
+) -> pd.Series[bool]:
+    """Determine which states and actions enter the transition.
 
     Transition functions correspond to the "next_" functions in the model. This function
     returns all state and action variables that occur as inputs to these functions.
@@ -142,7 +141,10 @@ def _get_variables_that_enter_transition(
         targets=next_fn_names,
         include_targets=False,
     )
-    return list(set(states_and_actions_names).intersection(set(ancestors)))
+    return pd.Series(
+        [var in ancestors for var in states_and_actions_names],
+        index=states_and_actions_names,
+    )
 
 
 def get_gridspecs(

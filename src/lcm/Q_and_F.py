@@ -94,7 +94,7 @@ def get_Q_and_F_non_terminal(
         model=model, next_states=next_state_space_info.states_names, target=Target.SOLVE
     )
     next_stochastic_states_weights = get_next_stochastic_weights_function(
-        model, next_stochastic_variables=next_stochastic_variables
+        model, next_stochastic_states=next_stochastic_variables
     )
     joint_weights_from_marginals = _get_joint_weights_function(
         next_stochastic_variables
