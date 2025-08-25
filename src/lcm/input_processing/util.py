@@ -102,6 +102,15 @@ def _get_variables_that_enter_concurrent_valuation(
     function_info: pd.DataFrame,
     user_functions: dict[str, UserFunction],
 ) -> list[str]:
+    """Get variables that enter the concurrent valuation.
+
+    The concurrent valuation is the evaluation of the Q_and_F function. Hence, all
+    variables that influence the "utility" (Q), as well as the constraints (F), count
+    as relevant for the concurrent valuation.
+
+    Special variables such as the "_period" or parameters will be ignored.
+
+    """
     enters_Q_and_F_fn_names = [
         "utility",
         *function_info.query("is_constraint").index.tolist(),

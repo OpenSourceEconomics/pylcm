@@ -160,9 +160,9 @@ def simulate(
             states=states,
         )
 
+        # Update states
+        # ------------------------------------------------------------------------------
         if not is_last_period:
-            # Update states
-            # --------------------------------------------------------------------------
             key, stochastic_variables_keys = generate_simulation_keys(
                 key=key,
                 ids=model.function_info.query("is_stochastic_next").index.tolist(),
