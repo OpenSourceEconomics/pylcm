@@ -64,7 +64,7 @@ def get_max_Qc_over_d(
 
     """
     if is_last_period:
-        variable_info = variable_info.query("~is_auxiliary")
+        variable_info = variable_info.query("enters_concurrent_valuation")
 
     discrete_action_axes = _determine_discrete_action_axes_solution(variable_info)
 

@@ -8,10 +8,8 @@ from numpy.testing import assert_array_almost_equal, assert_array_equal
 
 from lcm.entry_point import get_lcm_function
 from lcm.input_processing import process_model
-from lcm.interfaces import Target
 from lcm.logging import get_logger
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a
-from lcm.next_state import get_next_state_function
 from lcm.Q_and_F import get_Q_and_F
 from lcm.simulation.simulate import (
     _lookup_optimal_continuous_actions,
@@ -65,7 +63,6 @@ def simulate_inputs():
     return {
         "argmax_and_max_Q_over_a_functions": argmax_and_max_Q_over_a_functions,
         "model": model,
-        "next_state": get_next_state_function(model, target=Target.SIMULATE),
     }
 
 

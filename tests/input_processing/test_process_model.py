@@ -40,12 +40,16 @@ class ModelMock:
 
 @pytest.fixture
 def model(binary_category_class):
+    def utility(c):
+        pass
+
     def next_c(a, b):
-        return a + b
+        pass
 
     return ModelMock(
         n_periods=2,
         functions={
+            "utility": utility,
             "next_c": next_c,
         },
         actions={
@@ -61,11 +65,11 @@ def test_get_function_info(model):
     got = get_function_info(model)
     exp = pd.DataFrame(
         {
-            "is_constraint": [False],
-            "is_next": [True],
-            "is_stochastic_next": [False],
+            "is_constraint": [False, False],
+            "is_next": [False, True],
+            "is_stochastic_next": [False, False],
         },
-        index=["next_c"],
+        index=["utility", "next_c"],
     )
     assert_frame_equal(got, exp)
 
@@ -79,7 +83,8 @@ def test_get_variable_info(model):
             "is_continuous": [False, False],
             "is_discrete": [True, True],
             "is_stochastic": [False, False],
-            "is_auxiliary": [False, True],
+            "enters_concurrent_valuation": [False, True],
+            "enters_transition": [True, False],
         },
         index=["a", "c"],
     )

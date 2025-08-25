@@ -51,19 +51,6 @@ def utility(
     return jnp.log(consumption) - disutility_of_work * working
 
 
-def utility_with_constraint(
-    consumption: ContinuousAction,
-    working: IntND,
-    disutility_of_work: float,
-    # Temporary workaround for bug described in issue #30, which requires us to pass
-    # all state variables to the utility function.
-    # TODO(@timmens): Remove function once #30 is fixed (re-use "utility").
-    # https://github.com/opensourceeconomics/pylcm/issues/30
-    lagged_retirement: DiscreteState,  # noqa: ARG001
-) -> FloatND:
-    return utility(consumption, working, disutility_of_work)
-
-
 # --------------------------------------------------------------------------------------
 # Auxiliary variables
 # --------------------------------------------------------------------------------------
@@ -129,7 +116,7 @@ ISKHAKOV_ET_AL_2017 = Model(
     ),
     n_periods=3,
     functions={
-        "utility": utility_with_constraint,
+        "utility": utility,
         "next_wealth": next_wealth,
         "next_lagged_retirement": next_lagged_retirement,
         "borrowing_constraint": borrowing_constraint,

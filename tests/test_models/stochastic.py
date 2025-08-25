@@ -63,11 +63,6 @@ def utility(
     consumption: ContinuousAction,
     working: DiscreteAction,
     health: DiscreteState,
-    # Temporary workaround for bug described in issue #30, which requires us to pass
-    # all state variables to the utility function.
-    # TODO(@timmens): Remove function arguments once #30 is fixed.
-    # https://github.com/opensourceeconomics/pylcm/issues/30
-    partner: DiscreteState,  # noqa: ARG001
     disutility_of_work: float,
 ) -> FloatND:
     return jnp.log(consumption) - (1 - health / 2) * disutility_of_work * working
@@ -87,9 +82,10 @@ def next_wealth(
     wealth: ContinuousState,
     consumption: ContinuousAction,
     labor_income: FloatND,
+    partner: DiscreteState,
     interest_rate: float,
 ) -> ContinuousState:
-    return (1 + interest_rate) * (wealth - consumption) + labor_income
+    return (1 + interest_rate) * (wealth - consumption) + labor_income + partner
 
 
 # --------------------------------------------------------------------------------------

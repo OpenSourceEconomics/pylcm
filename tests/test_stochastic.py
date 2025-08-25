@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 import pandas as pd
 import pytest
+from numpy.testing import assert_array_almost_equal
 
 import lcm
 from lcm.entry_point import (
@@ -120,11 +121,12 @@ def test_compare_deterministic_and_stochastic_results_value_function(model_and_p
     solution_deterministic: dict[int, FloatND] = solve_model_deterministic(params)  # type: ignore[assignment]
     solution_stochastic: dict[int, FloatND] = solve_model_stochastic(params)  # type: ignore[assignment]
 
-    assert jnp.array_equal(
-        jnp.array(list(solution_deterministic.values())),
-        jnp.array(list(solution_stochastic.values())),
-        equal_nan=True,
-    )
+    for period in range(model_deterministic.n_periods):
+        assert_array_almost_equal(
+            solution_deterministic[period],
+            solution_stochastic[period],
+            decimal=14,
+        )
 
     # ==================================================================================
     # Compare simulation results

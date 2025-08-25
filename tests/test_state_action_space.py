@@ -36,7 +36,7 @@ def test_create_state_action_space_simulation():
     model = process_model(model_config)
     got_space = create_state_action_space(
         model=model,
-        initial_states={
+        states={
             "wealth": jnp.array([10.0, 20.0]),
             "lagged_retirement": jnp.array([0, 1]),
         },
@@ -66,7 +66,7 @@ def test_create_state_action_space_replace():
     model = process_model(model_config)
     space = create_state_action_space(
         model=model,
-        initial_states={
+        states={
             "wealth": jnp.array([10.0, 20.0]),
             "lagged_retirement": jnp.array([0, 1]),
         },

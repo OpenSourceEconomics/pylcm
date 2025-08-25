@@ -59,7 +59,9 @@ def model_input():
         "model": model,
         "state_action_space": state_action_space,
         "state_space_info": state_space_info,
-        "next_state": get_next_state_function(model, target=Target.SOLVE),
+        "next_state": get_next_state_function(
+            model=model, next_states=("wealth",), target=Target.SOLVE
+        ),
         "params": params,
     }
 
