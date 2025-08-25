@@ -20,7 +20,7 @@ def test_get_next_state_function_with_solve_target():
         get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=3),
     )
     got_func = get_next_state_function(
-        model,
+        model=model,
         next_states=("wealth",),
         target=Target.SOLVE,
     )
@@ -78,7 +78,7 @@ def test_get_next_state_function_with_simulate_target():
     )
 
     got_func = get_next_state_function(
-        model, next_states=("a", "b"), target=Target.SIMULATE
+        model=model, next_states=("a", "b"), target=Target.SIMULATE
     )
 
     keys = {"b": jnp.arange(2, dtype="uint32")}

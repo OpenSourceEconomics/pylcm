@@ -91,7 +91,7 @@ def get_Q_and_F_non_terminal(
 
     # Functions required to calculate the expected continuation values
     state_transition = get_next_state_function(
-        model, next_states=next_state_space_info.states_names, target=Target.SOLVE
+        model=model, next_states=next_state_space_info.states_names, target=Target.SOLVE
     )
     next_stochastic_states_weights = get_next_stochastic_weights_function(
         model, next_stochastic_variables=next_stochastic_variables

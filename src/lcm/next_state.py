@@ -25,8 +25,8 @@ if TYPE_CHECKING:
 
 
 def get_next_state_function(
-    model: InternalModel,
     *,
+    model: InternalModel,
     next_states: tuple[str, ...],
     target: Target,
 ) -> Callable[..., dict[str, DiscreteState | ContinuousState]]:
