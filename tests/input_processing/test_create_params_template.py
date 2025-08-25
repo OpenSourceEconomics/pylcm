@@ -33,7 +33,7 @@ class ModelMock:
 def test_create_params_without_shocks(binary_category_class):
     model = ModelMock(
         functions={
-            "f": lambda a, b, c: None,  # noqa: ARG005
+            "utility": lambda a, b, c: None,  # noqa: ARG005
             "next_b": lambda b: b,
         },
         actions={
@@ -45,13 +45,13 @@ def test_create_params_without_shocks(binary_category_class):
         n_periods=None,
     )
     got = create_params_template(model)  # type: ignore[arg-type]
-    assert got == {"beta": jnp.nan, "f": {"c": jnp.nan}, "next_b": {}}
+    assert got == {"beta": jnp.nan, "utility": {"c": jnp.nan}, "next_b": {}}
 
 
 def test_create_function_params():
     model = ModelMock(
         functions={
-            "f": lambda a, b, c: None,  # noqa: ARG005
+            "utility": lambda a, b, c: None,  # noqa: ARG005
         },
         actions={
             "a": None,
@@ -61,7 +61,7 @@ def test_create_function_params():
         },
     )
     got = _create_function_params(model)  # type: ignore[arg-type]
-    assert got == {"f": {"c": jnp.nan}}
+    assert got == {"utility": {"c": jnp.nan}}
 
 
 def test_create_shock_params():

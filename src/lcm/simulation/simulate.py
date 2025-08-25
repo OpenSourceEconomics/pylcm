@@ -91,16 +91,15 @@ def simulate(
 
         is_last_period = period == last_period
 
-        # In the last period, we must remove auxiliary states from the
-        # state-action-space
-        if is_last_period:
-            states_for_state_action_space = {
-                k: v
-                for k, v in states.items()
-                if not model.variable_info.loc[k].is_auxiliary
-            }
-        else:
-            states_for_state_action_space = states
+        relevant_states = model.variable_info.query(
+            "is_state and enters_concurrent_valuation"
+        ).index.tolist()
+        if not is_last_period:
+            relevant_states += model.variable_info.query(
+                "is_state and enters_transition"
+            ).index.tolist()
+
+        states_for_state_action_space = {n: states[n] for n in set(relevant_states)}
 
         state_action_space = create_state_action_space(
             model=model,

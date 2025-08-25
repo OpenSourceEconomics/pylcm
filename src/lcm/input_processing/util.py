@@ -70,12 +70,21 @@ def get_variable_info(model: Model) -> pd.DataFrame:
         for var in variables
     ]
 
-    auxiliary_variables = _get_auxiliary_variables(
-        state_variables=info.query("is_state").index.tolist(),
+    enter_concurrent_valuation = _get_variables_that_enter_concurrent_valuation(
+        states_and_actions_names=list(variables),
         function_info=function_info,
         user_functions=model.functions,
     )
-    info["is_auxiliary"] = [var in auxiliary_variables for var in variables]
+    info["enters_concurrent_valuation"] = [
+        var in enter_concurrent_valuation for var in variables
+    ]
+
+    enter_transition = _get_variables_that_enter_transition(
+        states_and_actions_names=list(variables),
+        function_info=function_info,
+        user_functions=model.functions,
+    )
+    info["enters_transition"] = [var in enter_transition for var in variables]
 
     order = info.query("is_discrete & is_state").index.tolist()
     order += info.query("is_discrete & is_action").index.tolist()
@@ -88,33 +97,43 @@ def get_variable_info(model: Model) -> pd.DataFrame:
     return info.loc[order]
 
 
-def _get_auxiliary_variables(
-    state_variables: list[str],
+def _get_variables_that_enter_concurrent_valuation(
+    states_and_actions_names: list[str],
     function_info: pd.DataFrame,
     user_functions: dict[str, UserFunction],
 ) -> list[str]:
-    """Get state variables that only occur in next functions.
-
-    Args:
-        state_variables: List of state variable names.
-        function_info: A table with information about all
-            functions in the model. The index contains the name of a function. The
-            columns are booleans that are True if the function has the corresponding
-            property. The columns are: is_filter, is_constraint, is_next.
-        user_functions: Dictionary that maps names of functions to functions.
-
-    Returns:
-        List of state variable names that are only used in next functions.
-
-    """
-    non_next_functions = function_info.query("~is_next").index.tolist()
-    user_functions = {name: user_functions[name] for name in non_next_functions}
+    enters_Q_and_F_fn_names = [
+        "utility",
+        *function_info.query("is_constraint").index.tolist(),
+    ]
     ancestors = get_ancestors(
         user_functions,
-        targets=list(user_functions),
-        include_targets=True,
+        targets=enters_Q_and_F_fn_names,
+        include_targets=False,
     )
-    return list(set(state_variables).difference(set(ancestors)))
+    return list(set(states_and_actions_names).intersection(set(ancestors)))
+
+
+def _get_variables_that_enter_transition(
+    states_and_actions_names: list[str],
+    function_info: pd.DataFrame,
+    user_functions: dict[str, UserFunction],
+) -> list[str]:
+    """Get state and action variables that enter the transition functions.
+
+    Transition functions correspond to the "next_" functions in the model. This function
+    returns all state and action variables that occur as inputs to these functions.
+
+    Special variables such as the "_period" or parameters will be ignored.
+
+    """
+    next_fn_names = function_info.query("is_next").index.tolist()
+    ancestors = get_ancestors(
+        user_functions,
+        targets=next_fn_names,
+        include_targets=False,
+    )
+    return list(set(states_and_actions_names).intersection(set(ancestors)))
 
 
 def get_gridspecs(

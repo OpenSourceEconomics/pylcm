@@ -39,7 +39,7 @@ def create_state_action_space(
     """
     vi = model.variable_info
     if is_last_period:
-        vi = vi.query("~is_auxiliary")
+        vi = vi.query("enters_concurrent_valuation")
 
     if initial_states is None:
         states = {sn: model.grids[sn] for sn in vi.query("is_state").index}
@@ -82,7 +82,7 @@ def create_state_space_info(
     """
     vi = model.variable_info
     if is_last_period:
-        vi = vi.query("~is_auxiliary")
+        vi = vi.query("enters_concurrent_valuation")
 
     state_names = vi.query("is_state").index.tolist()
 
