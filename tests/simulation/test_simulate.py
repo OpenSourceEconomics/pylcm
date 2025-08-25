@@ -186,7 +186,7 @@ def test_effect_of_beta_on_last_period():
     solve_model, _ = get_lcm_function(model=model_config, targets="solve")
 
     # low beta
-    params_low = get_params(beta=0.5, disutility_of_work=1.0)
+    params_low = get_params(beta=0.9, disutility_of_work=1.0)
 
     # high beta
     params_high = get_params(beta=0.99, disutility_of_work=1.0)

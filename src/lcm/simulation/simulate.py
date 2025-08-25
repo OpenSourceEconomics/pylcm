@@ -8,6 +8,7 @@ import jax.numpy as jnp
 from jax import Array, vmap
 
 from lcm.dispatchers import simulation_spacemap, vmap_1d
+from lcm.error_handling import validate_value_function_array
 from lcm.interfaces import (
     InternalModel,
     InternalSimulationPeriodResults,
@@ -136,6 +137,11 @@ def simulate(
             **state_action_space.continuous_actions,
             next_V_arr=next_V_arr,
             params=params,
+        )
+
+        validate_value_function_array(
+            V_arr=V_arr,
+            period=period,
         )
 
         # Convert action indices to action values

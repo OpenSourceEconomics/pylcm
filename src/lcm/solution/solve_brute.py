@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
+from lcm.error_handling import validate_value_function_array
+
 if TYPE_CHECKING:
     import logging
 
@@ -50,6 +52,11 @@ def solve(
             **state_action_space.continuous_actions,
             next_V_arr=next_V_arr,
             params=params,
+        )
+
+        validate_value_function_array(
+            V_arr=V_arr,
+            period=period,
         )
 
         solution[period] = V_arr
