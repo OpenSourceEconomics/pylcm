@@ -165,7 +165,7 @@ def test_get_combined_constraint_illustrative(internal_model_illustrative):
 
 def test_get_multiply_weights():
     multiply_weights = _get_joint_weights_function(
-        stochastic_variables=["a", "b"],
+        stochastic_variables=("a", "b"),
     )
 
     a = jnp.array([1, 2])
