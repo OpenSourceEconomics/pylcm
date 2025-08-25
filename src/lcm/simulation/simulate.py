@@ -8,7 +8,7 @@ import jax.numpy as jnp
 from jax import Array, vmap
 
 from lcm.dispatchers import simulation_spacemap, vmap_1d
-from lcm.error_handling import validate_value_function_array_integrity
+from lcm.error_handling import validate_value_function_array
 from lcm.interfaces import (
     InternalModel,
     InternalSimulationPeriodResults,
@@ -122,7 +122,7 @@ def simulate(
             params=params,
         )
 
-        validate_value_function_array_integrity(
+        validate_value_function_array(
             V_arr=V_arr,
             period=period,
         )

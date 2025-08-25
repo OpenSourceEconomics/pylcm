@@ -4,7 +4,7 @@ from jax import Array
 from lcm.exceptions import InvalidValueFunctionError
 
 
-def validate_value_function_array_integrity(
+def validate_value_function_array(
     V_arr: Array,
     period: int,
 ) -> None:
