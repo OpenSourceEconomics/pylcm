@@ -1,6 +1,9 @@
 # AI
 CLAUDE.md
 
+# PyLCM logging
+.pylcm
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

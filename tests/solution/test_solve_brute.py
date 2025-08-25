@@ -44,7 +44,6 @@ def test_solve_brute():
         states_and_discrete_actions_names=("lazy", "working", "wealth"),
     )
     state_action_spaces = {0: _scs, 1: _scs}
-
     # ==================================================================================
     # create the Q_and_F functions
     # ==================================================================================

@@ -8,6 +8,7 @@ import jax.numpy as jnp
 from jax import Array, vmap
 
 from lcm.dispatchers import simulation_spacemap, vmap_1d
+from lcm.error_handling import validate_value_function_array
 from lcm.interfaces import (
     InternalModel,
     InternalSimulationPeriodResults,
@@ -80,7 +81,6 @@ def simulate(
         model=model,
         initial_states=initial_states,
     )
-
     # The following variables are updated during the forward simulation
     states = initial_states
     key = jax.random.key(seed=seed)
@@ -91,7 +91,6 @@ def simulate(
 
     for period in range(n_periods):
         state_action_space = state_action_space.replace(states)
-
         discrete_actions_grid_shape = tuple(
             len(grid) for grid in state_action_space.discrete_actions.values()
         )
@@ -121,6 +120,11 @@ def simulate(
             **state_action_space.continuous_actions,
             next_V_arr=next_V_arr,
             params=params,
+        )
+
+        validate_value_function_array(
+            V_arr=V_arr,
+            period=period,
         )
 
         # Convert action indices to action values
