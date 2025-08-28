@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import jax
+
 from lcm.grids import ContinuousGrid, DiscreteGrid
 from lcm.interfaces import InternalModel, StateActionSpace, StateSpaceInfo
 
@@ -50,16 +51,18 @@ def create_state_action_space(
             sucess = False
             for state in _states:
                 if (_states[state].shape[0] % device_count) == 0:
-                    mesh = jax.make_mesh((device_count,), ('x'))
-                    sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
+                    mesh = jax.make_mesh((device_count,), ("x"))
+                    sharding = jax.sharding.NamedSharding(
+                        mesh, jax.sharding.PartitionSpec("x")
+                    )
                     _states[state] = jax.device_put(_states[state], device=sharding)
                     sucess = True
                     break
             if not sucess:
                 raise ValueError(
-                "If you want to use multiple devices, at least one state variable has to"
-                f" have a number of gridpoints divisible by the number of available devices.\n"
-                f"Available devices: {device_count}",
+                    "If you want to use multiple devices, at least one state variable has to"
+                    f" have a number of gridpoints divisible by the number of available devices.\n"
+                    f"Available devices: {device_count}",
                 )
     else:
         _validate_all_states_present(
@@ -67,7 +70,6 @@ def create_state_action_space(
             required_states_names=set(vi.query("is_state").index),
         )
         _states = states
-
 
     discrete_actions = {
         name: model.grids[name] for name in vi.query("is_action & is_discrete").index

@@ -109,7 +109,7 @@ def get_lcm_function(
         state_action_space = create_state_action_space(
             model=internal_model,
             is_last_period=is_last_period,
-            multi_device_support=multi_device_support
+            multi_device_support=multi_device_support,
         )
 
         state_space_info = create_state_space_info(
