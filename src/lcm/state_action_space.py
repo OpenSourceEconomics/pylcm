@@ -46,30 +46,38 @@ def create_state_action_space(
 
     if states is None:
         _states = {sn: model.grids[sn] for sn in vi.query("is_state").index}
-        if multi_device_support:
-            device_count = jax.device_count()
-            sucess = False
-            for state in _states:
-                if (_states[state].shape[0] % device_count) == 0:
-                    mesh = jax.make_mesh((device_count,), ("x"))
-                    sharding = jax.sharding.NamedSharding(
-                        mesh, jax.sharding.PartitionSpec("x")
-                    )
-                    _states[state] = jax.device_put(_states[state], device=sharding)
-                    sucess = True
-                    break
-            if not sucess:
-                raise ValueError(
-                    "If you want to use multiple devices, at least one state variable has to"
-                    f" have a number of gridpoints divisible by the number of available devices.\n"
-                    f"Available devices: {device_count}",
-                )
     else:
         _validate_all_states_present(
             provided_states=states,
             required_states_names=set(vi.query("is_state").index),
         )
         _states = states
+
+    if multi_device_support:
+        device_count = jax.device_count()
+        sucess = False
+        for key, value in _states.items():
+            if (value.shape[0] % device_count) == 0:
+                mesh = jax.make_mesh((device_count,), ("x"))
+                sharding = jax.sharding.NamedSharding(
+                    mesh, jax.sharding.PartitionSpec("x")
+                )
+                _states[key] = jax.device_put(value, device=sharding)
+                sucess = True
+                break
+        if not sucess:
+            if states is None:
+                raise ValueError(
+                    "If you want to use multiple devices, the number of initial states "
+                    "has to be divisible by the number of available devices.\n"
+                    f"Available devices: {device_count}",
+                )
+            raise ValueError(
+                "If you want to use multiple devices, at least one state variable "
+                "has to have a number of gridpoints divisible by the number"
+                " of available devices.\n"
+                f"Available devices: {device_count}",
+            )
 
     discrete_actions = {
         name: model.grids[name] for name in vi.query("is_action & is_discrete").index
