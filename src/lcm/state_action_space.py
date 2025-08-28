@@ -55,29 +55,16 @@ def create_state_action_space(
 
     if multi_device_support:
         device_count = jax.device_count()
-        sucess = False
-        for key, value in _states.items():
-            if (value.shape[0] % device_count) == 0:
-                mesh = jax.make_mesh((device_count,), ("x"))
-                sharding = jax.sharding.NamedSharding(
-                    mesh, jax.sharding.PartitionSpec("x")
-                )
-                _states[key] = jax.device_put(value, device=sharding)
-                sucess = True
-                break
-        if not sucess:
-            if states is None:
-                raise ValueError(
-                    "If you want to use multiple devices, the number of initial states "
-                    "has to be divisible by the number of available devices.\n"
-                    f"Available devices: {device_count}",
-                )
-            raise ValueError(
-                "If you want to use multiple devices, at least one state variable "
-                "has to have a number of gridpoints divisible by the number"
-                " of available devices.\n"
-                f"Available devices: {device_count}",
-            )
+        divisible_state_name = _find_divisible_state(
+            states=_states, device_count=device_count, simulation=states is None
+        )
+        mesh = jax.make_mesh((device_count,), (divisible_state_name,))
+        sharding = jax.sharding.NamedSharding(
+            mesh, jax.sharding.PartitionSpec(divisible_state_name)
+        )
+        _states[divisible_state_name] = jax.device_put(
+            _states[divisible_state_name], device=sharding
+        )
 
     discrete_actions = {
         name: model.grids[name] for name in vi.query("is_action & is_discrete").index
@@ -151,3 +138,23 @@ def _validate_all_states_present(
             f"\n\nMissing initial states: {missing}\n",
             f"Provided variables that are not states: {too_many}",
         )
+
+
+def _find_divisible_state(
+    states: dict[str, Array], device_count: int, *, simulation: bool
+) -> str:
+    for key, value in states.items():
+        if (value.shape[0] % device_count) == 0:
+            return key
+    if simulation:
+        raise ValueError(
+            "If you want to use multiple devices, the number of initial states "
+            "has to be divisible by the number of available devices.\n"
+            f"Available devices: {device_count}",
+        )
+    raise ValueError(
+        "If you want to use multiple devices, at least one state variable "
+        "has to have a number of gridpoints divisible by the number"
+        " of available devices.\n"
+        f"Available devices: {device_count}",
+    )
