@@ -1,4 +1,16 @@
-"""Test new Model solve/simulate methods."""
+"""Test new Model solve/simulate methods.
+
+This module tests the new Model class methods (solve, simulate, solve_and_simulate)
+that were added to replace the get_lcm_function approach. It includes:
+
+1. Tests for the new Model methods themselves
+2. Backward compatibility tests to ensure get_lcm_function still works
+3. Equivalence tests to ensure both approaches give identical results
+
+The backward compatibility tests (test_model_solve_method_equivalent_to_get_lcm_function)
+explicitly test that the deprecated get_lcm_function gives identical results to the
+new Model methods.
+"""
 
 from __future__ import annotations
 

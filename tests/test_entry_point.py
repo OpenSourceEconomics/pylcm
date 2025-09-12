@@ -414,3 +414,41 @@ def test_order_of_states_and_actions_does_not_matter():
     V_arr_dict_swapped = solve_model_swapped(params)
 
     assert tree_equal(V_arr_dict, V_arr_dict_swapped)
+
+
+# ======================================================================================
+# Test new Model methods equivalence
+# ======================================================================================
+
+
+def test_model_solve_equivalent_to_get_lcm_function_solve():
+    """Test that Model.solve() gives identical results to get_lcm_function."""
+    model = get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=3)
+    params = tree_map(lambda _: 0.2, model.params_template)
+    
+    # Old approach
+    solve_old, _ = get_lcm_function(model=model, targets="solve")
+    solution_old = solve_old(params)
+    
+    # New approach  
+    solution_new = model.solve(params)
+    
+    # Should give identical results
+    assert tree_equal(solution_old, solution_new)
+
+
+def test_model_solve_and_simulate_equivalent_to_get_lcm_function():
+    """Test that Model.solve_and_simulate() gives identical results to get_lcm_function."""
+    model = get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=3)
+    params = tree_map(lambda _: 0.2, model.params_template)
+    initial_states = {"wealth": jnp.array([1.0, 10.0, 50.0])}
+    
+    # Old approach
+    solve_and_simulate_old, _ = get_lcm_function(model=model, targets="solve_and_simulate")
+    result_old = solve_and_simulate_old(params, initial_states=initial_states)
+    
+    # New approach
+    result_new = model.solve_and_simulate(params, initial_states=initial_states)
+    
+    # Should give identical results
+    assert tree_equal(result_old, result_new)

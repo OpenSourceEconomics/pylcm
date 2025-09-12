@@ -115,7 +115,7 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
     return _model_solution
 
 
-def test_simulate_using_get_lcm_function(
+def test_simulate_using_model_methods(
     iskhakov_et_al_2017_stripped_down_model_solution,
 ):
     n_periods = 3
@@ -123,9 +123,7 @@ def test_simulate_using_get_lcm_function(
         n_periods=n_periods,
     )
 
-    simulate_model, _ = get_lcm_function(model=model, targets="simulate")
-
-    res: pd.DataFrame = simulate_model(  # type: ignore[assignment]
+    res: pd.DataFrame = model.simulate(
         params,
         V_arr_dict=V_arr_dict,
         initial_states={
@@ -160,9 +158,7 @@ def test_simulate_with_only_discrete_actions():
     model = get_model_config("iskhakov_et_al_2017_discrete", n_periods=2)
     params = get_params(wage=1.5, beta=1, interest_rate=0)
 
-    simulate_model, _ = get_lcm_function(model=model, targets="solve_and_simulate")
-
-    res: pd.DataFrame = simulate_model(  # type: ignore[assignment]
+    res: pd.DataFrame = model.solve_and_simulate(
         params,
         initial_states={"wealth": jnp.array([0, 4])},
         additional_targets=["labor_income", "working"],
@@ -181,10 +177,6 @@ def test_simulate_with_only_discrete_actions():
 def test_effect_of_beta_on_last_period():
     model_config = get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=5)
 
-    # Model solutions
-    # ==================================================================================
-    solve_model, _ = get_lcm_function(model=model_config, targets="solve")
-
     # low beta
     params_low = get_params(beta=0.9, disutility_of_work=1.0)
 
@@ -192,22 +184,20 @@ def test_effect_of_beta_on_last_period():
     params_high = get_params(beta=0.99, disutility_of_work=1.0)
 
     # solutions
-    solution_low = solve_model(params_low)
-    solution_high = solve_model(params_high)
+    solution_low = model_config.solve(params_low)
+    solution_high = model_config.solve(params_high)
 
     # Simulate
     # ==================================================================================
-    simulate_model, _ = get_lcm_function(model=model_config, targets="simulate")
-
     initial_wealth = jnp.array([20.0, 50, 70])
 
-    res_low: pd.DataFrame = simulate_model(  # type: ignore[assignment]
+    res_low: pd.DataFrame = model_config.simulate(
         params_low,
         V_arr_dict=solution_low,
         initial_states={"wealth": initial_wealth},
     )
 
-    res_high: pd.DataFrame = simulate_model(  # type: ignore[assignment]
+    res_high: pd.DataFrame = model_config.simulate(
         params_high,
         V_arr_dict=solution_high,
         initial_states={"wealth": initial_wealth},
@@ -225,10 +215,6 @@ def test_effect_of_beta_on_last_period():
 def test_effect_of_disutility_of_work():
     model_config = get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=5)
 
-    # Model solutions
-    # ==================================================================================
-    solve_model, _ = get_lcm_function(model=model_config, targets="solve")
-
     # low disutility_of_work
     params_low = get_params(beta=1.0, disutility_of_work=0.2)
 
@@ -236,22 +222,20 @@ def test_effect_of_disutility_of_work():
     params_high = get_params(beta=1.0, disutility_of_work=1.5)
 
     # solutions
-    solution_low = solve_model(params_low)
-    solution_high = solve_model(params_high)
+    solution_low = model_config.solve(params_low)
+    solution_high = model_config.solve(params_high)
 
     # Simulate
     # ==================================================================================
-    simulate_model, _ = get_lcm_function(model=model_config, targets="simulate")
-
     initial_wealth = jnp.array([20.0, 50, 70])
 
-    res_low: pd.DataFrame = simulate_model(  # type: ignore[assignment]
+    res_low: pd.DataFrame = model_config.simulate(
         params_low,
         V_arr_dict=solution_low,
         initial_states={"wealth": initial_wealth},
     )
 
-    res_high: pd.DataFrame = simulate_model(  # type: ignore[assignment]
+    res_high: pd.DataFrame = model_config.simulate(
         params_high,
         V_arr_dict=solution_high,
         initial_states={"wealth": initial_wealth},
