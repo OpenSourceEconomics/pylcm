@@ -14,7 +14,7 @@ from lcm.max_Q_over_c import (
 )
 from lcm.Q_and_F import get_Q_and_F
 from lcm.state_action_space import create_state_space_info
-from tests.test_models import get_model_config
+from tests.test_models import get_model
 from tests.test_models.deterministic import RetirementStatus
 from tests.test_models.deterministic import utility as iskhakov_et_al_2017_utility
 from tests.test_models.discrete_deterministic import ConsumptionChoice
@@ -41,7 +41,7 @@ STRIPPED_DOWN_AND_DISCRETE_MODELS = [
 
 
 def test_get_lcm_function_with_solve_target_stripped_down():
-    model = get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=3)
+    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
     solve_model, params_template = get_lcm_function(model=model, targets="solve")
 
     params = tree_map(lambda _: 0.2, params_template)
@@ -50,7 +50,7 @@ def test_get_lcm_function_with_solve_target_stripped_down():
 
 
 def test_get_lcm_function_with_solve_target_fully_discrete():
-    model = get_model_config("iskhakov_et_al_2017_discrete", n_periods=3)
+    model = get_model("iskhakov_et_al_2017_discrete", n_periods=3)
     solve_model, params_template = get_lcm_function(model=model, targets="solve")
 
     params = tree_map(lambda _: 0.2, params_template)
@@ -64,7 +64,7 @@ def test_get_lcm_function_with_solve_target_fully_discrete():
 
 
 def test_get_lcm_function_with_simulation_target_simple_stripped_down():
-    model = get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=3)
+    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
 
     simulate, params_template = get_lcm_function(
         model=model,
@@ -82,7 +82,7 @@ def test_get_lcm_function_with_simulation_target_simple_stripped_down():
 
 
 def test_get_lcm_function_with_simulation_target_simple_fully_discrete():
-    model = get_model_config("iskhakov_et_al_2017_discrete", n_periods=3)
+    model = get_model("iskhakov_et_al_2017_discrete", n_periods=3)
 
     simulate, params_template = get_lcm_function(
         model=model,
@@ -101,7 +101,7 @@ def test_get_lcm_function_with_simulation_target_simple_fully_discrete():
 
 @pytest.mark.parametrize(
     "model",
-    [get_model_config(name, n_periods=3) for name in STRIPPED_DOWN_AND_DISCRETE_MODELS],
+    [get_model(name, n_periods=3) for name in STRIPPED_DOWN_AND_DISCRETE_MODELS],
     ids=STRIPPED_DOWN_AND_DISCRETE_MODELS,
 )
 def test_get_lcm_function_with_simulation_is_coherent(model):
@@ -144,7 +144,7 @@ def test_get_lcm_function_with_simulation_is_coherent(model):
 
 @pytest.mark.parametrize(
     "model",
-    [get_model_config("iskhakov_et_al_2017", n_periods=3)],
+    [get_model("iskhakov_et_al_2017", n_periods=3)],
     ids=["iskhakov_et_al_2017"],
 )
 def test_get_lcm_function_with_simulation_target_iskhakov_et_al_2017(model):
@@ -179,7 +179,7 @@ def test_get_lcm_function_with_simulation_target_iskhakov_et_al_2017(model):
 
 def test_get_max_Q_over_c():
     model = process_model(
-        get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=3),
+        get_model("iskhakov_et_al_2017_stripped_down", n_periods=3),
     )
 
     params = {
@@ -224,7 +224,7 @@ def test_get_max_Q_over_c():
 
 def test_get_max_Q_over_c_with_discrete_model():
     model = process_model(
-        get_model_config("iskhakov_et_al_2017_discrete", n_periods=3),
+        get_model("iskhakov_et_al_2017_discrete", n_periods=3),
     )
 
     params = {
@@ -274,7 +274,7 @@ def test_get_max_Q_over_c_with_discrete_model():
 
 def test_argmax_and_max_Q_over_c():
     model = process_model(
-        get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=3),
+        get_model("iskhakov_et_al_2017_stripped_down", n_periods=3),
     )
 
     params = {
@@ -319,7 +319,7 @@ def test_argmax_and_max_Q_over_c():
 
 def test_argmax_and_max_Q_over_c_with_discrete_model():
     model = process_model(
-        get_model_config("iskhakov_et_al_2017_discrete", n_periods=3),
+        get_model("iskhakov_et_al_2017_discrete", n_periods=3),
     )
 
     params = {
@@ -368,7 +368,7 @@ def test_argmax_and_max_Q_over_c_with_discrete_model():
 
 
 def test_get_lcm_function_with_period_argument_in_constraint():
-    model = get_model_config("iskhakov_et_al_2017", n_periods=3)
+    model = get_model("iskhakov_et_al_2017", n_periods=3)
 
     def absorbing_retirement_constraint(
         retirement: DiscreteAction,
@@ -398,7 +398,7 @@ def _reverse_dict(d: dict[str, Any]) -> dict[str, Any]:
 
 
 def test_order_of_states_and_actions_does_not_matter():
-    model = get_model_config("iskhakov_et_al_2017", n_periods=3)
+    model = get_model("iskhakov_et_al_2017", n_periods=3)
 
     # Create a new model with the order of states and actions swapped
     model_swapped = model.replace(
@@ -423,32 +423,34 @@ def test_order_of_states_and_actions_does_not_matter():
 
 def test_model_solve_equivalent_to_get_lcm_function_solve():
     """Test that Model.solve() gives identical results to get_lcm_function."""
-    model = get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=3)
+    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
     params = tree_map(lambda _: 0.2, model.params_template)
-    
+
     # Old approach
     solve_old, _ = get_lcm_function(model=model, targets="solve")
     solution_old = solve_old(params)
-    
-    # New approach  
+
+    # New approach
     solution_new = model.solve(params)
-    
+
     # Should give identical results
     assert tree_equal(solution_old, solution_new)
 
 
 def test_model_solve_and_simulate_equivalent_to_get_lcm_function():
-    """Test that Model.solve_and_simulate() gives identical results to get_lcm_function."""
-    model = get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=3)
+    """Test Model.solve_and_simulate() equivalent to get_lcm_function."""
+    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
     params = tree_map(lambda _: 0.2, model.params_template)
     initial_states = {"wealth": jnp.array([1.0, 10.0, 50.0])}
-    
+
     # Old approach
-    solve_and_simulate_old, _ = get_lcm_function(model=model, targets="solve_and_simulate")
+    solve_and_simulate_old, _ = get_lcm_function(
+        model=model, targets="solve_and_simulate"
+    )
     result_old = solve_and_simulate_old(params, initial_states=initial_states)
-    
+
     # New approach
     result_new = model.solve_and_simulate(params, initial_states=initial_states)
-    
+
     # Should give identical results
     assert tree_equal(result_old, result_new)

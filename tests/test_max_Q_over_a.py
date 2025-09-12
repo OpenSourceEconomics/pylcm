@@ -22,7 +22,7 @@ from lcm.simulation.simulate import (
 )
 from lcm.state_action_space import create_state_action_space, create_state_space_info
 from tests.test_models import (
-    get_model_config,
+    get_model,
 )
 
 if TYPE_CHECKING:
@@ -33,12 +33,12 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def model_input():
-    _model_config = get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=1)
+    _model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=1)
     # Modify the model to have a coarser continuous action space for testing
-    actions = _model_config.actions
+    actions = _model.actions
     actions["consumption"] = actions["consumption"].replace(stop=20)  # type: ignore[attr-defined]
-    model_config = _model_config.replace(actions=actions)
-    model = process_model(model_config)
+    model = _model.replace(actions=actions)
+    model = process_model(model)
 
     state_space_info = create_state_space_info(
         model=model,

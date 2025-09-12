@@ -9,7 +9,7 @@ from pandas.testing import assert_frame_equal
 
 from lcm._config import TEST_DATA
 from lcm.entry_point import get_lcm_function
-from tests.test_models import get_model_config, get_params
+from tests.test_models import get_model, get_params
 
 if TYPE_CHECKING:
     from lcm.typing import FloatND
@@ -29,9 +29,9 @@ def test_regression_test():
 
     # Generate current lcm ouput
     # ==================================================================================
-    model_config = get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=3)
+    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
 
-    solve, _ = get_lcm_function(model=model_config, targets="solve")
+    solve, _ = get_lcm_function(model=model, targets="solve")
 
     params = get_params(
         beta=0.95,
@@ -41,7 +41,7 @@ def test_regression_test():
     got_solve: dict[int, FloatND] = solve(params)  # type: ignore[assignment]
 
     solve_and_simulate, _ = get_lcm_function(
-        model=model_config,
+        model=model,
         targets="solve_and_simulate",
     )
 

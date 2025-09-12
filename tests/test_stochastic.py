@@ -8,10 +8,7 @@ import pytest
 from numpy.testing import assert_array_almost_equal
 
 import lcm
-from lcm.entry_point import (
-    get_lcm_function,
-)
-from tests.test_models import get_model_config, get_params
+from tests.test_models import get_model, get_params
 
 if TYPE_CHECKING:
     from lcm.typing import FloatND
@@ -22,8 +19,8 @@ if TYPE_CHECKING:
 
 
 def test_model_solve_and_simulate_with_stochastic_model():
-    model = get_model_config("iskhakov_et_al_2017_stochastic", n_periods=3)
-    
+    model = get_model("iskhakov_et_al_2017_stochastic", n_periods=3)
+
     res: pd.DataFrame = model.solve_and_simulate(
         params=get_params(),
         initial_states={
@@ -52,7 +49,7 @@ def test_model_solve_and_simulate_with_stochastic_model():
 
 
 def test_model_solve_with_stochastic_model():
-    model = get_model_config("iskhakov_et_al_2017_stochastic", n_periods=3)
+    model = get_model("iskhakov_et_al_2017_stochastic", n_periods=3)
     model.solve(params=get_params())
 
 
@@ -68,13 +65,8 @@ def model_and_params():
     TODO(@timmens): Add this to tests/test_models/stochastic.py.
 
     """
-    model_deterministic = get_model_config(
-        "iskhakov_et_al_2017_stochastic", n_periods=3
-    )
-    model_stochastic = get_model_config("iskhakov_et_al_2017_stochastic", n_periods=3)
 
-    # Overwrite health transition with simple stochastic version and deterministic one
-    # ==================================================================================
+    # Define functions first
     @lcm.mark.stochastic
     def next_health_stochastic(health):
         pass
@@ -82,8 +74,18 @@ def model_and_params():
     def next_health_deterministic(health):
         return health
 
-    model_deterministic.functions["next_health"] = next_health_deterministic
-    model_stochastic.functions["next_health"] = next_health_stochastic
+    # Get the base models and create modified versions
+    base_model = get_model("iskhakov_et_al_2017_stochastic", n_periods=3)
+
+    # Create deterministic model with modified function
+    model_deterministic = base_model.replace(
+        functions={**base_model.functions, "next_health": next_health_deterministic}
+    )
+
+    # Create stochastic model with modified function
+    model_stochastic = base_model.replace(
+        functions={**base_model.functions, "next_health": next_health_stochastic}
+    )
 
     params = get_params(
         beta=0.95,

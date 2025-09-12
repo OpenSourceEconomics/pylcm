@@ -9,11 +9,11 @@ from lcm.state_action_space import (
     create_state_action_space,
     create_state_space_info,
 )
-from tests.test_models import get_model_config
+from tests.test_models import get_model
 
 
 def test_create_state_action_space_solution():
-    model = get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=3)
+    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
     internal_model = process_model(model)
 
     state_action_space = create_state_action_space(
@@ -32,8 +32,8 @@ def test_create_state_action_space_solution():
 
 
 def test_create_state_action_space_simulation():
-    model_config = get_model_config("iskhakov_et_al_2017", n_periods=3)
-    model = process_model(model_config)
+    model = get_model("iskhakov_et_al_2017", n_periods=3)
+    model = process_model(model)
     got_space = create_state_action_space(
         model=model,
         states={
@@ -47,7 +47,7 @@ def test_create_state_action_space_simulation():
 
 
 def test_create_state_space_info():
-    model = get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=3)
+    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
     internal_model = process_model(model)
 
     state_space_info = create_state_space_info(
@@ -62,8 +62,8 @@ def test_create_state_space_info():
 
 
 def test_create_state_action_space_replace():
-    model_config = get_model_config("iskhakov_et_al_2017", n_periods=3)
-    model = process_model(model_config)
+    model = get_model("iskhakov_et_al_2017", n_periods=3)
+    model = process_model(model)
     space = create_state_action_space(
         model=model,
         states={

@@ -9,7 +9,7 @@ from pybaum import tree_equal
 from lcm.input_processing import process_model
 from lcm.interfaces import InternalModel, ShockType, Target
 from lcm.next_state import _create_stochastic_next_func, get_next_state_function
-from tests.test_models import get_model_config
+from tests.test_models import get_model
 
 if TYPE_CHECKING:
     from lcm.typing import ContinuousState, FloatND, ParamsDict
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 def test_get_next_state_function_with_solve_target():
     model = process_model(
-        get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=3),
+        get_model("iskhakov_et_al_2017_stripped_down", n_periods=3),
     )
     got_func = get_next_state_function(
         model=model,

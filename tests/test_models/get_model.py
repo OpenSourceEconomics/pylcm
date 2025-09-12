@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from copy import deepcopy
 from typing import TYPE_CHECKING
 
@@ -23,9 +24,20 @@ TEST_MODELS = {
 }
 
 
+def get_model(model_name: str, n_periods: int) -> Model:
+    model = deepcopy(TEST_MODELS[model_name])
+    return model.replace(n_periods=n_periods)
+
+
+# Backward compatibility alias - will be removed in next version
 def get_model_config(model_name: str, n_periods: int) -> Model:
-    model_config = deepcopy(TEST_MODELS[model_name])
-    return model_config.replace(n_periods=n_periods)
+    """Deprecated: Use get_model() instead."""
+    warnings.warn(
+        "get_model_config() is deprecated. Use get_model() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return get_model(model_name, n_periods)
 
 
 def get_params(
