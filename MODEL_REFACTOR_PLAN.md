@@ -52,7 +52,7 @@ class Model:
     functions: dict[str, UserFunction] = field(default_factory=dict)
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
-    
+
     # NEW: Add computed attributes (set in __post_init__)
     internal_model: InternalModel = field(init=False)
     params_template: ParamsDict = field(init=False)
@@ -96,48 +96,48 @@ if TYPE_CHECKING:
 def __post_init__(self) -> None:
     _validate_attribute_types(self)
     _validate_logical_consistency(self)
-    
+
     # Process model to internal representation
     internal_model = process_model(self)
     object.__setattr__(self, 'internal_model', internal_model)
     object.__setattr__(self, 'params_template', internal_model.params)
-    
+
     # Initialize containers
     last_period = internal_model.n_periods - 1
     state_action_spaces: dict[int, StateActionSpace] = {}
     state_space_infos: dict[int, StateSpaceInfo] = {}
     max_Q_over_a_functions: dict[int, MaxQOverAFunction] = {}
     argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction] = {}
-    
+
     # Create functions for each period (reversed order like get_lcm_function)
     for period in reversed(range(internal_model.n_periods)):
         is_last_period = period == last_period
-        
+
         # Create state action space
         state_action_space = create_state_action_space(
             model=internal_model,
             is_last_period=is_last_period,
         )
-        
-        # Create state space info  
+
+        # Create state space info
         state_space_info = create_state_space_info(
             model=internal_model,
             is_last_period=is_last_period,
         )
-        
+
         # Determine next state space info
         if is_last_period:
             next_state_space_info = _get_last_periods_next_state_space_info()
         else:
             next_state_space_info = state_space_infos[period + 1]
-        
+
         # Create Q and F functions
         Q_and_F = get_Q_and_F(
             model=internal_model,
             next_state_space_info=next_state_space_info,
             period=period,
         )
-        
+
         # Create optimization functions
         max_Q_over_a = get_max_Q_over_a(
             Q_and_F=Q_and_F,
@@ -145,22 +145,22 @@ def __post_init__(self) -> None:
             + tuple(state_action_space.discrete_actions),
             states_names=tuple(state_action_space.states),
         )
-        
+
         argmax_and_max_Q_over_a = get_argmax_and_max_Q_over_a(
             Q_and_F=Q_and_F,
             actions_names=tuple(state_action_space.discrete_actions)
             + tuple(state_action_space.continuous_actions),
         )
-        
+
         # Store results
         state_action_spaces[period] = state_action_space
         state_space_infos[period] = state_space_info
         max_Q_over_a_functions[period] = jax.jit(max_Q_over_a)  # Default JIT enabled
         argmax_and_max_Q_over_a_functions[period] = jax.jit(argmax_and_max_Q_over_a)
-    
+
     # Set computed attributes using object.__setattr__ (frozen dataclass)
     object.__setattr__(self, 'state_action_spaces', state_action_spaces)
-    object.__setattr__(self, 'state_space_infos', state_space_infos) 
+    object.__setattr__(self, 'state_space_infos', state_space_infos)
     object.__setattr__(self, 'max_Q_over_a_functions', max_Q_over_a_functions)
     object.__setattr__(self, 'argmax_and_max_Q_over_a_functions', argmax_and_max_Q_over_a_functions)
 
@@ -185,19 +185,19 @@ def solve(
     debug_mode: bool = True,
 ) -> dict[int, FloatND]:
     """Solve the model using the pre-computed functions.
-    
+
     Args:
         params: Model parameters matching the template from self.params_template
         debug_mode: Whether to enable debug logging
-    
+
     Returns:
         Dictionary mapping period to value function arrays
     """
     from lcm.logging import get_logger
     from lcm.solution.solve_brute import solve
-    
+
     logger = get_logger(debug_mode=debug_mode)
-    
+
     return solve(
         params=params,
         state_action_spaces=self.state_action_spaces,
@@ -208,7 +208,7 @@ def solve(
 
 #### 2.2 Add simulate() Method
 
-```python  
+```python
 def simulate(
     self,
     params: ParamsDict,
@@ -220,23 +220,23 @@ def simulate(
     debug_mode: bool = True,
 ) -> pd.DataFrame:
     """Simulate the model forward using pre-computed functions.
-    
+
     Args:
-        params: Model parameters 
+        params: Model parameters
         initial_states: Initial state values
         V_arr_dict: Value function arrays from solve()
         additional_targets: Additional targets to compute
         seed: Random seed
         debug_mode: Whether to enable debug logging
-    
+
     Returns:
         Simulation results as DataFrame
     """
     from lcm.logging import get_logger
     from lcm.simulation.simulate import simulate
-    
+
     logger = get_logger(debug_mode=debug_mode)
-    
+
     return simulate(
         params=params,
         initial_states=initial_states,
@@ -262,14 +262,14 @@ def solve_and_simulate(
     debug_mode: bool = True,
 ) -> pd.DataFrame:
     """Solve and then simulate the model in one call.
-    
+
     Args:
         params: Model parameters
-        initial_states: Initial state values  
+        initial_states: Initial state values
         additional_targets: Additional targets to compute
         seed: Random seed
         debug_mode: Whether to enable debug logging
-    
+
     Returns:
         Simulation results as DataFrame
     """
@@ -299,8 +299,8 @@ def get_lcm_function(
     jit: bool = True,  # Ignored - always JIT now
 ) -> tuple[Callable[..., dict[int, Array] | pd.DataFrame], ParamsDict]:
     """Entry point for users to get high level functions generated by lcm.
-    
-    NOTE: This function is deprecated. Use Model.solve(), Model.simulate(), 
+
+    NOTE: This function is deprecated. Use Model.solve(), Model.simulate(),
     or Model.solve_and_simulate() methods directly instead.
     """
     import warnings
@@ -310,10 +310,10 @@ def get_lcm_function(
         DeprecationWarning,
         stacklevel=2
     )
-    
+
     if targets == "solve":
         return partial(model.solve, debug_mode=debug_mode), model.params_template
-    elif targets == "simulate":  
+    elif targets == "simulate":
         return partial(model.simulate, debug_mode=debug_mode), model.params_template
     elif targets == "solve_and_simulate":
         return partial(model.solve_and_simulate, debug_mode=debug_mode), model.params_template
@@ -327,7 +327,7 @@ def get_lcm_function(
 
 Based on grep analysis, these test files import `get_lcm_function`:
 - `tests/test_stochastic.py`
-- `tests/test_regression_test.py` 
+- `tests/test_regression_test.py`
 - `tests/test_error_handling.py`
 - `tests/test_entry_point.py`
 - `tests/test_analytical_solution.py`
@@ -351,36 +351,36 @@ def test_model_solve_method():
     """Test Model.solve() method works correctly."""
     model = get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=3)
     params = tree_map(lambda _: 0.2, model.params_template)
-    
+
     # Test solve method
     solution = model.solve(params)
-    
+
     assert isinstance(solution, dict)
     assert len(solution) == 3
     assert all(period in solution for period in range(3))
 
 
 def test_model_simulate_method():
-    """Test Model.simulate() method works correctly.""" 
+    """Test Model.simulate() method works correctly."""
     model = get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=3)
     params = tree_map(lambda _: 0.2, model.params_template)
-    
+
     # Solve first
     solution = model.solve(params)
-    
+
     # Create initial states
     initial_states = {
         "wealth": jnp.array([10.0, 20.0]),
         "lagged_retirement": jnp.array([0, 0]),
     }
-    
+
     # Test simulate method
     results = model.simulate(
         params=params,
-        initial_states=initial_states, 
+        initial_states=initial_states,
         V_arr_dict=solution,
     )
-    
+
     assert isinstance(results, pd.DataFrame)
     assert len(results) > 0
 
@@ -389,18 +389,18 @@ def test_model_solve_and_simulate_method():
     """Test Model.solve_and_simulate() method works correctly."""
     model = get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=3)
     params = tree_map(lambda _: 0.2, model.params_template)
-    
+
     initial_states = {
         "wealth": jnp.array([10.0, 20.0]),
         "lagged_retirement": jnp.array([0, 0]),
     }
-    
+
     # Test combined method
     results = model.solve_and_simulate(
         params=params,
         initial_states=initial_states,
     )
-    
+
     assert isinstance(results, pd.DataFrame)
     assert len(results) > 0
 
@@ -408,14 +408,14 @@ def test_model_solve_and_simulate_method():
 def test_model_initialization_timing():
     """Test that Model initialization completes without errors."""
     import time
-    
+
     start_time = time.time()
     model = get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=5)
     init_time = time.time() - start_time
-    
+
     # Should complete initialization in reasonable time
     assert init_time < 30  # 30 seconds should be more than enough
-    
+
     # Check all required attributes are present
     assert hasattr(model, 'internal_model')
     assert hasattr(model, 'params_template')
@@ -427,20 +427,20 @@ def test_model_initialization_timing():
 def test_model_params_template_matches_internal():
     """Test that params_template matches internal_model.params."""
     model = get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    
+
     assert model.params_template == model.internal_model.params
 
 
 @pytest.mark.parametrize("model_name", [
     "iskhakov_et_al_2017",
-    "iskhakov_et_al_2017_stripped_down", 
+    "iskhakov_et_al_2017_stripped_down",
     "iskhakov_et_al_2017_discrete",
     "iskhakov_et_al_2017_stochastic",
 ])
 def test_model_initialization_all_configs(model_name):
     """Test Model initialization works for all test configurations."""
     model = get_model_config(model_name, n_periods=2)
-    
+
     # Should complete without error
     assert model.internal_model is not None
     assert len(model.state_action_spaces) == 2
@@ -458,14 +458,14 @@ def test_model_solve_method_equivalent_to_get_lcm_function():
     """Test new Model.solve() gives same results as get_lcm_function."""
     model = get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=3)
     params = tree_map(lambda _: 0.2, model.params_template)
-    
+
     # Old approach
     solve_old, _ = get_lcm_function(model=model, targets="solve")
     solution_old = solve_old(params)
-    
-    # New approach  
+
+    # New approach
     solution_new = model.solve(params)
-    
+
     # Should give identical results
     assert tree_equal(solution_old, solution_new)
 ```
@@ -485,7 +485,7 @@ The `Model` class now includes built-in methods for solving and simulation:
 - `model.solve(params)` - Solve the model and return value function arrays
 - Access pre-computed components via `model.state_action_spaces`, `model.max_Q_over_a_functions`
 
-### Simulation  
+### Simulation
 - `model.simulate(params, initial_states, V_arr_dict)` - Simulate forward given solution
 - `model.solve_and_simulate(params, initial_states)` - Combined solve and simulate
 
@@ -513,9 +513,9 @@ def __post_init__(self) -> None:
     try:
         _validate_attribute_types(self)
         _validate_logical_consistency(self)
-        
+
         # ... existing initialization code ...
-        
+
     except Exception as e:
         raise ModelInitilizationError(
             f"Failed to initialize Model. Error during function compilation: {e}"
@@ -527,13 +527,13 @@ def __post_init__(self) -> None:
 Add option to control JIT compilation:
 
 ```python
-@dataclass(frozen=True) 
+@dataclass(frozen=True)
 class Model:
     # ... existing attributes ...
-    
+
     # New optional parameter
     enable_jit: bool = True
-    
+
     def __post_init__(self) -> None:
         # ... in the period loop ...
         max_Q_over_a_functions[period] = (
