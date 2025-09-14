@@ -16,7 +16,6 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm._config import TEST_DATA
-from lcm.entry_point import get_lcm_function
 from tests.test_models import get_model, get_params
 
 if TYPE_CHECKING:
@@ -68,9 +67,10 @@ def test_analytical_solution(model_name, model_and_params):
     """
     # Compute LCM solution
     # ==================================================================================
-    solve_model, _ = get_lcm_function(model=model_and_params["model"], targets="solve")
+    model = model_and_params["model"]
+    params = model_and_params["params"]
 
-    V_arr_dict: dict[int, FloatND] = solve_model(params=model_and_params["params"])  # type: ignore[assignment]
+    V_arr_dict: dict[int, FloatND] = model.solve(params=params)
     V_arr_list = list(dict(sorted(V_arr_dict.items(), key=lambda x: x[0])).values())
 
     _numerical = np.stack(V_arr_list)
