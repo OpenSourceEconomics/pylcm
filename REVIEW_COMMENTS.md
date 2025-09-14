@@ -3,4 +3,3 @@
 - Can you write a function that performs a frozendataclass robust setting of data that is then used for all instances where we set an attribute in a frozen dataclass?
 - Remove the "demo" module
 - I am getting 99 deprecation warnings because in the test suite you use get_lcm_function all the time. Can you change all the tests to use the new approach whereever possible? Maybe keep one (or a few) test that actually check that it still works with the get_lcm_function approach? Ah, I see you already do that in test_model_methods.py -- maybe be a bit more explicit in the module docstring.
-

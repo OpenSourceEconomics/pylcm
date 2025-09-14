@@ -8,12 +8,19 @@ from typing import TYPE_CHECKING, Any
 
 from lcm.exceptions import ModelInitilizationError, format_messages
 from lcm.grids import Grid
+from lcm.logging import get_logger
 from lcm.model_initialization import initialize_model_functions
+from lcm.simulation.simulate import simulate
+from lcm.solution.solve_brute import solve
 
 if TYPE_CHECKING:
+    import pandas as pd
+    from jax import Array
+
     from lcm.interfaces import InternalModel, StateActionSpace, StateSpaceInfo
     from lcm.typing import (
         ArgmaxQOverAFunction,
+        FloatND,
         MaxQOverAFunction,
         ParamsDict,
         UserFunction,
@@ -42,14 +49,16 @@ class Model:
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
     enable_jit: bool = True
-    
+
     # Computed attributes (set in __post_init__)
     internal_model: InternalModel = field(init=False)
     params_template: ParamsDict = field(init=False)
     state_action_spaces: dict[int, StateActionSpace] = field(init=False)
     state_space_infos: dict[int, StateSpaceInfo] = field(init=False)
     max_Q_over_a_functions: dict[int, MaxQOverAFunction] = field(init=False)
-    argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction] = field(init=False)
+    argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction] = field(
+        init=False
+    )
 
     def __post_init__(self) -> None:
         _validate_attribute_types(self)
@@ -62,56 +71,48 @@ class Model:
         params: ParamsDict,
         *,
         debug_mode: bool = True,
-    ) -> dict[int, Any]:
+    ) -> dict[int, FloatND]:
         """Solve the model using the pre-computed functions.
-        
+
         Args:
             params: Model parameters matching the template from self.params_template
             debug_mode: Whether to enable debug logging
-        
+
         Returns:
             Dictionary mapping period to value function arrays
         """
-        from lcm.logging import get_logger
-        from lcm.solution.solve_brute import solve
-        
-        logger = get_logger(debug_mode=debug_mode)
-        
         return solve(
             params=params,
             state_action_spaces=self.state_action_spaces,
             max_Q_over_a_functions=self.max_Q_over_a_functions,
-            logger=logger,
+            logger=get_logger(debug_mode=debug_mode),
         )
 
     def simulate(
         self,
         params: ParamsDict,
-        initial_states: dict[str, Any],
-        V_arr_dict: dict[int, Any],
+        initial_states: dict[str, Array],
+        V_arr_dict: dict[int, FloatND],
         *,
         additional_targets: list[str] | None = None,
         seed: int | None = None,
         debug_mode: bool = True,
-    ) -> Any:
+    ) -> pd.DataFrame:
         """Simulate the model forward using pre-computed functions.
-        
+
         Args:
-            params: Model parameters 
+            params: Model parameters
             initial_states: Initial state values
             V_arr_dict: Value function arrays from solve()
             additional_targets: Additional targets to compute
             seed: Random seed
             debug_mode: Whether to enable debug logging
-        
+
         Returns:
             Simulation results as DataFrame
         """
-        from lcm.logging import get_logger
-        from lcm.simulation.simulate import simulate
-        
         logger = get_logger(debug_mode=debug_mode)
-        
+
         return simulate(
             params=params,
             initial_states=initial_states,
@@ -126,21 +127,21 @@ class Model:
     def solve_and_simulate(
         self,
         params: ParamsDict,
-        initial_states: dict[str, Any],
+        initial_states: dict[str, Array],
         *,
         additional_targets: list[str] | None = None,
         seed: int | None = None,
         debug_mode: bool = True,
-    ) -> Any:
+    ) -> pd.DataFrame:
         """Solve and then simulate the model in one call.
-        
+
         Args:
             params: Model parameters
-            initial_states: Initial state values  
+            initial_states: Initial state values
             additional_targets: Additional targets to compute
             seed: Random seed
             debug_mode: Whether to enable debug logging
-        
+
         Returns:
             Simulation results as DataFrame
         """

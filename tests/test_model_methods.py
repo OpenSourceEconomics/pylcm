@@ -7,7 +7,7 @@ that were added to replace the get_lcm_function approach. It includes:
 2. Backward compatibility tests to ensure get_lcm_function still works
 3. Equivalence tests to ensure both approaches give identical results
 
-The backward compatibility tests 
+The backward compatibility tests
 (test_model_solve_method_equivalent_to_get_lcm_function) explicitly test that the
 deprecated get_lcm_function gives identical results to the new Model methods.
 """
@@ -129,7 +129,6 @@ def test_model_initialization_all_configs(model_name):
 
 def test_model_solve_method_equivalent_to_get_lcm_function():
     """Test new Model.solve() gives same results as get_lcm_function."""
-
     model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
     params = tree_map(lambda _: 0.2, model.params_template)
 

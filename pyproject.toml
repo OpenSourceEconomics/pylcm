@@ -183,6 +183,7 @@ extend-ignore = [
     "N802",  # Function name should be lowercase
     "N803",  # Argument name should be lowercase
     "N806",  # Variable in function should be lowercase
+    "N815",  # Variable in class scope should not be mixedCase
     "PLR0913",  # Too many arguments to function call
     "S101",  # use of `assert` detected
     "S301",  # `pickle` module is unsafe
