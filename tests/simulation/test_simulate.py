@@ -6,7 +6,6 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_almost_equal, assert_array_equal
 
-from lcm.entry_point import get_lcm_function
 from lcm.input_processing import process_model
 from lcm.logging import get_logger
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a
@@ -88,7 +87,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
 
 
 # ======================================================================================
-# Test simulate using get_lcm_function
+# Test simulate
 # ======================================================================================
 
 
@@ -106,10 +105,9 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
             if name not in ["age", "wage"]
         }
         model = model.replace(functions=updated_functions)
-        solve_model, _ = get_lcm_function(model, targets="solve")
 
         params = get_params()
-        V_arr_dict = solve_model(params=params)
+        V_arr_dict = model.solve(params=params)
         return V_arr_dict, params, model
 
     return _model_solution

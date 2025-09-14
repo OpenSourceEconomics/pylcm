@@ -54,7 +54,7 @@ def initialize_model_functions(model: Model) -> None:
             continuous_states={},
         )
 
-        # Create functions for each period (reversed order like get_lcm_function)
+        # Create functions for each period (reversed order following Backward induction)
         for period in reversed(range(internal_model.n_periods)):
             is_last_period = period == last_period
 

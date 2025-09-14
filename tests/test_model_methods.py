@@ -14,6 +14,8 @@ deprecated get_lcm_function gives identical results to the new Model methods.
 
 from __future__ import annotations
 
+import re
+
 import jax.numpy as jnp
 import pandas as pd
 import pytest
@@ -133,7 +135,9 @@ def test_model_solve_method_equivalent_to_get_lcm_function():
     params = tree_map(lambda _: 0.2, model.params_template)
 
     # Old approach
-    solve_old, _ = get_lcm_function(model=model, targets="solve")
+    warn_msg = re.escape("get_lcm_function() is deprecated.")
+    with pytest.warns(DeprecationWarning, match=warn_msg):
+        solve_old, _ = get_lcm_function(model=model, targets="solve")
     solution_old = solve_old(params)
 
     # New approach

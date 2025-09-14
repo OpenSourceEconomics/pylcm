@@ -6,7 +6,6 @@ import jax.numpy as jnp
 import pytest
 from pybaum import tree_equal, tree_map
 
-from lcm.entry_point import get_lcm_function
 from lcm.input_processing import process_model
 from lcm.max_Q_over_c import (
     get_argmax_and_max_Q_over_c,
@@ -23,6 +22,7 @@ if TYPE_CHECKING:
     from typing import Any
 
     from lcm.typing import BoolND, DiscreteAction, DiscreteState
+    from lcm.user_model import Model
 
 # ======================================================================================
 # Test cases
@@ -40,22 +40,16 @@ STRIPPED_DOWN_AND_DISCRETE_MODELS = [
 # ======================================================================================
 
 
-def test_get_lcm_function_with_solve_target_stripped_down():
+def test_solve_stripped_down():
     model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    solve_model, params_template = get_lcm_function(model=model, targets="solve")
-
-    params = tree_map(lambda _: 0.2, params_template)
-
-    solve_model(params)
+    params = tree_map(lambda _: 0.2, model.params_template)
+    model.solve(params)
 
 
-def test_get_lcm_function_with_solve_target_fully_discrete():
+def test_solve_fully_discrete():
     model = get_model("iskhakov_et_al_2017_discrete", n_periods=3)
-    solve_model, params_template = get_lcm_function(model=model, targets="solve")
-
-    params = tree_map(lambda _: 0.2, params_template)
-
-    solve_model(params)
+    params = tree_map(lambda _: 0.2, model.params_template)
+    model.solve(params)
 
 
 # ======================================================================================
@@ -63,16 +57,12 @@ def test_get_lcm_function_with_solve_target_fully_discrete():
 # ======================================================================================
 
 
-def test_get_lcm_function_with_simulation_target_simple_stripped_down():
+def test_solve_and_simulate_stripped_down():
     model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
 
-    simulate, params_template = get_lcm_function(
-        model=model,
-        targets="solve_and_simulate",
-    )
-    params = tree_map(lambda _: 0.2, params_template)
+    params = tree_map(lambda _: 0.2, model.params_template)
 
-    simulate(
+    model.solve_and_simulate(
         params,
         initial_states={
             "wealth": jnp.array([1.0, 10.0, 50.0]),
@@ -81,16 +71,12 @@ def test_get_lcm_function_with_simulation_target_simple_stripped_down():
     )
 
 
-def test_get_lcm_function_with_simulation_target_simple_fully_discrete():
+def test_solve_and_simulate_fully_discrete():
     model = get_model("iskhakov_et_al_2017_discrete", n_periods=3)
 
-    simulate, params_template = get_lcm_function(
-        model=model,
-        targets="solve_and_simulate",
-    )
-    params = tree_map(lambda _: 0.2, params_template)
+    params = tree_map(lambda _: 0.2, model.params_template)
 
-    simulate(
+    model.solve_and_simulate(
         params,
         initial_states={
             "wealth": jnp.array([1.0, 10.0, 50.0]),
@@ -104,20 +90,17 @@ def test_get_lcm_function_with_simulation_target_simple_fully_discrete():
     [get_model(name, n_periods=3) for name in STRIPPED_DOWN_AND_DISCRETE_MODELS],
     ids=STRIPPED_DOWN_AND_DISCRETE_MODELS,
 )
-def test_get_lcm_function_with_simulation_is_coherent(model):
+def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(model: Model):
     """Test that solve_and_simulate creates same output as solve then simulate."""
     # solve then simulate
     # ==================================================================================
 
     # solve
-    solve_model, params_template = get_lcm_function(model=model, targets="solve")
-    params = tree_map(lambda _: 0.2, params_template)
-    V_arr_dict = solve_model(params)
+    params = tree_map(lambda _: 0.2, model.params_template)
+    V_arr_dict = model.solve(params)
 
     # simulate using solution
-    simulate_model, _ = get_lcm_function(model=model, targets="simulate")
-
-    solve_then_simulate = simulate_model(
+    solve_then_simulate = model.simulate(
         params,
         V_arr_dict=V_arr_dict,
         initial_states={
@@ -127,12 +110,7 @@ def test_get_lcm_function_with_simulation_is_coherent(model):
 
     # solve and simulate
     # ==================================================================================
-    solve_and_simulate_model, _ = get_lcm_function(
-        model=model,
-        targets="solve_and_simulate",
-    )
-
-    solve_and_simulate = solve_and_simulate_model(
+    solve_and_simulate = model.solve_and_simulate(
         params,
         initial_states={
             "wealth": jnp.array([1.0, 10.0, 50.0]),
@@ -147,16 +125,13 @@ def test_get_lcm_function_with_simulation_is_coherent(model):
     [get_model("iskhakov_et_al_2017", n_periods=3)],
     ids=["iskhakov_et_al_2017"],
 )
-def test_get_lcm_function_with_simulation_target_iskhakov_et_al_2017(model):
+def test_simulate_iskhakov_et_al_2017(model: Model):
     # solve model
-    solve_model, params_template = get_lcm_function(model=model, targets="solve")
-    params = tree_map(lambda _: 0.9, params_template)
-    V_arr_dict = solve_model(params)
+    params = tree_map(lambda _: 0.9, model.params_template)
+    V_arr_dict = model.solve(params)
 
     # simulate using solution
-    simulate_model, _ = get_lcm_function(model=model, targets="simulate")
-
-    simulate_model(
+    model.simulate(
         params,
         V_arr_dict=V_arr_dict,
         initial_states={
@@ -367,7 +342,7 @@ def test_argmax_and_max_Q_over_c_with_discrete_model():
 # ======================================================================================
 
 
-def test_get_lcm_function_with_period_argument_in_constraint():
+def test_solve_with_period_argument_in_constraint():
     model = get_model("iskhakov_et_al_2017", n_periods=3)
 
     def absorbing_retirement_constraint(
@@ -382,9 +357,8 @@ def test_get_lcm_function_with_period_argument_in_constraint():
 
     model.functions["absorbing_retirement_constraint"] = absorbing_retirement_constraint
 
-    solve_model, params_template = get_lcm_function(model=model, targets="solve")
-    params = tree_map(lambda _: 0.2, params_template)
-    solve_model(params)
+    params = tree_map(lambda _: 0.2, model.params_template)
+    model.solve(params)
 
 
 # ======================================================================================
@@ -406,51 +380,9 @@ def test_order_of_states_and_actions_does_not_matter():
         actions=_reverse_dict(model.actions),
     )
 
-    solve_model, params_template = get_lcm_function(model=model, targets="solve")
-    params = tree_map(lambda _: 0.2, params_template)
-    V_arr_dict = solve_model(params)
+    params = tree_map(lambda _: 0.2, model.params_template)
+    V_arr_dict = model.solve(params)
 
-    solve_model_swapped, _ = get_lcm_function(model=model_swapped, targets="solve")
-    V_arr_dict_swapped = solve_model_swapped(params)
+    V_arr_dict_swapped = model_swapped.solve(params)
 
     assert tree_equal(V_arr_dict, V_arr_dict_swapped)
-
-
-# ======================================================================================
-# Test new Model methods equivalence
-# ======================================================================================
-
-
-def test_model_solve_equivalent_to_get_lcm_function_solve():
-    """Test that Model.solve() gives identical results to get_lcm_function."""
-    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    params = tree_map(lambda _: 0.2, model.params_template)
-
-    # Old approach
-    solve_old, _ = get_lcm_function(model=model, targets="solve")
-    solution_old = solve_old(params)
-
-    # New approach
-    solution_new = model.solve(params)
-
-    # Should give identical results
-    assert tree_equal(solution_old, solution_new)
-
-
-def test_model_solve_and_simulate_equivalent_to_get_lcm_function():
-    """Test Model.solve_and_simulate() equivalent to get_lcm_function."""
-    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    params = tree_map(lambda _: 0.2, model.params_template)
-    initial_states = {"wealth": jnp.array([1.0, 10.0, 50.0])}
-
-    # Old approach
-    solve_and_simulate_old, _ = get_lcm_function(
-        model=model, targets="solve_and_simulate"
-    )
-    result_old = solve_and_simulate_old(params, initial_states=initial_states)
-
-    # New approach
-    result_new = model.solve_and_simulate(params, initial_states=initial_states)
-
-    # Should give identical results
-    assert tree_equal(result_old, result_new)
