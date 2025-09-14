@@ -37,20 +37,20 @@ def simulate_inputs():
     actions = model.actions
     actions["consumption"] = actions["consumption"].replace(stop=100)  # type: ignore[attr-defined]
     model = model.replace(actions=actions)
-    model = process_model(model)
+    internal_model = process_model(model)
 
     state_space_info = create_state_space_info(
-        model=model,
+        model=internal_model,
         is_last_period=False,
     )
     state_action_space = create_state_action_space(
-        model=model,
+        model=internal_model,
         is_last_period=False,
     )
     argmax_and_max_Q_over_a_functions = []
     for period in range(model.n_periods):
         Q_and_F = get_Q_and_F(
-            model=model,
+            model=internal_model,
             next_state_space_info=state_space_info,
             period=period,
         )
@@ -62,7 +62,7 @@ def simulate_inputs():
 
     return {
         "argmax_and_max_Q_over_a_functions": argmax_and_max_Q_over_a_functions,
-        "model": model,
+        "model": internal_model,
     }
 
 

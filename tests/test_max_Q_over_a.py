@@ -38,14 +38,14 @@ def model_input():
     actions = _model.actions
     actions["consumption"] = actions["consumption"].replace(stop=20)  # type: ignore[attr-defined]
     model = _model.replace(actions=actions)
-    model = process_model(model)
+    internal_model = process_model(model)
 
     state_space_info = create_state_space_info(
-        model=model,
+        model=internal_model,
         is_last_period=False,
     )
     state_action_space = create_state_action_space(
-        model=model,
+        model=internal_model,
         is_last_period=False,
     )
     params = {
@@ -56,11 +56,11 @@ def model_input():
         },
     }
     return {
-        "model": model,
+        "model": internal_model,
         "state_action_space": state_action_space,
         "state_space_info": state_space_info,
         "next_state": get_next_state_function(
-            model=model, next_states=("wealth",), target=Target.SOLVE
+            model=internal_model, next_states=("wealth",), target=Target.SOLVE
         ),
         "params": params,
     }

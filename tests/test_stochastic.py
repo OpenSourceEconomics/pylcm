@@ -105,8 +105,8 @@ def test_compare_deterministic_and_stochastic_results_value_function(model_and_p
     # ==================================================================================
     # Compare value function arrays
     # ==================================================================================
-    solution_deterministic: dict[int, FloatND] = model_deterministic.solve(params)  # type: ignore[assignment]
-    solution_stochastic: dict[int, FloatND] = model_stochastic.solve(params)  # type: ignore[assignment]
+    solution_deterministic: dict[int, FloatND] = model_deterministic.solve(params)
+    solution_stochastic: dict[int, FloatND] = model_stochastic.solve(params)
 
     for period in range(model_deterministic.n_periods):
         assert_array_almost_equal(
@@ -134,4 +134,4 @@ def test_compare_deterministic_and_stochastic_results_value_function(model_and_p
         V_arr_dict=solution_stochastic,
         initial_states=initial_states,
     )
-    pd.testing.assert_frame_equal(simulation_deterministic, simulation_stochastic)  # type: ignore[arg-type]
+    pd.testing.assert_frame_equal(simulation_deterministic, simulation_stochastic)

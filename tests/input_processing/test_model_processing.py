@@ -11,7 +11,7 @@ from numpy.testing import assert_array_equal
 from pandas.testing import assert_frame_equal
 
 from lcm import DiscreteGrid, LinspaceGrid, grid_helpers
-from lcm.input_processing.process_model import (
+from lcm.input_processing.model_processing import (
     _get_stochastic_weight_function,
     get_function_info,
     get_grids,
