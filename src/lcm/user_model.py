@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from lcm.exceptions import ModelInitilizationError, format_messages
 from lcm.grids import Grid
 from lcm.logging import get_logger
-from lcm.model_initialization import initialize_model_functions
+from lcm.model_initialization import initialize_model_components
 from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
 
@@ -42,6 +42,7 @@ class Model:
 
     """
 
+    # Model specification information (provided by the User)
     description: str | None = None
     _: KW_ONLY
     n_periods: int
@@ -50,7 +51,7 @@ class Model:
     states: dict[str, Grid] = field(default_factory=dict)
     enable_jit: bool = True
 
-    # Computed attributes (set in __post_init__)
+    # Computed model components (set in __post_init__)
     internal_model: InternalModel = field(init=False)
     params_template: ParamsDict = field(init=False)
     state_action_spaces: dict[int, StateActionSpace] = field(init=False)
@@ -63,8 +64,7 @@ class Model:
     def __post_init__(self) -> None:
         _validate_attribute_types(self)
         _validate_logical_consistency(self)
-        # Set computed attributes
-        initialize_model_functions(model=self)
+        initialize_model_components(self)
 
     def solve(
         self,
