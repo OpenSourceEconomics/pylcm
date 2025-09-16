@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Callable
 from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -28,17 +29,47 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class ModelBlock:
+    """A modular component defining a consistent state-action space and functions.
+
+    Each ModelBlock represents a distinct "phase" of the economic model where
+    the agent has a specific set of available states, actions, and functions.
+
+    Attributes:
+        name: Unique identifier for this block.
+        actions: Dictionary of user provided actions for this block.
+        states: Dictionary of user provided states for this block.
+        functions: Dictionary of user provided functions for this block.
+        block_transitions: Dictionary mapping target block names to state transformation functions.
+
+    """
+
+    name: str
+    _: KW_ONLY
+    actions: dict[str, Grid] = field(default_factory=dict)
+    states: dict[str, Grid] = field(default_factory=dict)
+    functions: dict[str, UserFunction] = field(default_factory=dict)
+    block_transitions: dict[str, Callable] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # TODO: Add ModelBlock validation
+        pass
+
+
+@dataclass(frozen=True)
 class Model:
     """A user model which can be processed into an internal model.
+
+    Supports both single-block models (original API) and multi-block models.
 
     Attributes:
         description: Description of the model.
         n_periods: Number of periods in the model.
-        functions: Dictionary of user provided functions that define the functional
-            relationships between model variables. It must include at least a function
-            called 'utility'.
-        actions: Dictionary of user provided actions.
-        states: Dictionary of user provided states.
+        functions: Dictionary of user provided functions (single-block models only).
+        actions: Dictionary of user provided actions (single-block models only).
+        states: Dictionary of user provided states (single-block models only).
+        blocks: Dictionary of ModelBlocks (multi-block models only).
+        block_schedule: Period to block name mapping (multi-block models only).
 
     """
 
@@ -46,9 +77,16 @@ class Model:
     description: str | None = None
     _: KW_ONLY
     n_periods: int
+
+    # Single-block model specification (original API)
     functions: dict[str, UserFunction] = field(default_factory=dict)
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
+
+    # Multi-block model specification (new API)
+    blocks: dict[str, ModelBlock] = field(default_factory=dict)
+    block_schedule: dict[int, str] = field(default_factory=dict)
+
     enable_jit: bool = True
 
     # Computed model components (set in __post_init__)
@@ -61,7 +99,23 @@ class Model:
         init=False
     )
 
+    # Additional computed components for multi-block models
+    is_block_model: bool = field(init=False)
+    block_transition_dag: dict[str, dict[str, Callable]] = field(init=False)
+    next_block_state_function: Callable | None = field(init=False)
+
     def __post_init__(self) -> None:
+        # Determine if this is a block model
+        is_block_model = bool(self.blocks or self.block_schedule)
+        object.__setattr__(self, "is_block_model", is_block_model)
+
+        if is_block_model:
+            # TODO: Implement block model validation and initialization
+            object.__setattr__(self, "block_transition_dag", {})
+            object.__setattr__(self, "next_block_state_function", None)
+            # For now, raise NotImplementedError
+            raise NotImplementedError("Block models are not yet implemented")
+        # Original single-block model path
         _validate_attribute_types(self)
         _validate_logical_consistency(self)
         initialize_model_components(self)
