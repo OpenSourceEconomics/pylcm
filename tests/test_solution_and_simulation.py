@@ -90,7 +90,7 @@ def test_solve_and_simulate_fully_discrete():
     [get_model(name, n_periods=3) for name in STRIPPED_DOWN_AND_DISCRETE_MODELS],
     ids=STRIPPED_DOWN_AND_DISCRETE_MODELS,
 )
-def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(model: Model):
+def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(model: Model) -> None:
     """Test that solve_and_simulate creates same output as solve then simulate."""
     # solve then simulate
     # ==================================================================================
@@ -125,7 +125,7 @@ def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(model: Model):
     [get_model("iskhakov_et_al_2017", n_periods=3)],
     ids=["iskhakov_et_al_2017"],
 )
-def test_simulate_iskhakov_et_al_2017(model: Model):
+def test_simulate_iskhakov_et_al_2017(model: Model) -> None:
     # solve model
     params = tree_map(lambda _: 0.9, model.params_template)
     V_arr_dict = model.solve(params)
@@ -185,14 +185,14 @@ def test_get_max_Q_over_c():
 
     val = max_Q_over_c(
         consumption=jnp.array([10, 20, 30.0]),
-        retirement=RetirementStatus.retired,
-        wealth=30,
+        retirement=jnp.array(RetirementStatus.retired),
+        wealth=jnp.array(30),
         params=params,
         next_V_arr=jnp.empty(0),
     )
     assert val == iskhakov_et_al_2017_utility(
-        consumption=30.0,
-        working=RetirementStatus.working,
+        consumption=jnp.array(30.0),
+        working=jnp.array(RetirementStatus.working),
         disutility_of_work=1.0,
     )
 
@@ -230,14 +230,14 @@ def test_get_max_Q_over_c_with_discrete_model():
 
     val = max_Q_over_c(
         consumption=jnp.array([ConsumptionChoice.low, ConsumptionChoice.high]),
-        retirement=RetirementStatus.retired,
-        wealth=2,
+        retirement=jnp.array(RetirementStatus.retired),
+        wealth=jnp.array(2),
         params=params,
         next_V_arr=jnp.empty(0),
     )
     assert val == iskhakov_et_al_2017_utility(
-        consumption=2,
-        working=RetirementStatus.working,
+        consumption=jnp.array(2),
+        working=jnp.array(RetirementStatus.working),
         disutility_of_work=1.0,
     )
 
@@ -279,15 +279,15 @@ def test_argmax_and_max_Q_over_c():
 
     policy, val = argmax_and_max_Q_over_c(
         consumption=jnp.array([10, 20, 30.0]),
-        retirement=RetirementStatus.retired,
-        wealth=30,
+        retirement=jnp.array(RetirementStatus.retired),
+        wealth=jnp.array(30),
         params=params,
         next_V_arr=jnp.empty(0),
     )
     assert policy == 2
     assert val == iskhakov_et_al_2017_utility(
-        consumption=30.0,
-        working=RetirementStatus.working,
+        consumption=jnp.array(30.0),
+        working=jnp.array(RetirementStatus.working),
         disutility_of_work=1.0,
     )
 
@@ -324,15 +324,15 @@ def test_argmax_and_max_Q_over_c_with_discrete_model():
 
     _argmax, _max = argmax_and_max_Q_over_c(
         consumption=jnp.array([ConsumptionChoice.low, ConsumptionChoice.high]),
-        retirement=RetirementStatus.retired,
-        wealth=2,
+        retirement=jnp.array(RetirementStatus.retired),
+        wealth=jnp.array(2),
         params=params,
         next_V_arr=jnp.empty(0),
     )
     assert _argmax == 1
     assert _max == iskhakov_et_al_2017_utility(
-        consumption=2,
-        working=RetirementStatus.working,
+        consumption=jnp.array(2),
+        working=jnp.array(RetirementStatus.working),
         disutility_of_work=1.0,
     )
 
