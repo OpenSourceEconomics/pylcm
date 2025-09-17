@@ -61,7 +61,7 @@ def process_model(model: Model) -> InternalModel:
         params=params,
         # currently no additive utility shocks are supported
         random_utility_shocks=ShockType.NONE,
-        n_periods=model.n_periods,
+        n_periods=model.computed_n_periods,
     )
 
 

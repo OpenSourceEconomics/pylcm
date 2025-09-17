@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable
+import warnings
 from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from lcm.exceptions import ModelInitilizationError, format_messages
 from lcm.grids import Grid
@@ -29,6 +32,30 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class Regime:
+    """A modular component defining a consistent state-action space and functions.
+
+    Each Regime represents a distinct behavioral environment where the agent
+    has a specific set of available states, actions, and functions.
+    """
+
+    name: str
+    active: range
+    _: KW_ONLY
+    actions: dict[str, Grid] = field(default_factory=dict)
+    states: dict[str, Grid] = field(default_factory=dict)
+    functions: dict[str, UserFunction] = field(default_factory=dict)
+    regime_transitions: dict[str, Callable[..., Any]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Basic validation for now
+        if not isinstance(self.active, range):
+            raise TypeError("active must be a range object")
+        if not self.name:
+            raise ValueError("name cannot be empty")
+
+
+@dataclass(frozen=True)
 class ModelBlock:
     """A modular component defining a consistent state-action space and functions.
 
@@ -40,7 +67,8 @@ class ModelBlock:
         actions: Dictionary of user provided actions for this block.
         states: Dictionary of user provided states for this block.
         functions: Dictionary of user provided functions for this block.
-        block_transitions: Dictionary mapping target block names to state transformation functions.
+        block_transitions: Dictionary mapping target block names to state
+            transformation functions.
 
     """
 
@@ -49,10 +77,9 @@ class ModelBlock:
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
     functions: dict[str, UserFunction] = field(default_factory=dict)
-    block_transitions: dict[str, Callable] = field(default_factory=dict)
+    block_transitions: dict[str, Callable[..., Any]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        # TODO: Add ModelBlock validation
         pass
 
 
@@ -60,36 +87,31 @@ class ModelBlock:
 class Model:
     """A user model which can be processed into an internal model.
 
-    Supports both single-block models (original API) and multi-block models.
-
-    Attributes:
-        description: Description of the model.
-        n_periods: Number of periods in the model.
-        functions: Dictionary of user provided functions (single-block models only).
-        actions: Dictionary of user provided actions (single-block models only).
-        states: Dictionary of user provided states (single-block models only).
-        blocks: Dictionary of ModelBlocks (multi-block models only).
-        block_schedule: Period to block name mapping (multi-block models only).
-
+    Supports regime-based models (new API) and legacy single-regime models.
     """
 
     # Model specification information (provided by the User)
     description: str | None = None
     _: KW_ONLY
-    n_periods: int
 
-    # Single-block model specification (original API)
-    functions: dict[str, UserFunction] = field(default_factory=dict)
+    # New regime-based API (preferred)
+    regimes: list[Regime] = field(default_factory=list)
+
+    # Legacy single-regime API (with deprecation warning)
+    n_periods: int | None = None
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
+    functions: dict[str, UserFunction] = field(default_factory=dict)
 
-    # Multi-block model specification (new API)
+    # Legacy multi-block API (with deprecation warning)
     blocks: dict[str, ModelBlock] = field(default_factory=dict)
     block_schedule: dict[int, str] = field(default_factory=dict)
 
     enable_jit: bool = True
 
     # Computed model components (set in __post_init__)
+    computed_n_periods: int = field(init=False)
+    is_regime_model: bool = field(init=False)
     internal_model: InternalModel = field(init=False)
     params_template: ParamsDict = field(init=False)
     state_action_spaces: dict[int, StateActionSpace] = field(init=False)
@@ -99,22 +121,100 @@ class Model:
         init=False
     )
 
-    # Additional computed components for multi-block models
+    # Additional computed components for regime models
+    regime_transition_dag: dict[str, dict[str, Callable[..., Any]]] = field(init=False)
+    next_regime_state_function: Callable[..., Any] | None = field(init=False)
+
+    # Legacy computed components for block models
     is_block_model: bool = field(init=False)
-    block_transition_dag: dict[str, dict[str, Callable]] = field(init=False)
-    next_block_state_function: Callable | None = field(init=False)
+    block_transition_dag: dict[str, dict[str, Callable[..., Any]]] = field(init=False)
+    next_block_state_function: Callable[..., Any] | None = field(init=False)
 
     def __post_init__(self) -> None:
-        # Determine if this is a block model
+        # Determine model type
+        is_regime_model = bool(self.regimes)
         is_block_model = bool(self.blocks or self.block_schedule)
+        is_legacy_model = bool(
+            self.n_periods or self.actions or self.states or self.functions
+        )
+
+        object.__setattr__(self, "is_regime_model", is_regime_model)
         object.__setattr__(self, "is_block_model", is_block_model)
 
-        if is_block_model:
-            # TODO: Implement block model validation and initialization
-            object.__setattr__(self, "block_transition_dag", {})
-            object.__setattr__(self, "next_block_state_function", None)
-            # For now, raise NotImplementedError
-            raise NotImplementedError("Block models are not yet implemented")
+        # Handle different model types
+        if is_regime_model:
+            self._initialize_regime_model()
+        elif is_block_model:
+            self._initialize_block_model()
+        elif is_legacy_model:
+            self._initialize_legacy_model()
+        else:
+            raise ModelInitilizationError(
+                "Model must specify either regimes, blocks, or legacy parameters"
+            )
+
+    def _initialize_regime_model(self) -> None:
+        """Initialize regime-based model."""
+        # Auto-derive computed_n_periods
+        if not self.regimes:
+            raise ModelInitilizationError("Regime model must have at least one regime")
+
+        computed_n_periods = max(regime.active.stop for regime in self.regimes)
+        object.__setattr__(self, "computed_n_periods", computed_n_periods)
+
+        # Validate regime coverage
+        all_periods: set[int] = set()
+        for regime in self.regimes:
+            regime_periods = set(regime.active)
+            overlap = all_periods & regime_periods
+            if overlap:
+                raise ModelInitilizationError(
+                    f"Overlapping periods {overlap} between regimes"
+                )
+            all_periods.update(regime_periods)
+
+        expected_periods = set(range(computed_n_periods))
+        if all_periods != expected_periods:
+            missing = expected_periods - all_periods
+            extra = all_periods - expected_periods
+            msg = f"Period coverage mismatch. Missing: {missing}, Extra: {extra}"
+            raise ModelInitilizationError(msg)
+
+        # Initialize regime transition components (placeholder for now)
+        object.__setattr__(self, "regime_transition_dag", {})
+        object.__setattr__(self, "next_regime_state_function", None)
+
+        raise NotImplementedError("Regime models are not yet fully implemented")
+
+    def _initialize_block_model(self) -> None:
+        """Initialize legacy block model."""
+        warnings.warn(
+            "ModelBlock API is deprecated. Use Regime API instead.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+
+        # Legacy block model initialization
+        object.__setattr__(self, "computed_n_periods", self.n_periods or 0)
+        object.__setattr__(self, "block_transition_dag", {})
+        object.__setattr__(self, "next_block_state_function", None)
+        raise NotImplementedError("Block models are not yet implemented")
+
+    def _initialize_legacy_model(self) -> None:
+        """Initialize legacy single-regime model."""
+        warnings.warn(
+            "Legacy Model API (n_periods, actions, states, functions) is deprecated. "
+            "Use Regime API instead: Model(regimes=[Regime(name='default', "
+            "active=range(n_periods), ...)])",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+
+        if self.n_periods is None:
+            raise ModelInitilizationError("Legacy model must specify n_periods")
+
+        object.__setattr__(self, "computed_n_periods", self.n_periods)
+
         # Original single-block model path
         _validate_attribute_types(self)
         _validate_logical_consistency(self)
@@ -266,7 +366,7 @@ def _validate_logical_consistency(model: Model) -> None:
     """Validate the logical consistency of the model."""
     error_messages = []
 
-    if model.n_periods < 1:
+    if model.n_periods is not None and model.n_periods < 1:
         error_messages.append("Number of periods must be a positive integer.")
 
     if "utility" not in model.functions:
