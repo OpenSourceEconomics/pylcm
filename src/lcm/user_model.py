@@ -56,34 +56,6 @@ class Regime:
 
 
 @dataclass(frozen=True)
-class ModelBlock:
-    """A modular component defining a consistent state-action space and functions.
-
-    Each ModelBlock represents a distinct "phase" of the economic model where
-    the agent has a specific set of available states, actions, and functions.
-
-    Attributes:
-        name: Unique identifier for this block.
-        actions: Dictionary of user provided actions for this block.
-        states: Dictionary of user provided states for this block.
-        functions: Dictionary of user provided functions for this block.
-        block_transitions: Dictionary mapping target block names to state
-            transformation functions.
-
-    """
-
-    name: str
-    _: KW_ONLY
-    actions: dict[str, Grid] = field(default_factory=dict)
-    states: dict[str, Grid] = field(default_factory=dict)
-    functions: dict[str, UserFunction] = field(default_factory=dict)
-    block_transitions: dict[str, Callable[..., Any]] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        pass
-
-
-@dataclass(frozen=True)
 class Model:
     """A user model which can be processed into an internal model.
 
@@ -103,10 +75,6 @@ class Model:
     states: dict[str, Grid] = field(default_factory=dict)
     functions: dict[str, UserFunction] = field(default_factory=dict)
 
-    # Legacy multi-block API (with deprecation warning)
-    blocks: dict[str, ModelBlock] = field(default_factory=dict)
-    block_schedule: dict[int, str] = field(default_factory=dict)
-
     enable_jit: bool = True
 
     # Computed model components (set in __post_init__)
@@ -125,32 +93,23 @@ class Model:
     regime_transition_dag: dict[str, dict[str, Callable[..., Any]]] = field(init=False)
     next_regime_state_function: Callable[..., Any] | None = field(init=False)
 
-    # Legacy computed components for block models
-    is_block_model: bool = field(init=False)
-    block_transition_dag: dict[str, dict[str, Callable[..., Any]]] = field(init=False)
-    next_block_state_function: Callable[..., Any] | None = field(init=False)
-
     def __post_init__(self) -> None:
         # Determine model type
         is_regime_model = bool(self.regimes)
-        is_block_model = bool(self.blocks or self.block_schedule)
         is_legacy_model = bool(
             self.n_periods or self.actions or self.states or self.functions
         )
 
         object.__setattr__(self, "is_regime_model", is_regime_model)
-        object.__setattr__(self, "is_block_model", is_block_model)
 
         # Handle different model types
         if is_regime_model:
             self._initialize_regime_model()
-        elif is_block_model:
-            self._initialize_block_model()
         elif is_legacy_model:
             self._initialize_legacy_model()
         else:
             raise ModelInitilizationError(
-                "Model must specify either regimes, blocks, or legacy parameters"
+                "Model must specify either regimes or legacy parameters"
             )
 
     def _initialize_regime_model(self) -> None:
@@ -186,20 +145,6 @@ class Model:
 
         raise NotImplementedError("Regime models are not yet fully implemented")
 
-    def _initialize_block_model(self) -> None:
-        """Initialize legacy block model."""
-        warnings.warn(
-            "ModelBlock API is deprecated. Use Regime API instead.",
-            DeprecationWarning,
-            stacklevel=3,
-        )
-
-        # Legacy block model initialization
-        object.__setattr__(self, "computed_n_periods", self.n_periods or 0)
-        object.__setattr__(self, "block_transition_dag", {})
-        object.__setattr__(self, "next_block_state_function", None)
-        raise NotImplementedError("Block models are not yet implemented")
-
     def _initialize_legacy_model(self) -> None:
         """Initialize legacy single-regime model."""
         warnings.warn(
@@ -215,7 +160,7 @@ class Model:
 
         object.__setattr__(self, "computed_n_periods", self.n_periods)
 
-        # Original single-block model path
+        # Original single-regime model path
         _validate_attribute_types(self)
         _validate_logical_consistency(self)
         initialize_model_components(self)

@@ -202,7 +202,7 @@ The Model.__post_init__() method must validate:
 ### 1. Core Class Updates
 ```
 src/lcm/user_model.py:
-- Add new Regime class (alongside existing ModelBlock for compatibility)
+- Add new Regime class
 - Update Model class to accept regimes: list[Regime] parameter
 - Auto-derive computed_n_periods from regime.active ranges
 - Add deprecation warnings for legacy n_periods/actions/states/functions parameters
@@ -212,7 +212,7 @@ src/lcm/user_model.py:
 ### 2. Internal Processing Updates
 ```
 src/lcm/interfaces.py:
-- Add new InternalRegime interface (alongside InternalModelBlock)
+- Add new InternalRegime interface
 - Update type annotations for dual API support
 
 src/lcm/model_initialization.py:
@@ -264,7 +264,7 @@ tests/test_legacy_compatibility.py:  # New backward compatibility tests
 ## Migration Strategy
 
 ### Phase 1: Add Regime Support (Non-Breaking)
-1. **Add new Regime class** alongside existing ModelBlock
+1. **Add new Regime class**
 2. **Add regimes parameter** to Model class (optional, defaults to empty list)
 3. **Implement regime processing pipeline** for new API
 4. **Add deprecation warnings** for legacy API usage
@@ -277,7 +277,7 @@ tests/test_legacy_compatibility.py:  # New backward compatibility tests
 
 ### Phase 3: Remove Legacy API (Next Major Version)
 1. **Remove legacy parameters** from Model class
-2. **Remove ModelBlock references**
+2. **Clean up legacy single-regime references**
 3. **Clean up internal code** structure
 
 ## Future Extensions

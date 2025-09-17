@@ -7,14 +7,13 @@ except ImportError:
 
 from lcm import mark
 from lcm.grids import DiscreteGrid, LinspaceGrid, LogspaceGrid
-from lcm.user_model import Model, ModelBlock, Regime
+from lcm.user_model import Model, Regime
 
 __all__ = [
     "DiscreteGrid",
     "LinspaceGrid",
     "LogspaceGrid",
     "Model",
-    "ModelBlock",
     "Regime",
     "mark",
 ]
