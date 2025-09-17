@@ -21,7 +21,6 @@ if TYPE_CHECKING:
         BoolND,
         ContinuousAction,
         ContinuousState,
-        DiscreteAction,
         FloatND,
         IntND,
     )
