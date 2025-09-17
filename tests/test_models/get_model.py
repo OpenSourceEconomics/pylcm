@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import warnings
 from copy import deepcopy
 from typing import TYPE_CHECKING
 
@@ -16,28 +15,19 @@ from tests.test_models.stochastic import ISKHAKOV_ET_AL_2017_STOCHASTIC
 if TYPE_CHECKING:
     from lcm.user_model import Model
 
-TEST_MODELS = {
-    "iskhakov_et_al_2017": ISKHAKOV_ET_AL_2017,
-    "iskhakov_et_al_2017_stripped_down": ISKHAKOV_ET_AL_2017_STRIPPED_DOWN,
-    "iskhakov_et_al_2017_discrete": ISKHAKOV_ET_AL_2017_DISCRETE,
-    "iskhakov_et_al_2017_stochastic": ISKHAKOV_ET_AL_2017_STOCHASTIC,
-}
+TEST_REGIMES = [
+    ISKHAKOV_ET_AL_2017,
+    ISKHAKOV_ET_AL_2017_STRIPPED_DOWN,
+    ISKHAKOV_ET_AL_2017_DISCRETE,
+    ISKHAKOV_ET_AL_2017_STOCHASTIC,
+]
+
+TEST_REGIME_MAP = {regime.name: regime for regime in TEST_REGIMES}
 
 
-def get_model(model_name: str, n_periods: int) -> Model:
-    model = deepcopy(TEST_MODELS[model_name])
-    return model.replace(n_periods=n_periods)
-
-
-# Backward compatibility alias - will be removed in next version
-def get_model_config(model_name: str, n_periods: int) -> Model:
-    """Deprecated: Use get_model() instead."""
-    warnings.warn(
-        "get_model_config() is deprecated. Use get_model() instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return get_model(model_name, n_periods)
+def get_model(regime_name: str, n_periods: int) -> Model:
+    regime = deepcopy(TEST_REGIME_MAP[regime_name])
+    return regime.to_model(n_periods=n_periods)
 
 
 def get_params(

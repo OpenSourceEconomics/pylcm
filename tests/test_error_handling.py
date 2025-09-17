@@ -7,7 +7,7 @@ import pytest
 
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.grids import LinspaceGrid
-from lcm.user_model import Model
+from lcm.user_model import Model, Regime
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -41,8 +41,8 @@ def valid_model() -> Model:
     ) -> BoolND:
         return consumption <= wealth
 
-    return Model(
-        n_periods=2,
+    return Regime(
+        name="valid_regime",
         functions={
             "utility": utility,
             "next_wealth": next_wealth,
@@ -68,7 +68,7 @@ def valid_model() -> Model:
                 n_points=3,
             ),
         },
-    )
+    ).to_model(n_periods=3)
 
 
 @pytest.fixture

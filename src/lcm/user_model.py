@@ -40,6 +40,7 @@ class Regime:
 
     Args:
         name: Unique identifier for this regime.
+        description: Optional description of what this regime represents.
         active: Range of periods when this regime is active. If None, the regime
             will be active in all periods (requires Model.n_periods to be specified).
         actions: Dictionary of action variables and their grids for this regime.
@@ -50,6 +51,7 @@ class Regime:
     """
 
     name: str
+    description: str | None = None
     active: range | None = None
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
@@ -65,8 +67,8 @@ class Regime:
 
     def to_model(
         self,
-        n_periods: int | None = None,
         *,
+        n_periods: int | None = None,
         description: str | None = None,
         enable_jit: bool = True,
     ) -> Model:
@@ -78,7 +80,7 @@ class Regime:
         Args:
             n_periods: Number of periods. If None, derived from regime.active.
                 If regime.active is also None, an error will be raised.
-            description: Optional model description.
+            description: Optional model description. If None, uses regime.description.
             enable_jit: Whether to enable JIT compilation.
 
         Returns:
@@ -89,9 +91,11 @@ class Regime:
             >>> model = regime.to_model()  # Creates 10-period model
         """
         return Model(
-            regimes=[self],
             n_periods=n_periods,
-            description=description,
+            actions=self.actions,
+            states=self.states,
+            functions=self.functions,
+            description=description or self.description,
             enable_jit=enable_jit,
         )
 
@@ -267,9 +271,9 @@ class Model:
     def _initialize_legacy_model(self) -> None:
         """Initialize legacy single-regime model."""
         warnings.warn(
-            "Legacy Model API (n_periods, actions, states, functions) is deprecated "
-            "and will be removed in version 0.1.0. "
-            "Use Regime API instead: Model(regimes=[Regime(name='default', "
+            "Legacy Model API lcm.Model(n_periods, actions, states, functions) is "
+            "deprecated and will be removed in version 0.1.0. "
+            "Use Regime API instead: lcm.Model(regimes=[lcm.Regime(name='default', "
             "active=range(n_periods), ...)])",
             DeprecationWarning,
             stacklevel=3,

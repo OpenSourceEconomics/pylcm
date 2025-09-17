@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -14,7 +13,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
 import lcm
-from lcm import DiscreteGrid, LinspaceGrid, Model
+from lcm import DiscreteGrid, LinspaceGrid, Regime
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -68,13 +67,13 @@ def borrowing_constraint(
     return consumption <= wealth
 
 
-DETERMINISTIC_MODEL = Model(
+DETERMINISTIC_MODEL = Regime(
+    name="deterministic_regime",
     functions={
         "utility": utility,
         "next_wealth": next_wealth,
         "borrowing_constraint": borrowing_constraint,
     },
-    n_periods=2,
     actions={
         "consumption": DiscreteGrid(ConsumptionChoice),
         "working": DiscreteGrid(WorkingStatus),
@@ -86,7 +85,7 @@ DETERMINISTIC_MODEL = Model(
             n_points=1,
         ),
     },
-)
+).to_model(n_periods=2)
 
 
 @lcm.mark.stochastic
@@ -94,9 +93,12 @@ def next_health(health: DiscreteState) -> DiscreteState:  # type: ignore[empty-b
     pass
 
 
-STOCHASTIC_MODEL = deepcopy(DETERMINISTIC_MODEL)
-STOCHASTIC_MODEL.functions["next_health"] = next_health
-STOCHASTIC_MODEL.states["health"] = DiscreteGrid(HealthStatus)
+STOCHASTIC_MODEL = Regime(
+    name="stochastic_regime",
+    functions={**DETERMINISTIC_MODEL.functions, "next_health": next_health},
+    actions=DETERMINISTIC_MODEL.actions,
+    states={**DETERMINISTIC_MODEL.states, "health": DiscreteGrid(HealthStatus)},
+).to_model(n_periods=2)
 
 
 # ======================================================================================

@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
-from lcm import DiscreteGrid, LinspaceGrid, Model
+from lcm import DiscreteGrid, LinspaceGrid, Regime
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -108,13 +108,13 @@ def absorbing_retirement_constraint(
 # Model specifications
 # ======================================================================================
 
-ISKHAKOV_ET_AL_2017 = Model(
+ISKHAKOV_ET_AL_2017 = Regime(
+    name="iskhakov_et_al_2017",
     description=(
         "Corresponds to the example model in Iskhakov et al. (2017). In comparison to "
         "the extensions below, wage is treated as a constant parameter and therefore "
         "there is no need for the wage and age functions."
     ),
-    n_periods=3,
     functions={
         "utility": utility,
         "next_wealth": next_wealth,
@@ -142,13 +142,12 @@ ISKHAKOV_ET_AL_2017 = Model(
     },
 )
 
-
-ISKHAKOV_ET_AL_2017_STRIPPED_DOWN = Model(
+ISKHAKOV_ET_AL_2017_STRIPPED_DOWN = Regime(
+    name="iskhakov_et_al_2017_stripped_down",
     description=(
         "Starts from Iskhakov et al. (2017), removes absorbing retirement constraint "
         "and the lagged_retirement state, and adds wage function that depends on age."
     ),
-    n_periods=3,
     functions={
         "utility": utility,
         "next_wealth": next_wealth,
