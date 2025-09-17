@@ -6,7 +6,7 @@ the target specification for the implementation.
 
 from __future__ import annotations
 
-import warnings
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import pytest
 
 from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
+from lcm.exceptions import ModelInitilizationError
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -238,32 +239,24 @@ def test_single_regime_model():
 
 def test_legacy_api_deprecation_warning():
     """Test that legacy API shows deprecation warning."""
-    # Use warnings.catch_warnings instead of pytest.warns for complex block
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
+    warn_msg = re.escape(
+        "Legacy Model API (n_periods, actions, states, functions) is deprecated "
+        "and will be removed in version 0.1.0."
+    )
 
-        # Try to create legacy model - will fail on initialization
-        # but warning should trigger
-        try:
-            Model(
-                n_periods=5,
-                actions={"consumption": LinspaceGrid(start=1, stop=10, n_points=10)},
-                states={"wealth": LinspaceGrid(start=1, stop=100, n_points=11)},
-                functions={
-                    "utility": lambda consumption, _wealth: jnp.log(consumption),
-                    "next_wealth": lambda wealth, consumption: wealth - consumption,
-                },
-            )
-        except Exception:  # noqa: BLE001, S110
-            # Initialization may fail due to function signature issues,
-            # but the deprecation warning should still be triggered
-            pass
-
-        # Verify the deprecation warning was issued
-        assert len(w) == 1
-        assert issubclass(w[0].category, DeprecationWarning)
-        expected_msg = (
-            "Legacy Model API (n_periods, actions, states, functions) is deprecated "
-            "and will be removed in version 0.1.0."
+    # The deprecation warning should trigger before the initialization error
+    with (
+        pytest.warns(DeprecationWarning, match=warn_msg),
+        pytest.raises(ModelInitilizationError),
+    ):
+        # Model creation will fail due to function signature issues,
+        # but the deprecation warning should be triggered first
+        Model(
+            n_periods=5,
+            actions={"consumption": LinspaceGrid(start=1, stop=10, n_points=10)},
+            states={"wealth": LinspaceGrid(start=1, stop=100, n_points=11)},
+            functions={
+                "utility": lambda consumption, _wealth: jnp.log(consumption),
+                "next_wealth": lambda wealth, consumption: wealth - consumption,
+            },
         )
-        assert expected_msg in str(w[0].message)
