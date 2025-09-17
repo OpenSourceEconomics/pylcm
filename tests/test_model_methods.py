@@ -121,7 +121,9 @@ def test_model_solve_method_equivalent_to_get_lcm_function():
     params = tree_map(lambda _: 0.2, model.params_template)
 
     # Old approach
-    warn_msg = re.escape("get_lcm_function() is deprecated.")
+    warn_msg = re.escape(
+        "get_lcm_function() is deprecated and will be removed in version 0.1.0."
+    )
     with pytest.warns(DeprecationWarning, match=warn_msg):
         solve_old, _ = get_lcm_function(model=model, targets="solve")
     solution_old = solve_old(params)

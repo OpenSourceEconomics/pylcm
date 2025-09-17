@@ -74,8 +74,9 @@ def get_lcm_function(
 
     """
     msg = (
-        "get_lcm_function() is deprecated. Use Model.solve(), Model.simulate(), "
-        "or Model.solve_and_simulate() methods directly instead."
+        "get_lcm_function() is deprecated and will be removed in version 0.1.0. "
+        "Use Model.solve(), Model.simulate(), or Model.solve_and_simulate() "
+        "methods directly instead."
     )
     warnings.warn(
         msg,

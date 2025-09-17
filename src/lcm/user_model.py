@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Regime:
     """A modular component defining a consistent state-action space and functions.
 
@@ -41,7 +41,6 @@ class Regime:
 
     name: str
     active: range
-    _: KW_ONLY
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
     functions: dict[str, UserFunction] = field(default_factory=dict)
@@ -148,7 +147,8 @@ class Model:
     def _initialize_legacy_model(self) -> None:
         """Initialize legacy single-regime model."""
         warnings.warn(
-            "Legacy Model API (n_periods, actions, states, functions) is deprecated. "
+            "Legacy Model API (n_periods, actions, states, functions) is deprecated "
+            "and will be removed in version 0.1.0. "
             "Use Regime API instead: Model(regimes=[Regime(name='default', "
             "active=range(n_periods), ...)])",
             DeprecationWarning,
