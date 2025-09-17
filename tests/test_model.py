@@ -53,10 +53,6 @@ def labor_income(working: IntND, wage: float) -> FloatND:
     return working * wage
 
 
-def working_from_action(working: DiscreteAction) -> IntND:
-    return working
-
-
 def next_wealth(
     wealth: ContinuousState,
     consumption: ContinuousAction,
@@ -108,7 +104,6 @@ def test_work_retirement_model_solution():
         functions={
             "utility": utility,
             "labor_income": labor_income,
-            "working": working_from_action,
             "next_wealth": next_wealth,
             "borrowing_constraint": borrowing_constraint,
         },
