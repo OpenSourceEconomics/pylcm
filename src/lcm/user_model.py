@@ -60,10 +60,10 @@ class Regime:
 
     def __post_init__(self) -> None:
         # Basic validation for now
-        if self.active is not None and not isinstance(self.active, range):
-            raise TypeError("active must be a range object or None")
         if not self.name:
             raise ValueError("name cannot be empty")
+        _validate_attribute_types(self)
+        _validate_logical_consistency(self)
 
     def to_model(
         self,
@@ -141,7 +141,6 @@ class Model:
     enable_jit: bool = True
 
     # Computed model components (set in __post_init__)
-    computed_n_periods: int = field(init=False)
     is_regime_model: bool = field(init=False)
     internal_model: InternalModel = field(init=False)
     params_template: ParamsDict = field(init=False)
@@ -180,12 +179,36 @@ class Model:
         if not self.regimes:
             raise ModelInitilizationError("Regime model must have at least one regime")
 
-        # Step 1: Determine computed_n_periods based on interaction logic
-        computed_n_periods = self._resolve_n_periods_and_regime_active()
-        object.__setattr__(self, "computed_n_periods", computed_n_periods)
+        # Step 1: Determine n_periods based on interaction logic
+        n_periods = self.n_periods
+        if n_periods is None:
+            regimes_with_active = [r for r in self.regimes if r.active is not None]
+            if not regimes_with_active:
+                raise ModelInitilizationError(
+                    "When n_periods is None, at least one regime must have "
+                    "an active range specified"
+                )
+            n_periods = max(
+                regime.active.stop
+                for regime in regimes_with_active
+                if regime.active is not None
+            )
+            object.__setattr__(self, "n_periods", n_periods)
+        else:
+            # Update regimes with active=None to be active in all periods
+            for regime in self.regimes:
+                if regime.active is None:
+                    object.__setattr__(regime, "active", range(n_periods))
+            # Validate that explicit active ranges align with n_periods
+            for regime in self.regimes:
+                if regime.active is not None and regime.active.stop > n_periods:
+                    raise ModelInitilizationError(
+                        f"Regime '{regime.name}' has active range extending "
+                        f"beyond n_periods ({regime.active.stop} > {n_periods})"
+                    )
 
         # Step 2: Validate regime coverage
-        self._validate_regime_coverage(computed_n_periods)
+        self._validate_regime_coverage(n_periods)
 
         # Initialize regime transition components (placeholder for now)
         object.__setattr__(self, "regime_transition_dag", {})
@@ -193,53 +216,11 @@ class Model:
 
         raise NotImplementedError("Regime models are not yet fully implemented")
 
-    def _resolve_n_periods_and_regime_active(self) -> int:
-        """Resolve n_periods and regime active periods based on interaction logic.
-
-        Returns:
-            The computed number of periods for the model.
-
-        Raises:
-            ModelInitilizationError: If the configuration is invalid.
-        """
-        # Case 1: n_periods is None -> derive from regime.active ranges
-        if self.n_periods is None:
-            regimes_with_active = [r for r in self.regimes if r.active is not None]
-            if not regimes_with_active:
-                raise ModelInitilizationError(
-                    "When n_periods is None, at least one regime must have "
-                    "an active range specified"
-                )
-            return max(
-                regime.active.stop
-                for regime in regimes_with_active
-                if regime.active is not None
-            )
-
-        # Case 2: n_periods is not None -> validate alignment and set None active ranges
-        computed_n_periods = self.n_periods
-
-        # Update regimes with active=None to be active in all periods
-        for regime in self.regimes:
-            if regime.active is None:
-                # Set the regime to be active in all periods
-                object.__setattr__(regime, "active", range(computed_n_periods))
-
-        # Validate that explicit active ranges align with n_periods
-        for regime in self.regimes:
-            if regime.active is not None and regime.active.stop > computed_n_periods:
-                raise ModelInitilizationError(
-                    f"Regime '{regime.name}' has active range extending "
-                    f"beyond n_periods ({regime.active.stop} > {computed_n_periods})"
-                )
-
-        return computed_n_periods
-
-    def _validate_regime_coverage(self, computed_n_periods: int) -> None:
+    def _validate_regime_coverage(self, n_periods: int) -> None:
         """Validate that regimes cover all periods without overlap.
 
         Args:
-            computed_n_periods: The number of periods the model should cover.
+            n_periods: The number of periods the model should cover.
 
         Raises:
             ModelInitilizationError: If regime coverage is invalid.
@@ -261,7 +242,7 @@ class Model:
                 )
             all_periods.update(regime_periods)
 
-        expected_periods = set(range(computed_n_periods))
+        expected_periods = set(range(n_periods))
         if all_periods != expected_periods:
             missing = expected_periods - all_periods
             extra = all_periods - expected_periods
@@ -282,11 +263,7 @@ class Model:
         if self.n_periods is None:
             raise ModelInitilizationError("Legacy model must specify n_periods")
 
-        object.__setattr__(self, "computed_n_periods", self.n_periods)
-
         # Original single-regime model path
-        _validate_attribute_types(self)
-        _validate_logical_consistency(self)
         initialize_model_components(self)
 
     def solve(
@@ -396,14 +373,14 @@ class Model:
             ) from e
 
 
-def _validate_attribute_types(model: Model) -> None:  # noqa: C901
+def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901
     """Validate the types of the model attributes."""
     error_messages = []
 
     # Validate types of states and actions
     # ----------------------------------------------------------------------------------
     for attr_name in ("actions", "states"):
-        attr = getattr(model, attr_name)
+        attr = getattr(regime, attr_name)
         if isinstance(attr, dict):
             for k, v in attr.items():
                 if not isinstance(k, str):
@@ -415,8 +392,8 @@ def _validate_attribute_types(model: Model) -> None:  # noqa: C901
 
     # Validate types of functions
     # ----------------------------------------------------------------------------------
-    if isinstance(model.functions, dict):
-        for k, v in model.functions.items():
+    if isinstance(regime.functions, dict):
+        for k, v in regime.functions.items():
             if not isinstance(k, str):
                 error_messages.append(f"function keys must be a strings, but is {k}.")
             if not callable(v):
@@ -431,21 +408,23 @@ def _validate_attribute_types(model: Model) -> None:  # noqa: C901
         raise ModelInitilizationError(msg)
 
 
-def _validate_logical_consistency(model: Model) -> None:
-    """Validate the logical consistency of the model."""
+def _validate_logical_consistency(regime: Regime) -> None:
+    """Validate the logical consistency of the regime."""
     error_messages = []
 
-    if model.n_periods is not None and model.n_periods < 1:
-        error_messages.append("Number of periods must be a positive integer.")
+    # if regime.n_periods is not None and regime.n_periods < 1:
+    #     error_messages.append("Number of periods must be a positive integer.")
+    if regime.active is not None and not isinstance(regime.active, range):
+        error_messages.append("Active must be a range object or None.")
 
-    if "utility" not in model.functions:
+    if "utility" not in regime.functions:
         error_messages.append(
             "Utility function is not defined. LCM expects a function called 'utility' "
             "in the functions dictionary.",
         )
 
     states_without_next_func = [
-        state for state in model.states if f"next_{state}" not in model.functions
+        state for state in regime.states if f"next_{state}" not in regime.functions
     ]
     if states_without_next_func:
         error_messages.append(
@@ -454,7 +433,7 @@ def _validate_logical_consistency(model: Model) -> None:
             f"{states_without_next_func}.",
         )
 
-    states_and_actions_overlap = set(model.states) & set(model.actions)
+    states_and_actions_overlap = set(regime.states) & set(regime.actions)
     if states_and_actions_overlap:
         error_messages.append(
             "States and actions cannot have overlapping names. The following names "

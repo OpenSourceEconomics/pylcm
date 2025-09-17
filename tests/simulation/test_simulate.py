@@ -47,7 +47,7 @@ def simulate_inputs():
         is_last_period=False,
     )
     argmax_and_max_Q_over_a_functions = []
-    for period in range(model.computed_n_periods):
+    for period in range(model.n_periods):
         Q_and_F = get_Q_and_F(
             model=internal_model,
             next_state_space_info=state_space_info,
