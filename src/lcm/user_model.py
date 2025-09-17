@@ -37,10 +37,20 @@ class Regime:
 
     Each Regime represents a distinct behavioral environment where the agent
     has a specific set of available states, actions, and functions.
+
+    Args:
+        name: Unique identifier for this regime.
+        active: Range of periods when this regime is active. If None, the regime
+            will be active in all periods (requires Model.n_periods to be specified).
+        actions: Dictionary of action variables and their grids for this regime.
+        states: Dictionary of state variables and their grids for this regime.
+        functions: Dictionary of functions specific to this regime.
+        regime_transitions: Dictionary mapping target regime names to
+            transition functions.
     """
 
     name: str
-    active: range
+    active: range | None = None
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
     functions: dict[str, UserFunction] = field(default_factory=dict)
@@ -48,10 +58,42 @@ class Regime:
 
     def __post_init__(self) -> None:
         # Basic validation for now
-        if not isinstance(self.active, range):
-            raise TypeError("active must be a range object")
+        if self.active is not None and not isinstance(self.active, range):
+            raise TypeError("active must be a range object or None")
         if not self.name:
             raise ValueError("name cannot be empty")
+
+    def to_model(
+        self,
+        n_periods: int | None = None,
+        *,
+        description: str | None = None,
+        enable_jit: bool = True,
+    ) -> Model:
+        """Create a single-regime Model from this Regime.
+
+        This provides a fluent interface for the common case of single-regime models,
+        eliminating the need to manually wrap the regime in a list.
+
+        Args:
+            n_periods: Number of periods. If None, derived from regime.active.
+                If regime.active is also None, an error will be raised.
+            description: Optional model description.
+            enable_jit: Whether to enable JIT compilation.
+
+        Returns:
+            A Model containing only this regime.
+
+        Example:
+            >>> regime = Regime(name="simple", active=range(10), actions={...})
+            >>> model = regime.to_model()  # Creates 10-period model
+        """
+        return Model(
+            regimes=[self],
+            n_periods=n_periods,
+            description=description,
+            enable_jit=enable_jit,
+        )
 
 
 @dataclass(frozen=True)
@@ -59,6 +101,24 @@ class Model:
     """A user model which can be processed into an internal model.
 
     Supports regime-based models (new API) and legacy single-regime models.
+
+    The interaction between n_periods and Regime.active works as follows:
+
+    - If n_periods is None: Derives total periods from max(regime.active.stop)
+      across all regimes. At least one regime must have active specified.
+    - If n_periods is not None: Validates that regime.active ranges don't exceed
+      n_periods. Regimes with active=None will be set to active in all periods.
+
+    Args:
+        regimes: List of Regime objects defining the model structure.
+        n_periods: Total number of periods. If None, derived from regime active ranges.
+        description: Optional description of the model.
+        enable_jit: Whether to enable JIT compilation (default: True).
+
+    Legacy args (deprecated):
+        actions: Dictionary of action variables (single-regime models only).
+        states: Dictionary of state variables (single-regime models only).
+        functions: Dictionary of functions (single-regime models only).
     """
 
     # Model specification information (provided by the User)
@@ -67,9 +127,9 @@ class Model:
 
     # New regime-based API (preferred)
     regimes: list[Regime] = field(default_factory=list)
+    n_periods: int | None = None  # Used by both regime and legacy APIs
 
     # Legacy single-regime API (with deprecation warning)
-    n_periods: int | None = None
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
     functions: dict[str, UserFunction] = field(default_factory=dict)
@@ -113,16 +173,82 @@ class Model:
 
     def _initialize_regime_model(self) -> None:
         """Initialize regime-based model."""
-        # Auto-derive computed_n_periods
         if not self.regimes:
             raise ModelInitilizationError("Regime model must have at least one regime")
 
-        computed_n_periods = max(regime.active.stop for regime in self.regimes)
+        # Step 1: Determine computed_n_periods based on interaction logic
+        computed_n_periods = self._resolve_n_periods_and_regime_active()
         object.__setattr__(self, "computed_n_periods", computed_n_periods)
 
-        # Validate regime coverage
-        all_periods: set[int] = set()
+        # Step 2: Validate regime coverage
+        self._validate_regime_coverage(computed_n_periods)
+
+        # Initialize regime transition components (placeholder for now)
+        object.__setattr__(self, "regime_transition_dag", {})
+        object.__setattr__(self, "next_regime_state_function", None)
+
+        raise NotImplementedError("Regime models are not yet fully implemented")
+
+    def _resolve_n_periods_and_regime_active(self) -> int:
+        """Resolve n_periods and regime active periods based on interaction logic.
+
+        Returns:
+            The computed number of periods for the model.
+
+        Raises:
+            ModelInitilizationError: If the configuration is invalid.
+        """
+        # Case 1: n_periods is None -> derive from regime.active ranges
+        if self.n_periods is None:
+            regimes_with_active = [r for r in self.regimes if r.active is not None]
+            if not regimes_with_active:
+                raise ModelInitilizationError(
+                    "When n_periods is None, at least one regime must have "
+                    "an active range specified"
+                )
+            return max(
+                regime.active.stop
+                for regime in regimes_with_active
+                if regime.active is not None
+            )
+
+        # Case 2: n_periods is not None -> validate alignment and set None active ranges
+        computed_n_periods = self.n_periods
+
+        # Update regimes with active=None to be active in all periods
         for regime in self.regimes:
+            if regime.active is None:
+                # Set the regime to be active in all periods
+                object.__setattr__(regime, "active", range(computed_n_periods))
+
+        # Validate that explicit active ranges align with n_periods
+        for regime in self.regimes:
+            if regime.active is not None and regime.active.stop > computed_n_periods:
+                raise ModelInitilizationError(
+                    f"Regime '{regime.name}' has active range extending "
+                    f"beyond n_periods ({regime.active.stop} > {computed_n_periods})"
+                )
+
+        return computed_n_periods
+
+    def _validate_regime_coverage(self, computed_n_periods: int) -> None:
+        """Validate that regimes cover all periods without overlap.
+
+        Args:
+            computed_n_periods: The number of periods the model should cover.
+
+        Raises:
+            ModelInitilizationError: If regime coverage is invalid.
+        """
+        all_periods: set[int] = set()
+
+        for regime in self.regimes:
+            if regime.active is None:
+                raise ModelInitilizationError(
+                    f"Regime '{regime.name}' has active=None after resolution - "
+                    "this should not happen"
+                )
+
             regime_periods = set(regime.active)
             overlap = all_periods & regime_periods
             if overlap:
@@ -137,12 +263,6 @@ class Model:
             extra = all_periods - expected_periods
             msg = f"Period coverage mismatch. Missing: {missing}, Extra: {extra}"
             raise ModelInitilizationError(msg)
-
-        # Initialize regime transition components (placeholder for now)
-        object.__setattr__(self, "regime_transition_dag", {})
-        object.__setattr__(self, "next_regime_state_function", None)
-
-        raise NotImplementedError("Regime models are not yet fully implemented")
 
     def _initialize_legacy_model(self) -> None:
         """Initialize legacy single-regime model."""
