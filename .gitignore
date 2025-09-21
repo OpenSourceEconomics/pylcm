@@ -1,4 +1,5 @@
 # AI
+.claude
 CLAUDE.md
 
 # Byte-compiled / optimized / DLL files
@@ -131,3 +132,4 @@ venv.bak/
 .pytask.sqlite3
 src/lcm/_version.py
 .pixi
+.ruff_cache
