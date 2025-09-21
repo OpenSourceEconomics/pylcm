@@ -36,7 +36,7 @@ def simulate_inputs():
     model = _orig_model.replace(
         actions={
             **_orig_model.actions,
-            "consumption": _orig_model.actions["consumption"].replace(stop=100),
+            "consumption": _orig_model.actions["consumption"].replace(stop=100),  # type: ignore[attr-defined]
         }
     )
     internal_model = process_model(model)
