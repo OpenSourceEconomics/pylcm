@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import re
-
 import jax.numpy as jnp
 import pandas as pd
 import pytest
-from pybaum import tree_equal, tree_map
+from pybaum import tree_map
 
-from lcm.entry_point import get_lcm_function
 from tests.test_models import get_model
 
 
@@ -113,21 +110,3 @@ def test_model_initialization_all_configs(model_name):
     assert model.internal_model is not None
     assert len(model.state_action_spaces) == 2
     assert len(model.max_Q_over_a_functions) == 2
-
-
-def test_model_solve_method_equivalent_to_get_lcm_function():
-    """Test new Model.solve() gives same results as get_lcm_function."""
-    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    params = tree_map(lambda _: 0.2, model.params_template)
-
-    # Old approach
-    warn_msg = re.escape("get_lcm_function() is deprecated.")
-    with pytest.warns(DeprecationWarning, match=warn_msg):
-        solve_old, _ = get_lcm_function(model=model, targets="solve")
-    solution_old = solve_old(params)
-
-    # New approach
-    solution_new = model.solve(params)
-
-    # Should give identical results
-    assert tree_equal(solution_old, solution_new)
