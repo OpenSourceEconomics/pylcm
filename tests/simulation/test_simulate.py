@@ -32,24 +32,27 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def simulate_inputs():
-    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=1)
-    actions = model.actions
-    actions["consumption"] = actions["consumption"].replace(stop=100)  # type: ignore[attr-defined]
-    model = model.replace(actions=actions)
+    _orig_model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=1)
+    model = _orig_model.replace(
+        actions={
+            **_orig_model.actions,
+            "consumption": _orig_model.actions["consumption"].replace(stop=100),  # type: ignore[attr-defined]
+        }
+    )
     internal_model = process_model(model)
 
     state_space_info = create_state_space_info(
-        model=internal_model,
+        internal_model=internal_model,
         is_last_period=False,
     )
     state_action_space = create_state_action_space(
-        model=internal_model,
+        internal_model=internal_model,
         is_last_period=False,
     )
     argmax_and_max_Q_over_a_functions = []
     for period in range(model.n_periods):
         Q_and_F = get_Q_and_F(
-            model=internal_model,
+            internal_model=internal_model,
             next_state_space_info=state_space_info,
             period=period,
         )
@@ -61,7 +64,7 @@ def simulate_inputs():
 
     return {
         "argmax_and_max_Q_over_a_functions": argmax_and_max_Q_over_a_functions,
-        "model": internal_model,
+        "internal_model": internal_model,
     }
 
 

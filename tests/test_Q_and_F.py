@@ -38,12 +38,12 @@ def test_get_Q_and_F_function():
     }
 
     state_space_info = create_state_space_info(
-        model=model,
+        internal_model=model,
         is_last_period=False,
     )
 
     Q_and_F = get_Q_and_F(
-        model=model,
+        internal_model=model,
         next_state_space_info=state_space_info,
         period=model.n_periods - 1,
     )

@@ -37,7 +37,7 @@ def simulate(
     params: ParamsDict,
     initial_states: dict[str, Array],
     argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction],
-    model: InternalModel,
+    internal_model: InternalModel,
     logger: logging.Logger,
     V_arr_dict: dict[int, FloatND],
     *,
@@ -55,7 +55,7 @@ def simulate(
         next_state: Function that returns the next state given the current
             state and action variables. For stochastic variables, it returns a random
             draw from the distribution of the next state.
-        model: Model instance.
+        internal_model: Internal model instance.
         logger: Logger that logs to stdout.
         V_arr_dict: Dict of value function arrays of length n_periods.
         additional_targets: List of targets to compute. If provided, the targets
@@ -95,11 +95,11 @@ def simulate(
         else:
             query = "is_state and (enters_concurrent_valuation | enters_transition)"
         states_for_state_action_space = {
-            n: states[n] for n in model.variable_info.query(query).index
+            n: states[n] for n in internal_model.variable_info.query(query).index
         }
 
         state_action_space = create_state_action_space(
-            model=model,
+            internal_model=internal_model,
             states=states_for_state_action_space,
             is_last_period=is_last_period,
         )
@@ -161,11 +161,13 @@ def simulate(
         if not is_last_period:
             key, stochastic_variables_keys = generate_simulation_keys(
                 key=key,
-                ids=model.function_info.query("is_stochastic_next").index.tolist(),
+                ids=internal_model.function_info.query(
+                    "is_stochastic_next"
+                ).index.tolist(),
             )
 
             next_state = get_next_state_function(
-                model=model,
+                internal_model=internal_model,
                 next_states=tuple(state_action_space.states),
                 target=Target.SIMULATE,
             )
@@ -186,7 +188,7 @@ def simulate(
 
     processed = process_simulated_data(
         simulation_results,
-        model=model,
+        internal_model=internal_model,
         params=params,
         additional_targets=additional_targets,
     )

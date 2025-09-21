@@ -317,7 +317,7 @@ class Model:
             params=params,
             initial_states=initial_states,
             argmax_and_max_Q_over_a_functions=self.argmax_and_max_Q_over_a_functions,
-            model=self.internal_model,
+            internal_model=self.internal_model,
             logger=logger,
             V_arr_dict=V_arr_dict,
             additional_targets=additional_targets,
@@ -412,8 +412,6 @@ def _validate_logical_consistency(regime: Regime) -> None:
     """Validate the logical consistency of the regime."""
     error_messages = []
 
-    # if regime.n_periods is not None and regime.n_periods < 1:
-    #     error_messages.append("Number of periods must be a positive integer.")
     if regime.active is not None and not isinstance(regime.active, range):
         error_messages.append("Active must be a range object or None.")
 

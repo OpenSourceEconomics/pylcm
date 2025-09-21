@@ -69,13 +69,13 @@ def _get_model_components(model: Model) -> dict[str, Any]:
 
         # Create state action space
         state_action_space = create_state_action_space(
-            model=internal_model,
+            internal_model=internal_model,
             is_last_period=is_last_period,
         )
 
         # Create state space info
         state_space_info = create_state_space_info(
-            model=internal_model,
+            internal_model=internal_model,
             is_last_period=is_last_period,
         )
 
@@ -87,7 +87,7 @@ def _get_model_components(model: Model) -> dict[str, Any]:
 
         # Create Q and F functions
         Q_and_F = get_Q_and_F(
-            model=internal_model,
+            internal_model=internal_model,
             next_state_space_info=next_state_space_info,
             period=period,
         )

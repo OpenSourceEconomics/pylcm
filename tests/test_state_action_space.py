@@ -17,7 +17,7 @@ def test_create_state_action_space_solution():
     internal_model = process_model(model)
 
     state_action_space = create_state_action_space(
-        model=internal_model,
+        internal_model=internal_model,
         is_last_period=False,
     )
 
@@ -35,7 +35,7 @@ def test_create_state_action_space_simulation():
     model = get_model("iskhakov_et_al_2017", n_periods=3)
     internal_model = process_model(model)
     got_space = create_state_action_space(
-        model=internal_model,
+        internal_model=internal_model,
         states={
             "wealth": jnp.array([10.0, 20.0]),
             "lagged_retirement": jnp.array([0, 1]),
@@ -51,7 +51,7 @@ def test_create_state_space_info():
     internal_model = process_model(model)
 
     state_space_info = create_state_space_info(
-        model=internal_model,
+        internal_model=internal_model,
         is_last_period=False,
     )
 
@@ -65,7 +65,7 @@ def test_create_state_action_space_replace():
     model = get_model("iskhakov_et_al_2017", n_periods=3)
     internal_model = process_model(model)
     space = create_state_action_space(
-        model=internal_model,
+        internal_model=internal_model,
         states={
             "wealth": jnp.array([10.0, 20.0]),
             "lagged_retirement": jnp.array([0, 1]),
