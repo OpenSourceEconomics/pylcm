@@ -22,7 +22,7 @@ from lcm.simulation.simulate import (
 )
 from lcm.state_action_space import create_state_action_space, create_state_space_info
 from tests.test_models import (
-    get_model_config,
+    get_model,
 )
 
 if TYPE_CHECKING:
@@ -33,19 +33,19 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def model_input():
-    _model_config = get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=1)
+    _model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=1)
     # Modify the model to have a coarser continuous action space for testing
-    actions = _model_config.actions
+    actions = _model.actions
     actions["consumption"] = actions["consumption"].replace(stop=20)  # type: ignore[attr-defined]
-    model_config = _model_config.replace(actions=actions)
-    model = process_model(model_config)
+    model = _model.replace(actions=actions)
+    internal_model = process_model(model)
 
     state_space_info = create_state_space_info(
-        model=model,
+        internal_model=internal_model,
         is_last_period=False,
     )
     state_action_space = create_state_action_space(
-        model=model,
+        internal_model=internal_model,
         is_last_period=False,
     )
     params = {
@@ -56,11 +56,11 @@ def model_input():
         },
     }
     return {
-        "model": model,
+        "model": internal_model,
         "state_action_space": state_action_space,
         "state_space_info": state_space_info,
         "next_state": get_next_state_function(
-            model=model, next_states=("wealth",), target=Target.SOLVE
+            internal_model=internal_model, next_states=("wealth",), target=Target.SOLVE
         ),
         "params": params,
     }
@@ -81,7 +81,7 @@ def test_max_Q_over_a_equal(model_input):
     model = model_input["model"]
 
     Q_and_F = get_Q_and_F(
-        model=model,
+        internal_model=model,
         next_state_space_info=state_space_info,
         period=0,
     )
@@ -154,7 +154,7 @@ def test_argmax_Q_over_a_equal(model_input):
     model = model_input["model"]
 
     Q_and_F = get_Q_and_F(
-        model=model,
+        internal_model=model,
         next_state_space_info=state_space_info,
         period=0,
     )

@@ -8,10 +8,7 @@ import pytest
 from numpy.testing import assert_array_almost_equal
 
 import lcm
-from lcm.entry_point import (
-    get_lcm_function,
-)
-from tests.test_models import get_model_config, get_params
+from tests.test_models import get_model, get_params
 
 if TYPE_CHECKING:
     from lcm.typing import FloatND
@@ -21,13 +18,10 @@ if TYPE_CHECKING:
 # ======================================================================================
 
 
-def test_get_lcm_function_with_simulate_target():
-    simulate_model, _ = get_lcm_function(
-        model=get_model_config("iskhakov_et_al_2017_stochastic", n_periods=3),
-        targets="solve_and_simulate",
-    )
+def test_model_solve_and_simulate_with_stochastic_model():
+    model = get_model("iskhakov_et_al_2017_stochastic", n_periods=3)
 
-    res: pd.DataFrame = simulate_model(  # type: ignore[assignment]
+    res: pd.DataFrame = model.solve_and_simulate(
         params=get_params(),
         initial_states={
             "health": jnp.array([1, 1, 0, 0]),
@@ -54,12 +48,9 @@ def test_get_lcm_function_with_simulate_target():
 # ======================================================================================
 
 
-def test_get_lcm_function_with_solve_target():
-    solve_model, _ = get_lcm_function(
-        model=get_model_config("iskhakov_et_al_2017_stochastic", n_periods=3),
-        targets="solve",
-    )
-    solve_model(params=get_params())
+def test_model_solve_with_stochastic_model():
+    model = get_model("iskhakov_et_al_2017_stochastic", n_periods=3)
+    model.solve(params=get_params())
 
 
 # ======================================================================================
@@ -74,13 +65,8 @@ def model_and_params():
     TODO(@timmens): Add this to tests/test_models/stochastic.py.
 
     """
-    model_deterministic = get_model_config(
-        "iskhakov_et_al_2017_stochastic", n_periods=3
-    )
-    model_stochastic = get_model_config("iskhakov_et_al_2017_stochastic", n_periods=3)
 
-    # Overwrite health transition with simple stochastic version and deterministic one
-    # ==================================================================================
+    # Define functions first
     @lcm.mark.stochastic
     def next_health_stochastic(health):
         pass
@@ -88,8 +74,18 @@ def model_and_params():
     def next_health_deterministic(health):
         return health
 
-    model_deterministic.functions["next_health"] = next_health_deterministic
-    model_stochastic.functions["next_health"] = next_health_stochastic
+    # Get the base models and create modified versions
+    base_model = get_model("iskhakov_et_al_2017_stochastic", n_periods=3)
+
+    # Create deterministic model with modified function
+    model_deterministic = base_model.replace(
+        functions={**base_model.functions, "next_health": next_health_deterministic}
+    )
+
+    # Create stochastic model with modified function
+    model_stochastic = base_model.replace(
+        functions={**base_model.functions, "next_health": next_health_stochastic}
+    )
 
     params = get_params(
         beta=0.95,
@@ -109,17 +105,8 @@ def test_compare_deterministic_and_stochastic_results_value_function(model_and_p
     # ==================================================================================
     # Compare value function arrays
     # ==================================================================================
-    solve_model_deterministic, _ = get_lcm_function(
-        model=model_deterministic,
-        targets="solve",
-    )
-    solve_model_stochastic, _ = get_lcm_function(
-        model=model_stochastic,
-        targets="solve",
-    )
-
-    solution_deterministic: dict[int, FloatND] = solve_model_deterministic(params)  # type: ignore[assignment]
-    solution_stochastic: dict[int, FloatND] = solve_model_stochastic(params)  # type: ignore[assignment]
+    solution_deterministic: dict[int, FloatND] = model_deterministic.solve(params)
+    solution_stochastic: dict[int, FloatND] = model_stochastic.solve(params)
 
     for period in range(model_deterministic.n_periods):
         assert_array_almost_equal(
@@ -131,29 +118,20 @@ def test_compare_deterministic_and_stochastic_results_value_function(model_and_p
     # ==================================================================================
     # Compare simulation results
     # ==================================================================================
-    simulate_model_deterministic, _ = get_lcm_function(
-        model=model_deterministic,
-        targets="simulate",
-    )
-    simulate_model_stochastic, _ = get_lcm_function(
-        model=model_stochastic,
-        targets="simulate",
-    )
-
     initial_states = {
         "health": jnp.array([1, 1, 0, 0]),
         "partner": jnp.array([0, 0, 0, 0]),
         "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
     }
 
-    simulation_deterministic = simulate_model_deterministic(
+    simulation_deterministic = model_deterministic.simulate(
         params,
         V_arr_dict=solution_deterministic,
         initial_states=initial_states,
     )
-    simulation_stochastic = simulate_model_stochastic(
+    simulation_stochastic = model_stochastic.simulate(
         params,
         V_arr_dict=solution_stochastic,
         initial_states=initial_states,
     )
-    pd.testing.assert_frame_equal(simulation_deterministic, simulation_stochastic)  # type: ignore[arg-type]
+    pd.testing.assert_frame_equal(simulation_deterministic, simulation_stochastic)

@@ -26,14 +26,14 @@ if TYPE_CHECKING:
 
 def get_next_state_function(
     *,
-    model: InternalModel,
+    internal_model: InternalModel,
     next_states: tuple[str, ...],
     target: Target,
 ) -> Callable[..., dict[str, DiscreteState | ContinuousState]]:
     """Get function that computes the next states during the solution.
 
     Args:
-        model: Internal model instance.
+        internal_model: Internal model instance.
         next_states: Names of the next states to compute. These states are relevant for
             the next state space.
         target: Whether to generate the function for the solve or simulate target.
@@ -46,17 +46,17 @@ def get_next_state_function(
 
     """
     if target == Target.SOLVE:
-        functions_dict = model.functions
+        functions_dict = internal_model.functions
     elif target == Target.SIMULATE:
         # For the simulation target, we need to extend the functions dictionary with
         # stochastic next states functions and their weights.
-        functions_dict = _extend_functions_dict_for_simulation(model)
+        functions_dict = _extend_functions_dict_for_simulation(internal_model)
     else:
         raise ValueError(f"Invalid target: {target}")
 
     requested_next_states = [
         next_state
-        for next_state in model.function_info.query("is_next").index
+        for next_state in internal_model.function_info.query("is_next").index
         if next_state.replace("next_", "") in next_states
     ]
 
@@ -70,13 +70,13 @@ def get_next_state_function(
 
 
 def get_next_stochastic_weights_function(
-    model: InternalModel,
+    internal_model: InternalModel,
     next_stochastic_states: tuple[str, ...],
 ) -> Callable[..., dict[str, Array]]:
     """Get function that computes the weights for the next stochastic states.
 
     Args:
-        model: Internal model instance.
+        internal_model: Internal model instance.
         next_stochastic_states: Names of the stochastic states for which to compute the
             weights. These variables are relevant for the next state space.
 
@@ -87,7 +87,7 @@ def get_next_stochastic_weights_function(
     targets = [f"weight_next_{name}" for name in next_stochastic_states]
 
     return concatenate_functions(
-        functions=model.functions,
+        functions=internal_model.functions,
         targets=targets,
         return_type="dict",
         enforce_signature=False,
@@ -96,18 +96,18 @@ def get_next_stochastic_weights_function(
 
 
 def _extend_functions_dict_for_simulation(
-    model: InternalModel,
+    internal_model: InternalModel,
 ) -> dict[str, Callable[..., Array]]:
     """Extend the functions dictionary for the simulation target.
 
     Args:
-        model: Internal model instance.
+        internal_model: Internal model instance.
 
     Returns:
         Extended functions dictionary.
 
     """
-    stochastic_targets = model.function_info.query("is_stochastic_next").index
+    stochastic_targets = internal_model.function_info.query("is_stochastic_next").index
 
     # Handle stochastic next states functions
     # ----------------------------------------------------------------------------------
@@ -120,19 +120,19 @@ def _extend_functions_dict_for_simulation(
     # ----------------------------------------------------------------------------------
     stochastic_next = {
         name: _create_stochastic_next_func(
-            name, labels=model.grids[name.removeprefix("next_")]
+            name, labels=internal_model.grids[name.removeprefix("next_")]
         )
         for name in stochastic_targets
     }
 
     stochastic_weights = {
-        f"weight_{name}": model.functions[f"weight_{name}"]
+        f"weight_{name}": internal_model.functions[f"weight_{name}"]
         for name in stochastic_targets
     }
 
     # Overwrite model.functions with generated stochastic next states functions
     # ----------------------------------------------------------------------------------
-    return model.functions | stochastic_next | stochastic_weights
+    return internal_model.functions | stochastic_next | stochastic_weights
 
 
 def _create_stochastic_next_func(

@@ -16,8 +16,7 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm._config import TEST_DATA
-from lcm.entry_point import get_lcm_function
-from tests.test_models import get_model_config, get_params
+from tests.test_models import get_model, get_params
 
 if TYPE_CHECKING:
     from lcm.typing import FloatND
@@ -29,7 +28,7 @@ if TYPE_CHECKING:
 
 TEST_CASES = {
     "iskhakov_2017_five_periods": {
-        "model": get_model_config("iskhakov_et_al_2017", n_periods=5),
+        "model": get_model("iskhakov_et_al_2017", n_periods=5),
         "params": get_params(
             beta=0.98,
             disutility_of_work=1.0,
@@ -38,7 +37,7 @@ TEST_CASES = {
         ),
     },
     "iskhakov_2017_low_delta": {
-        "model": get_model_config("iskhakov_et_al_2017", n_periods=3),
+        "model": get_model("iskhakov_et_al_2017", n_periods=3),
         "params": get_params(
             beta=0.98,
             disutility_of_work=0.1,
@@ -68,9 +67,10 @@ def test_analytical_solution(model_name, model_and_params):
     """
     # Compute LCM solution
     # ==================================================================================
-    solve_model, _ = get_lcm_function(model=model_and_params["model"], targets="solve")
+    model = model_and_params["model"]
+    params = model_and_params["params"]
 
-    V_arr_dict: dict[int, FloatND] = solve_model(params=model_and_params["params"])  # type: ignore[assignment]
+    V_arr_dict: dict[int, FloatND] = model.solve(params=params)
     V_arr_list = list(dict(sorted(V_arr_dict.items(), key=lambda x: x[0])).values())
 
     _numerical = np.stack(V_arr_list)

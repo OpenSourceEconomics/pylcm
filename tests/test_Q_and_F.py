@@ -15,7 +15,7 @@ from lcm.Q_and_F import (
     get_Q_and_F,
 )
 from lcm.state_action_space import create_state_space_info
-from tests.test_models import get_model_config
+from tests.test_models import get_model
 from tests.test_models.deterministic import utility
 
 if TYPE_CHECKING:
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 @pytest.mark.illustrative
 def test_get_Q_and_F_function():
     model = process_model(
-        get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=3),
+        get_model("iskhakov_et_al_2017_stripped_down", n_periods=3),
     )
 
     params = {
@@ -38,12 +38,12 @@ def test_get_Q_and_F_function():
     }
 
     state_space_info = create_state_space_info(
-        model=model,
+        internal_model=model,
         is_last_period=False,
     )
 
     Q_and_F = get_Q_and_F(
-        model=model,
+        internal_model=model,
         next_state_space_info=state_space_info,
         period=model.n_periods - 1,
     )

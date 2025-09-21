@@ -30,14 +30,14 @@ if TYPE_CHECKING:
 
 
 def get_Q_and_F(
-    model: InternalModel,
+    internal_model: InternalModel,
     next_state_space_info: StateSpaceInfo,
     period: int,
 ) -> Callable[..., tuple[FloatND, BoolND]]:
     """Get the state-action (Q) and feasibility (F) function for a given period.
 
     Args:
-        model: The internal model object.
+        internal_model: Internal model instance.
         next_state_space_info: The state space information of the next period.
         period: The current period.
 
@@ -46,27 +46,27 @@ def get_Q_and_F(
         for the given period.
 
     """
-    is_last_period = period == model.n_periods - 1
+    is_last_period = period == internal_model.n_periods - 1
 
     if is_last_period:
-        Q_and_F = get_Q_and_F_terminal(model, period=period)
+        Q_and_F = get_Q_and_F_terminal(internal_model, period=period)
     else:
         Q_and_F = get_Q_and_F_non_terminal(
-            model, next_state_space_info=next_state_space_info, period=period
+            internal_model, next_state_space_info=next_state_space_info, period=period
         )
 
     return Q_and_F
 
 
 def get_Q_and_F_non_terminal(
-    model: InternalModel,
+    internal_model: InternalModel,
     next_state_space_info: StateSpaceInfo,
     period: int,
 ) -> Callable[..., tuple[FloatND, BoolND]]:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
     Args:
-        model: The internal model object.
+        internal_model: Internal model instance.
         next_state_space_info: The state space information of the next period.
         period: The current period.
 
@@ -75,7 +75,9 @@ def get_Q_and_F_non_terminal(
         for a non-terminal period.
 
     """
-    stochastic_variables = model.variable_info.query("is_stochastic").index.tolist()
+    stochastic_variables = internal_model.variable_info.query(
+        "is_stochastic"
+    ).index.tolist()
     # As we compute the expecation of the next period's value function, we only need the
     # stochastic variables that are relevant for the next state space.
     next_stochastic_variables = tuple(
@@ -87,14 +89,16 @@ def get_Q_and_F_non_terminal(
     # ----------------------------------------------------------------------------------
 
     # Function required to calculate instantaneous utility and feasibility
-    U_and_F = _get_U_and_F(model)
+    U_and_F = _get_U_and_F(internal_model)
 
     # Functions required to calculate the expected continuation values
     state_transition = get_next_state_function(
-        model=model, next_states=next_state_space_info.states_names, target=Target.SOLVE
+        internal_model=internal_model,
+        next_states=next_state_space_info.states_names,
+        target=Target.SOLVE,
     )
     next_stochastic_states_weights = get_next_stochastic_weights_function(
-        model, next_stochastic_states=next_stochastic_variables
+        internal_model, next_stochastic_states=next_stochastic_variables
     )
     joint_weights_from_marginals = _get_joint_weights_function(
         next_stochastic_variables
@@ -179,13 +183,13 @@ def get_Q_and_F_non_terminal(
 
 
 def get_Q_and_F_terminal(
-    model: InternalModel,
+    internal_model: InternalModel,
     period: int,
 ) -> Callable[..., tuple[FloatND, BoolND]]:
     """Get the state-action (Q) and feasibility (F) function for the terminal period.
 
     Args:
-        model: The internal model object.
+        internal_model: Internal model instance.
         period: The current period.
 
     Returns:
@@ -193,7 +197,7 @@ def get_Q_and_F_terminal(
         for the terminal period.
 
     """
-    U_and_F = _get_U_and_F(model)
+    U_and_F = _get_U_and_F(internal_model)
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         [U_and_F],
@@ -289,7 +293,9 @@ def _get_joint_weights_function(
     return productmap(_outer, variables=tuple(arg_names))
 
 
-def _get_U_and_F(model: InternalModel) -> Callable[..., tuple[FloatND, BoolND]]:
+def _get_U_and_F(
+    internal_model: InternalModel,
+) -> Callable[..., tuple[FloatND, BoolND]]:
     """Get the instantaneous utility and feasibility function.
 
     Note:
@@ -298,13 +304,16 @@ def _get_U_and_F(model: InternalModel) -> Callable[..., tuple[FloatND, BoolND]]:
     executed if they matter for the value of U.
 
     Args:
-        model: The internal model object.
+        internal_model: Internal model instance.
 
     Returns:
         The instantaneous utility and feasibility function.
 
     """
-    functions = {"feasibility": _get_feasibility(model), **model.functions}
+    functions = {
+        "feasibility": _get_feasibility(internal_model),
+        **internal_model.functions,
+    }
     return concatenate_functions(
         functions=functions,
         targets=["utility", "feasibility"],
@@ -313,17 +322,17 @@ def _get_U_and_F(model: InternalModel) -> Callable[..., tuple[FloatND, BoolND]]:
     )
 
 
-def _get_feasibility(model: InternalModel) -> InternalUserFunction:
+def _get_feasibility(internal_model: InternalModel) -> InternalUserFunction:
     """Create a function that combines all constraint functions into a single one.
 
     Args:
-        model: The internal model object.
+        internal_model: Internal model instance.
 
     Returns:
         The combined constraint function (feasibility).
 
     """
-    constraints = model.function_info.query("is_constraint").index.tolist()
+    constraints = internal_model.function_info.query("is_constraint").index.tolist()
 
     if constraints:
         with warnings.catch_warnings():
@@ -331,7 +340,7 @@ def _get_feasibility(model: InternalModel) -> InternalUserFunction:
             # called with an aggregator and raises a warning.
             warnings.simplefilter("ignore", category=DagsWarning)
             combined_constraint = concatenate_functions(
-                functions=model.functions,
+                functions=internal_model.functions,
                 targets=constraints,
                 aggregator=jnp.logical_and,
                 set_annotations=True,

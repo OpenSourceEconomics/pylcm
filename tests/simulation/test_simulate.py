@@ -6,7 +6,6 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_almost_equal, assert_array_equal
 
-from lcm.entry_point import get_lcm_function
 from lcm.input_processing import process_model
 from lcm.logging import get_logger
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a
@@ -18,7 +17,7 @@ from lcm.simulation.simulate import (
 )
 from lcm.state_action_space import create_state_action_space, create_state_space_info
 from tests.test_models import (
-    get_model_config,
+    get_model,
     get_params,
 )
 
@@ -33,24 +32,27 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def simulate_inputs():
-    model_config = get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=1)
-    actions = model_config.actions
-    actions["consumption"] = actions["consumption"].replace(stop=100)  # type: ignore[attr-defined]
-    model_config = model_config.replace(actions=actions)
-    model = process_model(model_config)
+    _orig_model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=1)
+    model = _orig_model.replace(
+        actions={
+            **_orig_model.actions,
+            "consumption": _orig_model.actions["consumption"].replace(stop=100),  # type: ignore[attr-defined]
+        }
+    )
+    internal_model = process_model(model)
 
     state_space_info = create_state_space_info(
-        model=model,
+        internal_model=internal_model,
         is_last_period=False,
     )
     state_action_space = create_state_action_space(
-        model=model,
+        internal_model=internal_model,
         is_last_period=False,
     )
     argmax_and_max_Q_over_a_functions = []
     for period in range(model.n_periods):
         Q_and_F = get_Q_and_F(
-            model=model,
+            internal_model=internal_model,
             next_state_space_info=state_space_info,
             period=period,
         )
@@ -62,7 +64,7 @@ def simulate_inputs():
 
     return {
         "argmax_and_max_Q_over_a_functions": argmax_and_max_Q_over_a_functions,
-        "model": model,
+        "internal_model": internal_model,
     }
 
 
@@ -88,34 +90,33 @@ def test_simulate_using_raw_inputs(simulate_inputs):
 
 
 # ======================================================================================
-# Test simulate using get_lcm_function
+# Test simulate
 # ======================================================================================
 
 
 @pytest.fixture
 def iskhakov_et_al_2017_stripped_down_model_solution():
     def _model_solution(n_periods):
-        model_config = get_model_config(
+        model = get_model(
             "iskhakov_et_al_2017_stripped_down",
             n_periods=n_periods,
         )
         updated_functions = {
             # remove dependency on age, so that wage becomes a parameter
             name: func
-            for name, func in model_config.functions.items()
+            for name, func in model.functions.items()
             if name not in ["age", "wage"]
         }
-        model_config = model_config.replace(functions=updated_functions)
-        solve_model, _ = get_lcm_function(model_config, targets="solve")
+        model = model.replace(functions=updated_functions)
 
         params = get_params()
-        V_arr_dict = solve_model(params=params)
-        return V_arr_dict, params, model_config
+        V_arr_dict = model.solve(params=params)
+        return V_arr_dict, params, model
 
     return _model_solution
 
 
-def test_simulate_using_get_lcm_function(
+def test_simulate_using_model_methods(
     iskhakov_et_al_2017_stripped_down_model_solution,
 ):
     n_periods = 3
@@ -123,9 +124,7 @@ def test_simulate_using_get_lcm_function(
         n_periods=n_periods,
     )
 
-    simulate_model, _ = get_lcm_function(model=model, targets="simulate")
-
-    res: pd.DataFrame = simulate_model(  # type: ignore[assignment]
+    res: pd.DataFrame = model.simulate(
         params,
         V_arr_dict=V_arr_dict,
         initial_states={
@@ -157,12 +156,10 @@ def test_simulate_using_get_lcm_function(
 
 
 def test_simulate_with_only_discrete_actions():
-    model = get_model_config("iskhakov_et_al_2017_discrete", n_periods=2)
+    model = get_model("iskhakov_et_al_2017_discrete", n_periods=2)
     params = get_params(wage=1.5, beta=1, interest_rate=0)
 
-    simulate_model, _ = get_lcm_function(model=model, targets="solve_and_simulate")
-
-    res: pd.DataFrame = simulate_model(  # type: ignore[assignment]
+    res: pd.DataFrame = model.solve_and_simulate(
         params,
         initial_states={"wealth": jnp.array([0, 4])},
         additional_targets=["labor_income", "working"],
@@ -179,11 +176,7 @@ def test_simulate_with_only_discrete_actions():
 
 
 def test_effect_of_beta_on_last_period():
-    model_config = get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=5)
-
-    # Model solutions
-    # ==================================================================================
-    solve_model, _ = get_lcm_function(model=model_config, targets="solve")
+    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=5)
 
     # low beta
     params_low = get_params(beta=0.9, disutility_of_work=1.0)
@@ -192,22 +185,20 @@ def test_effect_of_beta_on_last_period():
     params_high = get_params(beta=0.99, disutility_of_work=1.0)
 
     # solutions
-    solution_low = solve_model(params_low)
-    solution_high = solve_model(params_high)
+    solution_low = model.solve(params_low)
+    solution_high = model.solve(params_high)
 
     # Simulate
     # ==================================================================================
-    simulate_model, _ = get_lcm_function(model=model_config, targets="simulate")
-
     initial_wealth = jnp.array([20.0, 50, 70])
 
-    res_low: pd.DataFrame = simulate_model(  # type: ignore[assignment]
+    res_low: pd.DataFrame = model.simulate(
         params_low,
         V_arr_dict=solution_low,
         initial_states={"wealth": initial_wealth},
     )
 
-    res_high: pd.DataFrame = simulate_model(  # type: ignore[assignment]
+    res_high: pd.DataFrame = model.simulate(
         params_high,
         V_arr_dict=solution_high,
         initial_states={"wealth": initial_wealth},
@@ -223,11 +214,7 @@ def test_effect_of_beta_on_last_period():
 
 
 def test_effect_of_disutility_of_work():
-    model_config = get_model_config("iskhakov_et_al_2017_stripped_down", n_periods=5)
-
-    # Model solutions
-    # ==================================================================================
-    solve_model, _ = get_lcm_function(model=model_config, targets="solve")
+    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=5)
 
     # low disutility_of_work
     params_low = get_params(beta=1.0, disutility_of_work=0.2)
@@ -236,22 +223,20 @@ def test_effect_of_disutility_of_work():
     params_high = get_params(beta=1.0, disutility_of_work=1.5)
 
     # solutions
-    solution_low = solve_model(params_low)
-    solution_high = solve_model(params_high)
+    solution_low = model.solve(params_low)
+    solution_high = model.solve(params_high)
 
     # Simulate
     # ==================================================================================
-    simulate_model, _ = get_lcm_function(model=model_config, targets="simulate")
-
     initial_wealth = jnp.array([20.0, 50, 70])
 
-    res_low: pd.DataFrame = simulate_model(  # type: ignore[assignment]
+    res_low: pd.DataFrame = model.simulate(
         params_low,
         V_arr_dict=solution_low,
         initial_states={"wealth": initial_wealth},
     )
 
-    res_high: pd.DataFrame = simulate_model(  # type: ignore[assignment]
+    res_high: pd.DataFrame = model.simulate(
         params_high,
         V_arr_dict=solution_high,
         initial_states={"wealth": initial_wealth},

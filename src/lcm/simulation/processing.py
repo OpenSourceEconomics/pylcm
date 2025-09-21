@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 def process_simulated_data(
     results: dict[int, InternalSimulationPeriodResults],
-    model: InternalModel,
+    internal_model: InternalModel,
     params: ParamsDict,
     additional_targets: list[str] | None = None,
 ) -> dict[str, Array]:
@@ -33,7 +33,7 @@ def process_simulated_data(
         results: Dict with simulation results. Each dict contains the value,
             actions, and states for one period. Actions and states are stored in a
             nested dictionary.
-        model: Model.
+        internal_model: Internal model instance.
         params: Parameters.
         additional_targets: List of additional targets to compute.
 
@@ -62,7 +62,7 @@ def process_simulated_data(
         calculated_targets = _compute_targets(
             out,
             targets=additional_targets,
-            model_functions=model.functions,
+            model_functions=internal_model.functions,
             params=params,
         )
         out = {**out, **calculated_targets}

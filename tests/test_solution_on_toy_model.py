@@ -15,7 +15,6 @@ from pandas.testing import assert_frame_equal
 
 import lcm
 from lcm import DiscreteGrid, LinspaceGrid, Model
-from lcm.entry_point import get_lcm_function
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -358,12 +357,8 @@ def test_deterministic_solve(beta, n_wealth_points):
 
     # Solve model using LCM
     # ==================================================================================
-    solve, _ = get_lcm_function(
-        model=model,
-        targets="solve",
-    )
     params = {"beta": beta, "utility": {"health": 1}}
-    got = solve(params)
+    got = model.solve(params)
 
     # Compute analytical solution
     # ==================================================================================
@@ -393,12 +388,8 @@ def test_deterministic_simulate(beta, n_wealth_points):
 
     # Simulate model using LCM
     # ==================================================================================
-    solve_and_simulate, _ = get_lcm_function(
-        model=model,
-        targets="solve_and_simulate",
-    )
     params = {"beta": beta, "utility": {"health": 1}}
-    got: pd.DataFrame = solve_and_simulate(  # type: ignore[assignment]
+    got: pd.DataFrame = model.solve_and_simulate(
         params=params,
         initial_states={"wealth": jnp.array([0.25, 0.75, 1.25, 1.75])},
     )
@@ -431,12 +422,8 @@ def test_stochastic_solve(beta, n_wealth_points, health_transition):
 
     # Solve model using LCM
     # ==================================================================================
-    solve, _ = get_lcm_function(
-        model=model,
-        targets="solve",
-    )
     params = {"beta": beta, "shocks": {"health": health_transition}}
-    got = solve(params)
+    got = model.solve(params)
 
     # Compute analytical solution
     # ==================================================================================
@@ -480,16 +467,12 @@ def test_stochastic_simulate(beta, n_wealth_points, health_transition):
 
     # Simulate model using LCM
     # ==================================================================================
-    solve_and_simulate, _ = get_lcm_function(
-        model=model,
-        targets="solve_and_simulate",
-    )
     params = {"beta": beta, "shocks": {"health": health_transition}}
     initial_states = {
         "wealth": jnp.array([0.25, 0.75, 1.25, 1.75, 2.0]),
         "health": jnp.array([0, 1, 0, 1, 1]),
     }
-    _got: pd.DataFrame = solve_and_simulate(  # type: ignore[assignment]
+    _got: pd.DataFrame = model.solve_and_simulate(
         params=params,
         initial_states=initial_states,
     )

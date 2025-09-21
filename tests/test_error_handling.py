@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 import pytest
 
-from lcm.entry_point import get_lcm_function
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.grids import LinspaceGrid
 from lcm.user_model import Model
@@ -119,56 +118,38 @@ def inf_value_model(valid_model: Model) -> Model:
 def test_solve_model_with_nan_value_function_array_raises_error(
     nan_value_model: Model,
 ) -> None:
-    solve_model, _ = get_lcm_function(
-        model=nan_value_model,
-        targets="solve",
-    )
-
     with pytest.raises(InvalidValueFunctionError):
-        solve_model({"beta": 0.95})
+        nan_value_model.solve({"beta": 0.95})
 
 
 def test_solve_model_with_inf_value_function_does_not_raise_error(
     inf_value_model: Model,
 ) -> None:
-    solve_model, _ = get_lcm_function(
-        model=inf_value_model,
-        targets="solve",
-    )
-
     # This should not raise an error
-    solve_model({"beta": 0.95})
+    inf_value_model.solve({"beta": 0.95})
 
 
 def test_simulate_model_with_nan_value_function_array_raises_error(
     nan_value_model: Model,
 ) -> None:
-    simulate_model, _ = get_lcm_function(
-        model=nan_value_model,
-        targets="solve_and_simulate",
-    )
-
     initial_states = {
         "wealth": jnp.array([0.9, 1.0]),
         "health": jnp.array([1.0, 1.0]),
     }
 
     with pytest.raises(InvalidValueFunctionError):
-        simulate_model({"beta": 0.95}, initial_states=initial_states)
+        nan_value_model.solve_and_simulate(
+            {"beta": 0.95}, initial_states=initial_states
+        )
 
 
 def test_simulate_model_with_inf_value_function_array_does_not_raise_error(
     inf_value_model: Model,
 ) -> None:
-    simulate_model, _ = get_lcm_function(
-        model=inf_value_model,
-        targets="solve_and_simulate",
-    )
-
     initial_states = {
         "wealth": jnp.array([0.9, 1.0]),
         "health": jnp.array([1.0, 1.0]),
     }
 
     # This should not raise an error
-    simulate_model({"beta": 0.95}, initial_states=initial_states)
+    inf_value_model.solve_and_simulate({"beta": 0.95}, initial_states=initial_states)
