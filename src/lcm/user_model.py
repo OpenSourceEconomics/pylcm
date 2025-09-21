@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import dataclasses
-import warnings
 from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+from lcm.utils import set_frozen_attr
 from lcm.exceptions import ModelInitilizationError, format_messages
 from lcm.grids import Grid
 from lcm.logging import get_logger
-from lcm.model_initialization import initialize_model_components
+from lcm.model_initialization import initialize_regime_components
 from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
 
@@ -59,11 +59,9 @@ class Regime:
     regime_transitions: dict[str, Callable[..., Any]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        # Basic validation for now
-        if not self.name:
-            raise ValueError("name cannot be empty")
         _validate_attribute_types(self)
         _validate_logical_consistency(self)
+        initialize_regime_components(regime=self)
 
 
 @dataclass(frozen=True)
@@ -93,13 +91,12 @@ class Model:
 
     regimes: Regime | list[Regime]
     _: KW_ONLY
-    n_periods: int | None = None  # Used by both regime and legacy APIs
+    n_periods: int
     description: str | None = None
 
     enable_jit: bool = True
 
     # Computed model components (set in __post_init__)
-    is_regime_model: bool = field(init=False)
     internal_model: InternalModel = field(init=False)
     params_template: ParamsDict = field(init=False)
     state_action_spaces: dict[int, StateActionSpace] = field(init=False)
@@ -116,24 +113,12 @@ class Model:
     def __post_init__(self) -> None:
         if isinstance(self.regimes, Regime):
             object.__setattr__(self, "regimes", [self.regimes])
-
-        # Determine model type
-        is_regime_model = bool(self.regimes)
-        is_legacy_model = bool(
-            self.n_periods or self.actions or self.states or self.functions
+        _validate_regime_period_coverage(
+            regimes=self.regimes,
+            n_periods=self.n_periods
         )
-
-        object.__setattr__(self, "is_regime_model", is_regime_model)
-
-        # Handle different model types
-        if is_regime_model:
+        if len(self.regimes) == 1:
             self._initialize_regime_model()
-        elif is_legacy_model:
-            self._initialize_legacy_model()
-        else:
-            raise ModelInitilizationError(
-                "Model must specify either regimes or legacy parameters"
-            )
 
     def _initialize_regime_model(self) -> None:
         """Initialize regime-based model."""
@@ -177,55 +162,6 @@ class Model:
 
         raise NotImplementedError("Regime models are not yet fully implemented")
 
-    def _validate_regime_coverage(self, n_periods: int) -> None:
-        """Validate that regimes cover all periods without overlap.
-
-        Args:
-            n_periods: The number of periods the model should cover.
-
-        Raises:
-            ModelInitilizationError: If regime coverage is invalid.
-        """
-        all_periods: set[int] = set()
-
-        for regime in self.regimes:
-            if regime.active is None:
-                raise ModelInitilizationError(
-                    f"Regime '{regime.name}' has active=None after resolution - "
-                    "this should not happen"
-                )
-
-            regime_periods = set(regime.active)
-            overlap = all_periods & regime_periods
-            if overlap:
-                raise ModelInitilizationError(
-                    f"Overlapping periods {overlap} between regimes"
-                )
-            all_periods.update(regime_periods)
-
-        expected_periods = set(range(n_periods))
-        if all_periods != expected_periods:
-            missing = expected_periods - all_periods
-            extra = all_periods - expected_periods
-            msg = f"Period coverage mismatch. Missing: {missing}, Extra: {extra}"
-            raise ModelInitilizationError(msg)
-
-    def _initialize_legacy_model(self) -> None:
-        """Initialize legacy single-regime model."""
-        warnings.warn(
-            "Legacy Model API lcm.Model(n_periods, actions, states, functions) is "
-            "deprecated and will be removed in version 0.1.0. "
-            "Use Regime API instead: lcm.Model(regimes=[lcm.Regime(name='default', "
-            "active=range(n_periods), ...)])",
-            DeprecationWarning,
-            stacklevel=3,
-        )
-
-        if self.n_periods is None:
-            raise ModelInitilizationError("Legacy model must specify n_periods")
-
-        # Original single-regime model path
-        initialize_model_components(self)
 
     def solve(
         self,
@@ -401,4 +337,24 @@ def _validate_logical_consistency(regime: Regime) -> None:
 
     if error_messages:
         msg = format_messages(error_messages)
+        raise ModelInitilizationError(msg)
+
+
+def _validate_regime_period_coverage(regimes: list[Regime], n_periods: int) -> None:
+    """Validate that regimes cover all periods."""
+    all_periods: set[int] = set()
+
+    for regime in regimes:
+        if regime is not None:
+            all_periods.update(set(regime.active))
+
+    expected_periods = set(range(n_periods))
+    if all_periods != expected_periods:
+        missing = expected_periods - all_periods
+        extra = all_periods - expected_periods
+        msg = (
+            f"Regime period coverage mismatch for model with {n_periods=}:\n"
+            f"- Missing periods from regimes: {missing}\n"
+            f"- Extra periods in regimes: {extra}"
+        )
         raise ModelInitilizationError(msg)

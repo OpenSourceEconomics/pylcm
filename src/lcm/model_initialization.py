@@ -1,4 +1,4 @@
-"""Helper module for Model class initialization and utilities."""
+"""Helper module for Regime class initialization and utilities."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import jax
 
+from lcm.utils import set_frozen_attr
 from lcm.exceptions import ModelInitilizationError
 from lcm.input_processing import process_model
 from lcm.interfaces import StateActionSpace, StateSpaceInfo
@@ -18,34 +19,34 @@ from lcm.state_action_space import (
 
 if TYPE_CHECKING:
     from lcm.typing import ArgmaxQOverAFunction, MaxQOverAFunction
-    from lcm.user_model import Model
+    from lcm.user_model import Regime
 
 
-def initialize_model_components(model: Model) -> None:
-    """Initialize all pre-computed components for the Model instance.
+def initialize_regime_components(regime: Regime) -> None:
+    """Initialize all pre-computed components for the Regime instance.
 
     This function handles the complex initialization logic that was previously
-    in the Model.__post_init__ method. It processes the model, creates state-action
+    in the Regime.__post_init__ method. It processes the model, creates state-action
     spaces, and compiles optimization components for each period.
 
     Args:
-        model: The Model instance to initialize
+        model: The Regime instance to initialize
 
     Raises:
         ModelInitilizationError: If initialization fails
 
     """
     try:
-        components = _get_model_components(model)
+        components = _get_regime_components(regime)
         for name, component in components.items():
-            _set_frozen_attr(model, name, component)
+            set_frozen_attr(regime, name, component)
     except Exception as e:
         raise ModelInitilizationError(
             f"Failed to initialize model components: {e}"
         ) from e
 
 
-def _get_model_components(model: Model) -> dict[str, Any]:
+def _get_regime_components(model: Regime) -> dict[str, Any]:
     # Process model to internal representation
     internal_model = process_model(model)
 
@@ -126,15 +127,3 @@ def _get_model_components(model: Model) -> dict[str, Any]:
         "max_Q_over_a_functions": max_Q_over_a_functions,
         "argmax_and_max_Q_over_a_functions": argmax_and_max_Q_over_a_functions,
     }
-
-
-def _set_frozen_attr(obj: Any, name: str, value: Any) -> None:  # noqa: ANN401
-    """Robust attribute setting for frozen dataclasses.
-
-    Args:
-        obj: The frozen dataclass instance
-        name: Name of the attribute to set
-        value: Value to set
-
-    """
-    object.__setattr__(obj, name, value)
