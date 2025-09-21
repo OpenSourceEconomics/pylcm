@@ -203,9 +203,9 @@ def test_regime_to_model_uses_regime_description():
     )
 
     # Should use regime's description
-    model = regime.to_model(n_periods=1)
+    model = Model(regime, n_periods=1)
     assert model.description == "This is a test regime description"
 
     # Explicit description should override regime's description
-    model_override = regime.to_model(n_periods=1, description="Override description")
+    model_override = Model(regime, n_periods=1, description="Override description")
     assert model_override.description == "Override description"

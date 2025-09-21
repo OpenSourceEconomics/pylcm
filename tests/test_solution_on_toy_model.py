@@ -67,7 +67,7 @@ def borrowing_constraint(
     return consumption <= wealth
 
 
-DETERMINISTIC_MODEL = Regime(
+DETERMINISTIC_REGIME = Regime(
     name="deterministic_regime",
     functions={
         "utility": utility,
@@ -85,7 +85,8 @@ DETERMINISTIC_MODEL = Regime(
             n_points=1,
         ),
     },
-).to_model(n_periods=2)
+)
+DETERMINISTIC_MODEL = lcm.Model(DETERMINISTIC_REGIME, n_periods=2)
 
 
 @lcm.mark.stochastic
@@ -93,12 +94,13 @@ def next_health(health: DiscreteState) -> DiscreteState:  # type: ignore[empty-b
     pass
 
 
-STOCHASTIC_MODEL = Regime(
+STOCHASTIC_REGIME = Regime(
     name="stochastic_regime",
     functions={**DETERMINISTIC_MODEL.functions, "next_health": next_health},
     actions=DETERMINISTIC_MODEL.actions,
     states={**DETERMINISTIC_MODEL.states, "health": DiscreteGrid(HealthStatus)},
-).to_model(n_periods=2)
+)
+STOCHASTIC_MODEL = lcm.Model(STOCHASTIC_REGIME, n_periods=2)
 
 
 # ======================================================================================

@@ -41,7 +41,7 @@ def valid_model() -> Model:
     ) -> BoolND:
         return consumption <= wealth
 
-    return Regime(
+    regime = Regime(
         name="valid_regime",
         functions={
             "utility": utility,
@@ -68,7 +68,8 @@ def valid_model() -> Model:
                 n_points=3,
             ),
         },
-    ).to_model(n_periods=3)
+    )
+    return Model(regime, n_periods=3)
 
 
 @pytest.fixture

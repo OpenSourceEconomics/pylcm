@@ -65,40 +65,6 @@ class Regime:
         _validate_attribute_types(self)
         _validate_logical_consistency(self)
 
-    def to_model(
-        self,
-        *,
-        n_periods: int | None = None,
-        description: str | None = None,
-        enable_jit: bool = True,
-    ) -> Model:
-        """Create a single-regime Model from this Regime.
-
-        This provides a fluent interface for the common case of single-regime models,
-        eliminating the need to manually wrap the regime in a list.
-
-        Args:
-            n_periods: Number of periods. If None, derived from regime.active.
-                If regime.active is also None, an error will be raised.
-            description: Optional model description. If None, uses regime.description.
-            enable_jit: Whether to enable JIT compilation.
-
-        Returns:
-            A Model containing only this regime.
-
-        Example:
-            >>> regime = Regime(name="simple", active=range(10), actions={...})
-            >>> model = regime.to_model()  # Creates 10-period model
-        """
-        return Model(
-            n_periods=n_periods,
-            actions=self.actions,
-            states=self.states,
-            functions=self.functions,
-            description=description or self.description,
-            enable_jit=enable_jit,
-        )
-
 
 @dataclass(frozen=True)
 class Model:
@@ -125,18 +91,10 @@ class Model:
         functions: Dictionary of functions (single-regime models only).
     """
 
-    # Model specification information (provided by the User)
-    description: str | None = None
+    regimes: Regime | list[Regime]
     _: KW_ONLY
-
-    # New regime-based API (preferred)
-    regimes: list[Regime] = field(default_factory=list)
     n_periods: int | None = None  # Used by both regime and legacy APIs
-
-    # Legacy single-regime API (with deprecation warning)
-    actions: dict[str, Grid] = field(default_factory=dict)
-    states: dict[str, Grid] = field(default_factory=dict)
-    functions: dict[str, UserFunction] = field(default_factory=dict)
+    description: str | None = None
 
     enable_jit: bool = True
 
@@ -156,6 +114,9 @@ class Model:
     next_regime_state_function: Callable[..., Any] | None = field(init=False)
 
     def __post_init__(self) -> None:
+        if isinstance(self.regimes, Regime):
+            object.__setattr__(self, "regimes", [self.regimes])
+
         # Determine model type
         is_regime_model = bool(self.regimes)
         is_legacy_model = bool(
