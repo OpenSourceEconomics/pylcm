@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 
 def create_state_action_space(
-    model: InternalModel,
+    internal_model: InternalModel,
     *,
     states: dict[str, Array] | None = None,
     is_last_period: bool = False,
@@ -23,7 +23,7 @@ def create_state_action_space(
     simulation, states must be provided.
 
     Args:
-        model: A processed model.
+        internal_model: Internal model instance.
         states: A dictionary of states. If None, the grids as specified in the model
             are used.
         is_last_period: Whether the state-action-space is created for the last period,
@@ -35,12 +35,12 @@ def create_state_action_space(
         appear in the variable info table.
 
     """
-    vi = model.variable_info
+    vi = internal_model.variable_info
     if is_last_period:
         vi = vi.query("enters_concurrent_valuation")
 
     if states is None:
-        _states = {sn: model.grids[sn] for sn in vi.query("is_state").index}
+        _states = {sn: internal_model.grids[sn] for sn in vi.query("is_state").index}
     else:
         _validate_all_states_present(
             provided_states=states,
@@ -49,10 +49,12 @@ def create_state_action_space(
         _states = states
 
     discrete_actions = {
-        name: model.grids[name] for name in vi.query("is_action & is_discrete").index
+        name: internal_model.grids[name]
+        for name in vi.query("is_action & is_discrete").index
     }
     continuous_actions = {
-        name: model.grids[name] for name in vi.query("is_action & is_continuous").index
+        name: internal_model.grids[name]
+        for name in vi.query("is_action & is_continuous").index
     }
     ordered_var_names = tuple(vi.query("is_state | is_discrete").index)
 
@@ -65,7 +67,7 @@ def create_state_action_space(
 
 
 def create_state_space_info(
-    model: InternalModel,
+    internal_model: InternalModel,
     *,
     is_last_period: bool,
 ) -> StateSpaceInfo:
@@ -74,14 +76,14 @@ def create_state_space_info(
     A state-space information is a compressed representation of all feasible states.
 
     Args:
-        model: A processed model.
+        internal_model: Internal model instance.
         is_last_period: Whether the function is created for the last period.
 
     Returns:
         The state-space information.
 
     """
-    vi = model.variable_info
+    vi = internal_model.variable_info
     if is_last_period:
         vi = vi.query("enters_concurrent_valuation")
 
@@ -89,13 +91,13 @@ def create_state_space_info(
 
     discrete_states = {
         name: grid_spec
-        for name, grid_spec in model.gridspecs.items()
+        for name, grid_spec in internal_model.gridspecs.items()
         if name in state_names and isinstance(grid_spec, DiscreteGrid)
     }
 
     continuous_states = {
         name: grid_spec
-        for name, grid_spec in model.gridspecs.items()
+        for name, grid_spec in internal_model.gridspecs.items()
         if name in state_names and isinstance(grid_spec, ContinuousGrid)
     }
 

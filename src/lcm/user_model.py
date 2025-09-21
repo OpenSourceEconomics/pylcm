@@ -117,7 +117,7 @@ class Model:
             params=params,
             initial_states=initial_states,
             argmax_and_max_Q_over_a_functions=self.argmax_and_max_Q_over_a_functions,
-            model=self.internal_model,
+            internal_model=self.internal_model,
             logger=logger,
             V_arr_dict=V_arr_dict,
             additional_targets=additional_targets,

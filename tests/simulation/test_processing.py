@@ -90,7 +90,7 @@ def test_process_simulated_data():
     got = process_simulated_data(
         simulated,
         # Rest is none, since we are not computing any additional targets
-        model=None,  # type: ignore[arg-type]
+        internal_model=None,  # type: ignore[arg-type]
         params=None,  # type: ignore[arg-type]
         additional_targets=None,
     )
