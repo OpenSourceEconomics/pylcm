@@ -32,10 +32,13 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def simulate_inputs():
-    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=1)
-    actions = model.actions
-    actions["consumption"] = actions["consumption"].replace(stop=100)  # type: ignore[attr-defined]
-    model = model.replace(actions=actions)
+    _orig_model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=1)
+    model = _orig_model.replace(
+        actions={
+            **_orig_model.actions,
+            "consumption": _orig_model.actions["consumption"].replace(stop=100),
+        }
+    )
     internal_model = process_model(model)
 
     state_space_info = create_state_space_info(
