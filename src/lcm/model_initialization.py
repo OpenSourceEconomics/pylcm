@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any
 
 import jax
 
-from lcm.utils import set_frozen_attr
 from lcm.exceptions import ModelInitilizationError
 from lcm.input_processing import process_model
 from lcm.interfaces import StateActionSpace, StateSpaceInfo
@@ -16,6 +15,7 @@ from lcm.state_action_space import (
     create_state_action_space,
     create_state_space_info,
 )
+from lcm.utils import set_frozen_attr
 
 if TYPE_CHECKING:
     from lcm.typing import ArgmaxQOverAFunction, MaxQOverAFunction

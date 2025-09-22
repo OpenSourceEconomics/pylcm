@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-from lcm.utils import set_frozen_attr
 from lcm.exceptions import ModelInitilizationError, format_messages
 from lcm.grids import Grid
 from lcm.logging import get_logger
@@ -113,10 +112,7 @@ class Model:
     def __post_init__(self) -> None:
         if isinstance(self.regimes, Regime):
             object.__setattr__(self, "regimes", [self.regimes])
-        _validate_regime_period_coverage(
-            regimes=self.regimes,
-            n_periods=self.n_periods
-        )
+        _validate_regime_period_coverage(regimes=self.regimes, n_periods=self.n_periods)
         if len(self.regimes) == 1:
             self._initialize_regime_model()
 
@@ -161,7 +157,6 @@ class Model:
         object.__setattr__(self, "next_regime_state_function", None)
 
         raise NotImplementedError("Regime models are not yet fully implemented")
-
 
     def solve(
         self,
