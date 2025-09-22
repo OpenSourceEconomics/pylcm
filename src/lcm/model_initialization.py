@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import jax
 
-from lcm.exceptions import ModelInitilizationError
+from lcm.exceptions import ModelInitializationError
 from lcm.input_processing import process_model
 from lcm.interfaces import StateActionSpace, StateSpaceInfo
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a, get_max_Q_over_a
@@ -18,8 +18,8 @@ from lcm.state_action_space import (
 from lcm.utils import set_frozen_attr
 
 if TYPE_CHECKING:
+    from lcm.regime import Regime
     from lcm.typing import ArgmaxQOverAFunction, MaxQOverAFunction
-    from lcm.user_model import Regime
 
 
 def initialize_regime_components(regime: Regime) -> None:
@@ -41,7 +41,7 @@ def initialize_regime_components(regime: Regime) -> None:
         for name, component in components.items():
             set_frozen_attr(regime, name, component)
     except Exception as e:
-        raise ModelInitilizationError(
+        raise ModelInitializationError(
             f"Failed to initialize model components: {e}"
         ) from e
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from lcm.regime import Regime
+
 try:
     import pdbp  # noqa: F401
 except ImportError:
@@ -7,7 +9,7 @@ except ImportError:
 
 from lcm import mark
 from lcm.grids import DiscreteGrid, LinspaceGrid, LogspaceGrid
-from lcm.user_model import Model, Regime
+from lcm.user_model import Model
 
 __all__ = [
     "DiscreteGrid",

@@ -6,13 +6,13 @@ import dataclasses
 from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from lcm.regime import Regime
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-from lcm.exceptions import ModelInitilizationError, format_messages
-from lcm.grids import Grid
+from lcm.exceptions import ModelInitializationError
 from lcm.logging import get_logger
-from lcm.model_initialization import initialize_regime_components
 from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
 
@@ -26,41 +26,7 @@ if TYPE_CHECKING:
         FloatND,
         MaxQOverAFunction,
         ParamsDict,
-        UserFunction,
     )
-
-
-@dataclass(frozen=True, kw_only=True)
-class Regime:
-    """A modular component defining a consistent state-action space and functions.
-
-    Each Regime represents a distinct behavioral environment where the agent
-    has a specific set of available states, actions, and functions.
-
-    Args:
-        name: Unique identifier for this regime.
-        description: Optional description of what this regime represents.
-        active: Range of periods when this regime is active. If None, the regime
-            will be active in all periods (requires Model.n_periods to be specified).
-        actions: Dictionary of action variables and their grids for this regime.
-        states: Dictionary of state variables and their grids for this regime.
-        functions: Dictionary of functions specific to this regime.
-        regime_transitions: Dictionary mapping target regime names to
-            transition functions.
-    """
-
-    name: str
-    description: str | None = None
-    active: range | None = None
-    actions: dict[str, Grid] = field(default_factory=dict)
-    states: dict[str, Grid] = field(default_factory=dict)
-    functions: dict[str, UserFunction] = field(default_factory=dict)
-    regime_transitions: dict[str, Callable[..., Any]] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        _validate_attribute_types(self)
-        _validate_logical_consistency(self)
-        initialize_regime_components(regime=self)
 
 
 @dataclass(frozen=True)
@@ -119,14 +85,14 @@ class Model:
     def _initialize_regime_model(self) -> None:
         """Initialize regime-based model."""
         if not self.regimes:
-            raise ModelInitilizationError("Regime model must have at least one regime")
+            raise ModelInitializationError("Regime model must have at least one regime")
 
         # Step 1: Determine n_periods based on interaction logic
         n_periods = self.n_periods
         if n_periods is None:
             regimes_with_active = [r for r in self.regimes if r.active is not None]
             if not regimes_with_active:
-                raise ModelInitilizationError(
+                raise ModelInitializationError(
                     "When n_periods is None, at least one regime must have "
                     "an active range specified"
                 )
@@ -144,7 +110,7 @@ class Model:
             # Validate that explicit active ranges align with n_periods
             for regime in self.regimes:
                 if regime.active is not None and regime.active.stop > n_periods:
-                    raise ModelInitilizationError(
+                    raise ModelInitializationError(
                         f"Regime '{regime.name}' has active range extending "
                         f"beyond n_periods ({regime.active.stop} > {n_periods})"
                     )
@@ -260,79 +226,9 @@ class Model:
         try:
             return dataclasses.replace(self, **kwargs)
         except TypeError as e:
-            raise ModelInitilizationError(
+            raise ModelInitializationError(
                 f"Failed to replace attributes of the model. The error was: {e}"
             ) from e
-
-
-def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901
-    """Validate the types of the model attributes."""
-    error_messages = []
-
-    # Validate types of states and actions
-    # ----------------------------------------------------------------------------------
-    for attr_name in ("actions", "states"):
-        attr = getattr(regime, attr_name)
-        if isinstance(attr, dict):
-            for k, v in attr.items():
-                if not isinstance(k, str):
-                    error_messages.append(f"{attr_name} key {k} must be a string.")
-                if not isinstance(v, Grid):
-                    error_messages.append(f"{attr_name} value {v} must be an LCM grid.")
-        else:
-            error_messages.append(f"{attr_name} must be a dictionary.")
-
-    # Validate types of functions
-    # ----------------------------------------------------------------------------------
-    if isinstance(regime.functions, dict):
-        for k, v in regime.functions.items():
-            if not isinstance(k, str):
-                error_messages.append(f"function keys must be a strings, but is {k}.")
-            if not callable(v):
-                error_messages.append(
-                    f"function values must be a callable, but is {v}."
-                )
-    else:
-        error_messages.append("functions must be a dictionary.")
-
-    if error_messages:
-        msg = format_messages(error_messages)
-        raise ModelInitilizationError(msg)
-
-
-def _validate_logical_consistency(regime: Regime) -> None:
-    """Validate the logical consistency of the regime."""
-    error_messages = []
-
-    if regime.active is not None and not isinstance(regime.active, range):
-        error_messages.append("Active must be a range object or None.")
-
-    if "utility" not in regime.functions:
-        error_messages.append(
-            "Utility function is not defined. LCM expects a function called 'utility' "
-            "in the functions dictionary.",
-        )
-
-    states_without_next_func = [
-        state for state in regime.states if f"next_{state}" not in regime.functions
-    ]
-    if states_without_next_func:
-        error_messages.append(
-            "Each state must have a corresponding next state function. For the "
-            "following states, no next state function was found: "
-            f"{states_without_next_func}.",
-        )
-
-    states_and_actions_overlap = set(regime.states) & set(regime.actions)
-    if states_and_actions_overlap:
-        error_messages.append(
-            "States and actions cannot have overlapping names. The following names "
-            f"are used in both states and actions: {states_and_actions_overlap}.",
-        )
-
-    if error_messages:
-        msg = format_messages(error_messages)
-        raise ModelInitilizationError(msg)
 
 
 def _validate_regime_period_coverage(regimes: list[Regime], n_periods: int) -> None:
@@ -352,4 +248,4 @@ def _validate_regime_period_coverage(regimes: list[Regime], n_periods: int) -> N
             f"- Missing periods from regimes: {missing}\n"
             f"- Extra periods in regimes: {extra}"
         )
-        raise ModelInitilizationError(msg)
+        raise ModelInitializationError(msg)

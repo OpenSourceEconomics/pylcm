@@ -9,8 +9,12 @@ class InvalidValueFunctionError(PyLCMError):
     """Raised when the value function array is invalid."""
 
 
-class ModelInitilizationError(PyLCMError):
+class ModelInitializationError(PyLCMError):
     """Raised when there is an error in the model initialization."""
+
+
+class RegimeInitializationError(PyLCMError):
+    """Raised when there is an error in the regime initialization."""
 
 
 class GridInitializationError(PyLCMError):

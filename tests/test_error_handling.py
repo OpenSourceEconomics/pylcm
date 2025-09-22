@@ -7,7 +7,8 @@ import pytest
 
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.grids import LinspaceGrid
-from lcm.user_model import Model, Regime
+from lcm.regime import Regime
+from lcm.user_model import Model
 
 if TYPE_CHECKING:
     from lcm.typing import (

@@ -15,7 +15,8 @@ from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
-from lcm import DiscreteGrid, Regime
+from lcm import DiscreteGrid
+from lcm.regime import Regime
 from tests.test_models.deterministic import (
     RetirementStatus,
     borrowing_constraint,

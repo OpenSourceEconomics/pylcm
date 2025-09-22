@@ -14,7 +14,8 @@ from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
-from lcm import DiscreteGrid, LinspaceGrid, Regime
+from lcm import DiscreteGrid, LinspaceGrid
+from lcm.regime import Regime
 
 if TYPE_CHECKING:
     from lcm.typing import (

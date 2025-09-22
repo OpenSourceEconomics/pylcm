@@ -13,8 +13,9 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 import pytest
 
-from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
-from lcm.exceptions import ModelInitilizationError
+from lcm import DiscreteGrid, LinspaceGrid, Model
+from lcm.exceptions import ModelInitializationError
+from lcm.regime import Regime
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -178,7 +179,7 @@ def test_legacy_api_deprecation_warning():
     # The deprecation warning should trigger before the initialization error
     with (
         pytest.warns(DeprecationWarning, match=warn_msg),
-        pytest.raises(ModelInitilizationError),
+        pytest.raises(ModelInitializationError),
     ):
         # Model creation will fail due to function signature issues,
         # but the deprecation warning should be triggered first
