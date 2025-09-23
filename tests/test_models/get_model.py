@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
+from lcm.user_model import Model
 from tests.test_models.deterministic import (
     ISKHAKOV_ET_AL_2017,
     ISKHAKOV_ET_AL_2017_STRIPPED_DOWN,
@@ -12,20 +12,19 @@ from tests.test_models.deterministic import (
 from tests.test_models.discrete_deterministic import ISKHAKOV_ET_AL_2017_DISCRETE
 from tests.test_models.stochastic import ISKHAKOV_ET_AL_2017_STOCHASTIC
 
-if TYPE_CHECKING:
-    from lcm.user_model import Model
+TEST_REGIMES = [
+    ISKHAKOV_ET_AL_2017,
+    ISKHAKOV_ET_AL_2017_STRIPPED_DOWN,
+    ISKHAKOV_ET_AL_2017_DISCRETE,
+    ISKHAKOV_ET_AL_2017_STOCHASTIC,
+]
 
-TEST_MODELS = {
-    "iskhakov_et_al_2017": ISKHAKOV_ET_AL_2017,
-    "iskhakov_et_al_2017_stripped_down": ISKHAKOV_ET_AL_2017_STRIPPED_DOWN,
-    "iskhakov_et_al_2017_discrete": ISKHAKOV_ET_AL_2017_DISCRETE,
-    "iskhakov_et_al_2017_stochastic": ISKHAKOV_ET_AL_2017_STOCHASTIC,
-}
+TEST_REGIME_MAP = {regime.name: regime for regime in TEST_REGIMES}
 
 
-def get_model(model_name: str, n_periods: int) -> Model:
-    model = deepcopy(TEST_MODELS[model_name])
-    return model.replace(n_periods=n_periods)
+def get_model(regime_name: str, n_periods: int) -> Model:
+    regime = deepcopy(TEST_REGIME_MAP[regime_name])
+    return Model(regime, n_periods=n_periods)
 
 
 def get_params(
