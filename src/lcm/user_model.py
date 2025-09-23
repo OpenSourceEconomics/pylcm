@@ -75,13 +75,6 @@ class Model:
     regime_transition_dag: dict[str, dict[str, Callable[..., Any]]] = field(init=False)
     next_regime_state_function: Callable[..., Any] | None = field(init=False)
 
-    def __post_init__(self) -> None:
-        if isinstance(self.regimes, Regime):
-            object.__setattr__(self, "regimes", [self.regimes])
-        _validate_regime_period_coverage(regimes=self.regimes, n_periods=self.n_periods)
-        if len(self.regimes) == 1:
-            self._initialize_regime_model()
-
     def _initialize_regime_model(self) -> None:
         """Initialize regime-based model."""
         if not self.regimes:
@@ -230,22 +223,3 @@ class Model:
                 f"Failed to replace attributes of the model. The error was: {e}"
             ) from e
 
-
-def _validate_regime_period_coverage(regimes: list[Regime], n_periods: int) -> None:
-    """Validate that regimes cover all periods."""
-    all_periods: set[int] = set()
-
-    for regime in regimes:
-        if regime is not None:
-            all_periods.update(set(regime.active))
-
-    expected_periods = set(range(n_periods))
-    if all_periods != expected_periods:
-        missing = expected_periods - all_periods
-        extra = all_periods - expected_periods
-        msg = (
-            f"Regime period coverage mismatch for model with {n_periods=}:\n"
-            f"- Missing periods from regimes: {missing}\n"
-            f"- Extra periods in regimes: {extra}"
-        )
-        raise ModelInitializationError(msg)
