@@ -20,28 +20,28 @@ from lcm.input_processing.util import (
 from lcm.interfaces import ShockType
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     import pandas as pd
     from jax import Array
 
+    from lcm.grids import Grid
+    from lcm.regime import Regime
     from lcm.typing import (
         DiscreteAction,
         DiscreteState,
+        Float1D,
         FloatND,
         Int1D,
         InternalUserFunction,
         ParamsDict,
         UserFunction,
     )
-    from collections.abc import Sequence
     from lcm.user_model import Model
-    from lcm.regime import Regime
-    from lcm.grids import Grid
-    from lcm.typing import Float1D
-    
+
 
 @dataclasses.dataclass(frozen=True)
 class InternalRegime:
-
     name: str
     description: str | None
     active: list[int]

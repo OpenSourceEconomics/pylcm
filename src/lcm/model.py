@@ -2,35 +2,18 @@
 
 from __future__ import annotations
 
-import dataclasses
-from dataclasses import KW_ONLY, dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from lcm.regime import Regime
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Sequence
 
 from lcm.exceptions import ModelInitializationError, format_messages
-from lcm.logging import get_logger
-from lcm.simulation.simulate import simulate
-from lcm.solution.solve_brute import solve
 from lcm.input_processing.regime_processing import InternalRegime, process_regimes
 
-if TYPE_CHECKING:
-    import pandas as pd
-    from jax import Array
-
-    from lcm.interfaces import InternalModel, StateActionSpace, StateSpaceInfo
-    from lcm.typing import (
-        ArgmaxQOverAFunction,
-        FloatND,
-        MaxQOverAFunction,
-        ParamsDict,
-    )
 
 class Model:
-
     def __init__(
         self,
         regimes: Regime | Sequence[Regime],
@@ -64,7 +47,9 @@ def _validate_input_types(
     if isinstance(regimes, Regime):
         regimes = [regimes]
 
-    if not isinstance(regimes, Sequence) or not all(isinstance(r, Regime) for r in regimes):
+    if not isinstance(regimes, Sequence) or not all(
+        isinstance(r, Regime) for r in regimes
+    ):
         error_messages.append(
             f"'regimes' must be a Regime instance or a Sequence of Regime instances. "
             f"Got {regimes} of type {type(regimes)}."

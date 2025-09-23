@@ -222,4 +222,3 @@ class Model:
             raise ModelInitializationError(
                 f"Failed to replace attributes of the model. The error was: {e}"
             ) from e
-
