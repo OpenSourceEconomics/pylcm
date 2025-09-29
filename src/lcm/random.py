@@ -15,8 +15,8 @@ def generate_simulation_keys(
     A key can be used to generate a stream of random numbers, e.g., given a key, one can
     call jax.random.normal(key) to generate a stream of normal random numbers. In order
     to ensure that each simulation is based on a different stream of random numbers, we
-    split the key into one key per stochastic variable, and one key that will be passed
-    to the next iteration in order to generate new keys.
+    split the key into one key per initial state for each stochastic variable,
+    and one key that will be passed to the next iteration in order to generate new keys.
 
     See the JAX documentation for more details:
     https://docs.jax.dev/en/latest/random-numbers.html#random-numbers-in-jax

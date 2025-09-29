@@ -150,8 +150,7 @@ def _create_stochastic_next_func(
         - weight_{name}: 2d array of weights. The first dimension corresponds to the
           number of simulation units. The second dimension corresponds to the number of
           grid points (labels).
-        - keys: Dictionary with random key arrays. Dictionary keys correspond to the
-          names of stochastic next functions, e.g. 'next_health'.
+        - key_{name}: PRNG key for the stochastic next function, e.g. 'next_health'.
 
     """
 
