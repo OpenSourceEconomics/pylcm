@@ -81,8 +81,8 @@ def test_get_next_state_function_with_simulate_target():
         internal_model=model, next_states=("a", "b"), target=Target.SIMULATE
     )
 
-    keys = {"b": jnp.arange(2, dtype="uint32")}
-    got = got_func(state=jnp.arange(2), key_b=keys["b"], params={})
+    key = jnp.arange(2, dtype="uint32")
+    got = got_func(state=jnp.arange(2), key_b=key, params={})
 
     expected = {"a": jnp.array([0]), "b": jnp.array([1])}
     assert tree_equal(expected, got)
@@ -92,9 +92,9 @@ def test_create_stochastic_next_func():
     labels = jnp.arange(2)
     got_func = _create_stochastic_next_func(name="a", labels=labels)
 
-    keys = {"a": jnp.arange(2, dtype="uint32")}  # PRNG dtype
+    key = jnp.arange(2, dtype="uint32")  # PRNG dtype
     weights = jnp.array([0.0, 1])
 
-    got = got_func(key_a=keys["a"], weight_a=weights)
+    got = got_func(key_a=key, weight_a=weights)
 
     assert jnp.array_equal(got, jnp.array(1))
