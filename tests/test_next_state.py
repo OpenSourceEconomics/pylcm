@@ -48,7 +48,7 @@ def test_get_next_state_function_with_simulate_target():
         return None  # type: ignore[return-value]
 
     def f_weight_b(state: ContinuousState, params: ParamsDict) -> FloatND:  # noqa: ARG001
-        return jnp.array([[0.0, 1.0]])
+        return jnp.array([0.0, 1.0])
 
     functions = {
         "a": f_a,
@@ -82,7 +82,7 @@ def test_get_next_state_function_with_simulate_target():
     )
 
     keys = {"b": jnp.arange(2, dtype="uint32")}
-    got = got_func(state=jnp.arange(2), keys=keys, params={})
+    got = got_func(state=jnp.arange(2), key_b=keys["b"], params={})
 
     expected = {"a": jnp.array([0]), "b": jnp.array([1])}
     assert tree_equal(expected, got)
@@ -93,7 +93,8 @@ def test_create_stochastic_next_func():
     got_func = _create_stochastic_next_func(name="a", labels=labels)
 
     keys = {"a": jnp.arange(2, dtype="uint32")}  # PRNG dtype
-    weights = jnp.array([[0.0, 1], [1, 0]])
-    got = got_func(keys=keys, weight_a=weights)
+    weights = jnp.array([0.0, 1])
 
-    assert jnp.array_equal(got, jnp.array([1, 0]))
+    got = got_func(key_a=keys["a"], weight_a=weights)
+
+    assert jnp.array_equal(got, jnp.array(1))
