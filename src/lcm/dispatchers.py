@@ -10,7 +10,8 @@ from lcm.functools import allow_args, allow_only_kwargs
 from lcm.utils import find_duplicates
 
 FunctionWithArrayReturn = TypeVar(
-    "FunctionWithArrayReturn", bound=Callable[..., Array | tuple[Array, Array]]
+    "FunctionWithArrayReturn",
+    bound=Callable[..., Array | tuple[Array, Array] | dict[str, Array]],
 )
 
 

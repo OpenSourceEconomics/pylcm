@@ -1,40 +1,13 @@
 from __future__ import annotations
 
 import os
-from functools import partial
 
 import jax
 from jax import Array
 
 
-def random_choice(
-    labels: Array,
-    probs: Array,
-    key: Array,
-) -> Array:
-    """Draw multiple random choices.
-
-    Args:
-        labels: 1d array of labels.
-        probs: 2d array of probabilities. Second dimension must be the same length as
-            the dimension of labels.
-        key: Random key.
-
-    Returns:
-        Selected labels. 1d array of length len(probs).
-
-    """
-    keys = jax.random.split(key, probs.shape[0])
-    return _vmapped_choice(keys, probs, labels)
-
-
-@partial(jax.vmap, in_axes=(0, 0, None))
-def _vmapped_choice(key: Array, probs: Array, labels: Array) -> Array:
-    return jax.random.choice(key, a=labels, p=probs)
-
-
 def generate_simulation_keys(
-    key: Array, ids: list[str]
+    key: Array, names: list[str], n_initial_states: int
 ) -> tuple[Array, dict[str, Array]]:
     """Generate pseudo-random number generator keys (PRNG keys) for simulation.
 
@@ -50,18 +23,20 @@ def generate_simulation_keys(
 
     Args:
         key: Random key.
-        ids: List of names for which a key is to be generated.
+        names: List of names for which a key is to be generated.
+        n_initial_states: Number of initial states.
 
     Returns:
         - Updated random key.
         - Dict with random keys for each id in ids.
 
     """
-    keys = jax.random.split(key, num=len(ids) + 1)
-
-    next_key = keys[0]
-    simulation_keys = dict(zip(ids, keys[1:], strict=True))
-
+    simulation_keys = {}
+    next_key = key
+    for name in names:
+        keys = jax.random.split(next_key, num=n_initial_states + 1)
+        next_key = keys[0]
+        simulation_keys[f"key_{name}"] = keys[1:]
     return next_key, simulation_keys
 
 
