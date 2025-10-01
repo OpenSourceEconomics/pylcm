@@ -28,7 +28,7 @@ def generate_simulation_keys(
 
     Returns:
         - Updated random key.
-        - Dict with random keys for each id in ids.
+        - Dict with n=n_initial_states new random keys for each name in names.
 
     """
     simulation_keys = {}
