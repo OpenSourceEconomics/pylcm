@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -159,25 +160,42 @@ def simulate(
         # Update states
         # ------------------------------------------------------------------------------
         if not is_last_period:
+            stochastic_next_function_names = internal_model.function_info.query(
+                "is_stochastic_next"
+            ).index.tolist()
             key, stochastic_variables_keys = generate_simulation_keys(
                 key=key,
-                ids=internal_model.function_info.query(
-                    "is_stochastic_next"
-                ).index.tolist(),
+                names=stochastic_next_function_names,
+                n_initial_states=n_initial_states,
             )
-
             next_state = get_next_state_function(
                 internal_model=internal_model,
                 next_states=tuple(state_action_space.states),
                 target=Target.SIMULATE,
             )
+            signature = inspect.signature(next_state)
+            parameters = list(signature.parameters)
 
-            states_with_next_prefix = next_state(
+            next_state_vmapped = vmap_1d(
+                func=next_state,
+                variables=tuple(
+                    parameter
+                    for parameter in parameters
+                    if parameter not in ["_period", "params"]
+                ),
+            )
+
+            next_state_keywords = {
                 **states,
                 **optimal_actions,
-                _period=jnp.repeat(period, n_initial_states),
-                params=params,
-                keys=stochastic_variables_keys,
+                **stochastic_variables_keys,
+            } | {"_period": period, "params": params}
+
+            states_with_next_prefix = next_state_vmapped(
+                **{
+                    parameter: next_state_keywords[parameter]
+                    for parameter in parameters
+                }
             )
             # 'next_' prefix is added by the next_state function, but needs to be
             # removed for the next iteration of the loop, where these will be the

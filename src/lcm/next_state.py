@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import jax
 from dags import concatenate_functions
 from dags.signature import with_signature
 
 from lcm.interfaces import Target
-from lcm.random import random_choice
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -150,22 +150,19 @@ def _create_stochastic_next_func(
         - weight_{name}: 2d array of weights. The first dimension corresponds to the
           number of simulation units. The second dimension corresponds to the number of
           grid points (labels).
-        - keys: Dictionary with random key arrays. Dictionary keys correspond to the
-          names of stochastic next functions, e.g. 'next_health'.
+        - key_{name}: PRNG key for the stochastic next function, e.g. 'next_health'.
 
     """
 
     @with_signature(
-        args={f"weight_{name}": "FloatND", "keys": "dict[str, Array]"},
+        args={f"weight_{name}": "FloatND", f"key_{name}": "dict[str, Array]"},
         return_annotation="DiscreteState",
     )
-    def next_stochastic_state(
-        keys: dict[str, Array], **kwargs: FloatND
-    ) -> DiscreteState:
-        return random_choice(
-            labels=labels,
-            probs=kwargs[f"weight_{name}"],
-            key=keys[name],
+    def next_stochastic_state(**kwargs: FloatND) -> DiscreteState:
+        return jax.random.choice(
+            key=kwargs[f"key_{name}"],
+            a=labels,
+            p=kwargs[f"weight_{name}"],
         )
 
     return next_stochastic_state
