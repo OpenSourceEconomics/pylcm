@@ -142,4 +142,4 @@ class StochasticNextFunction(Protocol):
 
     """
 
-    def __call__(self, keys: dict[str, Array], **kwargs: Array) -> Array: ...  # noqa: D102
+    def __call__(self, **kwargs: Array) -> Array: ...  # noqa: D102
