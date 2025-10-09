@@ -39,7 +39,7 @@ def test_model_invalid_functions():
 
 def test_model_invalid_functions_values():
     with pytest.raises(
-        ModelInitilizationError, match="function values must be a callable, but is 0."
+        ModelInitilizationError, match=r"function values must be a callable, but is 0."
     ):
         Model(
             n_periods=2,
@@ -51,7 +51,7 @@ def test_model_invalid_functions_values():
 
 def test_model_invalid_functions_keys():
     with pytest.raises(
-        ModelInitilizationError, match="function keys must be a strings, but is 0."
+        ModelInitilizationError, match=r"function keys must be a strings, but is 0."
     ):
         Model(
             n_periods=2,
@@ -63,7 +63,7 @@ def test_model_invalid_functions_keys():
 
 def test_model_invalid_actions_values():
     with pytest.raises(
-        ModelInitilizationError, match="actions value 0 must be an LCM grid."
+        ModelInitilizationError, match=r"actions value 0 must be an LCM grid."
     ):
         Model(
             n_periods=2,
@@ -75,7 +75,7 @@ def test_model_invalid_actions_values():
 
 def test_model_invalid_states_values():
     with pytest.raises(
-        ModelInitilizationError, match="states value 0 must be an LCM grid."
+        ModelInitilizationError, match=r"states value 0 must be an LCM grid."
     ):
         Model(
             n_periods=2,
@@ -87,7 +87,7 @@ def test_model_invalid_states_values():
 
 def test_model_invalid_n_periods():
     with pytest.raises(
-        ModelInitilizationError, match="Number of periods must be a positive integer."
+        ModelInitilizationError, match=r"Number of periods must be a positive integer."
     ):
         Model(
             n_periods=0,
@@ -100,7 +100,7 @@ def test_model_invalid_n_periods():
 def test_model_missing_next_func(binary_category_class):
     with pytest.raises(
         ModelInitilizationError,
-        match="Each state must have a corresponding next state function.",
+        match=r"Each state must have a corresponding next state function.",
     ):
         Model(
             n_periods=2,
@@ -113,7 +113,9 @@ def test_model_missing_next_func(binary_category_class):
 def test_model_missing_utility():
     with pytest.raises(
         ModelInitilizationError,
-        match="Utility function is not defined. LCM expects a function called 'utility",
+        match=(
+            r"Utility function is not defined. LCM expects a function called 'utility'"
+        ),
     ):
         Model(
             n_periods=2,
@@ -126,7 +128,7 @@ def test_model_missing_utility():
 def test_model_overlapping_states_actions(binary_category_class):
     with pytest.raises(
         ModelInitilizationError,
-        match="States and actions cannot have overlapping names.",
+        match=r"States and actions cannot have overlapping names.",
     ):
         Model(
             n_periods=2,
