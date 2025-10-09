@@ -207,7 +207,7 @@ def test_allow_args_too_many_args():
     def f(a, *, b):
         return a + b
 
-    with pytest.raises(ValueError, match="Too many arguments provided."):
+    with pytest.raises(ValueError, match=r"Too many arguments provided."):
         allow_args(f)(1, 2, b=3)
 
 
@@ -215,7 +215,7 @@ def test_allow_args_too_few_args():
     def f(a, *, b):
         return a + b
 
-    with pytest.raises(ValueError, match="Not all arguments provided."):
+    with pytest.raises(ValueError, match=r"Not all arguments provided."):
         allow_args(f)(1)
 
 

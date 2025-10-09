@@ -283,7 +283,7 @@ def test_vmap_1d():
 
 
 def test_vmap_1d_error():
-    with pytest.raises(ValueError, match="Same argument provided more than once."):
+    with pytest.raises(ValueError, match=r"Same argument provided more than once."):
         vmap_1d(None, variables=["a", "a"])
 
 
@@ -325,6 +325,6 @@ def test_vmap_1d_callable_with_invalid():
 
     with pytest.raises(
         ValueError,
-        match="Invalid callable_with option: invalid. Possible options are",
+        match=r"Invalid callable_with option: invalid. Possible options are",
     ):
         vmap_1d(func, variables=["a"], callable_with="invalid")
