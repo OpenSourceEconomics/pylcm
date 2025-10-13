@@ -4,8 +4,10 @@ import dataclasses
 import functools
 import inspect
 from copy import deepcopy
+from dataclasses import field
 from typing import TYPE_CHECKING, Any, cast
 
+import jax
 from dags import get_annotations
 from dags.signature import with_signature
 
@@ -18,7 +20,10 @@ from lcm.input_processing.util import (
     get_variable_info,
 )
 from lcm.interfaces import ShockType
+from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a, get_max_Q_over_a
+from lcm.Q_and_F import get_Q_and_F
 from lcm.regime import Regime
+from lcm.state_action_space import create_state_action_space, create_state_space_info
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -27,20 +32,23 @@ if TYPE_CHECKING:
     from jax import Array
 
     from lcm.grids import Grid
+    from lcm.interfaces import StateActionSpace, StateSpaceInfo
+    from lcm.model import Model
     from lcm.typing import (
+        ArgmaxQOverAFunction,
         DiscreteAction,
         DiscreteState,
         Float1D,
         FloatND,
         Int1D,
         InternalUserFunction,
+        MaxQOverAFunction,
         ParamsDict,
         UserFunction,
     )
-    from lcm.user_model import Model
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=False)
 class InternalRegime:
     """An internal representation of a regime."""
 
@@ -57,8 +65,19 @@ class InternalRegime:
     random_utility_shocks: ShockType
     regime_transition_probs: InternalUserFunction | None
 
+    # Computed model components (set in __post_init__)
+    params_template: ParamsDict = field(init=False)
+    state_action_spaces: dict[int, StateActionSpace] = field(init=False)
+    state_space_infos: dict[int, StateSpaceInfo] = field(init=False)
+    max_Q_over_a_functions: dict[int, MaxQOverAFunction] = field(init=False)
+    argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction] = field(
+        init=False
+    )
 
-def process_regimes(regimes: Regime | Sequence[Regime]) -> list[InternalRegime]:
+
+def process_regimes(
+    model: Model, regimes: Regime | Sequence[Regime]
+) -> list[InternalRegime]:
     """Process the user regimes.
 
     This entails the following steps:
@@ -78,7 +97,20 @@ def process_regimes(regimes: Regime | Sequence[Regime]) -> list[InternalRegime]:
     if isinstance(regimes, Regime):
         regimes = [regimes]
 
-    return [_process_regime(regime) for regime in regimes]
+    internal_regimes = []
+    ssi = {}
+    sas = {}
+    for regime in regimes:
+        internal_regime = _process_regime(regime)
+        _initialize_state_space(internal_regime, model.n_periods)
+        ssi[regime.name] = internal_regime.state_space_infos
+        sas[regime.name] = internal_regime.state_action_spaces
+    for regime in regimes:
+        _initialize_regime_components(
+            internal_regime, model.n_periods, model.enable_jit, ssi, sas
+        )
+        internal_regimes.append(internal_regime)
+    return internal_regimes
 
 
 def _process_regime(regime: Regime) -> InternalRegime:
@@ -112,6 +144,97 @@ def _process_regime(regime: Regime) -> InternalRegime:
         # currently no additive utility shocks are supported
         random_utility_shocks=ShockType.NONE,
         regime_transition_probs=regime_transition_probs_processed,
+    )
+
+
+def _initialize_state_space(
+    internal_regime: InternalRegime, n_periods
+) -> dict[str, Any]:
+    # Process model to internal representation
+
+    # Initialize containers
+    state_action_spaces: dict[int, StateActionSpace] = {}
+    state_space_infos: dict[int, StateSpaceInfo] = {}
+
+    # Create functions for each period (reversed order following Backward induction)
+    for period in reversed(internal_regime.active):
+        is_last_period = period == n_periods - 1
+
+        # Create state action space
+        state_action_space = create_state_action_space(
+            internal_model=internal_regime,
+            is_last_period=is_last_period,
+        )
+
+        # Create state space info
+        state_space_info = create_state_space_info(
+            internal_model=internal_regime,
+            is_last_period=is_last_period,
+        )
+        state_action_spaces[period] = state_action_space
+        state_space_infos[period] = state_space_info
+
+    internal_regime.state_action_spaces = state_action_spaces
+    internal_regime.state_space_infos = state_space_infos
+
+
+def _initialize_regime_components(
+    internal_regime: InternalRegime, model: Model, ssi, sas
+):
+    max_Q_over_a_functions: dict[int, MaxQOverAFunction] = {}
+    argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction] = {}
+
+    # Create last period's next state space info
+    last_periods_next_state_space_info = StateSpaceInfo(
+        states_names=(),
+        discrete_states={},
+        continuous_states={},
+    )
+    for period in reversed(internal_regime.active):
+        state_action_space = internal_regime.state_action_spaces[period]
+        state_space_info = internal_regime.state_space_infos[period]
+        is_last_period = period == model.n_periods - 1
+        if is_last_period:
+            next_state_space_info = last_periods_next_state_space_info
+        else:
+            next_state_space_info = {
+                name: regime_ssi[period + 1] for name, regime_ssi in ssi.items()
+            }
+
+        # Create Q and F functions
+        Q_and_F = get_Q_and_F(
+            internal_model=internal_regime,
+            next_state_space_info=next_state_space_info,
+            period=period,
+        )
+
+        # Create optimization functions
+        max_Q_over_a = get_max_Q_over_a(
+            Q_and_F=Q_and_F,
+            actions_names=tuple(state_action_space.continuous_actions)
+            + tuple(state_action_space.discrete_actions),
+            states_names=tuple(state_action_space.states),
+        )
+
+        argmax_and_max_Q_over_a = get_argmax_and_max_Q_over_a(
+            Q_and_F=Q_and_F,
+            actions_names=tuple(state_action_space.discrete_actions)
+            + tuple(state_action_space.continuous_actions),
+        )
+
+        # Store results
+        max_Q_over_a_functions[period] = (
+            jax.jit(max_Q_over_a) if model.enable_jit else max_Q_over_a
+        )
+        argmax_and_max_Q_over_a_functions[period] = (
+            jax.jit(argmax_and_max_Q_over_a)
+            if model.enable_jit
+            else argmax_and_max_Q_over_a
+        )
+
+    internal_regime.max_Q_over_a_functions = max_Q_over_a_functions
+    internal_regime.argmax_and_max_Q_over_a_functions = (
+        argmax_and_max_Q_over_a_functions
     )
 
 

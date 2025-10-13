@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any
 from lcm.exceptions import ModelInitilizationError, format_messages
 from lcm.grids import Grid
 from lcm.logging import get_logger
-from lcm.model_initialization import initialize_model_components
 from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
 
