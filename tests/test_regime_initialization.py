@@ -141,3 +141,42 @@ def test_regime_overlapping_states_actions(binary_category_class):
             actions={"health": DiscreteGrid(binary_category_class)},
             functions={"utility": lambda: 0},
         )
+
+
+def test_regime_invalid_transition_probs_not_callable():
+    msg = r"regime_transition_probs must be a callable or None, but got dict\."
+    with pytest.raises(RegimeInitializationError, match=msg):
+        Regime(
+            name="foo",
+            active=[0],
+            states={},
+            actions={},
+            functions={"utility": lambda: 0},
+            regime_transition_probs={"regime_a": 0.5, "regime_b": 0.5},  # type: ignore[arg-type]
+        )
+
+
+def test_regime_transition_probs_none_is_valid():
+    # Should not raise any exception
+    regime = Regime(
+        name="foo",
+        active=[0],
+        states={},
+        actions={},
+        functions={"utility": lambda: 0},
+        regime_transition_probs=None,
+    )
+    assert regime.regime_transition_probs is None
+
+
+def test_regime_transition_probs_callable_is_valid():
+    # Should not raise any exception
+    regime = Regime(
+        name="foo",
+        active=[0],
+        states={},
+        actions={},
+        functions={"utility": lambda: 0},
+        regime_transition_probs=lambda: {"regime_a": 0.5, "regime_b": 0.5},
+    )
+    assert callable(regime.regime_transition_probs)

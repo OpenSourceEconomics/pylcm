@@ -24,6 +24,9 @@ class Regime:
         regime_transitions: Dictionary mapping the target regime names to a dictionary
             of functions that determine the state transition from this regime to the
             target regime. If empty, the regime is assumed to be absorbing.
+        regime_transition_probs: Optional callable that returns a dictionary mapping
+            regime names to transition probabilities. If None, the regime is assumed
+            to be absorbing (stays in the same regime with probability 1).
 
     """
 
@@ -35,6 +38,9 @@ class Regime:
     functions: dict[str, UserFunction] = field(default_factory=dict)
     regime_state_transitions: dict[str, dict[str, Callable[..., Any]]] = field(
         default_factory=dict
+    )
+    regime_transition_probs: Callable[..., dict[str, float]] | None = field(
+        default=None
     )
 
     def __post_init__(self) -> None:
@@ -58,6 +64,7 @@ def _validate_regime(regime: Regime) -> None:
         _validate_functions_dict,
         _validate_utility_function_exists,
         _validate_each_state_has_next_state_function,
+        _validate_regime_transition_probs,
     ]
 
     error_messages = []
@@ -202,6 +209,21 @@ def _validate_states_and_actions_no_overlap(regime: Regime) -> list[str]:
         error_messages.append(
             "States and actions cannot have overlapping names. The following names "
             f"are used in both states and actions: {states_and_actions_overlap}."
+        )
+
+    return error_messages
+
+
+def _validate_regime_transition_probs(regime: Regime) -> list[str]:
+    """Validate the regime_transition_probs attribute."""
+    error_messages = []
+
+    if regime.regime_transition_probs is not None and not callable(
+        regime.regime_transition_probs
+    ):
+        error_messages.append(
+            "regime_transition_probs must be a callable or None, but got "
+            f"{type(regime.regime_transition_probs).__name__}."
         )
 
     return error_messages

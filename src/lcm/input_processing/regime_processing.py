@@ -18,6 +18,7 @@ from lcm.input_processing.util import (
     get_variable_info,
 )
 from lcm.interfaces import ShockType
+from lcm.regime import Regime
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -26,7 +27,6 @@ if TYPE_CHECKING:
     from jax import Array
 
     from lcm.grids import Grid
-    from lcm.regime import Regime
     from lcm.typing import (
         DiscreteAction,
         DiscreteState,
@@ -42,6 +42,8 @@ if TYPE_CHECKING:
 
 @dataclasses.dataclass(frozen=True)
 class InternalRegime:
+    """An internal representation of a regime."""
+
     name: str
     description: str | None
     active: list[int]
@@ -53,6 +55,7 @@ class InternalRegime:
     params: ParamsDict
     # Not properly processed yet
     random_utility_shocks: ShockType
+    regime_transition_probs: InternalUserFunction | None
 
 
 def process_regimes(regimes: Regime | Sequence[Regime]) -> list[InternalRegime]:
@@ -81,6 +84,21 @@ def process_regimes(regimes: Regime | Sequence[Regime]) -> list[InternalRegime]:
 def _process_regime(regime: Regime) -> InternalRegime:
     params = create_params_template(regime)
 
+    # Process regime_transition_probs if it exists
+    regime_transition_probs_processed = None
+    if regime.regime_transition_probs is not None:
+        func_name = "regime_transition_probs"
+        if params.get(func_name):
+            regime_transition_probs_processed = _replace_func_parameters_by_params(
+                func=regime.regime_transition_probs,
+                params=params,
+                name=func_name,
+            )
+        else:
+            regime_transition_probs_processed = _add_dummy_params_argument(
+                regime.regime_transition_probs
+            )
+
     return InternalRegime(
         name=regime.name,
         description=regime.description,
@@ -93,6 +111,7 @@ def _process_regime(regime: Regime) -> InternalRegime:
         params=params,
         # currently no additive utility shocks are supported
         random_utility_shocks=ShockType.NONE,
+        regime_transition_probs=regime_transition_probs_processed,
     )
 
 

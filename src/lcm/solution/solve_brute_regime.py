@@ -10,12 +10,16 @@ if TYPE_CHECKING:
     from lcm.typing import FloatND, ParamsDict
 
 
+type RegimeName = str
+
+
 def solve(
-    params: ParamsDict,
+    params: dict[RegimeName, ParamsDict],
     model: Model,
 ) -> dict[int, FloatND]:
+    """Solve the model for the given parameters."""
     n_periods = len(model.state_action_spaces)
-    solution: dict[int, dict[str, FloatND]] = {}
+    solution: dict[int, dict[RegimeName, FloatND]] = {}
 
     # Terminal period
     # ----------------------------------------------------------------------------------
@@ -30,7 +34,7 @@ def solve(
             **state_action_space.states,
             **state_action_space.discrete_actions,
             **state_action_space.continuous_actions,
-            params=params,
+            params=params.get(internal_regime.name, {}),
         )
 
         validate_value_function_array(
@@ -53,7 +57,7 @@ def solve(
                 **state_action_space.discrete_actions,
                 **state_action_space.continuous_actions,
                 next_V_arr_dict=solution[period + 1],
-                params=params,
+                params=params.get(internal_regime.name, {}),
             )
 
             validate_value_function_array(
