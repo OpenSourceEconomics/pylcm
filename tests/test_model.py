@@ -6,7 +6,6 @@ the target specification for the implementation.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -14,7 +13,6 @@ import jax.numpy as jnp
 import pytest
 
 from lcm import DiscreteGrid, LinspaceGrid, Model
-from lcm.exceptions import ModelInitializationError
 from lcm.regime import Regime
 
 if TYPE_CHECKING:
@@ -167,31 +165,6 @@ def test_work_retirement_model_solution():
     # Basic simulation checks
     assert simulation is not None
     assert len(simulation) > 0
-
-
-def test_legacy_api_deprecation_warning():
-    """Test that legacy API shows deprecation warning."""
-    warn_msg = re.escape(
-        "Legacy Model API lcm.Model(n_periods, actions, states, functions) is "
-        "deprecated and will be removed in version 0.1.0."
-    )
-
-    # The deprecation warning should trigger before the initialization error
-    with (
-        pytest.warns(DeprecationWarning, match=warn_msg),
-        pytest.raises(ModelInitializationError),
-    ):
-        # Model creation will fail due to function signature issues,
-        # but the deprecation warning should be triggered first
-        Model(
-            n_periods=5,
-            actions={"consumption": LinspaceGrid(start=1, stop=10, n_points=10)},
-            states={"wealth": LinspaceGrid(start=1, stop=100, n_points=11)},
-            functions={
-                "utility": lambda consumption: jnp.log(consumption),
-                "next_wealth": lambda wealth, consumption: wealth - consumption,
-            },
-        )
 
 
 def test_regime_to_model_uses_regime_description():

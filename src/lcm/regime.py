@@ -33,7 +33,7 @@ class Regime:
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
     functions: dict[str, UserFunction] = field(default_factory=dict)
-    regime_transitions: dict[str, dict[str, Callable[..., Any]]] = field(
+    regime_state_transitions: dict[str, dict[str, Callable[..., Any]]] = field(
         default_factory=dict
     )
 
