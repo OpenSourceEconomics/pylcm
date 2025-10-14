@@ -167,7 +167,7 @@ def simulate(
             )
 
             next_state = get_next_state_function(
-                internal_model=internal_model,
+                internal_regime=internal_model,
                 next_states=tuple(state_action_space.states),
                 target=Target.SIMULATE,
             )

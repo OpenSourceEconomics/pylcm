@@ -8,13 +8,14 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 from lcm.exceptions import ModelInitializationError, format_messages
+from lcm.interfaces import InternalRegime
 from lcm.logging import get_logger
 from lcm.regime import Regime
 from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
+from collections.abc import Sequence
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
 
     from jax import Array
 
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
         ParamsDict,
     )
 
-from lcm.input_processing.regime_processing import InternalRegime, process_regimes
+from lcm.input_processing.regime_processing import process_regimes
 
 
 class Model:
@@ -52,7 +53,7 @@ class Model:
         self.jit = jit
 
         self.internal_regimes: list[InternalRegime] = process_regimes(
-            internal_model=self, regimes=regimes
+            model=self, regimes=regimes
         )
 
     def solve(

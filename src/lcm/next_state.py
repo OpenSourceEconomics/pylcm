@@ -9,25 +9,29 @@ from dags.signature import with_signature
 
 from lcm.interfaces import Target
 from lcm.random import random_choice
+from lcm.interfaces import InternalRegime
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from jax import Array
 
-    from lcm.interfaces import InternalModel
     from lcm.typing import (
         ContinuousState,
         DiscreteState,
         FloatND,
         StochasticNextFunction,
     )
+    
+
+type RegimeName = str
 
 
 def get_next_state_function(
     *,
-    internal_model: InternalModel,
+    internal_regime: InternalRegime,
     next_states: tuple[str, ...],
+    target_regime: str,
     target: Target,
 ) -> Callable[..., dict[str, DiscreteState | ContinuousState]]:
     """Get function that computes the next states during the solution.
@@ -46,19 +50,26 @@ def get_next_state_function(
 
     """
     if target == Target.SOLVE:
-        functions_dict = internal_model.functions
+        if target_regime == internal_regime.name:
+            # Mapping to self
+            functions_dict = internal_regime.functions
+        else:
+            # Mapping to another regime
+            functions_dict = internal_regime.regime_state_transitions[target_regime]
+
     elif target == Target.SIMULATE:
         # For the simulation target, we need to extend the functions dictionary with
         # stochastic next states functions and their weights.
-        functions_dict = _extend_functions_dict_for_simulation(internal_model)
+        functions_dict = _extend_functions_dict_for_simulation(internal_regime)
     else:
         raise ValueError(f"Invalid target: {target}")
 
-    requested_next_states = [
-        next_state
-        for next_state in internal_model.function_info.query("is_next").index
-        if next_state.replace("next_", "") in next_states
-    ]
+    requested_next_states = tuple(f"next_{name}" for name in next_states)
+    # requested_next_states = [
+    #     next_state
+    #     for next_state in internal_regime.function_info.query("is_next").index
+    #     if next_state.replace("next_", "") in next_states
+    # ]
 
     return concatenate_functions(
         functions=functions_dict,
@@ -67,27 +78,41 @@ def get_next_state_function(
         enforce_signature=False,
         set_annotations=True,
     )
-
+    
 
 def get_next_stochastic_weights_function(
-    internal_model: InternalModel,
-    next_stochastic_states: tuple[str, ...],
-) -> Callable[..., dict[str, Array]]:
+    internal_regime: InternalRegime,
+    next_stochastic_states: dict[RegimeName, tuple[str, ...]],
+) -> dict[RegimeName, Callable[..., dict[str, Array]]]:
     """Get function that computes the weights for the next stochastic states.
 
     Args:
-        internal_model: Internal model instance.
-        next_stochastic_states: Names of the stochastic states for which to compute the
-            weights. These variables are relevant for the next state space.
+        internal_regime: Internal regime instance.
+        next_stochastic_states: Names of the stochastic states for which to
+            compute the weights, for each regime given in a dictionary. These
+            variables are relevant for the next state space.
 
     Returns:
         Function that computes the weights for the next stochastic states.
 
     """
+    return {
+        regime_name: _get_next_stochastic_weights_function_single_regime(
+            internal_regime=internal_regime,
+            next_stochastic_states=state_names,
+        )
+        for regime_name, state_names in next_stochastic_states.items()
+    }
+
+
+def _get_next_stochastic_weights_function_single_regime(
+    internal_regime: InternalRegime,
+    next_stochastic_states: tuple[str, ...],
+) -> Callable[..., dict[str, Array]]:
     targets = [f"weight_next_{name}" for name in next_stochastic_states]
 
     return concatenate_functions(
-        functions=internal_model.functions,
+        functions=internal_regime.functions,
         targets=targets,
         return_type="dict",
         enforce_signature=False,
@@ -96,7 +121,7 @@ def get_next_stochastic_weights_function(
 
 
 def _extend_functions_dict_for_simulation(
-    internal_model: InternalModel,
+    internal_model: InternalRegime,
 ) -> dict[str, Callable[..., Array]]:
     """Extend the functions dictionary for the simulation target.
 

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from lcm.error_handling import validate_value_function_array
 
 if TYPE_CHECKING:
-    from lcm.input_processing.regime_processing import InternalRegime
+    from lcm.interfaces import InternalRegime
     from lcm.model import Model
     from lcm.typing import FloatND, ParamsDict
 

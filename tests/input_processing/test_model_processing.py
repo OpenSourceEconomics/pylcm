@@ -11,24 +11,24 @@ from numpy.testing import assert_array_equal
 from pandas.testing import assert_frame_equal
 
 from lcm import DiscreteGrid, LinspaceGrid, grid_helpers
-from lcm.input_processing.model_processing import (
+from lcm.input_processing.regime_processing import (
     _get_stochastic_weight_function,
     get_function_info,
     get_grids,
     get_gridspecs,
     get_variable_info,
-    process_model,
+    process_regimes,
 )
 from lcm.mark import StochasticInfo
 from tests.test_models import get_model
 
 
 @dataclass
-class ModelMock:
-    """A model mock for testing the process_model function.
+class RegimeMock:
+    """A regime mock for testing the process_regimes function.
 
     This dataclass has the same attributes as the Model dataclass, but does not perform
-    any checks, which helps us to test the process_model function in isolation.
+    any checks, which helps us to test the process_regimes function in isolation.
 
     """
 
@@ -46,7 +46,7 @@ def model(binary_category_class):
     def next_c(a, b):
         pass
 
-    return ModelMock(
+    return RegimeMock(
         n_periods=2,
         functions={
             "utility": utility,
@@ -110,7 +110,7 @@ def test_get_grids(model):
 
 def test_process_model_iskhakov_et_al_2017():
     user_model = get_model("iskhakov_et_al_2017", n_periods=3)
-    internal_model = process_model(user_model)
+    internal_model = process_regimes(user_model)
 
     # Variable Info
     assert (
@@ -176,7 +176,7 @@ def test_process_model_iskhakov_et_al_2017():
 
 def test_process_model():
     user_model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    internal_model = process_model(user_model)
+    internal_model = process_regimes(user_model)
 
     # Variable Info
     assert (

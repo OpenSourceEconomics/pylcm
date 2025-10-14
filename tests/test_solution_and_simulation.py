@@ -172,7 +172,7 @@ def test_get_max_Q_over_c():
     )
 
     Q_and_F = get_Q_and_F(
-        internal_model=model,
+        internal_regime=model,
         next_state_space_info=state_space_info,
         period=model.n_periods - 1,
     )
@@ -217,7 +217,7 @@ def test_get_max_Q_over_c_with_discrete_model():
     )
 
     Q_and_F = get_Q_and_F(
-        internal_model=model,
+        internal_regime=model,
         next_state_space_info=state_space_info,
         period=model.n_periods - 1,
     )
@@ -267,7 +267,7 @@ def test_argmax_and_max_Q_over_c():
     )
 
     Q_and_F = get_Q_and_F(
-        internal_model=model,
+        internal_regime=model,
         next_state_space_info=state_space_info,
         period=model.n_periods - 1,
     )
@@ -312,7 +312,7 @@ def test_argmax_and_max_Q_over_c_with_discrete_model():
     )
 
     Q_and_F = get_Q_and_F(
-        internal_model=model,
+        internal_regime=model,
         next_state_space_info=state_space_info,
         period=model.n_periods - 1,
     )

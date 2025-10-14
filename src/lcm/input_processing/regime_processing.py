@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import dataclasses
+from collections.abc import Callable
 import functools
 import inspect
 from copy import deepcopy
-from dataclasses import field
 from typing import TYPE_CHECKING, Any, cast
 
 import jax
@@ -20,10 +19,12 @@ from lcm.input_processing.util import (
     get_variable_info,
 )
 from lcm.interfaces import ShockType
+from lcm.interfaces import InternalRegime
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a, get_max_Q_over_a
 from lcm.Q_and_F import get_Q_and_F
 from lcm.regime import Regime
 from lcm.state_action_space import create_state_action_space, create_state_space_info
+from lcm.interfaces import StateActionSpace, StateSpaceInfo
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -31,47 +32,17 @@ if TYPE_CHECKING:
     import pandas as pd
     from jax import Array
 
-    from lcm.grids import Grid
-    from lcm.interfaces import StateActionSpace, StateSpaceInfo
     from lcm.model import Model
     from lcm.typing import (
         ArgmaxQOverAFunction,
         DiscreteAction,
         DiscreteState,
-        Float1D,
         FloatND,
         Int1D,
         InternalUserFunction,
         MaxQOverAFunction,
         ParamsDict,
         UserFunction,
-    )
-
-
-@dataclasses.dataclass(frozen=False)
-class InternalRegime:
-    """An internal representation of a regime."""
-
-    name: str
-    description: str | None
-    active: list[int]
-    grids: dict[str, Float1D | Int1D]
-    gridspecs: dict[str, Grid]
-    variable_info: pd.DataFrame
-    functions: dict[str, InternalUserFunction]
-    function_info: pd.DataFrame
-    params: ParamsDict
-    # Not properly processed yet
-    random_utility_shocks: ShockType
-    regime_transition_probs: InternalUserFunction | None
-
-    # Computed model components (set in __post_init__)
-    params_template: ParamsDict = field(init=False)
-    state_action_spaces: dict[int, StateActionSpace] = field(init=False)
-    state_space_infos: dict[int, StateSpaceInfo] = field(init=False)
-    max_Q_over_a_functions: dict[int, MaxQOverAFunction] = field(init=False)
-    argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction] = field(
-        init=False
     )
 
 
@@ -105,31 +76,47 @@ def process_regimes(
         _initialize_state_space(internal_regime, model.n_periods)
         ssi[regime.name] = internal_regime.state_space_infos
         sas[regime.name] = internal_regime.state_action_spaces
-    for regime in regimes:
-        _initialize_regime_components(
-            internal_regime, model.n_periods, model.enable_jit, ssi, sas
-        )
         internal_regimes.append(internal_regime)
+
+    for ir in internal_regimes:
+        _initialize_regime_components(
+            internal_regime=ir,
+            model=model,
+            ssi=ssi,
+            sas=sas,
+        )
+
     return internal_regimes
+
+
+def _add_default_params_argument_or_replace(
+    fn: Callable[..., Any],
+    fn_name: str,
+    params: ParamsDict,
+) -> Callable[..., Any]:
+    if params.get(fn_name):
+        return _replace_func_parameters_by_params(
+            func=fn,
+            params=params,
+            name=fn_name,
+        )
+    else:
+        return _add_dummy_params_argument(fn)
 
 
 def _process_regime(regime: Regime) -> InternalRegime:
     params = create_params_template(regime)
 
-    # Process regime_transition_probs if it exists
-    regime_transition_probs_processed = None
-    if regime.regime_transition_probs is not None:
-        func_name = "regime_transition_probs"
-        if params.get(func_name):
-            regime_transition_probs_processed = _replace_func_parameters_by_params(
-                func=regime.regime_transition_probs,
-                params=params,
-                name=func_name,
-            )
-        else:
-            regime_transition_probs_processed = _add_dummy_params_argument(
-                regime.regime_transition_probs
-            )
+    regime_transition_probs_processed = _add_default_params_argument_or_replace(
+        fn=regime.regime_transition_probs,
+        fn_name="regime_transition_probs",
+        params=params,
+    )
+
+    regime_state_transitions_processed = {
+        rn: {fn_name: _add_default_params_argument_or_replace(fn, fn_name, params) for fn_name, fn in dict_of_fn.items()}
+        for rn, dict_of_fn in regime.regime_state_transitions.items()
+    }
 
     return InternalRegime(
         name=regime.name,
@@ -144,6 +131,7 @@ def _process_regime(regime: Regime) -> InternalRegime:
         # currently no additive utility shocks are supported
         random_utility_shocks=ShockType.NONE,
         regime_transition_probs=regime_transition_probs_processed,
+        regime_state_transitions=regime_state_transitions_processed,
     )
 
 
@@ -185,27 +173,24 @@ def _initialize_regime_components(
     argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction] = {}
 
     # Create last period's next state space info
-    last_periods_next_state_space_info = StateSpaceInfo(
+    empty_next_state_space_info = StateSpaceInfo(
         states_names=(),
         discrete_states={},
         continuous_states={},
     )
     for period in reversed(internal_regime.active):
         state_action_space = internal_regime.state_action_spaces[period]
-        state_space_info = internal_regime.state_space_infos[period]
-        is_last_period = period == model.n_periods - 1
-        if is_last_period:
-            next_state_space_info = last_periods_next_state_space_info
-        else:
-            next_state_space_info = {
-                name: regime_ssi[period + 1] for name, regime_ssi in ssi.items()
-            }
+        # state_space_info = internal_regime.state_space_infos[period]
+        next_state_space_info = {
+            name: regime_ssi.get(period + 1, empty_next_state_space_info) for name, regime_ssi in ssi.items()
+        }
 
         # Create Q and F functions
         Q_and_F = get_Q_and_F(
-            internal_model=internal_regime,
+            internal_regime=internal_regime,
             next_state_space_info=next_state_space_info,
             period=period,
+            n_periods=model.n_periods,
         )
 
         # Create optimization functions

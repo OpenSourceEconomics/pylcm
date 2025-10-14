@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import dataclasses
+from dataclasses import field
 from enum import Enum
 from typing import TYPE_CHECKING
 
+import pandas as pd
+
+from lcm.grids import Grid
+from lcm.typing import ArgmaxQOverAFunction, Float1D, Int1D, InternalUserFunction, MaxQOverAFunction, ParamsDict
 from lcm.utils import first_non_none
 
 if TYPE_CHECKING:
@@ -175,3 +180,31 @@ class Target(Enum):
 
     SOLVE = "solve"
     SIMULATE = "simulate"
+
+
+@dataclasses.dataclass(frozen=False)
+class InternalRegime:
+    """An internal representation of a regime."""
+
+    name: str
+    description: str | None
+    active: list[int]
+    grids: dict[str, Float1D | Int1D]
+    gridspecs: dict[str, Grid]
+    variable_info: pd.DataFrame
+    functions: dict[str, InternalUserFunction]
+    function_info: pd.DataFrame
+    params: ParamsDict
+    # Not properly processed yet
+    random_utility_shocks: ShockType
+    regime_state_transitions: dict[str, dict[str, InternalUserFunction]]
+    regime_transition_probs: InternalUserFunction | None
+
+    # Computed model components (set in __post_init__)
+    params_template: ParamsDict = field(init=False)
+    state_action_spaces: dict[int, StateActionSpace] = field(init=False)
+    state_space_infos: dict[int, StateSpaceInfo] = field(init=False)
+    max_Q_over_a_functions: dict[int, MaxQOverAFunction] = field(init=False)
+    argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction] = field(
+        init=False
+    )

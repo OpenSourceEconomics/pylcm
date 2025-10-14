@@ -60,7 +60,7 @@ def model_input():
         "state_action_space": state_action_space,
         "state_space_info": state_space_info,
         "next_state": get_next_state_function(
-            internal_model=internal_model, next_states=("wealth",), target=Target.SOLVE
+            internal_regime=internal_model, next_states=("wealth",), target=Target.SOLVE
         ),
         "params": params,
     }
@@ -81,7 +81,7 @@ def test_max_Q_over_a_equal(model_input):
     model = model_input["model"]
 
     Q_and_F = get_Q_and_F(
-        internal_model=model,
+        internal_regime=model,
         next_state_space_info=state_space_info,
         period=0,
     )
@@ -154,7 +154,7 @@ def test_argmax_Q_over_a_equal(model_input):
     model = model_input["model"]
 
     Q_and_F = get_Q_and_F(
-        internal_model=model,
+        internal_regime=model,
         next_state_space_info=state_space_info,
         period=0,
     )

@@ -36,12 +36,8 @@ class Regime:
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
     functions: dict[str, UserFunction] = field(default_factory=dict)
-    regime_state_transitions: dict[str, dict[str, Callable[..., Any]]] = field(
-        default_factory=dict
-    )
-    regime_transition_probs: Callable[..., dict[str, float]] | None = field(
-        default=None
-    )
+    regime_state_transitions: dict[str, dict[str, Callable[..., Any]]]
+    regime_transition_probs: Callable[..., dict[str, float]]
 
     def __post_init__(self) -> None:
         _validate_regime(self)

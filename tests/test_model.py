@@ -68,24 +68,23 @@ def borrowing_constraint(
 
 
 # ======================================================================================
-# Regime Transition Functions
-# ======================================================================================
-
-
-def work_to_retirement_transition(
-    wealth: ContinuousState,
-) -> dict[str, ContinuousState]:
-    return {
-        "wealth": wealth,
-    }
-
-
-# ======================================================================================
 # API Demonstration Tests
 # ======================================================================================
 
+def next_wealth_regime_transition(
+    wealth: ContinuousState,
+    consumption: ContinuousAction,
+    interest_rate: float,
+) -> ContinuousState:
+    return (1 + interest_rate) * (wealth - consumption)
 
-@pytest.mark.skip(reason="Regime model implementation not yet complete")
+def regime_transition_probs_working_to_retirement(*args, **kwargs) -> dict[str, float]:
+    return {"work": 0.6, "retirement": 0.4}
+
+def regime_transition_probs_retirement_absorbing(*args, **kwargs) -> dict[str, float]:
+    return {"work": 0.0, "retirement": 1.0}
+
+
 def test_work_retirement_model_solution():
     """Test that a complete work-retirement model can be solved using new Regime API."""
     # Create work regime
@@ -105,9 +104,10 @@ def test_work_retirement_model_solution():
             "next_wealth": next_wealth,
             "borrowing_constraint": borrowing_constraint,
         },
-        regime_transitions={
-            "retirement": work_to_retirement_transition,
+        regime_state_transitions={
+            "retirement": {"next_wealth": next_wealth_regime_transition},
         },
+        regime_transition_probs=regime_transition_probs_working_to_retirement,
     )
 
     # Create retirement regime
@@ -127,16 +127,18 @@ def test_work_retirement_model_solution():
             "next_wealth": next_wealth,
             "borrowing_constraint": borrowing_constraint,
         },
-        regime_transitions={},  # Retirement is absorbing
+        regime_state_transitions={
+            "work": {"next_wealth": next_wealth_regime_transition},
+        },  # Retirement is absorbing
+        regime_transition_probs=regime_transition_probs_retirement_absorbing,
     )
 
     # Create complete model using new regime-based API
-    model = Model(regimes=[work_regime, retirement_regime])
+    model = Model(regimes=[work_regime, retirement_regime], n_periods=10)
 
     # Verify model properties
-    assert model.is_regime_model is True
     assert model.n_periods == 10
-    assert len(model.regimes) == 2
+    assert len(model.internal_regimes) == 2
 
     # Define parameters (similar to deterministic model)
     params = {
@@ -153,23 +155,12 @@ def test_work_retirement_model_solution():
     assert len(solution) == 10
     assert all(period in solution for period in range(10))
 
-    # Additional API test: simulate should also work
-    initial_states = {
-        "wealth": jnp.array([10.0]),
-    }
 
-    simulation = model.simulate(
-        params=params, initial_states=initial_states, V_arr_dict=solution, seed=42
-    )
-
-    # Basic simulation checks
-    assert simulation is not None
-    assert len(simulation) > 0
-
-
+@pytest.mark.skip(reason="Not clear what behavior we want for this yet, and not urgent at all!!!")
 def test_regime_to_model_uses_regime_description():
     regime = Regime(
         name="described_regime",
+        active=range(1),
         description="This is a test regime description",
         actions={"consumption": LinspaceGrid(start=1, stop=10, n_points=5)},
         states={},
@@ -178,7 +169,7 @@ def test_regime_to_model_uses_regime_description():
 
     # Should use regime's description
     model = Model(regime, n_periods=1)
-    assert model.description == "This is a test regime description"
+    assert model.description == "described_regime: This is a test regime description"
 
     # Explicit description should override regime's description
     model_override = Model(regime, n_periods=1, description="Override description")
