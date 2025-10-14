@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -13,10 +14,8 @@ from lcm.logging import get_logger
 from lcm.regime import Regime
 from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
-from collections.abc import Sequence
 
 if TYPE_CHECKING:
-
     from jax import Array
 
     from lcm.typing import (

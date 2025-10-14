@@ -7,9 +7,8 @@ from typing import TYPE_CHECKING
 from dags import concatenate_functions
 from dags.signature import with_signature
 
-from lcm.interfaces import Target
+from lcm.interfaces import InternalRegime, Target
 from lcm.random import random_choice
-from lcm.interfaces import InternalRegime
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -22,7 +21,7 @@ if TYPE_CHECKING:
         FloatND,
         StochasticNextFunction,
     )
-    
+
 
 type RegimeName = str
 
@@ -78,7 +77,7 @@ def get_next_state_function(
         enforce_signature=False,
         set_annotations=True,
     )
-    
+
 
 def get_next_stochastic_weights_function(
     internal_regime: InternalRegime,

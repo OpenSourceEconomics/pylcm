@@ -71,6 +71,7 @@ def borrowing_constraint(
 # API Demonstration Tests
 # ======================================================================================
 
+
 def next_wealth_regime_transition(
     wealth: ContinuousState,
     consumption: ContinuousAction,
@@ -78,8 +79,10 @@ def next_wealth_regime_transition(
 ) -> ContinuousState:
     return (1 + interest_rate) * (wealth - consumption)
 
+
 def regime_transition_probs_working_to_retirement(*args, **kwargs) -> dict[str, float]:
     return {"work": 0.6, "retirement": 0.4}
+
 
 def regime_transition_probs_retirement_absorbing(*args, **kwargs) -> dict[str, float]:
     return {"work": 0.0, "retirement": 1.0}
@@ -156,7 +159,9 @@ def test_work_retirement_model_solution():
     assert all(period in solution for period in range(10))
 
 
-@pytest.mark.skip(reason="Not clear what behavior we want for this yet, and not urgent at all!!!")
+@pytest.mark.skip(
+    reason="Not clear what behavior we want for this yet, and not urgent at all!!!"
+)
 def test_regime_to_model_uses_regime_description():
     regime = Regime(
         name="described_regime",

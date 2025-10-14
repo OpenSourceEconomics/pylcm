@@ -11,9 +11,8 @@ from dags.signature import with_signature
 from lcm.dispatchers import productmap
 from lcm.function_representation import get_value_function_representation
 from lcm.functools import get_union_of_arguments
-from lcm.interfaces import Target
+from lcm.interfaces import InternalRegime, Target
 from lcm.next_state import get_next_state_function, get_next_stochastic_weights_function
-from lcm.interfaces import InternalRegime
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -87,9 +86,7 @@ def get_Q_and_F_non_terminal(
     # As we compute the expecation of the next period's value function, we only need the
     # stochastic variables that are relevant for the next state space.
     next_stochastic_variables: dict[RegimeName, tuple[str]] = {
-        rn: tuple(
-            set(stochastic_variables) & set(nssi.states_names)
-        )
+        rn: tuple(set(stochastic_variables) & set(nssi.states_names))
         for rn, nssi in next_state_space_info.items()
     }
 
@@ -175,20 +172,24 @@ def get_Q_and_F_non_terminal(
                 params=params,
             )
 
-            marginal_next_stochastic_states_weights = next_stochastic_states_weights[target_regime](
+            marginal_next_stochastic_states_weights = next_stochastic_states_weights[
+                target_regime
+            ](
                 **states_and_actions,
                 _period=period,
                 params=params,
             )
 
-            joint_next_stochastic_states_weights = joint_weights_from_marginals[target_regime](
-                **marginal_next_stochastic_states_weights
-            )
+            joint_next_stochastic_states_weights = joint_weights_from_marginals[
+                target_regime
+            ](**marginal_next_stochastic_states_weights)
 
             # As we productmap'd the value function over the stochastic variables, the
             # resulting next value function gets a new dimension for each stochastic
             # variable.
-            next_V_at_stochastic_states_arr = next_V[target_regime](**next_states, next_V_arr=next_V_arr)
+            next_V_at_stochastic_states_arr = next_V[target_regime](
+                **next_states, next_V_arr=next_V_arr
+            )
 
             # We then take the weighted average of the next value function at
             # the stochastic states to get the expected next value function.
@@ -213,7 +214,7 @@ def get_Q_and_F_non_terminal(
 
         weighted_V_expected_arrays = [
             regime_transition_probs[rn] * next_V_expected_arrays[rn]
-            for rn in regime_names 
+            for rn in regime_names
         ]
 
         Q_arr = U_arr + params["beta"] * jnp.sum(weighted_V_expected_arrays, axis=0)

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 import functools
 import inspect
+from collections.abc import Callable
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, cast
 
@@ -18,13 +18,11 @@ from lcm.input_processing.util import (
     get_gridspecs,
     get_variable_info,
 )
-from lcm.interfaces import ShockType
-from lcm.interfaces import InternalRegime
+from lcm.interfaces import InternalRegime, ShockType, StateActionSpace, StateSpaceInfo
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a, get_max_Q_over_a
 from lcm.Q_and_F import get_Q_and_F
 from lcm.regime import Regime
 from lcm.state_action_space import create_state_action_space, create_state_space_info
-from lcm.interfaces import StateActionSpace, StateSpaceInfo
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -100,8 +98,7 @@ def _add_default_params_argument_or_replace(
             params=params,
             name=fn_name,
         )
-    else:
-        return _add_dummy_params_argument(fn)
+    return _add_dummy_params_argument(fn)
 
 
 def _process_regime(regime: Regime) -> InternalRegime:
@@ -114,7 +111,10 @@ def _process_regime(regime: Regime) -> InternalRegime:
     )
 
     regime_state_transitions_processed = {
-        rn: {fn_name: _add_default_params_argument_or_replace(fn, fn_name, params) for fn_name, fn in dict_of_fn.items()}
+        rn: {
+            fn_name: _add_default_params_argument_or_replace(fn, fn_name, params)
+            for fn_name, fn in dict_of_fn.items()
+        }
         for rn, dict_of_fn in regime.regime_state_transitions.items()
     }
 
@@ -182,7 +182,8 @@ def _initialize_regime_components(
         state_action_space = internal_regime.state_action_spaces[period]
         # state_space_info = internal_regime.state_space_infos[period]
         next_state_space_info = {
-            name: regime_ssi.get(period + 1, empty_next_state_space_info) for name, regime_ssi in ssi.items()
+            name: regime_ssi.get(period + 1, empty_next_state_space_info)
+            for name, regime_ssi in ssi.items()
         }
 
         # Create Q and F functions

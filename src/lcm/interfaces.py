@@ -8,7 +8,14 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 from lcm.grids import Grid
-from lcm.typing import ArgmaxQOverAFunction, Float1D, Int1D, InternalUserFunction, MaxQOverAFunction, ParamsDict
+from lcm.typing import (
+    ArgmaxQOverAFunction,
+    Float1D,
+    Int1D,
+    InternalUserFunction,
+    MaxQOverAFunction,
+    ParamsDict,
+)
 from lcm.utils import first_non_none
 
 if TYPE_CHECKING:
