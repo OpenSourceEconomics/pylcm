@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 import pytest
 
+import lcm
 from lcm import DiscreteGrid, LinspaceGrid, Model
 from lcm.regime import Regime
 
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
         BoolND,
         ContinuousAction,
         ContinuousState,
+        DiscreteState,
         FloatND,
         IntND,
         ParamsDict,
@@ -39,15 +41,24 @@ class WorkingStatus:
     working: int = 1
 
 
+@dataclass
+class HealthStatus:
+    bad: int = 0
+    good: int = 1
+
+
 # ======================================================================================
 # Model Functions (shared where possible)
 # ======================================================================================
 
 
 def utility_work(
-    consumption: ContinuousAction, working: IntND, disutility_of_work: float
+    consumption: ContinuousAction,
+    working: IntND,
+    disutility_of_work: float,
+    health: DiscreteState,
 ) -> FloatND:
-    return 1_000 * (jnp.log(consumption) - disutility_of_work * working)
+    return jnp.log(consumption) - (1 - health / 2) * disutility_of_work * working
 
 
 def utility_retirement(
@@ -69,6 +80,11 @@ def next_wealth(
     return (1 + interest_rate) * (wealth - consumption) + labor_income
 
 
+@lcm.mark.stochastic
+def next_health(health: DiscreteState) -> DiscreteState:  # type: ignore[empty-body]
+    pass
+
+
 def borrowing_constraint(
     consumption: ContinuousAction,
     wealth: ContinuousState,
@@ -83,6 +99,7 @@ def borrowing_constraint(
 
 def next_wealth_regime_transition(
     wealth: ContinuousState,
+    health: DiscreteState,
     consumption: ContinuousAction,
     interest_rate: float,
 ) -> ContinuousState:
@@ -91,6 +108,7 @@ def next_wealth_regime_transition(
 
 def regime_transition_probs_working_to_retirement(
     wealth,
+    health,
     working,
     consumption,
     _period,
@@ -100,6 +118,7 @@ def regime_transition_probs_working_to_retirement(
 
 def regime_transition_probs_retirement_absorbing(
     wealth,
+    health,
     consumption,
     _period,
 ) -> dict[str, float]:
@@ -124,15 +143,20 @@ def test_work_retirement_model_solution():
         },
         states={
             "wealth": LinspaceGrid(start=1, stop=100, n_points=50),
+            "health": DiscreteGrid(HealthStatus),
         },
         functions={
             "utility": utility_work,
             "labor_income": labor_income,
             "next_wealth": next_wealth,
+            "next_health": next_health,
             "borrowing_constraint": borrowing_constraint,
         },
         regime_state_transitions={
-            "retirement": {"next_wealth": next_wealth_regime_transition},
+            "retirement": {
+                "next_wealth": next_wealth_regime_transition,
+                "next_health": next_health,
+            },
         },
         regime_transition_probs=regime_transition_probs_working_to_retirement,
     )
@@ -146,16 +170,21 @@ def test_work_retirement_model_solution():
         },
         states={
             "wealth": LinspaceGrid(start=1, stop=100, n_points=50),
+            "health": DiscreteGrid(HealthStatus),
         },
         functions={
             "utility": utility_retirement,
             "working": working_during_retirement,  # Always not working in retirement
             "labor_income": labor_income,
             "next_wealth": next_wealth,
+            "next_health": next_health,
             "borrowing_constraint": borrowing_constraint,
         },
         regime_state_transitions={
-            "work": {"next_wealth": next_wealth_regime_transition},
+            "work": {
+                "next_wealth": next_wealth_regime_transition,
+                "next_health": next_health,
+            },
         },  # Retirement is absorbing
         regime_transition_probs=regime_transition_probs_retirement_absorbing,
     )
@@ -167,6 +196,15 @@ def test_work_retirement_model_solution():
     assert model.n_periods == 10
     assert len(model.internal_regimes) == 2
 
+    health_transition = jnp.array(
+        [
+            # From bad health today to (bad, good) tomorrow
+            [0.9, 0.1],
+            # From good health today to (bad, good) tomorrow
+            [0.5, 0.5],
+        ],
+    )
+
     # Define parameters
     params_working = {
         "beta": 0.9,
@@ -174,6 +212,9 @@ def test_work_retirement_model_solution():
         "labor_income": {"wage": 25},
         "next_wealth": {"interest_rate": 0.1},
         "borrowing_constraint": {},
+        "shocks": {
+            "health": health_transition,
+        },
     }
 
     params_retired = {
@@ -182,6 +223,9 @@ def test_work_retirement_model_solution():
         "labor_income": {"wage": 20},
         "next_wealth": {"interest_rate": 0.1},
         "borrowing_constraint": {},
+        "shocks": {
+            "health": health_transition,
+        },
     }
 
     params: dict[RegimeName, ParamsDict] = {
