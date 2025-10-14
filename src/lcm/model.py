@@ -57,6 +57,10 @@ class Model:
             model=self, regimes=regimes
         )
 
+        self.params_template = {
+            regime.name: regime.params for regime in self.internal_regimes
+        }
+
         # Figure out whether we need to perform any validation steps after the regimes
         # have been processed.
 
