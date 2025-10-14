@@ -161,7 +161,6 @@ def regime_transition_probs_ishkakov_et_al_2017_stripped_down(
     retirement: DiscreteAction,
     consumption: ContinuousAction,
     wealth: ContinuousState,
-    lagged_retirement: DiscreteState | IntND,
     _period: int | IntND,
 ) -> dict[str, float]:
     return {"iskhakov_et_al_2017_stripped_down": 1.0}
