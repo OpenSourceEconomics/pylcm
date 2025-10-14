@@ -369,7 +369,10 @@ def test_deterministic_solve(beta, n_wealth_points):
 
     # Solve model using LCM
     # ==================================================================================
-    params = {"beta": beta, "deterministic_regime": {"beta": beta, "utility": {"health": 1}}}
+    params = {
+        "beta": beta,
+        "deterministic_regime": {"beta": beta, "utility": {"health": 1}},
+    }  # Fix params usage
     got = model.solve(params)
 
     # Compute analytical solution
@@ -385,11 +388,15 @@ def test_deterministic_solve(beta, n_wealth_points):
     # Do not assert that in the first period, the arrays have the same values on the
     # first and last index: TODO (@timmens): THIS IS A BUG AND NEEDS TO BE INVESTIGATED.
     # ==================================================================================
-    aaae(got[0][slice(1, -1)], expected[0][slice(1, -1)], decimal=12)
-    aaae(got[1], expected[1], decimal=12)
+    aaae(
+        got[0]["deterministic_regime"][slice(1, -1)],
+        expected[0][slice(1, -1)],
+        decimal=12,
+    )
+    aaae(got[1]["deterministic_regime"], expected[1], decimal=12)
 
 
-@pytest.mark.skip()
+@pytest.mark.skip
 @pytest.mark.parametrize("beta", [0, 0.5, 0.9, 1.0])
 @pytest.mark.parametrize("n_wealth_points", [100, 1_000])
 def test_deterministic_simulate(beta, n_wealth_points):
@@ -423,7 +430,7 @@ HEALTH_TRANSITION = [
 ]
 
 
-@pytest.mark.skip()
+@pytest.mark.skip
 @pytest.mark.parametrize("beta", [0, 0.5, 0.9, 1.0])
 @pytest.mark.parametrize("n_wealth_points", [100, 1_000])
 @pytest.mark.parametrize("health_transition", HEALTH_TRANSITION)
@@ -469,7 +476,7 @@ def test_stochastic_solve(beta, n_wealth_points, health_transition):
     aaae(got[1], expected[1], decimal=12)
 
 
-@pytest.mark.skip()
+@pytest.mark.skip
 @pytest.mark.parametrize("beta", [0, 0.5, 0.9, 1.0])
 @pytest.mark.parametrize("n_wealth_points", [100, 1_000])
 @pytest.mark.parametrize("health_transition", HEALTH_TRANSITION)

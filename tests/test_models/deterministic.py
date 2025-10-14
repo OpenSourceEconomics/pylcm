@@ -170,7 +170,7 @@ def regime_transition_probs_ishkakov_et_al_2017_stripped_down(
 ISKHAKOV_ET_AL_2017_STRIPPED_DOWN = Regime(
     name="iskhakov_et_al_2017_stripped_down",
     description=(
-        "Starts from Iskhakov et al. (2017), removes absorbing retirement constraint "
+        "Starts from Isdkhakov et al. (2017), removes absorbing retirement constraint "
         "and the lagged_retirement state, and adds wage function that depends on age."
     ),
     functions={

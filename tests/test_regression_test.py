@@ -31,6 +31,7 @@ def test_regression_test():
     model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
 
     params = get_params(
+        regime_name="iskhakov_et_al_2017_stripped_down",
         beta=0.95,
         disutility_of_work=1.0,
         interest_rate=0.05,
