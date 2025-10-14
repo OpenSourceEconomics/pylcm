@@ -6,7 +6,7 @@ import dataclasses
 from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from lcm.exceptions import ModelInitilizationError, format_messages
+from lcm.exceptions import RegimeInitializationError, format_messages
 from lcm.grids import Grid
 from lcm.logging import get_logger
 from lcm.simulation.simulate import simulate
@@ -167,7 +167,7 @@ class Model:
         try:
             return dataclasses.replace(self, **kwargs)
         except TypeError as e:
-            raise ModelInitilizationError(
+            raise RegimeInitializationError(
                 f"Failed to replace attributes of the model. The error was: {e}"
             ) from e
 
@@ -204,7 +204,7 @@ def _validate_attribute_types(model: Model) -> None:  # noqa: C901
 
     if error_messages:
         msg = format_messages(error_messages)
-        raise ModelInitilizationError(msg)
+        raise RegimeInitializationError(msg)
 
 
 def _validate_logical_consistency(model: Model) -> None:
@@ -239,4 +239,4 @@ def _validate_logical_consistency(model: Model) -> None:
 
     if error_messages:
         msg = format_messages(error_messages)
-        raise ModelInitilizationError(msg)
+        raise RegimeInitializationError(msg)

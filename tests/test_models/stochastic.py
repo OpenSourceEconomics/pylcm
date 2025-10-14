@@ -117,6 +117,18 @@ def borrowing_constraint(
 # Model specification
 # ======================================================================================
 
+
+def regime_transition_probs(
+    working: DiscreteAction,
+    consumption: ContinuousAction,
+    health: DiscreteState,
+    partner: DiscreteState,
+    wealth: ContinuousState,
+    _period: int,
+) -> dict[str, float]:
+    return {"iskhakov_et_al_2017_stochastic": 1.0}
+
+
 ISKHAKOV_ET_AL_2017_STOCHASTIC = Regime(
     name="iskhakov_et_al_2017_stochastic",
     description=(
@@ -149,6 +161,6 @@ ISKHAKOV_ET_AL_2017_STOCHASTIC = Regime(
             n_points=100,
         ),
     },
-    regime_state_transitions={},
-    regime_transition_probs=None,
+    regime_state_transitions={"iskhakov_et_al_2017_stochastic": {}},
+    regime_transition_probs=regime_transition_probs,
 )

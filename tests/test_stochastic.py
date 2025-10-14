@@ -50,7 +50,7 @@ def test_model_solve_and_simulate_with_stochastic_model():
 
 def test_model_solve_with_stochastic_model():
     model = get_model("iskhakov_et_al_2017_stochastic", n_periods=3)
-    model.solve(params=get_params())
+    model.solve(params=get_params(regime_name="iskhakov_et_al_2017_stochastic"))
 
 
 # ======================================================================================

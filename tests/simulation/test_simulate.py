@@ -6,7 +6,6 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_almost_equal, assert_array_equal
 
-from lcm.input_processing import process_model
 from lcm.logging import get_logger
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a
 from lcm.Q_and_F import get_Q_and_F

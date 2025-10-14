@@ -8,7 +8,6 @@ from jax import Array
 from numpy.testing import assert_array_equal
 
 from lcm.dispatchers import simulation_spacemap
-from lcm.input_processing import process_model
 from lcm.interfaces import StateActionSpace, Target
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a, get_max_Q_over_a
 from lcm.max_Q_over_c import get_argmax_and_max_Q_over_c, get_max_Q_over_c

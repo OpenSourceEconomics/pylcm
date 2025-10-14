@@ -7,7 +7,6 @@ import pandas as pd
 import pytest
 from numpy.testing import assert_array_equal
 
-from lcm.input_processing import process_model
 from lcm.interfaces import InternalModel, ShockType
 from lcm.Q_and_F import (
     _get_feasibility,

@@ -152,7 +152,9 @@ def _create_stochastic_transition_params(
         else:
             # Get the dimensions of variables that influence the stochastic variable
             dimensions_of_deps = [
-                len(grids[arg]) if arg != "_period" else regime.n_periods
+                len(grids[arg])
+                if arg != "_period"
+                else 1  # TODO: This should be list(regime.active) or n_periods if regime.active is None.
                 for arg in dependencies
             ]
             # Add the dimension of the stochastic variable itself at the end

@@ -3,7 +3,6 @@ from __future__ import annotations
 import jax.numpy as jnp
 from numpy.testing import assert_array_equal
 
-from lcm.input_processing import process_model
 from lcm.interfaces import StateActionSpace, StateSpaceInfo
 from lcm.state_action_space import (
     create_state_action_space,
