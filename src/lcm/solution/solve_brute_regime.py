@@ -22,7 +22,7 @@ def solve(
 ) -> dict[int, FloatND]:
     """Solve the model for the given parameters."""
     n_periods = model.n_periods
-    solution: dict[int, dict[RegimeName, FloatND]] = {}
+    solution: dict[int, dict[RegimeName, FloatND]] = {i: {} for i in range(n_periods)}
 
     # Terminal period
     # ----------------------------------------------------------------------------------
@@ -37,7 +37,7 @@ def solve(
             **state_action_space.states,
             **state_action_space.discrete_actions,
             **state_action_space.continuous_actions,
-            params=params.get(internal_regime.name, {}),
+            params=params[internal_regime.name],
             next_V_arr={"work": None, "retirement": None},
         )
 
@@ -52,16 +52,16 @@ def solve(
     # ----------------------------------------------------------------------------------
     for period in reversed(range(n_periods - 1)):
         for internal_regime in _get_active_regimes(model.internal_regimes, period):
-            state_action_space = model.state_action_spaces[internal_regime.name]
-            max_Q_over_a = model.max_Q_over_a[internal_regime.name]
+            state_action_space = internal_regime.state_action_spaces[period]
+            max_Q_over_a = internal_regime.max_Q_over_a_functions[period]
 
             # evaluate Q-function on states and actions, and maximize over actions
             V_arr = max_Q_over_a(
                 **state_action_space.states,
                 **state_action_space.discrete_actions,
                 **state_action_space.continuous_actions,
-                next_V_arr_dict=solution[period + 1],
-                params=params.get(internal_regime.name, {}),
+                next_V_arr=solution[period + 1],
+                params=params[internal_regime.name],
             )
 
             validate_value_function_array(

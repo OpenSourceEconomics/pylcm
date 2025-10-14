@@ -22,7 +22,10 @@ if TYPE_CHECKING:
         ContinuousState,
         FloatND,
         IntND,
+        ParamsDict,
     )
+
+type RegimeName = str
 
 
 # ======================================================================================
@@ -41,7 +44,13 @@ class WorkingStatus:
 # ======================================================================================
 
 
-def utility(
+def utility_work(
+    consumption: ContinuousAction, working: IntND, disutility_of_work: float
+) -> FloatND:
+    return 1_000 * (jnp.log(consumption) - disutility_of_work * working)
+
+
+def utility_retirement(
     consumption: ContinuousAction, working: IntND, disutility_of_work: float
 ) -> FloatND:
     return jnp.log(consumption) - disutility_of_work * working
@@ -80,15 +89,26 @@ def next_wealth_regime_transition(
     return (1 + interest_rate) * (wealth - consumption)
 
 
-def regime_transition_probs_working_to_retirement(*args, **kwargs) -> dict[str, float]:
+def regime_transition_probs_working_to_retirement(
+    wealth,
+    working,
+    consumption,
+    _period,
+) -> dict[str, float]:
     return {"work": 0.6, "retirement": 0.4}
 
 
-def regime_transition_probs_retirement_absorbing(*args, **kwargs) -> dict[str, float]:
+def regime_transition_probs_retirement_absorbing(
+    wealth,
+    consumption,
+    _period,
+) -> dict[str, float]:
     return {"work": 0.0, "retirement": 1.0}
 
 
-def working_during_retirement() -> IntND:
+def working_during_retirement(
+    wealth: ContinuousState, consumption: ContinuousAction, _period: int
+) -> IntND:
     return 0
 
 
@@ -97,7 +117,7 @@ def test_work_retirement_model_solution():
     # Create work regime
     work_regime = Regime(
         name="work",
-        active=range(7),  # Periods 0-6
+        active=range(10),  # Periods 0-6
         actions={
             "consumption": LinspaceGrid(start=1, stop=100, n_points=50),
             "working": DiscreteGrid(WorkingStatus),
@@ -106,7 +126,7 @@ def test_work_retirement_model_solution():
             "wealth": LinspaceGrid(start=1, stop=100, n_points=50),
         },
         functions={
-            "utility": utility,
+            "utility": utility_work,
             "labor_income": labor_income,
             "next_wealth": next_wealth,
             "borrowing_constraint": borrowing_constraint,
@@ -120,7 +140,7 @@ def test_work_retirement_model_solution():
     # Create retirement regime
     retirement_regime = Regime(
         name="retirement",
-        active=range(7, 10),  # Periods 7-9
+        active=range(10),  # Periods 7-9
         actions={
             "consumption": LinspaceGrid(start=1, stop=100, n_points=50),
         },
@@ -128,7 +148,7 @@ def test_work_retirement_model_solution():
             "wealth": LinspaceGrid(start=1, stop=100, n_points=50),
         },
         functions={
-            "utility": utility,
+            "utility": utility_retirement,
             "working": working_during_retirement,  # Always not working in retirement
             "labor_income": labor_income,
             "next_wealth": next_wealth,
@@ -147,11 +167,26 @@ def test_work_retirement_model_solution():
     assert model.n_periods == 10
     assert len(model.internal_regimes) == 2
 
-    # Define parameters (similar to deterministic model)
-    params = {
-        "disutility_of_work": 2.0,
-        "wage": 10.0,
-        "interest_rate": 0.05,
+    # Define parameters
+    params_working = {
+        "beta": 0.9,
+        "utility": {"disutility_of_work": 2.0},
+        "labor_income": {"wage": 25},
+        "next_wealth": {"interest_rate": 0.1},
+        "borrowing_constraint": {},
+    }
+
+    params_retired = {
+        "beta": 0.8,
+        "utility": {"disutility_of_work": 2.0},
+        "labor_income": {"wage": 20},
+        "next_wealth": {"interest_rate": 0.1},
+        "borrowing_constraint": {},
+    }
+
+    params: dict[RegimeName, ParamsDict] = {
+        "work": params_working,
+        "retirement": params_retired,
     }
 
     # The core test: solve should work and return value functions

@@ -25,6 +25,8 @@ if TYPE_CHECKING:
 
 from lcm.input_processing.regime_processing import process_regimes
 
+type RegimeName = str
+
 
 class Model:
     description: str | None = None
@@ -57,14 +59,14 @@ class Model:
 
     def solve(
         self,
-        params: ParamsDict,
+        params: dict[RegimeName, ParamsDict],
         *,
         debug_mode: bool = True,
     ) -> dict[int, FloatND]:
         """Solve the model using the pre-computed functions.
 
         Args:
-            params: Model parameters matching the template from self.params_template
+            params: ....
             debug_mode: Whether to enable debug logging
 
         Returns:

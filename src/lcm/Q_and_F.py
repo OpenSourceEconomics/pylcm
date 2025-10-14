@@ -110,9 +110,10 @@ def get_Q_and_F_non_terminal(
     next_stochastic_states_weights = get_next_stochastic_weights_function(
         internal_regime, next_stochastic_states=next_stochastic_variables
     )
-    joint_weights_from_marginals = _get_joint_weights_function(
-        next_stochastic_variables
-    )
+    joint_weights_from_marginals: dict[RegimeName, Callable] = {
+        rn: _get_joint_weights_function(next_stochastic_variables)
+        for rn, next_stochastic_variables in next_stochastic_variables.items()
+    }
     _scalar_next_V: dict[RegimeName, Callable[..., Array]] = {
         rn: get_value_function_representation(nssi)
         for rn, nssi in next_state_space_info.items()
@@ -160,7 +161,20 @@ def get_Q_and_F_non_terminal(
             A tuple containing the arrays with state-action values and feasibilities.
 
         """
-        next_V_expected_arrays: dict[RegimeName, FloatND] = {}
+        regime_transition_probs = regime_transition_probs_fn(
+            **states_and_actions, _period=period, params=params
+        )
+
+        # ------------------------------------------------------------------------------
+        # Calculate the instantaneous utility and feasibility
+        # ------------------------------------------------------------------------------
+        U_arr, F_arr = U_and_F(
+            **states_and_actions,
+            _period=period,
+            params=params,
+        )
+
+        Q_arr = U_arr
 
         for target_regime in regime_names:
             # --------------------------------------------------------------------------
@@ -188,7 +202,7 @@ def get_Q_and_F_non_terminal(
             # resulting next value function gets a new dimension for each stochastic
             # variable.
             next_V_at_stochastic_states_arr = next_V[target_regime](
-                **next_states, next_V_arr=next_V_arr
+                **next_states, next_V_arr=next_V_arr[target_regime]
             )
 
             # We then take the weighted average of the next value function at
@@ -197,27 +211,12 @@ def get_Q_and_F_non_terminal(
                 next_V_at_stochastic_states_arr,
                 weights=joint_next_stochastic_states_weights,
             )
-            next_V_expected_arrays[target_regime] = next_V_expected_arr
 
-        # ------------------------------------------------------------------------------
-        # Calculate the instantaneous utility and feasibility
-        # ------------------------------------------------------------------------------
-        U_arr, F_arr = U_and_F(
-            **states_and_actions,
-            _period=period,
-            params=params,
-        )
-
-        regime_transition_probs = regime_transition_probs_fn(
-            **states_and_actions, _period=period, params=params
-        )
-
-        weighted_V_expected_arrays = [
-            regime_transition_probs[rn] * next_V_expected_arrays[rn]
-            for rn in regime_names
-        ]
-
-        Q_arr = U_arr + params["beta"] * jnp.sum(weighted_V_expected_arrays, axis=0)
+            Q_arr += (
+                params["beta"]
+                * regime_transition_probs[target_regime]
+                * next_V_expected_arr
+            )
 
         return Q_arr, F_arr
 
