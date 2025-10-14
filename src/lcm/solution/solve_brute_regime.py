@@ -38,7 +38,7 @@ def solve(
             **state_action_space.discrete_actions,
             **state_action_space.continuous_actions,
             params=params[internal_regime.name],
-            next_V_arr={"work": None, "retirement": None},
+            next_V_arr={rn: None for rn in list(params)}  # fix this
         )
 
         validate_value_function_array(

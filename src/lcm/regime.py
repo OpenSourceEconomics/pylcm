@@ -1,4 +1,5 @@
 from collections.abc import Callable, Iterable
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -41,6 +42,10 @@ class Regime:
 
     def __post_init__(self) -> None:
         _validate_regime(self)
+
+
+    def replace(self, **kwargs) -> "Regime":
+        return dataclasses.replace(self, **kwargs)
 
 
 def _validate_regime(regime: Regime) -> None:
