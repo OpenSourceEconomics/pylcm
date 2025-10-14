@@ -4,7 +4,7 @@ from copy import deepcopy
 
 import jax.numpy as jnp
 
-from lcm.user_model import Model
+from lcm.model import Model
 from tests.test_models.deterministic import (
     ISKHAKOV_ET_AL_2017,
     ISKHAKOV_ET_AL_2017_STRIPPED_DOWN,
@@ -28,6 +28,7 @@ def get_model(regime_name: str, n_periods: int) -> Model:
 
 
 def get_params(
+    regime_name: str,
     beta=0.95,
     disutility_of_work=0.5,
     interest_rate=0.05,
@@ -117,7 +118,7 @@ def get_params(
     # ----------------------------------------------------------------------------------
     # Model parameters
     # ----------------------------------------------------------------------------------
-    return {
+    params = {
         "beta": beta,
         "utility": {"disutility_of_work": disutility_of_work},
         "next_wealth": {"interest_rate": interest_rate},
@@ -129,3 +130,4 @@ def get_params(
             "partner": partner_transition,
         },
     }
+    return {regime_name: params}

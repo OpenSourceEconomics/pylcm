@@ -42,12 +42,12 @@ class Model:
         description: str | None = None,
         jit: bool = True,
     ):
-        _validate_input_types(
-            regimes=regimes,
-            n_periods=n_periods,
-            description=description,
-            jit=jit,
-        )
+        # _validate_input_types(
+        #     regimes=regimes,
+        #     n_periods=n_periods,
+        #     description=description,
+        #     jit=jit,
+        # )
 
         self.n_periods = n_periods
         self.description = description
@@ -56,6 +56,9 @@ class Model:
         self.internal_regimes: list[InternalRegime] = process_regimes(
             model=self, regimes=regimes
         )
+
+        # Figure out whether we need to perform any validation steps after the regimes
+        # have been processed.
 
     def solve(
         self,

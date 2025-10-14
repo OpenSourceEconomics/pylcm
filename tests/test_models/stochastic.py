@@ -149,4 +149,6 @@ ISKHAKOV_ET_AL_2017_STOCHASTIC = Regime(
             n_points=100,
         ),
     },
+    regime_state_transitions={},
+    regime_transition_probs=None,
 )

@@ -109,6 +109,17 @@ def absorbing_retirement_constraint(
 # Model specifications
 # ======================================================================================
 
+
+def regime_transition_probs_ishkakov_et_al_2017(
+    retirement: DiscreteAction,
+    consumption: ContinuousAction,
+    wealth: ContinuousState,
+    lagged_retirement: DiscreteState | IntND,
+    _period: int | IntND,
+) -> dict[str, float]:
+    return {"iskhakov_et_al_2017": 1.0}
+
+
 ISKHAKOV_ET_AL_2017 = Regime(
     name="iskhakov_et_al_2017",
     description=(
@@ -141,7 +152,20 @@ ISKHAKOV_ET_AL_2017 = Regime(
         ),
         "lagged_retirement": DiscreteGrid(RetirementStatus),
     },
+    regime_transition_probs=regime_transition_probs_ishkakov_et_al_2017,
+    regime_state_transitions={"iskhakov_et_al_2017": {}},
 )
+
+
+def regime_transition_probs_ishkakov_et_al_2017_stripped_down(
+    retirement: DiscreteAction,
+    consumption: ContinuousAction,
+    wealth: ContinuousState,
+    lagged_retirement: DiscreteState | IntND,
+    _period: int | IntND,
+) -> dict[str, float]:
+    return {"iskhakov_et_al_2017_stripped_down": 1.0}
+
 
 ISKHAKOV_ET_AL_2017_STRIPPED_DOWN = Regime(
     name="iskhakov_et_al_2017_stripped_down",
@@ -173,4 +197,6 @@ ISKHAKOV_ET_AL_2017_STRIPPED_DOWN = Regime(
             n_points=100,
         ),
     },
+    regime_transition_probs=regime_transition_probs_ishkakov_et_al_2017_stripped_down,
+    regime_state_transitions={"iskhakov_et_al_2017_stripped_down": {}},
 )

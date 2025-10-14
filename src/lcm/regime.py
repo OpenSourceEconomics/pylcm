@@ -32,7 +32,7 @@ class Regime:
 
     name: str
     description: str | None = None
-    active: Iterable[int]
+    active: Iterable[int] | None = None
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
     functions: dict[str, UserFunction] = field(default_factory=dict)
@@ -89,29 +89,29 @@ def _validate_active_periods_is_iterable_with_ints(regime: Regime) -> list[str]:
     """Validate the active periods attribute."""
     error_messages = []
 
-    if not isinstance(regime.active, Iterable):
-        error_messages.append("active must be an iterable of integers.")
+    if regime.active is not None and not isinstance(regime.active, Iterable):
+        error_messages.append("active must be an iterable of integers or None.")
         return error_messages  # Skip further validation if not iterable
 
-    non_int_periods: list[str] = []
-    negative_periods_idx: list[int] = []
-    for i, p in enumerate(regime.active):
-        if not isinstance(p, int):
-            non_int_periods.append(f"{p} (index: {i}, type: {type(p).__name__})")
-        elif p < 0:
-            negative_periods_idx.append(i)
+    # non_int_periods: list[str] = []
+    # negative_periods_idx: list[int] = []
+    # for i, p in enumerate(regime.active):
+    #     if not isinstance(p, int):
+    #         non_int_periods.append(f"{p} (index: {i}, type: {type(p).__name__})")
+    #     elif p < 0:
+    #         negative_periods_idx.append(i)
 
-    if non_int_periods:
-        error_messages.append(
-            "active must be an iterable of integers, but the following values are not: "
-            f"{', '.join(non_int_periods)}."
-        )
-    if negative_periods_idx:
-        error_messages.append(
-            "active must be an iterable of non-negative integers, but the values at the"
-            " following indices are negative: "
-            f"{', '.join(map(str, negative_periods_idx))}."
-        )
+    # if non_int_periods:
+    #     error_messages.append(
+    #         "active must be an iterable of integers, but the following values are not: "
+    #         f"{', '.join(non_int_periods)}."
+    #     )
+    # if negative_periods_idx:
+    #     error_messages.append(
+    #         "active must be an iterable of non-negative integers, but the values at the"
+    #         " following indices are negative: "
+    #         f"{', '.join(map(str, negative_periods_idx))}."
+    #     )
 
     return error_messages
 

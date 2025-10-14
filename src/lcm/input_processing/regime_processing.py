@@ -70,7 +70,7 @@ def process_regimes(
     ssi = {}
     sas = {}
     for regime in regimes:
-        internal_regime = _process_regime(regime)
+        internal_regime = _process_regime(regime, n_periods=model.n_periods)
         _initialize_state_space(internal_regime, model.n_periods)
         ssi[regime.name] = internal_regime.state_space_infos
         sas[regime.name] = internal_regime.state_action_spaces
@@ -101,7 +101,7 @@ def _add_default_params_argument_or_replace(
     return _add_dummy_params_argument(fn)
 
 
-def _process_regime(regime: Regime) -> InternalRegime:
+def _process_regime(regime: Regime, n_periods: int) -> InternalRegime:
     params = create_params_template(regime)
 
     regime_transition_probs_processed = _add_default_params_argument_or_replace(
@@ -118,10 +118,12 @@ def _process_regime(regime: Regime) -> InternalRegime:
         for rn, dict_of_fn in regime.regime_state_transitions.items()
     }
 
+    active = regime.active if regime.active is not None else range(n_periods)
+
     return InternalRegime(
         name=regime.name,
         description=regime.description,
-        active=list(regime.active),
+        active=list(active),
         grids=get_grids(regime),
         gridspecs=get_gridspecs(regime),
         variable_info=get_variable_info(regime),

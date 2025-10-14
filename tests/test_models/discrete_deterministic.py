@@ -89,6 +89,15 @@ def next_wealth_discrete(
 # ======================================================================================
 # Model specifications
 # ======================================================================================
+def regime_transition_probs_ishkakov_et_al_2017_discrete(
+    retirement: DiscreteAction,
+    consumption: DiscreteAction,
+    wealth: DiscreteState,
+    _period: int | IntND,
+) -> dict[str, float]:
+    return {"iskhakov_et_al_2017_discrete": 1.0}
+
+
 ISKHAKOV_ET_AL_2017_DISCRETE = Regime(
     name="iskhakov_et_al_2017_discrete",
     description=(
@@ -109,4 +118,6 @@ ISKHAKOV_ET_AL_2017_DISCRETE = Regime(
     states={
         "wealth": DiscreteGrid(WealthStatus),
     },
+    regime_transition_probs=regime_transition_probs_ishkakov_et_al_2017_discrete,
+    regime_state_transitions={"iskhakov_et_al_2017_discrete": {}},
 )
