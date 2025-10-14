@@ -88,6 +88,10 @@ def regime_transition_probs_retirement_absorbing(*args, **kwargs) -> dict[str, f
     return {"work": 0.0, "retirement": 1.0}
 
 
+def working_during_retirement() -> IntND:
+    return 0
+
+
 def test_work_retirement_model_solution():
     """Test that a complete work-retirement model can be solved using new Regime API."""
     # Create work regime
@@ -125,7 +129,7 @@ def test_work_retirement_model_solution():
         },
         functions={
             "utility": utility,
-            "working": lambda: 0,  # Always not working in retirement
+            "working": working_during_retirement,  # Always not working in retirement
             "labor_income": labor_income,
             "next_wealth": next_wealth,
             "borrowing_constraint": borrowing_constraint,

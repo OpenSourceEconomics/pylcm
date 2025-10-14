@@ -13,7 +13,7 @@ from lcm.interfaces import InternalRegime
 from lcm.logging import get_logger
 from lcm.regime import Regime
 from lcm.simulation.simulate import simulate
-from lcm.solution.solve_brute import solve
+from lcm.solution.solve_brute_regime import solve
 
 if TYPE_CHECKING:
     from jax import Array
@@ -72,8 +72,7 @@ class Model:
         """
         return solve(
             params=params,
-            state_action_spaces=self.state_action_spaces,
-            max_Q_over_a_functions=self.max_Q_over_a_functions,
+            model=self,
             logger=get_logger(debug_mode=debug_mode),
         )
 

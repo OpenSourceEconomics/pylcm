@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING
 from lcm.error_handling import validate_value_function_array
 
 if TYPE_CHECKING:
+    import logging
+
     from lcm.interfaces import InternalRegime
     from lcm.model import Model
     from lcm.typing import FloatND, ParamsDict
@@ -16,9 +18,10 @@ type RegimeName = str
 def solve(
     params: dict[RegimeName, ParamsDict],
     model: Model,
+    logger: logging.Logger,
 ) -> dict[int, FloatND]:
     """Solve the model for the given parameters."""
-    n_periods = len(model.state_action_spaces)
+    n_periods = model.n_periods
     solution: dict[int, dict[RegimeName, FloatND]] = {}
 
     # Terminal period
@@ -26,8 +29,8 @@ def solve(
     for internal_regime in _get_active_regimes(
         model.internal_regimes, period=n_periods - 1
     ):
-        state_action_space = model.state_action_spaces_terminal[internal_regime.name]
-        max_Q_over_a_terminal = model.max_Q_over_a_terminal[internal_regime.name]
+        state_action_space = internal_regime.state_action_spaces[n_periods - 1]
+        max_Q_over_a_terminal = internal_regime.max_Q_over_a_functions[n_periods - 1]
 
         # evaluate Q-function on states and actions, and maximize over actions
         V_arr = max_Q_over_a_terminal(
@@ -35,6 +38,7 @@ def solve(
             **state_action_space.discrete_actions,
             **state_action_space.continuous_actions,
             params=params.get(internal_regime.name, {}),
+            next_V_arr={"work": None, "retirement": None},
         )
 
         validate_value_function_array(
