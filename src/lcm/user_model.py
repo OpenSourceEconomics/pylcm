@@ -46,6 +46,9 @@ class Model:
     description: str | None = None
     _: KW_ONLY
     n_periods: int
+    utility: UserFunction
+    constraints: dict[str, UserFunction] = field(default_factory=dict)
+    transitions: dict[str, UserFunction] = field(default_factory=dict)
     functions: dict[str, UserFunction] = field(default_factory=dict)
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)

@@ -154,6 +154,9 @@ class InternalModel:
     gridspecs: dict[str, Grid]
     variable_info: pd.DataFrame
     functions: dict[str, InternalUserFunction]
+    utility: InternalUserFunction
+    constraints: dict[str, InternalUserFunction]
+    transitions: dict[str, InternalUserFunction]
     function_info: pd.DataFrame
     params: ParamsDict
     n_periods: int

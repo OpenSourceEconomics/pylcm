@@ -46,22 +46,23 @@ def get_next_state_function(
 
     """
     if target == Target.SOLVE:
-        functions_dict = internal_model.functions
+        functions = internal_model.transitions | internal_model.functions
     elif target == Target.SIMULATE:
         # For the simulation target, we need to extend the functions dictionary with
         # stochastic next states functions and their weights.
-        functions_dict = _extend_functions_dict_for_simulation(internal_model)
+        extended_transitions = _extend_transitions_for_simulation(internal_model)
+        functions = extended_transitions | internal_model.functions
     else:
         raise ValueError(f"Invalid target: {target}")
 
     requested_next_states = [
-        next_state
-        for next_state in internal_model.function_info.query("is_next").index
-        if next_state.replace("next_", "") in next_states
+        next_fn_name
+        for next_fn_name in internal_model.transitions
+        if next_fn_name.removeprefix("next_") in next_states
     ]
 
     return concatenate_functions(
-        functions=functions_dict,
+        functions=functions,
         targets=requested_next_states,
         return_type="dict",
         enforce_signature=False,
@@ -95,7 +96,7 @@ def get_next_stochastic_weights_function(
     )
 
 
-def _extend_functions_dict_for_simulation(
+def _extend_transitions_for_simulation(
     internal_model: InternalModel,
 ) -> dict[str, Callable[..., Array]]:
     """Extend the functions dictionary for the simulation target.
@@ -125,14 +126,9 @@ def _extend_functions_dict_for_simulation(
         for name in stochastic_targets
     }
 
-    stochastic_weights = {
-        f"weight_{name}": internal_model.functions[f"weight_{name}"]
-        for name in stochastic_targets
-    }
-
-    # Overwrite model.functions with generated stochastic next states functions
+    # Overwrite model transitions with generated stochastic next states functions
     # ----------------------------------------------------------------------------------
-    return internal_model.functions | stochastic_next | stochastic_weights
+    return internal_model.transitions | stochastic_next
 
 
 def _create_stochastic_next_func(

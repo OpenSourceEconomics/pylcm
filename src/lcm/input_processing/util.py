@@ -14,26 +14,10 @@ if TYPE_CHECKING:
     from lcm.user_model import Model
 
 
-def get_function_info(model: Model) -> pd.DataFrame:
-    """Derive information about functions in the model.
-
-    Args:
-        model: The model as provided by the user.
-
-    Returns:
-        A table with information about all functions in the model. The index contains
-        the name of a model function. The columns are booleans that are True if the
-        function has the corresponding property. The columns are: is_next,
-        is_stochastic_next, is_constraint.
-
-    """
-    info = pd.DataFrame(index=list(model.functions))
-    # Convert both filter and constraint to constraints, until we forbid filters.
-    info["is_constraint"] = info.index.str.endswith(("_constraint", "_filter"))
-    info["is_next"] = info.index.str.startswith("next_") & ~info["is_constraint"]
+def get_transition_info(model: Model) -> pd.DataFrame:
+    info = pd.DataFrame(index=list(model.transitions))
     info["is_stochastic_next"] = [
-        hasattr(func, "_stochastic_info") and info.loc[func_name]["is_next"]
-        for func_name, func in model.functions.items()
+        hasattr(func, "_stochastic_info") for func in model.transitions.values()
     ]
     return info
 
@@ -51,7 +35,7 @@ def get_variable_info(model: Model) -> pd.DataFrame:
         is_continuous, is_discrete.
 
     """
-    function_info = get_function_info(model)
+    transition_info = get_transition_info(model)
 
     variables = model.states | model.actions
 
@@ -66,20 +50,21 @@ def get_variable_info(model: Model) -> pd.DataFrame:
     info["is_discrete"] = ~info["is_continuous"]
 
     info["is_stochastic"] = [
-        (var in model.states and function_info.loc[f"next_{var}", "is_stochastic_next"])
+        (
+            var in model.states
+            and transition_info.loc[f"next_{var}", "is_stochastic_next"]
+        )
         for var in variables
     ]
 
     info["enters_concurrent_valuation"] = _indicator_enters_concurrent_valuation(
         states_and_actions_names=list(variables),
-        function_info=function_info,
-        user_functions=model.functions,
+        model=model,
     )
 
     info["enters_transition"] = _indicator_enters_transition(
         states_and_actions_names=list(variables),
-        function_info=function_info,
-        user_functions=model.functions,
+        model=model,
     )
 
     order = info.query("is_discrete & is_state").index.tolist()
@@ -95,8 +80,7 @@ def get_variable_info(model: Model) -> pd.DataFrame:
 
 def _indicator_enters_concurrent_valuation(
     states_and_actions_names: list[str],
-    function_info: pd.DataFrame,
-    user_functions: dict[str, UserFunction],
+    model: Model,
 ) -> pd.Series[bool]:
     """Determine which states and actions enter the concurrent valuation.
 
@@ -109,8 +93,9 @@ def _indicator_enters_concurrent_valuation(
     """
     enters_Q_and_F_fn_names = [
         "utility",
-        *function_info.query("is_constraint").index.tolist(),
+        *list(model.constraints),
     ]
+    user_functions = get_all_user_functions(model)
     ancestors = get_ancestors(
         user_functions,
         targets=enters_Q_and_F_fn_names,
@@ -124,8 +109,7 @@ def _indicator_enters_concurrent_valuation(
 
 def _indicator_enters_transition(
     states_and_actions_names: list[str],
-    function_info: pd.DataFrame,
-    user_functions: dict[str, UserFunction],
+    model: Model,
 ) -> pd.Series[bool]:
     """Determine which states and actions enter the transition.
 
@@ -135,7 +119,8 @@ def _indicator_enters_transition(
     Special variables such as the "_period" or parameters will be ignored.
 
     """
-    next_fn_names = function_info.query("is_next").index.tolist()
+    next_fn_names = list(model.transitions)
+    user_functions = get_all_user_functions(model)
     ancestors = get_ancestors(
         user_functions,
         targets=next_fn_names,
@@ -188,3 +173,12 @@ def get_grids(
     grids = {name: spec.to_jax() for name, spec in gridspecs.items()}
     order = variable_info.index.tolist()
     return {k: grids[k] for k in order}
+
+
+def get_all_user_functions(model: Model) -> dict[str, UserFunction]:
+    return (
+        {"utility": model.utility}
+        | model.functions
+        | model.transitions
+        | model.constraints
+    )

@@ -13,9 +13,9 @@ from pandas.testing import assert_frame_equal
 from lcm import DiscreteGrid, LinspaceGrid, grid_helpers
 from lcm.input_processing.model_processing import (
     _get_stochastic_weight_function,
-    get_function_info,
     get_grids,
     get_gridspecs,
+    get_transition_info,
     get_variable_info,
     process_model,
 )
@@ -62,7 +62,7 @@ def model(binary_category_class):
 
 
 def test_get_function_info(model):
-    got = get_function_info(model)
+    got = get_transition_info(model)
     exp = pd.DataFrame(
         {
             "is_constraint": [False, False],
@@ -281,7 +281,7 @@ def test_variable_info_with_continuous_constraint_has_unique_index():
     def wealth_constraint(wealth):
         return wealth > 200
 
-    model.functions["wealth_constraint"] = wealth_constraint
+    model.constraints["wealth_constraint"] = wealth_constraint
 
     got = get_variable_info(model)
     assert got.index.is_unique
