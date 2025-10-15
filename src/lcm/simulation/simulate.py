@@ -160,9 +160,11 @@ def simulate(
         # Update states
         # ------------------------------------------------------------------------------
         if not is_last_period:
-            stochastic_next_function_names = internal_model.function_info.query(
-                "is_stochastic_next"
-            ).index.tolist()
+            stochastic_next_function_names = [
+                key
+                for key, next_fn in internal_model.transitions.items()
+                if hasattr(next_fn, "_stochastic_info")
+            ]
             key, stochastic_variables_keys = generate_simulation_keys(
                 key=key,
                 names=stochastic_next_function_names,

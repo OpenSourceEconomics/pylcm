@@ -125,7 +125,6 @@ def internal_model_illustrative():
         transitions={},
         constraints=constraints,  # type: ignore[arg-type]
         functions=functions,  # type: ignore[arg-type]
-        function_info=pd.DataFrame(),
         params={},
         random_utility_shocks=ShockType.NONE,
         n_periods=0,
@@ -185,10 +184,6 @@ def test_get_combined_constraint():
     def h(params):  # noqa: ARG001
         return None
 
-    function_info = pd.DataFrame(
-        {"is_constraint": [True, True, False]},
-        index=["f", "g", "h"],
-    )
     model = InternalModel(
         grids={},
         gridspecs={},
@@ -197,7 +192,6 @@ def test_get_combined_constraint():
         constraints={"f": f, "g": g},  # type: ignore[dict-item]
         transitions={},
         functions={"h": h},  # type: ignore[dict-item]
-        function_info=function_info,
         params={},
         random_utility_shocks=ShockType.NONE,
         n_periods=0,

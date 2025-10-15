@@ -14,14 +14,6 @@ if TYPE_CHECKING:
     from lcm.user_model import Model
 
 
-def get_transition_info(model: Model) -> pd.DataFrame:
-    info = pd.DataFrame(index=list(model.transitions))
-    info["is_stochastic_next"] = [
-        hasattr(func, "_stochastic_info") for func in model.transitions.values()
-    ]
-    return info
-
-
 def get_variable_info(model: Model) -> pd.DataFrame:
     """Derive information about all variables in the model.
 
@@ -35,8 +27,6 @@ def get_variable_info(model: Model) -> pd.DataFrame:
         is_continuous, is_discrete.
 
     """
-    transition_info = get_transition_info(model)
-
     variables = model.states | model.actions
 
     info = pd.DataFrame(index=list(variables))
@@ -52,7 +42,7 @@ def get_variable_info(model: Model) -> pd.DataFrame:
     info["is_stochastic"] = [
         (
             var in model.states
-            and transition_info.loc[f"next_{var}", "is_stochastic_next"]
+            and hasattr(model.transitions[f"next_{var}"], "_stochastic_info")
         )
         for var in variables
     ]

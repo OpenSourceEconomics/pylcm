@@ -12,7 +12,6 @@ from lcm.input_processing.model_processing import (
     _get_stochastic_weight_function,
     get_grids,
     get_gridspecs,
-    get_transition_info,
     get_variable_info,
     process_model,
 )
@@ -40,17 +39,6 @@ def model(binary_category_class):
         utility=utility,
         transitions={"next_c": next_c},
     )
-
-
-def test_get_transition_info(model):
-    got = get_transition_info(model)
-    exp = pd.DataFrame(
-        {
-            "is_stochastic_next": [False],
-        },
-        index=["next_c"],
-    )
-    assert_frame_equal(got, exp)
 
 
 def test_get_variable_info(model):
@@ -140,11 +128,8 @@ def test_process_model_iskhakov_et_al_2017():
     assert (internal_model.grids["lagged_retirement"] == jnp.array([0, 1])).all()
 
     # Functions
-    assert (
-        internal_model.function_info["is_stochastic_next"].to_numpy()
-        == np.array([False, False])
-    ).all()
-
+    assert internal_model.transitions is not None
+    assert internal_model.constraints is not None
     assert internal_model.utility is not None
 
 
@@ -193,11 +178,8 @@ def test_process_model():
     assert (internal_model.grids["retirement"] == jnp.array([0, 1])).all()
 
     # Functions
-    assert (
-        internal_model.function_info["is_stochastic_next"].to_numpy()
-        == np.array([False, False])
-    ).all()
-
+    assert internal_model.transitions is not None
+    assert internal_model.constraints is not None
     assert internal_model.utility is not None
 
 

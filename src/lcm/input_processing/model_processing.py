@@ -14,7 +14,6 @@ from lcm.input_processing.util import (
     get_all_user_functions,
     get_grids,
     get_gridspecs,
-    get_transition_info,
     get_variable_info,
 )
 from lcm.interfaces import InternalModel, ShockType
@@ -63,7 +62,6 @@ def process_model(model: Model) -> InternalModel:
         utility=internal_functions["utility"],  # type: ignore[arg-type]
         constraints=internal_functions["constraints"],  # type: ignore[arg-type]
         transitions=internal_functions["transitions"],  # type: ignore[arg-type]
-        function_info=get_transition_info(model),
         params=params,
         # currently no additive utility shocks are supported
         random_utility_shocks=ShockType.NONE,

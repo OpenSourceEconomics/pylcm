@@ -108,8 +108,11 @@ def _extend_transitions_for_simulation(
         Extended functions dictionary.
 
     """
-    stochastic_targets = internal_model.function_info.query("is_stochastic_next").index
-
+    stochastic_targets = [
+        key
+        for key, next_fn in internal_model.transitions.items()
+        if hasattr(next_fn, "_stochastic_info")
+    ]
     # Handle stochastic next states functions
     # ----------------------------------------------------------------------------------
     # We generate stochastic next states functions that simulate the next state given
