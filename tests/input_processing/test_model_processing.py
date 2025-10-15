@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
-
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -20,22 +17,8 @@ from lcm.input_processing.model_processing import (
     process_model,
 )
 from lcm.mark import StochasticInfo
+from tests.model_mock import ModelMock
 from tests.test_models import get_model
-
-
-@dataclass
-class ModelMock:
-    """A model mock for testing the process_model function.
-
-    This dataclass has the same attributes as the Model dataclass, but does not perform
-    any checks, which helps us to test the process_model function in isolation.
-
-    """
-
-    n_periods: int
-    functions: dict[str, Any]
-    actions: dict[str, Any]
-    states: dict[str, Any]
 
 
 @pytest.fixture
@@ -48,28 +31,24 @@ def model(binary_category_class):
 
     return ModelMock(
         n_periods=2,
-        functions={
-            "utility": utility,
-            "next_c": next_c,
-        },
         actions={
             "a": DiscreteGrid(binary_category_class),
         },
         states={
             "c": DiscreteGrid(binary_category_class),
         },
+        utility=utility,
+        transitions={"next_c": next_c},
     )
 
 
-def test_get_function_info(model):
+def test_get_transition_info(model):
     got = get_transition_info(model)
     exp = pd.DataFrame(
         {
-            "is_constraint": [False, False],
-            "is_next": [False, True],
-            "is_stochastic_next": [False, False],
+            "is_stochastic_next": [False],
         },
-        index=["utility", "next_c"],
+        index=["next_c"],
     )
     assert_frame_equal(got, exp)
 
