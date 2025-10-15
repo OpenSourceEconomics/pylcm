@@ -8,6 +8,7 @@ import jax
 from dags import concatenate_functions
 from dags.signature import with_signature
 
+from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import Target
 
 if TYPE_CHECKING:
@@ -111,7 +112,7 @@ def _extend_transitions_for_simulation(
     stochastic_targets = [
         key
         for key, next_fn in internal_model.transitions.items()
-        if hasattr(next_fn, "_stochastic_info")
+        if is_stochastic_transition(next_fn)
     ]
     # Handle stochastic next states functions
     # ----------------------------------------------------------------------------------

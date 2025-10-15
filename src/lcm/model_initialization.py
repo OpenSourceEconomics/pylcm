@@ -35,7 +35,6 @@ def initialize_model_components(model: Model) -> None:
         ModelInitilizationError: If initialization fails
 
     """
-    components = _get_model_components(model)
     try:
         components = _get_model_components(model)
         for name, component in components.items():

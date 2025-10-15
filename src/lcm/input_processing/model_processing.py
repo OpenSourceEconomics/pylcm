@@ -15,6 +15,7 @@ from lcm.input_processing.util import (
     get_grids,
     get_gridspecs,
     get_variable_info,
+    is_stochastic_transition,
 )
 from lcm.interfaces import InternalModel, ShockType
 
@@ -95,9 +96,7 @@ def _get_internal_functions(
     # Create functions for stochastic transitions
     # ==================================================================================
     for next_fn_name, next_fn in model.transitions.items():
-        is_stochastic_transition = hasattr(next_fn, "_stochastic_info")
-
-        if is_stochastic_transition:
+        if is_stochastic_transition(next_fn):
             state = next_fn_name.removeprefix("next_")
 
             raw_functions[next_fn_name] = _get_stochastic_next_function(
@@ -141,10 +140,12 @@ def _get_internal_functions(
 
         functions[func_name] = processed_func
 
-    transition = {fn_name: functions[fn_name] for fn_name in model.transitions}
-    utility = functions["utility"]
-    constraints = {fn_name: functions[fn_name] for fn_name in model.constraints}
-    _functions = {
+    internal_transition = {fn_name: functions[fn_name] for fn_name in model.transitions}
+    internal_utility = functions["utility"]
+    internal_constraints = {
+        fn_name: functions[fn_name] for fn_name in model.constraints
+    }
+    internal_functions = {
         fn_name: functions[fn_name]
         for fn_name in functions
         if fn_name not in model.transitions
@@ -153,10 +154,10 @@ def _get_internal_functions(
     }
 
     return {
-        "functions": _functions,
-        "utility": utility,
-        "constraints": constraints,
-        "transitions": transition,
+        "functions": internal_functions,
+        "utility": internal_utility,
+        "constraints": internal_constraints,
+        "transitions": internal_transition,
     }
 
 

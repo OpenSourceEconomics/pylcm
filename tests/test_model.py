@@ -127,6 +127,21 @@ def test_model_invalid_utility():
         )
 
 
+def test_model_invalid_transition_names():
+    with pytest.raises(
+        ModelInitilizationError,
+        match=(r"Each transitions name must start with 'next_'."),
+    ):
+        Model(
+            n_periods=2,
+            states={},
+            actions={},
+            functions={},
+            utility=lambda: 0,
+            transitions={"invalid_name": lambda: 0},
+        )
+
+
 def test_model_overlapping_states_actions(binary_category_class):
     with pytest.raises(
         ModelInitilizationError,

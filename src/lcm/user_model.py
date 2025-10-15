@@ -233,6 +233,17 @@ def _validate_logical_consistency(model: Model) -> None:
             "The function name 'utility' is reserved and cannot be used in the "
             "functions dictionary. Please use the utility attribute instead.",
         )
+    invalid_transitions = [
+        tran_name
+        for tran_name in model.transitions
+        if not tran_name.startswith("next_")
+    ]
+    if invalid_transitions:
+        error_messages.append(
+            "Each transitions name must start with 'next_'. "
+            "The following transition names are invalid:"
+            f"{invalid_transitions}.",
+        )
 
     states = set(model.states)
     states_via_transition = {s.removeprefix("next_") for s in model.transitions}

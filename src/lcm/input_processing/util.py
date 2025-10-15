@@ -8,10 +8,16 @@ from dags import get_ancestors
 from lcm.grids import ContinuousGrid, Grid
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from jax import Array
 
-    from lcm.typing import UserFunction
+    from lcm.typing import Any, UserFunction
     from lcm.user_model import Model
+
+
+def is_stochastic_transition(fn: Callable[..., Any]) -> bool:
+    return hasattr(fn, "_stochastic_info")
 
 
 def get_variable_info(model: Model) -> pd.DataFrame:
@@ -42,7 +48,7 @@ def get_variable_info(model: Model) -> pd.DataFrame:
     info["is_stochastic"] = [
         (
             var in model.states
-            and hasattr(model.transitions[f"next_{var}"], "_stochastic_info")
+            and is_stochastic_transition(model.transitions[f"next_{var}"])
         )
         for var in variables
     ]
