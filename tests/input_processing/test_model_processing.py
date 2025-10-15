@@ -141,16 +141,11 @@ def test_process_model_iskhakov_et_al_2017():
 
     # Functions
     assert (
-        internal_model.function_info["is_next"].to_numpy()
-        == np.array([False, True, True, False, False, False, False])
+        internal_model.function_info["is_stochastic_next"].to_numpy()
+        == np.array([False, False])
     ).all()
 
-    assert (
-        internal_model.function_info["is_constraint"].to_numpy()
-        == np.array([False, False, False, True, True, False, False])
-    ).all()
-
-    assert ~internal_model.function_info.loc["utility"].to_numpy().any()
+    assert internal_model.utility is not None
 
 
 def test_process_model():
@@ -199,16 +194,11 @@ def test_process_model():
 
     # Functions
     assert (
-        internal_model.function_info["is_next"].to_numpy()
-        == np.array([False, True, False, False, False, False, False])
+        internal_model.function_info["is_stochastic_next"].to_numpy()
+        == np.array([False, False])
     ).all()
 
-    assert (
-        internal_model.function_info["is_constraint"].to_numpy()
-        == np.array([False, False, True, False, False, False, False])
-    ).all()
-
-    assert ~internal_model.function_info.loc["utility"].to_numpy().any()
+    assert internal_model.utility is not None
 
 
 def test_get_stochastic_weight_function():

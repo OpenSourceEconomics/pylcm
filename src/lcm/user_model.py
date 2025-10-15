@@ -176,7 +176,7 @@ class Model:
             ) from e
 
 
-def _validate_attribute_types(model: Model) -> None:  # noqa: C901
+def _validate_attribute_types(model: Model) -> None:  # noqa: C901, PLR0912
     """Validate the types of the model attributes."""
     error_messages = []
 
@@ -235,12 +235,13 @@ def _validate_logical_consistency(model: Model) -> None:
         )
 
     states = set(model.states)
-    states_via_transition = set([s.removeprefix("next_") for s in model.transitions])
+    states_via_transition = {s.removeprefix("next_") for s in model.transitions}
 
     if states - states_via_transition:
         error_messages.append(
             "Each state must have a corresponding transition function. For the "
-            f"following states, no transition function was found: {states - states_via_transition}.",
+            f"following states, no transition function was found: "
+            f"{states - states_via_transition}.",
         )
 
     if states_via_transition - states:

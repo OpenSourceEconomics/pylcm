@@ -79,12 +79,12 @@ def model_and_params():
 
     # Create deterministic model with modified function
     model_deterministic = base_model.replace(
-        functions={**base_model.functions, "next_health": next_health_deterministic}
+        transitions={**base_model.transitions, "next_health": next_health_deterministic}
     )
 
     # Create stochastic model with modified function
     model_stochastic = base_model.replace(
-        functions={**base_model.functions, "next_health": next_health_stochastic}
+        transitions={**base_model.transitions, "next_health": next_health_stochastic}
     )
 
     params = get_params(

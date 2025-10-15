@@ -47,6 +47,7 @@ def test_model_invalid_functions_values():
             states={},
             actions={},
             utility=lambda: 0,
+            functions={"function": 0},  # type: ignore[dict-item]
         )
 
 
@@ -102,7 +103,7 @@ def test_model_invalid_n_periods():
 def test_model_missing_next_func(binary_category_class):
     with pytest.raises(
         ModelInitilizationError,
-        match=r"Each state must have a corresponding next state function.",
+        match=r"Each state must have a corresponding transition function.",
     ):
         Model(
             n_periods=2,
@@ -112,19 +113,17 @@ def test_model_missing_next_func(binary_category_class):
         )
 
 
-def test_model_missing_utility():
+def test_model_invalid_utility():
     with pytest.raises(
         ModelInitilizationError,
-        match=(
-            r"Utility function is not defined. LCM expects a function called 'utility'"
-        ),
+        match=(r"utility must be a callable."),
     ):
         Model(
             n_periods=2,
             states={},
             actions={},
-            utility=lambda: 0,
             functions={},
+            utility=0,  # type: ignore[arg-type]
         )
 
 

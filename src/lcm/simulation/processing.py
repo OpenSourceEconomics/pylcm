@@ -62,7 +62,9 @@ def process_simulated_data(
         calculated_targets = _compute_targets(
             out,
             targets=additional_targets,
-            model_functions=internal_model.functions,
+            model_functions=internal_model.functions
+            | {"utility": internal_model.utility}
+            | internal_model.constraints,
             params=params,
         )
         out = {**out, **calculated_targets}
