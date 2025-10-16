@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
-from lcm import DiscreteGrid, LinspaceGrid, Model
+from lcm import DiscreteGrid, LinspaceGrid, Regime
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -99,7 +99,7 @@ def borrowing_constraint(
 RETIREMENT_AGE = 65
 
 
-MODEL_CONFIG = Model(
+MODEL_CONFIG = Regime(
     n_periods=RETIREMENT_AGE - 18,
     functions={
         "utility": utility,

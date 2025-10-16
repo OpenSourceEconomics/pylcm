@@ -6,21 +6,21 @@ import jax.numpy as jnp
 import pandas as pd
 from pybaum import tree_equal
 
-from lcm.input_processing import process_model
-from lcm.interfaces import InternalModel, ShockType, Target
+from lcm.input_processing import process_regime
+from lcm.interfaces import InternalRegime, ShockType, Target
 from lcm.next_state import _create_stochastic_next_func, get_next_state_function
-from tests.test_models import get_model
+from tests.test_models.utils import get_regime
 
 if TYPE_CHECKING:
     from lcm.typing import ContinuousState, FloatND, ParamsDict
 
 
 def test_get_next_state_function_with_solve_target():
-    model = process_model(
-        get_model("iskhakov_et_al_2017_stripped_down", n_periods=3),
+    internal_regime = process_regime(
+        get_regime("iskhakov_et_al_2017_stripped_down", n_periods=3),
     )
     got_func = get_next_state_function(
-        internal_model=model,
+        internal_regime=internal_regime,
         next_states=("wealth",),
         target=Target.SOLVE,
     )
@@ -52,7 +52,7 @@ def test_get_next_state_function_with_simulate_target():
 
     grids = {"b": jnp.arange(2)}
 
-    model = InternalModel(
+    internal_regime = InternalRegime(
         utility=lambda: 0,  # type: ignore[arg-type]
         constraints={},
         transitions={"next_a": f_a, "next_b": f_b},  # type: ignore[dict-item]
@@ -66,7 +66,7 @@ def test_get_next_state_function_with_simulate_target():
     )
 
     got_func = get_next_state_function(
-        internal_model=model, next_states=("a", "b"), target=Target.SIMULATE
+        internal_regime=internal_regime, next_states=("a", "b"), target=Target.SIMULATE
     )
 
     key = jnp.arange(2, dtype="uint32")

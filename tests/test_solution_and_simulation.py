@@ -6,23 +6,23 @@ import jax.numpy as jnp
 import pytest
 from pybaum import tree_equal, tree_map
 
-from lcm.input_processing import process_model
+from lcm.input_processing import process_regime
 from lcm.max_Q_over_c import (
     get_argmax_and_max_Q_over_c,
     get_max_Q_over_c,
 )
 from lcm.Q_and_F import get_Q_and_F
 from lcm.state_action_space import create_state_space_info
-from tests.test_models import get_model
 from tests.test_models.deterministic import RetirementStatus
 from tests.test_models.deterministic import utility as iskhakov_et_al_2017_utility
 from tests.test_models.discrete_deterministic import ConsumptionChoice
+from tests.test_models.utils import get_model
 
 if TYPE_CHECKING:
     from typing import Any
 
+    from lcm.regime import Regime
     from lcm.typing import BoolND, DiscreteAction, DiscreteState
-    from lcm.user_model import Model
 
 # ======================================================================================
 # Test cases
@@ -90,7 +90,7 @@ def test_solve_and_simulate_fully_discrete():
     [get_model(name, n_periods=3) for name in STRIPPED_DOWN_AND_DISCRETE_MODELS],
     ids=STRIPPED_DOWN_AND_DISCRETE_MODELS,
 )
-def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(model: Model) -> None:
+def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(model: Regime) -> None:
     """Test that solve_and_simulate creates same output as solve then simulate."""
     # solve then simulate
     # ==================================================================================
@@ -125,7 +125,7 @@ def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(model: Model) -
     [get_model("iskhakov_et_al_2017", n_periods=3)],
     ids=["iskhakov_et_al_2017"],
 )
-def test_simulate_iskhakov_et_al_2017(model: Model) -> None:
+def test_simulate_iskhakov_et_al_2017(model: Regime) -> None:
     # solve model
     params = tree_map(lambda _: 0.9, model.params_template)
     V_arr_dict = model.solve(params)
@@ -153,7 +153,7 @@ def test_simulate_iskhakov_et_al_2017(model: Model) -> None:
 
 
 def test_get_max_Q_over_c():
-    model = process_model(
+    model = process_regime(
         get_model("iskhakov_et_al_2017_stripped_down", n_periods=3),
     )
 
@@ -167,12 +167,12 @@ def test_get_max_Q_over_c():
     }
 
     state_space_info = create_state_space_info(
-        internal_model=model,
+        internal_regime=model,
         is_last_period=False,
     )
 
     Q_and_F = get_Q_and_F(
-        internal_model=model,
+        internal_regime=model,
         next_state_space_info=state_space_info,
         period=model.n_periods - 1,
     )
@@ -198,7 +198,7 @@ def test_get_max_Q_over_c():
 
 
 def test_get_max_Q_over_c_with_discrete_model():
-    model = process_model(
+    model = process_regime(
         get_model("iskhakov_et_al_2017_discrete", n_periods=3),
     )
 
@@ -212,12 +212,12 @@ def test_get_max_Q_over_c_with_discrete_model():
     }
 
     state_space_info = create_state_space_info(
-        internal_model=model,
+        internal_regime=model,
         is_last_period=False,
     )
 
     Q_and_F = get_Q_and_F(
-        internal_model=model,
+        internal_regime=model,
         next_state_space_info=state_space_info,
         period=model.n_periods - 1,
     )
@@ -248,7 +248,7 @@ def test_get_max_Q_over_c_with_discrete_model():
 
 
 def test_argmax_and_max_Q_over_c():
-    model = process_model(
+    model = process_regime(
         get_model("iskhakov_et_al_2017_stripped_down", n_periods=3),
     )
 
@@ -262,12 +262,12 @@ def test_argmax_and_max_Q_over_c():
     }
 
     state_space_info = create_state_space_info(
-        internal_model=model,
+        internal_regime=model,
         is_last_period=False,
     )
 
     Q_and_F = get_Q_and_F(
-        internal_model=model,
+        internal_regime=model,
         next_state_space_info=state_space_info,
         period=model.n_periods - 1,
     )
@@ -293,7 +293,7 @@ def test_argmax_and_max_Q_over_c():
 
 
 def test_argmax_and_max_Q_over_c_with_discrete_model():
-    model = process_model(
+    model = process_regime(
         get_model("iskhakov_et_al_2017_discrete", n_periods=3),
     )
 
@@ -307,12 +307,12 @@ def test_argmax_and_max_Q_over_c_with_discrete_model():
     }
 
     state_space_info = create_state_space_info(
-        internal_model=model,
+        internal_regime=model,
         is_last_period=False,
     )
 
     Q_and_F = get_Q_and_F(
-        internal_model=model,
+        internal_regime=model,
         next_state_space_info=state_space_info,
         period=model.n_periods - 1,
     )

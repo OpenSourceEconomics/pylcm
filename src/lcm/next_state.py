@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
     from jax import Array
 
-    from lcm.interfaces import InternalModel
+    from lcm.interfaces import InternalRegime
     from lcm.typing import (
         ContinuousState,
         DiscreteState,
@@ -27,38 +27,38 @@ if TYPE_CHECKING:
 
 def get_next_state_function(
     *,
-    internal_model: InternalModel,
+    internal_regime: InternalRegime,
     next_states: tuple[str, ...],
     target: Target,
 ) -> Callable[..., dict[str, DiscreteState | ContinuousState]]:
     """Get function that computes the next states during the solution.
 
     Args:
-        internal_model: Internal model instance.
+        internal_regime: Internal regime instance.
         next_states: Names of the next states to compute. These states are relevant for
             the next state space.
         target: Whether to generate the function for the solve or simulate target.
 
     Returns:
         Function that computes the next states. Depends on states and actions of the
-        current period, and the model parameters ("params"). If target is "simulate",
+        current period, and the regime parameters ("params"). If target is "simulate",
         the function also depends on the dictionary of random keys ("keys"), which
         corresponds to the names of stochastic next functions.
 
     """
     if target == Target.SOLVE:
-        functions = internal_model.transitions | internal_model.functions
+        functions = internal_regime.transitions | internal_regime.functions
     elif target == Target.SIMULATE:
         # For the simulation target, we need to extend the functions dictionary with
         # stochastic next states functions and their weights.
-        extended_transitions = _extend_transitions_for_simulation(internal_model)
-        functions = extended_transitions | internal_model.functions
+        extended_transitions = _extend_transitions_for_simulation(internal_regime)
+        functions = extended_transitions | internal_regime.functions
     else:
         raise ValueError(f"Invalid target: {target}")
 
     requested_next_states = [
         next_fn_name
-        for next_fn_name in internal_model.transitions
+        for next_fn_name in internal_regime.transitions
         if next_fn_name.removeprefix("next_") in next_states
     ]
 
@@ -72,13 +72,13 @@ def get_next_state_function(
 
 
 def get_next_stochastic_weights_function(
-    internal_model: InternalModel,
+    internal_regime: InternalRegime,
     next_stochastic_states: tuple[str, ...],
 ) -> Callable[..., dict[str, Array]]:
     """Get function that computes the weights for the next stochastic states.
 
     Args:
-        internal_model: Internal model instance.
+        internal_regime: Internal regime instance.
         next_stochastic_states: Names of the stochastic states for which to compute the
             weights. These variables are relevant for the next state space.
 
@@ -89,7 +89,7 @@ def get_next_stochastic_weights_function(
     targets = [f"weight_next_{name}" for name in next_stochastic_states]
 
     return concatenate_functions(
-        functions=internal_model.functions,
+        functions=internal_regime.functions,
         targets=targets,
         return_type="dict",
         enforce_signature=False,
@@ -98,12 +98,12 @@ def get_next_stochastic_weights_function(
 
 
 def _extend_transitions_for_simulation(
-    internal_model: InternalModel,
+    internal_regime: InternalRegime,
 ) -> dict[str, Callable[..., Array]]:
     """Extend the functions dictionary for the simulation target.
 
     Args:
-        internal_model: Internal model instance.
+        internal_regime: Internal regime instance.
 
     Returns:
         Extended functions dictionary.
@@ -111,7 +111,7 @@ def _extend_transitions_for_simulation(
     """
     stochastic_targets = [
         key
-        for key, next_fn in internal_model.transitions.items()
+        for key, next_fn in internal_regime.transitions.items()
         if is_stochastic_transition(next_fn)
     ]
     # Handle stochastic next states functions
@@ -125,14 +125,14 @@ def _extend_transitions_for_simulation(
     # ----------------------------------------------------------------------------------
     stochastic_next = {
         name: _create_stochastic_next_func(
-            name, labels=internal_model.grids[name.removeprefix("next_")]
+            name, labels=internal_regime.grids[name.removeprefix("next_")]
         )
         for name in stochastic_targets
     }
 
-    # Overwrite model transitions with generated stochastic next states functions
+    # Overwrite regime transitions with generated stochastic next states functions
     # ----------------------------------------------------------------------------------
-    return internal_model.transitions | stochastic_next
+    return internal_regime.transitions | stochastic_next
 
 
 def _create_stochastic_next_func(

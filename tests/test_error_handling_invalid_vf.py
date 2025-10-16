@@ -7,7 +7,7 @@ import pytest
 
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.grids import LinspaceGrid
-from lcm.user_model import Model
+from lcm.regime import Regime
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-def valid_model() -> Model:
+def valid_model() -> Regime:
     def utility(
         consumption: ContinuousAction,
         wealth: ContinuousState,  # noqa: ARG001
@@ -41,7 +41,7 @@ def valid_model() -> Model:
     ) -> BoolND:
         return consumption <= wealth
 
-    return Model(
+    return Regime(
         n_periods=2,
         actions={
             "consumption": LinspaceGrid(
@@ -74,7 +74,7 @@ def valid_model() -> Model:
 
 
 @pytest.fixture
-def nan_value_model(valid_model: Model) -> Model:
+def nan_value_model(valid_model: Regime) -> Regime:
     def invalid_utility(
         consumption: ContinuousAction,
         wealth: ContinuousState,
@@ -91,7 +91,7 @@ def nan_value_model(valid_model: Model) -> Model:
 
 
 @pytest.fixture
-def inf_value_model(valid_model: Model) -> Model:
+def inf_value_model(valid_model: Regime) -> Regime:
     def invalid_utility(
         consumption: ContinuousAction,
         wealth: ContinuousState,
@@ -108,21 +108,21 @@ def inf_value_model(valid_model: Model) -> Model:
 
 
 def test_solve_model_with_nan_value_function_array_raises_error(
-    nan_value_model: Model,
+    nan_value_model: Regime,
 ) -> None:
     with pytest.raises(InvalidValueFunctionError):
         nan_value_model.solve({"beta": 0.95})
 
 
 def test_solve_model_with_inf_value_function_does_not_raise_error(
-    inf_value_model: Model,
+    inf_value_model: Regime,
 ) -> None:
     # This should not raise an error
     inf_value_model.solve({"beta": 0.95})
 
 
 def test_simulate_model_with_nan_value_function_array_raises_error(
-    nan_value_model: Model,
+    nan_value_model: Regime,
 ) -> None:
     initial_states = {
         "wealth": jnp.array([0.9, 1.0]),
@@ -136,7 +136,7 @@ def test_simulate_model_with_nan_value_function_array_raises_error(
 
 
 def test_simulate_model_with_inf_value_function_array_does_not_raise_error(
-    inf_value_model: Model,
+    inf_value_model: Regime,
 ) -> None:
     initial_states = {
         "wealth": jnp.array([0.9, 1.0]),

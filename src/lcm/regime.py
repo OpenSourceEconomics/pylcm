@@ -1,15 +1,13 @@
-"""Collection of classes that are used by the user to define the model and grids."""
-
 from __future__ import annotations
 
 import dataclasses
 from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from lcm.exceptions import ModelInitilizationError, format_messages
+from lcm.exceptions import RegimeInitializationError, format_messages
 from lcm.grids import Grid
 from lcm.logging import get_logger
-from lcm.model_initialization import initialize_model_components
+from lcm.regime_initialization import initialize_regime_components
 from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
 
@@ -17,7 +15,7 @@ if TYPE_CHECKING:
     import pandas as pd
     from jax import Array
 
-    from lcm.interfaces import InternalModel, StateActionSpace, StateSpaceInfo
+    from lcm.interfaces import InternalRegime, StateActionSpace, StateSpaceInfo
     from lcm.typing import (
         ArgmaxQOverAFunction,
         FloatND,
@@ -28,21 +26,21 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class Model:
-    """A user model which can be processed into an internal model.
+class Regime:
+    """A user regime which can be processed into an internal regime.
 
     Attributes:
-        description: Description of the model.
-        n_periods: Number of periods in the model.
+        description: Description of the regime.
+        n_periods: Number of periods in the regime.
         functions: Dictionary of user provided functions that define the functional
-            relationships between model variables. It must include at least a function
+            relationships between regime variables. It must include at least a function
             called 'utility'.
         actions: Dictionary of user provided actions.
         states: Dictionary of user provided states.
 
     """
 
-    # Model specification information (provided by the User)
+    # regime specification information (provided by the User)
     description: str | None = None
     _: KW_ONLY
     n_periods: int
@@ -54,8 +52,8 @@ class Model:
     states: dict[str, Grid] = field(default_factory=dict)
     enable_jit: bool = True
 
-    # Computed model components (set in __post_init__)
-    internal_model: InternalModel = field(init=False)
+    # Computed regime components (set in __post_init__)
+    internal_regime: InternalRegime = field(init=False)
     params_template: ParamsDict = field(init=False)
     state_action_spaces: dict[int, StateActionSpace] = field(init=False)
     state_space_infos: dict[int, StateSpaceInfo] = field(init=False)
@@ -67,7 +65,7 @@ class Model:
     def __post_init__(self) -> None:
         _validate_attribute_types(self)
         _validate_logical_consistency(self)
-        initialize_model_components(self)
+        initialize_regime_components(self)
 
     def solve(
         self,
@@ -120,7 +118,7 @@ class Model:
             params=params,
             initial_states=initial_states,
             argmax_and_max_Q_over_a_functions=self.argmax_and_max_Q_over_a_functions,
-            internal_model=self.internal_model,
+            internal_regime=self.internal_regime,
             logger=logger,
             V_arr_dict=V_arr_dict,
             additional_targets=additional_targets,
@@ -158,32 +156,46 @@ class Model:
             debug_mode=debug_mode,
         )
 
-    def replace(self, **kwargs: Any) -> Model:  # noqa: ANN401
-        """Replace the attributes of the model.
-
-        Args:
-            **kwargs: Keyword arguments to replace the attributes of the model.
+    def get_all_functions(self) -> dict[str, UserFunction]:
+        """Get all regime functions including utility, constraints, and transitions.
 
         Returns:
-            A new model with the replaced attributes.
+            Dictionary that maps names of all regime functions to the functions.
+
+        """
+        return (
+            self.functions
+            | {"utility": self.utility}
+            | self.constraints
+            | self.transitions
+        )
+
+    def replace(self, **kwargs: Any) -> Regime:  # noqa: ANN401
+        """Replace the attributes of the regime.
+
+        Args:
+            **kwargs: Keyword arguments to replace the attributes of the regime.
+
+        Returns:
+            A new regime with the replaced attributes.
 
         """
         try:
             return dataclasses.replace(self, **kwargs)
         except TypeError as e:
-            raise ModelInitilizationError(
-                f"Failed to replace attributes of the model. The error was: {e}"
+            raise RegimeInitializationError(
+                f"Failed to replace attributes of the regime. The error was: {e}"
             ) from e
 
 
-def _validate_attribute_types(model: Model) -> None:  # noqa: C901, PLR0912
-    """Validate the types of the model attributes."""
+def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
+    """Validate the types of the regime attributes."""
     error_messages = []
 
     # Validate types of states and actions
     # ----------------------------------------------------------------------------------
     for attr_name in ("actions", "states"):
-        attr = getattr(model, attr_name)
+        attr = getattr(regime, attr_name)
         if isinstance(attr, dict):
             for k, v in attr.items():
                 if not isinstance(k, str):
@@ -195,7 +207,7 @@ def _validate_attribute_types(model: Model) -> None:  # noqa: C901, PLR0912
 
     # Validate types of functions
     # ----------------------------------------------------------------------------------
-    function_collections = [model.transitions, model.constraints, model.functions]
+    function_collections = [regime.transitions, regime.constraints, regime.functions]
     for func_collection in function_collections:
         if isinstance(func_collection, dict):
             for k, v in func_collection.items():
@@ -213,29 +225,29 @@ def _validate_attribute_types(model: Model) -> None:  # noqa: C901, PLR0912
                 "callables."
             )
 
-    if not callable(model.utility):
+    if not callable(regime.utility):
         error_messages.append("utility must be a callable.")
 
     if error_messages:
         msg = format_messages(error_messages)
-        raise ModelInitilizationError(msg)
+        raise RegimeInitializationError(msg)
 
 
-def _validate_logical_consistency(model: Model) -> None:
-    """Validate the logical consistency of the model."""
+def _validate_logical_consistency(regime: Regime) -> None:
+    """Validate the logical consistency of the regime."""
     error_messages = []
 
-    if model.n_periods < 1:
+    if regime.n_periods < 1:
         error_messages.append("Number of periods must be a positive integer.")
 
-    if "utility" in model.functions:
+    if "utility" in regime.functions:
         error_messages.append(
             "The function name 'utility' is reserved and cannot be used in the "
             "functions dictionary. Please use the utility attribute instead.",
         )
     invalid_transitions = [
         tran_name
-        for tran_name in model.transitions
+        for tran_name in regime.transitions
         if not tran_name.startswith("next_")
     ]
     if invalid_transitions:
@@ -245,8 +257,8 @@ def _validate_logical_consistency(model: Model) -> None:
             f"{invalid_transitions}.",
         )
 
-    states = set(model.states)
-    states_via_transition = {s.removeprefix("next_") for s in model.transitions}
+    states = set(regime.states)
+    states_via_transition = {s.removeprefix("next_") for s in regime.transitions}
 
     if states - states_via_transition:
         error_messages.append(
@@ -262,7 +274,7 @@ def _validate_logical_consistency(model: Model) -> None:
             f"{states_via_transition - states}.",
         )
 
-    states_and_actions_overlap = set(model.states) & set(model.actions)
+    states_and_actions_overlap = set(regime.states) & set(regime.actions)
     if states_and_actions_overlap:
         error_messages.append(
             "States and actions cannot have overlapping names. The following names "
@@ -271,4 +283,4 @@ def _validate_logical_consistency(model: Model) -> None:
 
     if error_messages:
         msg = format_messages(error_messages)
-        raise ModelInitilizationError(msg)
+        raise RegimeInitializationError(msg)

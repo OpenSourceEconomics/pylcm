@@ -5,25 +5,25 @@ import pandas as pd
 import pytest
 from pybaum import tree_map
 
-from tests.test_models import get_model
+from tests.test_models.utils import get_model, get_regime
 
 
-def test_model_has_required_attributes():
+def test_regime_has_required_attributes():
     """Test that Model has all required attributes after initialization."""
-    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
+    regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=3)
 
     # Check all required attributes exist
-    assert hasattr(model, "internal_model")
-    assert hasattr(model, "params_template")
-    assert hasattr(model, "state_action_spaces")
-    assert hasattr(model, "state_space_infos")
-    assert hasattr(model, "max_Q_over_a_functions")
-    assert hasattr(model, "argmax_and_max_Q_over_a_functions")
+    assert hasattr(regime, "internal_regime")
+    assert hasattr(regime, "params_template")
+    assert hasattr(regime, "state_action_spaces")
+    assert hasattr(regime, "state_space_infos")
+    assert hasattr(regime, "max_Q_over_a_functions")
+    assert hasattr(regime, "argmax_and_max_Q_over_a_functions")
 
     # Check they have correct types and lengths
-    assert len(model.state_action_spaces) == 3
-    assert len(model.max_Q_over_a_functions) == 3
-    assert len(model.argmax_and_max_Q_over_a_functions) == 3
+    assert len(regime.state_action_spaces) == 3
+    assert len(regime.max_Q_over_a_functions) == 3
+    assert len(regime.argmax_and_max_Q_over_a_functions) == 3
 
 
 def test_model_solve_method():
@@ -89,10 +89,10 @@ def test_model_solve_and_simulate_method():
 
 
 def test_model_params_template_matches_internal():
-    """Test that params_template matches internal_model.params."""
+    """Test that params_template matches internal_regime.params."""
     model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
 
-    assert model.params_template == model.internal_model.params
+    assert model.params_template == model.internal_regime.params
 
 
 @pytest.mark.parametrize(
@@ -107,6 +107,6 @@ def test_model_initialization_all_configs(model_name):
     model = get_model(model_name, n_periods=2)
 
     # Should complete without error
-    assert model.internal_model is not None
+    assert model.internal_regime is not None
     assert len(model.state_action_spaces) == 2
     assert len(model.max_Q_over_a_functions) == 2

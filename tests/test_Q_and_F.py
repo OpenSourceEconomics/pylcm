@@ -7,16 +7,16 @@ import pandas as pd
 import pytest
 from numpy.testing import assert_array_equal
 
-from lcm.input_processing import process_model
-from lcm.interfaces import InternalModel, ShockType
+from lcm.input_processing import process_regime
+from lcm.interfaces import InternalRegime, ShockType
 from lcm.Q_and_F import (
     _get_feasibility,
     _get_joint_weights_function,
     get_Q_and_F,
 )
 from lcm.state_action_space import create_state_space_info
-from tests.test_models import get_model
 from tests.test_models.deterministic import utility
+from tests.test_models.utils import get_regime
 
 if TYPE_CHECKING:
     from lcm.typing import BoolND, DiscreteAction, DiscreteState, ParamsDict
@@ -24,8 +24,8 @@ if TYPE_CHECKING:
 
 @pytest.mark.illustrative
 def test_get_Q_and_F_function():
-    model = process_model(
-        get_model("iskhakov_et_al_2017_stripped_down", n_periods=3),
+    internal_regime = process_regime(
+        get_regime("iskhakov_et_al_2017_stripped_down", n_periods=3),
     )
 
     params = {
@@ -38,14 +38,14 @@ def test_get_Q_and_F_function():
     }
 
     state_space_info = create_state_space_info(
-        internal_model=model,
+        internal_regime=internal_regime,
         is_last_period=False,
     )
 
     Q_and_F = get_Q_and_F(
-        internal_model=model,
+        internal_regime=internal_regime,
         next_state_space_info=state_space_info,
-        period=model.n_periods - 1,
+        period=internal_regime.n_periods - 1,
     )
 
     consumption = jnp.array([10, 20, 30])
@@ -72,7 +72,7 @@ def test_get_Q_and_F_function():
 
 
 @pytest.fixture
-def internal_model_illustrative():
+def internal_regime_illustrative():
     def age(period: int) -> int:
         return period + 18
 
@@ -115,9 +115,9 @@ def internal_model_illustrative():
 
     functions = {"age": age}
 
-    # create a model instance where some attributes are set to None because they
-    # are not needed to create the feasibilty mask
-    return InternalModel(
+    # create an internal regime instance where some attributes are set to None
+    # because they are not needed to create the feasibilty mask
+    return InternalRegime(
         grids=grids,
         gridspecs={},
         variable_info=pd.DataFrame(),
@@ -132,8 +132,8 @@ def internal_model_illustrative():
 
 
 @pytest.mark.illustrative
-def test_get_combined_constraint_illustrative(internal_model_illustrative):
-    combined_constraint = _get_feasibility(internal_model_illustrative)
+def test_get_combined_constraint_illustrative(internal_regime_illustrative):
+    combined_constraint = _get_feasibility(internal_regime_illustrative)
 
     age, retirement, lagged_retirement = jnp.array(
         [
@@ -184,7 +184,7 @@ def test_get_combined_constraint():
     def h(params):  # noqa: ARG001
         return None
 
-    model = InternalModel(
+    internal_regime = InternalRegime(
         grids={},
         gridspecs={},
         variable_info=pd.DataFrame(),
@@ -196,6 +196,6 @@ def test_get_combined_constraint():
         random_utility_shocks=ShockType.NONE,
         n_periods=0,
     )
-    combined_constraint = _get_feasibility(model)
+    combined_constraint = _get_feasibility(internal_regime)
     feasibility: BoolND = combined_constraint(params={})
     assert feasibility.item() is False

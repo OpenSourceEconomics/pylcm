@@ -28,12 +28,12 @@ def test_compute_targets():
     def f_c(params):  # noqa: ARG001
         return None
 
-    model_functions = {"fa": f_a, "fb": f_b, "fc": f_c}
+    functions = {"fa": f_a, "fb": f_b, "fc": f_c}
 
     got = _compute_targets(
         processed_results=processed_results,
         targets=["fa", "fb"],
-        model_functions=model_functions,  # type: ignore[arg-type]
+        functions=functions,  # type: ignore[arg-type]
         params={"disutility_of_work": -1.0},
     )
     expected = {
@@ -90,7 +90,7 @@ def test_process_simulated_data():
     got = process_simulated_data(
         simulated,
         # Rest is none, since we are not computing any additional targets
-        internal_model=None,  # type: ignore[arg-type]
+        internal_regime=None,  # type: ignore[arg-type]
         params=None,  # type: ignore[arg-type]
         additional_targets=None,
     )

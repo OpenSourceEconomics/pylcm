@@ -14,7 +14,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
 import lcm
-from lcm import DiscreteGrid, LinspaceGrid, Model
+from lcm import DiscreteGrid, LinspaceGrid, Regime
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -68,7 +68,7 @@ def borrowing_constraint(
     return consumption <= wealth
 
 
-DETERMINISTIC_MODEL = Model(
+DETERMINISTIC_MODEL = Regime(
     n_periods=2,
     actions={
         "consumption": DiscreteGrid(ConsumptionChoice),
