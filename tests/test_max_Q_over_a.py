@@ -81,7 +81,7 @@ def test_max_Q_over_a_equal(regime_input):
     regime = regime_input["regime"]
 
     Q_and_F = get_Q_and_F(
-        internal_regime=regime,
+        regime=regime,
         next_state_space_info=state_space_info,
         period=0,
     )
@@ -154,7 +154,7 @@ def test_argmax_Q_over_a_equal(regime_input):
     regime = regime_input["regime"]
 
     Q_and_F = get_Q_and_F(
-        internal_regime=regime,
+        regime=regime,
         next_state_space_info=state_space_info,
         period=0,
     )

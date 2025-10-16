@@ -3,14 +3,17 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from lcm.grids import ContinuousGrid, DiscreteGrid
-from lcm.interfaces import InternalRegime, StateActionSpace, StateSpaceInfo
+from lcm.input_processing.util import get_grids, get_gridspecs, get_variable_info
+from lcm.interfaces import StateActionSpace, StateSpaceInfo
 
 if TYPE_CHECKING:
     from jax import Array
 
+    from lcm.regime import Regime
+
 
 def create_state_action_space(
-    internal_regime: InternalRegime,
+    regime: Regime,
     *,
     states: dict[str, Array] | None = None,
     is_last_period: bool = False,
@@ -33,12 +36,14 @@ def create_state_action_space(
         appear in the variable info table.
 
     """
-    vi = internal_regime.variable_info
+    vi = get_variable_info(regime)
+    grids = get_grids(regime)
+
     if is_last_period:
         vi = vi.query("enters_concurrent_valuation")
 
     if states is None:
-        _states = {sn: internal_regime.grids[sn] for sn in vi.query("is_state").index}
+        _states = {sn: grids[sn] for sn in vi.query("is_state").index}
     else:
         _validate_all_states_present(
             provided_states=states,
@@ -47,12 +52,10 @@ def create_state_action_space(
         _states = states
 
     discrete_actions = {
-        name: internal_regime.grids[name]
-        for name in vi.query("is_action & is_discrete").index
+        name: grids[name] for name in vi.query("is_action & is_discrete").index
     }
     continuous_actions = {
-        name: internal_regime.grids[name]
-        for name in vi.query("is_action & is_continuous").index
+        name: grids[name] for name in vi.query("is_action & is_continuous").index
     }
     ordered_var_names = tuple(vi.query("is_state | is_discrete").index)
 
@@ -65,7 +68,7 @@ def create_state_action_space(
 
 
 def create_state_space_info(
-    internal_regime: InternalRegime,
+    regime: Regime,
     *,
     is_last_period: bool,
 ) -> StateSpaceInfo:
@@ -74,14 +77,16 @@ def create_state_space_info(
     A state-space information is a compressed representation of all feasible states.
 
     Args:
-        internal_regime: Internal regime instance.
+        regime: Regime instance.
         is_last_period: Whether the function is created for the last period.
 
     Returns:
         The state-space information.
 
     """
-    vi = internal_regime.variable_info
+    vi = get_variable_info(regime)
+    gridspecs = get_gridspecs(regime)
+
     if is_last_period:
         vi = vi.query("enters_concurrent_valuation")
 
@@ -89,13 +94,13 @@ def create_state_space_info(
 
     discrete_states = {
         name: grid_spec
-        for name, grid_spec in internal_regime.gridspecs.items()
+        for name, grid_spec in gridspecs.items()
         if name in state_names and isinstance(grid_spec, DiscreteGrid)
     }
 
     continuous_states = {
         name: grid_spec
-        for name, grid_spec in internal_regime.gridspecs.items()
+        for name, grid_spec in gridspecs.items()
         if name in state_names and isinstance(grid_spec, ContinuousGrid)
     }
 

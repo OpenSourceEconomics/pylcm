@@ -49,7 +49,7 @@ def simulate_inputs():
     argmax_and_max_Q_over_a_functions = []
     for period in range(model.n_periods):
         Q_and_F = get_Q_and_F(
-            internal_regime=internal_regime,
+            regime=internal_regime,
             next_state_space_info=state_space_info,
             period=period,
         )

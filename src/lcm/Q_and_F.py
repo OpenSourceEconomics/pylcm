@@ -11,7 +11,8 @@ from dags.signature import with_signature
 from lcm.dispatchers import productmap
 from lcm.function_representation import get_value_function_representation
 from lcm.functools import get_union_of_arguments
-from lcm.interfaces import Target
+from lcm.input_processing.util import get_variable_info
+from lcm.interfaces import InternalFunctions, Target
 from lcm.next_state import get_next_state_function, get_next_stochastic_weights_function
 
 if TYPE_CHECKING:
@@ -19,21 +20,26 @@ if TYPE_CHECKING:
 
     from jax import Array
 
-    from lcm.interfaces import InternalRegime, StateSpaceInfo
+    from lcm.interfaces import StateSpaceInfo
+    from lcm.regime import Regime
     from lcm.typing import (
         BoolND,
         Float1D,
         FloatND,
         InternalUserFunction,
         ParamsDict,
+        QAndFFunction,
     )
 
 
 def get_Q_and_F(
-    internal_regime: InternalRegime,
+    regime: Regime,
+    internal_functions: InternalFunctions,
     next_state_space_info: StateSpaceInfo,
     period: int,
-) -> Callable[..., tuple[FloatND, BoolND]]:
+    *,
+    is_last_period: bool,
+) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a given period.
 
     Args:
@@ -46,27 +52,30 @@ def get_Q_and_F(
         for the given period.
 
     """
-    is_last_period = period == internal_regime.n_periods - 1
-
     if is_last_period:
-        Q_and_F = get_Q_and_F_terminal(internal_regime, period=period)
+        Q_and_F = get_Q_and_F_terminal(internal_functions, period=period)
     else:
         Q_and_F = get_Q_and_F_non_terminal(
-            internal_regime, next_state_space_info=next_state_space_info, period=period
+            regime,
+            internal_functions=internal_functions,
+            next_state_space_info=next_state_space_info,
+            period=period,
         )
 
     return Q_and_F
 
 
 def get_Q_and_F_non_terminal(
-    internal_regime: InternalRegime,
+    regime: Regime,
+    internal_functions: InternalFunctions,
     next_state_space_info: StateSpaceInfo,
     period: int,
-) -> Callable[..., tuple[FloatND, BoolND]]:
+) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
     Args:
-        internal_regime: Internal regime instance.
+        regime: Regime instance.
+        internal_functions: Internal functions instance.
         next_state_space_info: The state space information of the next period.
         period: The current period.
 
@@ -75,9 +84,9 @@ def get_Q_and_F_non_terminal(
         for a non-terminal period.
 
     """
-    stochastic_variables = internal_regime.variable_info.query(
-        "is_stochastic"
-    ).index.tolist()
+    variable_info = get_variable_info(regime)
+
+    stochastic_variables = variable_info.query("is_stochastic").index.tolist()
     # As we compute the expecation of the next period's value function, we only need the
     # stochastic variables that are relevant for the next state space.
     next_stochastic_variables = tuple(
@@ -89,16 +98,18 @@ def get_Q_and_F_non_terminal(
     # ----------------------------------------------------------------------------------
 
     # Function required to calculate instantaneous utility and feasibility
-    U_and_F = _get_U_and_F(internal_regime)
+    U_and_F = _get_U_and_F(internal_functions)
 
     # Functions required to calculate the expected continuation values
     state_transition = get_next_state_function(
-        internal_regime=internal_regime,
+        regime=regime,
+        internal_functions=internal_functions,
         next_states=next_state_space_info.states_names,
         target=Target.SOLVE,
     )
     next_stochastic_states_weights = get_next_stochastic_weights_function(
-        internal_regime, next_stochastic_states=next_stochastic_variables
+        internal_functions=internal_functions,
+        next_stochastic_states=next_stochastic_variables,
     )
     joint_weights_from_marginals = _get_joint_weights_function(
         next_stochastic_variables
@@ -183,13 +194,13 @@ def get_Q_and_F_non_terminal(
 
 
 def get_Q_and_F_terminal(
-    internal_regime: InternalRegime,
+    internal_functions: InternalFunctions,
     period: int,
-) -> Callable[..., tuple[FloatND, BoolND]]:
+) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for the terminal period.
 
     Args:
-        internal_regime: Internal regime instance.
+        internal_functions: Internal functions instance.
         period: The current period.
 
     Returns:
@@ -197,7 +208,7 @@ def get_Q_and_F_terminal(
         for the terminal period.
 
     """
-    U_and_F = _get_U_and_F(internal_regime)
+    U_and_F = _get_U_and_F(internal_functions)
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         [U_and_F],
@@ -294,7 +305,7 @@ def _get_joint_weights_function(
 
 
 def _get_U_and_F(
-    internal_regime: InternalRegime,
+    internal_functions: InternalFunctions,
 ) -> Callable[..., tuple[FloatND, BoolND]]:
     """Get the instantaneous utility and feasibility function.
 
@@ -304,16 +315,16 @@ def _get_U_and_F(
     executed if they matter for the value of U.
 
     Args:
-        internal_regime: Internal regime instance.
+        internal_functions: Internal functions instance.
 
     Returns:
         The instantaneous utility and feasibility function.
 
     """
     functions = {
-        "feasibility": _get_feasibility(internal_regime),
-        "utility": internal_regime.utility,
-        **internal_regime.functions,
+        "feasibility": _get_feasibility(internal_functions),
+        "utility": internal_functions.utility,
+        **internal_functions.functions,
     }
     return concatenate_functions(
         functions=functions,
@@ -323,24 +334,24 @@ def _get_U_and_F(
     )
 
 
-def _get_feasibility(internal_regime: InternalRegime) -> InternalUserFunction:
+def _get_feasibility(internal_functions: InternalFunctions) -> InternalUserFunction:
     """Create a function that combines all constraint functions into a single one.
 
     Args:
-        internal_regime: Internal regime instance.
+        internal_functions: Internal functions instance.
 
     Returns:
         The combined constraint function (feasibility).
 
     """
-    if internal_regime.constraints:
+    if internal_functions.constraints:
         with warnings.catch_warnings():
             # set annotations does not set the return type when concatenate_functions is
             # called with an aggregator and raises a warning.
             warnings.simplefilter("ignore", category=DagsWarning)
             combined_constraint = concatenate_functions(
-                functions=internal_regime.constraints | internal_regime.functions,
-                targets=list(internal_regime.constraints),
+                functions=internal_functions.constraints | internal_functions.functions,
+                targets=list(internal_functions.constraints),
                 aggregator=jnp.logical_and,
                 set_annotations=True,
             )

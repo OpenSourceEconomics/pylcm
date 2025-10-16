@@ -43,7 +43,7 @@ def test_get_Q_and_F_function():
     )
 
     Q_and_F = get_Q_and_F(
-        internal_regime=internal_regime,
+        regime=internal_regime,
         next_state_space_info=state_space_info,
         period=internal_regime.n_periods - 1,
     )

@@ -47,6 +47,21 @@ class InternalUserFunction(Protocol):
     ) -> Array: ...
 
 
+class QAndFFunction(Protocol):
+    """The function that computes Q and F.
+
+    Q is the state-action value function. F is a boolean array that indicates whether
+    the state-action pair is feasible.
+
+    Only used for type checking.
+
+    """
+
+    def __call__(  # noqa: D102
+        self, next_V_arr: Array, params: ParamsDict, **kwargs: Array
+    ) -> tuple[FloatND, BoolND]: ...
+
+
 class MaxQOverCFunction(Protocol):
     """The function that maximizes Q over the continuous actions.
 
