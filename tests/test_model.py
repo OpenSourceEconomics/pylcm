@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from lcm.exceptions import ModelInitilizationError
+from lcm.exceptions import RegimeInitializationError
 from lcm.grids import DiscreteGrid
-from lcm.user_model import Model
+from lcm.regime import Regime
 
 
-def test_model_invalid_states():
-    with pytest.raises(ModelInitilizationError, match="states must be a dictionary"):
-        Model(
+def test_regime_invalid_states():
+    with pytest.raises(RegimeInitializationError, match="states must be a dictionary"):
+        Regime(
             n_periods=2,
             states="health",  # type: ignore[arg-type]
             actions={},
@@ -17,9 +17,9 @@ def test_model_invalid_states():
         )
 
 
-def test_model_invalid_actions():
-    with pytest.raises(ModelInitilizationError, match="actions must be a dictionary"):
-        Model(
+def test_regime_invalid_actions():
+    with pytest.raises(RegimeInitializationError, match="actions must be a dictionary"):
+        Regime(
             n_periods=2,
             states={},
             actions="exercise",  # type: ignore[arg-type]
@@ -27,9 +27,11 @@ def test_model_invalid_actions():
         )
 
 
-def test_model_invalid_functions():
-    with pytest.raises(ModelInitilizationError, match="functions must be a dictionary"):
-        Model(
+def test_regime_invalid_functions():
+    with pytest.raises(
+        RegimeInitializationError, match="functions must be a dictionary"
+    ):
+        Regime(
             n_periods=2,
             states={},
             actions={},
@@ -38,11 +40,12 @@ def test_model_invalid_functions():
         )
 
 
-def test_model_invalid_functions_values():
+def test_regime_invalid_functions_values():
     with pytest.raises(
-        ModelInitilizationError, match=r"function values must be a callable, but is 0."
+        RegimeInitializationError,
+        match=r"function values must be a callable, but is 0.",
     ):
-        Model(
+        Regime(
             n_periods=2,
             states={},
             actions={},
@@ -51,11 +54,11 @@ def test_model_invalid_functions_values():
         )
 
 
-def test_model_invalid_functions_keys():
+def test_regime_invalid_functions_keys():
     with pytest.raises(
-        ModelInitilizationError, match=r"function keys must be a strings, but is 0."
+        RegimeInitializationError, match=r"function keys must be a strings, but is 0."
     ):
-        Model(
+        Regime(
             n_periods=2,
             states={},
             actions={},
@@ -64,11 +67,11 @@ def test_model_invalid_functions_keys():
         )
 
 
-def test_model_invalid_actions_values():
+def test_regime_invalid_actions_values():
     with pytest.raises(
-        ModelInitilizationError, match=r"actions value 0 must be an LCM grid."
+        RegimeInitializationError, match=r"actions value 0 must be an LCM grid."
     ):
-        Model(
+        Regime(
             n_periods=2,
             states={},
             actions={"exercise": 0},  # type: ignore[dict-item]
@@ -76,11 +79,11 @@ def test_model_invalid_actions_values():
         )
 
 
-def test_model_invalid_states_values():
+def test_regime_invalid_states_values():
     with pytest.raises(
-        ModelInitilizationError, match=r"states value 0 must be an LCM grid."
+        RegimeInitializationError, match=r"states value 0 must be an LCM grid."
     ):
-        Model(
+        Regime(
             n_periods=2,
             states={"health": 0},  # type: ignore[dict-item]
             actions={},
@@ -88,11 +91,12 @@ def test_model_invalid_states_values():
         )
 
 
-def test_model_invalid_n_periods():
+def test_regime_invalid_n_periods():
     with pytest.raises(
-        ModelInitilizationError, match=r"Number of periods must be a positive integer."
+        RegimeInitializationError,
+        match=r"Number of periods must be a positive integer.",
     ):
-        Model(
+        Regime(
             n_periods=0,
             states={},
             actions={},
@@ -100,12 +104,12 @@ def test_model_invalid_n_periods():
         )
 
 
-def test_model_missing_next_func(binary_category_class):
+def test_regime_missing_next_func(binary_category_class):
     with pytest.raises(
-        ModelInitilizationError,
+        RegimeInitializationError,
         match=r"Each state must have a corresponding transition function.",
     ):
-        Model(
+        Regime(
             n_periods=2,
             states={"health": DiscreteGrid(binary_category_class)},
             actions={"exercise": DiscreteGrid(binary_category_class)},
@@ -113,12 +117,12 @@ def test_model_missing_next_func(binary_category_class):
         )
 
 
-def test_model_invalid_utility():
+def test_regime_invalid_utility():
     with pytest.raises(
-        ModelInitilizationError,
+        RegimeInitializationError,
         match=(r"utility must be a callable."),
     ):
-        Model(
+        Regime(
             n_periods=2,
             states={},
             actions={},
@@ -127,12 +131,12 @@ def test_model_invalid_utility():
         )
 
 
-def test_model_invalid_transition_names():
+def test_regime_invalid_transition_names():
     with pytest.raises(
-        ModelInitilizationError,
+        RegimeInitializationError,
         match=(r"Each transitions name must start with 'next_'."),
     ):
-        Model(
+        Regime(
             n_periods=2,
             states={},
             actions={},
@@ -142,12 +146,12 @@ def test_model_invalid_transition_names():
         )
 
 
-def test_model_overlapping_states_actions(binary_category_class):
+def test_regime_overlapping_states_actions(binary_category_class):
     with pytest.raises(
-        ModelInitilizationError,
+        RegimeInitializationError,
         match=r"States and actions cannot have overlapping names.",
     ):
-        Model(
+        Regime(
             n_periods=2,
             states={"health": DiscreteGrid(binary_category_class)},
             actions={"health": DiscreteGrid(binary_category_class)},

@@ -13,9 +13,9 @@ from tests.test_models.discrete_deterministic import ISKHAKOV_ET_AL_2017_DISCRET
 from tests.test_models.stochastic import ISKHAKOV_ET_AL_2017_STOCHASTIC
 
 if TYPE_CHECKING:
-    from lcm.user_model import Model
+    from lcm.regime import Regime
 
-TEST_MODELS = {
+TEST_REGIMES = {
     "iskhakov_et_al_2017": ISKHAKOV_ET_AL_2017,
     "iskhakov_et_al_2017_stripped_down": ISKHAKOV_ET_AL_2017_STRIPPED_DOWN,
     "iskhakov_et_al_2017_discrete": ISKHAKOV_ET_AL_2017_DISCRETE,
@@ -23,8 +23,12 @@ TEST_MODELS = {
 }
 
 
-def get_model(model_name: str, n_periods: int) -> Model:
-    model = deepcopy(TEST_MODELS[model_name])
+def get_model(model_name: str, n_periods: int) -> Regime:
+    return get_regime(model_name, n_periods)
+
+
+def get_regime(model_name: str, n_periods: int) -> Regime:
+    model = deepcopy(TEST_REGIMES[model_name])
     return model.replace(n_periods=n_periods)
 
 

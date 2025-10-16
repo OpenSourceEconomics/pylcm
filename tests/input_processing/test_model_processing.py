@@ -8,27 +8,27 @@ from numpy.testing import assert_array_equal
 from pandas.testing import assert_frame_equal
 
 from lcm import DiscreteGrid, LinspaceGrid, grid_helpers
-from lcm.input_processing.model_processing import (
+from lcm.input_processing.regime_processing import (
     _get_stochastic_weight_function,
     get_grids,
     get_gridspecs,
     get_variable_info,
-    process_model,
+    process_regime,
 )
 from lcm.mark import StochasticInfo
-from tests.model_mock import ModelMock
-from tests.test_models import get_model
+from tests.regime_mock import RegimeMock
+from tests.test_models.utils import get_regime
 
 
 @pytest.fixture
-def model(binary_category_class):
+def regime(binary_category_class):
     def utility(c):
         pass
 
     def next_c(a, b):
         pass
 
-    return ModelMock(
+    return RegimeMock(
         n_periods=2,
         actions={
             "a": DiscreteGrid(binary_category_class),
@@ -41,8 +41,8 @@ def model(binary_category_class):
     )
 
 
-def test_get_variable_info(model):
-    got = get_variable_info(model)
+def test_get_variable_info(regime):
+    got = get_variable_info(regime)
     exp = pd.DataFrame(
         {
             "is_state": [False, True],
@@ -58,8 +58,8 @@ def test_get_variable_info(model):
     assert_frame_equal(got.loc[exp.index], exp)  # we don't care about the id order here
 
 
-def test_get_gridspecs(model):
-    got = get_gridspecs(model)
+def test_get_gridspecs(regime):
+    got = get_gridspecs(regime)
     assert isinstance(got["a"], DiscreteGrid)
     assert got["a"].categories == ("cat0", "cat1")
     assert got["a"].codes == (0, 1)
@@ -69,24 +69,24 @@ def test_get_gridspecs(model):
     assert got["c"].codes == (0, 1)
 
 
-def test_get_grids(model):
-    got = get_grids(model)
+def test_get_grids(regime):
+    got = get_grids(regime)
     assert_array_equal(got["a"], jnp.array([0, 1]))
     assert_array_equal(got["c"], jnp.array([0, 1]))
 
 
-def test_process_model_iskhakov_et_al_2017():
-    user_model = get_model("iskhakov_et_al_2017", n_periods=3)
-    internal_model = process_model(user_model)
+def test_process_regime_iskhakov_et_al_2017():
+    regime = get_regime("iskhakov_et_al_2017", n_periods=3)
+    internal_regime = process_regime(regime)
 
     # Variable Info
     assert (
-        internal_model.variable_info["is_state"].to_numpy()
+        internal_regime.variable_info["is_state"].to_numpy()
         == np.array([True, False, True, False])
     ).all()
 
     assert (
-        internal_model.variable_info["is_continuous"].to_numpy()
+        internal_regime.variable_info["is_continuous"].to_numpy()
         == np.array([False, False, True, True])
     ).all()
 
@@ -94,57 +94,57 @@ def test_process_model_iskhakov_et_al_2017():
     wealth_grid = LinspaceGrid(
         start=1,
         stop=400,
-        n_points=user_model.states["wealth"].n_points,  # type: ignore[attr-defined]
+        n_points=regime.states["wealth"].n_points,  # type: ignore[attr-defined]
     )
 
-    assert internal_model.gridspecs["wealth"] == wealth_grid
+    assert internal_regime.gridspecs["wealth"] == wealth_grid
 
     consumption_grid = LinspaceGrid(
         start=1,
         stop=400,
-        n_points=user_model.actions["consumption"].n_points,  # type: ignore[attr-defined]
+        n_points=regime.actions["consumption"].n_points,  # type: ignore[attr-defined]
     )
-    assert internal_model.gridspecs["consumption"] == consumption_grid
+    assert internal_regime.gridspecs["consumption"] == consumption_grid
 
-    assert isinstance(internal_model.gridspecs["retirement"], DiscreteGrid)
-    assert internal_model.gridspecs["retirement"].categories == ("working", "retired")
-    assert internal_model.gridspecs["retirement"].codes == (0, 1)
+    assert isinstance(internal_regime.gridspecs["retirement"], DiscreteGrid)
+    assert internal_regime.gridspecs["retirement"].categories == ("working", "retired")
+    assert internal_regime.gridspecs["retirement"].codes == (0, 1)
 
-    assert isinstance(internal_model.gridspecs["lagged_retirement"], DiscreteGrid)
-    assert internal_model.gridspecs["lagged_retirement"].categories == (
+    assert isinstance(internal_regime.gridspecs["lagged_retirement"], DiscreteGrid)
+    assert internal_regime.gridspecs["lagged_retirement"].categories == (
         "working",
         "retired",
     )
-    assert internal_model.gridspecs["lagged_retirement"].codes == (0, 1)
+    assert internal_regime.gridspecs["lagged_retirement"].codes == (0, 1)
 
     # Grids
-    expected = grid_helpers.linspace(**user_model.actions["consumption"].__dict__)
-    assert_array_equal(internal_model.grids["consumption"], expected)
+    expected = grid_helpers.linspace(**regime.actions["consumption"].__dict__)
+    assert_array_equal(internal_regime.grids["consumption"], expected)
 
-    expected = grid_helpers.linspace(**user_model.states["wealth"].__dict__)
-    assert_array_equal(internal_model.grids["wealth"], expected)
+    expected = grid_helpers.linspace(**regime.states["wealth"].__dict__)
+    assert_array_equal(internal_regime.grids["wealth"], expected)
 
-    assert (internal_model.grids["retirement"] == jnp.array([0, 1])).all()
-    assert (internal_model.grids["lagged_retirement"] == jnp.array([0, 1])).all()
+    assert (internal_regime.grids["retirement"] == jnp.array([0, 1])).all()
+    assert (internal_regime.grids["lagged_retirement"] == jnp.array([0, 1])).all()
 
     # Functions
-    assert internal_model.transitions is not None
-    assert internal_model.constraints is not None
-    assert internal_model.utility is not None
+    assert internal_regime.transitions is not None
+    assert internal_regime.constraints is not None
+    assert internal_regime.utility is not None
 
 
-def test_process_model():
-    user_model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    internal_model = process_model(user_model)
+def test_process_regime():
+    regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=3)
+    internal_regime = process_regime(regime)
 
     # Variable Info
     assert (
-        internal_model.variable_info["is_state"].to_numpy()
+        internal_regime.variable_info["is_state"].to_numpy()
         == np.array([False, True, False])
     ).all()
 
     assert (
-        internal_model.variable_info["is_continuous"].to_numpy()
+        internal_regime.variable_info["is_continuous"].to_numpy()
         == np.array([False, True, True])
     ).all()
 
@@ -152,35 +152,35 @@ def test_process_model():
     wealth_specs = LinspaceGrid(
         start=1,
         stop=400,
-        n_points=user_model.states["wealth"].n_points,  # type: ignore[attr-defined]
+        n_points=regime.states["wealth"].n_points,  # type: ignore[attr-defined]
     )
 
-    assert internal_model.gridspecs["wealth"] == wealth_specs
+    assert internal_regime.gridspecs["wealth"] == wealth_specs
 
     consumption_specs = LinspaceGrid(
         start=1,
         stop=400,
-        n_points=user_model.actions["consumption"].n_points,  # type: ignore[attr-defined]
+        n_points=regime.actions["consumption"].n_points,  # type: ignore[attr-defined]
     )
-    assert internal_model.gridspecs["consumption"] == consumption_specs
+    assert internal_regime.gridspecs["consumption"] == consumption_specs
 
-    assert isinstance(internal_model.gridspecs["retirement"], DiscreteGrid)
-    assert internal_model.gridspecs["retirement"].categories == ("working", "retired")
-    assert internal_model.gridspecs["retirement"].codes == (0, 1)
+    assert isinstance(internal_regime.gridspecs["retirement"], DiscreteGrid)
+    assert internal_regime.gridspecs["retirement"].categories == ("working", "retired")
+    assert internal_regime.gridspecs["retirement"].codes == (0, 1)
 
     # Grids
-    expected = grid_helpers.linspace(**user_model.actions["consumption"].__dict__)
-    assert_array_equal(internal_model.grids["consumption"], expected)
+    expected = grid_helpers.linspace(**regime.actions["consumption"].__dict__)
+    assert_array_equal(internal_regime.grids["consumption"], expected)
 
-    expected = grid_helpers.linspace(**user_model.states["wealth"].__dict__)
-    assert_array_equal(internal_model.grids["wealth"], expected)
+    expected = grid_helpers.linspace(**regime.states["wealth"].__dict__)
+    assert_array_equal(internal_regime.grids["wealth"], expected)
 
-    assert (internal_model.grids["retirement"] == jnp.array([0, 1])).all()
+    assert (internal_regime.grids["retirement"] == jnp.array([0, 1])).all()
 
     # Functions
-    assert internal_model.transitions is not None
-    assert internal_model.constraints is not None
-    assert internal_model.utility is not None
+    assert internal_regime.transitions is not None
+    assert internal_regime.constraints is not None
+    assert internal_regime.utility is not None
 
 
 def test_get_stochastic_weight_function():
@@ -227,12 +227,12 @@ def test_get_stochastic_weight_function_non_state_dependency():
 
 
 def test_variable_info_with_continuous_constraint_has_unique_index():
-    model = get_model("iskhakov_et_al_2017", n_periods=3)
+    regime = get_regime("iskhakov_et_al_2017", n_periods=3)
 
     def wealth_constraint(wealth):
         return wealth > 200
 
-    model.constraints["wealth_constraint"] = wealth_constraint
+    regime.constraints["wealth_constraint"] = wealth_constraint
 
-    got = get_variable_info(model)
+    got = get_variable_info(regime)
     assert got.index.is_unique

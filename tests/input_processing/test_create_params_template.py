@@ -10,11 +10,11 @@ from lcm.input_processing.create_params_template import (
     _create_stochastic_transition_params,
     create_params_template,
 )
-from tests.model_mock import ModelMock
+from tests.regime_mock import RegimeMock
 
 
 def test_create_params_without_shocks(binary_category_class):
-    model = ModelMock(
+    regime = RegimeMock(
         actions={
             "a": DiscreteGrid(binary_category_class),
         },
@@ -27,12 +27,12 @@ def test_create_params_without_shocks(binary_category_class):
             "next_b": lambda b: b,
         },
     )
-    got = create_params_template(model)  # type: ignore[arg-type]
+    got = create_params_template(regime)  # type: ignore[arg-type]
     assert got == {"beta": jnp.nan, "utility": {"c": jnp.nan}, "next_b": {}}
 
 
 def test_create_function_params():
-    model = ModelMock(
+    regime = RegimeMock(
         actions={
             "a": None,
         },
@@ -41,7 +41,7 @@ def test_create_function_params():
         },
         utility=lambda a, b, c: None,  # noqa: ARG005
     )
-    got = _create_function_params(model)  # type: ignore[arg-type]
+    got = _create_function_params(regime)  # type: ignore[arg-type]
     assert got == {"utility": {"c": jnp.nan}}
 
 
@@ -54,14 +54,14 @@ def test_create_shock_params():
         index=["a"],
     )
 
-    model = ModelMock(
+    regime = RegimeMock(
         n_periods=3,
         utility=lambda a: None,  # noqa: ARG005
         transitions={"next_a": next_a},
     )
 
     got = _create_stochastic_transition_params(
-        model=model,  # type: ignore[arg-type]
+        regime=regime,  # type: ignore[arg-type]
         variable_info=variable_info,
         grids={"a": jnp.array([1, 2])},
     )
@@ -77,13 +77,13 @@ def test_create_shock_params_invalid_variable():
         index=["a"],
     )
 
-    model = ModelMock(
+    regime = RegimeMock(
         transitions={"next_a": next_a},
     )
 
     with pytest.raises(ValueError, match="The following variables are stochastic, but"):
         _create_stochastic_transition_params(
-            model=model,  # type: ignore[arg-type]
+            regime=regime,  # type: ignore[arg-type]
             variable_info=variable_info,
             grids={"a": jnp.array([1, 2])},
         )
@@ -102,13 +102,13 @@ def test_create_shock_params_invalid_dependency():
         index=["a", "b"],
     )
 
-    model = ModelMock(
+    regime = RegimeMock(
         transitions={"next_a": next_a},
     )
 
     with pytest.raises(ValueError, match="Stochastic transition functions can only"):
         _create_stochastic_transition_params(
-            model=model,  # type: ignore[arg-type]
+            regime=regime,  # type: ignore[arg-type]
             variable_info=variable_info,
             grids={"a": jnp.array([1, 2])},
         )

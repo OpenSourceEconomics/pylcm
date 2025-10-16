@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
     from jax import Array
 
-    from lcm.interfaces import InternalModel, StateSpaceInfo
+    from lcm.interfaces import InternalRegime, StateSpaceInfo
     from lcm.typing import (
         BoolND,
         Float1D,
@@ -30,14 +30,14 @@ if TYPE_CHECKING:
 
 
 def get_Q_and_F(
-    internal_model: InternalModel,
+    internal_regime: InternalRegime,
     next_state_space_info: StateSpaceInfo,
     period: int,
 ) -> Callable[..., tuple[FloatND, BoolND]]:
     """Get the state-action (Q) and feasibility (F) function for a given period.
 
     Args:
-        internal_model: Internal model instance.
+        internal_regime: Internal regime instance.
         next_state_space_info: The state space information of the next period.
         period: The current period.
 
@@ -46,27 +46,27 @@ def get_Q_and_F(
         for the given period.
 
     """
-    is_last_period = period == internal_model.n_periods - 1
+    is_last_period = period == internal_regime.n_periods - 1
 
     if is_last_period:
-        Q_and_F = get_Q_and_F_terminal(internal_model, period=period)
+        Q_and_F = get_Q_and_F_terminal(internal_regime, period=period)
     else:
         Q_and_F = get_Q_and_F_non_terminal(
-            internal_model, next_state_space_info=next_state_space_info, period=period
+            internal_regime, next_state_space_info=next_state_space_info, period=period
         )
 
     return Q_and_F
 
 
 def get_Q_and_F_non_terminal(
-    internal_model: InternalModel,
+    internal_regime: InternalRegime,
     next_state_space_info: StateSpaceInfo,
     period: int,
 ) -> Callable[..., tuple[FloatND, BoolND]]:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
     Args:
-        internal_model: Internal model instance.
+        internal_regime: Internal regime instance.
         next_state_space_info: The state space information of the next period.
         period: The current period.
 
@@ -75,7 +75,7 @@ def get_Q_and_F_non_terminal(
         for a non-terminal period.
 
     """
-    stochastic_variables = internal_model.variable_info.query(
+    stochastic_variables = internal_regime.variable_info.query(
         "is_stochastic"
     ).index.tolist()
     # As we compute the expecation of the next period's value function, we only need the
@@ -89,16 +89,16 @@ def get_Q_and_F_non_terminal(
     # ----------------------------------------------------------------------------------
 
     # Function required to calculate instantaneous utility and feasibility
-    U_and_F = _get_U_and_F(internal_model)
+    U_and_F = _get_U_and_F(internal_regime)
 
     # Functions required to calculate the expected continuation values
     state_transition = get_next_state_function(
-        internal_model=internal_model,
+        internal_regime=internal_regime,
         next_states=next_state_space_info.states_names,
         target=Target.SOLVE,
     )
     next_stochastic_states_weights = get_next_stochastic_weights_function(
-        internal_model, next_stochastic_states=next_stochastic_variables
+        internal_regime, next_stochastic_states=next_stochastic_variables
     )
     joint_weights_from_marginals = _get_joint_weights_function(
         next_stochastic_variables
@@ -183,13 +183,13 @@ def get_Q_and_F_non_terminal(
 
 
 def get_Q_and_F_terminal(
-    internal_model: InternalModel,
+    internal_regime: InternalRegime,
     period: int,
 ) -> Callable[..., tuple[FloatND, BoolND]]:
     """Get the state-action (Q) and feasibility (F) function for the terminal period.
 
     Args:
-        internal_model: Internal model instance.
+        internal_regime: Internal regime instance.
         period: The current period.
 
     Returns:
@@ -197,7 +197,7 @@ def get_Q_and_F_terminal(
         for the terminal period.
 
     """
-    U_and_F = _get_U_and_F(internal_model)
+    U_and_F = _get_U_and_F(internal_regime)
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         [U_and_F],
@@ -294,7 +294,7 @@ def _get_joint_weights_function(
 
 
 def _get_U_and_F(
-    internal_model: InternalModel,
+    internal_regime: InternalRegime,
 ) -> Callable[..., tuple[FloatND, BoolND]]:
     """Get the instantaneous utility and feasibility function.
 
@@ -304,16 +304,16 @@ def _get_U_and_F(
     executed if they matter for the value of U.
 
     Args:
-        internal_model: Internal model instance.
+        internal_regime: Internal regime instance.
 
     Returns:
         The instantaneous utility and feasibility function.
 
     """
     functions = {
-        "feasibility": _get_feasibility(internal_model),
-        "utility": internal_model.utility,
-        **internal_model.functions,
+        "feasibility": _get_feasibility(internal_regime),
+        "utility": internal_regime.utility,
+        **internal_regime.functions,
     }
     return concatenate_functions(
         functions=functions,
@@ -323,24 +323,24 @@ def _get_U_and_F(
     )
 
 
-def _get_feasibility(internal_model: InternalModel) -> InternalUserFunction:
+def _get_feasibility(internal_regime: InternalRegime) -> InternalUserFunction:
     """Create a function that combines all constraint functions into a single one.
 
     Args:
-        internal_model: Internal model instance.
+        internal_regime: Internal regime instance.
 
     Returns:
         The combined constraint function (feasibility).
 
     """
-    if internal_model.constraints:
+    if internal_regime.constraints:
         with warnings.catch_warnings():
             # set annotations does not set the return type when concatenate_functions is
             # called with an aggregator and raises a warning.
             warnings.simplefilter("ignore", category=DagsWarning)
             combined_constraint = concatenate_functions(
-                functions=internal_model.constraints | internal_model.functions,
-                targets=list(internal_model.constraints),
+                functions=internal_regime.constraints | internal_regime.functions,
+                targets=list(internal_regime.constraints),
                 aggregator=jnp.logical_and,
                 set_annotations=True,
             )

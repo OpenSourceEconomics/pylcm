@@ -11,13 +11,13 @@ from jax import Array
 from lcm.dispatchers import vmap_1d
 
 if TYPE_CHECKING:
-    from lcm.interfaces import InternalModel, InternalSimulationPeriodResults
+    from lcm.interfaces import InternalRegime, InternalSimulationPeriodResults
     from lcm.typing import InternalUserFunction, ParamsDict
 
 
 def process_simulated_data(
     results: dict[int, InternalSimulationPeriodResults],
-    internal_model: InternalModel,
+    internal_regime: InternalRegime,
     params: ParamsDict,
     additional_targets: list[str] | None = None,
 ) -> dict[str, Array]:
@@ -33,7 +33,7 @@ def process_simulated_data(
         results: Dict with simulation results. Each dict contains the value,
             actions, and states for one period. Actions and states are stored in a
             nested dictionary.
-        internal_model: Internal model instance.
+        internal_regime: Internal regime instance.
         params: Parameters.
         additional_targets: List of additional targets to compute.
 
@@ -59,15 +59,10 @@ def process_simulated_data(
     out["_period"] = jnp.repeat(jnp.arange(n_periods), n_initial_states)
 
     if additional_targets is not None:
-        model_functions = (
-            internal_model.functions
-            | {"utility": internal_model.utility}
-            | internal_model.constraints
-        )
         calculated_targets = _compute_targets(
             out,
             targets=additional_targets,
-            model_functions=model_functions,
+            functions=internal_regime.get_all_functions(),
             params=params,
         )
         out = {**out, **calculated_targets}
@@ -100,7 +95,7 @@ def as_panel(processed: dict[str, Array], n_periods: int) -> pd.DataFrame:
 def _compute_targets(
     processed_results: dict[str, Array],
     targets: list[str],
-    model_functions: dict[str, InternalUserFunction],
+    functions: dict[str, InternalUserFunction],
     params: ParamsDict,
 ) -> dict[str, Array]:
     """Compute targets.
@@ -109,15 +104,15 @@ def _compute_targets(
         processed_results: Dict with processed simulation results. Values must be
             one-dimensional arrays.
         targets: List of targets to compute.
-        model_functions: Dict with model functions.
-        params: Dict with model parameters.
+        functions: Dict with functions that are used to compute targets.
+        params: Dict with parameters.
 
     Returns:
         Dict with computed targets.
 
     """
     target_func = concatenate_functions(
-        functions=model_functions,
+        functions=functions,
         targets=targets,
         return_type="dict",
         set_annotations=True,

@@ -121,19 +121,19 @@ class ShockType(Enum):
 
 
 @dataclasses.dataclass(frozen=True)
-class InternalModel:
-    """Internal representation of a user model.
+class InternalRegime:
+    """Internal representation of a user regime.
 
     Attributes:
-        grids: Dictionary that maps names of model variables to grids of feasible values
-            for that variable.
-        gridspecs: Dictionary that maps names of model variables to specifications from
+        grids: Dictionary that maps names of regime variables to grids of feasible
+            values for that variable.
+        gridspecs: Dictionary that maps names of regime variables to specifications from
             which grids of feasible values can be built.
-        variable_info: A table with information about all variables in the model. The
-            index contains the name of a model variable. The columns are booleans that
+        variable_info: A table with information about all variables in the regime. The
+            index contains the name of a regime variable. The columns are booleans that
             are True if the variable has the corresponding property. The columns are:
             is_state, is_action, is_continuous, is_discrete.
-        utility: The utility function of the model.
+        utility: The utility function of the regime.
         transitions: Dictionary that maps transition functions to state names.
         constraints: Dictionary that maps constraint names to constraint functions.
         functions: Dictionary that maps names of functions to functions. The functions
@@ -160,6 +160,20 @@ class InternalModel:
     n_periods: int
     # Not properly processed yet
     random_utility_shocks: ShockType
+
+    def get_all_functions(self) -> dict[str, InternalUserFunction]:
+        """Get all regime functions including utility, constraints, and transitions.
+
+        Returns:
+            Dictionary that maps names of all regime functions to the functions.
+
+        """
+        return (
+            self.functions
+            | {"utility": self.utility}
+            | self.constraints
+            | self.transitions
+        )
 
 
 @dataclasses.dataclass(frozen=True)
