@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from lcm.typing import ArgmaxQOverAFunction, InternalUserFunction, MaxQOverAFunction
+from lcm.typing import ArgmaxQOverAFunction, InternalUserFunction
 from lcm.utils import first_non_none
 
 if TYPE_CHECKING:
@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
     from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
     from lcm.typing import (
+        ArgmaxQOverAFunction,
         ContinuousAction,
         ContinuousState,
         DiscreteAction,
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
         Float1D,
         Int1D,
         InternalUserFunction,
+        MaxQOverAFunction,
         ParamsDict,
     )
 
@@ -203,6 +205,8 @@ class Target(Enum):
 
 @dataclass(frozen=True)
 class InternalFunctions:
+    """All functions that are used in the regime"""
+
     functions: dict[str, InternalUserFunction]
     utility: InternalUserFunction
     constraints: dict[str, InternalUserFunction]

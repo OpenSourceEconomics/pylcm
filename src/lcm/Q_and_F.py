@@ -43,9 +43,11 @@ def get_Q_and_F(
     """Get the state-action (Q) and feasibility (F) function for a given period.
 
     Args:
-        internal_regime: Internal regime instance.
+        regime: Regime object containing all infos about the pre-processed regime.
+        internal_functions: Internal functions of the regime.
         next_state_space_info: The state space information of the next period.
         period: The current period.
+        is_last_period: True if this period is the last.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)

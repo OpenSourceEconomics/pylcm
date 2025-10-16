@@ -34,7 +34,8 @@ def get_next_state_function(
     """Get function that computes the next states during the solution.
 
     Args:
-        internal_regime: Internal regime instance.
+        grids: Grids of a regime.
+        internal_functions: Internal functions of a regime.
         next_states: Names of the next states to compute. These states are relevant for
             the next state space.
         target: Whether to generate the function for the solve or simulate target.

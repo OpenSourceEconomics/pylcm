@@ -41,9 +41,11 @@ def test_get_Q_and_F_function():
     )
 
     Q_and_F = get_Q_and_F(
-        regime=internal_regime,
+        regime=regime,
+        internal_functions=internal_regime.internal_functions,
         next_state_space_info=state_space_info,
         period=internal_regime.n_periods - 1,
+        is_last_period=True,
     )
 
     consumption = jnp.array([10, 20, 30])
@@ -70,7 +72,7 @@ def test_get_Q_and_F_function():
 
 
 @pytest.fixture
-def internal_regime_illustrative():
+def internal_functions_illustrative():
     def age(period: int) -> int:
         return period + 18
 

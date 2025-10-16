@@ -55,7 +55,8 @@ def regime_input():
         },
     }
     return {
-        "regime": internal_regime,
+        "regime": regime,
+        "internal_regime": internal_regime,
         "state_action_space": state_action_space,
         "state_space_info": state_space_info,
         "next_state": get_next_state_function(
@@ -81,11 +82,14 @@ def test_max_Q_over_a_equal(regime_input):
     state_space_info = regime_input["state_space_info"]
     state_action_space = regime_input["state_action_space"]
     regime = regime_input["regime"]
+    internal_regime = regime_input["internal_regime"]
 
     Q_and_F = get_Q_and_F(
         regime=regime,
+        internal_functions=internal_regime.internal_functions,
         next_state_space_info=state_space_info,
         period=0,
+        is_last_period=True,
     )
     next_V_arr = jnp.zeros((2, 2))
 
@@ -121,8 +125,8 @@ def test_max_Q_over_a_equal(regime_input):
         ),
     )
     max_Qc_over_d = get_max_Qc_over_d(
-        random_utility_shock_type=regime.random_utility_shocks,
-        variable_info=regime.variable_info,
+        random_utility_shock_type=internal_regime.random_utility_shocks,
+        variable_info=internal_regime.variable_info,
         is_last_period=False,
     )
     Qc_arr = max_Q_over_c(
@@ -154,11 +158,14 @@ def test_argmax_Q_over_a_equal(regime_input):
     state_space_info = regime_input["state_space_info"]
     state_action_space = regime_input["state_action_space"]
     regime = regime_input["regime"]
+    internal_regime = regime_input["internal_regime"]
 
     Q_and_F = get_Q_and_F(
         regime=regime,
+        internal_functions=internal_regime.internal_functions,
         next_state_space_info=state_space_info,
         period=0,
+        is_last_period=True,
     )
     next_V_arr = jnp.zeros((2, 2))
 
@@ -211,7 +218,7 @@ def test_argmax_Q_over_a_equal(regime_input):
         states_names=tuple(state_action_space.states),
     )
     argmax_and_max_Qc_over_d = get_argmax_and_max_Qc_over_d(
-        variable_info=regime.variable_info,
+        variable_info=internal_regime.variable_info,
     )
 
     indices_argmax_Q_over_c, Qc_arr = argmax_and_max_Q_over_c(

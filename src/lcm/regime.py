@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     import pandas as pd
     from jax import Array
 
+    from lcm.interfaces import InternalRegime
     from lcm.typing import (
         FloatND,
         ParamsDict,
@@ -48,6 +49,7 @@ class Regime:
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
     enable_jit: bool = True
+    internal_regime: InternalRegime | None = None
 
     def __post_init__(self) -> None:
         _validate_attribute_types(self)

@@ -3,11 +3,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
-import pandas as pd
 from pybaum import tree_equal
 
 from lcm.input_processing import process_regime
-from lcm.interfaces import InternalRegime, ShockType, Target
+from lcm.interfaces import InternalFunctions, Target
 from lcm.next_state import _create_stochastic_next_func, get_next_state_function
 from tests.test_models.utils import get_regime
 
@@ -52,23 +51,15 @@ def test_get_next_state_function_with_simulate_target():
         return jnp.array([0.0, 1.0])
 
     grids = {"b": jnp.arange(2)}
-
-    internal_regime = InternalRegime(
-        utility=lambda: 0,  # type: ignore[arg-type]
+    internal_functions = InternalFunctions(
+        utility=lambda: 0,
         constraints={},
-        transitions={"next_a": f_a, "next_b": f_b},  # type: ignore[dict-item]
-        functions={"f_weight_b": f_weight_b},  # type: ignore[dict-item]
-        grids=grids,
-        gridspecs={},
-        variable_info=pd.DataFrame(),
-        params={},
-        random_utility_shocks=ShockType.NONE,
-        n_periods=1,
+        transitions={"next_a": f_a, "next_b": f_b},
+        functions={"f_weight_b": f_weight_b},
     )
-
     got_func = get_next_state_function(
-        internal_functions=internal_regime.internal_functions,
-        grids=internal_regime.grids,
+        internal_functions=internal_functions,
+        grids=grids,
         next_states=("a", "b"),
         target=Target.SIMULATE,
     )

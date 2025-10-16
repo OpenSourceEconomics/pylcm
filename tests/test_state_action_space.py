@@ -50,7 +50,6 @@ def test_create_state_action_space_simulation():
 
 def test_create_state_space_info():
     regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    internal_regime = process_regime(regime)
 
     state_space_info = create_state_space_info(
         regime=regime,
