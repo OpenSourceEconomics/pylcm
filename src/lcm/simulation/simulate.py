@@ -10,6 +10,7 @@ from jax import Array, vmap
 
 from lcm.dispatchers import simulation_spacemap, vmap_1d
 from lcm.error_handling import validate_value_function_array
+from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import (
     InternalModel,
     InternalSimulationPeriodResults,
@@ -160,9 +161,11 @@ def simulate(
         # Update states
         # ------------------------------------------------------------------------------
         if not is_last_period:
-            stochastic_next_function_names = internal_model.function_info.query(
-                "is_stochastic_next"
-            ).index.tolist()
+            stochastic_next_function_names = [
+                next_fn_name
+                for next_fn_name, next_fn in internal_model.transitions.items()
+                if is_stochastic_transition(next_fn)
+            ]
             key, stochastic_variables_keys = generate_simulation_keys(
                 key=key,
                 names=stochastic_next_function_names,

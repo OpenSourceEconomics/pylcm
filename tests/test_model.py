@@ -13,7 +13,7 @@ def test_model_invalid_states():
             n_periods=2,
             states="health",  # type: ignore[arg-type]
             actions={},
-            functions={"utility": lambda: 0},
+            utility=lambda: 0,
         )
 
 
@@ -23,7 +23,7 @@ def test_model_invalid_actions():
             n_periods=2,
             states={},
             actions="exercise",  # type: ignore[arg-type]
-            functions={"utility": lambda: 0},
+            utility=lambda: 0,
         )
 
 
@@ -33,6 +33,7 @@ def test_model_invalid_functions():
             n_periods=2,
             states={},
             actions={},
+            utility=lambda: 0,
             functions="utility",  # type: ignore[arg-type]
         )
 
@@ -45,7 +46,8 @@ def test_model_invalid_functions_values():
             n_periods=2,
             states={},
             actions={},
-            functions={"utility": 0},  # type: ignore[dict-item]
+            utility=lambda: 0,
+            functions={"function": 0},  # type: ignore[dict-item]
         )
 
 
@@ -57,6 +59,7 @@ def test_model_invalid_functions_keys():
             n_periods=2,
             states={},
             actions={},
+            utility=lambda: 0,
             functions={0: lambda: 0},  # type: ignore[dict-item]
         )
 
@@ -69,7 +72,7 @@ def test_model_invalid_actions_values():
             n_periods=2,
             states={},
             actions={"exercise": 0},  # type: ignore[dict-item]
-            functions={"utility": lambda: 0},
+            utility=lambda: 0,
         )
 
 
@@ -81,7 +84,7 @@ def test_model_invalid_states_values():
             n_periods=2,
             states={"health": 0},  # type: ignore[dict-item]
             actions={},
-            functions={"utility": lambda: 0},
+            utility=lambda: 0,
         )
 
 
@@ -93,35 +96,49 @@ def test_model_invalid_n_periods():
             n_periods=0,
             states={},
             actions={},
-            functions={"utility": lambda: 0},
+            utility=lambda: 0,
         )
 
 
 def test_model_missing_next_func(binary_category_class):
     with pytest.raises(
         ModelInitilizationError,
-        match=r"Each state must have a corresponding next state function.",
+        match=r"Each state must have a corresponding transition function.",
     ):
         Model(
             n_periods=2,
             states={"health": DiscreteGrid(binary_category_class)},
             actions={"exercise": DiscreteGrid(binary_category_class)},
-            functions={"utility": lambda: 0},
+            utility=lambda: 0,
         )
 
 
-def test_model_missing_utility():
+def test_model_invalid_utility():
     with pytest.raises(
         ModelInitilizationError,
-        match=(
-            r"Utility function is not defined. LCM expects a function called 'utility'"
-        ),
+        match=(r"utility must be a callable."),
     ):
         Model(
             n_periods=2,
             states={},
             actions={},
             functions={},
+            utility=0,  # type: ignore[arg-type]
+        )
+
+
+def test_model_invalid_transition_names():
+    with pytest.raises(
+        ModelInitilizationError,
+        match=(r"Each transitions name must start with 'next_'."),
+    ):
+        Model(
+            n_periods=2,
+            states={},
+            actions={},
+            functions={},
+            utility=lambda: 0,
+            transitions={"invalid_name": lambda: 0},
         )
 
 
@@ -134,5 +151,5 @@ def test_model_overlapping_states_actions(binary_category_class):
             n_periods=2,
             states={"health": DiscreteGrid(binary_category_class)},
             actions={"health": DiscreteGrid(binary_category_class)},
-            functions={"utility": lambda: 0},
+            utility=lambda: 0,
         )

@@ -355,7 +355,9 @@ def test_solve_with_period_argument_in_constraint():
             lagged_retirement == RetirementStatus.working,
         )
 
-    model.functions["absorbing_retirement_constraint"] = absorbing_retirement_constraint
+    model.constraints["absorbing_retirement_constraint"] = (
+        absorbing_retirement_constraint
+    )
 
     params = tree_map(lambda _: 0.2, model.params_template)
     model.solve(params)

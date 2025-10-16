@@ -8,7 +8,11 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 from jax import Array
 
-from lcm.input_processing.util import get_grids, get_variable_info
+from lcm.input_processing.util import (
+    get_all_user_functions,
+    get_grids,
+    get_variable_info,
+)
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -81,9 +85,9 @@ def _create_function_params(model: Model) -> dict[str, dict[str, float]]:
         variables = variables | set(model.shocks)
 
     function_params = {}
-    # For each model function, capture the arguments of the function that are not in the
+    # For each user function, capture the arguments of the function that are not in the
     # set of model variables, and initialize them.
-    for name, func in model.functions.items():
+    for name, func in get_all_user_functions(model).items():
         arguments = set(inspect.signature(func).parameters)
         params = sorted(arguments.difference(variables))
         function_params[name] = dict.fromkeys(params, jnp.nan)
@@ -132,7 +136,7 @@ def _create_stochastic_transition_params(
 
     for var in stochastic_variables:
         # Retrieve corresponding next function and its arguments
-        next_var = model.functions[f"next_{var}"]
+        next_var = model.transitions[f"next_{var}"]
         dependencies = list(inspect.signature(next_var).parameters)
 
         # If there are invalid dependencies, store them in a dictionary and continue

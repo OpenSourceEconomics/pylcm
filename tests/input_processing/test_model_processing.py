@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
-
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -13,29 +10,14 @@ from pandas.testing import assert_frame_equal
 from lcm import DiscreteGrid, LinspaceGrid, grid_helpers
 from lcm.input_processing.model_processing import (
     _get_stochastic_weight_function,
-    get_function_info,
     get_grids,
     get_gridspecs,
     get_variable_info,
     process_model,
 )
 from lcm.mark import StochasticInfo
+from tests.model_mock import ModelMock
 from tests.test_models import get_model
-
-
-@dataclass
-class ModelMock:
-    """A model mock for testing the process_model function.
-
-    This dataclass has the same attributes as the Model dataclass, but does not perform
-    any checks, which helps us to test the process_model function in isolation.
-
-    """
-
-    n_periods: int
-    functions: dict[str, Any]
-    actions: dict[str, Any]
-    states: dict[str, Any]
 
 
 @pytest.fixture
@@ -48,30 +30,15 @@ def model(binary_category_class):
 
     return ModelMock(
         n_periods=2,
-        functions={
-            "utility": utility,
-            "next_c": next_c,
-        },
         actions={
             "a": DiscreteGrid(binary_category_class),
         },
         states={
             "c": DiscreteGrid(binary_category_class),
         },
+        utility=utility,
+        transitions={"next_c": next_c},
     )
-
-
-def test_get_function_info(model):
-    got = get_function_info(model)
-    exp = pd.DataFrame(
-        {
-            "is_constraint": [False, False],
-            "is_next": [False, True],
-            "is_stochastic_next": [False, False],
-        },
-        index=["utility", "next_c"],
-    )
-    assert_frame_equal(got, exp)
 
 
 def test_get_variable_info(model):
@@ -161,17 +128,9 @@ def test_process_model_iskhakov_et_al_2017():
     assert (internal_model.grids["lagged_retirement"] == jnp.array([0, 1])).all()
 
     # Functions
-    assert (
-        internal_model.function_info["is_next"].to_numpy()
-        == np.array([False, True, True, False, False, False, False])
-    ).all()
-
-    assert (
-        internal_model.function_info["is_constraint"].to_numpy()
-        == np.array([False, False, False, True, True, False, False])
-    ).all()
-
-    assert ~internal_model.function_info.loc["utility"].to_numpy().any()
+    assert internal_model.transitions is not None
+    assert internal_model.constraints is not None
+    assert internal_model.utility is not None
 
 
 def test_process_model():
@@ -219,17 +178,9 @@ def test_process_model():
     assert (internal_model.grids["retirement"] == jnp.array([0, 1])).all()
 
     # Functions
-    assert (
-        internal_model.function_info["is_next"].to_numpy()
-        == np.array([False, True, False, False, False, False, False])
-    ).all()
-
-    assert (
-        internal_model.function_info["is_constraint"].to_numpy()
-        == np.array([False, False, True, False, False, False, False])
-    ).all()
-
-    assert ~internal_model.function_info.loc["utility"].to_numpy().any()
+    assert internal_model.transitions is not None
+    assert internal_model.constraints is not None
+    assert internal_model.utility is not None
 
 
 def test_get_stochastic_weight_function():
@@ -281,7 +232,7 @@ def test_variable_info_with_continuous_constraint_has_unique_index():
     def wealth_constraint(wealth):
         return wealth > 200
 
-    model.functions["wealth_constraint"] = wealth_constraint
+    model.constraints["wealth_constraint"] = wealth_constraint
 
     got = get_variable_info(model)
     assert got.index.is_unique

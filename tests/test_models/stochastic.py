@@ -123,14 +123,6 @@ ISKHAKOV_ET_AL_2017_STOCHASTIC = Model(
         "health and partner."
     ),
     n_periods=3,
-    functions={
-        "utility": utility,
-        "next_wealth": next_wealth,
-        "next_health": next_health,
-        "next_partner": next_partner,
-        "borrowing_constraint": borrowing_constraint,
-        "labor_income": labor_income,
-    },
     actions={
         "working": DiscreteGrid(WorkingStatus),
         "consumption": LinspaceGrid(
@@ -147,5 +139,17 @@ ISKHAKOV_ET_AL_2017_STOCHASTIC = Model(
             stop=100,
             n_points=100,
         ),
+    },
+    utility=utility,
+    constraints={
+        "borrowing_constraint": borrowing_constraint,
+    },
+    transitions={
+        "next_wealth": next_wealth,
+        "next_health": next_health,
+        "next_partner": next_partner,
+    },
+    functions={
+        "labor_income": labor_income,
     },
 )

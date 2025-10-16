@@ -59,10 +59,15 @@ def process_simulated_data(
     out["_period"] = jnp.repeat(jnp.arange(n_periods), n_initial_states)
 
     if additional_targets is not None:
+        model_functions = (
+            internal_model.functions
+            | {"utility": internal_model.utility}
+            | internal_model.constraints
+        )
         calculated_targets = _compute_targets(
             out,
             targets=additional_targets,
-            model_functions=internal_model.functions,
+            model_functions=model_functions,
             params=params,
         )
         out = {**out, **calculated_targets}

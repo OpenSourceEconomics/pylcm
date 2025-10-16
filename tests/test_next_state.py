@@ -50,26 +50,14 @@ def test_get_next_state_function_with_simulate_target():
     def f_weight_b(state: ContinuousState, params: ParamsDict) -> FloatND:  # noqa: ARG001
         return jnp.array([0.0, 1.0])
 
-    functions = {
-        "a": f_a,
-        "b": f_b,
-        "weight_b": f_weight_b,
-    }
-
     grids = {"b": jnp.arange(2)}
 
-    function_info = pd.DataFrame(
-        {
-            "is_next": [True, True],
-            "is_stochastic_next": [False, True],
-        },
-        index=["a", "b"],
-    )
-
     model = InternalModel(
-        functions=functions,  # type: ignore[arg-type]
+        utility=lambda: 0,  # type: ignore[arg-type]
+        constraints={},
+        transitions={"next_a": f_a, "next_b": f_b},  # type: ignore[dict-item]
+        functions={"f_weight_b": f_weight_b},  # type: ignore[dict-item]
         grids=grids,
-        function_info=function_info,
         gridspecs={},
         variable_info=pd.DataFrame(),
         params={},
