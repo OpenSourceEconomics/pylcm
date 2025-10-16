@@ -115,15 +115,6 @@ ISKHAKOV_ET_AL_2017 = Model(
         "there is no need for the wage and age functions."
     ),
     n_periods=3,
-    functions={
-        "utility": utility,
-        "next_wealth": next_wealth,
-        "next_lagged_retirement": next_lagged_retirement,
-        "borrowing_constraint": borrowing_constraint,
-        "absorbing_retirement_constraint": absorbing_retirement_constraint,
-        "labor_income": labor_income,
-        "working": working,
-    },
     actions={
         "retirement": DiscreteGrid(RetirementStatus),
         "consumption": LinspaceGrid(
@@ -140,6 +131,19 @@ ISKHAKOV_ET_AL_2017 = Model(
         ),
         "lagged_retirement": DiscreteGrid(RetirementStatus),
     },
+    utility=utility,
+    constraints={
+        "borrowing_constraint": borrowing_constraint,
+        "absorbing_retirement_constraint": absorbing_retirement_constraint,
+    },
+    transitions={
+        "next_wealth": next_wealth,
+        "next_lagged_retirement": next_lagged_retirement,
+    },
+    functions={
+        "labor_income": labor_income,
+        "working": working,
+    },
 )
 
 
@@ -149,15 +153,6 @@ ISKHAKOV_ET_AL_2017_STRIPPED_DOWN = Model(
         "and the lagged_retirement state, and adds wage function that depends on age."
     ),
     n_periods=3,
-    functions={
-        "utility": utility,
-        "next_wealth": next_wealth,
-        "borrowing_constraint": borrowing_constraint,
-        "labor_income": labor_income,
-        "working": working,
-        "wage": wage,
-        "age": age,
-    },
     actions={
         "retirement": DiscreteGrid(RetirementStatus),
         "consumption": LinspaceGrid(
@@ -172,5 +167,18 @@ ISKHAKOV_ET_AL_2017_STRIPPED_DOWN = Model(
             stop=400,
             n_points=100,
         ),
+    },
+    utility=utility,
+    constraints={
+        "borrowing_constraint": borrowing_constraint,
+    },
+    transitions={
+        "next_wealth": next_wealth,
+    },
+    functions={
+        "labor_income": labor_income,
+        "working": working,
+        "wage": wage,
+        "age": age,
     },
 )

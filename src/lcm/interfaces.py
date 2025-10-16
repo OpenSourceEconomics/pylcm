@@ -133,6 +133,9 @@ class InternalModel:
             index contains the name of a model variable. The columns are booleans that
             are True if the variable has the corresponding property. The columns are:
             is_state, is_action, is_continuous, is_discrete.
+        utility: The utility function of the model.
+        transitions: Dictionary that maps transition functions to state names.
+        constraints: Dictionary that maps constraint names to constraint functions.
         functions: Dictionary that maps names of functions to functions. The functions
             differ from the user functions in that they take `params` as a keyword
             argument. Two cases:
@@ -140,10 +143,6 @@ class InternalModel:
               automatically extracted from `params` and passed to the original
               function.
             - Otherwise, the `params` argument is simply ignored.
-        function_info: A table with information about all functions in the model. The
-            index contains the name of a function. The columns are booleans that are
-            True if the function has the corresponding property. The columns are:
-            is_constraint, is_next.
         params: Dict of model parameters.
         n_periods: Number of periods.
         random_utility_shocks: Type of random utility shocks.
@@ -153,8 +152,10 @@ class InternalModel:
     grids: dict[str, Float1D | Int1D]
     gridspecs: dict[str, Grid]
     variable_info: pd.DataFrame
+    utility: InternalUserFunction
+    constraints: dict[str, InternalUserFunction]
+    transitions: dict[str, InternalUserFunction]
     functions: dict[str, InternalUserFunction]
-    function_info: pd.DataFrame
     params: ParamsDict
     n_periods: int
     # Not properly processed yet

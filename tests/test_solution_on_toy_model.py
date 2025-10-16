@@ -69,11 +69,6 @@ def borrowing_constraint(
 
 
 DETERMINISTIC_MODEL = Model(
-    functions={
-        "utility": utility,
-        "next_wealth": next_wealth,
-        "borrowing_constraint": borrowing_constraint,
-    },
     n_periods=2,
     actions={
         "consumption": DiscreteGrid(ConsumptionChoice),
@@ -86,6 +81,13 @@ DETERMINISTIC_MODEL = Model(
             n_points=1,
         ),
     },
+    utility=utility,
+    constraints={
+        "borrowing_constraint": borrowing_constraint,
+    },
+    transitions={
+        "next_wealth": next_wealth,
+    },
 )
 
 
@@ -95,7 +97,7 @@ def next_health(health: DiscreteState) -> DiscreteState:  # type: ignore[empty-b
 
 
 STOCHASTIC_MODEL = deepcopy(DETERMINISTIC_MODEL)
-STOCHASTIC_MODEL.functions["next_health"] = next_health
+STOCHASTIC_MODEL.transitions["next_health"] = next_health
 STOCHASTIC_MODEL.states["health"] = DiscreteGrid(HealthStatus)
 
 

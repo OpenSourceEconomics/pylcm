@@ -43,12 +43,6 @@ def valid_model() -> Model:
 
     return Model(
         n_periods=2,
-        functions={
-            "utility": utility,
-            "next_wealth": next_wealth,
-            "next_health": next_health,
-            "borrowing_constraint": borrowing_constraint,
-        },
         actions={
             "consumption": LinspaceGrid(
                 start=1,
@@ -68,6 +62,14 @@ def valid_model() -> Model:
                 n_points=3,
             ),
         },
+        utility=utility,
+        constraints={
+            "borrowing_constraint": borrowing_constraint,
+        },
+        transitions={
+            "next_wealth": next_wealth,
+            "next_health": next_health,
+        },
     )
 
 
@@ -85,12 +87,7 @@ def nan_value_model(valid_model: Model) -> Model:
         )
         return jnp.log(consumption) + nan_term
 
-    updated_functions = valid_model.functions.copy()
-    updated_functions["utility"] = invalid_utility
-
-    return valid_model.replace(
-        functions=updated_functions,
-    )
+    return valid_model.replace(utility=invalid_utility)
 
 
 @pytest.fixture
@@ -107,12 +104,7 @@ def inf_value_model(valid_model: Model) -> Model:
         )
         return jnp.log(consumption) + inf_term
 
-    updated_functions = valid_model.functions.copy()
-    updated_functions["utility"] = invalid_utility
-
-    return valid_model.replace(
-        functions=updated_functions,
-    )
+    return valid_model.replace(utility=invalid_utility)
 
 
 def test_solve_model_with_nan_value_function_array_raises_error(

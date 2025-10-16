@@ -94,18 +94,22 @@ ISKHAKOV_ET_AL_2017_DISCRETE = Model(
         "and the lagged_retirement state, and makes the consumption decision discrete."
     ),
     n_periods=3,
-    functions={
-        "utility": utility_discrete,
-        "next_wealth": next_wealth_discrete,
-        "borrowing_constraint": borrowing_constraint,
-        "labor_income": labor_income,
-        "working": working,
-    },
     actions={
         "retirement": DiscreteGrid(RetirementStatus),
         "consumption": DiscreteGrid(ConsumptionChoice),
     },
     states={
         "wealth": DiscreteGrid(WealthStatus),
+    },
+    utility=utility_discrete,
+    constraints={
+        "borrowing_constraint": borrowing_constraint,
+    },
+    transitions={
+        "next_wealth": next_wealth_discrete,
+    },
+    functions={
+        "labor_income": labor_income,
+        "working": working,
     },
 )

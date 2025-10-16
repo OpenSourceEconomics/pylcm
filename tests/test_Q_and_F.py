@@ -105,19 +105,15 @@ def internal_model_illustrative():
         "retirement": jnp.array([0, 1]),
     }
 
-    functions = {
+    constraints = {
         "mandatory_retirement_constraint": mandatory_retirement_constraint,
         "mandatory_lagged_retirement_constraint": (
             mandatory_lagged_retirement_constraint
         ),
         "absorbing_retirement_constraint": absorbing_retirement_constraint,
-        "age": age,
     }
 
-    function_info = pd.DataFrame(
-        {"is_constraint": [True, True, True, False]},
-        index=list(functions),
-    )
+    functions = {"age": age}
 
     # create a model instance where some attributes are set to None because they
     # are not needed to create the feasibilty mask
@@ -125,8 +121,10 @@ def internal_model_illustrative():
         grids=grids,
         gridspecs={},
         variable_info=pd.DataFrame(),
+        utility=lambda: 0,  # type: ignore[arg-type]
+        transitions={},
+        constraints=constraints,  # type: ignore[arg-type]
         functions=functions,  # type: ignore[arg-type]
-        function_info=function_info,
         params={},
         random_utility_shocks=ShockType.NONE,
         n_periods=0,
@@ -186,16 +184,14 @@ def test_get_combined_constraint():
     def h(params):  # noqa: ARG001
         return None
 
-    function_info = pd.DataFrame(
-        {"is_constraint": [True, True, False]},
-        index=["f", "g", "h"],
-    )
     model = InternalModel(
         grids={},
         gridspecs={},
         variable_info=pd.DataFrame(),
-        functions={"f": f, "g": g, "h": h},  # type: ignore[dict-item]
-        function_info=function_info,
+        utility=lambda: 0,  # type: ignore[arg-type]
+        constraints={"f": f, "g": g},  # type: ignore[dict-item]
+        transitions={},
+        functions={"h": h},  # type: ignore[dict-item]
         params={},
         random_utility_shocks=ShockType.NONE,
         n_periods=0,

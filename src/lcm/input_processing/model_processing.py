@@ -11,10 +11,11 @@ from dags.signature import with_signature
 from lcm.functools import convert_kwargs_to_args
 from lcm.input_processing.create_params_template import create_params_template
 from lcm.input_processing.util import (
-    get_function_info,
+    get_all_user_functions,
     get_grids,
     get_gridspecs,
     get_variable_info,
+    is_stochastic_transition,
 )
 from lcm.interfaces import InternalModel, ShockType
 
@@ -52,12 +53,16 @@ def process_model(model: Model) -> InternalModel:
     """
     params = create_params_template(model)
 
+    internal_functions = _get_internal_functions(model, params=params)
+
     return InternalModel(
         grids=get_grids(model),
         gridspecs=get_gridspecs(model),
         variable_info=get_variable_info(model),
-        functions=_get_internal_functions(model, params=params),
-        function_info=get_function_info(model),
+        functions=internal_functions["functions"],  # type: ignore[arg-type]
+        utility=internal_functions["utility"],  # type: ignore[arg-type]
+        constraints=internal_functions["constraints"],  # type: ignore[arg-type]
+        transitions=internal_functions["transitions"],  # type: ignore[arg-type]
         params=params,
         # currently no additive utility shocks are supported
         random_utility_shocks=ShockType.NONE,
@@ -68,7 +73,7 @@ def process_model(model: Model) -> InternalModel:
 def _get_internal_functions(
     model: Model,
     params: ParamsDict,
-) -> dict[str, InternalUserFunction]:
+) -> dict[str, InternalUserFunction | dict[str, InternalUserFunction]]:
     """Process the user provided model functions.
 
     Args:
@@ -85,18 +90,23 @@ def _get_internal_functions(
     variable_info = get_variable_info(model)
     grids = get_grids(model)
 
-    raw_functions = deepcopy(model.functions)
+    raw_functions = deepcopy(get_all_user_functions(model))
 
-    for var in model.states:
-        if variable_info.loc[var, "is_stochastic"]:
-            raw_functions[f"next_{var}"] = _get_stochastic_next_function(
-                raw_func=raw_functions[f"next_{var}"],
-                grid=grids[var],
+    # ==================================================================================
+    # Create functions for stochastic transitions
+    # ==================================================================================
+    for next_fn_name, next_fn in model.transitions.items():
+        if is_stochastic_transition(next_fn):
+            state = next_fn_name.removeprefix("next_")
+
+            raw_functions[next_fn_name] = _get_stochastic_next_function(
+                raw_func=next_fn,
+                grid=grids[state],
             )
 
-            raw_functions[f"weight_next_{var}"] = _get_stochastic_weight_function(
-                raw_func=raw_functions[f"next_{var}"],
-                name=var,
+            raw_functions[f"weight_{next_fn_name}"] = _get_stochastic_weight_function(
+                raw_func=next_fn,
+                name=state,
                 variable_info=variable_info,
             )
 
@@ -130,7 +140,25 @@ def _get_internal_functions(
 
         functions[func_name] = processed_func
 
-    return functions
+    internal_transition = {fn_name: functions[fn_name] for fn_name in model.transitions}
+    internal_utility = functions["utility"]
+    internal_constraints = {
+        fn_name: functions[fn_name] for fn_name in model.constraints
+    }
+    internal_functions = {
+        fn_name: functions[fn_name]
+        for fn_name in functions
+        if fn_name not in model.transitions
+        and fn_name not in model.constraints
+        and fn_name != "utility"
+    }
+
+    return {
+        "functions": internal_functions,
+        "utility": internal_utility,
+        "constraints": internal_constraints,
+        "transitions": internal_transition,
+    }
 
 
 def _replace_func_parameters_by_params(

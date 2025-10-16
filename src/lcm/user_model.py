@@ -46,6 +46,9 @@ class Model:
     description: str | None = None
     _: KW_ONLY
     n_periods: int
+    utility: UserFunction
+    constraints: dict[str, UserFunction] = field(default_factory=dict)
+    transitions: dict[str, UserFunction] = field(default_factory=dict)
     functions: dict[str, UserFunction] = field(default_factory=dict)
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
@@ -173,7 +176,7 @@ class Model:
             ) from e
 
 
-def _validate_attribute_types(model: Model) -> None:  # noqa: C901
+def _validate_attribute_types(model: Model) -> None:  # noqa: C901, PLR0912
     """Validate the types of the model attributes."""
     error_messages = []
 
@@ -192,16 +195,26 @@ def _validate_attribute_types(model: Model) -> None:  # noqa: C901
 
     # Validate types of functions
     # ----------------------------------------------------------------------------------
-    if isinstance(model.functions, dict):
-        for k, v in model.functions.items():
-            if not isinstance(k, str):
-                error_messages.append(f"function keys must be a strings, but is {k}.")
-            if not callable(v):
-                error_messages.append(
-                    f"function values must be a callable, but is {v}."
-                )
-    else:
-        error_messages.append("functions must be a dictionary.")
+    function_collections = [model.transitions, model.constraints, model.functions]
+    for func_collection in function_collections:
+        if isinstance(func_collection, dict):
+            for k, v in func_collection.items():
+                if not isinstance(k, str):
+                    error_messages.append(
+                        f"function keys must be a strings, but is {k}."
+                    )
+                if not callable(v):
+                    error_messages.append(
+                        f"function values must be a callable, but is {v}."
+                    )
+        else:
+            error_messages.append(
+                "transitions, constraints, and functions must be a dictionary of "
+                "callables."
+            )
+
+    if not callable(model.utility):
+        error_messages.append("utility must be a callable.")
 
     if error_messages:
         msg = format_messages(error_messages)
@@ -215,20 +228,38 @@ def _validate_logical_consistency(model: Model) -> None:
     if model.n_periods < 1:
         error_messages.append("Number of periods must be a positive integer.")
 
-    if "utility" not in model.functions:
+    if "utility" in model.functions:
         error_messages.append(
-            "Utility function is not defined. LCM expects a function called 'utility' "
-            "in the functions dictionary.",
+            "The function name 'utility' is reserved and cannot be used in the "
+            "functions dictionary. Please use the utility attribute instead.",
+        )
+    invalid_transitions = [
+        tran_name
+        for tran_name in model.transitions
+        if not tran_name.startswith("next_")
+    ]
+    if invalid_transitions:
+        error_messages.append(
+            "Each transitions name must start with 'next_'. "
+            "The following transition names are invalid:"
+            f"{invalid_transitions}.",
         )
 
-    states_without_next_func = [
-        state for state in model.states if f"next_{state}" not in model.functions
-    ]
-    if states_without_next_func:
+    states = set(model.states)
+    states_via_transition = {s.removeprefix("next_") for s in model.transitions}
+
+    if states - states_via_transition:
         error_messages.append(
-            "Each state must have a corresponding next state function. For the "
-            "following states, no next state function was found: "
-            f"{states_without_next_func}.",
+            "Each state must have a corresponding transition function. For the "
+            f"following states, no transition function was found: "
+            f"{states - states_via_transition}.",
+        )
+
+    if states_via_transition - states:
+        error_messages.append(
+            "Each transition function must correspond to a state. For the following "
+            f"transition functions, no corresponding state was found: "
+            f"{states_via_transition - states}.",
         )
 
     states_and_actions_overlap = set(model.states) & set(model.actions)

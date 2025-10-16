@@ -312,6 +312,7 @@ def _get_U_and_F(
     """
     functions = {
         "feasibility": _get_feasibility(internal_model),
+        "utility": internal_model.utility,
         **internal_model.functions,
     }
     return concatenate_functions(
@@ -332,16 +333,14 @@ def _get_feasibility(internal_model: InternalModel) -> InternalUserFunction:
         The combined constraint function (feasibility).
 
     """
-    constraints = internal_model.function_info.query("is_constraint").index.tolist()
-
-    if constraints:
+    if internal_model.constraints:
         with warnings.catch_warnings():
             # set annotations does not set the return type when concatenate_functions is
             # called with an aggregator and raises a warning.
             warnings.simplefilter("ignore", category=DagsWarning)
             combined_constraint = concatenate_functions(
-                functions=internal_model.functions,
-                targets=constraints,
+                functions=internal_model.constraints | internal_model.functions,
+                targets=list(internal_model.constraints),
                 aggregator=jnp.logical_and,
                 set_annotations=True,
             )
