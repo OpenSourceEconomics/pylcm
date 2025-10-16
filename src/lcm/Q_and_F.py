@@ -11,7 +11,7 @@ from dags.signature import with_signature
 from lcm.dispatchers import productmap
 from lcm.function_representation import get_value_function_representation
 from lcm.functools import get_union_of_arguments
-from lcm.input_processing.util import get_variable_info
+from lcm.input_processing.util import get_grids, get_variable_info
 from lcm.interfaces import InternalFunctions, Target
 from lcm.next_state import get_next_state_function, get_next_stochastic_weights_function
 
@@ -85,6 +85,7 @@ def get_Q_and_F_non_terminal(
 
     """
     variable_info = get_variable_info(regime)
+    grids = get_grids(regime)
 
     stochastic_variables = variable_info.query("is_stochastic").index.tolist()
     # As we compute the expecation of the next period's value function, we only need the
@@ -102,7 +103,7 @@ def get_Q_and_F_non_terminal(
 
     # Functions required to calculate the expected continuation values
     state_transition = get_next_state_function(
-        regime=regime,
+        grids=grids,
         internal_functions=internal_functions,
         next_states=next_state_space_info.states_names,
         target=Target.SOLVE,

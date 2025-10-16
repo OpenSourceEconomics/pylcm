@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import jax
 
+from lcm.input_processing.util import get_grids, get_variable_info
 from lcm.interfaces import InternalFunctions, StateActionSpace, StateSpaceInfo
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a, get_max_Q_over_a
 from lcm.Q_and_F import get_Q_and_F
@@ -19,7 +20,9 @@ if TYPE_CHECKING:
     from lcm.typing import ArgmaxQOverAFunction, MaxQOverAFunction, QAndFFunction
 
 
-def build_state_space_info(regime: Regime, n_periods: int) -> dict[int, StateSpaceInfo]:
+def build_state_space_infos(
+    regime: Regime, n_periods: int
+) -> dict[int, StateSpaceInfo]:
     state_space_infos = {}
     for period in range(n_periods):
         state_space_infos[period] = create_state_space_info(
@@ -29,13 +32,16 @@ def build_state_space_info(regime: Regime, n_periods: int) -> dict[int, StateSpa
     return state_space_infos
 
 
-def build_state_action_space(
+def build_state_action_spaces(
     regime: Regime, n_periods: int
 ) -> dict[int, StateActionSpace]:
+    variable_info = get_variable_info(regime)
+    grids = get_grids(regime)
     state_action_spaces = {}
     for period in range(n_periods):
         state_action_spaces[period] = create_state_action_space(
-            regime=regime,
+            variable_info=variable_info,
+            grids=grids,
             is_last_period=(period == n_periods - 1),
         )
     return state_action_spaces
@@ -44,7 +50,7 @@ def build_state_action_space(
 def build_Q_and_F_functions(
     regime: Regime, n_periods: int, internal_functions: InternalFunctions
 ) -> dict[int, Any]:
-    state_space_infos = build_state_space_info(regime, n_periods)
+    state_space_infos = build_state_space_infos(regime, n_periods)
     # Create last period's next state space info
     last_periods_next_state_space_info = StateSpaceInfo(
         states_names=(),
@@ -81,7 +87,7 @@ def build_max_Q_over_a_functions(
     n_periods: int,
     Q_and_F_functions: dict[int, QAndFFunction],
 ) -> dict[int, MaxQOverAFunction]:
-    state_action_space = build_state_action_space(regime, n_periods)
+    state_action_space = build_state_action_spaces(regime, n_periods)
 
     max_Q_over_a_functions = {}
     for period in range(n_periods):
@@ -104,7 +110,7 @@ def build_argmax_and_max_Q_over_a_functions(
     n_periods: int,
     Q_and_F_functions: dict[int, QAndFFunction],
 ) -> dict[int, ArgmaxQOverAFunction]:
-    state_action_space = build_state_action_space(regime, n_periods)
+    state_action_space = build_state_action_spaces(regime, n_periods)
 
     argmax_and_max_Q_over_a_functions = {}
     for period in range(n_periods):

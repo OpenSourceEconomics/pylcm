@@ -153,9 +153,8 @@ def test_simulate_iskhakov_et_al_2017(model: Regime) -> None:
 
 
 def test_get_max_Q_over_c():
-    model = process_regime(
-        get_model("iskhakov_et_al_2017_stripped_down", n_periods=3),
-    )
+    regime = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
+    internal_regime = process_regime(regime)
 
     params = {
         "beta": 1.0,
@@ -167,14 +166,14 @@ def test_get_max_Q_over_c():
     }
 
     state_space_info = create_state_space_info(
-        internal_regime=model,
+        regime=regime,
         is_last_period=False,
     )
 
     Q_and_F = get_Q_and_F(
-        regime=model,
+        regime=internal_regime,
         next_state_space_info=state_space_info,
-        period=model.n_periods - 1,
+        period=internal_regime.n_periods - 1,
     )
 
     max_Q_over_c = get_max_Q_over_c(
@@ -198,9 +197,8 @@ def test_get_max_Q_over_c():
 
 
 def test_get_max_Q_over_c_with_discrete_model():
-    model = process_regime(
-        get_model("iskhakov_et_al_2017_discrete", n_periods=3),
-    )
+    regime = get_model("iskhakov_et_al_2017_discrete", n_periods=3)
+    internal_regime = process_regime(regime)
 
     params = {
         "beta": 1.0,
@@ -212,14 +210,14 @@ def test_get_max_Q_over_c_with_discrete_model():
     }
 
     state_space_info = create_state_space_info(
-        internal_regime=model,
+        regime=regime,
         is_last_period=False,
     )
 
     Q_and_F = get_Q_and_F(
-        regime=model,
+        regime=internal_regime,
         next_state_space_info=state_space_info,
-        period=model.n_periods - 1,
+        period=internal_regime.n_periods - 1,
     )
 
     max_Q_over_c = get_max_Q_over_c(
@@ -248,9 +246,8 @@ def test_get_max_Q_over_c_with_discrete_model():
 
 
 def test_argmax_and_max_Q_over_c():
-    model = process_regime(
-        get_model("iskhakov_et_al_2017_stripped_down", n_periods=3),
-    )
+    regime = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
+    internal_regime = process_regime(regime)
 
     params = {
         "beta": 1.0,
@@ -262,14 +259,14 @@ def test_argmax_and_max_Q_over_c():
     }
 
     state_space_info = create_state_space_info(
-        internal_regime=model,
+        regime=regime,
         is_last_period=False,
     )
 
     Q_and_F = get_Q_and_F(
-        regime=model,
+        regime=internal_regime,
         next_state_space_info=state_space_info,
-        period=model.n_periods - 1,
+        period=internal_regime.n_periods - 1,
     )
 
     argmax_and_max_Q_over_c = get_argmax_and_max_Q_over_c(
@@ -293,9 +290,8 @@ def test_argmax_and_max_Q_over_c():
 
 
 def test_argmax_and_max_Q_over_c_with_discrete_model():
-    model = process_regime(
-        get_model("iskhakov_et_al_2017_discrete", n_periods=3),
-    )
+    regime = get_model("iskhakov_et_al_2017_discrete", n_periods=3)
+    internal_regime = process_regime(regime)
 
     params = {
         "beta": 1.0,
@@ -307,14 +303,14 @@ def test_argmax_and_max_Q_over_c_with_discrete_model():
     }
 
     state_space_info = create_state_space_info(
-        internal_regime=model,
+        regime=regime,
         is_last_period=False,
     )
 
     Q_and_F = get_Q_and_F(
-        regime=model,
+        regime=internal_regime,
         next_state_space_info=state_space_info,
-        period=model.n_periods - 1,
+        period=internal_regime.n_periods - 1,
     )
 
     argmax_and_max_Q_over_c = get_argmax_and_max_Q_over_c(

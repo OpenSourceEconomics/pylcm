@@ -14,8 +14,8 @@ from lcm.input_processing.regime_components import (
     build_argmax_and_max_Q_over_a_functions,
     build_max_Q_over_a_functions,
     build_Q_and_F_functions,
-    build_state_action_space,
-    build_state_space_info,
+    build_state_action_spaces,
+    build_state_space_infos,
 )
 from lcm.input_processing.util import (
     get_grids,
@@ -70,11 +70,11 @@ def process_regime(regime: Regime) -> InternalRegime:
         internal_functions=internal_functions,
     )
 
-    state_space_info = build_state_space_info(
+    state_space_info = build_state_space_infos(
         regime=regime,
         n_periods=regime.n_periods,
     )
-    state_action_space = build_state_action_space(
+    state_action_space = build_state_action_spaces(
         regime=regime,
         n_periods=regime.n_periods,
     )
@@ -96,6 +96,7 @@ def process_regime(regime: Regime) -> InternalRegime:
         functions=internal_functions.functions,
         utility=internal_functions.utility,
         constraints=internal_functions.constraints,
+        internal_functions=internal_functions,
         transitions=internal_functions.transitions,
         params_template=params_template,
         state_action_spaces=state_action_space,

@@ -39,11 +39,12 @@ def regime_input():
     internal_regime = process_regime(regime)
 
     state_space_info = create_state_space_info(
-        internal_regime=internal_regime,
+        regime=regime,
         is_last_period=False,
     )
     state_action_space = create_state_action_space(
-        internal_regime=internal_regime,
+        variable_info=internal_regime.variable_info,
+        grids=internal_regime.grids,
         is_last_period=False,
     )
     params = {
@@ -58,7 +59,8 @@ def regime_input():
         "state_action_space": state_action_space,
         "state_space_info": state_space_info,
         "next_state": get_next_state_function(
-            internal_regime=internal_regime,
+            internal_functions=internal_regime.internal_functions,
+            grids=internal_regime.grids,
             next_states=("wealth",),
             target=Target.SOLVE,
         ),

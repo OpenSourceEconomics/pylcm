@@ -20,7 +20,8 @@ def test_get_next_state_function_with_solve_target():
         get_regime("iskhakov_et_al_2017_stripped_down", n_periods=3),
     )
     got_func = get_next_state_function(
-        internal_regime=internal_regime,
+        internal_functions=internal_regime.internal_functions,
+        grids=internal_regime.grids,
         next_states=("wealth",),
         target=Target.SOLVE,
     )
@@ -66,7 +67,10 @@ def test_get_next_state_function_with_simulate_target():
     )
 
     got_func = get_next_state_function(
-        internal_regime=internal_regime, next_states=("a", "b"), target=Target.SIMULATE
+        internal_functions=internal_regime.internal_functions,
+        grids=internal_regime.grids,
+        next_states=("a", "b"),
+        target=Target.SIMULATE,
     )
 
     key = jnp.arange(2, dtype="uint32")

@@ -8,7 +8,7 @@ import jax
 from dags import concatenate_functions
 from dags.signature import with_signature
 
-from lcm.input_processing.util import get_grids, is_stochastic_transition
+from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import InternalFunctions, Target
 
 if TYPE_CHECKING:
@@ -16,7 +16,6 @@ if TYPE_CHECKING:
 
     from jax import Array
 
-    from lcm.regime import Regime
     from lcm.typing import (
         ContinuousState,
         DiscreteState,
@@ -27,7 +26,7 @@ if TYPE_CHECKING:
 
 def get_next_state_function(
     *,
-    regime: Regime,
+    grids: dict[str, Array],
     internal_functions: InternalFunctions,
     next_states: tuple[str, ...],
     target: Target,
@@ -53,7 +52,7 @@ def get_next_state_function(
         # For the simulation target, we need to extend the functions dictionary with
         # stochastic next states functions and their weights.
         extended_transitions = _extend_transitions_for_simulation(
-            regime=regime, internal_functions=internal_functions
+            grids=grids, internal_functions=internal_functions
         )
         functions = extended_transitions | internal_functions.functions
     else:
@@ -101,20 +100,19 @@ def get_next_stochastic_weights_function(
 
 
 def _extend_transitions_for_simulation(
-    regime: Regime,
+    grids: dict[str, Array],
     internal_functions: InternalFunctions,
 ) -> dict[str, Callable[..., Array]]:
     """Extend the functions dictionary for the simulation target.
 
     Args:
-        internal_regime: Internal regime instance.
+        grids: Dictionary of grids.
+        internal_functions: Internal functions instance.
 
     Returns:
         Extended functions dictionary.
 
     """
-    grids = get_grids(regime)
-
     stochastic_targets = [
         key
         for key, next_fn in internal_functions.transitions.items()

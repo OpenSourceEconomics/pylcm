@@ -101,7 +101,8 @@ def simulate(
         }
 
         state_action_space = create_state_action_space(
-            internal_regime=internal_regime,
+            variable_info=internal_regime.variable_info,
+            grids=internal_regime.grids,
             states=states_for_state_action_space,
             is_last_period=is_last_period,
         )
@@ -172,7 +173,8 @@ def simulate(
                 n_initial_states=n_initial_states,
             )
             next_state = get_next_state_function(
-                internal_regime=internal_regime,
+                internal_functions=internal_regime.internal_functions,
+                grids=internal_regime.grids,
                 next_states=tuple(state_action_space.states),
                 target=Target.SIMULATE,
             )

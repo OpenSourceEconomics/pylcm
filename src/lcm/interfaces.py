@@ -160,6 +160,7 @@ class InternalRegime:
     constraints: dict[str, InternalUserFunction]
     transitions: dict[str, InternalUserFunction]
     functions: dict[str, InternalUserFunction]
+    internal_functions: InternalFunctions
     params_template: ParamsDict
     n_periods: int
     state_action_spaces: dict[int, StateActionSpace]

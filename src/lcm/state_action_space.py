@@ -3,17 +3,19 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from lcm.grids import ContinuousGrid, DiscreteGrid
-from lcm.input_processing.util import get_grids, get_gridspecs, get_variable_info
+from lcm.input_processing.util import get_gridspecs, get_variable_info
 from lcm.interfaces import StateActionSpace, StateSpaceInfo
 
 if TYPE_CHECKING:
+    import pandas as pd
     from jax import Array
 
     from lcm.regime import Regime
 
 
 def create_state_action_space(
-    regime: Regime,
+    variable_info: pd.DataFrame,
+    grids: dict[str, Array],
     *,
     states: dict[str, Array] | None = None,
     is_last_period: bool = False,
@@ -24,7 +26,8 @@ def create_state_action_space(
     simulation, states must be provided.
 
     Args:
-        internal_regime: Internal regime instance.
+        variable_info: The variable info table as returned by get_variable_info.
+        grids: A dictionary of grids as returned by get_grids.
         states: A dictionary of states. If None, the grids as specified in the regime
             are used.
         is_last_period: Whether the state-action-space is created for the last period,
@@ -36,8 +39,7 @@ def create_state_action_space(
         appear in the variable info table.
 
     """
-    vi = get_variable_info(regime)
-    grids = get_grids(regime)
+    vi = variable_info.copy()
 
     if is_last_period:
         vi = vi.query("enters_concurrent_valuation")
