@@ -259,6 +259,7 @@ disallow_untyped_defs = false
 [[tool.mypy.overrides]]
 module = [
     "tests/test_dispatchers",
+    "tests/regime_mock",
 ]
 ignore_errors = true
 

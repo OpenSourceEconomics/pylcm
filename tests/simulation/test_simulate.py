@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_almost_equal, assert_array_equal
 
-from lcm.input_processing import process_model
+from lcm.input_processing import process_regime
 from lcm.logging import get_logger
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a
 from lcm.Q_and_F import get_Q_and_F
@@ -16,10 +16,7 @@ from lcm.simulation.simulate import (
     simulate,
 )
 from lcm.state_action_space import create_state_action_space, create_state_space_info
-from tests.test_models import (
-    get_model,
-    get_params,
-)
+from tests.test_models.utils import get_model, get_params
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -39,20 +36,20 @@ def simulate_inputs():
             "consumption": _orig_model.actions["consumption"].replace(stop=100),  # type: ignore[attr-defined]
         }
     )
-    internal_model = process_model(model)
+    internal_regime = process_regime(model)
 
     state_space_info = create_state_space_info(
-        internal_model=internal_model,
+        internal_regime=internal_regime,
         is_last_period=False,
     )
     state_action_space = create_state_action_space(
-        internal_model=internal_model,
+        internal_regime=internal_regime,
         is_last_period=False,
     )
     argmax_and_max_Q_over_a_functions = []
     for period in range(model.n_periods):
         Q_and_F = get_Q_and_F(
-            internal_model=internal_model,
+            internal_regime=internal_regime,
             next_state_space_info=state_space_info,
             period=period,
         )
@@ -64,7 +61,7 @@ def simulate_inputs():
 
     return {
         "argmax_and_max_Q_over_a_functions": argmax_and_max_Q_over_a_functions,
-        "internal_model": internal_model,
+        "internal_regime": internal_regime,
     }
 
 

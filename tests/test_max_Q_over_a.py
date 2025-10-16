@@ -8,7 +8,7 @@ from jax import Array
 from numpy.testing import assert_array_equal
 
 from lcm.dispatchers import simulation_spacemap
-from lcm.input_processing import process_model
+from lcm.input_processing import process_regime
 from lcm.interfaces import StateActionSpace, Target
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a, get_max_Q_over_a
 from lcm.max_Q_over_c import get_argmax_and_max_Q_over_c, get_max_Q_over_c
@@ -21,9 +21,7 @@ from lcm.simulation.simulate import (
     _lookup_values_from_indices,
 )
 from lcm.state_action_space import create_state_action_space, create_state_space_info
-from tests.test_models import (
-    get_model,
-)
+from tests.test_models.utils import get_regime
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -32,20 +30,20 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-def model_input():
-    _model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=1)
-    # Modify the model to have a coarser continuous action space for testing
-    actions = _model.actions
+def regime_input():
+    _regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=1)
+    # Modify the regime to have a coarser continuous action space for testing
+    actions = _regime.actions
     actions["consumption"] = actions["consumption"].replace(stop=20)  # type: ignore[attr-defined]
-    model = _model.replace(actions=actions)
-    internal_model = process_model(model)
+    regime = _regime.replace(actions=actions)
+    internal_regime = process_regime(regime)
 
     state_space_info = create_state_space_info(
-        internal_model=internal_model,
+        internal_regime=internal_regime,
         is_last_period=False,
     )
     state_action_space = create_state_action_space(
-        internal_model=internal_model,
+        internal_regime=internal_regime,
         is_last_period=False,
     )
     params = {
@@ -56,17 +54,19 @@ def model_input():
         },
     }
     return {
-        "model": internal_model,
+        "regime": internal_regime,
         "state_action_space": state_action_space,
         "state_space_info": state_space_info,
         "next_state": get_next_state_function(
-            internal_model=internal_model, next_states=("wealth",), target=Target.SOLVE
+            internal_regime=internal_regime,
+            next_states=("wealth",),
+            target=Target.SOLVE,
         ),
         "params": params,
     }
 
 
-def test_max_Q_over_a_equal(model_input):
+def test_max_Q_over_a_equal(regime_input):
     """Test max_Q_over_a is equivalent to max_Qc_over_d (max_Q_over_c).
 
     In this test we check that taking the maximum of Q over all actions
@@ -75,13 +75,13 @@ def test_max_Q_over_a_equal(model_input):
     (max_Qc_over_d); since these operations should be mathematically equivalent.
 
     """
-    params = model_input["params"]
-    state_space_info = model_input["state_space_info"]
-    state_action_space = model_input["state_action_space"]
-    model = model_input["model"]
+    params = regime_input["params"]
+    state_space_info = regime_input["state_space_info"]
+    state_action_space = regime_input["state_action_space"]
+    regime = regime_input["regime"]
 
     Q_and_F = get_Q_and_F(
-        internal_model=model,
+        internal_regime=regime,
         next_state_space_info=state_space_info,
         period=0,
     )
@@ -119,8 +119,8 @@ def test_max_Q_over_a_equal(model_input):
         ),
     )
     max_Qc_over_d = get_max_Qc_over_d(
-        random_utility_shock_type=model.random_utility_shocks,
-        variable_info=model.variable_info,
+        random_utility_shock_type=regime.random_utility_shocks,
+        variable_info=regime.variable_info,
         is_last_period=False,
     )
     Qc_arr = max_Q_over_c(
@@ -138,7 +138,7 @@ def test_max_Q_over_a_equal(model_input):
     assert_array_equal(V_arr_a, V_arr_c_d)
 
 
-def test_argmax_Q_over_a_equal(model_input):
+def test_argmax_Q_over_a_equal(regime_input):
     """Test argmax_Q_over_a is equivalent to argmax_Qc_over_d (argmax_Q_over_c).
 
     In this test we check that taking the argmax of Q over all actions
@@ -148,13 +148,13 @@ def test_argmax_Q_over_a_equal(model_input):
     equivalent.
 
     """
-    params = model_input["params"]
-    state_space_info = model_input["state_space_info"]
-    state_action_space = model_input["state_action_space"]
-    model = model_input["model"]
+    params = regime_input["params"]
+    state_space_info = regime_input["state_space_info"]
+    state_action_space = regime_input["state_action_space"]
+    regime = regime_input["regime"]
 
     Q_and_F = get_Q_and_F(
-        internal_model=model,
+        internal_regime=regime,
         next_state_space_info=state_space_info,
         period=0,
     )
@@ -209,7 +209,7 @@ def test_argmax_Q_over_a_equal(model_input):
         states_names=tuple(state_action_space.states),
     )
     argmax_and_max_Qc_over_d = get_argmax_and_max_Qc_over_d(
-        variable_info=model.variable_info,
+        variable_info=regime.variable_info,
     )
 
     indices_argmax_Q_over_c, Qc_arr = argmax_and_max_Q_over_c(

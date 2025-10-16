@@ -12,7 +12,7 @@ from lcm.dispatchers import simulation_spacemap, vmap_1d
 from lcm.error_handling import validate_value_function_array
 from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import (
-    InternalModel,
+    InternalRegime,
     InternalSimulationPeriodResults,
     StateActionSpace,
     Target,
@@ -39,7 +39,7 @@ def simulate(
     params: ParamsDict,
     initial_states: dict[str, Array],
     argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction],
-    internal_model: InternalModel,
+    internal_regime: InternalRegime,
     logger: logging.Logger,
     V_arr_dict: dict[int, FloatND],
     *,
@@ -57,7 +57,7 @@ def simulate(
         next_state: Function that returns the next state given the current
             state and action variables. For stochastic variables, it returns a random
             draw from the distribution of the next state.
-        internal_model: Internal model instance.
+        internal_regime: Internal model instance.
         logger: Logger that logs to stdout.
         V_arr_dict: Dict of value function arrays of length n_periods.
         additional_targets: List of targets to compute. If provided, the targets
@@ -97,11 +97,11 @@ def simulate(
         else:
             query = "is_state and (enters_concurrent_valuation | enters_transition)"
         states_for_state_action_space = {
-            n: states[n] for n in internal_model.variable_info.query(query).index
+            n: states[n] for n in internal_regime.variable_info.query(query).index
         }
 
         state_action_space = create_state_action_space(
-            internal_model=internal_model,
+            internal_regime=internal_regime,
             states=states_for_state_action_space,
             is_last_period=is_last_period,
         )
@@ -163,7 +163,7 @@ def simulate(
         if not is_last_period:
             stochastic_next_function_names = [
                 next_fn_name
-                for next_fn_name, next_fn in internal_model.transitions.items()
+                for next_fn_name, next_fn in internal_regime.transitions.items()
                 if is_stochastic_transition(next_fn)
             ]
             key, stochastic_variables_keys = generate_simulation_keys(
@@ -172,7 +172,7 @@ def simulate(
                 n_initial_states=n_initial_states,
             )
             next_state = get_next_state_function(
-                internal_model=internal_model,
+                internal_regime=internal_regime,
                 next_states=tuple(state_action_space.states),
                 target=Target.SIMULATE,
             )
@@ -209,7 +209,7 @@ def simulate(
 
     processed = process_simulated_data(
         simulation_results,
-        internal_model=internal_model,
+        internal_regime=internal_regime,
         params=params,
         additional_targets=additional_targets,
     )

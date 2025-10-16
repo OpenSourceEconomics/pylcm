@@ -1,5 +1,3 @@
-"""Create a parameter template for a model specification."""
-
 from __future__ import annotations
 
 import inspect
@@ -9,7 +7,6 @@ import jax.numpy as jnp
 from jax import Array
 
 from lcm.input_processing.util import (
-    get_all_user_functions,
     get_grids,
     get_variable_info,
 )
@@ -17,33 +14,33 @@ from lcm.input_processing.util import (
 if TYPE_CHECKING:
     import pandas as pd
 
+    from lcm.regime import Regime
     from lcm.typing import ParamsDict
-    from lcm.user_model import Model
 
 
 def create_params_template(
-    model: Model,
+    regime: Regime,
     default_params: dict[str, float] = {"beta": jnp.nan},  # noqa: B006
 ) -> ParamsDict:
-    """Create parameter template from a model specification.
+    """Create parameter template from a regime specification.
 
     Args:
-        model: The model as provided by the user.
+        regime: The regime as provided by the user.
         default_params: A dictionary of default parameters. Default is None. If None,
             the default {"beta": np.nan} is used. For other lifetime reward objectives,
             additional parameters may be required, for example {"beta": np.nan, "delta":
             np.nan} for beta-delta discounting.
 
     Returns:
-        A nested dictionary of model parameters.
+        A nested dictionary of regime parameters.
 
     """
-    variable_info = get_variable_info(model)
-    grids = get_grids(model)
+    variable_info = get_variable_info(regime)
+    grids = get_grids(regime)
 
     if variable_info["is_stochastic"].any():
         stochastic_transitions = _create_stochastic_transition_params(
-            model=model,
+            regime=regime,
             variable_info=variable_info,
             grids=grids,
         )
@@ -51,43 +48,43 @@ def create_params_template(
     else:
         stochastic_transition_params = {}
 
-    function_params = _create_function_params(model)
+    function_params = _create_function_params(regime)
 
     return default_params | function_params | stochastic_transition_params
 
 
-def _create_function_params(model: Model) -> dict[str, dict[str, float]]:
-    """Get function parameters from a model specification.
+def _create_function_params(regime: Regime) -> dict[str, dict[str, float]]:
+    """Get function parameters from a regime specification.
 
-    Explanation: We consider the arguments of all model functions, from which we exclude
-    all variables that are states, actions or the period argument. Everything else is
-    considered a parameter of the respective model function that is provided by the
-    user.
+    Explanation: We consider the arguments of all regime functions, from which we
+    exclude all variables that are states, actions or the period argument. Everything
+    else is considered a parameter of the respective regime function that is provided by
+    the user.
 
     Args:
-        model: The model as provided by the user.
+        regime: The regime as provided by the user.
 
     Returns:
-        A dictionary for each model function, containing a parameters required in the
-        model functions, initialized with jnp.nan.
+        A dictionary for each regime function, containing a parameters required in the
+        regime functions, initialized with jnp.nan.
 
     """
-    # Collect all model variables, that includes actions, states, the period, and
-    # auxiliary variables (model function names).
+    # Collect all regime variables, that includes actions, states, the period, and
+    # auxiliary variables (regime function names).
     variables = {
-        *model.functions,
-        *model.actions,
-        *model.states,
+        *regime.functions,
+        *regime.actions,
+        *regime.states,
         "_period",
     }
 
-    if hasattr(model, "shocks"):
-        variables = variables | set(model.shocks)
+    if hasattr(regime, "shocks"):
+        variables = variables | set(regime.shocks)
 
     function_params = {}
     # For each user function, capture the arguments of the function that are not in the
-    # set of model variables, and initialize them.
-    for name, func in get_all_user_functions(model).items():
+    # set of regime variables, and initialize them.
+    for name, func in regime.get_all_functions().items():
         arguments = set(inspect.signature(func).parameters)
         params = sorted(arguments.difference(variables))
         function_params[name] = dict.fromkeys(params, jnp.nan)
@@ -96,16 +93,16 @@ def _create_function_params(model: Model) -> dict[str, dict[str, float]]:
 
 
 def _create_stochastic_transition_params(
-    model: Model,
+    regime: Regime,
     variable_info: pd.DataFrame,
     grids: dict[str, Array],
 ) -> dict[str, Array]:
     """Create parameters for stochastic transitions.
 
     Args:
-        model: The model as provided by the user.
+        regime: The regime as provided by the user.
         variable_info: A dataframe with information about the variables.
-        grids: A dictionary of grids consistent with model.
+        grids: A dictionary of grids consistent with regime.
 
     Returns:
         A dictionary of parameters required for stochastic transitions, initialized with
@@ -136,7 +133,7 @@ def _create_stochastic_transition_params(
 
     for var in stochastic_variables:
         # Retrieve corresponding next function and its arguments
-        next_var = model.transitions[f"next_{var}"]
+        next_var = regime.transitions[f"next_{var}"]
         dependencies = list(inspect.signature(next_var).parameters)
 
         # If there are invalid dependencies, store them in a dictionary and continue
@@ -147,7 +144,7 @@ def _create_stochastic_transition_params(
         else:
             # Get the dimensions of variables that influence the stochastic variable
             dimensions_of_deps = [
-                len(grids[arg]) if arg != "_period" else model.n_periods
+                len(grids[arg]) if arg != "_period" else regime.n_periods
                 for arg in dependencies
             ]
             # Add the dimension of the stochastic variable itself at the end

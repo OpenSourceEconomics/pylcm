@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 
 import lcm
-from lcm import DiscreteGrid, LinspaceGrid, Model
+from lcm import DiscreteGrid, LinspaceGrid, Regime
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -116,7 +116,7 @@ def borrowing_constraint(
 # Model specification
 # ======================================================================================
 
-ISKHAKOV_ET_AL_2017_STOCHASTIC = Model(
+ISKHAKOV_ET_AL_2017_STOCHASTIC = Regime(
     description=(
         "Starts from Iskhakov et al. (2017), removes absorbing retirement constraint "
         "and the lagged_retirement state, and adds discrete stochastic state variables "

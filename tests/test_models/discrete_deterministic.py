@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
-from lcm import DiscreteGrid, Model
+from lcm import DiscreteGrid, Regime
 from tests.test_models.deterministic import (
     RetirementStatus,
     borrowing_constraint,
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     )
 
 # ======================================================================================
-# Model functions
+# Regime functions
 # ======================================================================================
 
 
@@ -86,9 +86,9 @@ def next_wealth_discrete(
 
 
 # ======================================================================================
-# Model specifications
+# Regime specifications
 # ======================================================================================
-ISKHAKOV_ET_AL_2017_DISCRETE = Model(
+ISKHAKOV_ET_AL_2017_DISCRETE = Regime(
     description=(
         "Starts from Iskhakov et al. (2017), removes absorbing retirement constraint "
         "and the lagged_retirement state, and makes the consumption decision discrete."

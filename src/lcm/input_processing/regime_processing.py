@@ -11,18 +11,18 @@ from dags.signature import with_signature
 from lcm.functools import convert_kwargs_to_args
 from lcm.input_processing.create_params_template import create_params_template
 from lcm.input_processing.util import (
-    get_all_user_functions,
     get_grids,
     get_gridspecs,
     get_variable_info,
     is_stochastic_transition,
 )
-from lcm.interfaces import InternalModel, ShockType
+from lcm.interfaces import InternalRegime, ShockType
 
 if TYPE_CHECKING:
     import pandas as pd
     from jax import Array
 
+    from lcm.regime import Regime
     from lcm.typing import (
         DiscreteAction,
         DiscreteState,
@@ -32,33 +32,32 @@ if TYPE_CHECKING:
         ParamsDict,
         UserFunction,
     )
-    from lcm.user_model import Model
 
 
-def process_model(model: Model) -> InternalModel:
-    """Process the user model.
+def process_regime(regime: Regime) -> InternalRegime:
+    """Process the user regime.
 
     This entails the following steps:
 
     - Set defaults where needed
     - Generate derived information
-    - Check that the model specification is valid.
+    - Check that the regime specification is valid.
 
     Args:
-        model: The model as provided by the user.
+        regime: The regime as provided by the user.
 
     Returns:
-        The processed model.
+        The processed regime.
 
     """
-    params = create_params_template(model)
+    params = create_params_template(regime)
 
-    internal_functions = _get_internal_functions(model, params=params)
+    internal_functions = _get_internal_functions(regime, params=params)
 
-    return InternalModel(
-        grids=get_grids(model),
-        gridspecs=get_gridspecs(model),
-        variable_info=get_variable_info(model),
+    return InternalRegime(
+        grids=get_grids(regime),
+        gridspecs=get_gridspecs(regime),
+        variable_info=get_variable_info(regime),
         functions=internal_functions["functions"],  # type: ignore[arg-type]
         utility=internal_functions["utility"],  # type: ignore[arg-type]
         constraints=internal_functions["constraints"],  # type: ignore[arg-type]
@@ -66,36 +65,36 @@ def process_model(model: Model) -> InternalModel:
         params=params,
         # currently no additive utility shocks are supported
         random_utility_shocks=ShockType.NONE,
-        n_periods=model.n_periods,
+        n_periods=regime.n_periods,
     )
 
 
 def _get_internal_functions(
-    model: Model,
+    regime: Regime,
     params: ParamsDict,
 ) -> dict[str, InternalUserFunction | dict[str, InternalUserFunction]]:
-    """Process the user provided model functions.
+    """Process the user provided regime functions.
 
     Args:
-        model: The model as provided by the user.
-        params: The parameters of the model.
+        regime: The regime as provided by the user.
+        params: The parameters of the regime.
 
     Returns:
-        Dictionary containing all functions of the model. The keys are the names of the
+        Dictionary containing all functions of the regime. The keys are the names of the
         functions. The values are the processed functions. The main difference between
         processed and unprocessed functions is that processed functions take `params` as
         argument.
 
     """
-    variable_info = get_variable_info(model)
-    grids = get_grids(model)
+    variable_info = get_variable_info(regime)
+    grids = get_grids(regime)
 
-    raw_functions = deepcopy(get_all_user_functions(model))
+    raw_functions = deepcopy(regime.get_all_functions())
 
     # ==================================================================================
     # Create functions for stochastic transitions
     # ==================================================================================
-    for next_fn_name, next_fn in model.transitions.items():
+    for next_fn_name, next_fn in regime.transitions.items():
         if is_stochastic_transition(next_fn):
             state = next_fn_name.removeprefix("next_")
 
@@ -127,7 +126,7 @@ def _get_internal_functions(
             processed_func = cast("InternalUserFunction", func)
 
         # params[name] contains the dictionary of parameters for the function, which
-        # is empty if the function does not depend on any model parameters.
+        # is empty if the function does not depend on any regime parameters.
         elif params[func_name]:
             processed_func = _replace_func_parameters_by_params(
                 func=func,
@@ -140,16 +139,18 @@ def _get_internal_functions(
 
         functions[func_name] = processed_func
 
-    internal_transition = {fn_name: functions[fn_name] for fn_name in model.transitions}
+    internal_transition = {
+        fn_name: functions[fn_name] for fn_name in regime.transitions
+    }
     internal_utility = functions["utility"]
     internal_constraints = {
-        fn_name: functions[fn_name] for fn_name in model.constraints
+        fn_name: functions[fn_name] for fn_name in regime.constraints
     }
     internal_functions = {
         fn_name: functions[fn_name]
         for fn_name in functions
-        if fn_name not in model.transitions
-        and fn_name not in model.constraints
+        if fn_name not in regime.transitions
+        and fn_name not in regime.constraints
         and fn_name != "utility"
     }
 
@@ -230,7 +231,7 @@ def _get_stochastic_weight_function(
     Args:
         raw_func: The raw next function of the stochastic variable.
         name: The name of the stochastic variable.
-        variable_info: A table with information about model variables.
+        variable_info: A table with information about regime variables.
 
     Returns:
         A function that returns the transition weights of the stochastic variable.

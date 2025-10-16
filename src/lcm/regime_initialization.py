@@ -1,4 +1,4 @@
-"""Helper module for Model class initialization and utilities."""
+"""Helper module for regime class initialization and utilities."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Any
 
 import jax
 
-from lcm.exceptions import ModelInitilizationError
-from lcm.input_processing import process_model
+from lcm.exceptions import RegimeInitializationError
+from lcm.input_processing import process_regime
 from lcm.interfaces import StateActionSpace, StateSpaceInfo
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a, get_max_Q_over_a
 from lcm.Q_and_F import get_Q_and_F
@@ -17,40 +17,40 @@ from lcm.state_action_space import (
 )
 
 if TYPE_CHECKING:
+    from lcm.regime import Regime
     from lcm.typing import ArgmaxQOverAFunction, MaxQOverAFunction
-    from lcm.user_model import Model
 
 
-def initialize_model_components(model: Model) -> None:
-    """Initialize all pre-computed components for the Model instance.
+def initialize_regime_components(regime: Regime) -> None:
+    """Initialize all pre-computed components for the regime instance.
 
     This function handles the complex initialization logic that was previously
-    in the Model.__post_init__ method. It processes the model, creates state-action
+    in the regime.__post_init__ method. It processes the regime, creates state-action
     spaces, and compiles optimization components for each period.
 
     Args:
-        model: The Model instance to initialize
+        regime: The regime instance to initialize
 
     Raises:
-        ModelInitilizationError: If initialization fails
+        regimeInitilizationError: If initialization fails
 
     """
     try:
-        components = _get_model_components(model)
+        components = _get_regime_components(regime)
         for name, component in components.items():
-            _set_frozen_attr(model, name, component)
+            _set_frozen_attr(regime, name, component)
     except Exception as e:
-        raise ModelInitilizationError(
-            f"Failed to initialize model components: {e}"
+        raise RegimeInitializationError(
+            f"Failed to initialize regime components: {e}"
         ) from e
 
 
-def _get_model_components(model: Model) -> dict[str, Any]:
-    # Process model to internal representation
-    internal_model = process_model(model)
+def _get_regime_components(regime: Regime) -> dict[str, Any]:
+    # Process regime to internal representation
+    internal_regime = process_regime(regime)
 
     # Initialize containers
-    last_period = internal_model.n_periods - 1
+    last_period = internal_regime.n_periods - 1
     state_action_spaces: dict[int, StateActionSpace] = {}
     state_space_infos: dict[int, StateSpaceInfo] = {}
     max_Q_over_a_functions: dict[int, MaxQOverAFunction] = {}
@@ -64,18 +64,18 @@ def _get_model_components(model: Model) -> dict[str, Any]:
     )
 
     # Create functions for each period (reversed order following Backward induction)
-    for period in reversed(range(internal_model.n_periods)):
+    for period in reversed(range(internal_regime.n_periods)):
         is_last_period = period == last_period
 
         # Create state action space
         state_action_space = create_state_action_space(
-            internal_model=internal_model,
+            internal_regime=internal_regime,
             is_last_period=is_last_period,
         )
 
         # Create state space info
         state_space_info = create_state_space_info(
-            internal_model=internal_model,
+            internal_regime=internal_regime,
             is_last_period=is_last_period,
         )
 
@@ -87,7 +87,7 @@ def _get_model_components(model: Model) -> dict[str, Any]:
 
         # Create Q and F functions
         Q_and_F = get_Q_and_F(
-            internal_model=internal_model,
+            internal_regime=internal_regime,
             next_state_space_info=next_state_space_info,
             period=period,
         )
@@ -110,17 +110,17 @@ def _get_model_components(model: Model) -> dict[str, Any]:
         state_action_spaces[period] = state_action_space
         state_space_infos[period] = state_space_info
         max_Q_over_a_functions[period] = (
-            jax.jit(max_Q_over_a) if model.enable_jit else max_Q_over_a
+            jax.jit(max_Q_over_a) if regime.enable_jit else max_Q_over_a
         )
         argmax_and_max_Q_over_a_functions[period] = (
             jax.jit(argmax_and_max_Q_over_a)
-            if model.enable_jit
+            if regime.enable_jit
             else argmax_and_max_Q_over_a
         )
 
     return {
-        "internal_model": internal_model,
-        "params_template": internal_model.params,
+        "internal_regime": internal_regime,
+        "params_template": internal_regime.params,
         "state_action_spaces": state_action_spaces,
         "state_space_infos": state_space_infos,
         "max_Q_over_a_functions": max_Q_over_a_functions,
