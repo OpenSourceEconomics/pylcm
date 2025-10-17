@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Any
 
 from lcm.exceptions import RegimeInitializationError, format_messages
 from lcm.grids import Grid
+from lcm.input_processing.regime_processing import process_regime
 from lcm.logging import get_logger
-from lcm.regime_initialization import initialize_regime_components
 from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
 
@@ -15,11 +15,9 @@ if TYPE_CHECKING:
     import pandas as pd
     from jax import Array
 
-    from lcm.interfaces import InternalRegime, StateActionSpace, StateSpaceInfo
+    from lcm.interfaces import InternalRegime
     from lcm.typing import (
-        ArgmaxQOverAFunction,
         FloatND,
-        MaxQOverAFunction,
         ParamsDict,
         UserFunction,
     )
@@ -51,21 +49,13 @@ class Regime:
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
     enable_jit: bool = True
-
-    # Computed regime components (set in __post_init__)
     internal_regime: InternalRegime = field(init=False)
-    params_template: ParamsDict = field(init=False)
-    state_action_spaces: dict[int, StateActionSpace] = field(init=False)
-    state_space_infos: dict[int, StateSpaceInfo] = field(init=False)
-    max_Q_over_a_functions: dict[int, MaxQOverAFunction] = field(init=False)
-    argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction] = field(
-        init=False
-    )
 
     def __post_init__(self) -> None:
         _validate_attribute_types(self)
         _validate_logical_consistency(self)
-        initialize_regime_components(self)
+        # This will later be used in model
+        object.__setattr__(self, "internal_regime", process_regime(self))
 
     def solve(
         self,
@@ -84,8 +74,8 @@ class Regime:
         """
         return solve(
             params=params,
-            state_action_spaces=self.state_action_spaces,
-            max_Q_over_a_functions=self.max_Q_over_a_functions,
+            state_action_spaces=self.internal_regime.state_action_spaces,
+            max_Q_over_a_functions=self.internal_regime.max_Q_over_a_functions,
             logger=get_logger(debug_mode=debug_mode),
         )
 
@@ -117,7 +107,7 @@ class Regime:
         return simulate(
             params=params,
             initial_states=initial_states,
-            argmax_and_max_Q_over_a_functions=self.argmax_and_max_Q_over_a_functions,
+            argmax_and_max_Q_over_a_functions=self.internal_regime.argmax_and_max_Q_over_a_functions,
             internal_regime=self.internal_regime,
             logger=logger,
             V_arr_dict=V_arr_dict,

@@ -16,7 +16,7 @@ from lcm.simulation.simulate import (
     simulate,
 )
 from lcm.state_action_space import create_state_action_space, create_state_space_info
-from tests.test_models.utils import get_model, get_params
+from tests.test_models.utils import get_params, get_regime
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -29,29 +29,32 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def simulate_inputs():
-    _orig_model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=1)
-    model = _orig_model.replace(
+    _orig_regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=1)
+    regime = _orig_regime.replace(
         actions={
-            **_orig_model.actions,
-            "consumption": _orig_model.actions["consumption"].replace(stop=100),  # type: ignore[attr-defined]
+            **_orig_regime.actions,
+            "consumption": _orig_regime.actions["consumption"].replace(stop=100),  # type: ignore[attr-defined]
         }
     )
-    internal_regime = process_regime(model)
+    internal_regime = process_regime(regime)
 
     state_space_info = create_state_space_info(
-        internal_regime=internal_regime,
+        regime=regime,
         is_last_period=False,
     )
     state_action_space = create_state_action_space(
-        internal_regime=internal_regime,
+        variable_info=internal_regime.variable_info,
+        grids=internal_regime.grids,
         is_last_period=False,
     )
     argmax_and_max_Q_over_a_functions = []
-    for period in range(model.n_periods):
+    for period in range(regime.n_periods):
         Q_and_F = get_Q_and_F(
-            internal_regime=internal_regime,
+            regime=regime,
+            internal_functions=internal_regime.internal_functions,
             next_state_space_info=state_space_info,
             period=period,
+            is_last_period=period == regime.n_periods - 1,
         )
         argmax_and_max_Q_over_a = get_argmax_and_max_Q_over_a(
             Q_and_F=Q_and_F,
@@ -94,21 +97,21 @@ def test_simulate_using_raw_inputs(simulate_inputs):
 @pytest.fixture
 def iskhakov_et_al_2017_stripped_down_model_solution():
     def _model_solution(n_periods):
-        model = get_model(
+        regime = get_regime(
             "iskhakov_et_al_2017_stripped_down",
             n_periods=n_periods,
         )
         updated_functions = {
             # remove dependency on age, so that wage becomes a parameter
             name: func
-            for name, func in model.functions.items()
+            for name, func in regime.functions.items()
             if name not in ["age", "wage"]
         }
-        model = model.replace(functions=updated_functions)
+        regime = regime.replace(functions=updated_functions)
 
         params = get_params()
-        V_arr_dict = model.solve(params=params)
-        return V_arr_dict, params, model
+        V_arr_dict = regime.solve(params=params)
+        return V_arr_dict, params, regime
 
     return _model_solution
 
@@ -153,10 +156,10 @@ def test_simulate_using_model_methods(
 
 
 def test_simulate_with_only_discrete_actions():
-    model = get_model("iskhakov_et_al_2017_discrete", n_periods=2)
+    regime = get_regime("iskhakov_et_al_2017_discrete", n_periods=2)
     params = get_params(wage=1.5, beta=1, interest_rate=0)
 
-    res: pd.DataFrame = model.solve_and_simulate(
+    res: pd.DataFrame = regime.solve_and_simulate(
         params,
         initial_states={"wealth": jnp.array([0, 4])},
         additional_targets=["labor_income", "working"],
@@ -173,7 +176,7 @@ def test_simulate_with_only_discrete_actions():
 
 
 def test_effect_of_beta_on_last_period():
-    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=5)
+    regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=5)
 
     # low beta
     params_low = get_params(beta=0.9, disutility_of_work=1.0)
@@ -182,20 +185,20 @@ def test_effect_of_beta_on_last_period():
     params_high = get_params(beta=0.99, disutility_of_work=1.0)
 
     # solutions
-    solution_low = model.solve(params_low)
-    solution_high = model.solve(params_high)
+    solution_low = regime.solve(params_low)
+    solution_high = regime.solve(params_high)
 
     # Simulate
     # ==================================================================================
     initial_wealth = jnp.array([20.0, 50, 70])
 
-    res_low: pd.DataFrame = model.simulate(
+    res_low: pd.DataFrame = regime.simulate(
         params_low,
         V_arr_dict=solution_low,
         initial_states={"wealth": initial_wealth},
     )
 
-    res_high: pd.DataFrame = model.simulate(
+    res_high: pd.DataFrame = regime.simulate(
         params_high,
         V_arr_dict=solution_high,
         initial_states={"wealth": initial_wealth},
@@ -211,7 +214,7 @@ def test_effect_of_beta_on_last_period():
 
 
 def test_effect_of_disutility_of_work():
-    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=5)
+    regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=5)
 
     # low disutility_of_work
     params_low = get_params(beta=1.0, disutility_of_work=0.2)
@@ -220,20 +223,20 @@ def test_effect_of_disutility_of_work():
     params_high = get_params(beta=1.0, disutility_of_work=1.5)
 
     # solutions
-    solution_low = model.solve(params_low)
-    solution_high = model.solve(params_high)
+    solution_low = regime.solve(params_low)
+    solution_high = regime.solve(params_high)
 
     # Simulate
     # ==================================================================================
     initial_wealth = jnp.array([20.0, 50, 70])
 
-    res_low: pd.DataFrame = model.simulate(
+    res_low: pd.DataFrame = regime.simulate(
         params_low,
         V_arr_dict=solution_low,
         initial_states={"wealth": initial_wealth},
     )
 
-    res_high: pd.DataFrame = model.simulate(
+    res_high: pd.DataFrame = regime.simulate(
         params_high,
         V_arr_dict=solution_high,
         initial_states={"wealth": initial_wealth},

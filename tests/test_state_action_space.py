@@ -17,7 +17,8 @@ def test_create_state_action_space_solution():
     internal_regime = process_regime(regime)
 
     state_action_space = create_state_action_space(
-        internal_regime=internal_regime,
+        variable_info=internal_regime.variable_info,
+        grids=internal_regime.grids,
         is_last_period=False,
     )
 
@@ -35,7 +36,8 @@ def test_create_state_action_space_simulation():
     regime = get_regime("iskhakov_et_al_2017", n_periods=3)
     internal_regime = process_regime(regime)
     got_space = create_state_action_space(
-        internal_regime=internal_regime,
+        variable_info=internal_regime.variable_info,
+        grids=internal_regime.grids,
         states={
             "wealth": jnp.array([10.0, 20.0]),
             "lagged_retirement": jnp.array([0, 1]),
@@ -48,10 +50,9 @@ def test_create_state_action_space_simulation():
 
 def test_create_state_space_info():
     regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    internal_regime = process_regime(regime)
 
     state_space_info = create_state_space_info(
-        internal_regime=internal_regime,
+        regime=regime,
         is_last_period=False,
     )
 
@@ -65,7 +66,8 @@ def test_create_state_action_space_replace():
     regime = get_regime("iskhakov_et_al_2017", n_periods=3)
     internal_regime = process_regime(regime)
     space = create_state_action_space(
-        internal_regime=internal_regime,
+        variable_info=internal_regime.variable_info,
+        grids=internal_regime.grids,
         states={
             "wealth": jnp.array([10.0, 20.0]),
             "lagged_retirement": jnp.array([0, 1]),
