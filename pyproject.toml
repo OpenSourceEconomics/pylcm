@@ -151,7 +151,7 @@ test-cuda = {features = ["testing", "cuda"], solve-group = "cuda"}
 # ======================================================================================
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py313"
 fix = true
 exclude = ["src/lcm/sandbox"]
 

@@ -136,7 +136,7 @@ def get_Q_and_F_non_terminal(
         args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
     )
     def Q_and_F(
-        params: ParamsDict, next_V_arr: FloatND, **states_and_actions: Array
+        next_V_arr: FloatND, params: ParamsDict, **states_and_actions: Array
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action value and feasibility for a non-terminal period.
 
@@ -230,8 +230,8 @@ def get_Q_and_F_terminal(
         args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
     )
     def Q_and_F(
-        params: ParamsDict,
         next_V_arr: FloatND,  # noqa: ARG001
+        params: ParamsDict,
         **states_and_actions: Array,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action values and feasibilities for the terminal period.
