@@ -52,10 +52,10 @@ def test_get_next_state_function_with_simulate_target():
 
     grids = {"b": jnp.arange(2)}
     internal_functions = InternalFunctions(
-        utility=lambda: 0,
+        utility=lambda: 0,  # type: ignore[arg-type]
         constraints={},
-        transitions={"next_a": f_a, "next_b": f_b},
-        functions={"f_weight_b": f_weight_b},
+        transitions={"next_a": f_a, "next_b": f_b},  # type: ignore[dict-item]
+        functions={"f_weight_b": f_weight_b},  # type: ignore[dict-item]
     )
     got_func = get_next_state_function(
         internal_functions=internal_functions,

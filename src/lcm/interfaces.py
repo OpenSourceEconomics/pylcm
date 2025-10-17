@@ -205,7 +205,7 @@ class Target(Enum):
 
 @dataclass(frozen=True)
 class InternalFunctions:
-    """All functions that are used in the regime"""
+    """All functions that are used in the regime."""
 
     functions: dict[str, InternalUserFunction]
     utility: InternalUserFunction

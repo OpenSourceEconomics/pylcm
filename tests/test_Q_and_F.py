@@ -57,7 +57,7 @@ def test_get_Q_and_F_function():
         retirement=retirement,
         wealth=wealth,
         params=params,
-        next_V_arr=None,
+        next_V_arr=jnp.arange(1),
     )
 
     assert_array_equal(

@@ -49,7 +49,7 @@ class Regime:
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
     enable_jit: bool = True
-    internal_regime: InternalRegime | None = None
+    internal_regime: InternalRegime = field(init=False)
 
     def __post_init__(self) -> None:
         _validate_attribute_types(self)

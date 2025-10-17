@@ -58,7 +58,7 @@ class QAndFFunction(Protocol):
     """
 
     def __call__(  # noqa: D102
-        self, next_V_arr: Array, params: ParamsDict, **kwargs: Array
+        self, params: ParamsDict, next_V_arr: FloatND, **states_and_actions: Array
     ) -> tuple[FloatND, BoolND]: ...
 
 
