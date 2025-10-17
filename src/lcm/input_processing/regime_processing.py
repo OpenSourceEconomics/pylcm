@@ -10,13 +10,20 @@ from dags.signature import with_signature
 
 from lcm.functools import convert_kwargs_to_args
 from lcm.input_processing.create_params_template import create_params_template
+from lcm.input_processing.regime_components import (
+    build_argmax_and_max_Q_over_a_functions,
+    build_max_Q_over_a_functions,
+    build_Q_and_F_functions,
+    build_state_action_spaces,
+    build_state_space_infos,
+)
 from lcm.input_processing.util import (
     get_grids,
     get_gridspecs,
     get_variable_info,
     is_stochastic_transition,
 )
-from lcm.interfaces import InternalRegime, ShockType
+from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -50,19 +57,52 @@ def process_regime(regime: Regime) -> InternalRegime:
         The processed regime.
 
     """
-    params = create_params_template(regime)
+    params_template = create_params_template(regime)
 
-    internal_functions = _get_internal_functions(regime, params=params)
+    internal_functions = _get_internal_functions(regime, params=params_template)
+    grids = get_grids(regime)
+    gridspecs = get_gridspecs(regime)
+    variable_info = get_variable_info(regime)
+
+    Q_and_F_functions = build_Q_and_F_functions(
+        regime=regime,
+        n_periods=regime.n_periods,
+        internal_functions=internal_functions,
+    )
+
+    state_space_info = build_state_space_infos(
+        regime=regime,
+        n_periods=regime.n_periods,
+    )
+    state_action_space = build_state_action_spaces(
+        regime=regime,
+        n_periods=regime.n_periods,
+    )
+    max_Q_over_a_functions = build_max_Q_over_a_functions(
+        regime=regime,
+        Q_and_F_functions=Q_and_F_functions,
+        n_periods=regime.n_periods,
+    )
+    argmax_and_max_Q_over_a_functions = build_argmax_and_max_Q_over_a_functions(
+        regime=regime,
+        Q_and_F_functions=Q_and_F_functions,
+        n_periods=regime.n_periods,
+    )
 
     return InternalRegime(
-        grids=get_grids(regime),
-        gridspecs=get_gridspecs(regime),
-        variable_info=get_variable_info(regime),
-        functions=internal_functions["functions"],  # type: ignore[arg-type]
-        utility=internal_functions["utility"],  # type: ignore[arg-type]
-        constraints=internal_functions["constraints"],  # type: ignore[arg-type]
-        transitions=internal_functions["transitions"],  # type: ignore[arg-type]
-        params=params,
+        grids=grids,
+        gridspecs=gridspecs,
+        variable_info=variable_info,
+        functions=internal_functions.functions,
+        utility=internal_functions.utility,
+        constraints=internal_functions.constraints,
+        internal_functions=internal_functions,
+        transitions=internal_functions.transitions,
+        params_template=params_template,
+        state_action_spaces=state_action_space,
+        state_space_infos=state_space_info,
+        max_Q_over_a_functions=max_Q_over_a_functions,
+        argmax_and_max_Q_over_a_functions=argmax_and_max_Q_over_a_functions,
         # currently no additive utility shocks are supported
         random_utility_shocks=ShockType.NONE,
         n_periods=regime.n_periods,
@@ -72,7 +112,7 @@ def process_regime(regime: Regime) -> InternalRegime:
 def _get_internal_functions(
     regime: Regime,
     params: ParamsDict,
-) -> dict[str, InternalUserFunction | dict[str, InternalUserFunction]]:
+) -> InternalFunctions:
     """Process the user provided regime functions.
 
     Args:
@@ -80,10 +120,7 @@ def _get_internal_functions(
         params: The parameters of the regime.
 
     Returns:
-        Dictionary containing all functions of the regime. The keys are the names of the
-        functions. The values are the processed functions. The main difference between
-        processed and unprocessed functions is that processed functions take `params` as
-        argument.
+        The processed regime functions.
 
     """
     variable_info = get_variable_info(regime)
@@ -154,12 +191,12 @@ def _get_internal_functions(
         and fn_name != "utility"
     }
 
-    return {
-        "functions": internal_functions,
-        "utility": internal_utility,
-        "constraints": internal_constraints,
-        "transitions": internal_transition,
-    }
+    return InternalFunctions(
+        functions=internal_functions,
+        utility=internal_utility,
+        constraints=internal_constraints,
+        transitions=internal_transition,
+    )
 
 
 def _replace_func_parameters_by_params(

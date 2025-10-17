@@ -27,8 +27,8 @@ def get_model(model_name: str, n_periods: int) -> Regime:
     return get_regime(model_name, n_periods)
 
 
-def get_regime(model_name: str, n_periods: int) -> Regime:
-    model = deepcopy(TEST_REGIMES[model_name])
+def get_regime(regime_name: str, n_periods: int) -> Regime:
+    model = deepcopy(TEST_REGIMES[regime_name])
     return model.replace(n_periods=n_periods)
 
 

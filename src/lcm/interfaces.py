@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import dataclasses
+from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from lcm.typing import ArgmaxQOverAFunction, InternalUserFunction
 from lcm.utils import first_non_none
 
 if TYPE_CHECKING:
@@ -14,6 +16,7 @@ if TYPE_CHECKING:
 
     from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
     from lcm.typing import (
+        ArgmaxQOverAFunction,
         ContinuousAction,
         ContinuousState,
         DiscreteAction,
@@ -21,6 +24,7 @@ if TYPE_CHECKING:
         Float1D,
         Int1D,
         InternalUserFunction,
+        MaxQOverAFunction,
         ParamsDict,
     )
 
@@ -124,6 +128,8 @@ class ShockType(Enum):
 class InternalRegime:
     """Internal representation of a user regime.
 
+    MUST BE UPDATED.
+
     Attributes:
         grids: Dictionary that maps names of regime variables to grids of feasible
             values for that variable.
@@ -156,8 +162,13 @@ class InternalRegime:
     constraints: dict[str, InternalUserFunction]
     transitions: dict[str, InternalUserFunction]
     functions: dict[str, InternalUserFunction]
-    params: ParamsDict
+    internal_functions: InternalFunctions
+    params_template: ParamsDict
     n_periods: int
+    state_action_spaces: dict[int, StateActionSpace]
+    state_space_infos: dict[int, StateSpaceInfo]
+    max_Q_over_a_functions: dict[int, MaxQOverAFunction]
+    argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction]
     # Not properly processed yet
     random_utility_shocks: ShockType
 
@@ -190,3 +201,13 @@ class Target(Enum):
 
     SOLVE = "solve"
     SIMULATE = "simulate"
+
+
+@dataclass(frozen=True)
+class InternalFunctions:
+    """All functions that are used in the regime."""
+
+    functions: dict[str, InternalUserFunction]
+    utility: InternalUserFunction
+    constraints: dict[str, InternalUserFunction]
+    transitions: dict[str, InternalUserFunction]
