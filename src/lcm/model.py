@@ -4,18 +4,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import pandas as pd
-
 from lcm.input_processing.regime_processing import process_regime
 from lcm.logging import get_logger
-from lcm.regime import Regime
 from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
 
 if TYPE_CHECKING:
+    import pandas as pd
     from jax import Array
 
     from lcm.input_processing.regime_processing import InternalRegime
+    from lcm.regime import Regime
     from lcm.typing import (
         FloatND,
         ParamsDict,
@@ -23,6 +22,23 @@ if TYPE_CHECKING:
 
 
 class Model:
+    """A model which is created from a regime.
+
+    Upon initialization, an intrnal
+    regime will be created which contains all the functions needed to solve and
+    simulate the model.
+
+    Attributes:
+        description: Description of the model.
+        n_periods: Number of periods in the model.
+        enable_jit: Whether to jit the functions of the internal regime.
+        regime: The user provided regime that contains the information
+            about the models regime.
+        internal_regime: The internal regime instance created by LCM, which allows
+            to solve and simulate the model.
+
+    """
+
     description: str | None = None
     n_periods: int
     enable_jit: bool = True
@@ -36,7 +52,16 @@ class Model:
         n_periods: int,
         description: str | None = None,
         enable_jit: bool = True,
-    ):
+    ) -> None:
+        """Initialize the Model.
+
+        Args:
+            regime: User provided regime.
+            n_periods: Numper of periods of the model.
+            description: Description of the model.
+            enable_jit: Whether to jit the functions of the internal regime.
+
+        """
         self.n_periods = n_periods
         self.description = description
         self.enable_jit = enable_jit
