@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 @pytest.mark.illustrative
 def test_get_Q_and_F_function():
     regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    internal_regime = process_regime(regime)
+    internal_regime = process_regime(regime, enable_jit=True)
 
     params = {
         "beta": 1.0,

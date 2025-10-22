@@ -77,7 +77,7 @@ def test_get_grids(regime):
 
 def test_process_regime_iskhakov_et_al_2017():
     regime = get_regime("iskhakov_et_al_2017", n_periods=3)
-    internal_regime = process_regime(regime)
+    internal_regime = process_regime(regime, enable_jit=True)
 
     # Variable Info
     assert (
@@ -135,7 +135,7 @@ def test_process_regime_iskhakov_et_al_2017():
 
 def test_process_regime():
     regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    internal_regime = process_regime(regime)
+    internal_regime = process_regime(regime, enable_jit=True)
 
     # Variable Info
     assert (

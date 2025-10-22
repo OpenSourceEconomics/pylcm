@@ -109,6 +109,7 @@ def absorbing_retirement_constraint(
 # ======================================================================================
 
 ISKHAKOV_ET_AL_2017 = Regime(
+    name="iskhakov_et_al_2017",
     description=(
         "Corresponds to the example model in Iskhakov et al. (2017). In comparison to "
         "the extensions below, wage is treated as a constant parameter and therefore "
@@ -148,6 +149,7 @@ ISKHAKOV_ET_AL_2017 = Regime(
 
 
 ISKHAKOV_ET_AL_2017_STRIPPED_DOWN = Regime(
+    name="iskhakov_et_al_2017_stripped_down",
     description=(
         "Starts from Iskhakov et al. (2017), removes absorbing retirement constraint "
         "and the lagged_retirement state, and adds wage function that depends on age."

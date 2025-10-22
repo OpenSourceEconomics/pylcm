@@ -15,6 +15,7 @@ from pandas.testing import assert_frame_equal
 
 import lcm
 from lcm import DiscreteGrid, LinspaceGrid, Regime
+from lcm.model import Model
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -68,7 +69,8 @@ def borrowing_constraint(
     return consumption <= wealth
 
 
-DETERMINISTIC_MODEL = Regime(
+DETERMINISTIC_REGIME = Regime(
+    name="deterministic",
     n_periods=2,
     actions={
         "consumption": DiscreteGrid(ConsumptionChoice),
@@ -96,9 +98,12 @@ def next_health(health: DiscreteState) -> DiscreteState:  # type: ignore[empty-b
     pass
 
 
-STOCHASTIC_MODEL = deepcopy(DETERMINISTIC_MODEL)
-STOCHASTIC_MODEL.transitions["next_health"] = next_health
-STOCHASTIC_MODEL.states["health"] = DiscreteGrid(HealthStatus)
+STOCHASTIC_REGIME = deepcopy(DETERMINISTIC_REGIME)
+STOCHASTIC_REGIME.transitions["next_health"] = next_health
+STOCHASTIC_REGIME.states["health"] = DiscreteGrid(HealthStatus)
+
+DETERMINISTIC_MODEL = Model(DETERMINISTIC_REGIME, n_periods=2)
+STOCHASTIC_MODEL = Model(STOCHASTIC_REGIME, n_periods=2)
 
 
 # ======================================================================================
@@ -353,9 +358,9 @@ def analytical_simulate_stochastic(initial_wealth, initial_health, health_1, par
 def test_deterministic_solve(beta, n_wealth_points):
     # Update model
     # ==================================================================================
-    new_states = DETERMINISTIC_MODEL.states
+    new_states = DETERMINISTIC_REGIME.states
     new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # type: ignore[attr-defined]
-    model = DETERMINISTIC_MODEL.replace(states=new_states)
+    model = Model(DETERMINISTIC_REGIME.replace(states=new_states), n_periods=2)
 
     # Solve model using LCM
     # ==================================================================================
@@ -364,7 +369,7 @@ def test_deterministic_solve(beta, n_wealth_points):
 
     # Compute analytical solution
     # ==================================================================================
-    wealth_grid_class: LinspaceGrid = model.states["wealth"]  # type: ignore[assignment]
+    wealth_grid_class: LinspaceGrid = new_states["wealth"]  # type: ignore[assignment]
     wealth_grid = np.linspace(
         start=wealth_grid_class.start,
         stop=wealth_grid_class.stop,
@@ -384,9 +389,9 @@ def test_deterministic_solve(beta, n_wealth_points):
 def test_deterministic_simulate(beta, n_wealth_points):
     # Update model
     # ==================================================================================
-    new_states = DETERMINISTIC_MODEL.states
+    new_states = DETERMINISTIC_REGIME.states
     new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # type: ignore[attr-defined]
-    model = DETERMINISTIC_MODEL.replace(states=new_states)
+    model = Model(DETERMINISTIC_REGIME.replace(states=new_states), n_periods=2)
 
     # Simulate model using LCM
     # ==================================================================================
@@ -418,9 +423,9 @@ HEALTH_TRANSITION = [
 def test_stochastic_solve(beta, n_wealth_points, health_transition):
     # Update model
     # ==================================================================================
-    new_states = STOCHASTIC_MODEL.states
+    new_states = STOCHASTIC_REGIME.states
     new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # type: ignore[attr-defined]
-    model = STOCHASTIC_MODEL.replace(states=new_states)
+    model = Model(STOCHASTIC_REGIME.replace(states=new_states), n_periods=2)
 
     # Solve model using LCM
     # ==================================================================================
@@ -429,7 +434,7 @@ def test_stochastic_solve(beta, n_wealth_points, health_transition):
 
     # Compute analytical solution
     # ==================================================================================
-    wealth_grid_class: LinspaceGrid = model.states["wealth"]  # type: ignore[assignment]
+    wealth_grid_class: LinspaceGrid = new_states["wealth"]  # type: ignore[assignment]
     _wealth_grid = np.linspace(
         start=wealth_grid_class.start,
         stop=wealth_grid_class.stop,
@@ -463,9 +468,9 @@ def test_stochastic_solve(beta, n_wealth_points, health_transition):
 def test_stochastic_simulate(beta, n_wealth_points, health_transition):
     # Update model
     # ==================================================================================
-    new_states = STOCHASTIC_MODEL.states
+    new_states = STOCHASTIC_REGIME.states
     new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # type: ignore[attr-defined]
-    model = STOCHASTIC_MODEL.replace(states=new_states)
+    model = Model(STOCHASTIC_REGIME.replace(states=new_states), n_periods=2)
 
     # Simulate model using LCM
     # ==================================================================================

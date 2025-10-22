@@ -9,6 +9,7 @@ from numpy.testing import assert_array_almost_equal, assert_array_equal
 from lcm.input_processing import process_regime
 from lcm.logging import get_logger
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a
+from lcm.model import Model
 from lcm.Q_and_F import get_Q_and_F
 from lcm.simulation.simulate import (
     _lookup_optimal_continuous_actions,
@@ -16,7 +17,7 @@ from lcm.simulation.simulate import (
     simulate,
 )
 from lcm.state_action_space import create_state_action_space, create_state_space_info
-from tests.test_models.utils import get_params, get_regime
+from tests.test_models.utils import get_model, get_params, get_regime
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -36,7 +37,7 @@ def simulate_inputs():
             "consumption": _orig_regime.actions["consumption"].replace(stop=100),  # type: ignore[attr-defined]
         }
     )
-    internal_regime = process_regime(regime)
+    internal_regime = process_regime(regime, enable_jit=True)
 
     state_space_info = create_state_space_info(
         regime=regime,
@@ -110,8 +111,9 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
         regime = regime.replace(functions=updated_functions)
 
         params = get_params()
-        V_arr_dict = regime.solve(params=params)
-        return V_arr_dict, params, regime
+        model = Model(regime, n_periods=n_periods)
+        V_arr_dict = model.solve(params=params)
+        return V_arr_dict, params, model
 
     return _model_solution
 
@@ -156,10 +158,10 @@ def test_simulate_using_model_methods(
 
 
 def test_simulate_with_only_discrete_actions():
-    regime = get_regime("iskhakov_et_al_2017_discrete", n_periods=2)
+    model = get_model("iskhakov_et_al_2017_discrete", n_periods=2)
     params = get_params(wage=1.5, beta=1, interest_rate=0)
 
-    res: pd.DataFrame = regime.solve_and_simulate(
+    res: pd.DataFrame = model.solve_and_simulate(
         params,
         initial_states={"wealth": jnp.array([0, 4])},
         additional_targets=["labor_income", "working"],
@@ -176,7 +178,7 @@ def test_simulate_with_only_discrete_actions():
 
 
 def test_effect_of_beta_on_last_period():
-    regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=5)
+    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=5)
 
     # low beta
     params_low = get_params(beta=0.9, disutility_of_work=1.0)
@@ -185,20 +187,20 @@ def test_effect_of_beta_on_last_period():
     params_high = get_params(beta=0.99, disutility_of_work=1.0)
 
     # solutions
-    solution_low = regime.solve(params_low)
-    solution_high = regime.solve(params_high)
+    solution_low = model.solve(params_low)
+    solution_high = model.solve(params_high)
 
     # Simulate
     # ==================================================================================
     initial_wealth = jnp.array([20.0, 50, 70])
 
-    res_low: pd.DataFrame = regime.simulate(
+    res_low: pd.DataFrame = model.simulate(
         params_low,
         V_arr_dict=solution_low,
         initial_states={"wealth": initial_wealth},
     )
 
-    res_high: pd.DataFrame = regime.simulate(
+    res_high: pd.DataFrame = model.simulate(
         params_high,
         V_arr_dict=solution_high,
         initial_states={"wealth": initial_wealth},
@@ -214,7 +216,7 @@ def test_effect_of_beta_on_last_period():
 
 
 def test_effect_of_disutility_of_work():
-    regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=5)
+    regime = get_model("iskhakov_et_al_2017_stripped_down", n_periods=5)
 
     # low disutility_of_work
     params_low = get_params(beta=1.0, disutility_of_work=0.2)

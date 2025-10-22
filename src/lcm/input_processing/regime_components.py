@@ -20,37 +20,35 @@ if TYPE_CHECKING:
     from lcm.typing import ArgmaxQOverAFunction, MaxQOverAFunction, QAndFFunction
 
 
-def build_state_space_infos(
-    regime: Regime, n_periods: int
-) -> dict[int, StateSpaceInfo]:
+def build_state_space_infos(regime: Regime) -> dict[int, StateSpaceInfo]:
     state_space_infos = {}
-    for period in range(n_periods):
+    for period in range(regime.n_periods):
         state_space_infos[period] = create_state_space_info(
             regime=regime,
-            is_last_period=(period == n_periods - 1),
+            is_last_period=(period == regime.n_periods - 1),
         )
     return state_space_infos
 
 
 def build_state_action_spaces(
-    regime: Regime, n_periods: int
+    regime: Regime,
 ) -> dict[int, StateActionSpace]:
     variable_info = get_variable_info(regime)
     grids = get_grids(regime)
     state_action_spaces = {}
-    for period in range(n_periods):
+    for period in range(regime.n_periods):
         state_action_spaces[period] = create_state_action_space(
             variable_info=variable_info,
             grids=grids,
-            is_last_period=(period == n_periods - 1),
+            is_last_period=(period == regime.n_periods - 1),
         )
     return state_action_spaces
 
 
 def build_Q_and_F_functions(
-    regime: Regime, n_periods: int, internal_functions: InternalFunctions
+    regime: Regime, internal_functions: InternalFunctions, *, enable_jit: bool
 ) -> dict[int, Any]:
-    state_space_infos = build_state_space_infos(regime, n_periods)
+    state_space_infos = build_state_space_infos(regime)
     # Create last period's next state space info
     last_periods_next_state_space_info = StateSpaceInfo(
         states_names=(),
@@ -61,8 +59,8 @@ def build_Q_and_F_functions(
     Q_and_F_functions = {}
     # Importantly, for Q_and_F, we have to go in reversed order, because the
     # next_state_space_info depends on the next period
-    for period in reversed(range(n_periods)):
-        is_last_period = period == n_periods - 1
+    for period in reversed(range(regime.n_periods)):
+        is_last_period = period == regime.n_periods - 1
 
         # Determine next state space info
         if is_last_period:
@@ -78,19 +76,17 @@ def build_Q_and_F_functions(
             period=period,
             is_last_period=is_last_period,
         )
-        Q_and_F_functions[period] = jax.jit(Q_and_F) if regime.enable_jit else Q_and_F
+        Q_and_F_functions[period] = jax.jit(Q_and_F) if enable_jit else Q_and_F
     return Q_and_F_functions
 
 
 def build_max_Q_over_a_functions(
-    regime: Regime,
-    n_periods: int,
-    Q_and_F_functions: dict[int, QAndFFunction],
+    regime: Regime, Q_and_F_functions: dict[int, QAndFFunction], *, enable_jit: bool
 ) -> dict[int, MaxQOverAFunction]:
-    state_action_space = build_state_action_spaces(regime, n_periods)
+    state_action_space = build_state_action_spaces(regime)
 
     max_Q_over_a_functions = {}
-    for period in range(n_periods):
+    for period in range(regime.n_periods):
         action_names = tuple(state_action_space[period].continuous_actions) + tuple(
             state_action_space[period].discrete_actions
         )
@@ -100,20 +96,18 @@ def build_max_Q_over_a_functions(
             states_names=tuple(state_action_space[period].states),
         )
         max_Q_over_a_functions[period] = (
-            jax.jit(max_Q_over_a) if regime.enable_jit else max_Q_over_a
+            jax.jit(max_Q_over_a) if enable_jit else max_Q_over_a
         )
     return max_Q_over_a_functions
 
 
 def build_argmax_and_max_Q_over_a_functions(
-    regime: Regime,
-    n_periods: int,
-    Q_and_F_functions: dict[int, QAndFFunction],
+    regime: Regime, Q_and_F_functions: dict[int, QAndFFunction], *, enable_jit: bool
 ) -> dict[int, ArgmaxQOverAFunction]:
-    state_action_space = build_state_action_spaces(regime, n_periods)
+    state_action_space = build_state_action_spaces(regime)
 
     argmax_and_max_Q_over_a_functions = {}
-    for period in range(n_periods):
+    for period in range(regime.n_periods):
         action_names = tuple(state_action_space[period].discrete_actions) + tuple(
             state_action_space[period].continuous_actions
         )
@@ -121,8 +115,6 @@ def build_argmax_and_max_Q_over_a_functions(
             Q_and_F=Q_and_F_functions[period], actions_names=action_names
         )
         argmax_and_max_Q_over_a_functions[period] = (
-            jax.jit(argmax_and_max_Q_over_a)
-            if regime.enable_jit
-            else argmax_and_max_Q_over_a
+            jax.jit(argmax_and_max_Q_over_a) if enable_jit else argmax_and_max_Q_over_a
         )
     return argmax_and_max_Q_over_a_functions

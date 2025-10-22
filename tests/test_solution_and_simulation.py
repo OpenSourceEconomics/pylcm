@@ -11,17 +11,17 @@ from lcm.max_Q_over_c import (
     get_argmax_and_max_Q_over_c,
     get_max_Q_over_c,
 )
+from lcm.model import Model
 from lcm.Q_and_F import get_Q_and_F
 from lcm.state_action_space import create_state_space_info
 from tests.test_models.deterministic import RetirementStatus
 from tests.test_models.deterministic import utility as iskhakov_et_al_2017_utility
 from tests.test_models.discrete_deterministic import ConsumptionChoice
-from tests.test_models.utils import get_model
+from tests.test_models.utils import get_model, get_regime
 
 if TYPE_CHECKING:
     from typing import Any
 
-    from lcm.regime import Regime
     from lcm.typing import BoolND, DiscreteAction, DiscreteState
 
 # ======================================================================================
@@ -67,7 +67,9 @@ def test_solve_and_simulate_stripped_down():
         initial_states={
             "wealth": jnp.array([1.0, 10.0, 50.0]),
         },
-        additional_targets=["age"] if "age" in model.functions else None,
+        additional_targets=["age"]
+        if "age" in model.internal_regime.functions
+        else None,
     )
 
 
@@ -81,7 +83,9 @@ def test_solve_and_simulate_fully_discrete():
         initial_states={
             "wealth": jnp.array([1.0, 10.0, 50.0]),
         },
-        additional_targets=["age"] if "age" in model.functions else None,
+        additional_targets=["age"]
+        if "age" in model.internal_regime.functions
+        else None,
     )
 
 
@@ -90,7 +94,7 @@ def test_solve_and_simulate_fully_discrete():
     [get_model(name, n_periods=3) for name in STRIPPED_DOWN_AND_DISCRETE_MODELS],
     ids=STRIPPED_DOWN_AND_DISCRETE_MODELS,
 )
-def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(model: Regime) -> None:
+def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(model: Model) -> None:
     """Test that solve_and_simulate creates same output as solve then simulate."""
     # solve then simulate
     # ==================================================================================
@@ -125,7 +129,7 @@ def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(model: Regime) 
     [get_model("iskhakov_et_al_2017", n_periods=3)],
     ids=["iskhakov_et_al_2017"],
 )
-def test_simulate_iskhakov_et_al_2017(model: Regime) -> None:
+def test_simulate_iskhakov_et_al_2017(model: Model) -> None:
     # solve model
     params = tree_map(lambda _: 0.9, model.internal_regime.params_template)
     V_arr_dict = model.solve(params)
@@ -153,8 +157,8 @@ def test_simulate_iskhakov_et_al_2017(model: Regime) -> None:
 
 
 def test_get_max_Q_over_c():
-    regime = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    internal_regime = process_regime(regime)
+    regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=3)
+    internal_regime = process_regime(regime, enable_jit=True)
 
     params = {
         "beta": 1.0,
@@ -199,8 +203,8 @@ def test_get_max_Q_over_c():
 
 
 def test_get_max_Q_over_c_with_discrete_model():
-    regime = get_model("iskhakov_et_al_2017_discrete", n_periods=3)
-    internal_regime = process_regime(regime)
+    regime = get_regime("iskhakov_et_al_2017_discrete", n_periods=3)
+    internal_regime = process_regime(regime, enable_jit=True)
 
     params = {
         "beta": 1.0,
@@ -250,8 +254,8 @@ def test_get_max_Q_over_c_with_discrete_model():
 
 
 def test_argmax_and_max_Q_over_c():
-    regime = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    internal_regime = process_regime(regime)
+    regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=3)
+    internal_regime = process_regime(regime, enable_jit=True)
 
     params = {
         "beta": 1.0,
@@ -296,8 +300,8 @@ def test_argmax_and_max_Q_over_c():
 
 
 def test_argmax_and_max_Q_over_c_with_discrete_model():
-    regime = get_model("iskhakov_et_al_2017_discrete", n_periods=3)
-    internal_regime = process_regime(regime)
+    regime = get_regime("iskhakov_et_al_2017_discrete", n_periods=3)
+    internal_regime = process_regime(regime, enable_jit=True)
 
     params = {
         "beta": 1.0,
@@ -347,7 +351,7 @@ def test_argmax_and_max_Q_over_c_with_discrete_model():
 
 
 def test_solve_with_period_argument_in_constraint():
-    model = get_model("iskhakov_et_al_2017", n_periods=3)
+    regime = get_regime("iskhakov_et_al_2017", n_periods=3)
 
     def absorbing_retirement_constraint(
         retirement: DiscreteAction,
@@ -359,10 +363,11 @@ def test_solve_with_period_argument_in_constraint():
             lagged_retirement == RetirementStatus.working,
         )
 
-    model.constraints["absorbing_retirement_constraint"] = (
-        absorbing_retirement_constraint
-    )
+    constraints = regime.constraints
+    constraints["absorbing_retirement_constraint"] = absorbing_retirement_constraint
+    regime = regime.replace(constraints=constraints)
 
+    model = Model(regime=regime, n_periods=regime.n_periods)
     params = tree_map(lambda _: 0.2, model.internal_regime.params_template)
     model.solve(params)
 
@@ -378,14 +383,16 @@ def _reverse_dict(d: dict[str, Any]) -> dict[str, Any]:
 
 
 def test_order_of_states_and_actions_does_not_matter():
-    model = get_model("iskhakov_et_al_2017", n_periods=3)
+    regime = get_regime("iskhakov_et_al_2017", n_periods=3)
 
-    # Create a new model with the order of states and actions swapped
-    model_swapped = model.replace(
-        states=_reverse_dict(model.states),
-        actions=_reverse_dict(model.actions),
+    # Create a new regime with the order of states and actions swapped
+    regime_swapped = regime.replace(
+        states=_reverse_dict(regime.states),
+        actions=_reverse_dict(regime.actions),
     )
 
+    model = Model(regime=regime, n_periods=regime.n_periods)
+    model_swapped = Model(regime=regime_swapped, n_periods=regime.n_periods)
     params = tree_map(lambda _: 0.2, model.internal_regime.params_template)
     V_arr_dict = model.solve(params)
 

@@ -31,12 +31,12 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def regime_input():
-    _regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=1)
+    regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=1)
     # Modify the regime to have a coarser continuous action space for testing
-    actions = _regime.actions
+    actions = regime.actions
     actions["consumption"] = actions["consumption"].replace(stop=20)  # type: ignore[attr-defined]
-    regime = _regime.replace(actions=actions)
-    internal_regime = process_regime(regime)
+    regime = regime.replace(actions=actions)
+    internal_regime = process_regime(regime, enable_jit=True)
 
     state_space_info = create_state_space_info(
         regime=regime,

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
+from lcm.model import Model
 from tests.test_models.deterministic import (
     ISKHAKOV_ET_AL_2017,
     ISKHAKOV_ET_AL_2017_STRIPPED_DOWN,
@@ -23,13 +24,13 @@ TEST_REGIMES = {
 }
 
 
-def get_model(model_name: str, n_periods: int) -> Regime:
-    return get_regime(model_name, n_periods)
+def get_model(model_name: str, n_periods: int) -> Model:
+    return Model(get_regime(model_name, n_periods=n_periods), n_periods=n_periods)
 
 
 def get_regime(regime_name: str, n_periods: int) -> Regime:
-    model = deepcopy(TEST_REGIMES[regime_name])
-    return model.replace(n_periods=n_periods)
+    regime = deepcopy(TEST_REGIMES[regime_name])
+    return regime.replace(n_periods=n_periods)
 
 
 def get_params(

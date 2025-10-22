@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     )
 
 
-def process_regime(regime: Regime) -> InternalRegime:
+def process_regime(regime: Regime, *, enable_jit: bool) -> InternalRegime:
     """Process the user regime.
 
     This entails the following steps:
@@ -52,6 +52,7 @@ def process_regime(regime: Regime) -> InternalRegime:
 
     Args:
         regime: The regime as provided by the user.
+        enable_jit: Whether to jit the functions of the internal regime.
 
     Returns:
         The processed regime.
@@ -65,28 +66,20 @@ def process_regime(regime: Regime) -> InternalRegime:
     variable_info = get_variable_info(regime)
 
     Q_and_F_functions = build_Q_and_F_functions(
-        regime=regime,
-        n_periods=regime.n_periods,
-        internal_functions=internal_functions,
+        regime=regime, internal_functions=internal_functions, enable_jit=enable_jit
     )
 
     state_space_info = build_state_space_infos(
         regime=regime,
-        n_periods=regime.n_periods,
     )
     state_action_space = build_state_action_spaces(
         regime=regime,
-        n_periods=regime.n_periods,
     )
     max_Q_over_a_functions = build_max_Q_over_a_functions(
-        regime=regime,
-        Q_and_F_functions=Q_and_F_functions,
-        n_periods=regime.n_periods,
+        regime=regime, Q_and_F_functions=Q_and_F_functions, enable_jit=enable_jit
     )
     argmax_and_max_Q_over_a_functions = build_argmax_and_max_Q_over_a_functions(
-        regime=regime,
-        Q_and_F_functions=Q_and_F_functions,
-        n_periods=regime.n_periods,
+        regime=regime, Q_and_F_functions=Q_and_F_functions, enable_jit=enable_jit
     )
 
     return InternalRegime(
