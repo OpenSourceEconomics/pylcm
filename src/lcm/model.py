@@ -6,21 +6,20 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from lcm.input_processing.regime_processing import process_regime
 from lcm.logging import get_logger
 from lcm.regime import Regime
 from lcm.simulation.simulate import simulate
-from lcm.input_processing.regime_processing import process_regime
 from lcm.solution.solve_brute import solve
 
 if TYPE_CHECKING:
     from jax import Array
 
+    from lcm.input_processing.regime_processing import InternalRegime
     from lcm.typing import (
         FloatND,
         ParamsDict,
     )
-
-    from lcm.input_processing.regime_processing import InternalRegime
 
 
 class Model:
