@@ -13,7 +13,7 @@ class RegimeMock:
 
     """
 
-    n_periods: int | None = None
+    active: list[int] | None = None
     actions: dict[str, Any] | None = None
     utility: UserFunction | None = None
     states: dict[str, Any] | None = None

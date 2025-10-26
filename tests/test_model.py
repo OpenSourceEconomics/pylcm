@@ -11,7 +11,7 @@ def test_regime_invalid_states():
     with pytest.raises(RegimeInitializationError, match="states must be a dictionary"):
         Regime(
             name="test",
-            n_periods=2,
+            active=list(range(2)),
             states="health",  # type: ignore[arg-type]
             actions={},
             utility=lambda: 0,
@@ -22,7 +22,7 @@ def test_regime_invalid_actions():
     with pytest.raises(RegimeInitializationError, match="actions must be a dictionary"):
         Regime(
             name="test",
-            n_periods=2,
+            active=list(range(2)),
             states={},
             actions="exercise",  # type: ignore[arg-type]
             utility=lambda: 0,
@@ -35,7 +35,7 @@ def test_regime_invalid_functions():
     ):
         Regime(
             name="test",
-            n_periods=2,
+            active=list(range(2)),
             states={},
             actions={},
             utility=lambda: 0,
@@ -50,7 +50,7 @@ def test_regime_invalid_functions_values():
     ):
         Regime(
             name="test",
-            n_periods=2,
+            active=list(range(2)),
             states={},
             actions={},
             utility=lambda: 0,
@@ -64,7 +64,7 @@ def test_regime_invalid_functions_keys():
     ):
         Regime(
             name="test",
-            n_periods=2,
+            active=list(range(2)),
             states={},
             actions={},
             utility=lambda: 0,
@@ -78,7 +78,7 @@ def test_regime_invalid_actions_values():
     ):
         Regime(
             name="test",
-            n_periods=2,
+            active=list(range(2)),
             states={},
             actions={"exercise": 0},  # type: ignore[dict-item]
             utility=lambda: 0,
@@ -91,7 +91,7 @@ def test_regime_invalid_states_values():
     ):
         Regime(
             name="test",
-            n_periods=2,
+            active=list(range(2)),
             states={"health": 0},  # type: ignore[dict-item]
             actions={},
             utility=lambda: 0,
@@ -105,7 +105,7 @@ def test_regime_invalid_n_periods():
     ):
         Regime(
             name="test",
-            n_periods=0,
+            active=list(range(0)),
             states={},
             actions={},
             utility=lambda: 0,
@@ -119,7 +119,7 @@ def test_regime_missing_next_func(binary_category_class):
     ):
         Regime(
             name="test",
-            n_periods=2,
+            active=list(range(2)),
             states={"health": DiscreteGrid(binary_category_class)},
             actions={"exercise": DiscreteGrid(binary_category_class)},
             utility=lambda: 0,
@@ -133,7 +133,7 @@ def test_regime_invalid_utility():
     ):
         Regime(
             name="test",
-            n_periods=2,
+            active=list(range(2)),
             states={},
             actions={},
             functions={},
@@ -148,7 +148,7 @@ def test_regime_invalid_transition_names():
     ):
         Regime(
             name="test",
-            n_periods=2,
+            active=list(range(2)),
             states={},
             actions={},
             functions={},
@@ -164,7 +164,7 @@ def test_regime_overlapping_states_actions(binary_category_class):
     ):
         Regime(
             name="test",
-            n_periods=2,
+            active=list(range(2)),
             states={"health": DiscreteGrid(binary_category_class)},
             actions={"health": DiscreteGrid(binary_category_class)},
             utility=lambda: 0,

@@ -13,6 +13,10 @@ class RegimeInitializationError(PyLCMError):
     """Raised when there is an error in the regime initialization."""
 
 
+class ModelInitializationError(PyLCMError):
+    """Raised when there is an error in the model initialization."""
+
+
 class GridInitializationError(PyLCMError):
     """Raised when there is an error in the grid initialization."""
 

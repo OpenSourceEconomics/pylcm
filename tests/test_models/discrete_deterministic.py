@@ -94,7 +94,7 @@ ISKHAKOV_ET_AL_2017_DISCRETE = Regime(
         "Starts from Iskhakov et al. (2017), removes absorbing retirement constraint "
         "and the lagged_retirement state, and makes the consumption decision discrete."
     ),
-    n_periods=3,
+    active=list(range(3)),
     actions={
         "retirement": DiscreteGrid(RetirementStatus),
         "consumption": DiscreteGrid(ConsumptionChoice),

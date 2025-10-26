@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from lcm.exceptions import ModelInitializationError, format_messages
 from lcm.input_processing.regime_processing import process_regime
 from lcm.logging import get_logger
 from lcm.simulation.simulate import simulate
@@ -24,9 +25,8 @@ if TYPE_CHECKING:
 class Model:
     """A model which is created from a regime.
 
-    Upon initialization, an intrnal
-    regime will be created which contains all the functions needed to solve and
-    simulate the model.
+    Upon initialization, an intrnal regime will be created which contains all
+    the functions needed to solve and simulate the model.
 
     Attributes:
         description: Description of the model.
@@ -62,6 +62,7 @@ class Model:
             enable_jit: Whether to jit the functions of the internal regime.
 
         """
+        _validate_model_consistency(regime, n_periods)
         self.n_periods = n_periods
         self.description = description
         self.enable_jit = enable_jit
@@ -120,6 +121,7 @@ class Model:
             params=params,
             initial_states=initial_states,
             argmax_and_max_Q_over_a_functions=self.internal_regime.argmax_and_max_Q_over_a_functions,
+            next_state_simulation_functions=self.internal_regime.next_state_simulation_functions,
             internal_regime=self.internal_regime,
             logger=logger,
             V_arr_dict=V_arr_dict,
@@ -157,3 +159,17 @@ class Model:
             seed=seed,
             debug_mode=debug_mode,
         )
+
+
+def _validate_model_consistency(regime: Regime, n_periods: int) -> None:
+    error_messages = []
+    if set(regime.active) != set(range(n_periods)):
+        error_messages.append(
+            "Each model periods needs at least one active "
+            "Regime. The following periods have no active Regime"
+            f"{set(range(n_periods)) - set(regime.active)}.",
+        )
+
+    if error_messages:
+        msg = format_messages(error_messages)
+        raise ModelInitializationError(msg)

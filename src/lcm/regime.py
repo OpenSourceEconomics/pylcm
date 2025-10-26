@@ -19,7 +19,7 @@ class Regime:
 
     Attributes:
         description: Description of the regime.
-        n_periods: Number of periods in the regime.
+        active: The periods for which the regime is active.
         functions: Dictionary of user provided functions that define the functional
             relationships between regime variables. It must include at least a function
             called 'utility'.
@@ -32,7 +32,7 @@ class Regime:
     name: str
     description: str | None = None
     _: KW_ONLY
-    n_periods: int
+    active: list[int]
     utility: UserFunction
     constraints: dict[str, UserFunction] = field(default_factory=dict)
     transitions: dict[str, UserFunction] = field(default_factory=dict)
@@ -126,7 +126,7 @@ def _validate_logical_consistency(regime: Regime) -> None:
     """Validate the logical consistency of the regime."""
     error_messages = []
 
-    if regime.n_periods < 1:
+    if len(regime.active) < 1:
         error_messages.append("Number of periods must be a positive integer.")
 
     if "utility" in regime.functions:
