@@ -165,7 +165,7 @@ def _validate_model_consistency(regime: Regime, n_periods: int) -> None:
     error_messages = []
     if set(regime.active) != set(range(n_periods)):
         error_messages.append(
-            "Each model periods needs at least one active "
+            "Each model period needs at least one active "
             "Regime. The following periods have no active Regime"
             f"{set(range(n_periods)) - set(regime.active)}.",
         )
