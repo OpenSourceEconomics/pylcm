@@ -89,6 +89,7 @@ def next_wealth_discrete(
 # Regime specifications
 # ======================================================================================
 ISKHAKOV_ET_AL_2017_DISCRETE = Regime(
+    name="iskhakov_et_al_2017_discrete",
     description=(
         "Starts from Iskhakov et al. (2017), removes absorbing retirement constraint "
         "and the lagged_retirement state, and makes the consumption decision discrete."
