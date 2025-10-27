@@ -43,7 +43,6 @@ class Regime:
     def __post_init__(self) -> None:
         _validate_attribute_types(self)
         _validate_logical_consistency(self)
-        # This will later be used in model
 
     def get_all_functions(self) -> dict[str, UserFunction]:
         """Get all regime functions including utility, constraints, and transitions.
