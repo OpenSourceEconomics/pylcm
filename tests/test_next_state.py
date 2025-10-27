@@ -15,8 +15,8 @@ if TYPE_CHECKING:
 
 
 def test_get_next_state_function_with_solve_target():
-    regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    internal_regime = process_regime(regime=regime, enable_jit=True)
+    regime = get_regime("iskhakov_et_al_2017_stripped_down")
+    internal_regime = process_regime(regime=regime, n_periods=3, enable_jit=True)
     got_func = get_next_state_function(
         internal_functions=internal_regime.internal_functions,
         grids=internal_regime.grids,

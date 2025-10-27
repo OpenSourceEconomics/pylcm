@@ -62,13 +62,15 @@ class Model:
             enable_jit: Whether to jit the functions of the internal regime.
 
         """
-        _validate_model_consistency(regime, n_periods)
+        _validate_model_consistency()
         self.n_periods = n_periods
         self.description = description
         self.enable_jit = enable_jit
         self.regime = regime
 
-        self.internal_regime = process_regime(regime=regime, enable_jit=enable_jit)
+        self.internal_regime = process_regime(
+            regime=regime, n_periods=n_periods, enable_jit=enable_jit
+        )
 
     def solve(
         self,
@@ -87,7 +89,8 @@ class Model:
         """
         return solve(
             params=params,
-            state_action_spaces=self.internal_regime.state_action_spaces,
+            n_periods=self.n_periods,
+            state_action_space=self.internal_regime.state_action_space,
             max_Q_over_a_functions=self.internal_regime.max_Q_over_a_functions,
             logger=get_logger(debug_mode=debug_mode),
         )
@@ -121,7 +124,7 @@ class Model:
             params=params,
             initial_states=initial_states,
             argmax_and_max_Q_over_a_functions=self.internal_regime.argmax_and_max_Q_over_a_functions,
-            next_state_simulation_functions=self.internal_regime.next_state_simulation_functions,
+            next_state_simulation_function=self.internal_regime.next_state_simulation_function,
             internal_regime=self.internal_regime,
             logger=logger,
             V_arr_dict=V_arr_dict,
@@ -161,10 +164,10 @@ class Model:
         )
 
 
-def _validate_model_consistency(regime: Regime, n_periods: int) -> None:
+def _validate_model_consistency() -> None:
     error_messages = []
     # Just an example validation
-    if regime.n_periods != n_periods:
+    if False:
         error_messages.append(
             "The Regime needs to have the same number of periods as the Model."
         )

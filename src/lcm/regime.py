@@ -32,7 +32,6 @@ class Regime:
     name: str
     description: str | None = None
     _: KW_ONLY
-    n_periods: int
     utility: UserFunction
     constraints: dict[str, UserFunction] = field(default_factory=dict)
     transitions: dict[str, UserFunction] = field(default_factory=dict)
@@ -124,9 +123,6 @@ def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
 def _validate_logical_consistency(regime: Regime) -> None:
     """Validate the logical consistency of the regime."""
     error_messages = []
-
-    if regime.n_periods < 1:
-        error_messages.append("Number of periods must be a positive integer.")
 
     if "utility" in regime.functions:
         error_messages.append(

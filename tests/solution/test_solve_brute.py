@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm.interfaces import StateActionSpace
+from lcm.interfaces import MaxQOverAFunctions, StateActionSpace
 from lcm.logging import get_logger
 from lcm.max_Q_over_a import get_max_Q_over_a
 from lcm.ndimage import map_coordinates
@@ -27,7 +27,7 @@ def test_solve_brute():
     # ==================================================================================
     # create the list of state_action_spaces
     # ==================================================================================
-    _scs = StateActionSpace(
+    state_action_space = StateActionSpace(
         discrete_actions={
             # pick [0, 1] such that no label translation is needed
             # lazy is like a type, it influences utility but is not affected by actions
@@ -43,12 +43,11 @@ def test_solve_brute():
         },
         states_and_discrete_actions_names=("lazy", "working", "wealth"),
     )
-    state_action_spaces = {0: _scs, 1: _scs}
     # ==================================================================================
     # create the Q_and_F functions
     # ==================================================================================
 
-    def _Q_and_F(consumption, lazy, wealth, working, next_V_arr, params):
+    def _Q_and_F(consumption, lazy, wealth, working, next_V_arr, params, period):  # noqa: ARG001
         next_wealth = wealth + working - consumption
         next_lazy = lazy
 
@@ -74,7 +73,9 @@ def test_solve_brute():
         states_names=("lazy", "wealth"),
     )
 
-    max_Q_over_a_functions = {0: max_Q_over_a, 1: max_Q_over_a}
+    max_Q_over_a_functions = MaxQOverAFunctions(
+        terminal=max_Q_over_a, non_terminal=max_Q_over_a
+    )
 
     # ==================================================================================
     # call solve function
@@ -82,7 +83,8 @@ def test_solve_brute():
 
     solution = solve(
         params=params,
-        state_action_spaces=state_action_spaces,
+        n_periods=2,
+        state_action_space=state_action_space,
         max_Q_over_a_functions=max_Q_over_a_functions,
         logger=get_logger(debug_mode=False),
     )
@@ -104,7 +106,7 @@ def test_solve_brute_single_period_Qc_arr():
         states_and_discrete_actions_names=("a", "b", "c"),
     )
 
-    def _Q_and_F(a, c, b, d, next_V_arr, params):  # noqa: ARG001
+    def _Q_and_F(a, c, b, d, next_V_arr, params, period):  # noqa: ARG001
         util = d
         feasib = d <= a + b + c
         return util, feasib
@@ -121,8 +123,11 @@ def test_solve_brute_single_period_Qc_arr():
     # is correctly applied to the state_action_space
     got = solve(
         params={},
-        state_action_spaces={0: state_action_space},
-        max_Q_over_a_functions={0: max_Q_over_a},
+        n_periods=2,
+        state_action_space=state_action_space,
+        max_Q_over_a_functions=MaxQOverAFunctions(
+            terminal=max_Q_over_a, non_terminal=max_Q_over_a
+        ),
         logger=get_logger(debug_mode=False),
     )
 

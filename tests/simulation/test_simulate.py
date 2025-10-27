@@ -9,7 +9,7 @@ from numpy.testing import assert_array_almost_equal, assert_array_equal
 
 from lcm.dispatchers import vmap_1d
 from lcm.input_processing import process_regime
-from lcm.interfaces import Target
+from lcm.interfaces import ArgmaxQOverAFunctions, Target
 from lcm.logging import get_logger
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a
 from lcm.model import Model
@@ -34,14 +34,14 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def simulate_inputs():
-    _orig_regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=1)
+    _orig_regime = get_regime("iskhakov_et_al_2017_stripped_down")
     regime = _orig_regime.replace(
         actions={
             **_orig_regime.actions,
             "consumption": _orig_regime.actions["consumption"].replace(stop=100),  # type: ignore[attr-defined]
         }
     )
-    internal_regime = process_regime(regime, enable_jit=True)
+    internal_regime = process_regime(regime, n_periods=1, enable_jit=True)
 
     state_space_info = create_state_space_info(
         regime=regime,
@@ -52,41 +52,50 @@ def simulate_inputs():
         grids=internal_regime.grids,
         is_last_period=False,
     )
-    argmax_and_max_Q_over_a_functions = {}
-    next_state_simulation_functions = {}
-    for period in range(regime.n_periods):
-        Q_and_F = get_Q_and_F(
-            regime=regime,
-            internal_functions=internal_regime.internal_functions,
-            next_state_space_info=state_space_info,
-            period=period,
-            is_last_period=period == regime.n_periods - 1,
-        )
-        argmax_and_max_Q_over_a_functions[period] = get_argmax_and_max_Q_over_a(
-            Q_and_F=Q_and_F,
-            actions_names=(*state_action_space.discrete_actions, "consumption"),
-        )
-        next_state = get_next_state_function(
-            internal_functions=internal_regime.internal_functions,
-            grids=internal_regime.grids,
-            next_states=tuple(state_action_space.states),
-            target=Target.SIMULATE,
-        )
-        signature = inspect.signature(next_state)
-        parameters = list(signature.parameters)
+    Q_and_F_terminal = get_Q_and_F(
+        regime=regime,
+        internal_functions=internal_regime.internal_functions,
+        next_state_space_info=state_space_info,
+        is_last_period=True,
+    )
+    Q_and_F_non_terminal = get_Q_and_F(
+        regime=regime,
+        internal_functions=internal_regime.internal_functions,
+        next_state_space_info=state_space_info,
+        is_last_period=False,
+    )
+    argmax_and_max_Q_over_a_functions_terminal = get_argmax_and_max_Q_over_a(
+        Q_and_F=Q_and_F_terminal,
+        actions_names=(*state_action_space.discrete_actions, "consumption"),
+    )
+    argmax_and_max_Q_over_a_functions_non_terminal = get_argmax_and_max_Q_over_a(
+        Q_and_F=Q_and_F_non_terminal,
+        actions_names=(*state_action_space.discrete_actions, "consumption"),
+    )
+    next_state = get_next_state_function(
+        internal_functions=internal_regime.internal_functions,
+        grids=internal_regime.grids,
+        next_states=tuple(state_action_space.states),
+        target=Target.SIMULATE,
+    )
+    signature = inspect.signature(next_state)
+    parameters = list(signature.parameters)
 
-        next_state_simulation_functions[period] = vmap_1d(
-            func=next_state,
-            variables=tuple(
-                parameter
-                for parameter in parameters
-                if parameter not in ["_period", "params"]
-            ),
-        )
+    next_state_simulation_function = vmap_1d(
+        func=next_state,
+        variables=tuple(
+            parameter
+            for parameter in parameters
+            if parameter not in ["_period", "params"]
+        ),
+    )
 
     return {
-        "argmax_and_max_Q_over_a_functions": argmax_and_max_Q_over_a_functions,
-        "next_state_simulation_functions": next_state_simulation_functions,
+        "argmax_and_max_Q_over_a_functions": ArgmaxQOverAFunctions(
+            terminal=argmax_and_max_Q_over_a_functions_terminal,
+            non_terminal=argmax_and_max_Q_over_a_functions_non_terminal,
+        ),
+        "next_state_simulation_function": next_state_simulation_function,
         "internal_regime": internal_regime,
     }
 
@@ -122,7 +131,6 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
     def _model_solution(n_periods):
         regime = get_regime(
             "iskhakov_et_al_2017_stripped_down",
-            n_periods=n_periods,
         )
         updated_functions = {
             # remove dependency on age, so that wage becomes a parameter

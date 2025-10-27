@@ -9,21 +9,23 @@ from lcm.error_handling import validate_value_function_array
 if TYPE_CHECKING:
     import logging
 
-    from lcm.interfaces import StateActionSpace
-    from lcm.typing import FloatND, MaxQOverAFunction, ParamsDict
+    from lcm.interfaces import MaxQOverAFunctions, StateActionSpace
+    from lcm.typing import FloatND, ParamsDict
 
 
 def solve(
     params: ParamsDict,
-    state_action_spaces: dict[int, StateActionSpace],
-    max_Q_over_a_functions: dict[int, MaxQOverAFunction],
+    n_periods: int,
+    state_action_space: StateActionSpace,
+    max_Q_over_a_functions: MaxQOverAFunctions,
     logger: logging.Logger,
 ) -> dict[int, FloatND]:
     """Solve a model using grid search.
 
     Args:
         params: Dict of model parameters.
-        state_action_spaces: Dict with one state_action_space per period.
+        n_periods: The number of periods in the model.
+        state_action_space: The regimes state action space.
         max_Q_over_a_functions: Dict with one function per period. The functions
             calculate the maximum of the Q-function over all actions. The
             result corresponds to the Q-function of that period.
@@ -33,7 +35,6 @@ def solve(
         Dict with one value function array per period.
 
     """
-    n_periods = len(state_action_spaces)
     solution = {}
     next_V_arr = jnp.empty(0)
 
@@ -41,15 +42,17 @@ def solve(
 
     # backwards induction loop
     for period in reversed(range(n_periods)):
-        state_action_space = state_action_spaces[period]
-
-        max_Q_over_a = max_Q_over_a_functions[period]
+        if period == n_periods - 1:
+            max_Q_over_a = max_Q_over_a_functions.terminal
+        else:
+            max_Q_over_a = max_Q_over_a_functions.non_terminal
 
         # evaluate Q-function on states and actions, and maximize over actions
         V_arr = max_Q_over_a(
             **state_action_space.states,
             **state_action_space.discrete_actions,
             **state_action_space.continuous_actions,
+            period=period,
             next_V_arr=next_V_arr,
             params=params,
         )

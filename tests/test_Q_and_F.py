@@ -23,8 +23,8 @@ if TYPE_CHECKING:
 
 @pytest.mark.illustrative
 def test_get_Q_and_F_function():
-    regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    internal_regime = process_regime(regime, enable_jit=True)
+    regime = get_regime("iskhakov_et_al_2017_stripped_down")
+    internal_regime = process_regime(regime, n_periods=3, enable_jit=True)
 
     params = {
         "beta": 1.0,
@@ -44,7 +44,6 @@ def test_get_Q_and_F_function():
         regime=regime,
         internal_functions=internal_regime.internal_functions,
         next_state_space_info=state_space_info,
-        period=internal_regime.n_periods - 1,
         is_last_period=True,
     )
 
@@ -57,6 +56,7 @@ def test_get_Q_and_F_function():
         retirement=retirement,
         wealth=wealth,
         params=params,
+        period=0,
         next_V_arr=jnp.arange(1),
     )
 

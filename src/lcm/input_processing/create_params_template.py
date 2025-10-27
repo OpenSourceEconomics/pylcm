@@ -20,12 +20,14 @@ if TYPE_CHECKING:
 
 def create_params_template(
     regime: Regime,
+    n_periods: int,
     default_params: dict[str, float] = {"beta": jnp.nan},  # noqa: B006
 ) -> ParamsDict:
     """Create parameter template from a regime specification.
 
     Args:
         regime: The regime as provided by the user.
+        n_periods: Number of periods of the model.
         default_params: A dictionary of default parameters. Default is None. If None,
             the default {"beta": np.nan} is used. For other lifetime reward objectives,
             additional parameters may be required, for example {"beta": np.nan, "delta":
@@ -40,9 +42,7 @@ def create_params_template(
 
     if variable_info["is_stochastic"].any():
         stochastic_transitions = _create_stochastic_transition_params(
-            regime=regime,
-            variable_info=variable_info,
-            grids=grids,
+            regime=regime, variable_info=variable_info, grids=grids, n_periods=n_periods
         )
         stochastic_transition_params = {"shocks": stochastic_transitions}
     else:
@@ -96,6 +96,7 @@ def _create_stochastic_transition_params(
     regime: Regime,
     variable_info: pd.DataFrame,
     grids: dict[str, Array],
+    n_periods: int,
 ) -> dict[str, Array]:
     """Create parameters for stochastic transitions.
 
@@ -103,6 +104,7 @@ def _create_stochastic_transition_params(
         regime: The regime as provided by the user.
         variable_info: A dataframe with information about the variables.
         grids: A dictionary of grids consistent with regime.
+        n_periods: Number of periods in the model.
 
     Returns:
         A dictionary of parameters required for stochastic transitions, initialized with
@@ -144,7 +146,7 @@ def _create_stochastic_transition_params(
         else:
             # Get the dimensions of variables that influence the stochastic variable
             dimensions_of_deps = [
-                len(grids[arg]) if arg != "_period" else regime.n_periods
+                len(grids[arg]) if arg != "_period" else n_periods
                 for arg in dependencies
             ]
             # Add the dimension of the stochastic variable itself at the end

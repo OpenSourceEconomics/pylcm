@@ -115,7 +115,6 @@ ISKHAKOV_ET_AL_2017 = Regime(
         "the extensions below, wage is treated as a constant parameter and therefore "
         "there is no need for the wage and age functions."
     ),
-    n_periods=3,
     actions={
         "retirement": DiscreteGrid(RetirementStatus),
         "consumption": LinspaceGrid(
@@ -154,7 +153,6 @@ ISKHAKOV_ET_AL_2017_STRIPPED_DOWN = Regime(
         "Starts from Iskhakov et al. (2017), removes absorbing retirement constraint "
         "and the lagged_retirement state, and adds wage function that depends on age."
     ),
-    n_periods=3,
     actions={
         "retirement": DiscreteGrid(RetirementStatus),
         "consumption": LinspaceGrid(

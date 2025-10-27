@@ -157,8 +157,8 @@ def test_simulate_iskhakov_et_al_2017(model: Model) -> None:
 
 
 def test_get_max_Q_over_c():
-    regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    internal_regime = process_regime(regime, enable_jit=True)
+    regime = get_regime("iskhakov_et_al_2017_stripped_down")
+    internal_regime = process_regime(regime, n_periods=3, enable_jit=True)
 
     params = {
         "beta": 1.0,
@@ -178,7 +178,6 @@ def test_get_max_Q_over_c():
         regime=regime,
         internal_functions=internal_regime.internal_functions,
         next_state_space_info=state_space_info,
-        period=internal_regime.n_periods - 1,
         is_last_period=True,
     )
 
@@ -193,6 +192,7 @@ def test_get_max_Q_over_c():
         retirement=jnp.array(RetirementStatus.retired),
         wealth=jnp.array(30),
         params=params,
+        period=2,
         next_V_arr=jnp.empty(0),
     )
     assert val == iskhakov_et_al_2017_utility(
@@ -203,8 +203,8 @@ def test_get_max_Q_over_c():
 
 
 def test_get_max_Q_over_c_with_discrete_model():
-    regime = get_regime("iskhakov_et_al_2017_discrete", n_periods=3)
-    internal_regime = process_regime(regime, enable_jit=True)
+    regime = get_regime("iskhakov_et_al_2017_discrete")
+    internal_regime = process_regime(regime, n_periods=3, enable_jit=True)
 
     params = {
         "beta": 1.0,
@@ -224,7 +224,6 @@ def test_get_max_Q_over_c_with_discrete_model():
         regime=regime,
         internal_functions=internal_regime.internal_functions,
         next_state_space_info=state_space_info,
-        period=internal_regime.n_periods - 1,
         is_last_period=True,
     )
 
@@ -239,6 +238,7 @@ def test_get_max_Q_over_c_with_discrete_model():
         retirement=jnp.array(RetirementStatus.retired),
         wealth=jnp.array(2),
         params=params,
+        period=2,
         next_V_arr=jnp.empty(0),
     )
     assert val == iskhakov_et_al_2017_utility(
@@ -254,8 +254,8 @@ def test_get_max_Q_over_c_with_discrete_model():
 
 
 def test_argmax_and_max_Q_over_c():
-    regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    internal_regime = process_regime(regime, enable_jit=True)
+    regime = get_regime("iskhakov_et_al_2017_stripped_down")
+    internal_regime = process_regime(regime, n_periods=3, enable_jit=True)
 
     params = {
         "beta": 1.0,
@@ -275,7 +275,6 @@ def test_argmax_and_max_Q_over_c():
         regime=regime,
         internal_functions=internal_regime.internal_functions,
         next_state_space_info=state_space_info,
-        period=internal_regime.n_periods - 1,
         is_last_period=True,
     )
 
@@ -289,6 +288,7 @@ def test_argmax_and_max_Q_over_c():
         retirement=jnp.array(RetirementStatus.retired),
         wealth=jnp.array(30),
         params=params,
+        period=2,
         next_V_arr=jnp.empty(0),
     )
     assert policy == 2
@@ -300,8 +300,8 @@ def test_argmax_and_max_Q_over_c():
 
 
 def test_argmax_and_max_Q_over_c_with_discrete_model():
-    regime = get_regime("iskhakov_et_al_2017_discrete", n_periods=3)
-    internal_regime = process_regime(regime, enable_jit=True)
+    regime = get_regime("iskhakov_et_al_2017_discrete")
+    internal_regime = process_regime(regime, n_periods=3, enable_jit=True)
 
     params = {
         "beta": 1.0,
@@ -321,7 +321,6 @@ def test_argmax_and_max_Q_over_c_with_discrete_model():
         regime=regime,
         internal_functions=internal_regime.internal_functions,
         next_state_space_info=state_space_info,
-        period=internal_regime.n_periods - 1,
         is_last_period=True,
     )
 
@@ -335,6 +334,7 @@ def test_argmax_and_max_Q_over_c_with_discrete_model():
         retirement=jnp.array(RetirementStatus.retired),
         wealth=jnp.array(2),
         params=params,
+        period=2,
         next_V_arr=jnp.empty(0),
     )
     assert _argmax == 1
@@ -351,7 +351,7 @@ def test_argmax_and_max_Q_over_c_with_discrete_model():
 
 
 def test_solve_with_period_argument_in_constraint():
-    regime = get_regime("iskhakov_et_al_2017", n_periods=3)
+    regime = get_regime("iskhakov_et_al_2017")
 
     def absorbing_retirement_constraint(
         retirement: DiscreteAction,
@@ -367,7 +367,7 @@ def test_solve_with_period_argument_in_constraint():
     constraints["absorbing_retirement_constraint"] = absorbing_retirement_constraint
     regime = regime.replace(constraints=constraints)
 
-    model = Model(regime=regime, n_periods=regime.n_periods)
+    model = Model(regime=regime, n_periods=3)
     params = tree_map(lambda _: 0.2, model.internal_regime.params_template)
     model.solve(params)
 
@@ -383,7 +383,7 @@ def _reverse_dict(d: dict[str, Any]) -> dict[str, Any]:
 
 
 def test_order_of_states_and_actions_does_not_matter():
-    regime = get_regime("iskhakov_et_al_2017", n_periods=3)
+    regime = get_regime("iskhakov_et_al_2017")
 
     # Create a new regime with the order of states and actions swapped
     regime_swapped = regime.replace(
@@ -391,8 +391,8 @@ def test_order_of_states_and_actions_does_not_matter():
         actions=_reverse_dict(regime.actions),
     )
 
-    model = Model(regime=regime, n_periods=regime.n_periods)
-    model_swapped = Model(regime=regime_swapped, n_periods=regime.n_periods)
+    model = Model(regime=regime, n_periods=3)
+    model_swapped = Model(regime=regime_swapped, n_periods=3)
     params = tree_map(lambda _: 0.2, model.internal_regime.params_template)
     V_arr_dict = model.solve(params)
 

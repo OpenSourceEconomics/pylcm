@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from lcm.typing import ArgmaxQOverAFunction, InternalUserFunction
 from lcm.utils import first_non_none
 
 if TYPE_CHECKING:
@@ -26,6 +25,7 @@ if TYPE_CHECKING:
         InternalUserFunction,
         MaxQOverAFunction,
         ParamsDict,
+        QAndFFunction,
     )
 
 
@@ -164,12 +164,11 @@ class InternalRegime:
     functions: dict[str, InternalUserFunction]
     internal_functions: InternalFunctions
     params_template: ParamsDict
-    n_periods: int
-    state_action_spaces: dict[int, StateActionSpace]
-    state_space_infos: dict[int, StateSpaceInfo]
-    max_Q_over_a_functions: dict[int, MaxQOverAFunction]
-    argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction]
-    next_state_simulation_functions: dict[int, Any]
+    state_action_space: StateActionSpace
+    state_space_info: StateSpaceInfo
+    max_Q_over_a_functions: MaxQOverAFunctions
+    argmax_and_max_Q_over_a_functions: ArgmaxQOverAFunctions
+    next_state_simulation_function: Any
     # Not properly processed yet
     random_utility_shocks: ShockType
 
@@ -212,3 +211,27 @@ class InternalFunctions:
     utility: InternalUserFunction
     constraints: dict[str, InternalUserFunction]
     transitions: dict[str, InternalUserFunction]
+
+
+@dataclass(frozen=True)
+class MaxQOverAFunctions:
+    """All functions that are used in the regime."""
+
+    terminal: MaxQOverAFunction
+    non_terminal: MaxQOverAFunction
+
+
+@dataclass(frozen=True)
+class ArgmaxQOverAFunctions:
+    """All functions that are used in the regime."""
+
+    terminal: ArgmaxQOverAFunction
+    non_terminal: ArgmaxQOverAFunction
+
+
+@dataclass(frozen=True)
+class QAndFFunctions:
+    """All functions that are used in the regime."""
+
+    terminal: QAndFFunction
+    non_terminal: QAndFFunction
