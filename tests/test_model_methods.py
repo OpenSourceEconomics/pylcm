@@ -5,25 +5,25 @@ import pandas as pd
 import pytest
 from pybaum import tree_map
 
-from tests.test_models.utils import get_model, get_regime
+from tests.test_models.utils import get_model
 
 
-def test_regime_has_required_attributes():
+def test_internal_regime_has_required_attributes():
     """Test that Model has all required attributes after initialization."""
-    regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=3)
+    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
 
     # Check all required attributes exist
-    assert hasattr(regime, "internal_regime")
-    assert hasattr(regime.internal_regime, "params_template")
-    assert hasattr(regime.internal_regime, "state_action_spaces")
-    assert hasattr(regime.internal_regime, "state_space_infos")
-    assert hasattr(regime.internal_regime, "max_Q_over_a_functions")
-    assert hasattr(regime.internal_regime, "argmax_and_max_Q_over_a_functions")
+    assert hasattr(model, "internal_regime")
+    assert hasattr(model.internal_regime, "params_template")
+    assert hasattr(model.internal_regime, "state_action_spaces")
+    assert hasattr(model.internal_regime, "state_space_infos")
+    assert hasattr(model.internal_regime, "max_Q_over_a_functions")
+    assert hasattr(model.internal_regime, "argmax_and_max_Q_over_a_functions")
 
     # Check they have correct types and lengths
-    assert len(regime.internal_regime.state_action_spaces) == 3
-    assert len(regime.internal_regime.max_Q_over_a_functions) == 3
-    assert len(regime.internal_regime.argmax_and_max_Q_over_a_functions) == 3
+    assert len(model.internal_regime.state_action_spaces) == 3
+    assert len(model.internal_regime.max_Q_over_a_functions) == 3
+    assert len(model.internal_regime.argmax_and_max_Q_over_a_functions) == 3
 
 
 def test_model_solve_method():

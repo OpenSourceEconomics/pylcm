@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
@@ -15,9 +15,7 @@ from lcm.interfaces import (
     InternalRegime,
     InternalSimulationPeriodResults,
     StateActionSpace,
-    Target,
 )
-from lcm.next_state import get_next_state_function
 from lcm.random import draw_random_seed, generate_simulation_keys
 from lcm.simulation.processing import as_panel, process_simulated_data
 from lcm.state_action_space import create_state_action_space
@@ -39,6 +37,7 @@ def simulate(
     params: ParamsDict,
     initial_states: dict[str, Array],
     argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction],
+    next_state_simulation_functions: dict[int, Any],
     internal_regime: InternalRegime,
     logger: logging.Logger,
     V_arr_dict: dict[int, FloatND],
@@ -54,9 +53,9 @@ def simulate(
             observed dataset.
         argmax_and_max_Q_over_a_functions: Dict of functions of length n_periods. Each
             function calculates the argument maximizing Q over all actions.
-        next_state: Function that returns the next state given the current
-            state and action variables. For stochastic variables, it returns a random
-            draw from the distribution of the next state.
+        next_state_simulation_functions: Functions that return the next state given the
+            current state and action variables. For stochastic variables, it returns a
+            random draw from the distribution of the next state.
         internal_regime: Internal model instance.
         logger: Logger that logs to stdout.
         V_arr_dict: Dict of value function arrays of length n_periods.
@@ -172,36 +171,22 @@ def simulate(
                 names=stochastic_next_function_names,
                 n_initial_states=n_initial_states,
             )
-            next_state = get_next_state_function(
-                internal_functions=internal_regime.internal_functions,
-                grids=internal_regime.grids,
-                next_states=tuple(state_action_space.states),
-                target=Target.SIMULATE,
-            )
-            signature = inspect.signature(next_state)
-            parameters = list(signature.parameters)
+            next_state_vmapped = next_state_simulation_functions[period]
+            signature = inspect.signature(next_state_vmapped)
+            parameters = set(signature.parameters)
 
-            next_state_vmapped = vmap_1d(
-                func=next_state,
-                variables=tuple(
-                    parameter
-                    for parameter in parameters
-                    if parameter not in ["_period", "params"]
-                ),
+            next_vars = (
+                states
+                | optimal_actions
+                | stochastic_variables_keys
+                | {"_period": period, "params": params}
             )
 
-            next_state_keywords = {
-                **states,
-                **optimal_actions,
-                **stochastic_variables_keys,
-            } | {"_period": period, "params": params}
+            next_state_input = {
+                parameter: next_vars[parameter] for parameter in parameters
+            }
 
-            states_with_next_prefix = next_state_vmapped(
-                **{
-                    parameter: next_state_keywords[parameter]
-                    for parameter in parameters
-                }
-            )
+            states_with_next_prefix = next_state_vmapped(**next_state_input)
             # 'next_' prefix is added by the next_state function, but needs to be
             # removed for the next iteration of the loop, where these will be the
             # current states.

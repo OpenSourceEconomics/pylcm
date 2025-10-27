@@ -8,7 +8,8 @@ import pytest
 from numpy.testing import assert_array_almost_equal
 
 import lcm
-from tests.test_models.utils import get_model, get_params
+from lcm.model import Model
+from tests.test_models.utils import get_model, get_params, get_regime
 
 if TYPE_CHECKING:
     from lcm.typing import FloatND
@@ -75,16 +76,19 @@ def model_and_params():
         return health
 
     # Get the base models and create modified versions
-    base_model = get_model("iskhakov_et_al_2017_stochastic", n_periods=3)
+    base_regime = get_regime("iskhakov_et_al_2017_stochastic", n_periods=3)
 
     # Create deterministic model with modified function
-    model_deterministic = base_model.replace(
-        transitions={**base_model.transitions, "next_health": next_health_deterministic}
+    regime_deterministic = base_regime.replace(
+        transitions={
+            **base_regime.transitions,
+            "next_health": next_health_deterministic,
+        }
     )
 
     # Create stochastic model with modified function
-    model_stochastic = base_model.replace(
-        transitions={**base_model.transitions, "next_health": next_health_stochastic}
+    regime_stochastic = base_regime.replace(
+        transitions={**base_regime.transitions, "next_health": next_health_stochastic}
     )
 
     params = get_params(
@@ -95,6 +99,8 @@ def model_and_params():
         health_transition=jnp.identity(2),
     )
 
+    model_deterministic = Model(regime_deterministic, n_periods=base_regime.n_periods)
+    model_stochastic = Model(regime_stochastic, n_periods=base_regime.n_periods)
     return model_deterministic, model_stochastic, params
 
 

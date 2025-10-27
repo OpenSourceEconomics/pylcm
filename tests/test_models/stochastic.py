@@ -117,6 +117,7 @@ def borrowing_constraint(
 # ======================================================================================
 
 ISKHAKOV_ET_AL_2017_STOCHASTIC = Regime(
+    name="iskhakov_et_al_2017_stochastic",
     description=(
         "Starts from Iskhakov et al. (2017), removes absorbing retirement constraint "
         "and the lagged_retirement state, and adds discrete stochastic state variables "

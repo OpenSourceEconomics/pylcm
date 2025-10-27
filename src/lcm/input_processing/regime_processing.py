@@ -13,6 +13,7 @@ from lcm.input_processing.create_params_template import create_params_template
 from lcm.input_processing.regime_components import (
     build_argmax_and_max_Q_over_a_functions,
     build_max_Q_over_a_functions,
+    build_next_state_simulation_functions,
     build_Q_and_F_functions,
     build_state_action_spaces,
     build_state_space_infos,
@@ -41,7 +42,7 @@ if TYPE_CHECKING:
     )
 
 
-def process_regime(regime: Regime) -> InternalRegime:
+def process_regime(regime: Regime, *, enable_jit: bool) -> InternalRegime:
     """Process the user regime.
 
     This entails the following steps:
@@ -52,6 +53,7 @@ def process_regime(regime: Regime) -> InternalRegime:
 
     Args:
         regime: The regime as provided by the user.
+        enable_jit: Whether to jit the functions of the internal regime.
 
     Returns:
         The processed regime.
@@ -65,28 +67,26 @@ def process_regime(regime: Regime) -> InternalRegime:
     variable_info = get_variable_info(regime)
 
     Q_and_F_functions = build_Q_and_F_functions(
-        regime=regime,
-        n_periods=regime.n_periods,
-        internal_functions=internal_functions,
+        regime=regime, internal_functions=internal_functions
     )
 
     state_space_info = build_state_space_infos(
         regime=regime,
-        n_periods=regime.n_periods,
     )
     state_action_space = build_state_action_spaces(
         regime=regime,
-        n_periods=regime.n_periods,
     )
     max_Q_over_a_functions = build_max_Q_over_a_functions(
-        regime=regime,
-        Q_and_F_functions=Q_and_F_functions,
-        n_periods=regime.n_periods,
+        regime=regime, Q_and_F_functions=Q_and_F_functions, enable_jit=enable_jit
     )
     argmax_and_max_Q_over_a_functions = build_argmax_and_max_Q_over_a_functions(
+        regime=regime, Q_and_F_functions=Q_and_F_functions, enable_jit=enable_jit
+    )
+    next_state_simulation_functions = build_next_state_simulation_functions(
         regime=regime,
-        Q_and_F_functions=Q_and_F_functions,
-        n_periods=regime.n_periods,
+        internal_functions=internal_functions,
+        grids=grids,
+        enable_jit=enable_jit,
     )
 
     return InternalRegime(
@@ -103,6 +103,7 @@ def process_regime(regime: Regime) -> InternalRegime:
         state_space_infos=state_space_info,
         max_Q_over_a_functions=max_Q_over_a_functions,
         argmax_and_max_Q_over_a_functions=argmax_and_max_Q_over_a_functions,
+        next_state_simulation_functions=next_state_simulation_functions,
         # currently no additive utility shocks are supported
         random_utility_shocks=ShockType.NONE,
         n_periods=regime.n_periods,

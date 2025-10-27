@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from lcm.typing import ArgmaxQOverAFunction, InternalUserFunction
 from lcm.utils import first_non_none
@@ -169,6 +169,7 @@ class InternalRegime:
     state_space_infos: dict[int, StateSpaceInfo]
     max_Q_over_a_functions: dict[int, MaxQOverAFunction]
     argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction]
+    next_state_simulation_functions: dict[int, Any]
     # Not properly processed yet
     random_utility_shocks: ShockType
 
