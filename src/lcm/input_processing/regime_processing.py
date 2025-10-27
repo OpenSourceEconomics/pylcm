@@ -83,7 +83,10 @@ def process_regime(regime: Regime, *, enable_jit: bool) -> InternalRegime:
         regime=regime, Q_and_F_functions=Q_and_F_functions, enable_jit=enable_jit
     )
     next_state_simulation_functions = build_next_state_simulation_functions(
-        regime=regime, internal_functions=internal_functions, grids=grids
+        regime=regime,
+        internal_functions=internal_functions,
+        grids=grids,
+        enable_jit=enable_jit,
     )
 
     return InternalRegime(
@@ -103,7 +106,7 @@ def process_regime(regime: Regime, *, enable_jit: bool) -> InternalRegime:
         next_state_simulation_functions=next_state_simulation_functions,
         # currently no additive utility shocks are supported
         random_utility_shocks=ShockType.NONE,
-        active=regime.active,
+        n_periods=regime.n_periods,
     )
 
 

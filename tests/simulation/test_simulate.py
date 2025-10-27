@@ -34,9 +34,7 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def simulate_inputs():
-    _orig_regime = get_regime(
-        "iskhakov_et_al_2017_stripped_down", active=list(range(1))
-    )
+    _orig_regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=1)
     regime = _orig_regime.replace(
         actions={
             **_orig_regime.actions,
@@ -56,13 +54,13 @@ def simulate_inputs():
     )
     argmax_and_max_Q_over_a_functions = {}
     next_state_simulation_functions = {}
-    for period in regime.active:
+    for period in range(regime.n_periods):
         Q_and_F = get_Q_and_F(
             regime=regime,
             internal_functions=internal_regime.internal_functions,
             next_state_space_info=state_space_info,
             period=period,
-            is_last_period=period == regime.active[-1],
+            is_last_period=period == regime.n_periods - 1,
         )
         argmax_and_max_Q_over_a_functions[period] = get_argmax_and_max_Q_over_a(
             Q_and_F=Q_and_F,
@@ -124,7 +122,7 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
     def _model_solution(n_periods):
         regime = get_regime(
             "iskhakov_et_al_2017_stripped_down",
-            active=list(range(n_periods)),
+            n_periods=n_periods,
         )
         updated_functions = {
             # remove dependency on age, so that wage becomes a parameter

@@ -150,7 +150,7 @@ class InternalRegime:
               function.
             - Otherwise, the `params` argument is simply ignored.
         params: Dict of model parameters.
-        active: The periods for which the regime is active.
+        n_periods: Number of periods.
         random_utility_shocks: Type of random utility shocks.
 
     """
@@ -164,7 +164,7 @@ class InternalRegime:
     functions: dict[str, InternalUserFunction]
     internal_functions: InternalFunctions
     params_template: ParamsDict
-    active: list[int]
+    n_periods: int
     state_action_spaces: dict[int, StateActionSpace]
     state_space_infos: dict[int, StateSpaceInfo]
     max_Q_over_a_functions: dict[int, MaxQOverAFunction]

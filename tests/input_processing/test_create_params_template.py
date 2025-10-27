@@ -21,7 +21,7 @@ def test_create_params_without_shocks(binary_category_class):
         states={
             "b": DiscreteGrid(binary_category_class),
         },
-        active=None,
+        n_periods=None,
         utility=lambda a, b, c: None,  # noqa: ARG005
         transitions={
             "next_b": lambda b: b,
@@ -55,7 +55,7 @@ def test_create_shock_params():
     )
 
     regime = RegimeMock(
-        active=list(range(3)),
+        n_periods=3,
         utility=lambda a: None,  # noqa: ARG005
         transitions={"next_a": next_a},
     )

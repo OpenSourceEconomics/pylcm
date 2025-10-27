@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 @pytest.mark.illustrative
 def test_get_Q_and_F_function():
-    regime = get_regime("iskhakov_et_al_2017_stripped_down", active=list(range(3)))
+    regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=3)
     internal_regime = process_regime(regime, enable_jit=True)
 
     params = {
@@ -44,7 +44,7 @@ def test_get_Q_and_F_function():
         regime=regime,
         internal_functions=internal_regime.internal_functions,
         next_state_space_info=state_space_info,
-        period=internal_regime.active[-1],
+        period=internal_regime.n_periods - 1,
         is_last_period=True,
     )
 

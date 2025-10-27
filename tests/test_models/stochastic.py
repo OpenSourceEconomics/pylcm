@@ -123,7 +123,7 @@ ISKHAKOV_ET_AL_2017_STOCHASTIC = Regime(
         "and the lagged_retirement state, and adds discrete stochastic state variables "
         "health and partner."
     ),
-    active=list(range(3)),
+    n_periods=3,
     actions={
         "working": DiscreteGrid(WorkingStatus),
         "consumption": LinspaceGrid(

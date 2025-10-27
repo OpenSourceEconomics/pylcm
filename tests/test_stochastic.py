@@ -76,7 +76,7 @@ def model_and_params():
         return health
 
     # Get the base models and create modified versions
-    base_regime = get_regime("iskhakov_et_al_2017_stochastic", active=list(range(3)))
+    base_regime = get_regime("iskhakov_et_al_2017_stochastic", n_periods=3)
 
     # Create deterministic model with modified function
     regime_deterministic = base_regime.replace(
@@ -99,8 +99,8 @@ def model_and_params():
         health_transition=jnp.identity(2),
     )
 
-    model_deterministic = Model(regime_deterministic, n_periods=len(base_regime.active))
-    model_stochastic = Model(regime_stochastic, n_periods=len(base_regime.active))
+    model_deterministic = Model(regime_deterministic, n_periods=base_regime.n_periods)
+    model_stochastic = Model(regime_stochastic, n_periods=base_regime.n_periods)
     return model_deterministic, model_stochastic, params
 
 

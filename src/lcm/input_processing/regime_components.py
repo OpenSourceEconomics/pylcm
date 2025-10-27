@@ -31,10 +31,10 @@ if TYPE_CHECKING:
 
 def build_state_space_infos(regime: Regime) -> dict[int, StateSpaceInfo]:
     state_space_infos = {}
-    for period in regime.active:
+    for period in range(regime.n_periods):
         state_space_infos[period] = create_state_space_info(
             regime=regime,
-            is_last_period=(period == regime.active[-1]),
+            is_last_period=(period == regime.n_periods - 1),
         )
     return state_space_infos
 
@@ -45,11 +45,11 @@ def build_state_action_spaces(
     variable_info = get_variable_info(regime)
     grids = get_grids(regime)
     state_action_spaces = {}
-    for period in regime.active:
+    for period in range(regime.n_periods):
         state_action_spaces[period] = create_state_action_space(
             variable_info=variable_info,
             grids=grids,
-            is_last_period=(period == regime.active[-1]),
+            is_last_period=(period == regime.n_periods - 1),
         )
     return state_action_spaces
 
@@ -69,8 +69,8 @@ def build_Q_and_F_functions(
     Q_and_F_functions = {}
     # Importantly, for Q_and_F, we have to go in reversed order, because the
     # next_state_space_info depends on the next period
-    for period in reversed(regime.active):
-        is_last_period = period == regime.active[-1]
+    for period in reversed(range(regime.n_periods)):
+        is_last_period = period == regime.n_periods - 1
 
         # Determine next state space info
         if is_last_period:
@@ -96,7 +96,7 @@ def build_max_Q_over_a_functions(
     state_action_space = build_state_action_spaces(regime)
 
     max_Q_over_a_functions = {}
-    for period in regime.active:
+    for period in range(regime.n_periods):
         action_names = tuple(state_action_space[period].continuous_actions) + tuple(
             state_action_space[period].discrete_actions
         )
@@ -117,7 +117,7 @@ def build_argmax_and_max_Q_over_a_functions(
     state_action_space = build_state_action_spaces(regime)
 
     argmax_and_max_Q_over_a_functions = {}
-    for period in regime.active:
+    for period in range(regime.n_periods):
         action_names = tuple(state_action_space[period].discrete_actions) + tuple(
             state_action_space[period].continuous_actions
         )
@@ -131,11 +131,15 @@ def build_argmax_and_max_Q_over_a_functions(
 
 
 def build_next_state_simulation_functions(
-    regime: Regime, internal_functions: InternalFunctions, grids: dict[str, Array]
+    regime: Regime,
+    internal_functions: InternalFunctions,
+    grids: dict[str, Array],
+    *,
+    enable_jit: bool,
 ) -> dict[int, Any]:
     state_action_spaces = build_state_action_spaces(regime)
     next_state_simulation_functions = {}
-    for period in regime.active:
+    for period in range(regime.n_periods):
         next_state = get_next_state_function(
             internal_functions=internal_functions,
             grids=grids,
@@ -153,5 +157,7 @@ def build_next_state_simulation_functions(
                 if parameter not in ["_period", "params"]
             ),
         )
-        next_state_simulation_functions[period] = next_state_vmapped
+        next_state_simulation_functions[period] = (
+            jax.jit(next_state_vmapped) if enable_jit else next_state_vmapped
+        )
     return next_state_simulation_functions

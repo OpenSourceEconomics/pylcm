@@ -71,7 +71,7 @@ def borrowing_constraint(
 
 DETERMINISTIC_REGIME = Regime(
     name="deterministic",
-    active=list(range(2)),
+    n_periods=2,
     actions={
         "consumption": DiscreteGrid(ConsumptionChoice),
         "working": DiscreteGrid(WorkingStatus),

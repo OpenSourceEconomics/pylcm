@@ -44,7 +44,7 @@ def valid_regime() -> Regime:
 
     return Regime(
         name="test",
-        active=list(range(2)),
+        n_periods=2,
         actions={
             "consumption": LinspaceGrid(
                 start=1,

@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 class Model:
     """A model which is created from a regime.
 
-    Upon initialization, an intrnal regime will be created which contains all
+    Upon initialization, an internal regime will be created which contains all
     the functions needed to solve and simulate the model.
 
     Attributes:
@@ -163,11 +163,10 @@ class Model:
 
 def _validate_model_consistency(regime: Regime, n_periods: int) -> None:
     error_messages = []
-    if set(regime.active) != set(range(n_periods)):
+    # Just an example validation
+    if regime.n_periods != n_periods:
         error_messages.append(
-            "Each model period needs at least one active "
-            "Regime. The following periods have no active Regime"
-            f"{set(range(n_periods)) - set(regime.active)}.",
+            "The Regime needs to have the same number of periods as the Model."
         )
 
     if error_messages:
