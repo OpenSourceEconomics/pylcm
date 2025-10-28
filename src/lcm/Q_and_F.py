@@ -28,6 +28,7 @@ if TYPE_CHECKING:
         FloatND,
         InternalUserFunction,
         ParamsDict,
+        Period,
         QAndFFunction,
     )
 
@@ -135,7 +136,7 @@ def get_Q_and_F_non_terminal(
     def Q_and_F(
         next_V_arr: FloatND,
         params: ParamsDict,
-        period: int,
+        period: Period,
         **states_and_actions: Array,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action value and feasibility for a non-terminal period.
@@ -231,8 +232,8 @@ def get_Q_and_F_terminal(
     )
     def Q_and_F(
         next_V_arr: FloatND,  # noqa: ARG001
-        period: int,
         params: ParamsDict,
+        period: Period,
         **states_and_actions: Array,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action values and feasibilities for the terminal period.

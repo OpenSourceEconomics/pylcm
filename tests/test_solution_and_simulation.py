@@ -22,7 +22,7 @@ from tests.test_models.utils import get_model, get_regime
 if TYPE_CHECKING:
     from typing import Any
 
-    from lcm.typing import BoolND, DiscreteAction, DiscreteState
+    from lcm.typing import BoolND, DiscreteAction, DiscreteState, Period
 
 # ======================================================================================
 # Test cases
@@ -356,7 +356,7 @@ def test_solve_with_period_argument_in_constraint():
     def absorbing_retirement_constraint(
         retirement: DiscreteAction,
         lagged_retirement: DiscreteState,
-        period: int,
+        period: Period,  # noqa: ARG001
     ) -> BoolND:
         return jnp.logical_or(
             retirement == RetirementStatus.retired,

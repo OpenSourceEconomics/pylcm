@@ -32,6 +32,7 @@ if TYPE_CHECKING:
         IntND,
         NextStateSimulationFunction,
         ParamsDict,
+        Period,
     )
 
 
@@ -179,8 +180,8 @@ def simulate(
             signature = inspect.signature(next_state_vmapped)
             parameters = set(signature.parameters)
 
-            next_vars = (
-                states
+            next_vars: dict[str, Array | Period | ParamsDict] = (
+                states  # type: ignore[assignment]
                 | optimal_actions
                 | stochastic_variables_keys
                 | {"period": period, "params": params}

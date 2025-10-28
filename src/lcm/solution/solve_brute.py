@@ -5,12 +5,11 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 
 from lcm.error_handling import validate_value_function_array
-from lcm.interfaces import TerminalNonTerminal
 
 if TYPE_CHECKING:
     import logging
 
-    from lcm.interfaces import MaxQOverAFunction, StateActionSpace
+    from lcm.interfaces import MaxQOverAFunction, StateActionSpace, TerminalNonTerminal
     from lcm.typing import FloatND, ParamsDict
 
 
@@ -26,7 +25,7 @@ def solve(
     Args:
         params: Dict of model parameters.
         n_periods: The number of periods in the model.
-        state_action_space: The regimes state action spaces.
+        state_action_spaces: The regimes state action spaces.
         max_Q_over_a_functions: The functions to calculate the maximum of the Q-function
             over all actions. The result corresponds to the Q-function of that period.
         logger: Logger that logs to stdout.

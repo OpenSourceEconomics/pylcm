@@ -165,7 +165,7 @@ class Model:
 
 
 def _validate_model_consistency() -> None:
-    error_messages = []
+    error_messages: list[str] = []
     # Just an example validation
     if False:
         error_messages.append(

@@ -21,6 +21,8 @@ type Bool1D = Bool[Array, "_"]  # noqa: F821
 type ScalarInt = int | Int[Scalar, ""]  # noqa: F722
 type ScalarFloat = float | Float[Scalar, ""]  # noqa: F722
 
+type Period = int | Int1D
+
 
 ParamsDict = dict[str, Any]
 
@@ -58,7 +60,11 @@ class QAndFFunction(Protocol):
     """
 
     def __call__(  # noqa: D102
-        self, next_V_arr: FloatND, params: ParamsDict, **kwargs: Array
+        self,
+        next_V_arr: FloatND,
+        params: ParamsDict,
+        period: Period,
+        **states_and_actions: Array,
     ) -> tuple[FloatND, BoolND]: ...
 
 
@@ -73,7 +79,7 @@ class MaxQOverCFunction(Protocol):
     """
 
     def __call__(  # noqa: D102
-        self, next_V_arr: Array, params: ParamsDict, **kwargs: Array
+        self, next_V_arr: Array, params: ParamsDict, period: Period, **kwargs: Array
     ) -> Array: ...
 
 
@@ -88,7 +94,7 @@ class ArgmaxQOverCFunction(Protocol):
     """
 
     def __call__(  # noqa: D102
-        self, next_V_arr: Array, params: ParamsDict, **kwargs: Array
+        self, next_V_arr: Array, params: ParamsDict, period: Period, **kwargs: Array
     ) -> tuple[Array, Array]: ...
 
 
@@ -103,7 +109,11 @@ class MaxQOverAFunction(Protocol):
     """
 
     def __call__(  # noqa: D102
-        self, next_V_arr: Array, params: ParamsDict, **kwargs: Array
+        self,
+        next_V_arr: Array,
+        params: ParamsDict,
+        period: Period,
+        **states_and_actions: Array,
     ) -> Array: ...
 
 
@@ -118,7 +128,11 @@ class ArgmaxQOverAFunction(Protocol):
     """
 
     def __call__(  # noqa: D102
-        self, next_V_arr: Array, params: ParamsDict, **kwargs: Array
+        self,
+        next_V_arr: Array,
+        params: ParamsDict,
+        period: Period,
+        **states_and_actions: Array,
     ) -> tuple[Array, Array]: ...
 
 
@@ -169,7 +183,5 @@ class NextStateSimulationFunction(Protocol):
 
     def __call__(  # noqa: D102
         self,
-        period: int,
-        params: ParamsDict,
-        **kwargs: Array,
+        **kwargs: Array | Period | ParamsDict,
     ) -> dict[str, DiscreteState | ContinuousState]: ...

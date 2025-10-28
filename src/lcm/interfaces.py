@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from lcm.utils import first_non_none
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     import pandas as pd
     from jax import Array
@@ -139,7 +138,7 @@ U = TypeVar("U")
 
 
 @dataclass(frozen=True, slots=True)
-class TerminalNonTerminal(Generic[T]):
+class TerminalNonTerminal[T]:
     """Container for terminal vs. non-terminal versions of the same object."""
 
     terminal: T

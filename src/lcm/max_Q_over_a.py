@@ -21,6 +21,7 @@ if TYPE_CHECKING:
         IntND,
         MaxQOverAFunction,
         ParamsDict,
+        Period,
     )
 
 
@@ -69,7 +70,7 @@ def get_max_Q_over_a(
     # the Q and F calculation directly. Therefore, we only vmapp over the relevant
     # states.
     parameters = list(inspect.signature(Q_and_F).parameters)
-    relevant_states_names = [s for s in states_names if s in parameters]
+    relevant_states_names = tuple(s for s in states_names if s in parameters)
 
     @with_signature(
         args=["next_V_arr", "params", "period", *actions_names, *states_names],
@@ -78,7 +79,7 @@ def get_max_Q_over_a(
     def max_Q_over_a(
         next_V_arr: FloatND,
         params: ParamsDict,
-        period: int,
+        period: Period,
         **states_and_actions: Array,
     ) -> FloatND:
         s_and_a = {k: v for k, v in states_and_actions.items() if k in parameters}
@@ -133,10 +134,13 @@ def get_argmax_and_max_Q_over_a(
 
     @functools.wraps(Q_and_F)
     def argmax_and_max_Q_over_a(
-        next_V_arr: FloatND, params: ParamsDict, **states_and_actions: Array
+        next_V_arr: FloatND,
+        params: ParamsDict,
+        period: Period,
+        **states_and_actions: Array,
     ) -> tuple[IntND, FloatND]:
         Q_arr, F_arr = Q_and_F(
-            params=params, next_V_arr=next_V_arr, **states_and_actions
+            params=params, next_V_arr=next_V_arr, period=period, **states_and_actions
         )
         return argmax_and_max(Q_arr, where=F_arr, initial=-jnp.inf)
 
