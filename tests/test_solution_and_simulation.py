@@ -346,7 +346,7 @@ def test_argmax_and_max_Q_over_c_with_discrete_model():
 
 
 # ======================================================================================
-# Test constraints with _period argument
+# Test constraints with period argument
 # ======================================================================================
 
 
@@ -356,7 +356,7 @@ def test_solve_with_period_argument_in_constraint():
     def absorbing_retirement_constraint(
         retirement: DiscreteAction,
         lagged_retirement: DiscreteState,
-        _period: int,
+        period: int,
     ) -> BoolND:
         return jnp.logical_or(
             retirement == RetirementStatus.retired,

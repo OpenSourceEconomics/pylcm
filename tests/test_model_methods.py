@@ -15,8 +15,8 @@ def test_internal_regime_has_required_attributes():
     # Check all required attributes exist
     assert hasattr(model, "internal_regime")
     assert hasattr(model.internal_regime, "params_template")
-    assert hasattr(model.internal_regime, "state_action_space")
-    assert hasattr(model.internal_regime, "state_space_info")
+    assert hasattr(model.internal_regime, "state_action_spaces")
+    assert hasattr(model.internal_regime, "state_space_infos")
     assert hasattr(model.internal_regime, "max_Q_over_a_functions")
     assert hasattr(model.internal_regime, "argmax_and_max_Q_over_a_functions")
     assert hasattr(model.internal_regime, "next_state_simulation_function")

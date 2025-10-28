@@ -46,7 +46,7 @@ def test_create_function_params():
 
 
 def test_create_shock_params():
-    def next_a(a, _period):
+    def next_a(a, period):
         pass
 
     variable_info = pd.DataFrame(
@@ -91,7 +91,7 @@ def test_create_shock_params_invalid_variable():
 
 
 def test_create_shock_params_invalid_dependency():
-    def next_a(a, b, _period):
+    def next_a(a, b, period):
         pass
 
     variable_info = pd.DataFrame(

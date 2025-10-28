@@ -90,7 +90,7 @@ class Model:
         return solve(
             params=params,
             n_periods=self.n_periods,
-            state_action_space=self.internal_regime.state_action_space,
+            state_action_spaces=self.internal_regime.state_action_spaces,
             max_Q_over_a_functions=self.internal_regime.max_Q_over_a_functions,
             logger=get_logger(debug_mode=debug_mode),
         )

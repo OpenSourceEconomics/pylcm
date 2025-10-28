@@ -9,7 +9,7 @@ from numpy.testing import assert_array_almost_equal, assert_array_equal
 
 from lcm.dispatchers import vmap_1d
 from lcm.input_processing import process_regime
-from lcm.interfaces import ArgmaxQOverAFunctions, Target
+from lcm.interfaces import Target, TerminalNonTerminal
 from lcm.logging import get_logger
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a
 from lcm.model import Model
@@ -86,12 +86,12 @@ def simulate_inputs():
         variables=tuple(
             parameter
             for parameter in parameters
-            if parameter not in ["_period", "params"]
+            if parameter not in ["period", "params"]
         ),
     )
 
     return {
-        "argmax_and_max_Q_over_a_functions": ArgmaxQOverAFunctions(
+        "argmax_and_max_Q_over_a_functions": TerminalNonTerminal(
             terminal=argmax_and_max_Q_over_a_functions_terminal,
             non_terminal=argmax_and_max_Q_over_a_functions_non_terminal,
         ),
@@ -166,7 +166,7 @@ def test_simulate_using_model_methods(
     )
 
     assert {
-        "_period",
+        "period",
         "value",
         "retirement",
         "consumption",
@@ -246,7 +246,7 @@ def test_effect_of_beta_on_last_period():
 
 
 def test_effect_of_disutility_of_work():
-    regime = get_model("iskhakov_et_al_2017_stripped_down", n_periods=5)
+    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=5)
 
     # low disutility_of_work
     params_low = get_params(beta=1.0, disutility_of_work=0.2)
@@ -255,20 +255,20 @@ def test_effect_of_disutility_of_work():
     params_high = get_params(beta=1.0, disutility_of_work=1.5)
 
     # solutions
-    solution_low = regime.solve(params_low)
-    solution_high = regime.solve(params_high)
+    solution_low = model.solve(params_low)
+    solution_high = model.solve(params_high)
 
     # Simulate
     # ==================================================================================
     initial_wealth = jnp.array([20.0, 50, 70])
 
-    res_low: pd.DataFrame = regime.simulate(
+    res_low: pd.DataFrame = model.simulate(
         params_low,
         V_arr_dict=solution_low,
         initial_states={"wealth": initial_wealth},
     )
 
-    res_high: pd.DataFrame = regime.simulate(
+    res_high: pd.DataFrame = model.simulate(
         params_high,
         V_arr_dict=solution_high,
         initial_states={"wealth": initial_wealth},

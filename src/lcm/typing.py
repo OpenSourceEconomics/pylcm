@@ -158,3 +158,18 @@ class StochasticNextFunction(Protocol):
     """
 
     def __call__(self, **kwargs: Array) -> Array: ...  # noqa: D102
+
+
+class NextStateSimulationFunction(Protocol):
+    """The function that computes the next states during the simulation.
+
+    Only used for type checking.
+
+    """
+
+    def __call__(  # noqa: D102
+        self,
+        period: int,
+        params: ParamsDict,
+        **kwargs: Array,
+    ) -> dict[str, DiscreteState | ContinuousState]: ...

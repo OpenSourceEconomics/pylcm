@@ -98,7 +98,7 @@ def next_health(health: DiscreteState, partner: DiscreteState) -> DiscreteState:
 
 @lcm.mark.stochastic
 def next_partner(  # type: ignore[empty-body]
-    _period: int | Int1D, working: DiscreteAction, partner: DiscreteState
+    period: int | Int1D, working: DiscreteAction, partner: DiscreteState
 ) -> DiscreteState:
     pass
 

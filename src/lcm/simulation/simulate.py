@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
@@ -12,10 +12,10 @@ from lcm.dispatchers import simulation_spacemap, vmap_1d
 from lcm.error_handling import validate_value_function_array
 from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import (
-    ArgmaxQOverAFunctions,
     InternalRegime,
     InternalSimulationPeriodResults,
     StateActionSpace,
+    TerminalNonTerminal,
 )
 from lcm.random import draw_random_seed, generate_simulation_keys
 from lcm.simulation.processing import as_panel, process_simulated_data
@@ -27,8 +27,10 @@ if TYPE_CHECKING:
     import pandas as pd
 
     from lcm.typing import (
+        ArgmaxQOverAFunction,
         FloatND,
         IntND,
+        NextStateSimulationFunction,
         ParamsDict,
     )
 
@@ -36,8 +38,8 @@ if TYPE_CHECKING:
 def simulate(
     params: ParamsDict,
     initial_states: dict[str, Array],
-    argmax_and_max_Q_over_a_functions: ArgmaxQOverAFunctions,
-    next_state_simulation_function: Any,
+    argmax_and_max_Q_over_a_functions: TerminalNonTerminal[ArgmaxQOverAFunction],
+    next_state_simulation_function: NextStateSimulationFunction,
     internal_regime: InternalRegime,
     logger: logging.Logger,
     V_arr_dict: dict[int, FloatND],
@@ -120,18 +122,12 @@ def simulate(
         # periods's value funciton. In the last period, we pass an empty array.
         next_V_arr = V_arr_dict.get(period + 1, jnp.empty(0))
 
-        if is_last_period:
-            argmax_and_max_Q_over_a = simulation_spacemap(
-                argmax_and_max_Q_over_a_functions.terminal,
-                actions_names=(),
-                states_names=tuple(state_action_space.states),
-            )
-        else:
-            argmax_and_max_Q_over_a = simulation_spacemap(
-                argmax_and_max_Q_over_a_functions.non_terminal,
-                actions_names=(),
-                states_names=tuple(state_action_space.states),
-            )
+        argmax_and_max_Q_over_a = simulation_spacemap(
+            argmax_and_max_Q_over_a_functions(is_terminal=is_last_period),
+            actions_names=(),
+            states_names=tuple(state_action_space.states),
+        )
+
         # The Q-function values contain the information of how much value each action
         # combination is worth. To find the optimal discrete action, we therefore only
         # need to maximize the Q-function values over all actions.
@@ -187,7 +183,7 @@ def simulate(
                 states
                 | optimal_actions
                 | stochastic_variables_keys
-                | {"_period": period, "params": params}
+                | {"period": period, "params": params}
             )
 
             next_state_input = {

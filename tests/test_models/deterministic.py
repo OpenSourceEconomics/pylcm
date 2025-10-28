@@ -66,8 +66,8 @@ def wage(age: int | IntND) -> float | FloatND:
     return 1 + 0.1 * age
 
 
-def age(_period: int | Int1D) -> int | IntND:
-    return _period + 18
+def age(period: int | Int1D) -> int | IntND:
+    return period + 18
 
 
 # --------------------------------------------------------------------------------------

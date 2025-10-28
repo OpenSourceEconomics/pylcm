@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import dataclasses
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from lcm.utils import first_non_none
 
@@ -25,7 +26,6 @@ if TYPE_CHECKING:
         InternalUserFunction,
         MaxQOverAFunction,
         ParamsDict,
-        QAndFFunction,
     )
 
 
@@ -67,6 +67,16 @@ class StateActionSpace:
     discrete_actions: dict[str, DiscreteAction]
     continuous_actions: dict[str, ContinuousAction]
     states_and_discrete_actions_names: tuple[str, ...]
+
+    @property
+    def states_names(self) -> tuple[str, ...]:
+        """Tuple with names of all state variables."""
+        return tuple(self.states)
+
+    @property
+    def actions_names(self) -> tuple[str, ...]:
+        """Tuple with names of all action variables."""
+        return tuple(self.discrete_actions) + tuple(self.continuous_actions)
 
     def replace(
         self,
@@ -124,34 +134,43 @@ class ShockType(Enum):
     NONE = None
 
 
+T = TypeVar("T")
+U = TypeVar("U")
+
+
+@dataclass(frozen=True, slots=True)
+class TerminalNonTerminal(Generic[T]):
+    """Container for terminal vs. non-terminal versions of the same object."""
+
+    terminal: T
+    non_terminal: T
+
+    def __call__(self, *, is_terminal: bool) -> T:
+        """Return the terminal object if `is_terminal` else the non-terminal one."""
+        return self.terminal if is_terminal else self.non_terminal
+
+    def map(self, f: Callable[[T], U]) -> TerminalNonTerminal[U]:
+        """Apply `f` to both entries and return a new `HorizonPair`."""
+        return TerminalNonTerminal(
+            terminal=f(self.terminal), non_terminal=f(self.non_terminal)
+        )
+
+    def replace(
+        self, *, terminal: T | None = None, non_terminal: T | None = None
+    ) -> TerminalNonTerminal[T]:
+        """Immutable update (dataclasses.replace wrapper)."""
+        return replace(
+            self,
+            terminal=self.terminal if terminal is None else terminal,
+            non_terminal=self.non_terminal if non_terminal is None else non_terminal,
+        )
+
+
 @dataclasses.dataclass(frozen=True)
 class InternalRegime:
     """Internal representation of a user regime.
 
     MUST BE UPDATED.
-
-    Attributes:
-        grids: Dictionary that maps names of regime variables to grids of feasible
-            values for that variable.
-        gridspecs: Dictionary that maps names of regime variables to specifications from
-            which grids of feasible values can be built.
-        variable_info: A table with information about all variables in the regime. The
-            index contains the name of a regime variable. The columns are booleans that
-            are True if the variable has the corresponding property. The columns are:
-            is_state, is_action, is_continuous, is_discrete.
-        utility: The utility function of the regime.
-        transitions: Dictionary that maps transition functions to state names.
-        constraints: Dictionary that maps constraint names to constraint functions.
-        functions: Dictionary that maps names of functions to functions. The functions
-            differ from the user functions in that they take `params` as a keyword
-            argument. Two cases:
-            - If the original function depended on model parameters, those are
-              automatically extracted from `params` and passed to the original
-              function.
-            - Otherwise, the `params` argument is simply ignored.
-        params: Dict of model parameters.
-        n_periods: Number of periods.
-        random_utility_shocks: Type of random utility shocks.
 
     """
 
@@ -164,10 +183,10 @@ class InternalRegime:
     functions: dict[str, InternalUserFunction]
     internal_functions: InternalFunctions
     params_template: ParamsDict
-    state_action_space: StateActionSpace
-    state_space_info: StateSpaceInfo
-    max_Q_over_a_functions: MaxQOverAFunctions
-    argmax_and_max_Q_over_a_functions: ArgmaxQOverAFunctions
+    state_action_spaces: TerminalNonTerminal[StateActionSpace]
+    state_space_infos: TerminalNonTerminal[StateSpaceInfo]
+    max_Q_over_a_functions: TerminalNonTerminal[MaxQOverAFunction]
+    argmax_and_max_Q_over_a_functions: TerminalNonTerminal[ArgmaxQOverAFunction]
     next_state_simulation_function: Any
     # Not properly processed yet
     random_utility_shocks: ShockType
@@ -211,27 +230,3 @@ class InternalFunctions:
     utility: InternalUserFunction
     constraints: dict[str, InternalUserFunction]
     transitions: dict[str, InternalUserFunction]
-
-
-@dataclass(frozen=True)
-class MaxQOverAFunctions:
-    """All functions that are used in the regime."""
-
-    terminal: MaxQOverAFunction
-    non_terminal: MaxQOverAFunction
-
-
-@dataclass(frozen=True)
-class ArgmaxQOverAFunctions:
-    """All functions that are used in the regime."""
-
-    terminal: ArgmaxQOverAFunction
-    non_terminal: ArgmaxQOverAFunction
-
-
-@dataclass(frozen=True)
-class QAndFFunctions:
-    """All functions that are used in the regime."""
-
-    terminal: QAndFFunction
-    non_terminal: QAndFFunction

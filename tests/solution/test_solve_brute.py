@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm.interfaces import MaxQOverAFunctions, StateActionSpace
+from lcm.interfaces import StateActionSpace, TerminalNonTerminal
 from lcm.logging import get_logger
 from lcm.max_Q_over_a import get_max_Q_over_a
 from lcm.ndimage import map_coordinates
@@ -43,6 +43,9 @@ def test_solve_brute():
         },
         states_and_discrete_actions_names=("lazy", "working", "wealth"),
     )
+    state_action_spaces = TerminalNonTerminal(
+        terminal=state_action_space, non_terminal=state_action_space
+    )
     # ==================================================================================
     # create the Q_and_F functions
     # ==================================================================================
@@ -73,7 +76,7 @@ def test_solve_brute():
         states_names=("lazy", "wealth"),
     )
 
-    max_Q_over_a_functions = MaxQOverAFunctions(
+    max_Q_over_a_functions = TerminalNonTerminal(
         terminal=max_Q_over_a, non_terminal=max_Q_over_a
     )
 
@@ -84,7 +87,7 @@ def test_solve_brute():
     solution = solve(
         params=params,
         n_periods=2,
-        state_action_space=state_action_space,
+        state_action_spaces=state_action_spaces,
         max_Q_over_a_functions=max_Q_over_a_functions,
         logger=get_logger(debug_mode=False),
     )
@@ -105,6 +108,9 @@ def test_solve_brute_single_period_Qc_arr():
         states={},
         states_and_discrete_actions_names=("a", "b", "c"),
     )
+    state_action_spaces = TerminalNonTerminal(
+        terminal=state_action_space, non_terminal=state_action_space
+    )
 
     def _Q_and_F(a, c, b, d, next_V_arr, params, period):  # noqa: ARG001
         util = d
@@ -124,8 +130,8 @@ def test_solve_brute_single_period_Qc_arr():
     got = solve(
         params={},
         n_periods=2,
-        state_action_space=state_action_space,
-        max_Q_over_a_functions=MaxQOverAFunctions(
+        state_action_spaces=state_action_spaces,
+        max_Q_over_a_functions=TerminalNonTerminal(
             terminal=max_Q_over_a, non_terminal=max_Q_over_a
         ),
         logger=get_logger(debug_mode=False),

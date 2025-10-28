@@ -40,7 +40,7 @@ def process_simulated_data(
     Returns:
         Dict with processed simulation results. The keys are the variable names and the
         values are the flattened arrays, with dimension (n_periods * n_initial_states,).
-        Additionally, the _period variable is added.
+        Additionally, the period variable is added.
 
     """
     n_periods = len(results)
@@ -56,7 +56,7 @@ def process_simulated_data(
         for key in list(list_of_dicts[0])
     }
     out = {key: jnp.concatenate(values) for key, values in dict_of_lists.items()}
-    out["_period"] = jnp.repeat(jnp.arange(n_periods), n_initial_states)
+    out["period"] = jnp.repeat(jnp.arange(n_periods), n_initial_states)
 
     if additional_targets is not None:
         calculated_targets = _compute_targets(

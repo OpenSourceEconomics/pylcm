@@ -75,7 +75,7 @@ def _create_function_params(regime: Regime) -> dict[str, dict[str, float]]:
         *regime.functions,
         *regime.actions,
         *regime.states,
-        "_period",
+        "period",
     }
 
     if hasattr(regime, "shocks"):
@@ -127,8 +127,8 @@ def _create_stochastic_transition_params(
     # Create template matrices for stochastic transitions
     # ==================================================================================
 
-    # Stochastic transition functions can only depend on discrete vars or '_period'.
-    valid_vars = set(variable_info.query("is_discrete").index) | {"_period"}
+    # Stochastic transition functions can only depend on discrete vars or 'period'.
+    valid_vars = set(variable_info.query("is_discrete").index) | {"period"}
 
     stochastic_transition_params = {}
     invalid_dependencies = {}
@@ -146,7 +146,7 @@ def _create_stochastic_transition_params(
         else:
             # Get the dimensions of variables that influence the stochastic variable
             dimensions_of_deps = [
-                len(grids[arg]) if arg != "_period" else n_periods
+                len(grids[arg]) if arg != "period" else n_periods
                 for arg in dependencies
             ]
             # Add the dimension of the stochastic variable itself at the end
@@ -159,7 +159,7 @@ def _create_stochastic_transition_params(
     if invalid_dependencies:
         raise ValueError(
             f"Stochastic transition functions can only depend on discrete variables or "
-            "'_period'. The following variables have invalid arguments: "
+            "'period'. The following variables have invalid arguments: "
             f"{invalid_dependencies}.",
         )
 
