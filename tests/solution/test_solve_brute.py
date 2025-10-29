@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm.interfaces import StateActionSpace, TerminalNonTerminal
+from lcm.interfaces import PeriodVariantContainer, StateActionSpace
 from lcm.logging import get_logger
 from lcm.max_Q_over_a import get_max_Q_over_a
 from lcm.ndimage import map_coordinates
@@ -43,7 +43,7 @@ def test_solve_brute():
         },
         states_and_discrete_actions_names=("lazy", "working", "wealth"),
     )
-    state_action_spaces = TerminalNonTerminal(
+    state_action_spaces = PeriodVariantContainer(
         terminal=state_action_space, non_terminal=state_action_space
     )
     # ==================================================================================
@@ -76,7 +76,7 @@ def test_solve_brute():
         states_names=("lazy", "wealth"),
     )
 
-    max_Q_over_a_functions = TerminalNonTerminal(
+    max_Q_over_a_functions = PeriodVariantContainer(
         terminal=max_Q_over_a, non_terminal=max_Q_over_a
     )
 
@@ -108,7 +108,7 @@ def test_solve_brute_single_period_Qc_arr():
         states={},
         states_and_discrete_actions_names=("a", "b", "c"),
     )
-    state_action_spaces = TerminalNonTerminal(
+    state_action_spaces = PeriodVariantContainer(
         terminal=state_action_space, non_terminal=state_action_space
     )
 
@@ -131,7 +131,7 @@ def test_solve_brute_single_period_Qc_arr():
         params={},
         n_periods=2,
         state_action_spaces=state_action_spaces,
-        max_Q_over_a_functions=TerminalNonTerminal(
+        max_Q_over_a_functions=PeriodVariantContainer(
             terminal=max_Q_over_a, non_terminal=max_Q_over_a
         ),
         logger=get_logger(debug_mode=False),

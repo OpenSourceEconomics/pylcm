@@ -9,7 +9,7 @@ from numpy.testing import assert_array_almost_equal, assert_array_equal
 
 from lcm.dispatchers import vmap_1d
 from lcm.input_processing import process_regime
-from lcm.interfaces import Target, TerminalNonTerminal
+from lcm.interfaces import PeriodVariantContainer, Target
 from lcm.logging import get_logger
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a
 from lcm.model import Model
@@ -91,7 +91,7 @@ def simulate_inputs():
     )
 
     return {
-        "argmax_and_max_Q_over_a_functions": TerminalNonTerminal(
+        "argmax_and_max_Q_over_a_functions": PeriodVariantContainer(
             terminal=argmax_and_max_Q_over_a_functions_terminal,
             non_terminal=argmax_and_max_Q_over_a_functions_non_terminal,
         ),

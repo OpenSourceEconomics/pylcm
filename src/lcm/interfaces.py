@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import dataclasses
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any
 
 from lcm.utils import first_non_none
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Mapping
 
     import pandas as pd
     from jax import Array
@@ -133,36 +133,36 @@ class ShockType(Enum):
     NONE = None
 
 
-T = TypeVar("T")
-U = TypeVar("U")
+class PeriodVariantContainer[T]:
+    """Container for objects that vary by period relative to the terminal period.
 
+    Attributes:
+        terminal: Object for the terminal period.
+        non_terminal: Object for all non-terminal periods, except the one before the
+            terminal period if provided.
+        before_terminal: Object for the period just before the terminal period. If None,
+            defaults to the non-terminal object.
 
-@dataclass(frozen=True, slots=True)
-class TerminalNonTerminal[T]:
-    """Container for terminal vs. non-terminal versions of the same object."""
+    """
 
-    terminal: T
-    non_terminal: T
+    __slots__ = ("before_terminal", "non_terminal", "terminal")
 
-    def __call__(self, *, is_terminal: bool) -> T:
-        """Return the terminal object if `is_terminal` else the non-terminal one."""
-        return self.terminal if is_terminal else self.non_terminal
-
-    def map(self, f: Callable[[T], U]) -> TerminalNonTerminal[U]:
-        """Apply `f` to both entries and return a new `HorizonPair`."""
-        return TerminalNonTerminal(
-            terminal=f(self.terminal), non_terminal=f(self.non_terminal)
+    def __init__(
+        self, terminal: T, non_terminal: T, before_terminal: T | None = None
+    ) -> None:
+        self.terminal = terminal
+        self.non_terminal = non_terminal
+        self.before_terminal = (
+            non_terminal if before_terminal is None else before_terminal
         )
 
-    def replace(
-        self, *, terminal: T | None = None, non_terminal: T | None = None
-    ) -> TerminalNonTerminal[T]:
-        """Immutable update (dataclasses.replace wrapper)."""
-        return replace(
-            self,
-            terminal=self.terminal if terminal is None else terminal,
-            non_terminal=self.non_terminal if non_terminal is None else non_terminal,
-        )
+    def __call__(self, period: int, *, n_periods: int) -> T:
+        """Return object given period relative to the terminal period."""
+        if period == n_periods - 1:
+            return self.terminal
+        if period == n_periods - 2:
+            return self.before_terminal
+        return self.non_terminal
 
 
 @dataclasses.dataclass(frozen=True)
@@ -182,10 +182,10 @@ class InternalRegime:
     functions: dict[str, InternalUserFunction]
     internal_functions: InternalFunctions
     params_template: ParamsDict
-    state_action_spaces: TerminalNonTerminal[StateActionSpace]
-    state_space_infos: TerminalNonTerminal[StateSpaceInfo]
-    max_Q_over_a_functions: TerminalNonTerminal[MaxQOverAFunction]
-    argmax_and_max_Q_over_a_functions: TerminalNonTerminal[ArgmaxQOverAFunction]
+    state_action_spaces: PeriodVariantContainer[StateActionSpace]
+    state_space_infos: PeriodVariantContainer[StateSpaceInfo]
+    max_Q_over_a_functions: PeriodVariantContainer[MaxQOverAFunction]
+    argmax_and_max_Q_over_a_functions: PeriodVariantContainer[ArgmaxQOverAFunction]
     next_state_simulation_function: Any
     # Not properly processed yet
     random_utility_shocks: ShockType

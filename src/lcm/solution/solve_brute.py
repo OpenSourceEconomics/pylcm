@@ -9,15 +9,19 @@ from lcm.error_handling import validate_value_function_array
 if TYPE_CHECKING:
     import logging
 
-    from lcm.interfaces import MaxQOverAFunction, StateActionSpace, TerminalNonTerminal
+    from lcm.interfaces import (
+        MaxQOverAFunction,
+        PeriodVariantContainer,
+        StateActionSpace,
+    )
     from lcm.typing import FloatND, ParamsDict
 
 
 def solve(
     params: ParamsDict,
     n_periods: int,
-    state_action_spaces: TerminalNonTerminal[StateActionSpace],
-    max_Q_over_a_functions: TerminalNonTerminal[MaxQOverAFunction],
+    state_action_spaces: PeriodVariantContainer[StateActionSpace],
+    max_Q_over_a_functions: PeriodVariantContainer[MaxQOverAFunction],
     logger: logging.Logger,
 ) -> dict[int, FloatND]:
     """Solve a model using grid search.
@@ -41,8 +45,8 @@ def solve(
 
     # backwards induction loop
     for period in reversed(range(n_periods)):
-        max_Q_over_a = max_Q_over_a_functions(is_terminal=period == n_periods - 1)
-        state_action_space = state_action_spaces(is_terminal=period == n_periods - 1)
+        max_Q_over_a = max_Q_over_a_functions(period, n_periods=n_periods)
+        state_action_space = state_action_spaces(period, n_periods=n_periods)
 
         # evaluate Q-function on states and actions, and maximize over actions
         V_arr = max_Q_over_a(
