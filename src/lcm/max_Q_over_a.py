@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import functools
-import inspect
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
@@ -66,12 +65,6 @@ def get_max_Q_over_a(
         variables=actions_names,
     )
 
-    # Some state variables only influence the state transition, which does not affect
-    # the Q and F calculation directly. Therefore, we only vmapp over the relevant
-    # states.
-    parameters = list(inspect.signature(Q_and_F).parameters)
-    relevant_states_names = tuple(s for s in states_names if s in parameters)
-
     @with_signature(
         args=["next_V_arr", "params", "period", *actions_names, *states_names],
         return_annotation="FloatND",
@@ -82,13 +75,12 @@ def get_max_Q_over_a(
         period: Period,
         **states_and_actions: Array,
     ) -> FloatND:
-        s_and_a = {k: v for k, v in states_and_actions.items() if k in parameters}
         Q_arr, F_arr = Q_and_F(
-            params=params, next_V_arr=next_V_arr, period=period, **s_and_a
+            params=params, next_V_arr=next_V_arr, period=period, **states_and_actions
         )
         return Q_arr.max(where=F_arr, initial=-jnp.inf)
 
-    return productmap(max_Q_over_a, variables=relevant_states_names)
+    return productmap(max_Q_over_a, variables=states_names)
 
 
 def get_argmax_and_max_Q_over_a(
