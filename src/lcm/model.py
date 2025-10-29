@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from lcm.exceptions import ModelInitializationError, format_messages
 from lcm.input_processing.regime_processing import process_regime
 from lcm.logging import get_logger
+from lcm.regime import Regime
 from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
 
@@ -15,7 +16,6 @@ if TYPE_CHECKING:
     from jax import Array
 
     from lcm.input_processing.regime_processing import InternalRegime
-    from lcm.regime import Regime
     from lcm.typing import (
         FloatND,
         ParamsDict,
@@ -62,7 +62,11 @@ class Model:
             enable_jit: Whether to jit the functions of the internal regime.
 
         """
-        _validate_model_consistency()
+        _validate_model_inputs(
+            n_periods=n_periods,
+            regime=regime,
+        )
+
         self.n_periods = n_periods
         self.description = description
         self.enable_jit = enable_jit
@@ -164,13 +168,16 @@ class Model:
         )
 
 
-def _validate_model_consistency() -> None:
+def _validate_model_inputs(n_periods: int, regime: Regime) -> None:
     error_messages: list[str] = []
-    # Just an example validation
-    if False:
-        error_messages.append(
-            "The Regime needs to have the same number of periods as the Model."
-        )
+
+    if not isinstance(n_periods, int):
+        error_messages.append("n_periods must be an integer.")
+    elif n_periods <= 1:
+        error_messages.append("n_periods must be at least 2.")
+
+    if not isinstance(regime, Regime):
+        error_messages.append("regime must be an instance of lcm.Regime.")
 
     if error_messages:
         msg = format_messages(error_messages)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from lcm.utils import first_non_none
 
@@ -24,6 +24,7 @@ if TYPE_CHECKING:
         Int1D,
         InternalUserFunction,
         MaxQOverAFunction,
+        NextStateSimulationFunction,
         ParamsDict,
     )
 
@@ -186,7 +187,7 @@ class InternalRegime:
     state_space_infos: PeriodVariantContainer[StateSpaceInfo]
     max_Q_over_a_functions: PeriodVariantContainer[MaxQOverAFunction]
     argmax_and_max_Q_over_a_functions: PeriodVariantContainer[ArgmaxQOverAFunction]
-    next_state_simulation_function: Any
+    next_state_simulation_function: NextStateSimulationFunction
     # Not properly processed yet
     random_utility_shocks: ShockType
 

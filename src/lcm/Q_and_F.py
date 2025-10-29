@@ -127,7 +127,6 @@ def get_Q_and_F_non_terminal(
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         [U_and_F, state_transition, next_stochastic_states_weights],
         include={"params", "next_V_arr", "period"},
-        exclude={"period"},
     )
 
     @with_signature(
@@ -220,7 +219,6 @@ def get_Q_and_F_terminal(
         # include it in the signature, such that we can treat all periods uniformly
         # during the solution and simulation.
         include={"params", "next_V_arr", "period"},
-        exclude={"period"},
     )
 
     args = dict.fromkeys(arg_names_of_Q_and_F, "Array")
