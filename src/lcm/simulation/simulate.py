@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
@@ -14,6 +14,7 @@ from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import (
     InternalRegime,
     InternalSimulationPeriodResults,
+    PeriodVariantContainer,
     StateActionSpace,
 )
 from lcm.random import draw_random_seed, generate_simulation_keys
@@ -29,15 +30,17 @@ if TYPE_CHECKING:
         ArgmaxQOverAFunction,
         FloatND,
         IntND,
+        NextStateSimulationFunction,
         ParamsDict,
+        Period,
     )
 
 
 def simulate(
     params: ParamsDict,
     initial_states: dict[str, Array],
-    argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction],
-    next_state_simulation_functions: dict[int, Any],
+    argmax_and_max_Q_over_a_functions: PeriodVariantContainer[ArgmaxQOverAFunction],
+    next_state_simulation_function: NextStateSimulationFunction,
     internal_regime: InternalRegime,
     logger: logging.Logger,
     V_arr_dict: dict[int, FloatND],
@@ -53,7 +56,7 @@ def simulate(
             observed dataset.
         argmax_and_max_Q_over_a_functions: Dict of functions of length n_periods. Each
             function calculates the argument maximizing Q over all actions.
-        next_state_simulation_functions: Functions that return the next state given the
+        next_state_simulation_function: Function that returns the next state given the
             current state and action variables. For stochastic variables, it returns a
             random draw from the distribution of the next state.
         internal_regime: Internal model instance.
@@ -121,10 +124,11 @@ def simulate(
         next_V_arr = V_arr_dict.get(period + 1, jnp.empty(0))
 
         argmax_and_max_Q_over_a = simulation_spacemap(
-            argmax_and_max_Q_over_a_functions[period],
+            argmax_and_max_Q_over_a_functions(period, n_periods=n_periods),
             actions_names=(),
             states_names=tuple(state_action_space.states),
         )
+
         # The Q-function values contain the information of how much value each action
         # combination is worth. To find the optimal discrete action, we therefore only
         # need to maximize the Q-function values over all actions.
@@ -133,6 +137,7 @@ def simulate(
             **state_action_space.states,
             **state_action_space.discrete_actions,
             **state_action_space.continuous_actions,
+            period=period,
             next_V_arr=next_V_arr,
             params=params,
         )
@@ -171,15 +176,15 @@ def simulate(
                 names=stochastic_next_function_names,
                 n_initial_states=n_initial_states,
             )
-            next_state_vmapped = next_state_simulation_functions[period]
+            next_state_vmapped = next_state_simulation_function
             signature = inspect.signature(next_state_vmapped)
             parameters = set(signature.parameters)
 
-            next_vars = (
-                states
+            next_vars: dict[str, Array | Period | ParamsDict] = (
+                states  # type: ignore[assignment]
                 | optimal_actions
                 | stochastic_variables_keys
-                | {"_period": period, "params": params}
+                | {"period": period, "params": params}
             )
 
             next_state_input = {

@@ -25,12 +25,11 @@ TEST_REGIMES = {
 
 
 def get_model(model_name: str, n_periods: int) -> Model:
-    return Model(get_regime(model_name, n_periods=n_periods), n_periods=n_periods)
+    return Model(get_regime(model_name), n_periods=n_periods)
 
 
-def get_regime(regime_name: str, n_periods: int) -> Regime:
-    regime = deepcopy(TEST_REGIMES[regime_name])
-    return regime.replace(n_periods=n_periods)
+def get_regime(regime_name: str) -> Regime:
+    return deepcopy(TEST_REGIMES[regime_name])
 
 
 def get_params(

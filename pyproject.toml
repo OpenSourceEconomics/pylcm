@@ -167,6 +167,7 @@ extend-ignore = [
     "D103",  # missing docstring in public function
     "D104",  # missing docstring in public package
     "D105",  # Missing docstring in magic method
+    "D107",  # missing docstring in __init__
     "EM101",  # exception must not use a string literal
     "EM102",  # exception must not use an f-string literal
     "FIX002",  # line contains a todo

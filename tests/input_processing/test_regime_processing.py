@@ -29,7 +29,6 @@ def regime(binary_category_class):
         pass
 
     return RegimeMock(
-        n_periods=2,
         actions={
             "a": DiscreteGrid(binary_category_class),
         },
@@ -76,8 +75,8 @@ def test_get_grids(regime):
 
 
 def test_process_regime_iskhakov_et_al_2017():
-    regime = get_regime("iskhakov_et_al_2017", n_periods=3)
-    internal_regime = process_regime(regime, enable_jit=True)
+    regime = get_regime("iskhakov_et_al_2017")
+    internal_regime = process_regime(regime, n_periods=3, enable_jit=True)
 
     # Variable Info
     assert (
@@ -134,8 +133,8 @@ def test_process_regime_iskhakov_et_al_2017():
 
 
 def test_process_regime():
-    regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    internal_regime = process_regime(regime, enable_jit=True)
+    regime = get_regime("iskhakov_et_al_2017_stripped_down")
+    internal_regime = process_regime(regime, n_periods=3, enable_jit=True)
 
     # Variable Info
     assert (
@@ -227,7 +226,7 @@ def test_get_stochastic_weight_function_non_state_dependency():
 
 
 def test_variable_info_with_continuous_constraint_has_unique_index():
-    regime = get_regime("iskhakov_et_al_2017", n_periods=3)
+    regime = get_regime("iskhakov_et_al_2017")
 
     def wealth_constraint(wealth):
         return wealth > 200

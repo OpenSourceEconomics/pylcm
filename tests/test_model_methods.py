@@ -19,11 +19,7 @@ def test_internal_regime_has_required_attributes():
     assert hasattr(model.internal_regime, "state_space_infos")
     assert hasattr(model.internal_regime, "max_Q_over_a_functions")
     assert hasattr(model.internal_regime, "argmax_and_max_Q_over_a_functions")
-
-    # Check they have correct types and lengths
-    assert len(model.internal_regime.state_action_spaces) == 3
-    assert len(model.internal_regime.max_Q_over_a_functions) == 3
-    assert len(model.internal_regime.argmax_and_max_Q_over_a_functions) == 3
+    assert hasattr(model.internal_regime, "next_state_simulation_function")
 
 
 def test_model_solve_method():
@@ -109,5 +105,3 @@ def test_model_initialization_all_configs(model_name):
 
     # Should complete without error
     assert model.internal_regime is not None
-    assert len(model.internal_regime.state_action_spaces) == 2
-    assert len(model.internal_regime.max_Q_over_a_functions) == 2

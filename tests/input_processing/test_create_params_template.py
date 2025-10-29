@@ -27,7 +27,7 @@ def test_create_params_without_shocks(binary_category_class):
             "next_b": lambda b: b,
         },
     )
-    got = create_params_template(regime)  # type: ignore[arg-type]
+    got = create_params_template(regime, n_periods=3)  # type: ignore[arg-type]
     assert got == {"beta": jnp.nan, "utility": {"c": jnp.nan}, "next_b": {}}
 
 
@@ -46,7 +46,7 @@ def test_create_function_params():
 
 
 def test_create_shock_params():
-    def next_a(a, _period):
+    def next_a(a, period):
         pass
 
     variable_info = pd.DataFrame(
@@ -55,7 +55,6 @@ def test_create_shock_params():
     )
 
     regime = RegimeMock(
-        n_periods=3,
         utility=lambda a: None,  # noqa: ARG005
         transitions={"next_a": next_a},
     )
@@ -63,6 +62,7 @@ def test_create_shock_params():
     got = _create_stochastic_transition_params(
         regime=regime,  # type: ignore[arg-type]
         variable_info=variable_info,
+        n_periods=3,
         grids={"a": jnp.array([1, 2])},
     )
     jnp.array_equal(got["a"], jnp.full((2, 3, 2), jnp.nan), equal_nan=True)
@@ -85,12 +85,13 @@ def test_create_shock_params_invalid_variable():
         _create_stochastic_transition_params(
             regime=regime,  # type: ignore[arg-type]
             variable_info=variable_info,
+            n_periods=3,
             grids={"a": jnp.array([1, 2])},
         )
 
 
 def test_create_shock_params_invalid_dependency():
-    def next_a(a, b, _period):
+    def next_a(a, b, period):
         pass
 
     variable_info = pd.DataFrame(
@@ -110,5 +111,6 @@ def test_create_shock_params_invalid_dependency():
         _create_stochastic_transition_params(
             regime=regime,  # type: ignore[arg-type]
             variable_info=variable_info,
+            n_periods=3,
             grids={"a": jnp.array([1, 2])},
         )

@@ -18,13 +18,20 @@ from tests.test_models.deterministic import utility
 from tests.test_models.utils import get_regime
 
 if TYPE_CHECKING:
-    from lcm.typing import BoolND, DiscreteAction, DiscreteState, ParamsDict
+    from lcm.typing import (
+        BoolND,
+        DiscreteAction,
+        DiscreteState,
+        Int1D,
+        ParamsDict,
+        Period,
+    )
 
 
 @pytest.mark.illustrative
 def test_get_Q_and_F_function():
-    regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    internal_regime = process_regime(regime, enable_jit=True)
+    regime = get_regime("iskhakov_et_al_2017_stripped_down")
+    internal_regime = process_regime(regime, n_periods=3, enable_jit=True)
 
     params = {
         "beta": 1.0,
@@ -44,7 +51,6 @@ def test_get_Q_and_F_function():
         regime=regime,
         internal_functions=internal_regime.internal_functions,
         next_state_space_info=state_space_info,
-        period=internal_regime.n_periods - 1,
         is_last_period=True,
     )
 
@@ -57,6 +63,7 @@ def test_get_Q_and_F_function():
         retirement=retirement,
         wealth=wealth,
         params=params,
+        period=0,
         next_V_arr=jnp.arange(1),
     )
 
@@ -73,12 +80,12 @@ def test_get_Q_and_F_function():
 
 @pytest.fixture
 def internal_functions_illustrative():
-    def age(period: int) -> int:
+    def age(period: Period) -> int | Int1D:
         return period + 18
 
     def mandatory_retirement_constraint(
         retirement: DiscreteAction,
-        age: int,
+        age: int | Int1D,
         params: ParamsDict,  # noqa: ARG001
     ) -> BoolND:
         # Individuals must be retired from age 65 onwards
@@ -86,7 +93,7 @@ def internal_functions_illustrative():
 
     def mandatory_lagged_retirement_constraint(
         lagged_retirement: DiscreteState,
-        age: int,
+        age: int | Int1D,
         params: ParamsDict,  # noqa: ARG001
     ) -> BoolND:
         # Individuals must have been retired last year from age 66 onwards

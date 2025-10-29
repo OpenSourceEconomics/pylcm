@@ -31,12 +31,12 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def regime_input():
-    regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=1)
+    regime = get_regime("iskhakov_et_al_2017_stripped_down")
     # Modify the regime to have a coarser continuous action space for testing
     actions = regime.actions
     actions["consumption"] = actions["consumption"].replace(stop=20)  # type: ignore[attr-defined]
     regime = regime.replace(actions=actions)
-    internal_regime = process_regime(regime, enable_jit=True)
+    internal_regime = process_regime(regime, n_periods=3, enable_jit=True)
 
     state_space_info = create_state_space_info(
         regime=regime,
@@ -88,7 +88,6 @@ def test_max_Q_over_a_equal(regime_input):
         regime=regime,
         internal_functions=internal_regime.internal_functions,
         next_state_space_info=state_space_info,
-        period=0,
         is_last_period=True,
     )
     next_V_arr = jnp.zeros((2, 2))
@@ -109,6 +108,7 @@ def test_max_Q_over_a_equal(regime_input):
         **state_action_space.states,
         **state_action_space.discrete_actions,
         **state_action_space.continuous_actions,
+        period=0,
         next_V_arr=next_V_arr,
         params=params,
     )
@@ -133,6 +133,7 @@ def test_max_Q_over_a_equal(regime_input):
         **state_action_space.states,
         **state_action_space.discrete_actions,
         **state_action_space.continuous_actions,
+        period=0,
         next_V_arr=next_V_arr,
         params=params,
     )
@@ -164,7 +165,6 @@ def test_argmax_Q_over_a_equal(regime_input):
         regime=regime,
         internal_functions=internal_regime.internal_functions,
         next_state_space_info=state_space_info,
-        period=0,
         is_last_period=True,
     )
     next_V_arr = jnp.zeros((2, 2))
@@ -196,6 +196,7 @@ def test_argmax_Q_over_a_equal(regime_input):
         **state_action_space.states,
         **state_action_space.discrete_actions,
         **state_action_space.continuous_actions,
+        period=0,
         next_V_arr=next_V_arr,
         params=params,
     )
@@ -226,6 +227,7 @@ def test_argmax_Q_over_a_equal(regime_input):
         **state_action_space.discrete_actions,
         **state_action_space.continuous_actions,
         next_V_arr=jnp.zeros((2, 2)),
+        period=0,
         params=params,
     )
     indices_optimal_discrete_actions, V_arr_c_d = argmax_and_max_Qc_over_d(

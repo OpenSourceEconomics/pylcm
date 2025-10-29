@@ -3,9 +3,8 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from lcm.typing import ArgmaxQOverAFunction, InternalUserFunction
 from lcm.utils import first_non_none
 
 if TYPE_CHECKING:
@@ -25,6 +24,7 @@ if TYPE_CHECKING:
         Int1D,
         InternalUserFunction,
         MaxQOverAFunction,
+        NextStateSimulationFunction,
         ParamsDict,
     )
 
@@ -67,6 +67,16 @@ class StateActionSpace:
     discrete_actions: dict[str, DiscreteAction]
     continuous_actions: dict[str, ContinuousAction]
     states_and_discrete_actions_names: tuple[str, ...]
+
+    @property
+    def states_names(self) -> tuple[str, ...]:
+        """Tuple with names of all state variables."""
+        return tuple(self.states)
+
+    @property
+    def actions_names(self) -> tuple[str, ...]:
+        """Tuple with names of all action variables."""
+        return tuple(self.discrete_actions) + tuple(self.continuous_actions)
 
     def replace(
         self,
@@ -124,34 +134,43 @@ class ShockType(Enum):
     NONE = None
 
 
+class PeriodVariantContainer[T]:
+    """Container for objects that vary by period relative to the terminal period.
+
+    Attributes:
+        terminal: Object for the terminal period.
+        non_terminal: Object for all non-terminal periods, except the one before the
+            terminal period if provided.
+        before_terminal: Object for the period just before the terminal period. If None,
+            defaults to the non-terminal object.
+
+    """
+
+    __slots__ = ("before_terminal", "non_terminal", "terminal")
+
+    def __init__(
+        self, terminal: T, non_terminal: T, before_terminal: T | None = None
+    ) -> None:
+        self.terminal = terminal
+        self.non_terminal = non_terminal
+        self.before_terminal = (
+            non_terminal if before_terminal is None else before_terminal
+        )
+
+    def __call__(self, period: int, *, n_periods: int) -> T:
+        """Return object given period relative to the terminal period."""
+        if period == n_periods - 1:
+            return self.terminal
+        if period == n_periods - 2:
+            return self.before_terminal
+        return self.non_terminal
+
+
 @dataclasses.dataclass(frozen=True)
 class InternalRegime:
     """Internal representation of a user regime.
 
     MUST BE UPDATED.
-
-    Attributes:
-        grids: Dictionary that maps names of regime variables to grids of feasible
-            values for that variable.
-        gridspecs: Dictionary that maps names of regime variables to specifications from
-            which grids of feasible values can be built.
-        variable_info: A table with information about all variables in the regime. The
-            index contains the name of a regime variable. The columns are booleans that
-            are True if the variable has the corresponding property. The columns are:
-            is_state, is_action, is_continuous, is_discrete.
-        utility: The utility function of the regime.
-        transitions: Dictionary that maps transition functions to state names.
-        constraints: Dictionary that maps constraint names to constraint functions.
-        functions: Dictionary that maps names of functions to functions. The functions
-            differ from the user functions in that they take `params` as a keyword
-            argument. Two cases:
-            - If the original function depended on model parameters, those are
-              automatically extracted from `params` and passed to the original
-              function.
-            - Otherwise, the `params` argument is simply ignored.
-        params: Dict of model parameters.
-        n_periods: Number of periods.
-        random_utility_shocks: Type of random utility shocks.
 
     """
 
@@ -164,12 +183,11 @@ class InternalRegime:
     functions: dict[str, InternalUserFunction]
     internal_functions: InternalFunctions
     params_template: ParamsDict
-    n_periods: int
-    state_action_spaces: dict[int, StateActionSpace]
-    state_space_infos: dict[int, StateSpaceInfo]
-    max_Q_over_a_functions: dict[int, MaxQOverAFunction]
-    argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction]
-    next_state_simulation_functions: dict[int, Any]
+    state_action_spaces: PeriodVariantContainer[StateActionSpace]
+    state_space_infos: PeriodVariantContainer[StateSpaceInfo]
+    max_Q_over_a_functions: PeriodVariantContainer[MaxQOverAFunction]
+    argmax_and_max_Q_over_a_functions: PeriodVariantContainer[ArgmaxQOverAFunction]
+    next_state_simulation_function: NextStateSimulationFunction
     # Not properly processed yet
     random_utility_shocks: ShockType
 

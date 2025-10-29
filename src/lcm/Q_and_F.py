@@ -28,6 +28,7 @@ if TYPE_CHECKING:
         FloatND,
         InternalUserFunction,
         ParamsDict,
+        Period,
         QAndFFunction,
     )
 
@@ -36,7 +37,6 @@ def get_Q_and_F(
     regime: Regime,
     internal_functions: InternalFunctions,
     next_state_space_info: StateSpaceInfo,
-    period: int,
     *,
     is_last_period: bool,
 ) -> QAndFFunction:
@@ -55,13 +55,12 @@ def get_Q_and_F(
 
     """
     if is_last_period:
-        Q_and_F = get_Q_and_F_terminal(internal_functions, period=period)
+        Q_and_F = get_Q_and_F_terminal(internal_functions)
     else:
         Q_and_F = get_Q_and_F_non_terminal(
             regime,
             internal_functions=internal_functions,
             next_state_space_info=next_state_space_info,
-            period=period,
         )
 
     return Q_and_F
@@ -71,7 +70,6 @@ def get_Q_and_F_non_terminal(
     regime: Regime,
     internal_functions: InternalFunctions,
     next_state_space_info: StateSpaceInfo,
-    period: int,
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
@@ -128,20 +126,23 @@ def get_Q_and_F_non_terminal(
     # ----------------------------------------------------------------------------------
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         [U_and_F, state_transition, next_stochastic_states_weights],
-        include={"params", "next_V_arr"},
-        exclude={"_period"},
+        include={"params", "next_V_arr", "period"},
     )
 
     @with_signature(
         args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
     )
     def Q_and_F(
-        next_V_arr: FloatND, params: ParamsDict, **states_and_actions: Array
+        next_V_arr: FloatND,
+        params: ParamsDict,
+        period: Period,
+        **states_and_actions: Array,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action value and feasibility for a non-terminal period.
 
         Args:
             params: The parameters.
+            period: The current period.
             next_V_arr: The next period's value function array.
             **states_and_actions: The current states and actions.
 
@@ -154,13 +155,13 @@ def get_Q_and_F_non_terminal(
         # ------------------------------------------------------------------------------
         next_states = state_transition(
             **states_and_actions,
-            _period=period,
+            period=period,
             params=params,
         )
 
         marginal_next_stochastic_states_weights = next_stochastic_states_weights(
             **states_and_actions,
-            _period=period,
+            period=period,
             params=params,
         )
 
@@ -185,7 +186,7 @@ def get_Q_and_F_non_terminal(
         # ------------------------------------------------------------------------------
         U_arr, F_arr = U_and_F(
             **states_and_actions,
-            _period=period,
+            period=period,
             params=params,
         )
 
@@ -198,7 +199,6 @@ def get_Q_and_F_non_terminal(
 
 def get_Q_and_F_terminal(
     internal_functions: InternalFunctions,
-    period: int,
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for the terminal period.
 
@@ -218,8 +218,7 @@ def get_Q_and_F_terminal(
         # While the terminal period does not depend on the value function array, we
         # include it in the signature, such that we can treat all periods uniformly
         # during the solution and simulation.
-        include={"params", "next_V_arr"},
-        exclude={"_period"},
+        include={"params", "next_V_arr", "period"},
     )
 
     args = dict.fromkeys(arg_names_of_Q_and_F, "Array")
@@ -232,12 +231,14 @@ def get_Q_and_F_terminal(
     def Q_and_F(
         next_V_arr: FloatND,  # noqa: ARG001
         params: ParamsDict,
+        period: Period,
         **states_and_actions: Array,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action values and feasibilities for the terminal period.
 
         Args:
             params: The parameters.
+            period: The current period.
             next_V_arr: The next period's value function array (unused here).
             **states_and_actions: The current states and actions.
 
@@ -247,7 +248,7 @@ def get_Q_and_F_terminal(
         """
         return U_and_F(
             **states_and_actions,
-            _period=period,
+            period=period,
             params=params,
         )
 
