@@ -19,6 +19,7 @@ if TYPE_CHECKING:
         IntND,
         MaxQOverCFunction,
         ParamsDict,
+        Period,
     )
 
 
@@ -67,10 +68,13 @@ def get_max_Q_over_c(
 
     @functools.wraps(Q_and_F)
     def max_Q_over_c(
-        next_V_arr: FloatND, params: ParamsDict, **states_and_actions: Array
+        next_V_arr: FloatND,
+        params: ParamsDict,
+        period: Period,
+        **states_and_actions: Array,
     ) -> FloatND:
         Q_arr, F_arr = Q_and_F(
-            params=params, next_V_arr=next_V_arr, **states_and_actions
+            params=params, next_V_arr=next_V_arr, period=period, **states_and_actions
         )
         return Q_arr.max(where=F_arr, initial=-jnp.inf)
 
@@ -121,10 +125,13 @@ def get_argmax_and_max_Q_over_c(
 
     @functools.wraps(Q_and_F)
     def argmax_and_max_Q_over_c(
-        next_V_arr: FloatND, params: ParamsDict, **states_and_actions: Array
+        next_V_arr: FloatND,
+        params: ParamsDict,
+        period: Period,
+        **states_and_actions: Array,
     ) -> tuple[IntND, FloatND]:
         Q_arr, F_arr = Q_and_F(
-            params=params, next_V_arr=next_V_arr, **states_and_actions
+            params=params, next_V_arr=next_V_arr, period=period, **states_and_actions
         )
         return argmax_and_max(Q_arr, where=F_arr, initial=-jnp.inf)
 

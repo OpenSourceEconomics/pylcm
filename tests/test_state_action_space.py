@@ -13,8 +13,8 @@ from tests.test_models.utils import get_regime
 
 
 def test_create_state_action_space_solution():
-    regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    internal_regime = process_regime(regime, enable_jit=True)
+    regime = get_regime("iskhakov_et_al_2017_stripped_down")
+    internal_regime = process_regime(regime, n_periods=3, enable_jit=True)
 
     state_action_space = create_state_action_space(
         variable_info=internal_regime.variable_info,
@@ -33,8 +33,8 @@ def test_create_state_action_space_solution():
 
 
 def test_create_state_action_space_simulation():
-    regime = get_regime("iskhakov_et_al_2017", n_periods=3)
-    internal_regime = process_regime(regime, enable_jit=True)
+    regime = get_regime("iskhakov_et_al_2017")
+    internal_regime = process_regime(regime, n_periods=3, enable_jit=True)
     got_space = create_state_action_space(
         variable_info=internal_regime.variable_info,
         grids=internal_regime.grids,
@@ -49,7 +49,7 @@ def test_create_state_action_space_simulation():
 
 
 def test_create_state_space_info():
-    regime = get_regime("iskhakov_et_al_2017_stripped_down", n_periods=3)
+    regime = get_regime("iskhakov_et_al_2017_stripped_down")
 
     state_space_info = create_state_space_info(
         regime=regime,
@@ -63,8 +63,8 @@ def test_create_state_space_info():
 
 
 def test_create_state_action_space_replace():
-    regime = get_regime("iskhakov_et_al_2017", n_periods=3)
-    internal_regime = process_regime(regime, enable_jit=True)
+    regime = get_regime("iskhakov_et_al_2017")
+    internal_regime = process_regime(regime, n_periods=3, enable_jit=True)
     space = create_state_action_space(
         variable_info=internal_regime.variable_info,
         grids=internal_regime.grids,

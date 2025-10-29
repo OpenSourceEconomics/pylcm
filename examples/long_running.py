@@ -100,7 +100,6 @@ RETIREMENT_AGE = 65
 
 
 MODEL_CONFIG = Regime(
-    n_periods=RETIREMENT_AGE - 18,
     functions={
         "utility": utility,
         "next_wealth": next_wealth,

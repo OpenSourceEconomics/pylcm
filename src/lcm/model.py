@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from lcm.exceptions import ModelInitializationError, format_messages
 from lcm.input_processing.regime_processing import process_regime
 from lcm.logging import get_logger
+from lcm.regime import Regime
 from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
 
@@ -15,7 +16,6 @@ if TYPE_CHECKING:
     from jax import Array
 
     from lcm.input_processing.regime_processing import InternalRegime
-    from lcm.regime import Regime
     from lcm.typing import (
         FloatND,
         ParamsDict,
@@ -62,13 +62,19 @@ class Model:
             enable_jit: Whether to jit the functions of the internal regime.
 
         """
-        _validate_model_consistency(regime, n_periods)
+        _validate_model_inputs(
+            n_periods=n_periods,
+            regime=regime,
+        )
+
         self.n_periods = n_periods
         self.description = description
         self.enable_jit = enable_jit
         self.regime = regime
 
-        self.internal_regime = process_regime(regime=regime, enable_jit=enable_jit)
+        self.internal_regime = process_regime(
+            regime=regime, n_periods=n_periods, enable_jit=enable_jit
+        )
 
     def solve(
         self,
@@ -87,6 +93,7 @@ class Model:
         """
         return solve(
             params=params,
+            n_periods=self.n_periods,
             state_action_spaces=self.internal_regime.state_action_spaces,
             max_Q_over_a_functions=self.internal_regime.max_Q_over_a_functions,
             logger=get_logger(debug_mode=debug_mode),
@@ -121,7 +128,7 @@ class Model:
             params=params,
             initial_states=initial_states,
             argmax_and_max_Q_over_a_functions=self.internal_regime.argmax_and_max_Q_over_a_functions,
-            next_state_simulation_functions=self.internal_regime.next_state_simulation_functions,
+            next_state_simulation_function=self.internal_regime.next_state_simulation_function,
             internal_regime=self.internal_regime,
             logger=logger,
             V_arr_dict=V_arr_dict,
@@ -161,13 +168,16 @@ class Model:
         )
 
 
-def _validate_model_consistency(regime: Regime, n_periods: int) -> None:
-    error_messages = []
-    # Just an example validation
-    if regime.n_periods != n_periods:
-        error_messages.append(
-            "The Regime needs to have the same number of periods as the Model."
-        )
+def _validate_model_inputs(n_periods: int, regime: Regime) -> None:
+    error_messages: list[str] = []
+
+    if not isinstance(n_periods, int):
+        error_messages.append("n_periods must be an integer.")
+    elif n_periods <= 1:
+        error_messages.append("n_periods must be at least 2.")
+
+    if not isinstance(regime, Regime):
+        error_messages.append("regime must be an instance of lcm.Regime.")
 
     if error_messages:
         msg = format_messages(error_messages)

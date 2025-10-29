@@ -2,11 +2,12 @@ import jax.numpy as jnp
 from jax import Array
 
 from lcm.exceptions import InvalidValueFunctionError
+from lcm.typing import Period
 
 
 def validate_value_function_array(
     V_arr: Array,
-    period: int,
+    period: Period,
 ) -> None:
     """Validate the value function array for NaN values.
 

@@ -42,7 +42,9 @@ if TYPE_CHECKING:
     )
 
 
-def process_regime(regime: Regime, *, enable_jit: bool) -> InternalRegime:
+def process_regime(
+    regime: Regime, n_periods: int, *, enable_jit: bool
+) -> InternalRegime:
     """Process the user regime.
 
     This entails the following steps:
@@ -53,13 +55,14 @@ def process_regime(regime: Regime, *, enable_jit: bool) -> InternalRegime:
 
     Args:
         regime: The regime as provided by the user.
+        n_periods: Number of periods of the model.
         enable_jit: Whether to jit the functions of the internal regime.
 
     Returns:
         The processed regime.
 
     """
-    params_template = create_params_template(regime)
+    params_template = create_params_template(regime, n_periods=n_periods)
 
     internal_functions = _get_internal_functions(regime, params=params_template)
     grids = get_grids(regime)
@@ -69,20 +72,15 @@ def process_regime(regime: Regime, *, enable_jit: bool) -> InternalRegime:
     Q_and_F_functions = build_Q_and_F_functions(
         regime=regime, internal_functions=internal_functions
     )
-
-    state_space_info = build_state_space_infos(
-        regime=regime,
-    )
-    state_action_space = build_state_action_spaces(
-        regime=regime,
-    )
+    state_space_infos = build_state_space_infos(regime)
+    state_action_spaces = build_state_action_spaces(regime)
     max_Q_over_a_functions = build_max_Q_over_a_functions(
         regime=regime, Q_and_F_functions=Q_and_F_functions, enable_jit=enable_jit
     )
     argmax_and_max_Q_over_a_functions = build_argmax_and_max_Q_over_a_functions(
         regime=regime, Q_and_F_functions=Q_and_F_functions, enable_jit=enable_jit
     )
-    next_state_simulation_functions = build_next_state_simulation_functions(
+    next_state_simulation_function = build_next_state_simulation_functions(
         regime=regime,
         internal_functions=internal_functions,
         grids=grids,
@@ -99,14 +97,13 @@ def process_regime(regime: Regime, *, enable_jit: bool) -> InternalRegime:
         internal_functions=internal_functions,
         transitions=internal_functions.transitions,
         params_template=params_template,
-        state_action_spaces=state_action_space,
-        state_space_infos=state_space_info,
+        state_action_spaces=state_action_spaces,
+        state_space_infos=state_space_infos,
         max_Q_over_a_functions=max_Q_over_a_functions,
         argmax_and_max_Q_over_a_functions=argmax_and_max_Q_over_a_functions,
-        next_state_simulation_functions=next_state_simulation_functions,
+        next_state_simulation_function=next_state_simulation_function,
         # currently no additive utility shocks are supported
         random_utility_shocks=ShockType.NONE,
-        n_periods=regime.n_periods,
     )
 
 
@@ -281,12 +278,12 @@ def _get_stochastic_weight_function(
     invalid = {
         arg
         for arg in function_parameters
-        if arg != "_period" and not variable_info.loc[arg, "is_discrete"]
+        if arg != "period" and not variable_info.loc[arg, "is_discrete"]
     }
 
     if invalid:
         raise ValueError(
-            "Stochastic variables can only depend on discrete variables and '_period', "
+            "Stochastic variables can only depend on discrete variables and 'period', "
             f"but {name} depends on {invalid}.",
         )
 

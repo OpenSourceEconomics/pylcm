@@ -17,9 +17,9 @@ if TYPE_CHECKING:
     from jax import Array
 
     from lcm.typing import (
-        ContinuousState,
         DiscreteState,
         FloatND,
+        NextStateSimulationFunction,
         StochasticNextFunction,
     )
 
@@ -30,7 +30,7 @@ def get_next_state_function(
     internal_functions: InternalFunctions,
     next_states: tuple[str, ...],
     target: Target,
-) -> Callable[..., dict[str, DiscreteState | ContinuousState]]:
+) -> NextStateSimulationFunction:
     """Get function that computes the next states during the solution.
 
     Args:

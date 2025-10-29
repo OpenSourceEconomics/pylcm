@@ -84,7 +84,7 @@ def _indicator_enters_concurrent_valuation(
     variables that (directly or indirectly) influence the "utility" (Q) or the
     constraints (F), count as relevant for the concurrent valuation.
 
-    Special variables such as the "_period" or parameters will be ignored.
+    Special variables such as the "period" or parameters will be ignored.
 
     """
     enters_Q_and_F_fn_names = [
@@ -113,7 +113,7 @@ def _indicator_enters_transition(
     function returns all state and action variables that occur as inputs to these
     functions.
 
-    Special variables such as the "_period" or parameters will be ignored.
+    Special variables such as the "period" or parameters will be ignored.
 
     """
     next_fn_names = list(regime.transitions)

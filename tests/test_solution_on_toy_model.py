@@ -71,7 +71,6 @@ def borrowing_constraint(
 
 DETERMINISTIC_REGIME = Regime(
     name="deterministic",
-    n_periods=2,
     actions={
         "consumption": DiscreteGrid(ConsumptionChoice),
         "working": DiscreteGrid(WorkingStatus),
@@ -199,7 +198,7 @@ def analytical_simulate_deterministic(initial_wealth, params):
     )
     raw_long_with_index = raw_long.swaplevel().sort_index()
     return raw_long_with_index.assign(
-        _period=raw_long_with_index.index.get_level_values("period"),
+        period=raw_long_with_index.index.get_level_values("period"),
     )
 
 
@@ -344,7 +343,7 @@ def analytical_simulate_stochastic(initial_wealth, initial_health, health_1, par
     )
     raw_long_with_index = raw_long.swaplevel().sort_index()
     return raw_long_with_index.assign(
-        _period=raw_long_with_index.index.get_level_values("period"),
+        period=raw_long_with_index.index.get_level_values("period"),
     )
 
 
