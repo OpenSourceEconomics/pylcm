@@ -152,4 +152,5 @@ ISKHAKOV_ET_AL_2017_STOCHASTIC = Regime(
     functions={
         "labor_income": labor_income,
     },
+    regime_transition_probabilities=lambda: {"iskhakov_et_al_2017_stochastic": 1.0},
 )

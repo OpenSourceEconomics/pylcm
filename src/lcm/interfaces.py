@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
+
+from dags.tree import flatten_to_qnames
 
 from lcm.utils import first_non_none
 
@@ -181,6 +184,7 @@ class InternalRegime:
     constraints: dict[str, InternalUserFunction]
     transitions: dict[str, InternalUserFunction]
     functions: dict[str, InternalUserFunction]
+    regime_transition_probabilities: Callable[..., dict[str, float]]
     internal_functions: InternalFunctions
     params_template: ParamsDict
     state_action_spaces: PeriodVariantContainer[StateActionSpace]
@@ -230,3 +234,19 @@ class InternalFunctions:
     utility: InternalUserFunction
     constraints: dict[str, InternalUserFunction]
     transitions: dict[str, InternalUserFunction]
+    regime_transition_probabilities: Callable[..., dict[str, float]]
+
+    def get_all_functions(self) -> dict[str, InternalUserFunction]:
+        """Get all regime functions including utility, constraints, and transitions.
+
+        Returns:
+            Dictionary that maps names of all regime functions to the functions.
+
+        """
+        return flatten_to_qnames(
+            self.functions
+            | {"utility": self.utility}
+            | self.constraints
+            | self.transitions
+            | {"regime_transition_probabilities": self.regime_transition_probabilities}
+        )

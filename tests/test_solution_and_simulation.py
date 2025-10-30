@@ -42,13 +42,13 @@ STRIPPED_DOWN_AND_DISCRETE_MODELS = [
 
 def test_solve_stripped_down():
     model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    params = tree_map(lambda _: 0.2, model.internal_regime.params_template)
+    params = tree_map(lambda _: 0.2, model.internal_regimes.params_template)
     model.solve(params)
 
 
 def test_solve_fully_discrete():
     model = get_model("iskhakov_et_al_2017_discrete", n_periods=3)
-    params = tree_map(lambda _: 0.2, model.internal_regime.params_template)
+    params = tree_map(lambda _: 0.2, model.internal_regimes.params_template)
     model.solve(params)
 
 
@@ -60,7 +60,7 @@ def test_solve_fully_discrete():
 def test_solve_and_simulate_stripped_down():
     model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
 
-    params = tree_map(lambda _: 0.2, model.internal_regime.params_template)
+    params = tree_map(lambda _: 0.2, model.internal_regimes.params_template)
 
     model.solve_and_simulate(
         params,
@@ -68,7 +68,7 @@ def test_solve_and_simulate_stripped_down():
             "wealth": jnp.array([1.0, 10.0, 50.0]),
         },
         additional_targets=["age"]
-        if "age" in model.internal_regime.functions
+        if "age" in model.internal_regimes.functions
         else None,
     )
 
@@ -76,7 +76,7 @@ def test_solve_and_simulate_stripped_down():
 def test_solve_and_simulate_fully_discrete():
     model = get_model("iskhakov_et_al_2017_discrete", n_periods=3)
 
-    params = tree_map(lambda _: 0.2, model.internal_regime.params_template)
+    params = tree_map(lambda _: 0.2, model.internal_regimes.params_template)
 
     model.solve_and_simulate(
         params,
@@ -84,7 +84,7 @@ def test_solve_and_simulate_fully_discrete():
             "wealth": jnp.array([1.0, 10.0, 50.0]),
         },
         additional_targets=["age"]
-        if "age" in model.internal_regime.functions
+        if "age" in model.internal_regimes.functions
         else None,
     )
 
@@ -100,7 +100,7 @@ def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(model: Model) -
     # ==================================================================================
 
     # solve
-    params = tree_map(lambda _: 0.2, model.internal_regime.params_template)
+    params = tree_map(lambda _: 0.2, model.internal_regimes.params_template)
     V_arr_dict = model.solve(params)
 
     # simulate using solution
@@ -131,7 +131,7 @@ def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(model: Model) -
 )
 def test_simulate_iskhakov_et_al_2017(model: Model) -> None:
     # solve model
-    params = tree_map(lambda _: 0.9, model.internal_regime.params_template)
+    params = tree_map(lambda _: 0.9, model.internal_regimes.params_template)
     V_arr_dict = model.solve(params)
 
     # simulate using solution
@@ -368,7 +368,7 @@ def test_solve_with_period_argument_in_constraint():
     regime = regime.replace(constraints=constraints)
 
     model = Model(regime=regime, n_periods=3)
-    params = tree_map(lambda _: 0.2, model.internal_regime.params_template)
+    params = tree_map(lambda _: 0.2, model.internal_regimes.params_template)
     model.solve(params)
 
 
@@ -393,7 +393,7 @@ def test_order_of_states_and_actions_does_not_matter():
 
     model = Model(regime=regime, n_periods=3)
     model_swapped = Model(regime=regime_swapped, n_periods=3)
-    params = tree_map(lambda _: 0.2, model.internal_regime.params_template)
+    params = tree_map(lambda _: 0.2, model.internal_regimes.params_template)
     V_arr_dict = model.solve(params)
 
     V_arr_dict_swapped = model_swapped.solve(params)

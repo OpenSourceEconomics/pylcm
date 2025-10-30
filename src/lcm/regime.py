@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Callable
 from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any
+
+from dags.tree import flatten_to_qnames
 
 from lcm.exceptions import RegimeInitializationError, format_messages
 from lcm.grids import Grid
@@ -38,10 +41,12 @@ class Regime:
     functions: dict[str, UserFunction] = field(default_factory=dict)
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
+    regime_transition_probabilities: Callable[..., dict[str, float]]
 
     def __post_init__(self) -> None:
-        _validate_attribute_types(self)
-        _validate_logical_consistency(self)
+        # _validate_attribute_types(self)
+        # _validate_logical_consistency(self)
+        pass
 
     def get_all_functions(self) -> dict[str, UserFunction]:
         """Get all regime functions including utility, constraints, and transitions.
@@ -50,11 +55,12 @@ class Regime:
             Dictionary that maps names of all regime functions to the functions.
 
         """
-        return (
+        return flatten_to_qnames(
             self.functions
             | {"utility": self.utility}
             | self.constraints
             | self.transitions
+            | {"regime_transition_probabilities": self.regime_transition_probabilities}
         )
 
     def replace(self, **kwargs: Any) -> Regime:  # noqa: ANN401

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import dags.tree as dt
 import pandas as pd
 from dags import get_ancestors
 
@@ -48,7 +49,7 @@ def get_variable_info(regime: Regime) -> pd.DataFrame:
     info["is_stochastic"] = [
         (
             var in regime.states
-            and is_stochastic_transition(regime.transitions[f"next_{var}"])
+            and is_stochastic_transition(regime.transitions[regime.name][f"next_{var}"])
         )
         for var in variables
     ]
@@ -116,7 +117,7 @@ def _indicator_enters_transition(
     Special variables such as the "period" or parameters will be ignored.
 
     """
-    next_fn_names = list(regime.transitions)
+    next_fn_names = list(dt.flatten_to_qnames(regime.transitions))
     user_functions = regime.get_all_functions()
     ancestors = get_ancestors(
         user_functions,

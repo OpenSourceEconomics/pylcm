@@ -14,18 +14,18 @@ def test_internal_regime_has_required_attributes():
 
     # Check all required attributes exist
     assert hasattr(model, "internal_regime")
-    assert hasattr(model.internal_regime, "params_template")
-    assert hasattr(model.internal_regime, "state_action_spaces")
-    assert hasattr(model.internal_regime, "state_space_infos")
-    assert hasattr(model.internal_regime, "max_Q_over_a_functions")
-    assert hasattr(model.internal_regime, "argmax_and_max_Q_over_a_functions")
-    assert hasattr(model.internal_regime, "next_state_simulation_function")
+    assert hasattr(model.internal_regimes, "params_template")
+    assert hasattr(model.internal_regimes, "state_action_spaces")
+    assert hasattr(model.internal_regimes, "state_space_infos")
+    assert hasattr(model.internal_regimes, "max_Q_over_a_functions")
+    assert hasattr(model.internal_regimes, "argmax_and_max_Q_over_a_functions")
+    assert hasattr(model.internal_regimes, "next_state_simulation_function")
 
 
 def test_model_solve_method():
     """Test Model.solve() method works correctly."""
     model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    params = tree_map(lambda _: 0.2, model.internal_regime.params_template)
+    params = tree_map(lambda _: 0.2, model.internal_regimes.params_template)
 
     # Test solve method
     solution = model.solve(params)
@@ -42,7 +42,7 @@ def test_model_solve_method():
 def test_model_simulate_method():
     """Test Model.simulate() method works correctly."""
     model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    params = tree_map(lambda _: 0.2, model.internal_regime.params_template)
+    params = tree_map(lambda _: 0.2, model.internal_regimes.params_template)
 
     # Solve first
     solution = model.solve(params)
@@ -67,7 +67,7 @@ def test_model_simulate_method():
 def test_model_solve_and_simulate_method():
     """Test Model.solve_and_simulate() method works correctly."""
     model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    params = tree_map(lambda _: 0.2, model.internal_regime.params_template)
+    params = tree_map(lambda _: 0.2, model.internal_regimes.params_template)
 
     initial_states = {
         "wealth": jnp.array([10.0, 20.0]),
@@ -89,7 +89,7 @@ def test_model_params_template_matches_internal():
     """Test that params_template matches internal_regime.params."""
     model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
 
-    assert hasattr(model.internal_regime, "params_template")
+    assert hasattr(model.internal_regimes, "params_template")
 
 
 @pytest.mark.parametrize(
@@ -104,4 +104,4 @@ def test_model_initialization_all_configs(model_name):
     model = get_model(model_name, n_periods=2)
 
     # Should complete without error
-    assert model.internal_regime is not None
+    assert model.internal_regimes is not None

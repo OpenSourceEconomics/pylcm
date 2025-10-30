@@ -6,6 +6,7 @@ import inspect
 from typing import TYPE_CHECKING
 
 import jax
+from dags.tree import flatten_to_qnames
 
 from lcm.dispatchers import vmap_1d
 from lcm.input_processing.util import get_grids, get_variable_info
@@ -186,7 +187,8 @@ def build_next_state_simulation_functions(
 ) -> NextStateSimulationFunction:
     state_action_spaces = build_state_action_spaces(regime)
     next_state = get_next_state_function(
-        internal_functions=internal_functions,
+        transitions=flatten_to_qnames(internal_functions.transitions),
+        functions=internal_functions.functions,
         grids=grids,
         next_states=state_action_spaces.non_terminal.states_names,
         target=Target.SIMULATE,

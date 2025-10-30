@@ -55,7 +55,7 @@ def get_Q_and_F(
 
     """
     if is_last_period:
-        Q_and_F = get_Q_and_F_terminal(internal_functions)
+        Q_and_F = get_Q_and_F_terminal(regime, internal_functions=internal_functions)
     else:
         Q_and_F = get_Q_and_F_non_terminal(
             regime,
@@ -100,33 +100,52 @@ def get_Q_and_F_non_terminal(
 
     # Function required to calculate instantaneous utility and feasibility
     U_and_F = _get_U_and_F(internal_functions)
-
-    # Functions required to calculate the expected continuation values
-    state_transition = get_next_state_function(
-        grids=grids,
-        internal_functions=internal_functions,
-        next_states=next_state_space_info.states_names,
-        target=Target.SOLVE,
+    regime_transition_probabilities = concatenate_functions(
+        functions=internal_functions.get_all_functions(),
+        targets="regime_transition_probabilities",
+        return_type="dict",
+        enforce_signature=False,
+        set_annotations=True,
     )
-    next_stochastic_states_weights = get_next_stochastic_weights_function(
-        internal_functions=internal_functions,
-        next_stochastic_states=next_stochastic_variables,
-    )
-    joint_weights_from_marginals = _get_joint_weights_function(
-        next_stochastic_variables
-    )
-    _scalar_next_V = get_value_function_representation(next_state_space_info)
-    next_V = productmap(
-        _scalar_next_V,
-        variables=tuple(f"next_{var}" for var in next_stochastic_variables),
-    )
+    state_transitions = {}
+    next_stochastic_states_weights = {}
+    joint_weights_from_marginals = {}
+    next_V = {}
+    for regime_name, transition in internal_functions.transitions.items():
+        # Functions required to calculate the expected continuation values
+        state_transitions[regime_name] = get_next_state_function(
+            grids=grids,
+            functions=internal_functions.functions,
+            transitions=transition,
+            next_states=next_state_space_info.states_names,
+            target=Target.SOLVE,
+        )
+        next_stochastic_states_weights[regime_name] = (
+            get_next_stochastic_weights_function(
+                functions=internal_functions.functions,
+                next_stochastic_states=next_stochastic_variables,
+            )
+        )
+        joint_weights_from_marginals[regime_name] = _get_joint_weights_function(
+            next_stochastic_variables
+        )
+        _scalar_next_V = get_value_function_representation(next_state_space_info)
+        next_V[regime_name] = productmap(
+            _scalar_next_V,
+            variables=tuple(f"next_{var}" for var in next_stochastic_variables),
+        )
 
     # ----------------------------------------------------------------------------------
     # Create the state-action value and feasibility function
     # ----------------------------------------------------------------------------------
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
-        [U_and_F, state_transition, next_stochastic_states_weights],
-        include={"params", "next_V_arr", "period"},
+        [
+            U_and_F,
+            *list(state_transitions.values()),
+            *list(next_stochastic_states_weights.values()),
+            *list(internal_functions.constraints.values()),
+        ],
+        include={"params", "next_V_arr", "period", "wealth"},
     )
 
     @with_signature(
@@ -153,44 +172,57 @@ def get_Q_and_F_non_terminal(
         # ------------------------------------------------------------------------------
         # Calculate the expected continuation values
         # ------------------------------------------------------------------------------
-        next_states = state_transition(
+        regime_transition_probs = regime_transition_probabilities(
+            **states_and_actions, period=period, params=params
+        )
+        U_arr, F_arr = U_and_F(
             **states_and_actions,
             period=period,
-            params=params,
+            params=params[regime.name],
         )
+        Q_arr = U_arr
+        for regime_name in internal_functions.transitions.keys():
+            next_states = state_transitions[regime_name](
+                **states_and_actions,
+                period=period,
+                params=params[regime_name],
+            )
 
-        marginal_next_stochastic_states_weights = next_stochastic_states_weights(
-            **states_and_actions,
-            period=period,
-            params=params,
-        )
+            marginal_next_stochastic_states_weights = next_stochastic_states_weights[
+                regime_name
+            ](
+                **states_and_actions,
+                period=period,
+                params=params[regime_name],
+            )
 
-        joint_next_stochastic_states_weights = joint_weights_from_marginals(
-            **marginal_next_stochastic_states_weights
-        )
+            joint_next_stochastic_states_weights = joint_weights_from_marginals[
+                regime_name
+            ](**marginal_next_stochastic_states_weights)
 
-        # As we productmap'd the value function over the stochastic variables, the
-        # resulting next value function gets a new dimension for each stochastic
-        # variable.
-        next_V_at_stochastic_states_arr = next_V(**next_states, next_V_arr=next_V_arr)
+            # As we productmap'd the value function over the stochastic variables, the
+            # resulting next value function gets a new dimension for each stochastic
+            # variable.
+            next_V_at_stochastic_states_arr = next_V[regime_name](
+                **next_states, next_V_arr=next_V_arr[regime_name]
+            )
 
-        # We then take the weighted average of the next value function at the stochastic
-        # states to get the expected next value function.
-        next_V_expected_arr = jnp.average(
-            next_V_at_stochastic_states_arr,
-            weights=joint_next_stochastic_states_weights,
-        )
+            # We then take the weighted average of the next value function at the stochastic
+            # states to get the expected next value function.
+            next_V_expected_arr = jnp.average(
+                next_V_at_stochastic_states_arr,
+                weights=joint_next_stochastic_states_weights,
+            )
+            Q_arr = (
+                Q_arr
+                + params[regime_name]["beta"]
+                * regime_transition_probs[regime_name]
+                * next_V_expected_arr
+            )
 
         # ------------------------------------------------------------------------------
         # Calculate the instantaneous utility and feasibility
         # ------------------------------------------------------------------------------
-        U_arr, F_arr = U_and_F(
-            **states_and_actions,
-            period=period,
-            params=params,
-        )
-
-        Q_arr = U_arr + params["beta"] * next_V_expected_arr
 
         return Q_arr, F_arr
 
@@ -198,6 +230,7 @@ def get_Q_and_F_non_terminal(
 
 
 def get_Q_and_F_terminal(
+    regime: Regime,
     internal_functions: InternalFunctions,
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for the terminal period.
@@ -214,7 +247,7 @@ def get_Q_and_F_terminal(
     U_and_F = _get_U_and_F(internal_functions)
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
-        [U_and_F],
+        [U_and_F, *list(internal_functions.constraints.values())],
         # While the terminal period does not depend on the value function array, we
         # include it in the signature, such that we can treat all periods uniformly
         # during the solution and simulation.
@@ -249,7 +282,7 @@ def get_Q_and_F_terminal(
         return U_and_F(
             **states_and_actions,
             period=period,
-            params=params,
+            params=params[regime.name],
         )
 
     return Q_and_F

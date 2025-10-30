@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from dags import get_annotations
 from dags.signature import with_signature
+from dags.tree import flatten_to_qnames, unflatten_from_qnames
 
 from lcm.functools import convert_kwargs_to_args
 from lcm.input_processing.create_params_template import create_params_template
@@ -94,6 +95,7 @@ def process_regime(
         functions=internal_functions.functions,
         utility=internal_functions.utility,
         constraints=internal_functions.constraints,
+        regime_transition_probabilities=internal_functions.regime_transition_probabilities,
         internal_functions=internal_functions,
         transitions=internal_functions.transitions,
         params_template=params_template,
@@ -175,16 +177,19 @@ def _get_internal_functions(
         functions[func_name] = processed_func
 
     internal_transition = {
-        fn_name: functions[fn_name] for fn_name in regime.transitions
+        fn_name: functions[fn_name] for fn_name in flatten_to_qnames(regime.transitions)
     }
     internal_utility = functions["utility"]
+    internal_regime_transition_probabilities = functions[
+        "regime_transition_probabilities"
+    ]
     internal_constraints = {
         fn_name: functions[fn_name] for fn_name in regime.constraints
     }
     internal_functions = {
         fn_name: functions[fn_name]
         for fn_name in functions
-        if fn_name not in regime.transitions
+        if fn_name not in flatten_to_qnames(regime.transitions)
         and fn_name not in regime.constraints
         and fn_name != "utility"
     }
@@ -193,7 +198,8 @@ def _get_internal_functions(
         functions=internal_functions,
         utility=internal_utility,
         constraints=internal_constraints,
-        transitions=internal_transition,
+        transitions=unflatten_from_qnames(internal_transition),
+        regime_transition_probabilities=internal_regime_transition_probabilities,
     )
 
 

@@ -42,12 +42,12 @@ class Model:
     description: str | None = None
     n_periods: int
     enable_jit: bool = True
-    regimes: Regime
-    internal_regime: InternalRegime
+    regimes: dict[Regime]
+    internal_regimes: dict[str, InternalRegime]
 
     def __init__(
         self,
-        regime: Regime,
+        regimes: list[Regime],
         *,
         n_periods: int,
         description: str | None = None,
@@ -62,19 +62,21 @@ class Model:
             enable_jit: Whether to jit the functions of the internal regime.
 
         """
-        _validate_model_inputs(
-            n_periods=n_periods,
-            regime=regime,
-        )
-
         self.n_periods = n_periods
         self.description = description
         self.enable_jit = enable_jit
-        self.regime = regime
+        self.regimes = {}
+        self.internal_regimes = {}
 
-        self.internal_regime = process_regime(
-            regime=regime, n_periods=n_periods, enable_jit=enable_jit
-        )
+        for regime in regimes:
+            _validate_model_inputs(
+                n_periods=n_periods,
+                regime=regime,
+            )
+            self.regimes[regime.name] = regime
+            self.internal_regimes[regime.name] = process_regime(
+                regime=regime, n_periods=n_periods, enable_jit=enable_jit
+            )
 
     def solve(
         self,
@@ -94,8 +96,7 @@ class Model:
         return solve(
             params=params,
             n_periods=self.n_periods,
-            state_action_spaces=self.internal_regime.state_action_spaces,
-            max_Q_over_a_functions=self.internal_regime.max_Q_over_a_functions,
+            internal_regimes=self.internal_regimes,
             logger=get_logger(debug_mode=debug_mode),
         )
 
@@ -127,9 +128,9 @@ class Model:
         return simulate(
             params=params,
             initial_states=initial_states,
-            argmax_and_max_Q_over_a_functions=self.internal_regime.argmax_and_max_Q_over_a_functions,
-            next_state_simulation_function=self.internal_regime.next_state_simulation_function,
-            internal_regime=self.internal_regime,
+            argmax_and_max_Q_over_a_functions=self.internal_regimes.argmax_and_max_Q_over_a_functions,
+            next_state_simulation_function=self.internal_regimes.next_state_simulation_function,
+            internal_regime=self.internal_regimes,
             logger=logger,
             V_arr_dict=V_arr_dict,
             additional_targets=additional_targets,
