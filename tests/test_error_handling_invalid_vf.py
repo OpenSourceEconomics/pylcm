@@ -68,15 +68,18 @@ def valid_regime() -> Regime:
             "borrowing_constraint": borrowing_constraint,
         },
         transitions={
-            "next_wealth": next_wealth,
-            "next_health": next_health,
+            "test": {
+                "next_wealth": next_wealth,
+                "next_health": next_health,
+            }
         },
+        regime_transition_probs=lambda: {"test": 1.0},
     )
 
 
 @pytest.fixture
 def valid_model(valid_regime: Regime) -> Model:
-    return Model(regime=valid_regime, n_periods=2)
+    return Model(regimes=[valid_regime], n_periods=2)
 
 
 @pytest.fixture
@@ -94,7 +97,7 @@ def nan_value_model(valid_regime: Regime) -> Model:
         return jnp.log(consumption) + nan_term
 
     invalid_regime = valid_regime.replace(utility=invalid_utility)
-    return Model(regime=invalid_regime, n_periods=2)
+    return Model(regimes=[invalid_regime], n_periods=2)
 
 
 @pytest.fixture
@@ -112,7 +115,7 @@ def inf_value_model(valid_regime: Regime) -> Model:
         return jnp.log(consumption) + inf_term
 
     inf_model = valid_regime.replace(utility=invalid_utility)
-    return Model(regime=inf_model, n_periods=2)
+    return Model(regimes=[inf_model], n_periods=2)
 
 
 def test_solve_model_with_nan_value_function_array_raises_error(

@@ -8,7 +8,7 @@ import pytest
 from numpy.testing import assert_array_almost_equal, assert_array_equal
 
 from lcm.dispatchers import vmap_1d
-from lcm.input_processing import process_regime
+from lcm.input_processing import process_regimes
 from lcm.interfaces import PeriodVariantContainer, Target
 from lcm.logging import get_logger
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a
@@ -41,7 +41,7 @@ def simulate_inputs():
             "consumption": _orig_regime.actions["consumption"].replace(stop=100),  # type: ignore[attr-defined]
         }
     )
-    internal_regime = process_regime(regime, n_periods=1, enable_jit=True)
+    internal_regime = process_regimes(regime, n_periods=1, enable_jit=True)
 
     state_space_info = create_state_space_info(
         regime=regime,
@@ -141,7 +141,7 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
         regime = regime.replace(functions=updated_functions)
 
         params = get_params()
-        model = Model(regime, n_periods=n_periods)
+        model = Model([regime], n_periods=n_periods)
         V_arr_dict = model.solve(params=params)
         return V_arr_dict, params, model
 

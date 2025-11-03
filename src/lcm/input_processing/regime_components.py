@@ -75,25 +75,34 @@ def build_state_action_spaces(
 def build_Q_and_F_functions(
     regime: Regime,
     internal_functions: InternalFunctions,
+    state_space_infos: dict[str, PeriodVariantContainer[StateSpaceInfo]],
+    grids,
 ) -> PeriodVariantContainer[QAndFFunction]:
-    state_space_infos = build_state_space_infos(regime)
-
     Q_and_F_terminal = get_Q_and_F(
         regime=regime,
         internal_functions=internal_functions,
-        next_state_space_info=state_space_infos.terminal,
+        next_state_space_infos={
+            name: info.terminal for name, info in state_space_infos.items()
+        },
+        grids=grids,
         is_last_period=True,
     )
     Q_and_F_before_terminal = get_Q_and_F(
         regime=regime,
         internal_functions=internal_functions,
-        next_state_space_info=state_space_infos.terminal,
+        next_state_space_infos={
+            name: info.terminal for name, info in state_space_infos.items()
+        },
+        grids=grids,
         is_last_period=False,
     )
     Q_and_F_non_terminal = get_Q_and_F(
         regime=regime,
         internal_functions=internal_functions,
-        next_state_space_info=state_space_infos.non_terminal,
+        next_state_space_infos={
+            name: info.non_terminal for name, info in state_space_infos.items()
+        },
+        grids=grids,
         is_last_period=False,
     )
     return PeriodVariantContainer(
@@ -185,12 +194,10 @@ def build_next_state_simulation_functions(
     *,
     enable_jit: bool,
 ) -> NextStateSimulationFunction:
-    state_action_spaces = build_state_action_spaces(regime)
     next_state = get_next_state_function(
         transitions=flatten_to_qnames(internal_functions.transitions),
         functions=internal_functions.functions,
         grids=grids,
-        next_states=state_action_spaces.non_terminal.states_names,
         target=Target.SIMULATE,
     )
     signature = inspect.signature(next_state)

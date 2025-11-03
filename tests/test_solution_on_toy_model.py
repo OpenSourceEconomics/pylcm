@@ -70,7 +70,7 @@ def borrowing_constraint(
 
 
 DETERMINISTIC_REGIME = Regime(
-    name="deterministic",
+    name="test",
     actions={
         "consumption": DiscreteGrid(ConsumptionChoice),
         "working": DiscreteGrid(WorkingStatus),
@@ -87,8 +87,11 @@ DETERMINISTIC_REGIME = Regime(
         "borrowing_constraint": borrowing_constraint,
     },
     transitions={
-        "next_wealth": next_wealth,
+        "test": {
+            "next_wealth": next_wealth,
+        }
     },
+    regime_transition_probs=lambda: {"test": 1.0},
 )
 
 
@@ -98,11 +101,11 @@ def next_health(health: DiscreteState) -> DiscreteState:  # type: ignore[empty-b
 
 
 STOCHASTIC_REGIME = deepcopy(DETERMINISTIC_REGIME)
-STOCHASTIC_REGIME.transitions["next_health"] = next_health
+STOCHASTIC_REGIME.transitions["test"]["next_health"] = next_health
 STOCHASTIC_REGIME.states["health"] = DiscreteGrid(HealthStatus)
 
-DETERMINISTIC_MODEL = Model(DETERMINISTIC_REGIME, n_periods=2)
-STOCHASTIC_MODEL = Model(STOCHASTIC_REGIME, n_periods=2)
+DETERMINISTIC_MODEL = Model([DETERMINISTIC_REGIME], n_periods=2)
+STOCHASTIC_MODEL = Model([STOCHASTIC_REGIME], n_periods=2)
 
 
 # ======================================================================================
@@ -237,7 +240,7 @@ def policy_second_period_stochastic(wealth, health):
 
 def value_first_period_stochastic(wealth, health, params):
     """Value function in the first period. Computed using pen and paper."""
-    health_transition = params["shocks"]["health"]
+    health_transition = params["shocks"]["test__next_health"]
 
     index = (wealth < 1).astype(int)  # map wealth to indices 0 and 1
 
@@ -249,7 +252,7 @@ def value_first_period_stochastic(wealth, health, params):
     )
     value_health_0 = _values[index]
 
-    new_beta = params["beta"] * params["shocks"]["health"][1, 1]
+    new_beta = params["beta"] * params["shocks"]["test__next_health"][1, 1]
     value_health_1 = value_first_period_deterministic(wealth, params={"beta": new_beta})
 
     # Combined
@@ -274,7 +277,7 @@ def policy_first_period_stochastic(wealth, health, params):
     )
     policy_health_0 = _policies[index]
 
-    new_beta = params["beta"] * params["shocks"]["health"][1, 1]
+    new_beta = params["beta"] * params["shocks"]["test__next_health"][1, 1]
     _policy_health_1 = policy_first_period_deterministic(
         wealth,
         params={"beta": new_beta},
@@ -359,12 +362,12 @@ def test_deterministic_solve(beta, n_wealth_points):
     # ==================================================================================
     new_states = DETERMINISTIC_REGIME.states
     new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # type: ignore[attr-defined]
-    model = Model(DETERMINISTIC_REGIME.replace(states=new_states), n_periods=2)
+    model = Model([DETERMINISTIC_REGIME.replace(states=new_states)], n_periods=2)
 
     # Solve model using LCM
     # ==================================================================================
     params = {"beta": beta, "utility": {"health": 1}}
-    got = model.solve(params)
+    got = model.solve(params={"test": params})
 
     # Compute analytical solution
     # ==================================================================================
@@ -379,8 +382,8 @@ def test_deterministic_solve(beta, n_wealth_points):
     # Do not assert that in the first period, the arrays have the same values on the
     # first and last index: TODO (@timmens): THIS IS A BUG AND NEEDS TO BE INVESTIGATED.
     # ==================================================================================
-    aaae(got[0][slice(1, -1)], expected[0][slice(1, -1)], decimal=12)
-    aaae(got[1], expected[1], decimal=12)
+    aaae(got[0]["test"][slice(1, -1)], expected[0][slice(1, -1)], decimal=12)
+    aaae(got[1]["test"], expected[1], decimal=12)
 
 
 @pytest.mark.parametrize("beta", [0, 0.5, 0.9, 1.0])
@@ -390,13 +393,13 @@ def test_deterministic_simulate(beta, n_wealth_points):
     # ==================================================================================
     new_states = DETERMINISTIC_REGIME.states
     new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # type: ignore[attr-defined]
-    model = Model(DETERMINISTIC_REGIME.replace(states=new_states), n_periods=2)
+    model = Model([DETERMINISTIC_REGIME.replace(states=new_states)], n_periods=2)
 
     # Simulate model using LCM
     # ==================================================================================
     params = {"beta": beta, "utility": {"health": 1}}
     got: pd.DataFrame = model.solve_and_simulate(
-        params=params,
+        params={"test": params},
         initial_states={"wealth": jnp.array([0.25, 0.75, 1.25, 1.75])},
     )
 
@@ -424,12 +427,12 @@ def test_stochastic_solve(beta, n_wealth_points, health_transition):
     # ==================================================================================
     new_states = STOCHASTIC_REGIME.states
     new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # type: ignore[attr-defined]
-    model = Model(STOCHASTIC_REGIME.replace(states=new_states), n_periods=2)
+    model = Model([STOCHASTIC_REGIME.replace(states=new_states)], n_periods=2)
 
     # Solve model using LCM
     # ==================================================================================
-    params = {"beta": beta, "shocks": {"health": health_transition}}
-    got = model.solve(params)
+    params = {"beta": beta, "shocks": {"test__next_health": health_transition}}
+    got = model.solve(params={"test": params})
 
     # Compute analytical solution
     # ==================================================================================
@@ -457,8 +460,8 @@ def test_stochastic_solve(beta, n_wealth_points, health_transition):
     # Do not assert that in the first period, the arrays have the same values on the
     # first and last index: TODO (@timmens): THIS IS A BUG AND NEEDS TO BE INVESTIGATED.
     # ==================================================================================
-    aaae(got[0][:, slice(1, -1)], expected[0][:, slice(1, -1)], decimal=12)
-    aaae(got[1], expected[1], decimal=12)
+    aaae(got[0]["test"][:, slice(1, -1)], expected[0][:, slice(1, -1)], decimal=12)
+    aaae(got[1]["test"], expected[1], decimal=12)
 
 
 @pytest.mark.parametrize("beta", [0, 0.5, 0.9, 1.0])
@@ -469,17 +472,17 @@ def test_stochastic_simulate(beta, n_wealth_points, health_transition):
     # ==================================================================================
     new_states = STOCHASTIC_REGIME.states
     new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # type: ignore[attr-defined]
-    model = Model(STOCHASTIC_REGIME.replace(states=new_states), n_periods=2)
+    model = Model([STOCHASTIC_REGIME.replace(states=new_states)], n_periods=2)
 
     # Simulate model using LCM
     # ==================================================================================
-    params = {"beta": beta, "shocks": {"health": health_transition}}
+    params = {"beta": beta, "shocks": {"test__next_health": health_transition}}
     initial_states = {
         "wealth": jnp.array([0.25, 0.75, 1.25, 1.75, 2.0]),
         "health": jnp.array([0, 1, 0, 1, 1]),
     }
     _got: pd.DataFrame = model.solve_and_simulate(
-        params=params,
+        params={"test": params},
         initial_states=initial_states,
     )
 

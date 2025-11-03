@@ -127,10 +127,8 @@ def get_params(
         regime_name: {
             "beta": beta,
             "utility": {"disutility_of_work": disutility_of_work},
-            "iskhakov_et_al_2017_stripped_down__next_wealth": {
-                "interest_rate": interest_rate
-            },
-            "iskhakov_et_al_2017_stripped_down__next_health": {},
+            f"{regime_name}__next_wealth": {"interest_rate": interest_rate},
+            f"{regime_name}__next_health": {},
             "borrowing_constraint": {},
             "labor_income": {"wage": wage},
             "shocks": {

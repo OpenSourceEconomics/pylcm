@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import jax
 from dags import concatenate_functions
 from dags.signature import with_signature
+from dags.tree import flatten_to_qnames
 
 from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import Target
@@ -26,10 +27,9 @@ if TYPE_CHECKING:
 
 def get_next_state_function(
     *,
-    grids: dict[str, Array],
+    grids: dict[str, dict[str, Array]],
     transitions,
     functions,
-    next_states: tuple[str, ...],
     target: Target,
 ) -> NextStateSimulationFunction:
     """Get function that computes the next states during the solution.
@@ -60,15 +60,9 @@ def get_next_state_function(
     else:
         raise ValueError(f"Invalid target: {target}")
 
-    requested_next_states = [
-        next_fn_name
-        for next_fn_name in transitions
-        if next_fn_name.removeprefix("next_") in next_states
-    ]
-
     return concatenate_functions(
         functions=functions,
-        targets=requested_next_states,
+        targets=list(transitions.keys()),
         return_type="dict",
         enforce_signature=False,
         set_annotations=True,
@@ -76,8 +70,9 @@ def get_next_state_function(
 
 
 def get_next_stochastic_weights_function(
+    regime_name,
     functions,
-    next_stochastic_states: tuple[str, ...],
+    transitions,
 ) -> Callable[..., dict[str, Array]]:
     """Get function that computes the weights for the next stochastic states.
 
@@ -90,7 +85,11 @@ def get_next_stochastic_weights_function(
         Function that computes the weights for the next stochastic states.
 
     """
-    targets = [f"weight_next_{name}" for name in next_stochastic_states]
+    targets = [
+        f"weight_{regime_name}__{key}"
+        for key, value in transitions.items()
+        if is_stochastic_transition(value)
+    ]
 
     return concatenate_functions(
         functions=functions,
@@ -102,7 +101,7 @@ def get_next_stochastic_weights_function(
 
 
 def _extend_transitions_for_simulation(
-    grids: dict[str, Array],
+    grids: dict[str, dict[str, Array]],
     transitions,
 ) -> dict[str, Callable[..., Array]]:
     """Extend the functions dictionary for the simulation target.
@@ -115,6 +114,7 @@ def _extend_transitions_for_simulation(
         Extended functions dictionary.
 
     """
+    flat_grids = flatten_to_qnames(grids)
     stochastic_targets = [
         key for key, next_fn in transitions.items() if is_stochastic_transition(next_fn)
     ]
@@ -129,7 +129,7 @@ def _extend_transitions_for_simulation(
     # ----------------------------------------------------------------------------------
     stochastic_next = {
         name: _create_stochastic_next_func(
-            name, labels=grids[name.removeprefix("next_")]
+            name, labels=flat_grids[name.replace("next_", "")]
         )
         for name in stochastic_targets
     }

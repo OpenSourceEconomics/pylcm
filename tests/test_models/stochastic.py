@@ -145,12 +145,14 @@ ISKHAKOV_ET_AL_2017_STOCHASTIC = Regime(
         "borrowing_constraint": borrowing_constraint,
     },
     transitions={
-        "next_wealth": next_wealth,
-        "next_health": next_health,
-        "next_partner": next_partner,
+        "iskhakov_et_al_2017_stochastic": {
+            "next_wealth": next_wealth,
+            "next_health": next_health,
+            "next_partner": next_partner,
+        }
     },
     functions={
         "labor_income": labor_income,
     },
-    regime_transition_probabilities=lambda: {"iskhakov_et_al_2017_stochastic": 1.0},
+    regime_transition_probs=lambda: {"iskhakov_et_al_2017_stochastic": 1.0},
 )

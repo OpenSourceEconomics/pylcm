@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 from pybaum import tree_equal
 
-from lcm.input_processing import process_regime
+from lcm.input_processing import process_regimes
 from lcm.interfaces import InternalFunctions, Target
 from lcm.next_state import _create_stochastic_next_func, get_next_state_function
 from tests.test_models.utils import get_regime
@@ -16,18 +16,24 @@ if TYPE_CHECKING:
 
 def test_get_next_state_function_with_solve_target():
     regime = get_regime("iskhakov_et_al_2017_stripped_down")
-    internal_regime = process_regime(regime=regime, n_periods=3, enable_jit=True)
+    internal_regimes = process_regimes(regimes=[regime], n_periods=3, enable_jit=True)
     got_func = get_next_state_function(
-        internal_functions=internal_regime.internal_functions,
-        grids=internal_regime.grids,
-        next_states=("wealth",),
+        transitions=internal_regimes["iskhakov_et_al_2017_stripped_down"].transitions[
+            "iskhakov_et_al_2017_stripped_down"
+        ],
+        functions=internal_regimes["iskhakov_et_al_2017_stripped_down"].functions,
+        grids={
+            "iskhakov_et_al_2017_stripped_down": internal_regimes[
+                "iskhakov_et_al_2017_stripped_down"
+            ].grids
+        },
         target=Target.SOLVE,
     )
 
     params = {
         "beta": 1.0,
         "utility": {"disutility_of_work": 1.0},
-        "next_wealth": {
+        "iskhakov_et_al_2017_stripped_down__next_wealth": {
             "interest_rate": 0.05,
         },
     }

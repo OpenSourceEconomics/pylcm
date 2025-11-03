@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from lcm.exceptions import ModelInitializationError, format_messages
-from lcm.input_processing.regime_processing import process_regime
+from lcm.input_processing.regime_processing import process_regimes
 from lcm.logging import get_logger
 from lcm.regime import Regime
 from lcm.simulation.simulate import simulate
@@ -42,8 +42,9 @@ class Model:
     description: str | None = None
     n_periods: int
     enable_jit: bool = True
-    regimes: dict[Regime]
+    regimes: dict[str, Regime]
     internal_regimes: dict[str, InternalRegime]
+    params_template: ParamsDict
 
     def __init__(
         self,
@@ -68,15 +69,18 @@ class Model:
         self.regimes = {}
         self.internal_regimes = {}
 
-        for regime in regimes:
-            _validate_model_inputs(
-                n_periods=n_periods,
-                regime=regime,
-            )
-            self.regimes[regime.name] = regime
-            self.internal_regimes[regime.name] = process_regime(
-                regime=regime, n_periods=n_periods, enable_jit=enable_jit
-            )
+        _validate_model_inputs(
+            n_periods=n_periods,
+            regimes=regimes,
+        )
+        self.regimes = {regime.name: regime for regime in regimes}
+        self.internal_regimes = process_regimes(
+            regimes=regimes, n_periods=n_periods, enable_jit=enable_jit
+        )
+        self.params_template = {
+            name: regime.params_template
+            for name, regime in self.internal_regimes.items()
+        }
 
     def solve(
         self,
@@ -169,7 +173,7 @@ class Model:
         )
 
 
-def _validate_model_inputs(n_periods: int, regime: Regime) -> None:
+def _validate_model_inputs(n_periods: int, regimes: Regime) -> None:
     error_messages: list[str] = []
 
     if not isinstance(n_periods, int):
@@ -177,8 +181,10 @@ def _validate_model_inputs(n_periods: int, regime: Regime) -> None:
     elif n_periods <= 1:
         error_messages.append("n_periods must be at least 2.")
 
-    if not isinstance(regime, Regime):
-        error_messages.append("regime must be an instance of lcm.Regime.")
+    for regime in regimes:
+        if not isinstance(regime, Regime):
+            error_messages.append("regimes must be instances of lcm.Regime.")
+            break
 
     if error_messages:
         msg = format_messages(error_messages)

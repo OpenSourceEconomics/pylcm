@@ -11,7 +11,7 @@ from dags.signature import with_signature
 from lcm.dispatchers import productmap
 from lcm.function_representation import get_value_function_representation
 from lcm.functools import get_union_of_arguments
-from lcm.input_processing.util import get_grids, get_variable_info
+from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import InternalFunctions, Target
 from lcm.next_state import get_next_state_function, get_next_stochastic_weights_function
 
@@ -36,7 +36,8 @@ if TYPE_CHECKING:
 def get_Q_and_F(
     regime: Regime,
     internal_functions: InternalFunctions,
-    next_state_space_info: StateSpaceInfo,
+    next_state_space_infos: dict[str, StateSpaceInfo],
+    grids,
     *,
     is_last_period: bool,
 ) -> QAndFFunction:
@@ -60,7 +61,8 @@ def get_Q_and_F(
         Q_and_F = get_Q_and_F_non_terminal(
             regime,
             internal_functions=internal_functions,
-            next_state_space_info=next_state_space_info,
+            next_state_space_infos=next_state_space_infos,
+            grids=grids,
         )
 
     return Q_and_F
@@ -69,7 +71,8 @@ def get_Q_and_F(
 def get_Q_and_F_non_terminal(
     regime: Regime,
     internal_functions: InternalFunctions,
-    next_state_space_info: StateSpaceInfo,
+    next_state_space_infos: dict[str, StateSpaceInfo],
+    grids,
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
@@ -84,25 +87,15 @@ def get_Q_and_F_non_terminal(
         for a non-terminal period.
 
     """
-    variable_info = get_variable_info(regime)
-    grids = get_grids(regime)
-
-    stochastic_variables = variable_info.query("is_stochastic").index.tolist()
-    # As we compute the expecation of the next period's value function, we only need the
-    # stochastic variables that are relevant for the next state space.
-    next_stochastic_variables = tuple(
-        set(stochastic_variables) & set(next_state_space_info.states_names)
-    )
-
     # ----------------------------------------------------------------------------------
     # Generate dynamic functions
     # ----------------------------------------------------------------------------------
 
     # Function required to calculate instantaneous utility and feasibility
     U_and_F = _get_U_and_F(internal_functions)
-    regime_transition_probabilities = concatenate_functions(
+    regime_transition_prob_func = concatenate_functions(
         functions=internal_functions.get_all_functions(),
-        targets="regime_transition_probabilities",
+        targets="regime_transition_probs",
         return_type="dict",
         enforce_signature=False,
         set_annotations=True,
@@ -111,28 +104,34 @@ def get_Q_and_F_non_terminal(
     next_stochastic_states_weights = {}
     joint_weights_from_marginals = {}
     next_V = {}
-    for regime_name, transition in internal_functions.transitions.items():
+    for regime_name, transitions in internal_functions.transitions.items():
         # Functions required to calculate the expected continuation values
         state_transitions[regime_name] = get_next_state_function(
-            grids=grids,
+            grids=grids[regime_name],
             functions=internal_functions.functions,
-            transitions=transition,
-            next_states=next_state_space_info.states_names,
+            transitions=transitions,
             target=Target.SOLVE,
         )
         next_stochastic_states_weights[regime_name] = (
             get_next_stochastic_weights_function(
+                regime_name=regime.name,
                 functions=internal_functions.functions,
-                next_stochastic_states=next_stochastic_variables,
+                transitions=transitions,
             )
         )
         joint_weights_from_marginals[regime_name] = _get_joint_weights_function(
-            next_stochastic_variables
+            regime_name=regime.name, transitions=transitions
         )
-        _scalar_next_V = get_value_function_representation(next_state_space_info)
+        _scalar_next_V = get_value_function_representation(
+            next_state_space_infos[regime_name]
+        )
         next_V[regime_name] = productmap(
             _scalar_next_V,
-            variables=tuple(f"next_{var}" for var in next_stochastic_variables),
+            variables=[
+                key
+                for key, value in transitions.items()
+                if is_stochastic_transition(value)
+            ],
         )
 
     # ----------------------------------------------------------------------------------
@@ -143,7 +142,6 @@ def get_Q_and_F_non_terminal(
             U_and_F,
             *list(state_transitions.values()),
             *list(next_stochastic_states_weights.values()),
-            *list(internal_functions.constraints.values()),
         ],
         include={"params", "next_V_arr", "period", "wealth"},
     )
@@ -172,7 +170,7 @@ def get_Q_and_F_non_terminal(
         # ------------------------------------------------------------------------------
         # Calculate the expected continuation values
         # ------------------------------------------------------------------------------
-        regime_transition_probs = regime_transition_probabilities(
+        regime_transition_prob = regime_transition_prob_func(
             **states_and_actions, period=period, params=params
         )
         U_arr, F_arr = U_and_F(
@@ -216,7 +214,7 @@ def get_Q_and_F_non_terminal(
             Q_arr = (
                 Q_arr
                 + params[regime_name]["beta"]
-                * regime_transition_probs[regime_name]
+                * regime_transition_prob[regime_name]
                 * next_V_expected_arr
             )
 
@@ -247,7 +245,7 @@ def get_Q_and_F_terminal(
     U_and_F = _get_U_and_F(internal_functions)
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
-        [U_and_F, *list(internal_functions.constraints.values())],
+        [U_and_F],
         # While the terminal period does not depend on the value function array, we
         # include it in the signature, such that we can treat all periods uniformly
         # during the solution and simulation.
@@ -315,7 +313,8 @@ def _get_arg_names_of_Q_and_F(
 
 
 def _get_joint_weights_function(
-    stochastic_variables: tuple[str, ...],
+    regime_name,
+    transitions,
 ) -> Callable[..., FloatND]:
     """Get function that calculates the joint weights.
 
@@ -331,7 +330,11 @@ def _get_joint_weights_function(
         variables.
 
     """
-    arg_names = [f"weight_next_{var}" for var in stochastic_variables]
+    arg_names = [
+        f"weight_{regime_name}__{key}"
+        for key, value in transitions.items()
+        if is_stochastic_transition(value)
+    ]
 
     @with_signature(args=arg_names)
     def _outer(**kwargs: Float1D) -> FloatND:

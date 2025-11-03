@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_equal
 
-from lcm.input_processing import process_regime
+from lcm.input_processing import process_regimes
 from lcm.interfaces import InternalFunctions
 from lcm.Q_and_F import (
     _get_feasibility,
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 @pytest.mark.illustrative
 def test_get_Q_and_F_function():
     regime = get_regime("iskhakov_et_al_2017_stripped_down")
-    internal_regime = process_regime(regime, n_periods=3, enable_jit=True)
+    internal_regime = process_regimes(regime, n_periods=3, enable_jit=True)
 
     params = {
         "beta": 1.0,

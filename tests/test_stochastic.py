@@ -99,8 +99,8 @@ def model_and_params():
         health_transition=jnp.identity(2),
     )
 
-    model_deterministic = Model(regime_deterministic, n_periods=3)
-    model_stochastic = Model(regime_stochastic, n_periods=3)
+    model_deterministic = Model([regime_deterministic], n_periods=3)
+    model_stochastic = Model([regime_stochastic], n_periods=3)
     return model_deterministic, model_stochastic, params
 
 

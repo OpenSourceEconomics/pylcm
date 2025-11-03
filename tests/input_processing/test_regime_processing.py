@@ -13,7 +13,7 @@ from lcm.input_processing.regime_processing import (
     get_grids,
     get_gridspecs,
     get_variable_info,
-    process_regime,
+    process_regimes,
 )
 from lcm.mark import StochasticInfo
 from tests.regime_mock import RegimeMock
@@ -76,7 +76,7 @@ def test_get_grids(regime):
 
 def test_process_regime_iskhakov_et_al_2017():
     regime = get_regime("iskhakov_et_al_2017")
-    internal_regime = process_regime(regime, n_periods=3, enable_jit=True)
+    internal_regime = process_regimes(regime, n_periods=3, enable_jit=True)
 
     # Variable Info
     assert (
@@ -134,7 +134,7 @@ def test_process_regime_iskhakov_et_al_2017():
 
 def test_process_regime():
     regime = get_regime("iskhakov_et_al_2017_stripped_down")
-    internal_regime = process_regime(regime, n_periods=3, enable_jit=True)
+    internal_regime = process_regimes(regime, n_periods=3, enable_jit=True)
 
     # Variable Info
     assert (

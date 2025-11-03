@@ -37,16 +37,15 @@ class Regime:
     _: KW_ONLY
     utility: UserFunction
     constraints: dict[str, UserFunction] = field(default_factory=dict)
-    transitions: dict[str, UserFunction] = field(default_factory=dict)
+    transitions: dict[str, dict[str, UserFunction]] = field(default_factory=dict)
     functions: dict[str, UserFunction] = field(default_factory=dict)
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
-    regime_transition_probabilities: Callable[..., dict[str, float]]
+    regime_transition_probs: Callable[..., dict[str, float]] | None = None
 
     def __post_init__(self) -> None:
-        # _validate_attribute_types(self)
-        # _validate_logical_consistency(self)
-        pass
+        _validate_attribute_types(self)
+        _validate_logical_consistency(self)
 
     def get_all_functions(self) -> dict[str, UserFunction]:
         """Get all regime functions including utility, constraints, and transitions.
@@ -60,7 +59,7 @@ class Regime:
             | {"utility": self.utility}
             | self.constraints
             | self.transitions
-            | {"regime_transition_probabilities": self.regime_transition_probabilities}
+            | {"regime_transition_probs": self.regime_transition_probs}
         )
 
     def replace(self, **kwargs: Any) -> Regime:  # noqa: ANN401
@@ -100,7 +99,11 @@ def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
 
     # Validate types of functions
     # ----------------------------------------------------------------------------------
-    function_collections = [regime.transitions, regime.constraints, regime.functions]
+    function_collections = [
+        flatten_to_qnames(regime.transitions),
+        regime.constraints,
+        regime.functions,
+    ]
     for func_collection in function_collections:
         if isinstance(func_collection, dict):
             for k, v in func_collection.items():
@@ -120,6 +123,8 @@ def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
 
     if not callable(regime.utility):
         error_messages.append("utility must be a callable.")
+    if not callable(regime.regime_transition_probs):
+        error_messages.append("regime_transition_probs must be a callable.")
 
     if error_messages:
         msg = format_messages(error_messages)
@@ -135,9 +140,14 @@ def _validate_logical_consistency(regime: Regime) -> None:
             "The function name 'utility' is reserved and cannot be used in the "
             "functions dictionary. Please use the utility attribute instead.",
         )
+
     invalid_transitions = [
         tran_name
-        for tran_name in regime.transitions
+        for tran_name in [
+            key
+            for transition_dict in regime.transitions.values()
+            for key in transition_dict.keys()
+        ]
         if not tran_name.startswith("next_")
     ]
     if invalid_transitions:
@@ -148,7 +158,9 @@ def _validate_logical_consistency(regime: Regime) -> None:
         )
 
     states = set(regime.states)
-    states_via_transition = {s.removeprefix("next_") for s in regime.transitions}
+    states_via_transition = {
+        s.removeprefix("next_") for s in regime.transitions[regime.name]
+    }
 
     if states - states_via_transition:
         error_messages.append(

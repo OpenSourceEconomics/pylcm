@@ -22,6 +22,7 @@ from lcm.input_processing.regime_components import (
 from lcm.input_processing.util import (
     get_grids,
     get_gridspecs,
+    get_transition_info,
     get_variable_info,
     is_stochastic_transition,
 )
@@ -43,9 +44,9 @@ if TYPE_CHECKING:
     )
 
 
-def process_regime(
-    regime: Regime, n_periods: int, *, enable_jit: bool
-) -> InternalRegime:
+def process_regimes(
+    regimes: list[Regime], n_periods: int, *, enable_jit: bool
+) -> dict[str, InternalRegime]:
     """Process the user regime.
 
     This entails the following steps:
@@ -63,54 +64,74 @@ def process_regime(
         The processed regime.
 
     """
-    params_template = create_params_template(regime, n_periods=n_periods)
+    grids = {}
+    gridspecs = {}
+    variable_info = {}
+    state_space_infos = {}
+    state_action_spaces = {}
+    transition_info = {}
 
-    internal_functions = _get_internal_functions(regime, params=params_template)
-    grids = get_grids(regime)
-    gridspecs = get_gridspecs(regime)
-    variable_info = get_variable_info(regime)
+    for regime in regimes:
+        grids[regime.name] = get_grids(regime)
+        gridspecs[regime.name] = get_gridspecs(regime)
+        variable_info[regime.name] = get_variable_info(regime)
+        transition_info[regime.name] = get_transition_info(regime)
+        state_space_infos[regime.name] = build_state_space_infos(regime)
+        state_action_spaces[regime.name] = build_state_action_spaces(regime)
 
-    Q_and_F_functions = build_Q_and_F_functions(
-        regime=regime, internal_functions=internal_functions
-    )
-    state_space_infos = build_state_space_infos(regime)
-    state_action_spaces = build_state_action_spaces(regime)
-    max_Q_over_a_functions = build_max_Q_over_a_functions(
-        regime=regime, Q_and_F_functions=Q_and_F_functions, enable_jit=enable_jit
-    )
-    argmax_and_max_Q_over_a_functions = build_argmax_and_max_Q_over_a_functions(
-        regime=regime, Q_and_F_functions=Q_and_F_functions, enable_jit=enable_jit
-    )
-    next_state_simulation_function = build_next_state_simulation_functions(
-        regime=regime,
-        internal_functions=internal_functions,
-        grids=grids,
-        enable_jit=enable_jit,
-    )
+    internal_regimes = {}
+    for regime in regimes:
+        params_template = create_params_template(
+            regime, grids=grids, n_periods=n_periods
+        )
 
-    return InternalRegime(
-        grids=grids,
-        gridspecs=gridspecs,
-        variable_info=variable_info,
-        functions=internal_functions.functions,
-        utility=internal_functions.utility,
-        constraints=internal_functions.constraints,
-        regime_transition_probabilities=internal_functions.regime_transition_probabilities,
-        internal_functions=internal_functions,
-        transitions=internal_functions.transitions,
-        params_template=params_template,
-        state_action_spaces=state_action_spaces,
-        state_space_infos=state_space_infos,
-        max_Q_over_a_functions=max_Q_over_a_functions,
-        argmax_and_max_Q_over_a_functions=argmax_and_max_Q_over_a_functions,
-        next_state_simulation_function=next_state_simulation_function,
-        # currently no additive utility shocks are supported
-        random_utility_shocks=ShockType.NONE,
-    )
+        internal_functions = _get_internal_functions(
+            regime, grids=grids, params=params_template
+        )
+
+        Q_and_F_functions = build_Q_and_F_functions(
+            regime=regime,
+            internal_functions=internal_functions,
+            state_space_infos=state_space_infos,
+            grids=grids,
+        )
+        max_Q_over_a_functions = build_max_Q_over_a_functions(
+            regime=regime, Q_and_F_functions=Q_and_F_functions, enable_jit=enable_jit
+        )
+        argmax_and_max_Q_over_a_functions = build_argmax_and_max_Q_over_a_functions(
+            regime=regime, Q_and_F_functions=Q_and_F_functions, enable_jit=enable_jit
+        )
+        next_state_simulation_function = build_next_state_simulation_functions(
+            regime=regime,
+            internal_functions=internal_functions,
+            grids=grids,
+            enable_jit=enable_jit,
+        )
+        internal_regimes[regime.name] = InternalRegime(
+            grids=grids[regime.name],
+            gridspecs=gridspecs[regime.name],
+            variable_info=variable_info[regime.name],
+            functions=internal_functions.functions,
+            utility=internal_functions.utility,
+            constraints=internal_functions.constraints,
+            regime_transition_probs=internal_functions.regime_transition_probs,
+            internal_functions=internal_functions,
+            transitions=internal_functions.transitions,
+            params_template=params_template,
+            state_action_spaces=state_action_spaces[regime.name],
+            state_space_infos=state_space_infos[regime.name],
+            max_Q_over_a_functions=max_Q_over_a_functions,
+            argmax_and_max_Q_over_a_functions=argmax_and_max_Q_over_a_functions,
+            next_state_simulation_function=next_state_simulation_function,
+            # currently no additive utility shocks are supported
+            random_utility_shocks=ShockType.NONE,
+        )
+    return internal_regimes
 
 
 def _get_internal_functions(
     regime: Regime,
+    grids: dict[str, dict[str, Array]],
     params: ParamsDict,
 ) -> InternalFunctions:
     """Process the user provided regime functions.
@@ -124,25 +145,22 @@ def _get_internal_functions(
 
     """
     variable_info = get_variable_info(regime)
-    grids = get_grids(regime)
 
     raw_functions = deepcopy(regime.get_all_functions())
-
+    flat_grids = flatten_to_qnames(grids)
     # ==================================================================================
     # Create functions for stochastic transitions
     # ==================================================================================
-    for next_fn_name, next_fn in regime.transitions.items():
+    for next_fn_name, next_fn in flatten_to_qnames(regime.transitions).items():
         if is_stochastic_transition(next_fn):
-            state = next_fn_name.removeprefix("next_")
-
             raw_functions[next_fn_name] = _get_stochastic_next_function(
                 raw_func=next_fn,
-                grid=grids[state],
+                grid=flat_grids[next_fn_name.replace("next_", "")],
             )
 
             raw_functions[f"weight_{next_fn_name}"] = _get_stochastic_weight_function(
                 raw_func=next_fn,
-                name=state,
+                name=next_fn_name,
                 variable_info=variable_info,
             )
 
@@ -157,7 +175,7 @@ def _get_internal_functions(
     functions: dict[str, InternalUserFunction] = {}
 
     for func_name, func in raw_functions.items():
-        is_weight_next_function = func_name.startswith("weight_next_")
+        is_weight_next_function = func_name.startswith("weight_")
 
         if is_weight_next_function:
             processed_func = cast("InternalUserFunction", func)
@@ -180,9 +198,7 @@ def _get_internal_functions(
         fn_name: functions[fn_name] for fn_name in flatten_to_qnames(regime.transitions)
     }
     internal_utility = functions["utility"]
-    internal_regime_transition_probabilities = functions[
-        "regime_transition_probabilities"
-    ]
+    internal_regime_transition_probabilities = functions["regime_transition_probs"]
     internal_constraints = {
         fn_name: functions[fn_name] for fn_name in regime.constraints
     }
@@ -199,7 +215,7 @@ def _get_internal_functions(
         utility=internal_utility,
         constraints=internal_constraints,
         transitions=unflatten_from_qnames(internal_transition),
-        regime_transition_probabilities=internal_regime_transition_probabilities,
+        regime_transition_probs=internal_regime_transition_probabilities,
     )
 
 

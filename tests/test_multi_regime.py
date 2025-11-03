@@ -57,12 +57,17 @@ def utility_work(
     working: IntND,
     disutility_of_work: float,
     health: DiscreteState,
+    wealth: ContinuousState,
 ) -> FloatND:
     return jnp.log(consumption) - (1 - health / 2) * disutility_of_work * working
 
 
 def utility_retirement(
-    consumption: ContinuousAction, working: IntND, disutility_of_work: float, health
+    consumption: ContinuousAction,
+    working: IntND,
+    disutility_of_work: float,
+    health: DiscreteState,
+    wealth: ContinuousState,
 ) -> FloatND:
     return jnp.log(consumption) - disutility_of_work * working
 
@@ -145,7 +150,7 @@ def test_work_retirement_model_solution():
                 "next_health": next_health,
             },
         },
-        regime_transition_probabilities=regime_transition_probs_working_to_retirement,
+        regime_transition_probs=regime_transition_probs_working_to_retirement,
     )
 
     # Create retirement regime
@@ -171,7 +176,7 @@ def test_work_retirement_model_solution():
             },
             "retirement": {"next_wealth": next_wealth, "next_health": next_health},
         },  # Retirement is absorbing
-        regime_transition_probabilities=regime_transition_probs_retirement_absorbing,
+        regime_transition_probs=regime_transition_probs_retirement_absorbing,
     )
 
     # Create complete model using new regime-based API
@@ -244,9 +249,9 @@ def test_regime_to_model_uses_regime_description():
     )
 
     # Should use regime's description
-    model = Model(regime, n_periods=1)
+    model = Model([regime], n_periods=1)
     assert model.description == "described_regime: This is a test regime description"
 
     # Explicit description should override regime's description
-    model_override = Model(regime, n_periods=1, description="Override description")
+    model_override = Model([regime], n_periods=1, description="Override description")
     assert model_override.description == "Override description"

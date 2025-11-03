@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import pytest
 from pybaum import tree_equal, tree_map
 
-from lcm.input_processing import process_regime
+from lcm.input_processing import process_regimes
 from lcm.max_Q_over_c import (
     get_argmax_and_max_Q_over_c,
     get_max_Q_over_c,
@@ -42,13 +42,13 @@ STRIPPED_DOWN_AND_DISCRETE_MODELS = [
 
 def test_solve_stripped_down():
     model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    params = tree_map(lambda _: 0.2, model.internal_regimes.params_template)
+    params = tree_map(lambda _: 0.2, model.params_template)
     model.solve(params)
 
 
 def test_solve_fully_discrete():
     model = get_model("iskhakov_et_al_2017_discrete", n_periods=3)
-    params = tree_map(lambda _: 0.2, model.internal_regimes.params_template)
+    params = tree_map(lambda _: 0.2, model.params_template)
     model.solve(params)
 
 
@@ -60,7 +60,7 @@ def test_solve_fully_discrete():
 def test_solve_and_simulate_stripped_down():
     model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
 
-    params = tree_map(lambda _: 0.2, model.internal_regimes.params_template)
+    params = tree_map(lambda _: 0.2, model.params_template)
 
     model.solve_and_simulate(
         params,
@@ -76,7 +76,7 @@ def test_solve_and_simulate_stripped_down():
 def test_solve_and_simulate_fully_discrete():
     model = get_model("iskhakov_et_al_2017_discrete", n_periods=3)
 
-    params = tree_map(lambda _: 0.2, model.internal_regimes.params_template)
+    params = tree_map(lambda _: 0.2, model.params_template)
 
     model.solve_and_simulate(
         params,
@@ -100,7 +100,7 @@ def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(model: Model) -
     # ==================================================================================
 
     # solve
-    params = tree_map(lambda _: 0.2, model.internal_regimes.params_template)
+    params = tree_map(lambda _: 0.2, model.params_template)
     V_arr_dict = model.solve(params)
 
     # simulate using solution
@@ -131,7 +131,7 @@ def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(model: Model) -
 )
 def test_simulate_iskhakov_et_al_2017(model: Model) -> None:
     # solve model
-    params = tree_map(lambda _: 0.9, model.internal_regimes.params_template)
+    params = tree_map(lambda _: 0.9, model.params_template)
     V_arr_dict = model.solve(params)
 
     # simulate using solution
@@ -158,7 +158,7 @@ def test_simulate_iskhakov_et_al_2017(model: Model) -> None:
 
 def test_get_max_Q_over_c():
     regime = get_regime("iskhakov_et_al_2017_stripped_down")
-    internal_regime = process_regime(regime, n_periods=3, enable_jit=True)
+    internal_regime = process_regimes(regime, n_periods=3, enable_jit=True)
 
     params = {
         "beta": 1.0,
@@ -204,7 +204,7 @@ def test_get_max_Q_over_c():
 
 def test_get_max_Q_over_c_with_discrete_model():
     regime = get_regime("iskhakov_et_al_2017_discrete")
-    internal_regime = process_regime(regime, n_periods=3, enable_jit=True)
+    internal_regime = process_regimes(regime, n_periods=3, enable_jit=True)
 
     params = {
         "beta": 1.0,
@@ -255,7 +255,7 @@ def test_get_max_Q_over_c_with_discrete_model():
 
 def test_argmax_and_max_Q_over_c():
     regime = get_regime("iskhakov_et_al_2017_stripped_down")
-    internal_regime = process_regime(regime, n_periods=3, enable_jit=True)
+    internal_regime = process_regimes(regime, n_periods=3, enable_jit=True)
 
     params = {
         "beta": 1.0,
@@ -301,7 +301,7 @@ def test_argmax_and_max_Q_over_c():
 
 def test_argmax_and_max_Q_over_c_with_discrete_model():
     regime = get_regime("iskhakov_et_al_2017_discrete")
-    internal_regime = process_regime(regime, n_periods=3, enable_jit=True)
+    internal_regime = process_regimes(regime, n_periods=3, enable_jit=True)
 
     params = {
         "beta": 1.0,
@@ -367,8 +367,8 @@ def test_solve_with_period_argument_in_constraint():
     constraints["absorbing_retirement_constraint"] = absorbing_retirement_constraint
     regime = regime.replace(constraints=constraints)
 
-    model = Model(regime=regime, n_periods=3)
-    params = tree_map(lambda _: 0.2, model.internal_regimes.params_template)
+    model = Model(regimes=[regime], n_periods=3)
+    params = tree_map(lambda _: 0.2, model.params_template)
     model.solve(params)
 
 
@@ -391,9 +391,9 @@ def test_order_of_states_and_actions_does_not_matter():
         actions=_reverse_dict(regime.actions),
     )
 
-    model = Model(regime=regime, n_periods=3)
-    model_swapped = Model(regime=regime_swapped, n_periods=3)
-    params = tree_map(lambda _: 0.2, model.internal_regimes.params_template)
+    model = Model(regimes=[regime], n_periods=3)
+    model_swapped = Model(regimes=[regime_swapped], n_periods=3)
+    params = tree_map(lambda _: 0.2, model.params_template)
     V_arr_dict = model.solve(params)
 
     V_arr_dict_swapped = model_swapped.solve(params)

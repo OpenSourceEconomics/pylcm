@@ -184,7 +184,7 @@ class InternalRegime:
     constraints: dict[str, InternalUserFunction]
     transitions: dict[str, InternalUserFunction]
     functions: dict[str, InternalUserFunction]
-    regime_transition_probabilities: Callable[..., dict[str, float]]
+    regime_transition_probs: Callable[..., dict[str, float]]
     internal_functions: InternalFunctions
     params_template: ParamsDict
     state_action_spaces: PeriodVariantContainer[StateActionSpace]
@@ -207,6 +207,7 @@ class InternalRegime:
             | {"utility": self.utility}
             | self.constraints
             | self.transitions
+            | {"regime_transition_probs": self.regime_transition_probs}
         )
 
 
@@ -234,7 +235,7 @@ class InternalFunctions:
     utility: InternalUserFunction
     constraints: dict[str, InternalUserFunction]
     transitions: dict[str, InternalUserFunction]
-    regime_transition_probabilities: Callable[..., dict[str, float]]
+    regime_transition_probs: Callable[..., dict[str, float]]
 
     def get_all_functions(self) -> dict[str, InternalUserFunction]:
         """Get all regime functions including utility, constraints, and transitions.
@@ -248,5 +249,5 @@ class InternalFunctions:
             | {"utility": self.utility}
             | self.constraints
             | self.transitions
-            | {"regime_transition_probabilities": self.regime_transition_probabilities}
+            | {"regime_transition_probs": self.regime_transition_probs}
         )
