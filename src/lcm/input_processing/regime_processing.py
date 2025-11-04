@@ -16,6 +16,7 @@ from lcm.input_processing.regime_components import (
     build_max_Q_over_a_functions,
     build_next_state_simulation_functions,
     build_Q_and_F_functions,
+    build_regime_transition_probs_functions,
     build_state_action_spaces,
     build_state_space_infos,
 )
@@ -64,12 +65,15 @@ def process_regimes(
         The processed regime.
 
     """
+    # ----------------------------------------------------------------------------------
+    # Stage 1: Initialize regime components that do not depend on other regimes
+    # ----------------------------------------------------------------------------------
     grids = {}
     gridspecs = {}
     variable_info = {}
+    transition_info = {}
     state_space_infos = {}
     state_action_spaces = {}
-    transition_info = {}
 
     for regime in regimes:
         grids[regime.name] = get_grids(regime)
@@ -79,6 +83,9 @@ def process_regimes(
         state_space_infos[regime.name] = build_state_space_infos(regime)
         state_action_spaces[regime.name] = build_state_action_spaces(regime)
 
+    # ----------------------------------------------------------------------------------
+    # Stage 2: Initialize regime components that depend on other regimes
+    # ----------------------------------------------------------------------------------
     internal_regimes = {}
     for regime in regimes:
         params_template = create_params_template(
@@ -107,6 +114,15 @@ def process_regimes(
             grids=grids,
             enable_jit=enable_jit,
         )
+        regime_transition_probs = build_regime_transition_probs_functions(
+            regime=regime,
+            internal_functions=internal_functions,
+            enable_jit=enable_jit,
+        )
+
+        # ------------------------------------------------------------------------------
+        # Collect all components into the internal regime
+        # ------------------------------------------------------------------------------
         internal_regimes[regime.name] = InternalRegime(
             grids=grids[regime.name],
             gridspecs=gridspecs[regime.name],
@@ -114,7 +130,7 @@ def process_regimes(
             functions=internal_functions.functions,
             utility=internal_functions.utility,
             constraints=internal_functions.constraints,
-            regime_transition_probs=internal_functions.regime_transition_probs,
+            regime_transition_probs=regime_transition_probs,
             internal_functions=internal_functions,
             transitions=internal_functions.transitions,
             params_template=params_template,
@@ -126,6 +142,7 @@ def process_regimes(
             # currently no additive utility shocks are supported
             random_utility_shocks=ShockType.NONE,
         )
+
     return internal_regimes
 
 

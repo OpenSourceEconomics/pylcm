@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
-import pytest
 
 from lcm import DiscreteGrid, LinspaceGrid
 from lcm.model import Model
@@ -57,7 +56,6 @@ def utility_work(
     working: IntND,
     disutility_of_work: float,
     health: DiscreteState,
-    wealth: ContinuousState,
 ) -> FloatND:
     return jnp.log(consumption) - (1 - health / 2) * disutility_of_work * working
 
@@ -66,8 +64,7 @@ def utility_retirement(
     consumption: ContinuousAction,
     working: IntND,
     disutility_of_work: float,
-    health: DiscreteState,
-    wealth: ContinuousState,
+    # health: DiscreteState,
 ) -> FloatND:
     return jnp.log(consumption) - disutility_of_work * working
 
@@ -233,25 +230,3 @@ def test_work_retirement_model_solution():
     assert isinstance(solution, dict)
     assert len(solution) == 10
     assert all(period in solution for period in range(10))
-
-
-@pytest.mark.skip(
-    reason="Not clear what behavior we want for this yet, and not urgent at all!!!"
-)
-def test_regime_to_model_uses_regime_description():
-    regime = Regime(
-        name="described_regime",
-        active=range(1),
-        description="This is a test regime description",
-        actions={"consumption": LinspaceGrid(start=1, stop=10, n_points=5)},
-        states={},
-        functions={"utility": lambda consumption: jnp.log(consumption)},
-    )
-
-    # Should use regime's description
-    model = Model([regime], n_periods=1)
-    assert model.description == "described_regime: This is a test regime description"
-
-    # Explicit description should override regime's description
-    model_override = Model([regime], n_periods=1, description="Override description")
-    assert model_override.description == "Override description"

@@ -16,7 +16,9 @@ if TYPE_CHECKING:
 
 def test_get_next_state_function_with_solve_target():
     regime = get_regime("iskhakov_et_al_2017_stripped_down")
-    internal_regimes = process_regimes(regimes=[regime], n_periods=3, enable_jit=True)
+    internal_regimes = process_regimes(regimes=[regime], n_periods=3, enable_jit=True)[
+        "iskhakov_et_al_2017_stripped_down"
+    ]
     got_func = get_next_state_function(
         transitions=internal_regimes["iskhakov_et_al_2017_stripped_down"].transitions[
             "iskhakov_et_al_2017_stripped_down"

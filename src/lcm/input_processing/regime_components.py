@@ -6,6 +6,7 @@ import inspect
 from typing import TYPE_CHECKING
 
 import jax
+from dags import concatenate_functions
 from dags.tree import flatten_to_qnames
 
 from lcm.dispatchers import vmap_1d
@@ -212,3 +213,32 @@ def build_next_state_simulation_functions(
         ),
     )
     return jax.jit(next_state_vmapped) if enable_jit else next_state_vmapped
+
+
+def build_regime_transition_probs_functions(
+    internal_functions: InternalFunctions,
+    *,
+    enable_jit: bool,
+):
+    fn = concatenate_functions(
+        functions=internal_functions.get_all_functions(),
+        targets="regime_transition_probs",
+        return_type="dict",
+        enforce_signature=False,
+        set_annotations=True,
+    )
+    signature = inspect.signature(fn)
+    parameters = list(signature.parameters)
+
+    vmapped = vmap_1d(
+        func=fn,
+        variables=tuple(
+            parameter
+            for parameter in parameters
+            if parameter not in ("period", "params")
+        ),
+    )
+    if enable_jit:
+        vmapped = jax.jit(vmapped)
+
+    return {"solve": fn, "simulate": vmapped}

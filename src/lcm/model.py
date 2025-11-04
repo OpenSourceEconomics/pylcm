@@ -48,7 +48,7 @@ class Model:
 
     def __init__(
         self,
-        regimes: list[Regime],
+        regimes: Regime | list[Regime],
         *,
         n_periods: int,
         description: str | None = None,
@@ -63,6 +63,10 @@ class Model:
             enable_jit: Whether to jit the functions of the internal regime.
 
         """
+        # TODO: Requires a more robust function
+        if isinstance(regimes, Regime):
+            regimes = [regimes]
+
         self.n_periods = n_periods
         self.description = description
         self.enable_jit = enable_jit

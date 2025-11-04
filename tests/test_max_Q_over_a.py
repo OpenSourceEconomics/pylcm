@@ -36,7 +36,7 @@ def regime_input():
     actions = regime.actions
     actions["consumption"] = actions["consumption"].replace(stop=20)  # type: ignore[attr-defined]
     regime = regime.replace(actions=actions)
-    internal_regime = process_regimes(regime, n_periods=3, enable_jit=True)
+    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)
 
     state_space_info = create_state_space_info(
         regime=regime,

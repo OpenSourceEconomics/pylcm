@@ -158,7 +158,9 @@ def test_simulate_iskhakov_et_al_2017(model: Model) -> None:
 
 def test_get_max_Q_over_c():
     regime = get_regime("iskhakov_et_al_2017_stripped_down")
-    internal_regime = process_regimes(regime, n_periods=3, enable_jit=True)
+    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
+        "iskhakov_et_al_2017_stripped_down"
+    ]
 
     params = {
         "beta": 1.0,
@@ -204,7 +206,9 @@ def test_get_max_Q_over_c():
 
 def test_get_max_Q_over_c_with_discrete_model():
     regime = get_regime("iskhakov_et_al_2017_discrete")
-    internal_regime = process_regimes(regime, n_periods=3, enable_jit=True)
+    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
+        "iskhakov_et_al_2017_discrete"
+    ]
 
     params = {
         "beta": 1.0,
@@ -255,7 +259,9 @@ def test_get_max_Q_over_c_with_discrete_model():
 
 def test_argmax_and_max_Q_over_c():
     regime = get_regime("iskhakov_et_al_2017_stripped_down")
-    internal_regime = process_regimes(regime, n_periods=3, enable_jit=True)
+    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
+        "iskhakov_et_al_2017_stripped_down"
+    ]
 
     params = {
         "beta": 1.0,
@@ -301,7 +307,9 @@ def test_argmax_and_max_Q_over_c():
 
 def test_argmax_and_max_Q_over_c_with_discrete_model():
     regime = get_regime("iskhakov_et_al_2017_discrete")
-    internal_regime = process_regimes(regime, n_periods=3, enable_jit=True)
+    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
+        "iskhakov_et_al_2017_discrete"
+    ]
 
     params = {
         "beta": 1.0,
