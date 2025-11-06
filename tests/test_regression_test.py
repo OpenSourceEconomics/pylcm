@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pandas as pd
-from numpy.testing import assert_array_almost_equal as aaae
+from jax import numpy as jnp
+from pandas.testing import assert_frame_equal
 
 from lcm._config import TEST_DATA
 from tests.test_models.utils import get_model, get_params
@@ -36,13 +37,18 @@ def test_regression_test():
     )
     got_solve: dict[int, FloatND] = model.solve(params)
 
-    """ got_simulate = model.solve_and_simulate(
+    got_simulate = model.solve_and_simulate(
         params=params,
         initial_states={
-            "wealth": jnp.array([5.0, 20, 40, 70]),
+            "iskhakov_et_al_2017_stripped_down__next_wealth": jnp.array(
+                [5.0, 20, 40, 70]
+            ),
         },
-    ) """
+        initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 4,
+    )
     # Compare
     # ==================================================================================
-    aaae(expected_solve, list(got_solve.values()), decimal=5)
-    """ assert_frame_equal(expected_simulate, got_simulate) """
+    # aaae(expected_solve, list(got_solve.values()), decimal=5)
+    assert_frame_equal(
+        expected_simulate, got_simulate["iskhakov_et_al_2017_stripped_down"]
+    )

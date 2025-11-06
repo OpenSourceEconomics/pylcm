@@ -64,7 +64,7 @@ def utility_retirement(
     consumption: ContinuousAction,
     working: IntND,
     disutility_of_work: float,
-    # health: DiscreteState,
+    health: DiscreteState,
 ) -> FloatND:
     return jnp.log(consumption) - disutility_of_work * working
 
@@ -107,11 +107,11 @@ def next_wealth_regime_transition(
     return (1 + interest_rate) * (wealth - consumption)
 
 
-def regime_transition_probs_working_to_retirement() -> dict[str, float]:
+def regime_transition_probs_working_to_retirement(wealth) -> dict[str, float]:
     return {"work": 0.6, "retirement": 0.4}
 
 
-def regime_transition_probs_retirement_absorbing() -> dict[str, float]:
+def regime_transition_probs_retirement_absorbing(wealth) -> dict[str, float]:
     return {"work": 0.0, "retirement": 1.0}
 
 
@@ -225,7 +225,18 @@ def test_work_retirement_model_solution():
 
     # The core test: solve should work and return value functions
     solution = model.solve(params)
-
+    simulation = model.simulate(
+        params=params,
+        initial_states={
+            "work__next_wealth": jnp.array([5.0, 20, 40, 70]),
+            "retirement__next_wealth": jnp.array([5.0, 20, 40, 70]),
+            "work__next_health": jnp.array([1, 1, 1, 1]),
+            "retirement__next_health": jnp.array([1, 1, 1, 1]),
+        },
+        initial_regimes=["work"] * 4,
+        V_arr_dict=solution,
+    )
+    print(simulation)
     # Basic checks: solution should be a dict with one entry per period
     assert isinstance(solution, dict)
     assert len(solution) == 10

@@ -43,21 +43,25 @@ def process_simulated_data(
         Additionally, the period variable is added.
 
     """
-    n_periods = len(results)
     n_initial_states = len(results[0].value)
 
     nan_array = jnp.full(n_initial_states, jnp.nan, dtype=jnp.float64)
 
     list_of_dicts = [
-        {"value": d.value, **d.actions, **d.states} for d in results.values()
+        {
+            "period": jnp.full_like(d.subject_ids, period),
+            "subject_ids": d.subject_ids,
+            "value": d.value,
+            **d.actions,
+            **d.states,
+        }
+        for period, d in results.items()
     ]
     dict_of_lists = {
         key: [d.get(key, nan_array) for d in list_of_dicts]
         for key in list(list_of_dicts[0])
     }
     out = {key: jnp.concatenate(values) for key, values in dict_of_lists.items()}
-    out["period"] = jnp.repeat(jnp.arange(n_periods), n_initial_states)
-
     if additional_targets is not None:
         calculated_targets = _compute_targets(
             out,
@@ -84,12 +88,12 @@ def as_panel(processed: dict[str, Array], n_periods: int) -> pd.DataFrame:
         variables, and potentially auxiliary variables.
 
     """
-    n_initial_states = len(processed["value"]) // n_periods
+    """ n_initial_states = len(processed["value"]) // n_periods
     index = pd.MultiIndex.from_product(
         [list(range(n_periods)), list(range(n_initial_states))],
         names=["period", "initial_state_id"],
-    )
-    return pd.DataFrame(processed, index=index)
+    ) """
+    return pd.DataFrame(processed)
 
 
 def _compute_targets(

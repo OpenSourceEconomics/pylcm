@@ -177,6 +177,7 @@ class InternalRegime:
 
     """
 
+    name: str
     grids: dict[str, Float1D | Int1D]
     gridspecs: dict[str, Grid]
     variable_info: pd.DataFrame
@@ -218,6 +219,7 @@ class InternalSimulationPeriodResults:
     value: Array
     actions: dict[str, Array]
     states: dict[str, Array]
+    subject_ids: Array
 
 
 class Target(Enum):

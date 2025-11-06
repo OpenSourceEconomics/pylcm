@@ -74,13 +74,22 @@ def simulate(
 
     # The following variables are updated during the forward simulation
     states = initial_states
-    regime_names = initial_regimes
+    regime_mapping = {
+        regime.name: i
+        for regime, i in zip(
+            internal_regimes.values(), range(len(internal_regimes)), strict=False
+        )
+    }
+    subject_regime_ids = jnp.asarray(
+        [regime_mapping[initial_regime] for initial_regime in initial_regimes]
+    )
+
     key = jax.random.key(seed=seed)
 
     # Forward simulation
     # ----------------------------------------------------------------------------------
     simulation_results = {regime_name: {} for regime_name in internal_regimes}
-
+    regime_results = {}
     for period in range(n_periods):
         logger.info("Period: %s", period)
 
@@ -91,9 +100,16 @@ def simulate(
         else:
             query = "is_state and (enters_concurrent_valuation | enters_transition)"
 
+        new_subject_regime_ids = jnp.zeros(n_initial_states)
         for regime_name, internal_regime in internal_regimes.items():
+            subjects_in_curr_regime = jnp.nonzero(
+                regime_mapping[regime_name] == subject_regime_ids
+            )[0]
             states_for_state_action_space = {
-                n: states[n] for n in internal_regime.variable_info.query(query).index
+                state_name: states[f"{regime_name}__next_{state_name}"][
+                    subjects_in_curr_regime
+                ]
+                for state_name in internal_regime.variable_info.query(query).index
             }
 
             state_action_space = create_state_action_space(
@@ -153,15 +169,24 @@ def simulate(
                 actions_grid_shape=actions_grid_shape,
                 state_action_space=state_action_space,
             )
-
             # Store results
             # ------------------------------------------------------------------------------
+            curr_state_action_space = (
+                internal_regime.state_action_spaces.terminal
+                if is_last_period
+                else internal_regime.state_action_spaces.non_terminal
+            )
+            result_relevant_states = {
+                k: states[f"{regime_name}__next_{k}"][subjects_in_curr_regime]
+                for k in curr_state_action_space.states
+            }
+
             simulation_results[regime_name][period] = InternalSimulationPeriodResults(
                 value=V_arr,
                 actions=optimal_actions,
-                states=states,
+                states=result_relevant_states,
+                subject_ids=subjects_in_curr_regime,
             )
-
             # Update states
             # ------------------------------------------------------------------------------
             if not is_last_period:
@@ -180,10 +205,10 @@ def simulate(
                 parameters = set(signature.parameters)
 
                 next_vars: dict[str, Array | Period | ParamsDict] = (
-                    states  # type: ignore[assignment]
+                    state_action_space.states  # type: ignore[assignment]
                     | optimal_actions
                     | stochastic_variables_keys
-                    | {"period": period, "params": params}
+                    | {"period": period, "params": params[regime_name]}
                 )
 
                 next_state_input = {
@@ -195,32 +220,38 @@ def simulate(
                 # removed for the next iteration of the loop, where these will be the
                 # current states.
                 states = {
-                    k.removeprefix("next_"): v
+                    k: states[k].at[subjects_in_curr_regime].set(v)
                     for k, v in states_with_next_prefix.items()
                 }
 
-            # Update regime
-            # --------------------------------------------------------------------------
-            _regime_transition_probs = internal_regime.regime_transition_probs[
-                "simulate"
-            ](
-                **state_action_space.states,
-                **state_action_space.discrete_actions,
-                **state_action_space.continuous_actions,
-                period=period,
-                params=params,
-            )
+                # Update regime
+                # --------------------------------------------------------------------------
+                signature = inspect.signature(
+                    internal_regime.regime_transition_probs["simulate"]
+                )
+                parameters = set(signature.parameters)
+                next_regime_input = {
+                    parameter: next_vars[parameter] for parameter in parameters
+                }
+                _regime_transition_probs = internal_regime.regime_transition_probs[
+                    "simulate"
+                ](**next_regime_input)
 
-            key, regime_transition_key = generate_simulation_keys(
-                key=key,
-                names="regime_transition",
-                n_initial_states=n_initial_states,
-            )
-
-            regime_names = draw_key_from_dict(
-                d=_regime_transition_probs,
-                key=regime_transition_key,
-            )
+                key, regime_transition_key = generate_simulation_keys(
+                    key=key,
+                    names=["regime_transition"],
+                    n_initial_states=subjects_in_curr_regime.shape[0],
+                )
+                new_regimes = draw_key_from_dict(
+                    d=_regime_transition_probs,
+                    keys=regime_transition_key["key_regime_transition"],
+                    regime_mapping=regime_mapping,
+                )
+                new_subject_regime_ids = new_subject_regime_ids.at[
+                    subjects_in_curr_regime
+                ].set(new_regimes)
+        regime_results[period] = new_subject_regime_ids
+        subject_regime_ids = new_subject_regime_ids
 
     processed = {}
     for regime_name, regime_simulation_results in simulation_results.items():
@@ -230,6 +261,7 @@ def simulate(
             params=params,
             additional_targets=additional_targets,
         )
+
         processed[regime_name] = as_panel(_processed, n_periods=n_periods)
     return processed
 
@@ -308,7 +340,9 @@ def _lookup_values_from_indices(
 vmapped_unravel_index = vmap(jnp.unravel_index, in_axes=(0, None))
 
 
-def draw_key_from_dict(d: dict[str, Array], key: Array) -> list[str]:
+def draw_key_from_dict(
+    d: dict[str, Array], regime_mapping: dict[str, int], keys: Array
+) -> list[str]:
     """Draw a random key from a dictionary of arrays.
 
     Args:
@@ -316,25 +350,24 @@ def draw_key_from_dict(d: dict[str, Array], key: Array) -> list[str]:
             represent a probability distribution over the keys. That is, for the
             dictionary {'regime1': jnp.array([0.2, 0.5]), 'regime2': jnp.array([0.8, 0.5])},
             0.2 + 0.8 = 1.0 and 0.5 + 0.5 = 1.0.
-        key: JAX random key.
+        keys: JAX random keys.
 
     Returns:
         A random key from the dictionary for each entry in the arrays.
 
     """
+    regime_ids = jnp.array([regime_mapping[key] for key in d])
 
     def draw_single_key(
         key: Array,
         p: Array,
-        keys: list[str],
     ) -> str:
         return jax.random.choice(
             key,
-            jnp.arange(len(keys)),
+            regime_ids,
             p=p,
         )
 
-    draw_key = vmap(draw_single_key, in_axes=(None, 0, None))
-
-    draw = draw_key(key, jnp.array(list(d.values())).T, list(d.keys()))
-    return [list(d.keys())[i] for i in draw]
+    draw_key = vmap(draw_single_key, in_axes=(0, 0))
+    draw = draw_key(keys, jnp.array(list(d.values())).T)
+    return draw

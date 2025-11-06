@@ -115,7 +115,6 @@ def process_regimes(
             enable_jit=enable_jit,
         )
         regime_transition_probs = build_regime_transition_probs_functions(
-            regime=regime,
             internal_functions=internal_functions,
             enable_jit=enable_jit,
         )
@@ -124,6 +123,7 @@ def process_regimes(
         # Collect all components into the internal regime
         # ------------------------------------------------------------------------------
         internal_regimes[regime.name] = InternalRegime(
+            name=regime.name,
             grids=grids[regime.name],
             gridspecs=gridspecs[regime.name],
             variable_info=variable_info[regime.name],
