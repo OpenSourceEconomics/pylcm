@@ -64,6 +64,7 @@ def utility(
     working: DiscreteAction,
     health: DiscreteState,
     disutility_of_work: float,
+    partner,
 ) -> FloatND:
     return jnp.log(consumption) - (1 - health / 2) * disutility_of_work * working
 
@@ -154,5 +155,5 @@ ISKHAKOV_ET_AL_2017_STOCHASTIC = Regime(
     functions={
         "labor_income": labor_income,
     },
-    regime_transition_probs=lambda: {"iskhakov_et_al_2017_stochastic": 1.0},
+    regime_transition_probs=lambda wealth: {"iskhakov_et_al_2017_stochastic": 1.0},
 )

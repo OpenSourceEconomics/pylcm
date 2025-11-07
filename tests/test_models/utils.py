@@ -132,8 +132,8 @@ def get_params(
             "borrowing_constraint": {},
             "labor_income": {"wage": wage},
             "shocks": {
-                "health": health_transition,
-                "partner": partner_transition,
+                f"{regime_name}__next_health": health_transition,
+                f"{regime_name}__next_partner": partner_transition,
             },
         }
     }

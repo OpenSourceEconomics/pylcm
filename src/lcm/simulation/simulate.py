@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
+from dags.tree import flatten_to_qnames
 from jax import Array, vmap
 
 from lcm.dispatchers import simulation_spacemap, vmap_1d
@@ -67,13 +68,8 @@ def simulate(
 
     logger.info("Starting simulation")
 
-    # Preparations
-    # ----------------------------------------------------------------------------------
-    n_periods = len(V_arr_dict)
-    n_initial_states = len(next(iter(initial_states.values())))
-
     # The following variables are updated during the forward simulation
-    states = initial_states
+    states = flatten_to_qnames(initial_states)
     regime_mapping = {
         regime.name: i
         for regime, i in zip(
@@ -84,6 +80,10 @@ def simulate(
         [regime_mapping[initial_regime] for initial_regime in initial_regimes]
     )
 
+    # Preparations
+    # ----------------------------------------------------------------------------------
+    n_periods = len(V_arr_dict)
+    n_initial_states = subject_regime_ids.shape[0]
     key = jax.random.key(seed=seed)
 
     # Forward simulation
@@ -102,16 +102,18 @@ def simulate(
 
         new_subject_regime_ids = jnp.zeros(n_initial_states)
         for regime_name, internal_regime in internal_regimes.items():
+            # Select Subjects that are in the current regime
             subjects_in_curr_regime = jnp.nonzero(
                 regime_mapping[regime_name] == subject_regime_ids
             )[0]
+
+            # Create state action space with current subjects
             states_for_state_action_space = {
-                state_name: states[f"{regime_name}__next_{state_name}"][
+                state_name: states[f"{regime_name}__{state_name}"][
                     subjects_in_curr_regime
                 ]
                 for state_name in internal_regime.variable_info.query(query).index
             }
-
             state_action_space = create_state_action_space(
                 variable_info=internal_regime.variable_info,
                 grids=internal_regime.grids,
@@ -119,6 +121,7 @@ def simulate(
                 is_last_period=is_last_period,
             )
 
+            # Get action grids
             discrete_actions_grid_shape = tuple(
                 len(grid) for grid in state_action_space.discrete_actions.values()
             )
@@ -177,10 +180,9 @@ def simulate(
                 else internal_regime.state_action_spaces.non_terminal
             )
             result_relevant_states = {
-                k: states[f"{regime_name}__next_{k}"][subjects_in_curr_regime]
+                k: states[f"{regime_name}__{k}"][subjects_in_curr_regime]
                 for k in curr_state_action_space.states
             }
-
             simulation_results[regime_name][period] = InternalSimulationPeriodResults(
                 value=V_arr,
                 actions=optimal_actions,
@@ -192,18 +194,19 @@ def simulate(
             if not is_last_period:
                 stochastic_next_function_names = [
                     next_fn_name
-                    for next_fn_name, next_fn in internal_regime.transitions.items()
+                    for next_fn_name, next_fn in flatten_to_qnames(
+                        internal_regime.transitions
+                    ).items()
                     if is_stochastic_transition(next_fn)
                 ]
                 key, stochastic_variables_keys = generate_simulation_keys(
                     key=key,
                     names=stochastic_next_function_names,
-                    n_initial_states=n_initial_states,
+                    n_initial_states=subjects_in_curr_regime.shape[0],
                 )
                 next_state_vmapped = internal_regime.next_state_simulation_function
                 signature = inspect.signature(next_state_vmapped)
                 parameters = set(signature.parameters)
-
                 next_vars: dict[str, Array | Period | ParamsDict] = (
                     state_action_space.states  # type: ignore[assignment]
                     | optimal_actions
@@ -216,11 +219,14 @@ def simulate(
                 }
 
                 states_with_next_prefix = next_state_vmapped(**next_state_input)
+
                 # 'next_' prefix is added by the next_state function, but needs to be
                 # removed for the next iteration of the loop, where these will be the
                 # current states.
                 states = {
-                    k: states[k].at[subjects_in_curr_regime].set(v)
+                    k.replace("next_", ""): states[k.replace("next_", "")]
+                    .at[subjects_in_curr_regime]
+                    .set(v)
                     for k, v in states_with_next_prefix.items()
                 }
 
@@ -247,9 +253,13 @@ def simulate(
                     keys=regime_transition_key["key_regime_transition"],
                     regime_mapping=regime_mapping,
                 )
+                print(new_regimes)
+                print(new_subject_regime_ids)
                 new_subject_regime_ids = new_subject_regime_ids.at[
                     subjects_in_curr_regime
                 ].set(new_regimes)
+                print(new_subject_regime_ids)
+
         regime_results[period] = new_subject_regime_ids
         subject_regime_ids = new_subject_regime_ids
 

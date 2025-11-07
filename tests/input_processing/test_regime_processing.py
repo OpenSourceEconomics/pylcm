@@ -36,7 +36,7 @@ def regime(binary_category_class):
             "c": DiscreteGrid(binary_category_class),
         },
         utility=utility,
-        transitions={"next_c": next_c},
+        transitions={"mock": {"next_c": next_c}},
     )
 
 
@@ -48,12 +48,12 @@ def test_get_variable_info(regime):
             "is_action": [True, False],
             "is_continuous": [False, False],
             "is_discrete": [True, True],
-            "is_stochastic": [False, False],
             "enters_concurrent_valuation": [False, True],
             "enters_transition": [True, False],
         },
         index=["a", "c"],
     )
+    print(got.to_string())
     assert_frame_equal(got.loc[exp.index], exp)  # we don't care about the id order here
 
 
@@ -76,7 +76,9 @@ def test_get_grids(regime):
 
 def test_process_regime_iskhakov_et_al_2017():
     regime = get_regime("iskhakov_et_al_2017")
-    internal_regime = process_regimes(regime, n_periods=3, enable_jit=True)
+    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
+        "iskhakov_et_al_2017"
+    ]
 
     # Variable Info
     assert (
@@ -134,7 +136,9 @@ def test_process_regime_iskhakov_et_al_2017():
 
 def test_process_regime():
     regime = get_regime("iskhakov_et_al_2017_stripped_down")
-    internal_regime = process_regimes(regime, n_periods=3, enable_jit=True)
+    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
+        "iskhakov_et_al_2017_stripped_down"
+    ]
 
     # Variable Info
     assert (

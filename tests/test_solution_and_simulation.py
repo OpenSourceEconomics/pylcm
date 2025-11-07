@@ -377,7 +377,7 @@ def test_solve_with_period_argument_in_constraint():
 
     model = Model(regimes=[regime], n_periods=3)
     params = tree_map(lambda _: 0.2, model.params_template)
-    model.solve(params)
+    model.solve({"iskhakov_et_al_2017": params})
 
 
 # ======================================================================================

@@ -41,7 +41,9 @@ def simulate_inputs():
             "consumption": _orig_regime.actions["consumption"].replace(stop=100),  # type: ignore[attr-defined]
         }
     )
-    internal_regime = process_regimes(regime, n_periods=1, enable_jit=True)
+    internal_regime = process_regimes([regime], n_periods=1, enable_jit=True)[
+        "iskhakov_et_al_2017_stripped_down"
+    ]
 
     state_space_info = create_state_space_info(
         regime=regime,
@@ -55,14 +57,16 @@ def simulate_inputs():
     Q_and_F_terminal = get_Q_and_F(
         regime=regime,
         internal_functions=internal_regime.internal_functions,
-        next_state_space_info=state_space_info,
+        next_state_space_infos=state_space_info,
         is_last_period=True,
+        grids=internal_regime.grids,
     )
     Q_and_F_non_terminal = get_Q_and_F(
         regime=regime,
         internal_functions=internal_regime.internal_functions,
-        next_state_space_info=state_space_info,
+        next_state_space_infos=state_space_info,
         is_last_period=False,
+        grids=internal_regime.grids,
     )
     argmax_and_max_Q_over_a_functions_terminal = get_argmax_and_max_Q_over_a(
         Q_and_F=Q_and_F_terminal,
@@ -140,7 +144,7 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
         }
         regime = regime.replace(functions=updated_functions)
 
-        params = get_params()
+        params = get_params(regime_name="iskhakov_et_al_2017_stripped_down")
         model = Model([regime], n_periods=n_periods)
         V_arr_dict = model.solve(params=params)
         return V_arr_dict, params, model
@@ -160,8 +164,11 @@ def test_simulate_using_model_methods(
         params,
         V_arr_dict=V_arr_dict,
         initial_states={
-            "wealth": jnp.array([20.0, 150, 250, 320]),
+            "iskhakov_et_al_2017_stripped_down__wealth": jnp.array(
+                [20.0, 150, 250, 320]
+            ),
         },
+        initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 4,
         additional_targets=["utility", "borrowing_constraint"],
     )
 
@@ -189,12 +196,15 @@ def test_simulate_using_model_methods(
 
 def test_simulate_with_only_discrete_actions():
     model = get_model("iskhakov_et_al_2017_discrete", n_periods=2)
-    params = get_params(wage=1.5, beta=1, interest_rate=0)
+    params = get_params(
+        regime_name="iskhakov_et_al_2017_discrete", wage=1.5, beta=1, interest_rate=0
+    )
 
     res: pd.DataFrame = model.solve_and_simulate(
         params,
-        initial_states={"wealth": jnp.array([0, 4])},
+        initial_states={"iskhakov_et_al_2017_discrete__wealth": jnp.array([0, 4])},
         additional_targets=["labor_income", "working"],
+        initial_regimes=["iskhakov_et_al_2017_discrete"] * 2,
     )
 
     assert_array_equal(res["retirement"], jnp.array([0, 1, 1, 1]))
@@ -211,10 +221,18 @@ def test_effect_of_beta_on_last_period():
     model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=5)
 
     # low beta
-    params_low = get_params(beta=0.9, disutility_of_work=1.0)
+    params_low = get_params(
+        regime_name="iskhakov_et_al_2017_stripped_down",
+        beta=0.9,
+        disutility_of_work=1.0,
+    )
 
     # high beta
-    params_high = get_params(beta=0.99, disutility_of_work=1.0)
+    params_high = get_params(
+        regime_name="iskhakov_et_al_2017_stripped_down",
+        beta=0.99,
+        disutility_of_work=1.0,
+    )
 
     # solutions
     solution_low = model.solve(params_low)
@@ -227,14 +245,16 @@ def test_effect_of_beta_on_last_period():
     res_low: pd.DataFrame = model.simulate(
         params_low,
         V_arr_dict=solution_low,
-        initial_states={"wealth": initial_wealth},
-    )
+        initial_states={"iskhakov_et_al_2017_stripped_down__wealth": initial_wealth},
+        initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 3,
+    )["iskhakov_et_al_2017_stripped_down"]
 
     res_high: pd.DataFrame = model.simulate(
         params_high,
         V_arr_dict=solution_high,
-        initial_states={"wealth": initial_wealth},
-    )
+        initial_states={"iskhakov_et_al_2017_stripped_down__wealth": initial_wealth},
+        initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 3,
+    )["iskhakov_et_al_2017_stripped_down"]
 
     # Asserting
     # ==================================================================================
@@ -249,10 +269,18 @@ def test_effect_of_disutility_of_work():
     model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=5)
 
     # low disutility_of_work
-    params_low = get_params(beta=1.0, disutility_of_work=0.2)
+    params_low = get_params(
+        regime_name="iskhakov_et_al_2017_stripped_down",
+        beta=1.0,
+        disutility_of_work=0.2,
+    )
 
     # high disutility_of_work
-    params_high = get_params(beta=1.0, disutility_of_work=1.5)
+    params_high = get_params(
+        regime_name="iskhakov_et_al_2017_stripped_down",
+        beta=1.0,
+        disutility_of_work=1.5,
+    )
 
     # solutions
     solution_low = model.solve(params_low)
@@ -266,13 +294,13 @@ def test_effect_of_disutility_of_work():
         params_low,
         V_arr_dict=solution_low,
         initial_states={"wealth": initial_wealth},
-    )
+    )["iskhakov_et_al_2017_stripped_down"]
 
     res_high: pd.DataFrame = model.simulate(
         params_high,
         V_arr_dict=solution_high,
         initial_states={"wealth": initial_wealth},
-    )
+    )["iskhakov_et_al_2017_stripped_down"]
 
     # Asserting
     # ==================================================================================

@@ -36,7 +36,9 @@ def regime_input():
     actions = regime.actions
     actions["consumption"] = actions["consumption"].replace(stop=20)  # type: ignore[attr-defined]
     regime = regime.replace(actions=actions)
-    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)
+    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
+        "iskhakov_et_al_2017_stripped_down"
+    ]
 
     state_space_info = create_state_space_info(
         regime=regime,
@@ -48,11 +50,13 @@ def regime_input():
         is_last_period=False,
     )
     params = {
-        "beta": 1.0,
-        "utility": {"disutility_of_work": 1.0},
-        "next_wealth": {
-            "interest_rate": 0.05,
-        },
+        "iskhakov_et_al_2017_stripped_down": {
+            "beta": 1.0,
+            "utility": {"disutility_of_work": 1.0},
+            "next_wealth": {
+                "interest_rate": 0.05,
+            },
+        }
     }
     return {
         "regime": regime,
@@ -60,12 +64,15 @@ def regime_input():
         "state_action_space": state_action_space,
         "state_space_info": state_space_info,
         "next_state": get_next_state_function(
-            internal_functions=internal_regime.internal_functions,
+            transitions=internal_regime.internal_functions.transitions[
+                "iskhakov_et_al_2017_stripped_down"
+            ],
+            functions=internal_regime.internal_functions.functions,
             grids=internal_regime.grids,
-            next_states=("wealth",),
             target=Target.SOLVE,
         ),
         "params": params,
+        "grids": internal_regime.grids,
     }
 
 
@@ -79,7 +86,8 @@ def test_max_Q_over_a_equal(regime_input):
 
     """
     params = regime_input["params"]
-    state_space_info = regime_input["state_space_info"]
+    grids = regime_input["grids"]
+    state_space_infos = regime_input["state_space_info"]
     state_action_space = regime_input["state_action_space"]
     regime = regime_input["regime"]
     internal_regime = regime_input["internal_regime"]
@@ -87,8 +95,9 @@ def test_max_Q_over_a_equal(regime_input):
     Q_and_F = get_Q_and_F(
         regime=regime,
         internal_functions=internal_regime.internal_functions,
-        next_state_space_info=state_space_info,
+        next_state_space_infos=state_space_infos,
         is_last_period=True,
+        grids=grids,
     )
     next_V_arr = jnp.zeros((2, 2))
 
@@ -156,7 +165,8 @@ def test_argmax_Q_over_a_equal(regime_input):
 
     """
     params = regime_input["params"]
-    state_space_info = regime_input["state_space_info"]
+    grids = regime_input["grids"]
+    state_space_infos = regime_input["state_space_info"]
     state_action_space = regime_input["state_action_space"]
     regime = regime_input["regime"]
     internal_regime = regime_input["internal_regime"]
@@ -164,8 +174,9 @@ def test_argmax_Q_over_a_equal(regime_input):
     Q_and_F = get_Q_and_F(
         regime=regime,
         internal_functions=internal_regime.internal_functions,
-        next_state_space_info=state_space_info,
+        next_state_space_infos=state_space_infos,
         is_last_period=True,
+        grids=grids,
     )
     next_V_arr = jnp.zeros((2, 2))
 

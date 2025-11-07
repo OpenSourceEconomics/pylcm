@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+from dags.tree import flatten_to_qnames
+
 from lcm.typing import UserFunction
 
 
@@ -13,6 +15,7 @@ class RegimeMock:
 
     """
 
+    name: str = "mock"
     n_periods: int | None = None
     actions: dict[str, Any] | None = None
     utility: UserFunction | None = None
@@ -23,7 +26,7 @@ class RegimeMock:
 
     def get_all_functions(self) -> dict[str, UserFunction | None]:
         """Get all regime functions including utility, constraints, and transitions."""
-        return (
+        return flatten_to_qnames(
             self.functions
             | {"utility": self.utility}
             | self.constraints

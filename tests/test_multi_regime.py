@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
+import lcm
 from lcm import DiscreteGrid, LinspaceGrid
 from lcm.model import Model
 from lcm.regime import Regime
@@ -82,8 +83,9 @@ def next_wealth(
     return (1 + interest_rate) * (wealth - consumption) + labor_income
 
 
+@lcm.mark.stochastic
 def next_health(health: DiscreteState) -> DiscreteState:  # type: ignore[empty-body]
-    return health
+    pass
 
 
 def borrowing_constraint(
@@ -200,9 +202,11 @@ def test_work_retirement_model_solution():
         "work__next_wealth": {"interest_rate": 0.1},
         "retirement__next_wealth": {"interest_rate": 0.1},
         "work__next_health": {},
-        "retirement__next_health": {},
         "borrowing_constraint": {},
-        "shocks": {},
+        "shocks": {
+            "work__next_health": health_transition,
+            "retirement__next_health": health_transition,
+        },
     }
 
     params_retired = {
@@ -215,7 +219,10 @@ def test_work_retirement_model_solution():
         "retirement__next_health": {},
         "working": {},
         "borrowing_constraint": {},
-        "shocks": {},
+        "shocks": {
+            "work__next_health": health_transition,
+            "retirement__next_health": health_transition,
+        },
     }
 
     params: dict[RegimeName, ParamsDict] = {
@@ -236,7 +243,8 @@ def test_work_retirement_model_solution():
         initial_regimes=["work"] * 4,
         V_arr_dict=solution,
     )
-    print(simulation)
+    print(simulation["work"])
+    print(simulation["retirement"])
     # Basic checks: solution should be a dict with one entry per period
     assert isinstance(solution, dict)
     assert len(solution) == 10

@@ -91,7 +91,7 @@ DETERMINISTIC_REGIME = Regime(
             "next_wealth": next_wealth,
         }
     },
-    regime_transition_probs=lambda: {"test": 1.0},
+    regime_transition_probs=lambda wealth: {"test": 1.0},
 )
 
 
@@ -181,7 +181,7 @@ def analytical_simulate_deterministic(initial_wealth, params):
     # ==================================================================================
     data = (
         {
-            "initial_state_id": jnp.arange(len(initial_wealth)),
+            "subject_ids": jnp.arange(len(initial_wealth)),
             "wealth_0": initial_wealth,
             "wealth_1": wealth_1,
             "value_0": V_arr_0,
@@ -195,14 +195,14 @@ def analytical_simulate_deterministic(initial_wealth, params):
     raw_long = pd.wide_to_long(
         raw,
         stubnames=["value", "wealth", "consumption", "working"],
-        i="initial_state_id",
+        i="subject_ids",
         j="period",
         sep="_",
     )
-    raw_long_with_index = raw_long.swaplevel().sort_index()
-    return raw_long_with_index.assign(
-        period=raw_long_with_index.index.get_level_values("period"),
-    )
+
+    raw_long_with_index = raw_long.swaplevel().sort_index().reset_index()
+
+    return raw_long_with_index
 
 
 def matrix_to_dict_of_vectors(arr, col_names):
@@ -261,7 +261,7 @@ def value_first_period_stochastic(wealth, health, params):
 
 def policy_first_period_stochastic(wealth, health, params):
     """Policy function in the first period. Computed using pen and paper."""
-    health_transition = params["shocks"]["health"]
+    health_transition = params["shocks"]["test__next_health"]
 
     index = (wealth < 1).astype(int)  # map wealth to indices 0 and 1
     _policies = np.array(
@@ -325,7 +325,7 @@ def analytical_simulate_stochastic(initial_wealth, initial_health, health_1, par
     # Transform data into format as expected by LCM
     # ==================================================================================
     data = {
-        "initial_state_id": jnp.arange(len(initial_wealth)),
+        "subject_ids": jnp.arange(len(initial_wealth)),
         "wealth_0": initial_wealth,
         "wealth_1": wealth_1,
         "health_0": initial_health,
@@ -340,14 +340,12 @@ def analytical_simulate_stochastic(initial_wealth, initial_health, health_1, par
     raw_long = pd.wide_to_long(
         raw,
         stubnames=["value", "consumption", "working", "wealth", "health"],
-        i="initial_state_id",
+        i="subject_ids",
         j="period",
         sep="_",
     )
-    raw_long_with_index = raw_long.swaplevel().sort_index()
-    return raw_long_with_index.assign(
-        period=raw_long_with_index.index.get_level_values("period"),
-    )
+    raw_long_with_index = raw_long.swaplevel().sort_index().reset_index()
+    return raw_long_with_index
 
 
 # ======================================================================================
@@ -400,7 +398,8 @@ def test_deterministic_simulate(beta, n_wealth_points):
     params = {"beta": beta, "utility": {"health": 1}}
     got: pd.DataFrame = model.solve_and_simulate(
         params={"test": params},
-        initial_states={"wealth": jnp.array([0.25, 0.75, 1.25, 1.75])},
+        initial_states={"test": {"wealth": jnp.array([0.25, 0.75, 1.25, 1.75])}},
+        initial_regimes=["test"] * 4,
     )
 
     # Compute analytical simulation
@@ -409,7 +408,8 @@ def test_deterministic_simulate(beta, n_wealth_points):
         initial_wealth=np.array([0.25, 0.75, 1.25, 1.75]),
         params=params,
     )
-    assert_frame_equal(got, expected, check_like=True, check_dtype=False)
+
+    assert_frame_equal(got["test"], expected, check_like=True, check_dtype=False)
 
 
 HEALTH_TRANSITION = [
@@ -483,8 +483,9 @@ def test_stochastic_simulate(beta, n_wealth_points, health_transition):
     }
     _got: pd.DataFrame = model.solve_and_simulate(
         params={"test": params},
-        initial_states=initial_states,
-    )
+        initial_states={"test": initial_states},
+        initial_regimes=["test"] * 5,
+    )["test"]
 
     # Compute analytical simulation
     # ==================================================================================

@@ -88,11 +88,6 @@ def as_panel(processed: dict[str, Array], n_periods: int) -> pd.DataFrame:
         variables, and potentially auxiliary variables.
 
     """
-    """ n_initial_states = len(processed["value"]) // n_periods
-    index = pd.MultiIndex.from_product(
-        [list(range(n_periods)), list(range(n_initial_states))],
-        names=["period", "initial_state_id"],
-    ) """
     return pd.DataFrame(processed)
 
 
