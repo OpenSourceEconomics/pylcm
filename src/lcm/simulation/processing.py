@@ -11,12 +11,12 @@ from jax import Array
 from lcm.dispatchers import vmap_1d
 
 if TYPE_CHECKING:
-    from lcm.interfaces import InternalRegime, InternalSimulationPeriodResults
+    from lcm.interfaces import InternalRegime, SimulationResults
     from lcm.typing import InternalUserFunction, ParamsDict
 
 
 def process_simulated_data(
-    results: dict[int, InternalSimulationPeriodResults],
+    results: dict[int, SimulationResults],
     internal_regime: InternalRegime,
     params: ParamsDict,
     additional_targets: list[str] | None = None,
@@ -43,7 +43,7 @@ def process_simulated_data(
         Additionally, the period variable is added.
 
     """
-    n_initial_states = len(results[0].value)
+    n_initial_states = len(results[0].V_arr)
 
     nan_array = jnp.full(n_initial_states, jnp.nan, dtype=jnp.float64)
 
@@ -51,7 +51,7 @@ def process_simulated_data(
         {
             "period": jnp.full_like(d.subject_ids, period),
             "subject_ids": d.subject_ids,
-            "value": d.value,
+            "value": d.V_arr,
             **d.actions,
             **d.states,
         }

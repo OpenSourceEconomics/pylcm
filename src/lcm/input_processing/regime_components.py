@@ -9,7 +9,7 @@ import jax
 from dags import concatenate_functions
 from dags.tree import flatten_to_qnames
 
-from lcm.dispatchers import vmap_1d
+from lcm.dispatchers import simulation_spacemap, vmap_1d
 from lcm.input_processing.util import get_grids, get_variable_info
 from lcm.interfaces import (
     InternalFunctions,
@@ -162,12 +162,19 @@ def build_argmax_and_max_Q_over_a_functions(
     argmax_and_max_Q_over_a_functions = {}
 
     for attr in ("terminal", "non_terminal", "before_terminal"):
+        state_action_space = getattr(state_action_spaces, attr)
+
         fn = _build_argmax_and_max_Q_over_a_function(
-            state_action_space=getattr(state_action_spaces, attr),
+            state_action_space=state_action_space,
             Q_and_F=getattr(Q_and_F_functions, attr),
             enable_jit=enable_jit,
         )
-        argmax_and_max_Q_over_a_functions[attr] = fn
+        fn_spacemapped = simulation_spacemap(
+            fn,
+            actions_names=(),
+            states_names=tuple(state_action_space.states),
+        )
+        argmax_and_max_Q_over_a_functions[attr] = fn_spacemapped
 
     return PeriodVariantContainer(**argmax_and_max_Q_over_a_functions)
 

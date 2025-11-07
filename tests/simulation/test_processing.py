@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import pandas as pd
 from pybaum import tree_equal
 
-from lcm.interfaces import InternalSimulationPeriodResults
+from lcm.interfaces import SimulationResults
 from lcm.simulation.processing import (
     _compute_targets,
     as_panel,
@@ -62,13 +62,13 @@ def test_as_panel():
 
 def test_process_simulated_data():
     simulated = {
-        0: InternalSimulationPeriodResults(
-            value=jnp.array([0.1, 0.2]),
+        0: SimulationResults(
+            V_arr=jnp.array([0.1, 0.2]),
             states={"a": jnp.array([1, 2]), "b": jnp.array([-1, -2])},
             actions={"c": jnp.array([5, 6]), "d": jnp.array([-5, -6])},
         ),
-        1: InternalSimulationPeriodResults(
-            value=jnp.array([0.3, 0.4]),
+        1: SimulationResults(
+            V_arr=jnp.array([0.3, 0.4]),
             states={
                 "b": jnp.array([-3, -4]),
                 "a": jnp.array([3, 4]),

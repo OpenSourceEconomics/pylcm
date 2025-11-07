@@ -223,10 +223,10 @@ class InternalRegime:
 
 
 @dataclasses.dataclass(frozen=True)
-class InternalSimulationPeriodResults:
-    """The results of a simulation for one period."""
+class SimulationResults:
+    """The results of a simulation for one period and one regime."""
 
-    value: Array
+    V_arr: Array
     actions: dict[str, Array]
     states: dict[str, Array]
     subject_ids: Array
