@@ -81,6 +81,16 @@ class StateActionSpace:
         """Tuple with names of all action variables."""
         return tuple(self.discrete_actions) + tuple(self.continuous_actions)
 
+    @property
+    def actions(self) -> dict[str, DiscreteAction | ContinuousAction]:
+        """Dictionary with all action variables."""
+        return self.discrete_actions | self.continuous_actions
+
+    @property
+    def actions_grid_shapes(self) -> tuple[int, ...]:
+        """Dictionary with all action variables."""
+        return tuple(len(grid) for grid in self.actions.values())
+
     def replace(
         self,
         states: dict[str, ContinuousState | DiscreteState] | None = None,

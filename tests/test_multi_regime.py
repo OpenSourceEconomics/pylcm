@@ -25,9 +25,8 @@ if TYPE_CHECKING:
         FloatND,
         IntND,
         ParamsDict,
+        RegimeName,
     )
-
-type RegimeName = str
 
 
 # ======================================================================================

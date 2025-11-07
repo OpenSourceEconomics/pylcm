@@ -22,7 +22,7 @@ type ScalarInt = int | Int[Scalar, ""]  # noqa: F722
 type ScalarFloat = float | Float[Scalar, ""]  # noqa: F722
 
 type Period = int | Int1D
-
+type RegimeName = str
 
 ParamsDict = dict[str, Any]
 
