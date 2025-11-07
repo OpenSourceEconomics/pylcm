@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 from jax import numpy as jnp
+from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
 from lcm._config import TEST_DATA
@@ -40,15 +41,15 @@ def test_regression_test():
     got_simulate = model.solve_and_simulate(
         params=params,
         initial_states={
-            "iskhakov_et_al_2017_stripped_down__next_wealth": jnp.array(
-                [5.0, 20, 40, 70]
-            ),
+            "iskhakov_et_al_2017_stripped_down__wealth": jnp.array([5.0, 20, 40, 70]),
         },
         initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 4,
     )
     # Compare
     # ==================================================================================
-    # aaae(expected_solve, list(got_solve.values()), decimal=5)
-    assert_frame_equal(
-        expected_simulate, got_simulate["iskhakov_et_al_2017_stripped_down"]
-    )
+    for period in expected_solve:
+        for regime in expected_solve[period]:
+            aaae(expected_solve[period][regime], got_solve[period][regime], decimal=5)
+
+    for regime in expected_simulate:
+        assert_frame_equal(expected_simulate[regime], got_simulate[regime])
