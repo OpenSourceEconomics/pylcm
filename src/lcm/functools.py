@@ -11,11 +11,14 @@ if TYPE_CHECKING:
 ReturnType = TypeVar("ReturnType")
 
 
-def allow_only_kwargs(func: Callable[..., ReturnType]) -> Callable[..., ReturnType]:
+def allow_only_kwargs(
+    func: Callable[..., ReturnType], enforce: bool = True
+) -> Callable[..., ReturnType]:
     """Restrict a function to be called with only keyword arguments.
 
     Args:
         func: The function to be wrapped.
+        enforce: Whether to enforce the signature.
 
     Returns:
         A Callable with the same arguments as func (but with the additional restriction
@@ -46,23 +49,28 @@ def allow_only_kwargs(func: Callable[..., ReturnType]) -> Callable[..., ReturnTy
                 ),
             )
 
-        extra = set(kwargs).difference(parameters)
-        if extra:
-            raise ValueError(
-                f"Expected arguments: {list(parameters)}, got extra: {extra}",
-            )
+        if enforce:
+            extra = set(kwargs).difference(parameters)
+            if extra:
+                raise ValueError(
+                    f"Expected arguments: {list(parameters)}, got extra: {extra}",
+                )
 
-        missing = set(parameters).difference(kwargs)
-        if missing:
-            raise ValueError(
-                f"Expected arguments: {list(parameters)}, missing: {missing}",
-            )
+            missing = set(parameters).difference(kwargs)
+            if missing:
+                raise ValueError(
+                    f"Expected arguments: {list(parameters)}, missing: {missing}",
+                )
 
         # Retrieve keyword-only arguments
         kw_only_kwargs = {k: kwargs[k] for k in kw_only_parameters}
 
         # Get kwargs that must be converted to positional arguments
-        pos_kwargs = {k: v for k, v in kwargs.items() if k not in kw_only_parameters}
+        pos_kwargs = {
+            k: v
+            for k, v in kwargs.items()
+            if (k not in kw_only_parameters) and (k in parameters)
+        }
 
         # Collect all positional arguments in correct order
         positional = convert_kwargs_to_args(pos_kwargs, list(parameters))

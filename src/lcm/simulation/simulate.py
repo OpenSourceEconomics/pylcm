@@ -148,14 +148,13 @@ def simulate(
             if not is_last_period:
                 next_states_key, next_regime_key, key = jax.random.split(key, 3)
 
-                # Next states
+                # Calculate next states
                 next_states = calculate_next_states(
                     internal_regime=internal_regime,
                     subjects_in_regime=subjects_in_regime,
                     optimal_actions=optimal_actions,
                     period=period,
-                    params=params,
-                    regime_name=regime_name,
+                    params=params[regime_name],
                     states=states,
                     state_action_space=state_action_space,
                     key=next_states_key,
@@ -163,8 +162,19 @@ def simulate(
                 # Update states
                 states = next_states
 
-                # Next regime membership
-                next_regimes = calculate_next_regime_membership()
+                # Calculate next regime membership
+                next_regimes = calculate_next_regime_membership(
+                    internal_regime=internal_regime,
+                    subjects_in_regime=subjects_in_regime,
+                    optimal_actions=optimal_actions,
+                    period=period,
+                    params=params[regime_name],
+                    state_action_space=state_action_space,
+                    new_subject_regime_ids=new_subject_regime_ids,
+                    regime_name_to_id=regime_name_to_id,
+                    key=next_states_key,
+                )
+                new_subject_regime_ids = next_regimes
 
         subject_regime_ids = new_subject_regime_ids
 
@@ -207,36 +217,3 @@ def _lookup_values_from_indices(
 # vmap jnp.unravel_index over the first axis of the `indices` argument, while holding
 # the `shape` argument constant (in_axes = (0, None)).
 vmapped_unravel_index = vmap(jnp.unravel_index, in_axes=(0, None))
-
-
-def draw_key_from_dict(
-    d: dict[str, Array], regime_name_to_id: dict[str, int], keys: Array
-) -> list[str]:
-    """Draw a random key from a dictionary of arrays.
-
-    Args:
-        d: Dictionary of arrays, all of the same length. The values in the arrays
-            represent a probability distribution over the keys. That is, for the
-            dictionary {'regime1': jnp.array([0.2, 0.5]), 'regime2': jnp.array([0.8, 0.5])},
-            0.2 + 0.8 = 1.0 and 0.5 + 0.5 = 1.0.
-        keys: JAX random keys.
-
-    Returns:
-        A random key from the dictionary for each entry in the arrays.
-
-    """
-    regime_ids = jnp.array([regime_name_to_id[key] for key in d])
-
-    def draw_single_key(
-        key: Array,
-        p: Array,
-    ) -> str:
-        return jax.random.choice(
-            key,
-            regime_ids,
-            p=p,
-        )
-
-    draw_key = vmap(draw_single_key, in_axes=(0, 0))
-    draw = draw_key(keys, jnp.array(list(d.values())).T)
-    return draw

@@ -129,7 +129,7 @@ def vmap_1d(
     vmapped.__signature__ = signature  # type: ignore[attr-defined]
 
     if callable_with == "only_kwargs":
-        out = allow_only_kwargs(vmapped)
+        out = allow_only_kwargs(vmapped, enforce=False)
     elif callable_with == "only_args":
         out = vmapped
     else:

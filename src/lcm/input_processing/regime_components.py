@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import jax
 from dags import concatenate_functions
+from dags.signature import with_signature
 from dags.tree import flatten_to_qnames
 
 from lcm.dispatchers import simulation_spacemap, vmap_1d
@@ -219,6 +220,11 @@ def build_next_state_simulation_functions(
             if parameter not in ("period", "params")
         ),
     )
+
+    next_state_vmapped = with_signature(
+        next_state_vmapped, kwargs=parameters, enforce=False
+    )
+
     return jax.jit(next_state_vmapped) if enable_jit else next_state_vmapped
 
 
@@ -227,25 +233,29 @@ def build_regime_transition_probs_functions(
     *,
     enable_jit: bool,
 ):
-    fn = concatenate_functions(
+    next_regime = concatenate_functions(
         functions=internal_functions.get_all_functions(),
         targets="regime_transition_probs",
         return_type="dict",
         enforce_signature=False,
         set_annotations=True,
     )
-    signature = inspect.signature(fn)
+    signature = inspect.signature(next_regime)
     parameters = list(signature.parameters)
 
-    vmapped = vmap_1d(
-        func=fn,
+    next_regime_vmapped = vmap_1d(
+        func=next_regime,
         variables=tuple(
             parameter
             for parameter in parameters
             if parameter not in ("period", "params")
         ),
     )
-    if enable_jit:
-        vmapped = jax.jit(vmapped)
+    next_regime_vmapped = with_signature(
+        next_regime_vmapped, kwargs=parameters, enforce=False
+    )
 
-    return {"solve": fn, "simulate": vmapped}
+    if enable_jit:
+        next_regime_vmapped = jax.jit(next_regime_vmapped)
+
+    return {"solve": next_regime, "simulate": next_regime_vmapped}
