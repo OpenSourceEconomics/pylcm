@@ -146,7 +146,7 @@ ISKHAKOV_ET_AL_2017 = Regime(
         "labor_income": labor_income,
         "working": working,
     },
-    regime_transition_probs=lambda wealth: {"iskhakov_et_al_2017": 1.0},
+    regime_transition_probs=lambda: {"iskhakov_et_al_2017": 1.0},
 )
 
 
@@ -182,5 +182,5 @@ ISKHAKOV_ET_AL_2017_STRIPPED_DOWN = Regime(
         "wage": wage,
         "age": age,
     },
-    regime_transition_probs=lambda wealth: {"iskhakov_et_al_2017_stripped_down": 1.0},
+    regime_transition_probs=lambda: {"iskhakov_et_al_2017_stripped_down": 1.0},
 )

@@ -64,7 +64,7 @@ def utility_retirement(
     consumption: ContinuousAction,
     working: IntND,
     disutility_of_work: float,
-    health: DiscreteState,
+    health: DiscreteState,  # noqa: ARG001
 ) -> FloatND:
     return jnp.log(consumption) - disutility_of_work * working
 
@@ -101,18 +101,17 @@ def borrowing_constraint(
 
 def next_wealth_regime_transition(
     wealth: ContinuousState,
-    health: DiscreteState,
     consumption: ContinuousAction,
     interest_rate: float,
 ) -> ContinuousState:
     return (1 + interest_rate) * (wealth - consumption)
 
 
-def regime_transition_probs_working_to_retirement(wealth) -> dict[str, float]:
-    return {"work": 0.6, "retirement": 0.4}
+def regime_transition_probs_working_to_retirement(period) -> dict[str, float]:
+    return {"work": jnp.where(period<6, 1, 0.5), "retirement": jnp.where(period<6, 0, 0.5)}
 
 
-def regime_transition_probs_retirement_absorbing(wealth) -> dict[str, float]:
+def regime_transition_probs_retirement_absorbing() -> dict[str, float]:
     return {"work": 0.0, "retirement": 1.0}
 
 
@@ -178,10 +177,10 @@ def test_work_retirement_model_solution():
     )
 
     # Create complete model using new regime-based API
-    model = Model(regimes=[work_regime, retirement_regime], n_periods=5)
+    model = Model(regimes=[work_regime, retirement_regime], n_periods=10)
 
     # Verify model properties
-    assert model.n_periods == 5
+    assert model.n_periods == 10
     assert len(model.internal_regimes) == 2
 
     health_transition = jnp.array(
@@ -242,10 +241,12 @@ def test_work_retirement_model_solution():
         initial_regimes=["work"] * 4,
         V_arr_dict=solution,
     )
+    print(simulation["work"])
+    print(simulation["retirement"])
     # Basic checks: solution should be a dict with one entry per period
     assert isinstance(solution, dict)
-    assert len(solution) == 5
-    assert all(period in solution for period in range(5))
+    assert len(solution) == 10
+    assert all(period in solution for period in range(10))
 
     assert isinstance(simulation, dict)
     assert len(simulation) == 2

@@ -74,7 +74,7 @@ def valid_regime() -> Regime:
                 "next_health": next_health,
             }
         },
-        regime_transition_probs=lambda wealth: {"test": 1.0},
+        regime_transition_probs=lambda: {"test": 1.0},
     )
 
 

@@ -63,7 +63,7 @@ class Model:
             enable_jit: Whether to jit the functions of the internal regime.
 
         """
-        # TODO: Requires a more robust function
+        # TODO @timmens: Requires a more robust function
         if isinstance(regimes, Regime):
             regimes = [regimes]
 

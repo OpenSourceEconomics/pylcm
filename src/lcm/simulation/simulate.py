@@ -188,7 +188,7 @@ def simulate(
             additional_targets=additional_targets,
         )
 
-        processed[regime_name] = as_panel(_processed, n_periods=n_periods)
+        processed[regime_name] = as_panel(_processed)
     return processed
 
 

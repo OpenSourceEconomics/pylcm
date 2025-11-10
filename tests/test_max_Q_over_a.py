@@ -182,9 +182,6 @@ def test_argmax_Q_over_a_equal(regime_input):
     discrete_actions_grid_shape = tuple(
         len(grid) for grid in state_action_space.discrete_actions.values()
     )
-    continuous_actions_grid_shape = tuple(
-        len(grid) for grid in state_action_space.continuous_actions.values()
-    )
 
     # ----------------------------------------------------------------------------------
     # Argmax over all actions directly
@@ -249,8 +246,6 @@ def test_argmax_Q_over_a_equal(regime_input):
     optimal_actions_c_d = _lookup_actions_from_indices_c_d(
         indices_optimal_discrete_actions=indices_optimal_discrete_actions,
         indices_optimal_continuous_actions=indices_optimal_continuous_actions,
-        discrete_actions_grid_shape=discrete_actions_grid_shape,
-        continuous_actions_grid_shape=continuous_actions_grid_shape,
         state_action_space=state_action_space,
     )
 

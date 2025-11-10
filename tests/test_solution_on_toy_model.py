@@ -91,7 +91,7 @@ DETERMINISTIC_REGIME = Regime(
             "next_wealth": next_wealth,
         }
     },
-    regime_transition_probs=lambda wealth: {"test": 1.0},
+    regime_transition_probs=lambda: {"test": 1.0},
 )
 
 

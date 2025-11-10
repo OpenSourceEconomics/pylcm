@@ -94,7 +94,7 @@ def process_regimes(
         )
 
         internal_functions = _get_internal_functions(
-            regime, grids=grids, params=params_template
+            regime, grids=grids, params=params_template, enable_jit=enable_jit
         )
         Q_and_F_functions = build_Q_and_F_functions(
             regime=regime,
@@ -109,7 +109,6 @@ def process_regimes(
             regime=regime, Q_and_F_functions=Q_and_F_functions, enable_jit=enable_jit
         )
         next_state_simulation_function = build_next_state_simulation_functions(
-            regime=regime,
             internal_functions=internal_functions,
             grids=grids,
             enable_jit=enable_jit,
@@ -228,6 +227,7 @@ def _get_internal_functions(
     internal_regime_transition_probs = build_regime_transition_probs_functions(
         internal_functions=internal_functions,
         regime_transition_probs=functions["regime_transition_probs"],
+        grids=grids[regime.name],
         enable_jit=enable_jit,
     )
 

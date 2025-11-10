@@ -51,7 +51,7 @@ def test_as_panel():
         "a": jnp.arange(6),
         "b": 6 + jnp.arange(6),
     }
-    got = as_panel(processed, n_periods=2)
+    got = as_panel(processed)
     expected = pd.DataFrame(
         {
             "period": [0, 0, 0, 1, 1, 1],

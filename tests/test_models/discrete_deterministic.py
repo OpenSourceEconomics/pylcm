@@ -114,5 +114,5 @@ ISKHAKOV_ET_AL_2017_DISCRETE = Regime(
         "labor_income": labor_income,
         "working": working,
     },
-    regime_transition_probs=lambda wealth: {"iskhakov_et_al_2017_discrete": 1.0},
+    regime_transition_probs=lambda: {"iskhakov_et_al_2017_discrete": 1.0},
 )

@@ -231,6 +231,7 @@ def build_next_state_simulation_functions(
 def build_regime_transition_probs_functions(
     internal_functions: InternalFunctions,
     regime_transition_probs: InternalUserFunction,
+    grids,
     *,
     enable_jit: bool,
 ):
@@ -245,8 +246,18 @@ def build_regime_transition_probs_functions(
     signature = inspect.signature(next_regime)
     parameters = list(signature.parameters)
 
+    # We do this because a transition function without any parameters will throw
+    # an error with vmap
+    next_regime_accepting_all = with_signature(
+        next_regime,
+        args=parameters + [state for state in grids if state not in parameters],
+    )
+
+    signature = inspect.signature(next_regime_accepting_all)
+    parameters = list(signature.parameters)
+
     next_regime_vmapped = vmap_1d(
-        func=next_regime,
+        func=next_regime_accepting_all,
         variables=tuple(
             parameter
             for parameter in parameters
