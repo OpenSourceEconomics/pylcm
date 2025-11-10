@@ -81,7 +81,7 @@ def process_simulated_data(
     return out
 
 
-def as_panel(processed: dict[str, Array], n_periods: int) -> pd.DataFrame:
+def as_panel(processed: dict[str, Array]) -> pd.DataFrame:
     """Convert processed simulation results to panel.
 
     Args:

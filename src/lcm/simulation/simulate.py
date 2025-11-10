@@ -47,6 +47,7 @@ def simulate(
         initial_states: List of initial states to start from. Typically from the
             observed dataset.
         internal_regimes: Dict of internal regime instances.
+        initial_regimes: List containing the names of the regimes the subjects start in.
         logger: Logger that logs to stdout.
         V_arr_dict: Dict of value function arrays of length n_periods.
         additional_targets: List of targets to compute. If provided, the targets

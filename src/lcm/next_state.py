@@ -20,7 +20,9 @@ if TYPE_CHECKING:
     from lcm.typing import (
         DiscreteState,
         FloatND,
+        InternalUserFunction,
         NextStateSimulationFunction,
+        RegimeName,
         StochasticNextFunction,
     )
 
@@ -28,17 +30,16 @@ if TYPE_CHECKING:
 def get_next_state_function(
     *,
     grids: dict[str, dict[str, Array]],
-    transitions,
-    functions,
+    transitions: dict[RegimeName, dict[str, InternalUserFunction]],
+    functions: dict[str, InternalUserFunction],
     target: Target,
 ) -> NextStateSimulationFunction:
     """Get function that computes the next states during the solution.
 
     Args:
         grids: Grids of a regime.
-        internal_functions: Internal functions of a regime.
-        next_states: Names of the next states to compute. These states are relevant for
-            the next state space.
+        transitions: Transitions to the next states of a regime.
+        functions: Dict of auxiliary functions of a regime.
         target: Whether to generate the function for the solve or simulate target.
 
     Returns:
@@ -70,16 +71,16 @@ def get_next_state_function(
 
 
 def get_next_stochastic_weights_function(
-    regime_name,
-    functions,
-    transitions,
+    regime_name: RegimeName,
+    functions: dict[str, InternalUserFunction],
+    transitions: dict[RegimeName, dict[str, InternalUserFunction]],
 ) -> Callable[..., dict[str, Array]]:
     """Get function that computes the weights for the next stochastic states.
 
     Args:
-        internal_functions: Internal functions instance.
-        next_stochastic_states: Names of the stochastic states for which to compute the
-            weights. These variables are relevant for the next state space.
+        regime_name: Name of the regime that the transitions target.
+        functions: Dict containing the auxiliary functions of the model.
+        transitions: Transitions to the target regime.
 
     Returns:
         Function that computes the weights for the next stochastic states.
@@ -102,13 +103,13 @@ def get_next_stochastic_weights_function(
 
 def _extend_transitions_for_simulation(
     grids: dict[str, dict[str, Array]],
-    transitions,
+    transitions: dict[RegimeName, dict[str, InternalUserFunction]],
 ) -> dict[str, Callable[..., Array]]:
     """Extend the functions dictionary for the simulation target.
 
     Args:
         grids: Dictionary of grids.
-        internal_functions: Internal functions instance.
+        transitions: A dictonary of transitions to extend.
 
     Returns:
         Extended functions dictionary.

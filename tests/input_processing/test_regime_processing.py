@@ -53,7 +53,7 @@ def test_get_variable_info(regime):
         },
         index=["a", "c"],
     )
-    print(got.to_string())
+
     assert_frame_equal(got.loc[exp.index], exp)  # we don't care about the id order here
 
 

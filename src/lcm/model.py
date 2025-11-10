@@ -57,7 +57,7 @@ class Model:
         """Initialize the Model.
 
         Args:
-            regime: User provided regime.
+            regimes: User provided regimes.
             n_periods: Numper of periods of the model.
             description: Description of the model.
             enable_jit: Whether to jit the functions of the internal regime.
@@ -124,6 +124,8 @@ class Model:
         Args:
             params: Model parameters
             initial_states: Initial state values
+            initial_regimes: List containing the names of the regimes the subjects
+                start in.
             V_arr_dict: Value function arrays from solve()
             additional_targets: Additional targets to compute
             seed: Random seed
@@ -160,6 +162,8 @@ class Model:
         Args:
             params: Model parameters
             initial_states: Initial state values
+            initial_regimes: List containing the names of the regimes the subjects
+                start in.
             additional_targets: Additional targets to compute
             seed: Random seed
             debug_mode: Whether to enable debug logging

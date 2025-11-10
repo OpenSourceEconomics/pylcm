@@ -100,5 +100,4 @@ def test_process_simulated_data():
         params=None,  # type: ignore[arg-type]
         additional_targets=None,
     )
-    print(got)
     assert tree_equal(expected, got)

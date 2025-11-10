@@ -242,9 +242,10 @@ def test_work_retirement_model_solution():
         initial_regimes=["work"] * 4,
         V_arr_dict=solution,
     )
-    print(simulation["work"])
-    print(simulation["retirement"])
     # Basic checks: solution should be a dict with one entry per period
     assert isinstance(solution, dict)
     assert len(solution) == 5
     assert all(period in solution for period in range(5))
+
+    assert isinstance(simulation, dict)
+    assert len(simulation) == 2

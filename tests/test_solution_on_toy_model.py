@@ -200,9 +200,7 @@ def analytical_simulate_deterministic(initial_wealth, params):
         sep="_",
     )
 
-    raw_long_with_index = raw_long.swaplevel().sort_index().reset_index()
-
-    return raw_long_with_index
+    return raw_long.swaplevel().sort_index().reset_index()
 
 
 def matrix_to_dict_of_vectors(arr, col_names):
@@ -344,8 +342,8 @@ def analytical_simulate_stochastic(initial_wealth, initial_health, health_1, par
         j="period",
         sep="_",
     )
-    raw_long_with_index = raw_long.swaplevel().sort_index().reset_index()
-    return raw_long_with_index
+
+    return raw_long.swaplevel().sort_index().reset_index()
 
 
 # ======================================================================================

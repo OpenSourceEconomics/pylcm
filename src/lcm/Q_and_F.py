@@ -38,7 +38,7 @@ def get_Q_and_F(
     regime: Regime,
     internal_functions: InternalFunctions,
     next_state_space_infos: dict[str, StateSpaceInfo],
-    grids,
+    grids: dict[RegimeName, Any],
     *,
     is_last_period: bool,
 ) -> QAndFFunction:
@@ -47,8 +47,8 @@ def get_Q_and_F(
     Args:
         regime: Regime object containing all infos about the pre-processed regime.
         internal_functions: Internal functions of the regime.
-        next_state_space_info: The state space information of the next period.
-        period: The current period.
+        next_state_space_infos: The state space information of the next period.
+        grids: Dict containing the state frids for all regimes.
         is_last_period: True if this period is the last.
 
     Returns:
@@ -73,15 +73,15 @@ def get_Q_and_F_non_terminal(
     regime: Regime,
     internal_functions: InternalFunctions,
     next_state_space_infos: dict[str, StateSpaceInfo],
-    grids,
+    grids: dict[RegimeName, Any],
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
     Args:
         regime: Regime instance.
         internal_functions: Internal functions instance.
-        next_state_space_info: The state space information of the next period.
-        period: The current period.
+        next_state_space_infos: The state space information of the next period.
+        grids: Dict containing the state frids for all regimes.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -174,7 +174,7 @@ def get_Q_and_F_non_terminal(
             params=params[regime.name],
         )
         Q_arr = U_arr
-        for regime_name in internal_functions.transitions.keys():
+        for regime_name in internal_functions.transitions:
             next_states = state_transitions[regime_name](
                 **states_and_actions,
                 period=period,
@@ -200,8 +200,8 @@ def get_Q_and_F_non_terminal(
                 **next_states, next_V_arr=next_V_arr[regime_name]
             )
 
-            # We then take the weighted average of the next value function at the stochastic
-            # states to get the expected next value function.
+            # We then take the weighted average of the next value function at the
+            # stochastic states to get the expected next value function.
             next_V_expected_arr = jnp.average(
                 next_V_at_stochastic_states_arr,
                 weights=joint_next_stochastic_states_weights,
@@ -229,8 +229,8 @@ def get_Q_and_F_terminal(
     """Get the state-action (Q) and feasibility (F) function for the terminal period.
 
     Args:
+        regime: The current regime.
         internal_functions: Internal functions instance.
-        period: The current period.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -318,7 +318,8 @@ def _get_joint_weights_function(
     stochastic variables.
 
     Args:
-        stochastic_variables: List of stochastic variables.
+        regime_name: Name of the target regime.
+        transitions: Transitions of the target regime.
 
     Returns:
         A function that computes the outer product of the weights of the stochastic

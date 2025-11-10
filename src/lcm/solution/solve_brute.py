@@ -26,9 +26,8 @@ def solve(
     Args:
         params: Dict of model parameters.
         n_periods: The number of periods in the model.
-        state_action_spaces: The regimes state action spaces.
-        max_Q_over_a_functions: The functions to calculate the maximum of the Q-function
-            over all actions. The result corresponds to the Q-function of that period.
+        internal_regimes: The internal regimes, that contain all necessary functions
+            to solve the model.
         logger: Logger that logs to stdout.
 
     Returns:

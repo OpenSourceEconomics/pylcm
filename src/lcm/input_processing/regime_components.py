@@ -26,7 +26,6 @@ from lcm.state_action_space import (
     create_state_action_space,
     create_state_space_info,
 )
-from lcm.typing import InternalUserFunction
 
 if TYPE_CHECKING:
     from jax import Array
@@ -34,6 +33,7 @@ if TYPE_CHECKING:
     from lcm.regime import Regime
     from lcm.typing import (
         ArgmaxQOverAFunction,
+        InternalUserFunction,
         MaxQOverAFunction,
         NextStateSimulationFunction,
         QAndFFunction,
@@ -198,7 +198,6 @@ def _build_argmax_and_max_Q_over_a_function(
 
 
 def build_next_state_simulation_functions(
-    regime: Regime,
     internal_functions: InternalFunctions,
     grids: dict[str, Array],
     *,
@@ -232,6 +231,8 @@ def build_next_state_simulation_functions(
 def build_regime_transition_probs_functions(
     internal_functions: InternalFunctions,
     regime_transition_probs: InternalUserFunction,
+    *,
+    enable_jit: bool,
 ):
     next_regime = concatenate_functions(
         functions=internal_functions
@@ -253,4 +254,7 @@ def build_regime_transition_probs_functions(
         ),
     )
 
-    return {"solve": next_regime, "simulate": next_regime_vmapped}
+    return {
+        "solve": next_regime,
+        "simulate": jax.jit(next_regime_vmapped) if enable_jit else next_regime_vmapped,
+    }

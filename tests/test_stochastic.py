@@ -36,7 +36,7 @@ def test_model_solve_and_simulate_with_stochastic_model():
     expected_next_partner = (
         (res.working.astype(bool) | ~res.partner.astype(bool)).astype(int).loc[:7]
     )
-    print(res["partner"], res["working"])
+
     pd.testing.assert_series_equal(
         res["partner"].loc[4:],
         expected_next_partner,

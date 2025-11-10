@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable
 from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -11,6 +10,8 @@ from lcm.exceptions import RegimeInitializationError, format_messages
 from lcm.grids import Grid
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from lcm.typing import (
         UserFunction,
     )
@@ -146,7 +147,7 @@ def _validate_logical_consistency(regime: Regime) -> None:
         for tran_name in [
             key
             for transition_dict in regime.transitions.values()
-            for key in transition_dict.keys()
+            for key in transition_dict
         ]
         if not tran_name.startswith("next_")
     ]

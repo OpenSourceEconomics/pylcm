@@ -73,7 +73,6 @@ def test_create_shock_params():
         n_periods=3,
         grids={"mock": {"a": jnp.array([1, 2])}},
     )
-    print(got)
     jnp.array_equal(got["mock"]["next_a"], jnp.full((2, 3, 2), jnp.nan), equal_nan=True)
 
 

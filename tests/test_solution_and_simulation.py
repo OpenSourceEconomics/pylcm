@@ -95,15 +95,17 @@ def test_solve_and_simulate_fully_discrete():
 
 
 @pytest.mark.parametrize(
-    "name",
-    [name for name in STRIPPED_DOWN_AND_DISCRETE_MODELS],
+    "model_name",
+    list(STRIPPED_DOWN_AND_DISCRETE_MODELS),
     ids=STRIPPED_DOWN_AND_DISCRETE_MODELS,
 )
-def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(name: str) -> None:
+def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(
+    model_name: str,
+) -> None:
     """Test that solve_and_simulate creates same output as solve then simulate."""
     # solve then simulate
     # ==================================================================================
-    model = get_model(name, n_periods=3)
+    model = get_model(model_name, n_periods=3)
     # solve
     params = tree_map(lambda _: 0.2, model.params_template)
     V_arr_dict = model.solve(params)
@@ -112,16 +114,16 @@ def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(name: str) -> N
     solve_then_simulate = model.simulate(
         params,
         V_arr_dict=V_arr_dict,
-        initial_states={name: {"wealth": jnp.array([1.0, 10.0, 50.0])}},
-        initial_regimes=[name] * 3,
+        initial_states={model_name: {"wealth": jnp.array([1.0, 10.0, 50.0])}},
+        initial_regimes=[model_name] * 3,
     )
 
     # solve and simulate
     # ==================================================================================
     solve_and_simulate = model.solve_and_simulate(
         params,
-        initial_states={name: {"wealth": jnp.array([1.0, 10.0, 50.0])}},
-        initial_regimes=[name] * 3,
+        initial_states={model_name: {"wealth": jnp.array([1.0, 10.0, 50.0])}},
+        initial_regimes=[model_name] * 3,
     )
 
     assert tree_equal(solve_then_simulate, solve_and_simulate)
@@ -395,7 +397,6 @@ def test_solve_with_period_argument_in_constraint():
 
     model = Model(regimes=[regime], n_periods=3)
     params = tree_map(lambda _: 0.2, model.params_template)
-    print(params)
     model.solve(params)
 
 

@@ -269,8 +269,6 @@ def test_argmax_Q_over_a_equal(regime_input):
 def _lookup_actions_from_indices_c_d(
     indices_optimal_discrete_actions: IntND,
     indices_optimal_continuous_actions: IntND,
-    discrete_actions_grid_shape: tuple[int, ...],
-    continuous_actions_grid_shape: tuple[int, ...],
     state_action_space: StateActionSpace,
 ) -> dict[str, Array]:
     """Lookup optimal actions from indices of discrete and continuous actions.

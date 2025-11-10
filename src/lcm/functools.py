@@ -12,7 +12,7 @@ ReturnType = TypeVar("ReturnType")
 
 
 def allow_only_kwargs(
-    func: Callable[..., ReturnType], enforce: bool = True
+    func: Callable[..., ReturnType], *, enforce: bool = True
 ) -> Callable[..., ReturnType]:
     """Restrict a function to be called with only keyword arguments.
 

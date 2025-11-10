@@ -41,6 +41,7 @@ if TYPE_CHECKING:
         Int1D,
         InternalUserFunction,
         ParamsDict,
+        RegimeName,
         UserFunction,
     )
 
@@ -57,7 +58,7 @@ def process_regimes(
     - Check that the regime specification is valid.
 
     Args:
-        regime: The regime as provided by the user.
+        regimes: The regimes as provided by the user.
         n_periods: Number of periods of the model.
         enable_jit: Whether to jit the functions of the internal regime.
 
@@ -143,14 +144,18 @@ def process_regimes(
 
 def _get_internal_functions(
     regime: Regime,
-    grids: dict[str, dict[str, Array]],
+    grids: dict[RegimeName, dict[str, Array]],
     params: ParamsDict,
+    *,
+    enable_jit: bool,
 ) -> InternalFunctions:
     """Process the user provided regime functions.
 
     Args:
         regime: The regime as provided by the user.
+        grids: Dict containing the state grids for each regime.
         params: The parameters of the regime.
+        enable_jit: Whether to jit the internal functions.
 
     Returns:
         The processed regime functions.
@@ -223,6 +228,7 @@ def _get_internal_functions(
     internal_regime_transition_probs = build_regime_transition_probs_functions(
         internal_functions=internal_functions,
         regime_transition_probs=functions["regime_transition_probs"],
+        enable_jit=enable_jit,
     )
 
     return InternalFunctions(

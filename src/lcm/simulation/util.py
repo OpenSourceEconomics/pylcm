@@ -120,10 +120,8 @@ def calculate_next_regime_membership(
         keys=regime_transition_key["key_regime_transition"],
         regime_name_to_id=regime_name_to_id,
     )
-    new_subject_regime_ids = new_subject_regime_ids.at[subjects_in_regime].set(
-        new_regimes
-    )
-    return new_subject_regime_ids
+
+    return new_subject_regime_ids.at[subjects_in_regime].set(new_regimes)
 
 
 def draw_key_from_dict(
@@ -134,8 +132,9 @@ def draw_key_from_dict(
     Args:
         d: Dictionary of arrays, all of the same length. The values in the arrays
             represent a probability distribution over the keys. That is, for the
-            dictionary {'regime1': jnp.array([0.2, 0.5]), 'regime2': jnp.array([0.8, 0.5])},
-            0.2 + 0.8 = 1.0 and 0.5 + 0.5 = 1.0.
+            dictionary {'regime1': jnp.array([0.2, 0.5]),
+            'regime2': jnp.array([0.8, 0.5])}, 0.2 + 0.8 = 1.0 and 0.5 + 0.5 = 1.0.
+        regime_name_to_id: Mapping of regime names to regime ids.
         keys: JAX random keys.
 
     Returns:
@@ -155,5 +154,5 @@ def draw_key_from_dict(
         )
 
     draw_key = vmap(draw_single_key, in_axes=(0, 0))
-    draw = draw_key(keys, jnp.array(list(d.values())).T)
-    return draw
+
+    return draw_key(keys, jnp.array(list(d.values())).T)

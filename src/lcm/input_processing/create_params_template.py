@@ -29,6 +29,7 @@ def create_params_template(
 
     Args:
         regime: The regime as provided by the user.
+        grids: Dict containing the state gris for each regime.
         n_periods: Number of periods of the model.
         default_params: A dictionary of default parameters. Default is None. If None,
             the default {"beta": np.nan} is used. For other lifetime reward objectives,
@@ -123,13 +124,14 @@ def _create_stochastic_transition_params(
                 # Retrieve corresponding next function and its arguments
                 dependencies = list(inspect.signature(transition).parameters)
 
-                # If there are invalid dependencies, store them in a dictionary and continue
-                # with the next variable to collect as many invalid arguments as possible.
+                # If there are invalid dependencies, store them in a dictionary and
+                # continue with the next variable to collect as many invalid
+                # arguments as possible.
                 invalid = set(dependencies) - valid_vars
                 if invalid:
                     invalid_dependencies[func_name] = invalid
                 else:
-                    # Get the dimensions of variables that influence the stochastic variable
+                    # Get the dims of variables that influence the stochastic variable
                     dimensions_of_deps = [
                         len(grids[regime_name][arg]) if arg != "period" else n_periods
                         for arg in dependencies
