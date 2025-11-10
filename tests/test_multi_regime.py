@@ -108,7 +108,10 @@ def next_wealth_regime_transition(
 
 
 def regime_transition_probs_working_to_retirement(period) -> dict[str, float]:
-    return {"work": jnp.where(period<6, 1, 0.5), "retirement": jnp.where(period<6, 0, 0.5)}
+    return {
+        "work": jnp.where(period < 6, 1, 0.5),
+        "retirement": jnp.where(period < 6, 0, 0.5),
+    }
 
 
 def regime_transition_probs_retirement_absorbing() -> dict[str, float]:
