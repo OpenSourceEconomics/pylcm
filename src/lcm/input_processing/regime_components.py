@@ -26,6 +26,7 @@ from lcm.state_action_space import (
     create_state_action_space,
     create_state_space_info,
 )
+from lcm.typing import InternalUserFunction
 
 if TYPE_CHECKING:
     from jax import Array
@@ -230,11 +231,11 @@ def build_next_state_simulation_functions(
 
 def build_regime_transition_probs_functions(
     internal_functions: InternalFunctions,
-    *,
-    enable_jit: bool,
+    regime_transition_probs: InternalUserFunction,
 ):
     next_regime = concatenate_functions(
-        functions=internal_functions.get_all_functions(),
+        functions=internal_functions
+        | {"regime_transition_probs": regime_transition_probs},
         targets="regime_transition_probs",
         return_type="dict",
         enforce_signature=False,
@@ -251,11 +252,5 @@ def build_regime_transition_probs_functions(
             if parameter not in ("period", "params")
         ),
     )
-    next_regime_vmapped = with_signature(
-        next_regime_vmapped, kwargs=parameters, enforce=False
-    )
-
-    if enable_jit:
-        next_regime_vmapped = jax.jit(next_regime_vmapped)
 
     return {"solve": next_regime, "simulate": next_regime_vmapped}

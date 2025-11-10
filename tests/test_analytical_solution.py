@@ -73,7 +73,10 @@ def test_analytical_solution(model_name, model_and_params):
     params = model_and_params["params"]
 
     V_arr_dict: dict[int, FloatND] = model.solve(params=params)
-    V_arr_list = list(dict(sorted(V_arr_dict.items(), key=lambda x: x[0])).values())
+    V_arr_list = [
+        period_res["iskhakov_et_al_2017"]
+        for period_res in dict(sorted(V_arr_dict.items(), key=lambda x: x[0])).values()
+    ]
 
     _numerical = np.stack(V_arr_list)
     numerical = {

@@ -65,10 +65,14 @@ def test_solve_and_simulate_stripped_down():
     model.solve_and_simulate(
         params,
         initial_states={
-            "wealth": jnp.array([1.0, 10.0, 50.0]),
+            "iskhakov_et_al_2017_stripped_down": {
+                "wealth": jnp.array([1.0, 10.0, 50.0])
+            }
         },
+        initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 3,
         additional_targets=["age"]
-        if "age" in model.internal_regimes.functions
+        if "age"
+        in model.internal_regimes["iskhakov_et_al_2017_stripped_down"].functions
         else None,
     )
 
@@ -81,24 +85,25 @@ def test_solve_and_simulate_fully_discrete():
     model.solve_and_simulate(
         params,
         initial_states={
-            "wealth": jnp.array([1.0, 10.0, 50.0]),
+            "iskhakov_et_al_2017_discrete": {"wealth": jnp.array([1.0, 10.0, 50.0])}
         },
+        initial_regimes=["iskhakov_et_al_2017_discrete"] * 3,
         additional_targets=["age"]
-        if "age" in model.internal_regimes.functions
+        if "age" in model.internal_regimes["iskhakov_et_al_2017_discrete"].functions
         else None,
     )
 
 
 @pytest.mark.parametrize(
-    "model",
-    [get_model(name, n_periods=3) for name in STRIPPED_DOWN_AND_DISCRETE_MODELS],
+    "name",
+    [name for name in STRIPPED_DOWN_AND_DISCRETE_MODELS],
     ids=STRIPPED_DOWN_AND_DISCRETE_MODELS,
 )
-def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(model: Model) -> None:
+def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(name: str) -> None:
     """Test that solve_and_simulate creates same output as solve then simulate."""
     # solve then simulate
     # ==================================================================================
-
+    model = get_model(name, n_periods=3)
     # solve
     params = tree_map(lambda _: 0.2, model.params_template)
     V_arr_dict = model.solve(params)
@@ -107,18 +112,16 @@ def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(model: Model) -
     solve_then_simulate = model.simulate(
         params,
         V_arr_dict=V_arr_dict,
-        initial_states={
-            "wealth": jnp.array([1.0, 10.0, 50.0]),
-        },
+        initial_states={name: {"wealth": jnp.array([1.0, 10.0, 50.0])}},
+        initial_regimes=[name] * 3,
     )
 
     # solve and simulate
     # ==================================================================================
     solve_and_simulate = model.solve_and_simulate(
         params,
-        initial_states={
-            "wealth": jnp.array([1.0, 10.0, 50.0]),
-        },
+        initial_states={name: {"wealth": jnp.array([1.0, 10.0, 50.0])}},
+        initial_regimes=[name] * 3,
     )
 
     assert tree_equal(solve_then_simulate, solve_and_simulate)
@@ -139,15 +142,18 @@ def test_simulate_iskhakov_et_al_2017(model: Model) -> None:
         params,
         V_arr_dict=V_arr_dict,
         initial_states={
-            "wealth": jnp.array([10.0, 10.0, 20.0]),
-            "lagged_retirement": jnp.array(
-                [
-                    RetirementStatus.working,
-                    RetirementStatus.retired,
-                    RetirementStatus.retired,
-                ]
-            ),
+            "iskhakov_et_al_2017": {
+                "wealth": jnp.array([10.0, 10.0, 20.0]),
+                "lagged_retirement": jnp.array(
+                    [
+                        RetirementStatus.working,
+                        RetirementStatus.retired,
+                        RetirementStatus.retired,
+                    ]
+                ),
+            }
         },
+        initial_regimes=["iskhakov_et_al_2017"] * 3,
     )
 
 
@@ -163,12 +169,14 @@ def test_get_max_Q_over_c():
     ]
 
     params = {
-        "beta": 1.0,
-        "utility": {"disutility_of_work": 1.0},
-        "next_wealth": {
-            "interest_rate": 0.05,
-            "wage": 1.0,
-        },
+        "iskhakov_et_al_2017_stripped_down": {
+            "beta": 1.0,
+            "utility": {"disutility_of_work": 1.0},
+            "next_wealth": {
+                "interest_rate": 0.05,
+                "wage": 1.0,
+            },
+        }
     }
 
     state_space_info = create_state_space_info(
@@ -179,7 +187,8 @@ def test_get_max_Q_over_c():
     Q_and_F = get_Q_and_F(
         regime=regime,
         internal_functions=internal_regime.internal_functions,
-        next_state_space_info=state_space_info,
+        next_state_space_infos=state_space_info,
+        grids=internal_regime.grids,
         is_last_period=True,
     )
 
@@ -211,12 +220,14 @@ def test_get_max_Q_over_c_with_discrete_model():
     ]
 
     params = {
-        "beta": 1.0,
-        "utility": {"disutility_of_work": 1.0},
-        "next_wealth": {
-            "interest_rate": 0.05,
-            "wage": 1.0,
-        },
+        "iskhakov_et_al_2017_discrete": {
+            "beta": 1.0,
+            "utility": {"disutility_of_work": 1.0},
+            "next_wealth": {
+                "interest_rate": 0.05,
+                "wage": 1.0,
+            },
+        }
     }
 
     state_space_info = create_state_space_info(
@@ -227,7 +238,8 @@ def test_get_max_Q_over_c_with_discrete_model():
     Q_and_F = get_Q_and_F(
         regime=regime,
         internal_functions=internal_regime.internal_functions,
-        next_state_space_info=state_space_info,
+        next_state_space_infos=state_space_info,
+        grids=internal_regime.grids,
         is_last_period=True,
     )
 
@@ -264,12 +276,14 @@ def test_argmax_and_max_Q_over_c():
     ]
 
     params = {
-        "beta": 1.0,
-        "utility": {"disutility_of_work": 1.0},
-        "next_wealth": {
-            "interest_rate": 0.05,
-            "wage": 1.0,
-        },
+        "iskhakov_et_al_2017_stripped_down": {
+            "beta": 1.0,
+            "utility": {"disutility_of_work": 1.0},
+            "next_wealth": {
+                "interest_rate": 0.05,
+                "wage": 1.0,
+            },
+        }
     }
 
     state_space_info = create_state_space_info(
@@ -280,7 +294,8 @@ def test_argmax_and_max_Q_over_c():
     Q_and_F = get_Q_and_F(
         regime=regime,
         internal_functions=internal_regime.internal_functions,
-        next_state_space_info=state_space_info,
+        next_state_space_infos=state_space_info,
+        grids=internal_regime.grids,
         is_last_period=True,
     )
 
@@ -312,12 +327,14 @@ def test_argmax_and_max_Q_over_c_with_discrete_model():
     ]
 
     params = {
-        "beta": 1.0,
-        "utility": {"disutility_of_work": 1.0},
-        "next_wealth": {
-            "interest_rate": 0.05,
-            "wage": 1.0,
-        },
+        "iskhakov_et_al_2017_discrete": {
+            "beta": 1.0,
+            "utility": {"disutility_of_work": 1.0},
+            "next_wealth": {
+                "interest_rate": 0.05,
+                "wage": 1.0,
+            },
+        }
     }
 
     state_space_info = create_state_space_info(
@@ -328,7 +345,8 @@ def test_argmax_and_max_Q_over_c_with_discrete_model():
     Q_and_F = get_Q_and_F(
         regime=regime,
         internal_functions=internal_regime.internal_functions,
-        next_state_space_info=state_space_info,
+        next_state_space_infos=state_space_info,
+        grids=internal_regime.grids,
         is_last_period=True,
     )
 
@@ -377,7 +395,8 @@ def test_solve_with_period_argument_in_constraint():
 
     model = Model(regimes=[regime], n_periods=3)
     params = tree_map(lambda _: 0.2, model.params_template)
-    model.solve({"iskhakov_et_al_2017": params})
+    print(params)
+    model.solve(params)
 
 
 # ======================================================================================

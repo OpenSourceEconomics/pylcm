@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import partial
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
@@ -7,7 +8,7 @@ import pytest
 from jax import Array
 from numpy.testing import assert_array_equal
 
-from lcm.dispatchers import simulation_spacemap
+from lcm.dispatchers import simulation_spacemap, vmap_1d
 from lcm.input_processing import process_regimes
 from lcm.interfaces import StateActionSpace, Target
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a, get_max_Q_over_a
@@ -16,8 +17,6 @@ from lcm.max_Qc_over_d import get_argmax_and_max_Qc_over_d, get_max_Qc_over_d
 from lcm.next_state import get_next_state_function
 from lcm.Q_and_F import get_Q_and_F
 from lcm.simulation.simulate import (
-    _lookup_actions_from_indices,
-    _lookup_optimal_continuous_actions,
     _lookup_values_from_indices,
 )
 from lcm.state_action_space import create_state_action_space, create_state_space_info
@@ -186,7 +185,6 @@ def test_argmax_Q_over_a_equal(regime_input):
     continuous_actions_grid_shape = tuple(
         len(grid) for grid in state_action_space.continuous_actions.values()
     )
-    actions_grid_shape = discrete_actions_grid_shape + continuous_actions_grid_shape
 
     # ----------------------------------------------------------------------------------
     # Argmax over all actions directly
@@ -211,10 +209,9 @@ def test_argmax_Q_over_a_equal(regime_input):
         next_V_arr=next_V_arr,
         params=params,
     )
-    optimal_actions_a = _lookup_actions_from_indices(
-        indices_optimal_actions=indices_optimal_actions,
-        actions_grid_shape=actions_grid_shape,
-        state_action_space=state_action_space,
+    optimal_actions_a = _lookup_values_from_indices(
+        flat_indices=indices_optimal_actions,
+        grids=state_action_space.actions,
     )
 
     # ----------------------------------------------------------------------------------
@@ -292,13 +289,32 @@ def _lookup_actions_from_indices_c_d(
     optimal_discrete_actions = _lookup_values_from_indices(
         flat_indices=indices_optimal_discrete_actions,
         grids=state_action_space.discrete_actions,
-        grids_shapes=discrete_actions_grid_shape,
     )
 
     optimal_continuous_actions = _lookup_values_from_indices(
         flat_indices=indices_optimal_continuous_actions,
         grids=state_action_space.continuous_actions,
-        grids_shapes=continuous_actions_grid_shape,
     )
 
     return optimal_discrete_actions | optimal_continuous_actions
+
+
+@partial(vmap_1d, variables=("indices_argmax_Q_over_c", "discrete_argmax"))
+def _lookup_optimal_continuous_actions(
+    indices_argmax_Q_over_c: IntND,
+    discrete_argmax: IntND,
+    discrete_actions_grid_shape: tuple[int, ...],
+) -> IntND:
+    """Look up the optimal continuous action index given index of discrete action.
+
+    Args:
+        indices_argmax_Q_over_c: Index array of optimal continous actions conditional on
+            discrete actions and states.
+        discrete_argmax: Index array of optimal discrete actions.
+        discrete_actions_grid_shape: Shape of the discrete actions grid.
+
+    Returns:
+        Index array of optimal continuous actions.
+    """
+    indices = jnp.unravel_index(discrete_argmax, shape=discrete_actions_grid_shape)
+    return indices_argmax_Q_over_c[indices]

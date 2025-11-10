@@ -95,7 +95,6 @@ def process_regimes(
         internal_functions = _get_internal_functions(
             regime, grids=grids, params=params_template
         )
-
         Q_and_F_functions = build_Q_and_F_functions(
             regime=regime,
             internal_functions=internal_functions,
@@ -114,10 +113,6 @@ def process_regimes(
             grids=grids,
             enable_jit=enable_jit,
         )
-        regime_transition_probs = build_regime_transition_probs_functions(
-            internal_functions=internal_functions,
-            enable_jit=enable_jit,
-        )
 
         # ------------------------------------------------------------------------------
         # Collect all components into the internal regime
@@ -130,7 +125,7 @@ def process_regimes(
             functions=internal_functions.functions,
             utility=internal_functions.utility,
             constraints=internal_functions.constraints,
-            regime_transition_probs=regime_transition_probs,
+            regime_transition_probs=internal_functions.regime_transition_probs,
             internal_functions=internal_functions,
             transitions=internal_functions.transitions,
             params_template=params_template,
@@ -215,7 +210,6 @@ def _get_internal_functions(
         fn_name: functions[fn_name] for fn_name in flatten_to_qnames(regime.transitions)
     }
     internal_utility = functions["utility"]
-    internal_regime_transition_probabilities = functions["regime_transition_probs"]
     internal_constraints = {
         fn_name: functions[fn_name] for fn_name in regime.constraints
     }
@@ -226,13 +220,17 @@ def _get_internal_functions(
         and fn_name not in regime.constraints
         and fn_name != "utility"
     }
+    internal_regime_transition_probs = build_regime_transition_probs_functions(
+        internal_functions=internal_functions,
+        regime_transition_probs=functions["regime_transition_probs"],
+    )
 
     return InternalFunctions(
         functions=internal_functions,
         utility=internal_utility,
         constraints=internal_constraints,
         transitions=unflatten_from_qnames(internal_transition),
-        regime_transition_probs=internal_regime_transition_probabilities,
+        regime_transition_probs=internal_regime_transition_probs,
     )
 
 

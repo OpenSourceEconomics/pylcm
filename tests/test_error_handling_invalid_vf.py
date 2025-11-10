@@ -16,6 +16,7 @@ if TYPE_CHECKING:
         ContinuousAction,
         ContinuousState,
         FloatND,
+        ParamsDict,
     )
 
 
@@ -73,7 +74,7 @@ def valid_regime() -> Regime:
                 "next_health": next_health,
             }
         },
-        regime_transition_probs=lambda: {"test": 1.0},
+        regime_transition_probs=lambda wealth: {"test": 1.0},
     )
 
 
@@ -118,41 +119,52 @@ def inf_value_model(valid_regime: Regime) -> Model:
     return Model(regimes=[inf_model], n_periods=2)
 
 
+@pytest.fixture
+def params() -> ParamsDict:
+    return {"test": {"beta": 0.95}}
+
+
 def test_solve_model_with_nan_value_function_array_raises_error(
-    nan_value_model: Model,
+    nan_value_model: Model, params: ParamsDict
 ) -> None:
     with pytest.raises(InvalidValueFunctionError):
-        nan_value_model.solve({"beta": 0.95})
+        nan_value_model.solve(params)
 
 
 def test_solve_model_with_inf_value_function_does_not_raise_error(
-    inf_value_model: Model,
+    inf_value_model: Model, params: ParamsDict
 ) -> None:
     # This should not raise an error
-    inf_value_model.solve({"beta": 0.95})
+    inf_value_model.solve(params)
 
 
 def test_simulate_model_with_nan_value_function_array_raises_error(
-    nan_value_model: Model,
+    nan_value_model: Model, params: ParamsDict
 ) -> None:
     initial_states = {
-        "wealth": jnp.array([0.9, 1.0]),
-        "health": jnp.array([1.0, 1.0]),
+        "test": {
+            "wealth": jnp.array([0.9, 1.0]),
+            "health": jnp.array([1.0, 1.0]),
+        }
     }
 
     with pytest.raises(InvalidValueFunctionError):
         nan_value_model.solve_and_simulate(
-            {"beta": 0.95}, initial_states=initial_states
+            params, initial_states=initial_states, initial_regimes=["test"] * 2
         )
 
 
 def test_simulate_model_with_inf_value_function_array_does_not_raise_error(
-    inf_value_model: Model,
+    inf_value_model: Model, params: ParamsDict
 ) -> None:
     initial_states = {
-        "wealth": jnp.array([0.9, 1.0]),
-        "health": jnp.array([1.0, 1.0]),
+        "test": {
+            "wealth": jnp.array([0.9, 1.0]),
+            "health": jnp.array([1.0, 1.0]),
+        }
     }
 
     # This should not raise an error
-    inf_value_model.solve_and_simulate({"beta": 0.95}, initial_states=initial_states)
+    inf_value_model.solve_and_simulate(
+        params, initial_states=initial_states, initial_regimes=["test"] * 2
+    )

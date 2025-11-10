@@ -30,6 +30,7 @@ if TYPE_CHECKING:
         ParamsDict,
         Period,
         QAndFFunction,
+        RegimeName,
     )
 
 
@@ -93,13 +94,7 @@ def get_Q_and_F_non_terminal(
 
     # Function required to calculate instantaneous utility and feasibility
     U_and_F = _get_U_and_F(internal_functions)
-    regime_transition_prob_func = concatenate_functions(
-        functions=internal_functions.get_all_functions(),
-        targets="regime_transition_probs",
-        return_type="dict",
-        enforce_signature=False,
-        set_annotations=True,
-    )
+    regime_transition_prob_func = internal_functions.regime_transition_probs["solve"]
     state_transitions = {}
     next_stochastic_states_weights = {}
     joint_weights_from_marginals = {}
@@ -313,8 +308,8 @@ def _get_arg_names_of_Q_and_F(
 
 
 def _get_joint_weights_function(
-    regime_name,
-    transitions,
+    regime_name: RegimeName,
+    transitions: dict[RegimeName, InternalUserFunction],
 ) -> Callable[..., FloatND]:
     """Get function that calculates the joint weights.
 

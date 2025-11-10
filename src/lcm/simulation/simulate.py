@@ -172,7 +172,7 @@ def simulate(
                     state_action_space=state_action_space,
                     new_subject_regime_ids=new_subject_regime_ids,
                     regime_name_to_id=regime_name_to_id,
-                    key=next_states_key,
+                    key=next_regime_key,
                 )
                 new_subject_regime_ids = next_regimes
 

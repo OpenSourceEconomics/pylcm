@@ -50,7 +50,7 @@ def process_simulated_data(
     list_of_dicts = [
         {
             "period": jnp.full_like(d.subject_ids, period),
-            "subject_ids": d.subject_ids,
+            "subject_id": d.subject_ids,
             "value": d.V_arr,
             **d.actions,
             **d.states,
@@ -66,8 +66,15 @@ def process_simulated_data(
         calculated_targets = _compute_targets(
             out,
             targets=additional_targets,
-            functions=internal_regime.get_all_functions(),
-            params=params,
+            functions=internal_regime.functions
+            | internal_regime.constraints
+            | {"utility": internal_regime.utility}
+            | {
+                "regime_transition_probs": internal_regime.regime_transition_probs[
+                    "simulate"
+                ]
+            },
+            params=params[internal_regime.name],
         )
         out = {**out, **calculated_targets}
 

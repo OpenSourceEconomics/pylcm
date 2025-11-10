@@ -68,7 +68,9 @@ def test_create_state_space_info():
 
 def test_create_state_action_space_replace():
     regime = get_regime("iskhakov_et_al_2017")
-    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)
+    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
+        "iskhakov_et_al_2017"
+    ]
     space = create_state_action_space(
         variable_info=internal_regime.variable_info,
         grids=internal_regime.grids,

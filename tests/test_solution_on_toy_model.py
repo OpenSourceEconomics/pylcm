@@ -181,7 +181,7 @@ def analytical_simulate_deterministic(initial_wealth, params):
     # ==================================================================================
     data = (
         {
-            "subject_ids": jnp.arange(len(initial_wealth)),
+            "subject_id": jnp.arange(len(initial_wealth)),
             "wealth_0": initial_wealth,
             "wealth_1": wealth_1,
             "value_0": V_arr_0,
@@ -195,7 +195,7 @@ def analytical_simulate_deterministic(initial_wealth, params):
     raw_long = pd.wide_to_long(
         raw,
         stubnames=["value", "wealth", "consumption", "working"],
-        i="subject_ids",
+        i="subject_id",
         j="period",
         sep="_",
     )
@@ -325,7 +325,7 @@ def analytical_simulate_stochastic(initial_wealth, initial_health, health_1, par
     # Transform data into format as expected by LCM
     # ==================================================================================
     data = {
-        "subject_ids": jnp.arange(len(initial_wealth)),
+        "subject_id": jnp.arange(len(initial_wealth)),
         "wealth_0": initial_wealth,
         "wealth_1": wealth_1,
         "health_0": initial_health,
@@ -340,7 +340,7 @@ def analytical_simulate_stochastic(initial_wealth, initial_health, health_1, par
     raw_long = pd.wide_to_long(
         raw,
         stubnames=["value", "consumption", "working", "wealth", "health"],
-        i="subject_ids",
+        i="subject_id",
         j="period",
         sep="_",
     )

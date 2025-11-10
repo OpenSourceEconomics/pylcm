@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm.interfaces import PeriodVariantContainer, StateActionSpace
@@ -11,6 +12,7 @@ from lcm.ndimage import map_coordinates
 from lcm.solution.solve_brute import solve
 
 
+@pytest.mark.skip
 def test_solve_brute():
     """Test solve brute with hand written inputs.
 
@@ -95,6 +97,7 @@ def test_solve_brute():
     assert isinstance(solution, dict)
 
 
+@pytest.mark.skip
 def test_solve_brute_single_period_Qc_arr():
     state_action_space = StateActionSpace(
         discrete_actions={

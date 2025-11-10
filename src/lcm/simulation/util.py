@@ -101,11 +101,13 @@ def calculate_next_regime_membership(
     new_subject_regime_ids: Int1D,
     key: Array,
 ) -> Int1D:
-    _regime_transition_probs = internal_regime.regime_transition_probs["simulate"](
-        **state_action_space.states,
-        **optimal_actions,
-        period=period,
-        params=params,
+    _regime_transition_probs = (
+        internal_regime.internal_functions.regime_transition_probs["simulate"](
+            **state_action_space.states,
+            **optimal_actions,
+            period=period,
+            params=params,
+        )
     )
 
     key, regime_transition_key = generate_simulation_keys(

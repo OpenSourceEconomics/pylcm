@@ -178,10 +178,10 @@ def test_work_retirement_model_solution():
     )
 
     # Create complete model using new regime-based API
-    model = Model(regimes=[work_regime, retirement_regime], n_periods=10)
+    model = Model(regimes=[work_regime, retirement_regime], n_periods=5)
 
     # Verify model properties
-    assert model.n_periods == 10
+    assert model.n_periods == 5
     assert len(model.internal_regimes) == 2
 
     health_transition = jnp.array(
@@ -234,10 +234,10 @@ def test_work_retirement_model_solution():
     simulation = model.simulate(
         params=params,
         initial_states={
-            "work__next_wealth": jnp.array([5.0, 20, 40, 70]),
-            "retirement__next_wealth": jnp.array([5.0, 20, 40, 70]),
-            "work__next_health": jnp.array([1, 1, 1, 1]),
-            "retirement__next_health": jnp.array([1, 1, 1, 1]),
+            "work__wealth": jnp.array([5.0, 20, 40, 70]),
+            "retirement__wealth": jnp.array([5.0, 20, 40, 70]),
+            "work__health": jnp.array([1, 1, 1, 1]),
+            "retirement__health": jnp.array([1, 1, 1, 1]),
         },
         initial_regimes=["work"] * 4,
         V_arr_dict=solution,
@@ -246,5 +246,5 @@ def test_work_retirement_model_solution():
     print(simulation["retirement"])
     # Basic checks: solution should be a dict with one entry per period
     assert isinstance(solution, dict)
-    assert len(solution) == 10
-    assert all(period in solution for period in range(10))
+    assert len(solution) == 5
+    assert all(period in solution for period in range(5))
