@@ -15,7 +15,7 @@ def test_regime_invalid_states():
             actions={},
             utility=lambda: 0,
             transitions={"test": {"next_health": lambda: 0}},
-            regime_transition_probs=lambda: 0,
+            regime_transition_probs=lambda: 0,  # type: ignore[arg-type, return-value]
         )
 
 
@@ -27,7 +27,7 @@ def test_regime_invalid_actions():
             actions="exercise",  # type: ignore[arg-type]
             utility=lambda: 0,
             transitions={"test": {"next_health": lambda: 0}},
-            regime_transition_probs=lambda: 0,
+            regime_transition_probs=lambda: 0,  # type: ignore[arg-type, return-value]
         )
 
 
@@ -42,7 +42,7 @@ def test_regime_invalid_functions():
             transitions={"test": {"next_health": lambda: 0}},
             utility=lambda: 0,
             functions="utility",  # type: ignore[arg-type]
-            regime_transition_probs=lambda: 0,
+            regime_transition_probs=lambda: 0,  # type: ignore[arg-type, return-value]
         )
 
 
@@ -58,7 +58,7 @@ def test_regime_invalid_functions_values():
             utility=lambda: 0,
             transitions={"test": {"next_health": lambda: 0}},
             functions={"function": 0},  # type: ignore[dict-item]
-            regime_transition_probs=lambda: 0,
+            regime_transition_probs=lambda: 0,  # type: ignore[arg-type, return-value]
         )
 
 
@@ -73,7 +73,7 @@ def test_regime_invalid_functions_keys():
             utility=lambda: 0,
             transitions={"test": {"next_health": lambda: 0}},
             functions={0: lambda: 0},  # type: ignore[dict-item]
-            regime_transition_probs=lambda: 0,
+            regime_transition_probs=lambda: 0,  # type: ignore[arg-type, return-value]
         )
 
 
@@ -87,7 +87,7 @@ def test_regime_invalid_actions_values():
             actions={"exercise": 0},  # type: ignore[dict-item]
             utility=lambda: 0,
             transitions={"test": {"next_health": lambda: 0}},
-            regime_transition_probs=lambda: 0,
+            regime_transition_probs=lambda: 0,  # type: ignore[arg-type, return-value]
         )
 
 
@@ -101,7 +101,7 @@ def test_regime_invalid_states_values():
             actions={},
             utility=lambda: 0,
             transitions={"test": {"next_health": lambda: 0}},
-            regime_transition_probs=lambda: 0,
+            regime_transition_probs=lambda: 0,  # type: ignore[arg-type, return-value]
         )
 
 
@@ -119,7 +119,7 @@ def test_regime_missing_next_func(binary_category_class):
             actions={"exercise": DiscreteGrid(binary_category_class)},
             utility=lambda: 0,
             transitions={"test": {"next_health": lambda: 0}},
-            regime_transition_probs=lambda: 0,
+            regime_transition_probs=lambda: 0,  # type: ignore[arg-type, return-value]
         )
 
 
@@ -135,7 +135,7 @@ def test_regime_invalid_utility():
             functions={},
             utility=0,  # type: ignore[arg-type]
             transitions={"test": {"next_health": lambda: 0}},
-            regime_transition_probs=lambda: 0,
+            regime_transition_probs=lambda: 0,  # type: ignore[arg-type, return-value]
         )
 
 
@@ -151,7 +151,7 @@ def test_regime_invalid_transition_names():
             functions={},
             utility=lambda: 0,
             transitions={"test": {"invalid_name": lambda: 0}},
-            regime_transition_probs=lambda: 0,
+            regime_transition_probs=lambda: 0,  # type: ignore[arg-type, return-value]
         )
 
 
@@ -166,5 +166,5 @@ def test_regime_overlapping_states_actions(binary_category_class):
             actions={"health": DiscreteGrid(binary_category_class)},
             utility=lambda: 0,
             transitions={"test": {"next_health": lambda: 0}},
-            regime_transition_probs=lambda: 0,
+            regime_transition_probs=lambda: 0,  # type: ignore[arg-type, return-value]
         )

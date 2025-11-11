@@ -64,7 +64,7 @@ def utility(
     working: DiscreteAction,
     health: DiscreteState,
     disutility_of_work: float,
-    partner,  # noqa: ARG001
+    partner: DiscreteState,  # noqa: ARG001
 ) -> FloatND:
     return jnp.log(consumption) - (1 - health / 2) * disutility_of_work * working
 

@@ -96,7 +96,7 @@ def test_create_shock_params_invalid_variable():
             regime=regime,  # type: ignore[arg-type]
             variable_info=variable_info,
             n_periods=3,
-            grids={"a": jnp.array([1, 2])},
+            grids={"mock": {"a": jnp.array([1, 2])}},
         )
 
 
@@ -123,5 +123,5 @@ def test_create_shock_params_invalid_dependency():
             regime=regime,  # type: ignore[arg-type]
             variable_info=variable_info,
             n_periods=3,
-            grids={"a": jnp.array([1, 2])},
+            grids={"mock": {"a": jnp.array([1, 2])}},
         )

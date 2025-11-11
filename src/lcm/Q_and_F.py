@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import jax.numpy as jnp
 from dags import concatenate_functions
@@ -99,7 +99,12 @@ def get_Q_and_F_non_terminal(
     next_stochastic_states_weights = {}
     joint_weights_from_marginals = {}
     next_V = {}
-    for regime_name, transitions in internal_functions.transitions.items():
+    # Cast to help mypy understand that when iterating, values are nested dicts
+    nested_transitions = cast(
+        "dict[str, dict[str, InternalUserFunction]]",
+        internal_functions.transitions,
+    )
+    for regime_name, transitions in nested_transitions.items():
         # Functions required to calculate the expected continuation values
         state_transitions[regime_name] = get_next_state_function(
             grids=grids[regime_name],
@@ -122,11 +127,11 @@ def get_Q_and_F_non_terminal(
         )
         next_V[regime_name] = productmap(
             _scalar_next_V,
-            variables=[
+            variables=tuple(
                 key
                 for key, value in transitions.items()
                 if is_stochastic_transition(value)
-            ],
+            ),
         )
 
     # ----------------------------------------------------------------------------------

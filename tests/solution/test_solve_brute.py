@@ -86,7 +86,7 @@ def test_solve_brute():
     # call solve function
     # ==================================================================================
 
-    solution = solve(
+    solution = solve(  # type: ignore[call-arg]
         params=params,
         n_periods=2,
         state_action_spaces=state_action_spaces,
@@ -130,7 +130,7 @@ def test_solve_brute_single_period_Qc_arr():
 
     # by setting max_Qc_over_d to identity, we can test that the max_Q_over_c function
     # is correctly applied to the state_action_space
-    got = solve(
+    got = solve(  # type: ignore[call-arg]
         params={},
         n_periods=2,
         state_action_spaces=state_action_spaces,
@@ -140,4 +140,4 @@ def test_solve_brute_single_period_Qc_arr():
         logger=get_logger(debug_mode=False),
     )
 
-    aaae(got[0], expected)
+    aaae(got[0], expected)  # type: ignore[arg-type]

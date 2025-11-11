@@ -10,8 +10,6 @@ from dags.tree import flatten_to_qnames
 from lcm.utils import first_non_none
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
-
     import pandas as pd
     from jax import Array
 
@@ -28,6 +26,9 @@ if TYPE_CHECKING:
         MaxQOverAFunction,
         NextStateSimulationFunction,
         ParamsDict,
+        RegimeTransitionFunction,
+        TransitionsDict,
+        VmappedRegimeTransitionFunction,
     )
 
 
@@ -135,8 +136,8 @@ class StateSpaceInfo:
     """
 
     states_names: tuple[str, ...]
-    discrete_states: Mapping[str, DiscreteGrid]
-    continuous_states: Mapping[str, ContinuousGrid]
+    discrete_states: dict[str, DiscreteGrid]
+    continuous_states: dict[str, ContinuousGrid]
 
 
 class ShockType(Enum):
@@ -192,9 +193,11 @@ class InternalRegime:
     variable_info: pd.DataFrame
     utility: InternalUserFunction
     constraints: dict[str, InternalUserFunction]
-    transitions: dict[str, InternalUserFunction]
+    transitions: TransitionsDict
     functions: dict[str, InternalUserFunction]
-    regime_transition_probs: Callable[..., dict[str, float]]
+    regime_transition_probs: dict[
+        str, RegimeTransitionFunction | VmappedRegimeTransitionFunction
+    ]
     internal_functions: InternalFunctions
     params_template: ParamsDict
     state_action_spaces: PeriodVariantContainer[StateActionSpace]
@@ -204,21 +207,6 @@ class InternalRegime:
     next_state_simulation_function: NextStateSimulationFunction
     # Not properly processed yet
     random_utility_shocks: ShockType
-
-    def get_all_functions(self) -> dict[str, InternalUserFunction]:
-        """Get all regime functions including utility, constraints, and transitions.
-
-        Returns:
-            Dictionary that maps names of all regime functions to the functions.
-
-        """
-        return (
-            self.functions
-            | {"utility": self.utility}
-            | self.constraints
-            | self.transitions
-            | {"regime_transition_probs": self.regime_transition_probs}
-        )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -245,8 +233,10 @@ class InternalFunctions:
     functions: dict[str, InternalUserFunction]
     utility: InternalUserFunction
     constraints: dict[str, InternalUserFunction]
-    transitions: dict[str, InternalUserFunction]
-    regime_transition_probs: Callable[..., dict[str, float]]
+    transitions: TransitionsDict
+    regime_transition_probs: dict[
+        str, RegimeTransitionFunction | VmappedRegimeTransitionFunction
+    ]
 
     def get_all_functions(self) -> dict[str, InternalUserFunction]:
         """Get all regime functions including utility, constraints, and transitions.
@@ -259,6 +249,6 @@ class InternalFunctions:
             self.functions
             | {"utility": self.utility}
             | self.constraints
-            | self.transitions
-            | {"regime_transition_probs": self.regime_transition_probs}
+            | dict(self.transitions)
+            | self.regime_transition_probs  # type: ignore[operator]
         )

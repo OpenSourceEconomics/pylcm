@@ -53,7 +53,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
 
     got = simulate(
         params=params,
-        V_arr_dict={0: jnp.empty(0)},
+        V_arr_dict={0: {"iskhakov_et_al_2017_stripped_down": jnp.empty(0)}},
         initial_states={
             "iskhakov_et_al_2017_stripped_down": {"wealth": jnp.array([1.0, 50.400803])}
         },
@@ -144,7 +144,7 @@ def test_simulate_with_only_discrete_actions():
 
     res: pd.DataFrame = model.solve_and_simulate(
         params,
-        initial_states={"iskhakov_et_al_2017_discrete__wealth": jnp.array([0, 4])},
+        initial_states={"iskhakov_et_al_2017_discrete": {"wealth": jnp.array([0, 4])}},
         additional_targets=["labor_income", "working"],
         initial_regimes=["iskhakov_et_al_2017_discrete"] * 2,
     )["iskhakov_et_al_2017_discrete"]
@@ -187,14 +187,18 @@ def test_effect_of_beta_on_last_period():
     res_low: pd.DataFrame = model.simulate(
         params_low,
         V_arr_dict=solution_low,
-        initial_states={"iskhakov_et_al_2017_stripped_down__wealth": initial_wealth},
+        initial_states={
+            "iskhakov_et_al_2017_stripped_down": {"wealth": initial_wealth}
+        },
         initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 3,
     )["iskhakov_et_al_2017_stripped_down"]
 
     res_high: pd.DataFrame = model.simulate(
         params_high,
         V_arr_dict=solution_high,
-        initial_states={"iskhakov_et_al_2017_stripped_down__wealth": initial_wealth},
+        initial_states={
+            "iskhakov_et_al_2017_stripped_down": {"wealth": initial_wealth}
+        },
         initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 3,
     )["iskhakov_et_al_2017_stripped_down"]
 
@@ -289,7 +293,7 @@ def test_get_continuous_action_argmax_given_discrete():
     )
     argmax = jnp.array([0, 1])
     vars_grid_shape = (2,)
-    got = _lookup_values_from_indices(
+    got = _lookup_values_from_indices(  # type: ignore[call-arg]
         indices_argmax_Q_over_c=argmax_and_max_Q_over_c_values,
         discrete_argmax=argmax,
         discrete_actions_grid_shape=vars_grid_shape,

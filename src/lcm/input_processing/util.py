@@ -21,25 +21,6 @@ def is_stochastic_transition(fn: Callable[..., Any]) -> bool:
     return hasattr(fn, "_stochastic_info")
 
 
-def get_transition_info(regime: Regime) -> pd.DataFrame:
-    """Derive information about all transitions in the regime.
-
-    Args:
-        regime: The regime as provided by the user.
-
-    Returns:
-        A table with information about all transitions in the regime. The index contains
-        the name of a regime transition. The columns are booleans that are True if the
-        variable has the corresponding property. The columns are: is_stochastic
-
-    """
-    flat_trans = dt.flatten_to_qnames(regime.transitions)
-    info = pd.DataFrame(index=list(flat_trans))
-    info["is_stochastic"] = [
-        (is_stochastic_transition(transition)) for transition in flat_trans
-    ]
-
-
 def get_variable_info(regime: Regime) -> pd.DataFrame:
     """Derive information about all variables in the regime.
 

@@ -36,12 +36,14 @@ def test_regression_test():
         disutility_of_work=1.0,
         interest_rate=0.05,
     )
-    got_solve: dict[int, FloatND] = model.solve(params)
+    got_solve: dict[int, dict[str, FloatND]] = model.solve(params)
 
     got_simulate = model.solve_and_simulate(
         params=params,
         initial_states={
-            "iskhakov_et_al_2017_stripped_down__wealth": jnp.array([5.0, 20, 40, 70]),
+            "iskhakov_et_al_2017_stripped_down": {
+                "wealth": jnp.array([5.0, 20, 40, 70])
+            }
         },
         initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 4,
     )

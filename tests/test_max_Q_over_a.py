@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
 import pytest
@@ -24,6 +24,7 @@ from tests.test_models.utils import get_regime
 
 if TYPE_CHECKING:
     from lcm.typing import (
+        InternalUserFunction,
         IntND,
     )
 
@@ -57,17 +58,21 @@ def regime_input():
             },
         }
     }
+    transitions_for_regime = cast(
+        "dict[str, InternalUserFunction]",
+        internal_regime.internal_functions.transitions[
+            "iskhakov_et_al_2017_stripped_down"
+        ],
+    )
     return {
         "regime": regime,
         "internal_regime": internal_regime,
         "state_action_space": state_action_space,
         "state_space_info": state_space_info,
         "next_state": get_next_state_function(
-            transitions=internal_regime.internal_functions.transitions[
-                "iskhakov_et_al_2017_stripped_down"
-            ],
+            transitions=transitions_for_regime,
             functions=internal_regime.internal_functions.functions,
-            grids=internal_regime.grids,
+            grids={"iskhakov_et_al_2017_stripped_down": internal_regime.grids},
             target=Target.SOLVE,
         ),
         "params": params,
@@ -94,11 +99,11 @@ def test_max_Q_over_a_equal(regime_input):
     Q_and_F = get_Q_and_F(
         regime=regime,
         internal_functions=internal_regime.internal_functions,
-        next_state_space_infos=state_space_infos,
+        next_state_space_infos={regime.name: state_space_infos},
         is_last_period=True,
-        grids=grids,
+        grids={regime.name: grids},
     )
-    next_V_arr = jnp.zeros((2, 2))
+    next_V_arr = {regime.name: jnp.zeros((2, 2))}
 
     # ----------------------------------------------------------------------------------
     # Maximum over all actions directly
@@ -173,11 +178,11 @@ def test_argmax_Q_over_a_equal(regime_input):
     Q_and_F = get_Q_and_F(
         regime=regime,
         internal_functions=internal_regime.internal_functions,
-        next_state_space_infos=state_space_infos,
+        next_state_space_infos={regime.name: state_space_infos},
         is_last_period=True,
-        grids=grids,
+        grids={regime.name: grids},
     )
-    next_V_arr = jnp.zeros((2, 2))
+    next_V_arr = {regime.name: jnp.zeros((2, 2))}
 
     discrete_actions_grid_shape = tuple(
         len(grid) for grid in state_action_space.discrete_actions.values()
@@ -231,7 +236,7 @@ def test_argmax_Q_over_a_equal(regime_input):
         **state_action_space.states,
         **state_action_space.discrete_actions,
         **state_action_space.continuous_actions,
-        next_V_arr=jnp.zeros((2, 2)),
+        next_V_arr={regime.name: jnp.zeros((2, 2))},
         period=0,
         params=params,
     )

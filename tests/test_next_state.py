@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
 from pybaum import tree_equal
@@ -11,7 +11,7 @@ from lcm.next_state import _create_stochastic_next_func, get_next_state_function
 from tests.test_models.utils import get_regime
 
 if TYPE_CHECKING:
-    from lcm.typing import ContinuousState, FloatND, ParamsDict
+    from lcm.typing import ContinuousState, FloatND, InternalUserFunction, ParamsDict
 
 
 def test_get_next_state_function_with_solve_target():
@@ -19,8 +19,12 @@ def test_get_next_state_function_with_solve_target():
     internal_regime = process_regimes(regimes=[regime], n_periods=3, enable_jit=True)[
         "iskhakov_et_al_2017_stripped_down"
     ]
+    transitions_for_regime = cast(
+        "dict[str, InternalUserFunction]",
+        internal_regime.transitions["iskhakov_et_al_2017_stripped_down"],
+    )
     got_func = get_next_state_function(
-        transitions=internal_regime.transitions["iskhakov_et_al_2017_stripped_down"],
+        transitions=transitions_for_regime,
         functions=internal_regime.functions,
         grids={"iskhakov_et_al_2017_stripped_down": internal_regime.grids},
         target=Target.SOLVE,
@@ -51,16 +55,18 @@ def test_get_next_state_function_with_simulate_target():
     def f_weight_b(state: ContinuousState, params: ParamsDict) -> FloatND:  # noqa: ARG001
         return jnp.array([0.0, 1.0])
 
-    grids = {"b": jnp.arange(2)}
+    grids = {"mock": {"b": jnp.arange(2)}}
     internal_functions = InternalFunctions(
         utility=lambda: 0,  # type: ignore[arg-type]
         constraints={},
         transitions={"next_a": f_a, "next_b": f_b},  # type: ignore[dict-item]
         functions={"f_weight_b": f_weight_b},  # type: ignore[dict-item]
-        regime_transition_probs={lambda: 1.0},
+        regime_transition_probs={"mock": lambda: {"mock": 1.0}},  # type: ignore[dict-item]
     )
     got_func = get_next_state_function(
-        transitions=internal_functions.transitions,
+        transitions=cast(
+            "dict[str, InternalUserFunction]", internal_functions.transitions
+        ),
         functions=internal_functions.functions,
         grids=grids,
         target=Target.SIMULATE,

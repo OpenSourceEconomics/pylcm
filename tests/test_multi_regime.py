@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
+from jax import Array
 
 import lcm
 from lcm import DiscreteGrid, LinspaceGrid
@@ -107,7 +108,7 @@ def next_wealth_regime_transition(
     return (1 + interest_rate) * (wealth - consumption)
 
 
-def regime_transition_probs_working_to_retirement(period) -> dict[str, float]:
+def regime_transition_probs_working_to_retirement(period: int) -> dict[str, Array]:
     return {
         "work": jnp.where(period < 6, 1, 0.5),
         "retirement": jnp.where(period < 6, 0, 0.5),
@@ -119,7 +120,7 @@ def regime_transition_probs_retirement_absorbing() -> dict[str, float]:
 
 
 def working_during_retirement() -> IntND:
-    return 0
+    return jnp.array(0)
 
 
 def test_work_retirement_model_solution():
@@ -150,7 +151,7 @@ def test_work_retirement_model_solution():
                 "next_health": next_health,
             },
         },
-        regime_transition_probs=regime_transition_probs_working_to_retirement,
+        regime_transition_probs=regime_transition_probs_working_to_retirement,  # type: ignore[arg-type]
     )
 
     # Create retirement regime
@@ -176,7 +177,7 @@ def test_work_retirement_model_solution():
             },
             "retirement": {"next_wealth": next_wealth, "next_health": next_health},
         },  # Retirement is absorbing
-        regime_transition_probs=regime_transition_probs_retirement_absorbing,
+        regime_transition_probs=regime_transition_probs_retirement_absorbing,  # type: ignore[arg-type]
     )
 
     # Create complete model using new regime-based API
@@ -236,10 +237,14 @@ def test_work_retirement_model_solution():
     simulation = model.simulate(
         params=params,
         initial_states={
-            "work__wealth": jnp.array([5.0, 20, 40, 70]),
-            "retirement__wealth": jnp.array([5.0, 20, 40, 70]),
-            "work__health": jnp.array([1, 1, 1, 1]),
-            "retirement__health": jnp.array([1, 1, 1, 1]),
+            "work": {
+                "wealth": jnp.array([5.0, 20, 40, 70]),
+                "health": jnp.array([1, 1, 1, 1]),
+            },
+            "retirement": {
+                "wealth": jnp.array([5.0, 20, 40, 70]),
+                "health": jnp.array([1, 1, 1, 1]),
+            },
         },
         initial_regimes=["work"] * 4,
         V_arr_dict=solution,

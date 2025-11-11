@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from lcm.interfaces import (
         InternalRegime,
     )
-    from lcm.typing import FloatND, ParamsDict
+    from lcm.typing import FloatND, ParamsDict, RegimeName
 
 
 def solve(
@@ -20,7 +20,7 @@ def solve(
     n_periods: int,
     internal_regimes: dict[str, InternalRegime],
     logger: logging.Logger,
-) -> dict[int, FloatND]:
+) -> dict[int, dict[RegimeName, FloatND]]:
     """Solve a model using grid search.
 
     Args:
@@ -34,14 +34,17 @@ def solve(
         Dict with one value function array per period.
 
     """
-    solution = {}
-    next_V_arr = {name: jnp.empty(0) for name in internal_regimes}
+    solution: dict[int, dict[RegimeName, FloatND]] = {}
+    next_V_arr: dict[RegimeName, FloatND] = {
+        name: jnp.empty(0) for name in internal_regimes
+    }
 
     logger.info("Starting solution")
 
     # backwards induction loop
     for period in reversed(range(n_periods)):
-        period_solution = {}
+        period_solution: dict[RegimeName, FloatND] = {}
+
         for name, internal_regime in internal_regimes.items():
             max_Q_over_a = internal_regime.max_Q_over_a_functions(
                 period, n_periods=n_periods

@@ -23,7 +23,6 @@ from lcm.input_processing.regime_components import (
 from lcm.input_processing.util import (
     get_grids,
     get_gridspecs,
-    get_transition_info,
     get_variable_info,
     is_stochastic_transition,
 )
@@ -42,8 +41,30 @@ if TYPE_CHECKING:
         InternalUserFunction,
         ParamsDict,
         RegimeName,
+        TransitionsDict,
         UserFunction,
     )
+
+
+def _unflatten_transitions(
+    flat_transitions: dict[str, InternalUserFunction],
+) -> TransitionsDict:
+    """Type-safe wrapper for unflatten_from_qnames for transition functions.
+
+    This function ensures that the output of unflatten_from_qnames has the correct
+    type structure for transitions. The unflattened structure can be:
+    - Flat (single regime): {"next_wealth": func, "next_health": func}
+    - Nested (multi-regime): {"work": {"next_wealth": func}, "retirement": {...}}
+
+    Args:
+        flat_transitions: A flat dictionary mapping qualified names to internal
+            functions.
+
+    Returns:
+        A nested dictionary structure typed as TransitionsDict.
+
+    """
+    return cast("TransitionsDict", unflatten_from_qnames(flat_transitions))
 
 
 def process_regimes(
@@ -72,7 +93,6 @@ def process_regimes(
     grids = {}
     gridspecs = {}
     variable_info = {}
-    transition_info = {}
     state_space_infos = {}
     state_action_spaces = {}
 
@@ -80,7 +100,6 @@ def process_regimes(
         grids[regime.name] = get_grids(regime)
         gridspecs[regime.name] = get_gridspecs(regime)
         variable_info[regime.name] = get_variable_info(regime)
-        transition_info[regime.name] = get_transition_info(regime)
         state_space_infos[regime.name] = build_state_space_infos(regime)
         state_action_spaces[regime.name] = build_state_action_spaces(regime)
 
@@ -235,7 +254,7 @@ def _get_internal_functions(
         functions=internal_functions,
         utility=internal_utility,
         constraints=internal_constraints,
-        transitions=unflatten_from_qnames(internal_transition),
+        transitions=_unflatten_transitions(internal_transition),
         regime_transition_probs=internal_regime_transition_probs,
     )
 

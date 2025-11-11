@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 def get_next_state_function(
     *,
     grids: dict[str, dict[str, Array]],
-    transitions: dict[RegimeName, dict[str, InternalUserFunction]],
+    transitions: dict[str, InternalUserFunction],
     functions: dict[str, InternalUserFunction],
     target: Target,
 ) -> NextStateSimulationFunction:
@@ -50,19 +50,19 @@ def get_next_state_function(
 
     """
     if target == Target.SOLVE:
-        functions = transitions | functions
+        functions_to_concatenate = transitions | functions
     elif target == Target.SIMULATE:
         # For the simulation target, we need to extend the functions dictionary with
         # stochastic next states functions and their weights.
         extended_transitions = _extend_transitions_for_simulation(
             grids=grids, transitions=transitions
         )
-        functions = extended_transitions | functions
+        functions_to_concatenate = extended_transitions | functions
     else:
         raise ValueError(f"Invalid target: {target}")
 
     return concatenate_functions(
-        functions=functions,
+        functions=functions_to_concatenate,
         targets=list(transitions.keys()),
         return_type="dict",
         enforce_signature=False,
@@ -73,7 +73,7 @@ def get_next_state_function(
 def get_next_stochastic_weights_function(
     regime_name: RegimeName,
     functions: dict[str, InternalUserFunction],
-    transitions: dict[RegimeName, dict[str, InternalUserFunction]],
+    transitions: dict[str, InternalUserFunction],
 ) -> Callable[..., dict[str, Array]]:
     """Get function that computes the weights for the next stochastic states.
 
@@ -87,9 +87,9 @@ def get_next_stochastic_weights_function(
 
     """
     targets = [
-        f"weight_{regime_name}__{key}"
-        for key, value in transitions.items()
-        if is_stochastic_transition(value)
+        f"weight_{regime_name}__{fn_name}"
+        for fn_name, fn in transitions.items()
+        if is_stochastic_transition(fn)
     ]
 
     return concatenate_functions(
@@ -103,7 +103,7 @@ def get_next_stochastic_weights_function(
 
 def _extend_transitions_for_simulation(
     grids: dict[str, dict[str, Array]],
-    transitions: dict[RegimeName, dict[str, InternalUserFunction]],
+    transitions: dict[str, InternalUserFunction],
 ) -> dict[str, Callable[..., Array]]:
     """Extend the functions dictionary for the simulation target.
 
@@ -117,7 +117,7 @@ def _extend_transitions_for_simulation(
     """
     flat_grids = flatten_to_qnames(grids)
     stochastic_targets = [
-        key for key, next_fn in transitions.items() if is_stochastic_transition(next_fn)
+        fn_name for fn_name, fn in transitions.items() if is_stochastic_transition(fn)
     ]
     # Handle stochastic next states functions
     # ----------------------------------------------------------------------------------

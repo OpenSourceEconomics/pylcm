@@ -12,6 +12,8 @@ from lcm.grids import Grid
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from jax import Array
+
     from lcm.typing import (
         UserFunction,
     )
@@ -42,7 +44,7 @@ class Regime:
     functions: dict[str, UserFunction] = field(default_factory=dict)
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
-    regime_transition_probs: Callable[..., dict[str, float]] | None = None
+    regime_transition_probs: Callable[..., dict[str, float | Array]] | None = None
 
     def __post_init__(self) -> None:
         _validate_attribute_types(self)

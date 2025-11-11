@@ -21,7 +21,7 @@ class RegimeMock:
     utility: UserFunction | None = None
     states: dict[str, Any] | None = None
     constraints: dict[str, UserFunction] = field(default_factory=dict)
-    transitions: dict[str, UserFunction] = field(default_factory=dict)
+    transitions: dict[str, dict[str, UserFunction]] = field(default_factory=dict)
     functions: dict[str, UserFunction] = field(default_factory=dict)
 
     def get_all_functions(self) -> dict[str, UserFunction | None]:

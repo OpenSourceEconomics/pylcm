@@ -7,10 +7,12 @@ from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.random import generate_simulation_keys
 from lcm.state_action_space import create_state_action_space
-from lcm.typing import Int1D, RegimeName
+from lcm.typing import Int1D, ParamsDict, RegimeName
 
 
-def get_regime_name_to_id_mapping(internal_regimes):
+def get_regime_name_to_id_mapping(
+    internal_regimes: dict[RegimeName, InternalRegime],
+) -> dict[RegimeName, int]:
     return {
         regime.name: i
         for regime, i in zip(
@@ -26,7 +28,7 @@ def create_regime_state_action_space(
     subjects_in_regime: Int1D,
     *,
     is_last_period: bool,
-):
+) -> StateActionSpace:
     if is_last_period:
         query = "is_state and enters_concurrent_valuation"
     else:
@@ -50,7 +52,7 @@ def calculate_next_states(
     subjects_in_regime: Int1D,
     optimal_actions: dict[str, Array],
     period: int,
-    params: dict[RegimeName, dict],
+    params: dict[RegimeName, ParamsDict],
     states: dict[str, Array],
     state_action_space: StateActionSpace,
     key: Array,
@@ -72,7 +74,7 @@ def calculate_next_states(
     next_state_vmapped = internal_regime.next_state_simulation_function
 
     states_with_next_prefix = next_state_vmapped(
-        **state_action_space.states,  # type: ignore[assignment]
+        **state_action_space.states,
         **optimal_actions,
         **stochastic_variables_keys,
         period=period,
@@ -96,7 +98,7 @@ def calculate_next_regime_membership(
     state_action_space: StateActionSpace,
     optimal_actions: dict[str, Array],
     period: int,
-    params: dict[RegimeName, dict],
+    params: dict[RegimeName, ParamsDict],
     regime_name_to_id: dict[RegimeName, int],
     new_subject_regime_ids: Int1D,
     key: Array,
@@ -116,7 +118,7 @@ def calculate_next_regime_membership(
         n_initial_states=subjects_in_regime.shape[0],
     )
     new_regimes = draw_key_from_dict(
-        d=_regime_transition_probs,
+        d=_regime_transition_probs,  # type: ignore[arg-type]
         keys=regime_transition_key["key_regime_transition"],
         regime_name_to_id=regime_name_to_id,
     )
@@ -126,7 +128,7 @@ def calculate_next_regime_membership(
 
 def draw_key_from_dict(
     d: dict[str, Array], regime_name_to_id: dict[str, int], keys: Array
-) -> list[str]:
+) -> Int1D:
     """Draw a random key from a dictionary of arrays.
 
     Args:
@@ -141,18 +143,20 @@ def draw_key_from_dict(
         A random key from the dictionary for each entry in the arrays.
 
     """
-    regime_ids = jnp.array([regime_name_to_id[key] for key in d])
+    regime_names = list(d)
+    regime_transition_probs = jnp.array(list(d.values())).T
+    regime_ids = jnp.array([regime_name_to_id[name] for name in regime_names])
 
-    def draw_single_key(
+    def random_id(
         key: Array,
         p: Array,
-    ) -> str:
+    ) -> Int1D:
         return jax.random.choice(
             key,
             regime_ids,
             p=p,
         )
 
-    draw_key = vmap(draw_single_key, in_axes=(0, 0))
+    random_ids = vmap(random_id, in_axes=(0, 0))
 
-    return draw_key(keys, jnp.array(list(d.values())).T)
+    return random_ids(keys, regime_transition_probs)

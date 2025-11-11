@@ -37,6 +37,8 @@ if TYPE_CHECKING:
         MaxQOverAFunction,
         NextStateSimulationFunction,
         QAndFFunction,
+        RegimeTransitionFunction,
+        VmappedRegimeTransitionFunction,
     )
 
 
@@ -79,7 +81,7 @@ def build_Q_and_F_functions(
     regime: Regime,
     internal_functions: InternalFunctions,
     state_space_infos: dict[str, PeriodVariantContainer[StateSpaceInfo]],
-    grids,
+    grids: dict[str, dict[str, Array]],
 ) -> PeriodVariantContainer[QAndFFunction]:
     Q_and_F_terminal = get_Q_and_F(
         regime=regime,
@@ -199,7 +201,7 @@ def _build_argmax_and_max_Q_over_a_function(
 
 def build_next_state_simulation_functions(
     internal_functions: InternalFunctions,
-    grids: dict[str, Array],
+    grids: dict[str, dict[str, Array]],
     *,
     enable_jit: bool,
 ) -> NextStateSimulationFunction:
@@ -229,12 +231,12 @@ def build_next_state_simulation_functions(
 
 
 def build_regime_transition_probs_functions(
-    internal_functions: InternalFunctions,
+    internal_functions: dict[str, InternalUserFunction],
     regime_transition_probs: InternalUserFunction,
-    grids,
+    grids: dict[str, Array],
     *,
     enable_jit: bool,
-):
+) -> dict[str, RegimeTransitionFunction | VmappedRegimeTransitionFunction]:
     next_regime = concatenate_functions(
         functions=internal_functions
         | {"regime_transition_probs": regime_transition_probs},

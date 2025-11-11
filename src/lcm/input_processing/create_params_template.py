@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import jax.numpy as jnp
 from dags.tree import unflatten_from_qnames
@@ -94,7 +94,7 @@ def _create_function_params(regime: Regime) -> dict[str, dict[str, float]]:
 def _create_stochastic_transition_params(
     regime: Regime,
     variable_info: pd.DataFrame,
-    grids: dict[str, Array],
+    grids: dict[str, dict[str, Array]],
     n_periods: int,
 ) -> dict[str, Array]:
     """Create parameters for stochastic transitions.
@@ -155,4 +155,4 @@ def _create_stochastic_transition_params(
             f"{invalid_dependencies}.",
         )
 
-    return unflatten_from_qnames(stochastic_transition_params)
+    return cast("dict[str, Any]", unflatten_from_qnames(stochastic_transition_params))

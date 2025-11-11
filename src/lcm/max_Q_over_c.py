@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import functools
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
 from jax import Array
@@ -78,7 +78,10 @@ def get_max_Q_over_c(
         )
         return Q_arr.max(where=F_arr, initial=-jnp.inf)
 
-    return productmap(max_Q_over_c, variables=states_and_discrete_actions_names)
+    return cast(
+        "MaxQOverCFunction",
+        productmap(max_Q_over_c, variables=states_and_discrete_actions_names),
+    )
 
 
 def get_argmax_and_max_Q_over_c(
@@ -135,4 +138,4 @@ def get_argmax_and_max_Q_over_c(
         )
         return argmax_and_max(Q_arr, where=F_arr, initial=-jnp.inf)
 
-    return argmax_and_max_Q_over_c
+    return cast("ArgmaxQOverCFunction", argmax_and_max_Q_over_c)

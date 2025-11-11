@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from lcm.typing import (
         FloatND,
         ParamsDict,
+        RegimeName,
     )
 
 
@@ -63,8 +64,7 @@ class Model:
             enable_jit: Whether to jit the functions of the internal regime.
 
         """
-        # TODO @timmens: Requires a more robust function
-        if isinstance(regimes, Regime):
+        if not isinstance(regimes, list):
             regimes = [regimes]
 
         self.n_periods = n_periods
@@ -91,7 +91,7 @@ class Model:
         params: ParamsDict,
         *,
         debug_mode: bool = True,
-    ) -> dict[int, FloatND]:
+    ) -> dict[int, dict[RegimeName, FloatND]]:
         """Solve the model using the pre-computed functions.
 
         Args:
@@ -99,7 +99,7 @@ class Model:
             debug_mode: Whether to enable debug logging
 
         Returns:
-            Dictionary mapping period to value function arrays
+            Dictionary mapping period to a value function array for each regime.
         """
         return solve(
             params=params,
@@ -111,14 +111,14 @@ class Model:
     def simulate(
         self,
         params: ParamsDict,
-        initial_states: dict[str, Array],
-        initial_regimes: list[str],
-        V_arr_dict: dict[int, FloatND],
+        initial_states: dict[RegimeName, dict[str, Array]],
+        initial_regimes: list[RegimeName],
+        V_arr_dict: dict[int, dict[RegimeName, FloatND]],
         *,
         additional_targets: list[str] | None = None,
         seed: int | None = None,
         debug_mode: bool = True,
-    ) -> pd.DataFrame:
+    ) -> dict[RegimeName, pd.DataFrame]:
         """Simulate the model forward using pre-computed functions.
 
         Args:
@@ -132,7 +132,7 @@ class Model:
             debug_mode: Whether to enable debug logging
 
         Returns:
-            Simulation results as DataFrame
+            Simulation results as dict mapping regime name to DataFrame
         """
         logger = get_logger(debug_mode=debug_mode)
 
@@ -150,13 +150,13 @@ class Model:
     def solve_and_simulate(
         self,
         params: ParamsDict,
-        initial_states: dict[str, Array],
-        initial_regimes: list[str],
+        initial_states: dict[RegimeName, dict[str, Array]],
+        initial_regimes: list[RegimeName],
         *,
         additional_targets: list[str] | None = None,
         seed: int | None = None,
         debug_mode: bool = True,
-    ) -> pd.DataFrame:
+    ) -> dict[RegimeName, pd.DataFrame]:
         """Solve and then simulate the model in one call.
 
         Args:
@@ -169,7 +169,7 @@ class Model:
             debug_mode: Whether to enable debug logging
 
         Returns:
-            Simulation results as DataFrame
+            Simulation results as dict mapping regime name to DataFrame
         """
         V_arr_dict = self.solve(params, debug_mode=debug_mode)
         return self.simulate(
@@ -183,7 +183,7 @@ class Model:
         )
 
 
-def _validate_model_inputs(n_periods: int, regimes: Regime) -> None:
+def _validate_model_inputs(n_periods: int, regimes: list[Regime]) -> None:
     error_messages: list[str] = []
 
     if not isinstance(n_periods, int):

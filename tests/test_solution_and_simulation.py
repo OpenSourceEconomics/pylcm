@@ -189,7 +189,7 @@ def test_get_max_Q_over_c():
     Q_and_F = get_Q_and_F(
         regime=regime,
         internal_functions=internal_regime.internal_functions,
-        next_state_space_infos=state_space_info,
+        next_state_space_infos={regime.name: state_space_info},
         grids=internal_regime.grids,
         is_last_period=True,
     )
@@ -206,7 +206,7 @@ def test_get_max_Q_over_c():
         wealth=jnp.array(30),
         params=params,
         period=2,
-        next_V_arr=jnp.empty(0),
+        next_V_arr={regime.name: jnp.empty(0)},
     )
     assert val == iskhakov_et_al_2017_utility(
         consumption=jnp.array(30.0),
@@ -240,7 +240,7 @@ def test_get_max_Q_over_c_with_discrete_model():
     Q_and_F = get_Q_and_F(
         regime=regime,
         internal_functions=internal_regime.internal_functions,
-        next_state_space_infos=state_space_info,
+        next_state_space_infos={regime.name: state_space_info},
         grids=internal_regime.grids,
         is_last_period=True,
     )
@@ -257,7 +257,7 @@ def test_get_max_Q_over_c_with_discrete_model():
         wealth=jnp.array(2),
         params=params,
         period=2,
-        next_V_arr=jnp.empty(0),
+        next_V_arr={regime.name: jnp.empty(0)},
     )
     assert val == iskhakov_et_al_2017_utility(
         consumption=jnp.array(2),
@@ -296,7 +296,7 @@ def test_argmax_and_max_Q_over_c():
     Q_and_F = get_Q_and_F(
         regime=regime,
         internal_functions=internal_regime.internal_functions,
-        next_state_space_infos=state_space_info,
+        next_state_space_infos={regime.name: state_space_info},
         grids=internal_regime.grids,
         is_last_period=True,
     )
@@ -312,7 +312,7 @@ def test_argmax_and_max_Q_over_c():
         wealth=jnp.array(30),
         params=params,
         period=2,
-        next_V_arr=jnp.empty(0),
+        next_V_arr={regime.name: jnp.empty(0)},
     )
     assert policy == 2
     assert val == iskhakov_et_al_2017_utility(
@@ -347,7 +347,7 @@ def test_argmax_and_max_Q_over_c_with_discrete_model():
     Q_and_F = get_Q_and_F(
         regime=regime,
         internal_functions=internal_regime.internal_functions,
-        next_state_space_infos=state_space_info,
+        next_state_space_infos={regime.name: state_space_info},
         grids=internal_regime.grids,
         is_last_period=True,
     )
@@ -363,7 +363,7 @@ def test_argmax_and_max_Q_over_c_with_discrete_model():
         wealth=jnp.array(2),
         params=params,
         period=2,
-        next_V_arr=jnp.empty(0),
+        next_V_arr={regime.name: jnp.empty(0)},
     )
     assert _argmax == 1
     assert _max == iskhakov_et_al_2017_utility(

@@ -39,7 +39,7 @@ def simulate(
     *,
     additional_targets: list[str] | None = None,
     seed: int | None = None,
-) -> pd.DataFrame:
+) -> dict[RegimeName, pd.DataFrame]:
     """Simulate the model forward in time given pre-computed value function arrays.
 
     Args:
@@ -80,7 +80,9 @@ def simulate(
 
     # Forward simulation
     # ----------------------------------------------------------------------------------
-    simulation_results = {regime_name: {} for regime_name in internal_regimes}
+    simulation_results: dict[str, dict[int, SimulationResults]] = {
+        regime_name: {} for regime_name in internal_regimes
+    }
     for period in range(n_periods):
         logger.info("Period: %s", period)
 
@@ -105,8 +107,8 @@ def simulate(
             # --------------------------------------------------------------------------
             # We need to pass the value function array of the next period to the
             # argmax_and_max_Q_over_a function, as the current Q-function requires the
-            # next periods's value funciton. In the last period, we pass an empty array.
-            next_V_arr = V_arr_dict.get(period + 1, jnp.empty(0))
+            # next periods's value funciton. In the last period, we pass an empty dict.
+            next_V_arr = V_arr_dict.get(period + 1, {})
 
             # The Q-function values contain the information of how much value each
             # action combination is worth. To find the optimal discrete action, we

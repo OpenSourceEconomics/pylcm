@@ -25,9 +25,11 @@ def test_model_solve_and_simulate_with_stochastic_model():
     res: pd.DataFrame = model.solve_and_simulate(
         params=get_params("iskhakov_et_al_2017_stochastic"),
         initial_states={
-            "iskhakov_et_al_2017_stochastic__health": jnp.array([1, 1, 0, 0]),
-            "iskhakov_et_al_2017_stochastic__partner": jnp.array([0, 0, 1, 0]),
-            "iskhakov_et_al_2017_stochastic__wealth": jnp.array([10.0, 50.0, 30, 80.0]),
+            "iskhakov_et_al_2017_stochastic": {
+                "health": jnp.array([1, 1, 0, 0]),
+                "partner": jnp.array([0, 0, 1, 0]),
+                "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
+            }
         },
         initial_regimes=["iskhakov_et_al_2017_stochastic"] * 4,
     )["iskhakov_et_al_2017_stochastic"]

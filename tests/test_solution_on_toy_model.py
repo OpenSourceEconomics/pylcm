@@ -394,7 +394,7 @@ def test_deterministic_simulate(beta, n_wealth_points):
     # Simulate model using LCM
     # ==================================================================================
     params = {"beta": beta, "utility": {"health": 1}}
-    got: pd.DataFrame = model.solve_and_simulate(
+    got: dict[str, pd.DataFrame] = model.solve_and_simulate(
         params={"test": params},
         initial_states={"test": {"wealth": jnp.array([0.25, 0.75, 1.25, 1.75])}},
         initial_regimes=["test"] * 4,

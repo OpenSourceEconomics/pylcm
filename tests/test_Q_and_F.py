@@ -55,8 +55,8 @@ def test_get_Q_and_F_function():
     Q_and_F = get_Q_and_F(
         regime=regime,
         internal_functions=internal_regime.internal_functions,
-        next_state_space_infos=state_space_info,
-        grids=internal_regime.grids,
+        next_state_space_infos={regime.name: state_space_info},
+        grids={regime.name: internal_regime.grids},
         is_last_period=True,
     )
 
@@ -130,7 +130,7 @@ def internal_functions_illustrative():
         transitions={},
         constraints=constraints,  # type: ignore[arg-type]
         functions=functions,  # type: ignore[arg-type]
-        regime_transition_probs=lambda: 1,
+        regime_transition_probs={"mock": lambda: {"mock": 1.0}},  # type: ignore[dict-item]
     )
 
 
@@ -202,7 +202,7 @@ def test_get_combined_constraint():
         constraints={"f": f, "g": g},  # type: ignore[dict-item]
         transitions={},
         functions={"h": h},  # type: ignore[dict-item]
-        regime_transition_probs=lambda: 1.0,
+        regime_transition_probs={"mock": lambda: {"mock": 1.0}},  # type: ignore[dict-item]
     )
     combined_constraint = _get_feasibility(internal_functions)
     feasibility: BoolND = combined_constraint(params={})
