@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 import jax
 from dags import concatenate_functions
 from dags.signature import with_signature
-from dags.tree import flatten_to_qnames
 
 from lcm.dispatchers import simulation_spacemap, vmap_1d
 from lcm.input_processing.util import get_grids, get_variable_info
@@ -26,6 +25,7 @@ from lcm.state_action_space import (
     create_state_action_space,
     create_state_space_info,
 )
+from lcm.utils import flatten_regime_namespace
 
 if TYPE_CHECKING:
     from jax import Array
@@ -207,7 +207,7 @@ def build_next_state_simulation_functions(
     enable_jit: bool,
 ) -> NextStateSimulationFunction:
     next_state = get_next_state_function(
-        transitions=flatten_to_qnames(internal_functions.transitions),
+        transitions=flatten_regime_namespace(internal_functions.transitions),
         functions=internal_functions.functions,
         grids=grids,
         target=Target.SIMULATE,

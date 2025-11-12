@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import dags.tree as dt
 import pandas as pd
 from dags import get_ancestors
 
 from lcm.grids import ContinuousGrid, Grid
+from lcm.utils import flatten_regime_namespace
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -109,7 +109,7 @@ def _indicator_enters_transition(
     Special variables such as the "period" or parameters will be ignored.
 
     """
-    next_fn_names = list(dt.flatten_to_qnames(regime.transitions))
+    next_fn_names = list(flatten_regime_namespace(regime.transitions))
     user_functions = regime.get_all_functions()
     ancestors = get_ancestors(
         user_functions,

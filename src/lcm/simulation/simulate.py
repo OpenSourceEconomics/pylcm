@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
-from dags.tree import flatten_to_qnames
 from jax import Array, vmap
 
 from lcm.error_handling import validate_value_function_array
@@ -20,6 +19,7 @@ from lcm.simulation.util import (
     create_regime_state_action_space,
     get_regime_name_to_id_mapping,
 )
+from lcm.utils import flatten_regime_namespace
 
 if TYPE_CHECKING:
     import logging
@@ -69,7 +69,7 @@ def simulate(
     regime_name_to_id = get_regime_name_to_id_mapping(internal_regimes)
 
     # The following variables are updated during the forward simulation
-    states = flatten_to_qnames(initial_states)
+    states = flatten_regime_namespace(initial_states)
     subject_regime_ids = jnp.asarray(
         [regime_name_to_id[initial_regime] for initial_regime in initial_regimes]
     )

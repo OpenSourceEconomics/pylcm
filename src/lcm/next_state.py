@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING
 import jax
 from dags import concatenate_functions
 from dags.signature import with_signature
-from dags.tree import flatten_to_qnames
 
 from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import Target
+from lcm.utils import flatten_regime_namespace
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -116,7 +116,7 @@ def _extend_transitions_for_simulation(
         Extended functions dictionary.
 
     """
-    flat_grids = flatten_to_qnames(grids)
+    flat_grids = flatten_regime_namespace(grids)
     stochastic_targets = [
         fn_name for fn_name, fn in transitions.items() if is_stochastic_transition(fn)
     ]

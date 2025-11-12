@@ -5,9 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from dags.tree import flatten_to_qnames
-
-from lcm.utils import first_non_none
+from lcm.utils import first_non_none, flatten_regime_namespace
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -243,10 +241,10 @@ class InternalFunctions:
             Dictionary that maps names of all regime functions to the functions.
 
         """
-        return flatten_to_qnames(
+        return flatten_regime_namespace(
             self.functions
             | {"utility": self.utility}
             | self.constraints
-            | dict(self.transitions)
-            | self.regime_transition_probs  # type: ignore[operator]
+            | self.transitions
+            | self.regime_transition_probs
         )

@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 from dags import get_annotations
 from dags.signature import with_signature
-from dags.tree import flatten_to_qnames, unflatten_from_qnames
 
 from lcm.functools import convert_kwargs_to_args
 from lcm.input_processing.create_params_template import create_params_template
@@ -27,6 +26,7 @@ from lcm.input_processing.util import (
     is_stochastic_transition,
 )
 from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
+from lcm.utils import flatten_regime_namespace, unflatten_regime_namespace
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -41,30 +41,8 @@ if TYPE_CHECKING:
         InternalUserFunction,
         ParamsDict,
         RegimeName,
-        TransitionFunctionsDict,
         UserFunction,
     )
-
-
-def _unflatten_transitions(
-    flat_transitions: dict[str, InternalUserFunction],
-) -> TransitionFunctionsDict:
-    """Type-safe wrapper for unflatten_from_qnames for transition functions.
-
-    This function ensures that the output of unflatten_from_qnames has the correct
-    type structure for transitions. The unflattened structure can be:
-    - Flat (single regime): {"next_wealth": func, "next_health": func}
-    - Nested (multi-regime): {"work": {"next_wealth": func}, "retirement": {...}}
-
-    Args:
-        flat_transitions: A flat dictionary mapping qualified names to internal
-            functions.
-
-    Returns:
-        A nested dictionary structure typed as TransitionFunctionsDict.
-
-    """
-    return cast("TransitionFunctionsDict", unflatten_from_qnames(flat_transitions))
 
 
 def process_regimes(
@@ -182,11 +160,11 @@ def _get_internal_functions(
     variable_info = get_variable_info(regime)
 
     raw_functions = deepcopy(regime.get_all_functions())
-    flat_grids = flatten_to_qnames(grids)
+    flat_grids = flatten_regime_namespace(grids)
     # ==================================================================================
     # Create functions for stochastic transitions
     # ==================================================================================
-    for next_fn_name, next_fn in flatten_to_qnames(regime.transitions).items():
+    for next_fn_name, next_fn in flatten_regime_namespace(regime.transitions).items():
         if is_stochastic_transition(next_fn):
             raw_functions[next_fn_name] = _get_stochastic_next_function(
                 raw_func=next_fn,
@@ -230,7 +208,8 @@ def _get_internal_functions(
         functions[func_name] = processed_func
 
     internal_transition = {
-        fn_name: functions[fn_name] for fn_name in flatten_to_qnames(regime.transitions)
+        fn_name: functions[fn_name]
+        for fn_name in flatten_regime_namespace(regime.transitions)
     }
     internal_utility = functions["utility"]
     internal_constraints = {
@@ -239,7 +218,7 @@ def _get_internal_functions(
     internal_functions = {
         fn_name: functions[fn_name]
         for fn_name in functions
-        if fn_name not in flatten_to_qnames(regime.transitions)
+        if fn_name not in flatten_regime_namespace(regime.transitions)
         and fn_name not in regime.constraints
         and fn_name != "utility"
     }
@@ -254,7 +233,7 @@ def _get_internal_functions(
         functions=internal_functions,
         utility=internal_utility,
         constraints=internal_constraints,
-        transitions=_unflatten_transitions(internal_transition),
+        transitions=unflatten_regime_namespace(internal_transition),
         regime_transition_probs=internal_regime_transition_probs,
     )
 

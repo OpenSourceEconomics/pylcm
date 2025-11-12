@@ -1,5 +1,4 @@
 import jax
-from dags.tree import flatten_to_qnames
 from jax import Array, vmap
 from jax import numpy as jnp
 
@@ -8,6 +7,7 @@ from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.random import generate_simulation_keys
 from lcm.state_action_space import create_state_action_space
 from lcm.typing import Int1D, ParamsDict, RegimeName
+from lcm.utils import flatten_regime_namespace
 
 
 def get_regime_name_to_id_mapping(
@@ -59,7 +59,7 @@ def calculate_next_states(
 ) -> dict[str, Array]:
     stochastic_next_function_names = [
         next_fn_name
-        for next_fn_name, next_fn in flatten_to_qnames(
+        for next_fn_name, next_fn in flatten_regime_namespace(
             internal_regime.transitions
         ).items()
         if is_stochastic_transition(next_fn)

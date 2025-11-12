@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import inspect
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
-from dags.tree import unflatten_from_qnames
 from jax import Array
 
 from lcm.input_processing.util import (
     get_variable_info,
     is_stochastic_transition,
 )
+from lcm.utils import unflatten_regime_namespace
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -155,4 +155,4 @@ def _create_stochastic_transition_params(
             f"{invalid_dependencies}.",
         )
 
-    return cast("dict[str, Any]", unflatten_from_qnames(stochastic_transition_params))
+    return unflatten_regime_namespace(stochastic_transition_params)

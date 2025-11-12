@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from collections import Counter
 from itertools import chain
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
+
+from dags.tree import flatten_to_qnames, unflatten_from_qnames
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+
+    from lcm.typing import RegimeName
 
 T = TypeVar("T")
 
@@ -33,3 +37,11 @@ def first_non_none(*args: T | None) -> T:
         if arg is not None:
             return arg
     raise ValueError("All arguments are None")
+
+
+def flatten_regime_namespace(d: dict[RegimeName, Any]) -> dict[str, Any]:
+    return flatten_to_qnames(d)
+
+
+def unflatten_regime_namespace(d: dict[str, Any]) -> dict[RegimeName, Any]:
+    return unflatten_from_qnames(d)  # type: ignore[return-value]

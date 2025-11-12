@@ -4,10 +4,9 @@ import dataclasses
 from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from dags.tree import flatten_to_qnames
-
 from lcm.exceptions import RegimeInitializationError, format_messages
 from lcm.grids import Grid
+from lcm.utils import flatten_regime_namespace
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -57,7 +56,7 @@ class Regime:
             Dictionary that maps names of all regime functions to the functions.
 
         """
-        return flatten_to_qnames(
+        return flatten_regime_namespace(
             self.functions
             | {"utility": self.utility}
             | self.constraints
@@ -103,7 +102,7 @@ def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
     # Validate types of functions
     # ----------------------------------------------------------------------------------
     function_collections = [
-        flatten_to_qnames(regime.transitions),
+        flatten_regime_namespace(regime.transitions),
         regime.constraints,
         regime.functions,
     ]
