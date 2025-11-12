@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from lcm.regime import Regime
     from lcm.typing import (
         ArgmaxQOverAFunction,
+        GridsDict,
         InternalUserFunction,
         MaxQOverAFunction,
         NextStateSimulationFunction,
@@ -81,7 +82,7 @@ def build_Q_and_F_functions(
     regime: Regime,
     internal_functions: InternalFunctions,
     state_space_infos: dict[str, PeriodVariantContainer[StateSpaceInfo]],
-    grids: dict[str, dict[str, Array]],
+    grids: GridsDict,
 ) -> PeriodVariantContainer[QAndFFunction]:
     Q_and_F_terminal = get_Q_and_F(
         regime=regime,
@@ -201,7 +202,7 @@ def _build_argmax_and_max_Q_over_a_function(
 
 def build_next_state_simulation_functions(
     internal_functions: InternalFunctions,
-    grids: dict[str, dict[str, Array]],
+    grids: GridsDict,
     *,
     enable_jit: bool,
 ) -> NextStateSimulationFunction:

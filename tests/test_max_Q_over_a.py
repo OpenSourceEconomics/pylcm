@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 import pytest
@@ -24,7 +24,6 @@ from tests.test_models.utils import get_regime
 
 if TYPE_CHECKING:
     from lcm.typing import (
-        InternalUserFunction,
         IntND,
     )
 
@@ -58,12 +57,9 @@ def regime_input():
             },
         }
     }
-    transitions_for_regime = cast(
-        "dict[str, InternalUserFunction]",
-        internal_regime.internal_functions.transitions[
-            "iskhakov_et_al_2017_stripped_down"
-        ],
-    )
+    transitions_for_regime = internal_regime.internal_functions.transitions[
+        "iskhakov_et_al_2017_stripped_down"
+    ]
     return {
         "regime": regime,
         "internal_regime": internal_regime,

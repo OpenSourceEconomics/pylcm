@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from lcm.typing import (
         DiscreteState,
         FloatND,
+        GridsDict,
         InternalUserFunction,
         NextStateSimulationFunction,
         RegimeName,
@@ -29,7 +30,7 @@ if TYPE_CHECKING:
 
 def get_next_state_function(
     *,
-    grids: dict[str, dict[str, Array]],
+    grids: GridsDict,
     transitions: dict[str, InternalUserFunction],
     functions: dict[str, InternalUserFunction],
     target: Target,
@@ -102,7 +103,7 @@ def get_next_stochastic_weights_function(
 
 
 def _extend_transitions_for_simulation(
-    grids: dict[str, dict[str, Array]],
+    grids: GridsDict,
     transitions: dict[str, InternalUserFunction],
 ) -> dict[str, Callable[..., Array]]:
     """Extend the functions dictionary for the simulation target.

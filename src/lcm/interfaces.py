@@ -20,14 +20,12 @@ if TYPE_CHECKING:
         ContinuousState,
         DiscreteAction,
         DiscreteState,
-        Float1D,
-        Int1D,
         InternalUserFunction,
         MaxQOverAFunction,
         NextStateSimulationFunction,
         ParamsDict,
         RegimeTransitionFunction,
-        TransitionsDict,
+        TransitionFunctionsDict,
         VmappedRegimeTransitionFunction,
     )
 
@@ -188,12 +186,12 @@ class InternalRegime:
     """
 
     name: str
-    grids: dict[str, Float1D | Int1D]
+    grids: dict[str, Array]
     gridspecs: dict[str, Grid]
     variable_info: pd.DataFrame
     utility: InternalUserFunction
     constraints: dict[str, InternalUserFunction]
-    transitions: TransitionsDict
+    transitions: TransitionFunctionsDict
     functions: dict[str, InternalUserFunction]
     regime_transition_probs: dict[
         str, RegimeTransitionFunction | VmappedRegimeTransitionFunction
@@ -233,7 +231,7 @@ class InternalFunctions:
     functions: dict[str, InternalUserFunction]
     utility: InternalUserFunction
     constraints: dict[str, InternalUserFunction]
-    transitions: TransitionsDict
+    transitions: TransitionFunctionsDict
     regime_transition_probs: dict[
         str, RegimeTransitionFunction | VmappedRegimeTransitionFunction
     ]

@@ -19,12 +19,8 @@ def test_get_next_state_function_with_solve_target():
     internal_regime = process_regimes(regimes=[regime], n_periods=3, enable_jit=True)[
         "iskhakov_et_al_2017_stripped_down"
     ]
-    transitions_for_regime = cast(
-        "dict[str, InternalUserFunction]",
-        internal_regime.transitions["iskhakov_et_al_2017_stripped_down"],
-    )
     got_func = get_next_state_function(
-        transitions=transitions_for_regime,
+        transitions=internal_regime.transitions["iskhakov_et_al_2017_stripped_down"],
         functions=internal_regime.functions,
         grids={"iskhakov_et_al_2017_stripped_down": internal_regime.grids},
         target=Target.SOLVE,

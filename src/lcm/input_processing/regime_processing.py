@@ -41,14 +41,14 @@ if TYPE_CHECKING:
         InternalUserFunction,
         ParamsDict,
         RegimeName,
-        TransitionsDict,
+        TransitionFunctionsDict,
         UserFunction,
     )
 
 
 def _unflatten_transitions(
     flat_transitions: dict[str, InternalUserFunction],
-) -> TransitionsDict:
+) -> TransitionFunctionsDict:
     """Type-safe wrapper for unflatten_from_qnames for transition functions.
 
     This function ensures that the output of unflatten_from_qnames has the correct
@@ -61,10 +61,10 @@ def _unflatten_transitions(
             functions.
 
     Returns:
-        A nested dictionary structure typed as TransitionsDict.
+        A nested dictionary structure typed as TransitionFunctionsDict.
 
     """
-    return cast("TransitionsDict", unflatten_from_qnames(flat_transitions))
+    return cast("TransitionFunctionsDict", unflatten_from_qnames(flat_transitions))
 
 
 def process_regimes(

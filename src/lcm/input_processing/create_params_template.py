@@ -16,12 +16,12 @@ if TYPE_CHECKING:
     import pandas as pd
 
     from lcm.regime import Regime
-    from lcm.typing import ParamsDict
+    from lcm.typing import GridsDict, ParamsDict
 
 
 def create_params_template(
     regime: Regime,
-    grids: dict[str, dict[str, Array]],
+    grids: GridsDict,
     n_periods: int,
     default_params: dict[str, float] = {"beta": jnp.nan},  # noqa: B006
 ) -> ParamsDict:
@@ -94,7 +94,7 @@ def _create_function_params(regime: Regime) -> dict[str, dict[str, float]]:
 def _create_stochastic_transition_params(
     regime: Regime,
     variable_info: pd.DataFrame,
-    grids: dict[str, dict[str, Array]],
+    grids: GridsDict,
     n_periods: int,
 ) -> dict[str, Array]:
     """Create parameters for stochastic transitions.

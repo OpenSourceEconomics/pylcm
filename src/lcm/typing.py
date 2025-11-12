@@ -24,7 +24,11 @@ type ScalarFloat = float | Float[Scalar, ""]  # noqa: F722
 type Period = int | Int1D
 type RegimeName = str
 
-ParamsDict = dict[str, Any]
+type _RegimeGridsDict = dict[str, Array]
+type GridsDict = dict[RegimeName, _RegimeGridsDict]
+
+type TransitionFunctionsDict = dict[RegimeName, dict[str, InternalUserFunction]]
+type ParamsDict = dict[RegimeName, Any]
 
 
 class UserFunction(Protocol):
@@ -47,13 +51,6 @@ class InternalUserFunction(Protocol):
     def __call__(  # noqa: D102
         self, *args: Array | int, params: ParamsDict, **kwargs: Array | int
     ) -> Array: ...
-
-
-# Type for nested transition structure after unflatten_from_qnames
-# Can be flat (single regime) or nested (multi-regime):
-# Single regime: {"next_wealth": func, "next_health": func}
-# Multi-regime: {"work": {"next_wealth": func}, "retirement": {"next_wealth": func}}
-type TransitionsDict = dict[str, InternalUserFunction | dict[str, InternalUserFunction]]
 
 
 class RegimeTransitionFunction(Protocol):
