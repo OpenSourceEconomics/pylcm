@@ -14,31 +14,42 @@ def get_regime_name_to_id_mapping(
     internal_regimes: dict[RegimeName, InternalRegime],
 ) -> dict[RegimeName, int]:
     return {
-        regime.name: i
-        for regime, i in zip(
-            internal_regimes.values(), range(len(internal_regimes)), strict=False
-        )
+        internal_regime.name: _id
+        for _id, internal_regime in enumerate(internal_regimes.values())
     }
 
 
 def create_regime_state_action_space(
-    regime_name: RegimeName,
-    states: dict[str, Array],
     internal_regime: InternalRegime,
-    subjects_in_regime: Int1D,
+    states: dict[str, Array],
+    subject_ids_in_regime: Int1D,
     *,
     is_last_period: bool,
 ) -> StateActionSpace:
+    """Create the state-action space containing only the relevant subjects in a regime.
+
+    Args:
+        internal_regime: The internal regime instance.
+        states: The current states of all subjects.
+        subject_ids_in_regime: Indices of subjects in the current regime.
+        is_last_period: Whether we are in the last period of the model.
+
+    Returns:
+        The state-action space for the subjects in the regime.
+
+    """
     if is_last_period:
         query = "is_state and enters_concurrent_valuation"
     else:
         query = "is_state and (enters_concurrent_valuation | enters_transition)"
 
-    # Create state action space with current subjects
+    relevant_states_names = internal_regime.variable_info.query(query).index
+
     states_for_state_action_space = {
-        state_name: states[f"{regime_name}__{state_name}"][subjects_in_regime]
-        for state_name in internal_regime.variable_info.query(query).index
+        sn: states[f"{internal_regime.name}__{sn}"][subject_ids_in_regime]
+        for sn in relevant_states_names
     }
+
     return create_state_action_space(
         variable_info=internal_regime.variable_info,
         grids=internal_regime.grids,
@@ -57,6 +68,26 @@ def calculate_next_states(
     state_action_space: StateActionSpace,
     key: Array,
 ) -> dict[str, Array]:
+    """Calculate next period states for subjects in a regime.
+
+    Args:
+        internal_regime: The internal regime instance.
+        subjects_in_regime: Indices of subjects currently in this regime.
+        optimal_actions: Optimal actions computed for these subjects.
+        period: Current period.
+        params: Model parameters for the regime.
+        states: Current states for all subjects (all regimes).
+        state_action_space: State-action space for subjects in this regime.
+        key: JAX random key.
+
+    Returns:
+        Updated states dictionary with next period states for subjects in this regime.
+        The returned dict contains states for all subjects, with updates only for
+        those in the current regime.
+
+    """
+    # Identify stochastic transitions and generate random keys
+    # ---------------------------------------------------------------------------------
     stochastic_next_function_names = [
         next_fn_name
         for next_fn_name, next_fn in flatten_regime_namespace(
@@ -71,6 +102,8 @@ def calculate_next_states(
         n_initial_states=subjects_in_regime.shape[0],
     )
 
+    # Compute next states using regime's transition functions
+    # ---------------------------------------------------------------------------------
     next_state_vmapped = internal_regime.next_state_simulation_function
 
     states_with_next_prefix = next_state_vmapped(
@@ -81,15 +114,15 @@ def calculate_next_states(
         params=params,
     )
 
-    # 'next_' prefix is added by the next_state function, but needs to be
-    # removed for the next iteration of the loop, where these will be the
-    # current states.
-    return {
-        k.replace("next_", ""): states[k.replace("next_", "")]
-        .at[subjects_in_regime]
-        .set(v)
-        for k, v in states_with_next_prefix.items()
-    }
+    # Update global states array with computed next states for subjects in regime
+    # ---------------------------------------------------------------------------------
+    # The transition function adds a 'next_' prefix to all state names. We remove
+    # this prefix and update only the entries corresponding to subjects in this regime.
+    return _update_states_for_subjects(
+        all_states=states,
+        computed_next_states=states_with_next_prefix,
+        subject_indices=subjects_in_regime,
+    )
 
 
 def calculate_next_regime_membership(
@@ -103,7 +136,31 @@ def calculate_next_regime_membership(
     new_subject_regime_ids: Int1D,
     key: Array,
 ) -> Int1D:
-    _regime_transition_probs = (
+    """Calculate next period regime membership for subjects in a regime.
+
+    Computes the probability distribution over regimes for the next period based on
+    current states and actions, then draws random regime assignments for each subject.
+
+    Args:
+        internal_regime: The internal regime instance.
+        subjects_in_regime: Indices of subjects currently in this regime.
+        state_action_space: State-action space for subjects in this regime.
+        optimal_actions: Optimal actions computed for these subjects.
+        period: Current period.
+        params: Model parameters for the regime.
+        regime_name_to_id: Mapping from regime names to integer IDs.
+        new_subject_regime_ids: Array to update with next regime assignments.
+        key: JAX random key.
+
+    Returns:
+        Updated array of regime IDs with next period assignments for subjects in this
+        regime. The returned array contains regime IDs for all subjects, with updates
+        only for those in the current regime.
+
+    """
+    # Compute regime transition probabilities
+    # ---------------------------------------------------------------------------------
+    regime_transition_probs = (
         internal_regime.internal_functions.regime_transition_probs.simulate(
             **state_action_space.states,
             **optimal_actions,
@@ -112,18 +169,23 @@ def calculate_next_regime_membership(
         )
     )
 
+    # Generate random keys and draw next regimes
+    # ---------------------------------------------------------------------------------
     key, regime_transition_key = generate_simulation_keys(
         key=key,
         names=["regime_transition"],
         n_initial_states=subjects_in_regime.shape[0],
     )
-    new_regimes = draw_key_from_dict(
-        d=_regime_transition_probs,
+
+    next_regime_ids = draw_key_from_dict(
+        d=regime_transition_probs,
         keys=regime_transition_key["key_regime_transition"],
         regime_name_to_id=regime_name_to_id,
     )
 
-    return new_subject_regime_ids.at[subjects_in_regime].set(new_regimes)
+    # Update global regime membership array
+    # ---------------------------------------------------------------------------------
+    return new_subject_regime_ids.at[subjects_in_regime].set(next_regime_ids)
 
 
 def draw_key_from_dict(
@@ -160,3 +222,32 @@ def draw_key_from_dict(
     random_ids = vmap(random_id, in_axes=(0, 0))
 
     return random_ids(keys, regime_transition_probs)
+
+
+def _update_states_for_subjects(
+    all_states: dict[str, Array],
+    computed_next_states: dict[str, Array],
+    subject_indices: Int1D,
+) -> dict[str, Array]:
+    """Update the global states dictionary with next states for specific subjects.
+
+    The transition functions add a 'next_' prefix to state variable names. This function
+    removes that prefix and updates only the entries corresponding to the specified
+    subjects, leaving other subjects' states unchanged.
+
+    Args:
+        all_states: Current states for all subjects across all regimes.
+        computed_next_states: Newly computed states (with 'next_' prefix) for specific
+            subjects.
+        subject_indices: Indices of subjects whose states should be updated.
+
+    Returns:
+        Updated states dictionary with next states for the specified subjects.
+
+    """
+    return {
+        state_name.replace("next_", ""): all_states[state_name.replace("next_", "")]
+        .at[subject_indices]
+        .set(next_state_value)
+        for state_name, next_state_value in computed_next_states.items()
+    }

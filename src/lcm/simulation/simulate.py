@@ -87,97 +87,24 @@ def simulate(
         logger.info("Period: %s", period)
 
         is_last_period = period == n_periods - 1
-
         new_subject_regime_ids = jnp.empty(n_initial_subjects)
-        for regime_name, internal_regime in internal_regimes.items():
-            # Select Subjects that are in the current regime
-            subjects_in_regime = jnp.nonzero(
-                regime_name_to_id[regime_name] == subject_regime_ids
-            )[0]
 
-            state_action_space = create_regime_state_action_space(
+        for regime_name, internal_regime in internal_regimes.items():
+            result, states, new_subject_regime_ids, key = _simulate_regime_in_period(
                 regime_name=regime_name,
-                states=states,
                 internal_regime=internal_regime,
-                subjects_in_regime=subjects_in_regime,
+                period=period,
+                n_periods=n_periods,
+                states=states,
+                subject_regime_ids=subject_regime_ids,
+                new_subject_regime_ids=new_subject_regime_ids,
+                V_arr_dict=V_arr_dict,
+                params=params,
+                regime_name_to_id=regime_name_to_id,
+                key=key,
                 is_last_period=is_last_period,
             )
-
-            # Compute optimal actions indices and convert to values
-            # --------------------------------------------------------------------------
-            # We need to pass the value function array of the next period to the
-            # argmax_and_max_Q_over_a function, as the current Q-function requires the
-            # next periods's value funciton. In the last period, we pass an empty dict.
-            next_V_arr = V_arr_dict.get(period + 1, {})
-
-            # The Q-function values contain the information of how much value each
-            # action combination is worth. To find the optimal discrete action, we
-            # therefore only need to maximize the Q-function values over all actions.
-            argmax_and_max_Q_over_a = internal_regime.argmax_and_max_Q_over_a_functions(
-                period, n_periods=n_periods
-            )
-
-            indices_optimal_actions, V_arr = argmax_and_max_Q_over_a(
-                **state_action_space.states,
-                **state_action_space.discrete_actions,
-                **state_action_space.continuous_actions,
-                period=period,
-                next_V_arr=next_V_arr,
-                params=params,
-            )
-
-            validate_value_function_array(V_arr, period=period)
-
-            optimal_actions = _lookup_values_from_indices(
-                flat_indices=indices_optimal_actions,
-                grids=state_action_space.actions,
-            )
-
-            # Store results
-            # --------------------------------------------------------------------------
-            regime_states = {
-                sn: states[f"{regime_name}__{sn}"][subjects_in_regime]
-                for sn in state_action_space.states
-            }
-            simulation_results[regime_name][period] = SimulationResults(
-                V_arr=V_arr,
-                actions=optimal_actions,
-                states=regime_states,
-                subject_ids=subjects_in_regime,
-            )
-
-            # Update states
-            # --------------------------------------------------------------------------
-            if not is_last_period:
-                next_states_key, next_regime_key, key = jax.random.split(key, 3)
-
-                # Calculate next states
-                next_states = calculate_next_states(
-                    internal_regime=internal_regime,
-                    subjects_in_regime=subjects_in_regime,
-                    optimal_actions=optimal_actions,
-                    period=period,
-                    params=params[regime_name],
-                    states=states,
-                    state_action_space=state_action_space,
-                    key=next_states_key,
-                )
-                # Update states
-                states = next_states
-
-                # Calculate next regime membership
-                next_regimes = calculate_next_regime_membership(
-                    internal_regime=internal_regime,
-                    subjects_in_regime=subjects_in_regime,
-                    optimal_actions=optimal_actions,
-                    period=period,
-                    params=params[regime_name],
-                    state_action_space=state_action_space,
-                    new_subject_regime_ids=new_subject_regime_ids,
-                    regime_name_to_id=regime_name_to_id,
-                    key=next_regime_key,
-                )
-                new_subject_regime_ids = next_regimes
+            simulation_results[regime_name][period] = result
 
         subject_regime_ids = new_subject_regime_ids
 
@@ -191,6 +118,135 @@ def simulate(
         )
 
     return processed
+
+
+def _simulate_regime_in_period(
+    regime_name: RegimeName,
+    internal_regime: InternalRegime,
+    period: int,
+    n_periods: int,
+    states: dict[str, Array],
+    subject_regime_ids: Array,
+    new_subject_regime_ids: Array,
+    V_arr_dict: dict[int, dict[RegimeName, FloatND]],
+    params: dict[RegimeName, ParamsDict],
+    regime_name_to_id: dict[RegimeName, int],
+    key: Array,
+    *,
+    is_last_period: bool,
+) -> tuple[SimulationResults, dict[str, Array], Array, Array]:
+    """Simulate one regime for one period.
+
+    This function processes all subjects in a given regime for a single period,
+    computing optimal actions, updating states, and determining next regime membership.
+
+    Args:
+        regime_name: Name of the current regime.
+        internal_regime: Internal representation of the regime.
+        period: Current period (0-indexed).
+        n_periods: Total number of periods in the model.
+        states: Current states for all subjects (namespaced by regime).
+        subject_regime_ids: Current regime membership for all subjects.
+        new_subject_regime_ids: Array to populate with next period's regime memberships.
+        V_arr_dict: Value function arrays for all periods and regimes.
+        params: Model parameters for all regimes.
+        regime_name_to_id: Mapping from regime names to integer IDs.
+        key: JAX random key for stochastic operations.
+        is_last_period: Whether this is the final period (no state updates needed).
+
+    Returns:
+        Tuple containing:
+        - SimulationResults for this regime-period
+        - Updated states dictionary
+        - Updated new_subject_regime_ids array
+        - Updated JAX random key
+
+    """
+    # Select subjects in the current regime
+    # ---------------------------------------------------------------------------------
+    subject_ids_in_regime = jnp.nonzero(
+        regime_name_to_id[regime_name] == subject_regime_ids
+    )[0]
+
+    state_action_space = create_regime_state_action_space(
+        internal_regime=internal_regime,
+        states=states,
+        subject_ids_in_regime=subject_ids_in_regime,
+        is_last_period=is_last_period,
+    )
+
+    # Compute optimal actions
+    # ---------------------------------------------------------------------------------
+    # We need to pass the value function array of the next period to the
+    # argmax_and_max_Q_over_a function, as the current Q-function requires the
+    # next period's value function. In the last period, we pass an empty dict.
+    next_V_arr = V_arr_dict.get(period + 1, {})
+
+    # The Q-function values contain the information of how much value each
+    # action combination is worth. To find the optimal discrete action, we
+    # therefore only need to maximize the Q-function values over all actions.
+    argmax_and_max_Q_over_a = internal_regime.argmax_and_max_Q_over_a_functions(
+        period, n_periods=n_periods
+    )
+
+    indices_optimal_actions, V_arr = argmax_and_max_Q_over_a(
+        **state_action_space.states,
+        **state_action_space.discrete_actions,
+        **state_action_space.continuous_actions,
+        period=period,
+        next_V_arr=next_V_arr,
+        params=params,
+    )
+
+    validate_value_function_array(V_arr, period=period)
+
+    optimal_actions = _lookup_values_from_indices(
+        flat_indices=indices_optimal_actions,
+        grids=state_action_space.actions,
+    )
+
+    # Store results for this regime-period
+    # ---------------------------------------------------------------------------------
+    regime_states = {
+        state_name: states[f"{regime_name}__{state_name}"][subject_ids_in_regime]
+        for state_name in state_action_space.states
+    }
+    simulation_result = SimulationResults(
+        V_arr=V_arr,
+        actions=optimal_actions,
+        states=regime_states,
+        subject_ids=subject_ids_in_regime,
+    )
+
+    # Update states and regime membership for next period
+    # ---------------------------------------------------------------------------------
+    if not is_last_period:
+        next_states_key, next_regime_key, key = jax.random.split(key, 3)
+
+        states = calculate_next_states(
+            internal_regime=internal_regime,
+            subjects_in_regime=subject_ids_in_regime,
+            optimal_actions=optimal_actions,
+            period=period,
+            params=params[regime_name],
+            states=states,
+            state_action_space=state_action_space,
+            key=next_states_key,
+        )
+
+        new_subject_regime_ids = calculate_next_regime_membership(
+            internal_regime=internal_regime,
+            subjects_in_regime=subject_ids_in_regime,
+            optimal_actions=optimal_actions,
+            period=period,
+            params=params[regime_name],
+            state_action_space=state_action_space,
+            new_subject_regime_ids=new_subject_regime_ids,
+            regime_name_to_id=regime_name_to_id,
+            key=next_regime_key,
+        )
+
+    return simulation_result, states, new_subject_regime_ids, key
 
 
 def _lookup_values_from_indices(
