@@ -76,7 +76,6 @@ def test_create_shock_params():
     jnp.array_equal(got["mock"]["next_a"], jnp.full((2, 3, 2), jnp.nan), equal_nan=True)
 
 
-@pytest.mark.skip
 def test_create_shock_params_invalid_variable():
     @lcm.mark.stochastic
     def next_a(a):
@@ -91,7 +90,7 @@ def test_create_shock_params_invalid_variable():
         transitions={"mock": {"next_a": next_a}},
     )
 
-    with pytest.raises(ValueError, match="The following variables are stochastic, but"):
+    with pytest.raises(ValueError, match="Stochastic transition functions can only"):
         _create_stochastic_transition_params(
             regime=regime,  # type: ignore[arg-type]
             variable_info=variable_info,
