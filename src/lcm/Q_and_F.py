@@ -139,7 +139,7 @@ def get_Q_and_F_non_terminal(
             *list(state_transitions.values()),
             *list(next_stochastic_states_weights.values()),
         ],
-        include={"params", "next_V_arr", "period",},
+        include={"params", "next_V_arr", "period"},
     )
 
     @with_signature(

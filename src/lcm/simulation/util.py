@@ -245,9 +245,12 @@ def _update_states_for_subjects(
         Updated states dictionary with next states for the specified subjects.
 
     """
-    return {
-        state_name.replace("next_", ""): all_states[state_name.replace("next_", "")]
-        .at[subject_indices]
-        .set(next_state_value)
-        for state_name, next_state_value in computed_next_states.items()
-    }
+    updated_states = all_states
+    for state_name, next_state_values in computed_next_states.items():
+        updated_states[state_name.replace("next_", "")] = (
+            all_states[state_name.replace("next_", "")]
+            .at[subject_indices]
+            .set(next_state_values)
+        )
+
+    return updated_states

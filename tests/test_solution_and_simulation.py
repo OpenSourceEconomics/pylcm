@@ -70,7 +70,7 @@ def test_solve_and_simulate_stripped_down():
             }
         },
         initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 3,
-        additional_targets=["age"]
+        additional_targets={"iskhakov_et_al_2017_discrete": ["age"]}
         if "age"
         in model.internal_regimes["iskhakov_et_al_2017_stripped_down"].functions
         else None,
@@ -88,7 +88,7 @@ def test_solve_and_simulate_fully_discrete():
             "iskhakov_et_al_2017_discrete": {"wealth": jnp.array([1.0, 10.0, 50.0])}
         },
         initial_regimes=["iskhakov_et_al_2017_discrete"] * 3,
-        additional_targets=["age"]
+        additional_targets={"iskhakov_et_al_2017_discrete": ["age"]}
         if "age" in model.internal_regimes["iskhakov_et_al_2017_discrete"].functions
         else None,
     )

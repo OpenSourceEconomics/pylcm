@@ -12,14 +12,14 @@ from lcm.dispatchers import vmap_1d
 
 if TYPE_CHECKING:
     from lcm.interfaces import InternalRegime, SimulationResults
-    from lcm.typing import InternalUserFunction, ParamsDict
+    from lcm.typing import InternalUserFunction, ParamsDict, RegimeName
 
 
 def process_simulated_data(
     results: dict[int, SimulationResults],
     internal_regime: InternalRegime,
     params: ParamsDict,
-    additional_targets: list[str] | None = None,
+    additional_targets: dict[RegimeName, list[str]] | None = None,
 ) -> pd.DataFrame:
     """Process and flatten the simulation results.
 

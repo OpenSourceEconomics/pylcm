@@ -37,7 +37,7 @@ def simulate(
     logger: logging.Logger,
     V_arr_dict: dict[int, dict[RegimeName, FloatND]],
     *,
-    additional_targets: list[str] | None = None,
+    additional_targets: dict[RegimeName, list[str]] | None = None,
     seed: int | None = None,
 ) -> dict[RegimeName, pd.DataFrame]:
     """Simulate the model forward in time given pre-computed value function arrays.
@@ -90,20 +90,23 @@ def simulate(
         new_subject_regime_ids = jnp.empty(n_initial_subjects)
 
         for regime_name, internal_regime in internal_regimes.items():
-            result, states, new_subject_regime_ids, key = _simulate_regime_in_period(
-                regime_name=regime_name,
-                internal_regime=internal_regime,
-                period=period,
-                n_periods=n_periods,
-                states=states,
-                subject_regime_ids=subject_regime_ids,
-                new_subject_regime_ids=new_subject_regime_ids,
-                V_arr_dict=V_arr_dict,
-                params=params,
-                regime_name_to_id=regime_name_to_id,
-                key=key,
-                is_last_period=is_last_period,
+            result, new_states, new_subject_regime_ids, key = (
+                _simulate_regime_in_period(
+                    regime_name=regime_name,
+                    internal_regime=internal_regime,
+                    period=period,
+                    n_periods=n_periods,
+                    states=states,
+                    subject_regime_ids=subject_regime_ids,
+                    new_subject_regime_ids=new_subject_regime_ids,
+                    V_arr_dict=V_arr_dict,
+                    params=params,
+                    regime_name_to_id=regime_name_to_id,
+                    key=key,
+                    is_last_period=is_last_period,
+                )
             )
+            states = new_states
             simulation_results[regime_name][period] = result
 
         subject_regime_ids = new_subject_regime_ids
@@ -223,7 +226,7 @@ def _simulate_regime_in_period(
     if not is_last_period:
         next_states_key, next_regime_key, key = jax.random.split(key, 3)
 
-        states = calculate_next_states(
+        next_states = calculate_next_states(
             internal_regime=internal_regime,
             subjects_in_regime=subject_ids_in_regime,
             optimal_actions=optimal_actions,
@@ -233,6 +236,8 @@ def _simulate_regime_in_period(
             state_action_space=state_action_space,
             key=next_states_key,
         )
+
+        states = next_states
 
         new_subject_regime_ids = calculate_next_regime_membership(
             internal_regime=internal_regime,

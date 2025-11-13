@@ -110,7 +110,9 @@ def test_simulate_using_model_methods(
             ),
         },
         initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 4,
-        additional_targets={"iskhakov_et_al_2017_stripped_down":["utility", "borrowing_constraint"]},
+        additional_targets={
+            "iskhakov_et_al_2017_stripped_down": ["utility", "borrowing_constraint"]
+        },
     )["iskhakov_et_al_2017_stripped_down"]
 
     assert {
@@ -145,7 +147,9 @@ def test_simulate_with_only_discrete_actions():
     res: pd.DataFrame = model.solve_and_simulate(
         params,
         initial_states={"iskhakov_et_al_2017_discrete": {"wealth": jnp.array([0, 4])}},
-        additional_targets=["labor_income", "working"],
+        additional_targets={
+            "iskhakov_et_al_2017_discrete": ["labor_income", "working"]
+        },
         initial_regimes=["iskhakov_et_al_2017_discrete"] * 2,
     )["iskhakov_et_al_2017_discrete"]
 

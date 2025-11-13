@@ -115,7 +115,7 @@ class Model:
         initial_regimes: list[RegimeName],
         V_arr_dict: dict[int, dict[RegimeName, FloatND]],
         *,
-        additional_targets: list[str] | None = None,
+        additional_targets: dict[RegimeName, list[str]] | None = None,
         seed: int | None = None,
         debug_mode: bool = True,
     ) -> dict[RegimeName, pd.DataFrame]:
@@ -153,7 +153,7 @@ class Model:
         initial_states: dict[RegimeName, dict[str, Array]],
         initial_regimes: list[RegimeName],
         *,
-        additional_targets: list[str] | None = None,
+        additional_targets: dict[RegimeName, list[str]] | None = None,
         seed: int | None = None,
         debug_mode: bool = True,
     ) -> dict[RegimeName, pd.DataFrame]:
