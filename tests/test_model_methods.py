@@ -109,14 +109,6 @@ def test_model_solve_and_simulate_method():
     assert len(results) > 0
 
 
-@pytest.mark.skip
-def test_model_params_template_matches_internal():
-    """Test that params_template matches internal_regime.params."""
-    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
-
-    assert hasattr(model.internal_regimes, "params_template")
-
-
 @pytest.mark.parametrize(
     "model_name",
     [

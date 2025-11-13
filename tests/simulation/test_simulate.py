@@ -281,21 +281,3 @@ def test_retrieve_actions():
     )
     assert_array_equal(got["a"], jnp.array([0, 0, 0.25]))
     assert_array_equal(got["b"], jnp.array([10, 16, 12]))
-
-
-@pytest.mark.skip
-def test_get_continuous_action_argmax_given_discrete():
-    argmax_and_max_Q_over_c_values = jnp.array(
-        [
-            [0, 1],
-            [1, 0],
-        ],
-    )
-    argmax = jnp.array([0, 1])
-    vars_grid_shape = (2,)
-    got = _lookup_values_from_indices(  # type: ignore[call-arg]
-        indices_argmax_Q_over_c=argmax_and_max_Q_over_c_values,
-        discrete_argmax=argmax,
-        discrete_actions_grid_shape=vars_grid_shape,
-    )
-    assert jnp.all(got == jnp.array([0, 0]))
