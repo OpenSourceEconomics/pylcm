@@ -139,7 +139,7 @@ def get_Q_and_F_non_terminal(
             *list(state_transitions.values()),
             *list(next_stochastic_states_weights.values()),
         ],
-        include={"params", "next_V_arr", "period", "wealth"},
+        include={"params", "next_V_arr", "period",},
     )
 
     @with_signature(
@@ -218,7 +218,7 @@ def get_Q_and_F_non_terminal(
         # Calculate the instantaneous utility and feasibility
         # ------------------------------------------------------------------------------
 
-        return Q_arr, F_arr
+        return jnp.asarray(Q_arr), jnp.asarray(F_arr)
 
     return Q_and_F
 
@@ -273,11 +273,13 @@ def get_Q_and_F_terminal(
             A tuple containing the arrays with state-action values and feasibilities.
 
         """
-        return U_and_F(
+        U_arr, F_arr = U_and_F(
             **states_and_actions,
             period=period,
             params=params[regime.name],
         )
+
+        return jnp.asarray(U_arr), jnp.asarray(F_arr)
 
     return Q_and_F
 
