@@ -12,7 +12,7 @@ from lcm.interfaces import (
     SimulationResults,
 )
 from lcm.random import draw_random_seed
-from lcm.simulation.processing import as_panel, process_simulated_data
+from lcm.simulation.processing import process_simulated_data
 from lcm.simulation.util import (
     calculate_next_regime_membership,
     calculate_next_states,
@@ -183,14 +183,13 @@ def simulate(
 
     processed = {}
     for regime_name, regime_simulation_results in simulation_results.items():
-        _processed = process_simulated_data(
+        processed[regime_name] = process_simulated_data(
             regime_simulation_results,
             internal_regime=internal_regime,
             params=params,
             additional_targets=additional_targets,
         )
 
-        processed[regime_name] = as_panel(_processed)
     return processed
 
 
