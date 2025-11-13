@@ -110,7 +110,7 @@ def test_simulate_using_model_methods(
             ),
         },
         initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 4,
-        additional_targets=["utility", "borrowing_constraint"],
+        additional_targets={"iskhakov_et_al_2017_stripped_down":["utility", "borrowing_constraint"]},
     )["iskhakov_et_al_2017_stripped_down"]
 
     assert {

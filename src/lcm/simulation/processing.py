@@ -62,7 +62,7 @@ def process_simulated_data(
         for key in list(list_of_dicts[0])
     }
     out = {key: jnp.concatenate(values) for key, values in dict_of_lists.items()}
-    if additional_targets is not None:
+    if additional_targets is not None and internal_regime.name in additional_targets:
         functions_pool = {
             **internal_regime.functions,
             **internal_regime.constraints,
@@ -72,7 +72,7 @@ def process_simulated_data(
 
         calculated_targets = _compute_targets(
             out,
-            targets=additional_targets,
+            targets=additional_targets[internal_regime.name],
             # Have to ignore the type error here because regime_transition_probs does
             # not conform to InternalUserFunction protocol, but fixing that would
             # require significant refactoring.
