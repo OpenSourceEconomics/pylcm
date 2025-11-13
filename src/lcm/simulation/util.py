@@ -104,7 +104,7 @@ def calculate_next_regime_membership(
     key: Array,
 ) -> Int1D:
     _regime_transition_probs = (
-        internal_regime.internal_functions.regime_transition_probs["simulate"](
+        internal_regime.internal_functions.regime_transition_probs.simulate(
             **state_action_space.states,
             **optimal_actions,
             period=period,
@@ -118,7 +118,7 @@ def calculate_next_regime_membership(
         n_initial_states=subjects_in_regime.shape[0],
     )
     new_regimes = draw_key_from_dict(
-        d=_regime_transition_probs,  # type: ignore[arg-type]
+        d=_regime_transition_probs,
         keys=regime_transition_key["key_regime_transition"],
         regime_name_to_id=regime_name_to_id,
     )

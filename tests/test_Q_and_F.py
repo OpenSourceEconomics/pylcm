@@ -8,7 +8,7 @@ from numpy.testing import assert_array_equal
 
 import lcm
 from lcm.input_processing import process_regimes
-from lcm.interfaces import InternalFunctions
+from lcm.interfaces import InternalFunctions, PhaseVariantContainer
 from lcm.Q_and_F import (
     _get_feasibility,
     _get_joint_weights_function,
@@ -125,12 +125,18 @@ def internal_functions_illustrative():
 
     # create an internal regime instance where some attributes are set to None
     # because they are not needed to create the feasibilty mask
+    mock_transition_solve = lambda *args, params, **kwargs: {"mock": 1.0}  # noqa: E731, ARG005
+    mock_transition_simulate = lambda *args, params, **kwargs: {  # noqa: E731, ARG005
+        "mock": jnp.array([1.0])
+    }
     return InternalFunctions(
         utility=lambda: 0,  # type: ignore[arg-type]
         transitions={},
         constraints=constraints,  # type: ignore[arg-type]
         functions=functions,  # type: ignore[arg-type]
-        regime_transition_probs={"mock": lambda: {"mock": 1.0}},  # type: ignore[dict-item]
+        regime_transition_probs=PhaseVariantContainer(
+            solve=mock_transition_solve, simulate=mock_transition_simulate
+        ),
     )
 
 
@@ -197,12 +203,18 @@ def test_get_combined_constraint():
     def h(params):  # noqa: ARG001
         return None
 
+    mock_transition_solve = lambda *args, params, **kwargs: {"mock": 1.0}  # noqa: E731, ARG005
+    mock_transition_simulate = lambda *args, params, **kwargs: {  # noqa: E731, ARG005
+        "mock": jnp.array([1.0])
+    }
     internal_functions = InternalFunctions(
         utility=lambda: 0,  # type: ignore[arg-type]
         constraints={"f": f, "g": g},  # type: ignore[dict-item]
         transitions={},
         functions={"h": h},  # type: ignore[dict-item]
-        regime_transition_probs={"mock": lambda: {"mock": 1.0}},  # type: ignore[dict-item]
+        regime_transition_probs=PhaseVariantContainer(
+            solve=mock_transition_solve, simulate=mock_transition_simulate
+        ),
     )
     combined_constraint = _get_feasibility(internal_functions)
     feasibility: BoolND = combined_constraint(params={})

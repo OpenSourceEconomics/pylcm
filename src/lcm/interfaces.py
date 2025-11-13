@@ -175,6 +175,22 @@ class PeriodVariantContainer[T]:
         return self.non_terminal
 
 
+class PhaseVariantContainer[S, T]:
+    """Container for objects that vary whether we are in the solve or simulate phase.
+
+    Attributes:
+        solve: Object for the solve phase.
+        simulate: Object for the simulate phase.
+
+    """
+
+    __slots__ = ("simulate", "solve")
+
+    def __init__(self, solve: S, simulate: T) -> None:
+        self.solve = solve
+        self.simulate = simulate
+
+
 @dataclasses.dataclass(frozen=True)
 class InternalRegime:
     """Internal representation of a user regime.
@@ -191,8 +207,8 @@ class InternalRegime:
     constraints: dict[str, InternalUserFunction]
     transitions: TransitionFunctionsDict
     functions: dict[str, InternalUserFunction]
-    regime_transition_probs: dict[
-        str, RegimeTransitionFunction | VmappedRegimeTransitionFunction
+    regime_transition_probs: PhaseVariantContainer[
+        RegimeTransitionFunction, VmappedRegimeTransitionFunction
     ]
     internal_functions: InternalFunctions
     params_template: ParamsDict
@@ -230,8 +246,8 @@ class InternalFunctions:
     utility: InternalUserFunction
     constraints: dict[str, InternalUserFunction]
     transitions: TransitionFunctionsDict
-    regime_transition_probs: dict[
-        str, RegimeTransitionFunction | VmappedRegimeTransitionFunction
+    regime_transition_probs: PhaseVariantContainer[
+        RegimeTransitionFunction, VmappedRegimeTransitionFunction
     ]
 
     def get_all_functions(self) -> dict[str, InternalUserFunction]:
@@ -241,10 +257,11 @@ class InternalFunctions:
             Dictionary that maps names of all regime functions to the functions.
 
         """
-        return flatten_regime_namespace(
-            self.functions
-            | {"utility": self.utility}
-            | self.constraints
-            | self.transitions
-            | self.regime_transition_probs
-        )
+        functions_pool = self.functions | {
+            "utility": self.utility,
+            "regime_transition_probs_solve": self.regime_transition_probs.solve,
+            "regime_transition_probs_simulate": self.regime_transition_probs.simulate,
+            **self.constraints,
+            **self.transitions,
+        }
+        return flatten_regime_namespace(functions_pool)

@@ -63,19 +63,20 @@ def process_simulated_data(
     }
     out = {key: jnp.concatenate(values) for key, values in dict_of_lists.items()}
     if additional_targets is not None:
-        # Type ignore needed because regime_transition_probs["simulate"] is
-        # VmappedRegimeTransitionFunction, not InternalUserFunction
+        functions_pool = {
+            **internal_regime.functions,
+            **internal_regime.constraints,
+            "utility": internal_regime.utility,
+            "regime_transition_probs": internal_regime.regime_transition_probs.simulate,
+        }
+
         calculated_targets = _compute_targets(
             out,
             targets=additional_targets,
-            functions=internal_regime.functions  # type: ignore[arg-type]
-            | internal_regime.constraints
-            | {"utility": internal_regime.utility}
-            | {
-                "regime_transition_probs": internal_regime.regime_transition_probs[
-                    "simulate"
-                ]
-            },
+            # Have to ignore the type error here because regime_transition_probs does
+            # not conform to InternalUserFunction protocol, but fixing that would
+            # require significant refactoring.
+            functions=functions_pool,  # type: ignore[arg-type]
             params=params[internal_regime.name],
         )
         out = {**out, **calculated_targets}

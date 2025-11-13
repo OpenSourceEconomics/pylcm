@@ -14,6 +14,7 @@ from lcm.input_processing.util import get_grids, get_variable_info
 from lcm.interfaces import (
     InternalFunctions,
     PeriodVariantContainer,
+    PhaseVariantContainer,
     StateActionSpace,
     StateSpaceInfo,
     Target,
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
         MaxQOverAFunction,
         NextStateSimulationFunction,
         QAndFFunction,
+        RegimeName,
         RegimeTransitionFunction,
         VmappedRegimeTransitionFunction,
     )
@@ -81,33 +83,35 @@ def build_state_action_spaces(
 def build_Q_and_F_functions(
     regime: Regime,
     internal_functions: InternalFunctions,
-    state_space_infos: dict[str, PeriodVariantContainer[StateSpaceInfo]],
+    state_space_infos: dict[RegimeName, PeriodVariantContainer[StateSpaceInfo]],
     grids: GridsDict,
 ) -> PeriodVariantContainer[QAndFFunction]:
+    next_state_space_infos_terminal = {
+        regime_name: ssi.terminal for regime_name, ssi in state_space_infos.items()
+    }
+
+    next_state_space_infos_non_terminal = {
+        regime_name: ssi.non_terminal for regime_name, ssi in state_space_infos.items()
+    }
+
     Q_and_F_terminal = get_Q_and_F(
         regime=regime,
         internal_functions=internal_functions,
-        next_state_space_infos={
-            name: info.terminal for name, info in state_space_infos.items()
-        },
+        next_state_space_infos=next_state_space_infos_terminal,
         grids=grids,
         is_last_period=True,
     )
     Q_and_F_before_terminal = get_Q_and_F(
         regime=regime,
         internal_functions=internal_functions,
-        next_state_space_infos={
-            name: info.terminal for name, info in state_space_infos.items()
-        },
+        next_state_space_infos=next_state_space_infos_terminal,
         grids=grids,
         is_last_period=False,
     )
     Q_and_F_non_terminal = get_Q_and_F(
         regime=regime,
         internal_functions=internal_functions,
-        next_state_space_infos={
-            name: info.non_terminal for name, info in state_space_infos.items()
-        },
+        next_state_space_infos=next_state_space_infos_non_terminal,
         grids=grids,
         is_last_period=False,
     )
@@ -237,10 +241,13 @@ def build_regime_transition_probs_functions(
     grids: dict[str, Array],
     *,
     enable_jit: bool,
-) -> dict[str, RegimeTransitionFunction | VmappedRegimeTransitionFunction]:
+) -> PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]:
+    functions_pool = internal_functions | {
+        "regime_transition_probs": regime_transition_probs
+    }
+
     next_regime = concatenate_functions(
-        functions=internal_functions
-        | {"regime_transition_probs": regime_transition_probs},
+        functions=functions_pool,
         targets="regime_transition_probs",
         return_type="dict",
         enforce_signature=False,
@@ -268,7 +275,7 @@ def build_regime_transition_probs_functions(
         ),
     )
 
-    return {
-        "solve": next_regime,
-        "simulate": jax.jit(next_regime_vmapped) if enable_jit else next_regime_vmapped,
-    }
+    return PhaseVariantContainer(
+        solve=next_regime,
+        simulate=jax.jit(next_regime_vmapped) if enable_jit else next_regime_vmapped,
+    )

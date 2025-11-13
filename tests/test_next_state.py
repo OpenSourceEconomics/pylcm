@@ -6,7 +6,7 @@ import jax.numpy as jnp
 from pybaum import tree_equal
 
 from lcm.input_processing import process_regimes
-from lcm.interfaces import InternalFunctions, Target
+from lcm.interfaces import InternalFunctions, PhaseVariantContainer, Target
 from lcm.next_state import _create_stochastic_next_func, get_next_state_function
 from tests.test_models.utils import get_regime
 
@@ -52,12 +52,18 @@ def test_get_next_state_function_with_simulate_target():
         return jnp.array([0.0, 1.0])
 
     grids = {"mock": {"b": jnp.arange(2)}}
+    mock_transition_solve = lambda *args, params, **kwargs: {"mock": 1.0}  # noqa: E731, ARG005
+    mock_transition_simulate = lambda *args, params, **kwargs: {  # noqa: E731, ARG005
+        "mock": jnp.array([1.0])
+    }
     internal_functions = InternalFunctions(
         utility=lambda: 0,  # type: ignore[arg-type]
         constraints={},
         transitions={"next_a": f_a, "next_b": f_b},  # type: ignore[dict-item]
         functions={"f_weight_b": f_weight_b},  # type: ignore[dict-item]
-        regime_transition_probs={"mock": lambda: {"mock": 1.0}},  # type: ignore[dict-item]
+        regime_transition_probs=PhaseVariantContainer(
+            solve=mock_transition_solve, simulate=mock_transition_simulate
+        ),
     )
     got_func = get_next_state_function(
         transitions=cast(

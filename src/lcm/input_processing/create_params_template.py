@@ -29,7 +29,7 @@ def create_params_template(
 
     Args:
         regime: The regime as provided by the user.
-        grids: Dict containing the state gris for each regime.
+        grids: Dictionary containing the state grids for each regime.
         n_periods: Number of periods of the model.
         default_params: A dictionary of default parameters. Default is None. If None,
             the default {"beta": np.nan} is used. For other lifetime reward objectives,

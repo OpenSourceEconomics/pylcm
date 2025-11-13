@@ -94,7 +94,7 @@ def get_Q_and_F_non_terminal(
 
     # Function required to calculate instantaneous utility and feasibility
     U_and_F = _get_U_and_F(internal_functions)
-    regime_transition_prob_func = internal_functions.regime_transition_probs["solve"]
+    regime_transition_prob_func = internal_functions.regime_transition_probs.solve
     state_transitions = {}
     next_stochastic_states_weights = {}
     joint_weights_from_marginals = {}
