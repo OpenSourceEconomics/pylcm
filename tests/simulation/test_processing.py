@@ -48,7 +48,7 @@ def test_process_simulated_data():
             V_arr=jnp.array([0.1, 0.2]),
             states={"a": jnp.array([1, 2]), "b": jnp.array([-1, -2])},
             actions={"c": jnp.array([5, 6]), "d": jnp.array([-5, -6])},
-            subject_ids=jnp.asarray([0, 1]),
+            in_regime=jnp.asarray([1, 1]),
         ),
         1: SimulationResults(
             V_arr=jnp.array([0.3, 0.4]),
@@ -60,7 +60,7 @@ def test_process_simulated_data():
                 "d": jnp.array([-7, -8]),
                 "c": jnp.array([7, 8]),
             },
-            subject_ids=jnp.asarray([0, 1]),
+            in_regime=jnp.asarray([1, 1]),
         ),
     }
     expected = pd.DataFrame(

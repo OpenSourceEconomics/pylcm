@@ -228,7 +228,7 @@ class SimulationResults:
     V_arr: Array
     actions: dict[str, Array]
     states: dict[str, Array]
-    subject_ids: Array
+    in_regime: Array
 
 
 class Target(Enum):

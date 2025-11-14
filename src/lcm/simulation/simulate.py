@@ -167,17 +167,15 @@ def _simulate_regime_in_period(
     """
     # Select subjects in the current regime
     # ---------------------------------------------------------------------------------
-    subject_ids_in_regime = jnp.nonzero(
+    subject_ids_in_regime = jnp.asarray(
         regime_name_to_id[regime_name] == subject_regime_ids
-    )[0]
+    )
 
     state_action_space = create_regime_state_action_space(
         internal_regime=internal_regime,
         states=states,
-        subject_ids_in_regime=subject_ids_in_regime,
         is_last_period=is_last_period,
     )
-
     # Compute optimal actions
     # ---------------------------------------------------------------------------------
     # We need to pass the value function array of the next period to the
@@ -191,7 +189,6 @@ def _simulate_regime_in_period(
     argmax_and_max_Q_over_a = internal_regime.argmax_and_max_Q_over_a_functions(
         period, n_periods=n_periods
     )
-
     indices_optimal_actions, V_arr = argmax_and_max_Q_over_a(
         **state_action_space.states,
         **state_action_space.discrete_actions,
@@ -200,25 +197,26 @@ def _simulate_regime_in_period(
         next_V_arr=next_V_arr,
         params=params,
     )
-
     validate_value_function_array(V_arr, period=period)
 
     optimal_actions = _lookup_values_from_indices(
         flat_indices=indices_optimal_actions,
         grids=state_action_space.actions,
     )
-
     # Store results for this regime-period
     # ---------------------------------------------------------------------------------
-    regime_states = {
-        state_name: states[f"{regime_name}__{state_name}"][subject_ids_in_regime]
-        for state_name in state_action_space.states
+
+    res = {
+        state_name.removeprefix(f"{regime_name}__"): state
+        for state_name, state in states.items()
+        if state_name.startswith(f"{regime_name}__")
     }
+
     simulation_result = SimulationResults(
         V_arr=V_arr,
         actions=optimal_actions,
-        states=regime_states,
-        subject_ids=subject_ids_in_regime,
+        states=res,
+        in_regime=subject_ids_in_regime,
     )
 
     # Update states and regime membership for next period
@@ -236,9 +234,7 @@ def _simulate_regime_in_period(
             state_action_space=state_action_space,
             key=next_states_key,
         )
-
         states = next_states
-
         new_subject_regime_ids = calculate_next_regime_membership(
             internal_regime=internal_regime,
             subjects_in_regime=subject_ids_in_regime,

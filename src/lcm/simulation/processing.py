@@ -49,8 +49,9 @@ def process_simulated_data(
 
     list_of_dicts = [
         {
-            "period": jnp.full_like(d.subject_ids, period),
-            "subject_id": d.subject_ids,
+            "period": jnp.full(n_initial_states, period),
+            "subject_id": jnp.arange(n_initial_states),
+            "in_regime": d.in_regime,
             "value": d.V_arr,
             **d.actions,
             **d.states,
@@ -80,8 +81,8 @@ def process_simulated_data(
             params=params[internal_regime.name],
         )
         out = {**out, **calculated_targets}
-
-    return pd.DataFrame(out)
+    df = pd.DataFrame(out)
+    return df[df["in_regime"] == 1].drop("in_regime", axis=1)
 
 
 def _compute_targets(

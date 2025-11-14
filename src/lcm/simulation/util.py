@@ -22,7 +22,6 @@ def get_regime_name_to_id_mapping(
 def create_regime_state_action_space(
     internal_regime: InternalRegime,
     states: dict[str, Array],
-    subject_ids_in_regime: Int1D,
     *,
     is_last_period: bool,
 ) -> StateActionSpace:
@@ -46,8 +45,7 @@ def create_regime_state_action_space(
     relevant_states_names = internal_regime.variable_info.query(query).index
 
     states_for_state_action_space = {
-        sn: states[f"{internal_regime.name}__{sn}"][subject_ids_in_regime]
-        for sn in relevant_states_names
+        sn: states[f"{internal_regime.name}__{sn}"] for sn in relevant_states_names
     }
 
     return create_state_action_space(
@@ -60,19 +58,19 @@ def create_regime_state_action_space(
 
 def calculate_next_states(
     internal_regime: InternalRegime,
-    subjects_in_regime: Int1D,
     optimal_actions: dict[str, Array],
     period: int,
     params: dict[RegimeName, ParamsDict],
     states: dict[str, Array],
     state_action_space: StateActionSpace,
     key: Array,
+    subjects_in_regime: Array,
 ) -> dict[str, Array]:
     """Calculate next period states for subjects in a regime.
 
     Args:
         internal_regime: The internal regime instance.
-        subjects_in_regime: Indices of subjects currently in this regime.
+        subjects_in_regime: Boolean array indicating if subject is in regime.
         optimal_actions: Optimal actions computed for these subjects.
         period: Current period.
         params: Model parameters for the regime.
@@ -127,7 +125,6 @@ def calculate_next_states(
 
 def calculate_next_regime_membership(
     internal_regime: InternalRegime,
-    subjects_in_regime: Int1D,
     state_action_space: StateActionSpace,
     optimal_actions: dict[str, Array],
     period: int,
@@ -135,6 +132,7 @@ def calculate_next_regime_membership(
     regime_name_to_id: dict[RegimeName, int],
     new_subject_regime_ids: Int1D,
     key: Array,
+    subjects_in_regime: Array,
 ) -> Int1D:
     """Calculate next period regime membership for subjects in a regime.
 
@@ -185,7 +183,7 @@ def calculate_next_regime_membership(
 
     # Update global regime membership array
     # ---------------------------------------------------------------------------------
-    return new_subject_regime_ids.at[subjects_in_regime].set(next_regime_ids)
+    return jnp.where(subjects_in_regime, next_regime_ids, new_subject_regime_ids)
 
 
 def draw_key_from_dict(
@@ -247,10 +245,10 @@ def _update_states_for_subjects(
     """
     updated_states = all_states
     for state_name, next_state_values in computed_next_states.items():
-        updated_states[state_name.replace("next_", "")] = (
-            all_states[state_name.replace("next_", "")]
-            .at[subject_indices]
-            .set(next_state_values)
+        updated_states[state_name.replace("next_", "")] = jnp.where(
+            subject_indices,
+            next_state_values,
+            all_states[state_name.replace("next_", "")],
         )
 
     return updated_states

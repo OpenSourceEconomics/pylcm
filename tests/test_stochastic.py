@@ -35,6 +35,7 @@ def test_model_solve_and_simulate_with_stochastic_model():
     )["iskhakov_et_al_2017_stochastic"]
 
     # This is derived from the partner transition in get_params.
+
     expected_next_partner = (
         (res.working.astype(bool) | ~res.partner.astype(bool)).astype(int).loc[:7]
     )
