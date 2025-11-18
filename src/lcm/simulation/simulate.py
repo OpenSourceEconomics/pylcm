@@ -115,7 +115,7 @@ def simulate(
     for regime_name, regime_simulation_results in simulation_results.items():
         processed[regime_name] = process_simulated_data(
             regime_simulation_results,
-            internal_regime=internal_regime,
+            internal_regime=internal_regimes[regime_name],
             params=params,
             additional_targets=additional_targets,
         )
