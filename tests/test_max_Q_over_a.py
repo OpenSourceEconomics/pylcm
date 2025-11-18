@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import partial
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
@@ -7,8 +8,8 @@ import pytest
 from jax import Array
 from numpy.testing import assert_array_equal
 
-from lcm.dispatchers import simulation_spacemap
-from lcm.input_processing import process_regime
+from lcm.dispatchers import simulation_spacemap, vmap_1d
+from lcm.input_processing import process_regimes
 from lcm.interfaces import StateActionSpace, Target
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a, get_max_Q_over_a
 from lcm.max_Q_over_c import get_argmax_and_max_Q_over_c, get_max_Q_over_c
@@ -16,8 +17,6 @@ from lcm.max_Qc_over_d import get_argmax_and_max_Qc_over_d, get_max_Qc_over_d
 from lcm.next_state import get_next_state_function
 from lcm.Q_and_F import get_Q_and_F
 from lcm.simulation.simulate import (
-    _lookup_actions_from_indices,
-    _lookup_optimal_continuous_actions,
     _lookup_values_from_indices,
 )
 from lcm.state_action_space import create_state_action_space, create_state_space_info
@@ -36,7 +35,9 @@ def regime_input():
     actions = regime.actions
     actions["consumption"] = actions["consumption"].replace(stop=20)  # type: ignore[attr-defined]
     regime = regime.replace(actions=actions)
-    internal_regime = process_regime(regime, n_periods=3, enable_jit=True)
+    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
+        "iskhakov_et_al_2017_stripped_down"
+    ]
 
     state_space_info = create_state_space_info(
         regime=regime,
@@ -48,24 +49,30 @@ def regime_input():
         is_last_period=False,
     )
     params = {
-        "beta": 1.0,
-        "utility": {"disutility_of_work": 1.0},
-        "next_wealth": {
-            "interest_rate": 0.05,
-        },
+        "iskhakov_et_al_2017_stripped_down": {
+            "beta": 1.0,
+            "utility": {"disutility_of_work": 1.0},
+            "next_wealth": {
+                "interest_rate": 0.05,
+            },
+        }
     }
+    transitions_for_regime = internal_regime.internal_functions.transitions[
+        "iskhakov_et_al_2017_stripped_down"
+    ]
     return {
         "regime": regime,
         "internal_regime": internal_regime,
         "state_action_space": state_action_space,
         "state_space_info": state_space_info,
         "next_state": get_next_state_function(
-            internal_functions=internal_regime.internal_functions,
-            grids=internal_regime.grids,
-            next_states=("wealth",),
+            transitions=transitions_for_regime,
+            functions=internal_regime.internal_functions.functions,
+            grids={"iskhakov_et_al_2017_stripped_down": internal_regime.grids},
             target=Target.SOLVE,
         ),
         "params": params,
+        "grids": internal_regime.grids,
     }
 
 
@@ -79,7 +86,8 @@ def test_max_Q_over_a_equal(regime_input):
 
     """
     params = regime_input["params"]
-    state_space_info = regime_input["state_space_info"]
+    grids = regime_input["grids"]
+    state_space_infos = regime_input["state_space_info"]
     state_action_space = regime_input["state_action_space"]
     regime = regime_input["regime"]
     internal_regime = regime_input["internal_regime"]
@@ -87,10 +95,11 @@ def test_max_Q_over_a_equal(regime_input):
     Q_and_F = get_Q_and_F(
         regime=regime,
         internal_functions=internal_regime.internal_functions,
-        next_state_space_info=state_space_info,
+        next_state_space_infos={regime.name: state_space_infos},
         is_last_period=True,
+        grids={regime.name: grids},
     )
-    next_V_arr = jnp.zeros((2, 2))
+    next_V_arr = {regime.name: jnp.zeros((2, 2))}
 
     # ----------------------------------------------------------------------------------
     # Maximum over all actions directly
@@ -156,7 +165,8 @@ def test_argmax_Q_over_a_equal(regime_input):
 
     """
     params = regime_input["params"]
-    state_space_info = regime_input["state_space_info"]
+    grids = regime_input["grids"]
+    state_space_infos = regime_input["state_space_info"]
     state_action_space = regime_input["state_action_space"]
     regime = regime_input["regime"]
     internal_regime = regime_input["internal_regime"]
@@ -164,18 +174,15 @@ def test_argmax_Q_over_a_equal(regime_input):
     Q_and_F = get_Q_and_F(
         regime=regime,
         internal_functions=internal_regime.internal_functions,
-        next_state_space_info=state_space_info,
+        next_state_space_infos={regime.name: state_space_infos},
         is_last_period=True,
+        grids={regime.name: grids},
     )
-    next_V_arr = jnp.zeros((2, 2))
+    next_V_arr = {regime.name: jnp.zeros((2, 2))}
 
     discrete_actions_grid_shape = tuple(
         len(grid) for grid in state_action_space.discrete_actions.values()
     )
-    continuous_actions_grid_shape = tuple(
-        len(grid) for grid in state_action_space.continuous_actions.values()
-    )
-    actions_grid_shape = discrete_actions_grid_shape + continuous_actions_grid_shape
 
     # ----------------------------------------------------------------------------------
     # Argmax over all actions directly
@@ -200,10 +207,9 @@ def test_argmax_Q_over_a_equal(regime_input):
         next_V_arr=next_V_arr,
         params=params,
     )
-    optimal_actions_a = _lookup_actions_from_indices(
-        indices_optimal_actions=indices_optimal_actions,
-        actions_grid_shape=actions_grid_shape,
-        state_action_space=state_action_space,
+    optimal_actions_a = _lookup_values_from_indices(
+        flat_indices=indices_optimal_actions,
+        grids=state_action_space.actions,
     )
 
     # ----------------------------------------------------------------------------------
@@ -226,7 +232,7 @@ def test_argmax_Q_over_a_equal(regime_input):
         **state_action_space.states,
         **state_action_space.discrete_actions,
         **state_action_space.continuous_actions,
-        next_V_arr=jnp.zeros((2, 2)),
+        next_V_arr={regime.name: jnp.zeros((2, 2))},
         period=0,
         params=params,
     )
@@ -241,8 +247,6 @@ def test_argmax_Q_over_a_equal(regime_input):
     optimal_actions_c_d = _lookup_actions_from_indices_c_d(
         indices_optimal_discrete_actions=indices_optimal_discrete_actions,
         indices_optimal_continuous_actions=indices_optimal_continuous_actions,
-        discrete_actions_grid_shape=discrete_actions_grid_shape,
-        continuous_actions_grid_shape=continuous_actions_grid_shape,
         state_action_space=state_action_space,
     )
 
@@ -261,8 +265,6 @@ def test_argmax_Q_over_a_equal(regime_input):
 def _lookup_actions_from_indices_c_d(
     indices_optimal_discrete_actions: IntND,
     indices_optimal_continuous_actions: IntND,
-    discrete_actions_grid_shape: tuple[int, ...],
-    continuous_actions_grid_shape: tuple[int, ...],
     state_action_space: StateActionSpace,
 ) -> dict[str, Array]:
     """Lookup optimal actions from indices of discrete and continuous actions.
@@ -281,13 +283,32 @@ def _lookup_actions_from_indices_c_d(
     optimal_discrete_actions = _lookup_values_from_indices(
         flat_indices=indices_optimal_discrete_actions,
         grids=state_action_space.discrete_actions,
-        grids_shapes=discrete_actions_grid_shape,
     )
 
     optimal_continuous_actions = _lookup_values_from_indices(
         flat_indices=indices_optimal_continuous_actions,
         grids=state_action_space.continuous_actions,
-        grids_shapes=continuous_actions_grid_shape,
     )
 
     return optimal_discrete_actions | optimal_continuous_actions
+
+
+@partial(vmap_1d, variables=("indices_argmax_Q_over_c", "discrete_argmax"))
+def _lookup_optimal_continuous_actions(
+    indices_argmax_Q_over_c: IntND,
+    discrete_argmax: IntND,
+    discrete_actions_grid_shape: tuple[int, ...],
+) -> IntND:
+    """Look up the optimal continuous action index given index of discrete action.
+
+    Args:
+        indices_argmax_Q_over_c: Index array of optimal continous actions conditional on
+            discrete actions and states.
+        discrete_argmax: Index array of optimal discrete actions.
+        discrete_actions_grid_shape: Shape of the discrete actions grid.
+
+    Returns:
+        Index array of optimal continuous actions.
+    """
+    indices = jnp.unravel_index(discrete_argmax, shape=discrete_actions_grid_shape)
+    return indices_argmax_Q_over_c[indices]

@@ -23,21 +23,25 @@ def test_model_solve_and_simulate_with_stochastic_model():
     model = get_model("iskhakov_et_al_2017_stochastic", n_periods=3)
 
     res: pd.DataFrame = model.solve_and_simulate(
-        params=get_params(),
+        params=get_params("iskhakov_et_al_2017_stochastic"),
         initial_states={
-            "health": jnp.array([1, 1, 0, 0]),
-            "partner": jnp.array([0, 0, 1, 0]),
-            "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
+            "iskhakov_et_al_2017_stochastic": {
+                "health": jnp.array([1, 1, 0, 0]),
+                "partner": jnp.array([0, 0, 1, 0]),
+                "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
+            }
         },
-    )
+        initial_regimes=["iskhakov_et_al_2017_stochastic"] * 4,
+    )["iskhakov_et_al_2017_stochastic"]
 
     # This is derived from the partner transition in get_params.
+
     expected_next_partner = (
-        (res.working.astype(bool) | ~res.partner.astype(bool)).astype(int).loc[:1]
+        (res.working.astype(bool) | ~res.partner.astype(bool)).astype(int).loc[:7]
     )
 
     pd.testing.assert_series_equal(
-        res["partner"].loc[1:],
+        res["partner"].loc[4:],
         expected_next_partner,
         check_index=False,
         check_names=False,
@@ -51,7 +55,7 @@ def test_model_solve_and_simulate_with_stochastic_model():
 
 def test_model_solve_with_stochastic_model():
     model = get_model("iskhakov_et_al_2017_stochastic", n_periods=3)
-    model.solve(params=get_params())
+    model.solve(params=get_params("iskhakov_et_al_2017_stochastic"))
 
 
 # ======================================================================================
@@ -81,17 +85,25 @@ def model_and_params():
     # Create deterministic model with modified function
     regime_deterministic = base_regime.replace(
         transitions={
-            **base_regime.transitions,
-            "next_health": next_health_deterministic,
+            "iskhakov_et_al_2017_stochastic": {
+                **base_regime.transitions["iskhakov_et_al_2017_stochastic"],
+                "next_health": next_health_deterministic,
+            }
         }
     )
 
     # Create stochastic model with modified function
     regime_stochastic = base_regime.replace(
-        transitions={**base_regime.transitions, "next_health": next_health_stochastic}
+        transitions={
+            "iskhakov_et_al_2017_stochastic": {
+                **base_regime.transitions["iskhakov_et_al_2017_stochastic"],
+                "next_health": next_health_stochastic,
+            }
+        }
     )
 
     params = get_params(
+        regime_name="iskhakov_et_al_2017_stochastic",
         beta=0.95,
         disutility_of_work=1.0,
         interest_rate=0.05,
@@ -99,8 +111,8 @@ def model_and_params():
         health_transition=jnp.identity(2),
     )
 
-    model_deterministic = Model(regime_deterministic, n_periods=3)
-    model_stochastic = Model(regime_stochastic, n_periods=3)
+    model_deterministic = Model([regime_deterministic], n_periods=3)
+    model_stochastic = Model([regime_stochastic], n_periods=3)
     return model_deterministic, model_stochastic, params
 
 
@@ -116,8 +128,8 @@ def test_compare_deterministic_and_stochastic_results_value_function(model_and_p
 
     for period in range(model_deterministic.n_periods):
         assert_array_almost_equal(
-            solution_deterministic[period],
-            solution_stochastic[period],
+            solution_deterministic[period]["iskhakov_et_al_2017_stochastic"],
+            solution_stochastic[period]["iskhakov_et_al_2017_stochastic"],
             decimal=14,
         )
 
@@ -125,19 +137,27 @@ def test_compare_deterministic_and_stochastic_results_value_function(model_and_p
     # Compare simulation results
     # ==================================================================================
     initial_states = {
-        "health": jnp.array([1, 1, 0, 0]),
-        "partner": jnp.array([0, 0, 0, 0]),
-        "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
+        "iskhakov_et_al_2017_stochastic": {
+            "health": jnp.array([1, 1, 0, 0]),
+            "partner": jnp.array([0, 0, 0, 0]),
+            "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
+        }
     }
+    initial_regimes = ["iskhakov_et_al_2017_stochastic"] * 4
 
     simulation_deterministic = model_deterministic.simulate(
         params,
         V_arr_dict=solution_deterministic,
         initial_states=initial_states,
+        initial_regimes=initial_regimes,
     )
     simulation_stochastic = model_stochastic.simulate(
         params,
         V_arr_dict=solution_stochastic,
         initial_states=initial_states,
+        initial_regimes=initial_regimes,
     )
-    pd.testing.assert_frame_equal(simulation_deterministic, simulation_stochastic)
+    pd.testing.assert_frame_equal(
+        simulation_deterministic["iskhakov_et_al_2017_stochastic"],
+        simulation_stochastic["iskhakov_et_al_2017_stochastic"],
+    )

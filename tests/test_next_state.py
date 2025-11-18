@@ -1,33 +1,35 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
 from pybaum import tree_equal
 
-from lcm.input_processing import process_regime
-from lcm.interfaces import InternalFunctions, Target
+from lcm.input_processing import process_regimes
+from lcm.interfaces import InternalFunctions, PhaseVariantContainer, Target
 from lcm.next_state import _create_stochastic_next_func, get_next_state_function
 from tests.test_models.utils import get_regime
 
 if TYPE_CHECKING:
-    from lcm.typing import ContinuousState, FloatND, ParamsDict
+    from lcm.typing import ContinuousState, FloatND, InternalUserFunction, ParamsDict
 
 
 def test_get_next_state_function_with_solve_target():
     regime = get_regime("iskhakov_et_al_2017_stripped_down")
-    internal_regime = process_regime(regime=regime, n_periods=3, enable_jit=True)
+    internal_regime = process_regimes(regimes=[regime], n_periods=3, enable_jit=True)[
+        "iskhakov_et_al_2017_stripped_down"
+    ]
     got_func = get_next_state_function(
-        internal_functions=internal_regime.internal_functions,
-        grids=internal_regime.grids,
-        next_states=("wealth",),
+        transitions=internal_regime.transitions["iskhakov_et_al_2017_stripped_down"],
+        functions=internal_regime.functions,
+        grids={"iskhakov_et_al_2017_stripped_down": internal_regime.grids},
         target=Target.SOLVE,
     )
 
     params = {
         "beta": 1.0,
         "utility": {"disutility_of_work": 1.0},
-        "next_wealth": {
+        "iskhakov_et_al_2017_stripped_down__next_wealth": {
             "interest_rate": 0.05,
         },
     }
@@ -49,17 +51,26 @@ def test_get_next_state_function_with_simulate_target():
     def f_weight_b(state: ContinuousState, params: ParamsDict) -> FloatND:  # noqa: ARG001
         return jnp.array([0.0, 1.0])
 
-    grids = {"b": jnp.arange(2)}
+    grids = {"mock": {"b": jnp.arange(2)}}
+    mock_transition_solve = lambda *args, params, **kwargs: {"mock": 1.0}  # noqa: E731, ARG005
+    mock_transition_simulate = lambda *args, params, **kwargs: {  # noqa: E731, ARG005
+        "mock": jnp.array([1.0])
+    }
     internal_functions = InternalFunctions(
         utility=lambda: 0,  # type: ignore[arg-type]
         constraints={},
         transitions={"next_a": f_a, "next_b": f_b},  # type: ignore[dict-item]
         functions={"f_weight_b": f_weight_b},  # type: ignore[dict-item]
+        regime_transition_probs=PhaseVariantContainer(
+            solve=mock_transition_solve, simulate=mock_transition_simulate
+        ),
     )
     got_func = get_next_state_function(
-        internal_functions=internal_functions,
+        transitions=cast(
+            "dict[str, InternalUserFunction]", internal_functions.transitions
+        ),
+        functions=internal_functions.functions,
         grids=grids,
-        next_states=("a", "b"),
         target=Target.SIMULATE,
     )
 

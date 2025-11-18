@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import pytest
 from pybaum import tree_equal, tree_map
 
-from lcm.input_processing import process_regime
+from lcm.input_processing import process_regimes
 from lcm.max_Q_over_c import (
     get_argmax_and_max_Q_over_c,
     get_max_Q_over_c,
@@ -42,13 +42,13 @@ STRIPPED_DOWN_AND_DISCRETE_MODELS = [
 
 def test_solve_stripped_down():
     model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    params = tree_map(lambda _: 0.2, model.internal_regime.params_template)
+    params = tree_map(lambda _: 0.2, model.params_template)
     model.solve(params)
 
 
 def test_solve_fully_discrete():
     model = get_model("iskhakov_et_al_2017_discrete", n_periods=3)
-    params = tree_map(lambda _: 0.2, model.internal_regime.params_template)
+    params = tree_map(lambda _: 0.2, model.params_template)
     model.solve(params)
 
 
@@ -60,15 +60,19 @@ def test_solve_fully_discrete():
 def test_solve_and_simulate_stripped_down():
     model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
 
-    params = tree_map(lambda _: 0.2, model.internal_regime.params_template)
+    params = tree_map(lambda _: 0.2, model.params_template)
 
     model.solve_and_simulate(
         params,
         initial_states={
-            "wealth": jnp.array([1.0, 10.0, 50.0]),
+            "iskhakov_et_al_2017_stripped_down": {
+                "wealth": jnp.array([1.0, 10.0, 50.0])
+            }
         },
-        additional_targets=["age"]
-        if "age" in model.internal_regime.functions
+        initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 3,
+        additional_targets={"iskhakov_et_al_2017_discrete": ["age"]}
+        if "age"
+        in model.internal_regimes["iskhakov_et_al_2017_stripped_down"].functions
         else None,
     )
 
@@ -76,49 +80,50 @@ def test_solve_and_simulate_stripped_down():
 def test_solve_and_simulate_fully_discrete():
     model = get_model("iskhakov_et_al_2017_discrete", n_periods=3)
 
-    params = tree_map(lambda _: 0.2, model.internal_regime.params_template)
+    params = tree_map(lambda _: 0.2, model.params_template)
 
     model.solve_and_simulate(
         params,
         initial_states={
-            "wealth": jnp.array([1.0, 10.0, 50.0]),
+            "iskhakov_et_al_2017_discrete": {"wealth": jnp.array([1.0, 10.0, 50.0])}
         },
-        additional_targets=["age"]
-        if "age" in model.internal_regime.functions
+        initial_regimes=["iskhakov_et_al_2017_discrete"] * 3,
+        additional_targets={"iskhakov_et_al_2017_discrete": ["age"]}
+        if "age" in model.internal_regimes["iskhakov_et_al_2017_discrete"].functions
         else None,
     )
 
 
 @pytest.mark.parametrize(
-    "model",
-    [get_model(name, n_periods=3) for name in STRIPPED_DOWN_AND_DISCRETE_MODELS],
+    "model_name",
+    list(STRIPPED_DOWN_AND_DISCRETE_MODELS),
     ids=STRIPPED_DOWN_AND_DISCRETE_MODELS,
 )
-def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(model: Model) -> None:
+def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(
+    model_name: str,
+) -> None:
     """Test that solve_and_simulate creates same output as solve then simulate."""
     # solve then simulate
     # ==================================================================================
-
+    model = get_model(model_name, n_periods=3)
     # solve
-    params = tree_map(lambda _: 0.2, model.internal_regime.params_template)
+    params = tree_map(lambda _: 0.2, model.params_template)
     V_arr_dict = model.solve(params)
 
     # simulate using solution
     solve_then_simulate = model.simulate(
         params,
         V_arr_dict=V_arr_dict,
-        initial_states={
-            "wealth": jnp.array([1.0, 10.0, 50.0]),
-        },
+        initial_states={model_name: {"wealth": jnp.array([1.0, 10.0, 50.0])}},
+        initial_regimes=[model_name] * 3,
     )
 
     # solve and simulate
     # ==================================================================================
     solve_and_simulate = model.solve_and_simulate(
         params,
-        initial_states={
-            "wealth": jnp.array([1.0, 10.0, 50.0]),
-        },
+        initial_states={model_name: {"wealth": jnp.array([1.0, 10.0, 50.0])}},
+        initial_regimes=[model_name] * 3,
     )
 
     assert tree_equal(solve_then_simulate, solve_and_simulate)
@@ -131,7 +136,7 @@ def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(model: Model) -
 )
 def test_simulate_iskhakov_et_al_2017(model: Model) -> None:
     # solve model
-    params = tree_map(lambda _: 0.9, model.internal_regime.params_template)
+    params = tree_map(lambda _: 0.9, model.params_template)
     V_arr_dict = model.solve(params)
 
     # simulate using solution
@@ -139,15 +144,18 @@ def test_simulate_iskhakov_et_al_2017(model: Model) -> None:
         params,
         V_arr_dict=V_arr_dict,
         initial_states={
-            "wealth": jnp.array([10.0, 10.0, 20.0]),
-            "lagged_retirement": jnp.array(
-                [
-                    RetirementStatus.working,
-                    RetirementStatus.retired,
-                    RetirementStatus.retired,
-                ]
-            ),
+            "iskhakov_et_al_2017": {
+                "wealth": jnp.array([10.0, 10.0, 20.0]),
+                "lagged_retirement": jnp.array(
+                    [
+                        RetirementStatus.working,
+                        RetirementStatus.retired,
+                        RetirementStatus.retired,
+                    ]
+                ),
+            }
         },
+        initial_regimes=["iskhakov_et_al_2017"] * 3,
     )
 
 
@@ -158,15 +166,19 @@ def test_simulate_iskhakov_et_al_2017(model: Model) -> None:
 
 def test_get_max_Q_over_c():
     regime = get_regime("iskhakov_et_al_2017_stripped_down")
-    internal_regime = process_regime(regime, n_periods=3, enable_jit=True)
+    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
+        "iskhakov_et_al_2017_stripped_down"
+    ]
 
     params = {
-        "beta": 1.0,
-        "utility": {"disutility_of_work": 1.0},
-        "next_wealth": {
-            "interest_rate": 0.05,
-            "wage": 1.0,
-        },
+        "iskhakov_et_al_2017_stripped_down": {
+            "beta": 1.0,
+            "utility": {"disutility_of_work": 1.0},
+            "next_wealth": {
+                "interest_rate": 0.05,
+                "wage": 1.0,
+            },
+        }
     }
 
     state_space_info = create_state_space_info(
@@ -177,7 +189,8 @@ def test_get_max_Q_over_c():
     Q_and_F = get_Q_and_F(
         regime=regime,
         internal_functions=internal_regime.internal_functions,
-        next_state_space_info=state_space_info,
+        next_state_space_infos={regime.name: state_space_info},
+        grids=internal_regime.grids,
         is_last_period=True,
     )
 
@@ -193,7 +206,7 @@ def test_get_max_Q_over_c():
         wealth=jnp.array(30),
         params=params,
         period=2,
-        next_V_arr=jnp.empty(0),
+        next_V_arr={regime.name: jnp.empty(0)},
     )
     assert val == iskhakov_et_al_2017_utility(
         consumption=jnp.array(30.0),
@@ -204,15 +217,19 @@ def test_get_max_Q_over_c():
 
 def test_get_max_Q_over_c_with_discrete_model():
     regime = get_regime("iskhakov_et_al_2017_discrete")
-    internal_regime = process_regime(regime, n_periods=3, enable_jit=True)
+    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
+        "iskhakov_et_al_2017_discrete"
+    ]
 
     params = {
-        "beta": 1.0,
-        "utility": {"disutility_of_work": 1.0},
-        "next_wealth": {
-            "interest_rate": 0.05,
-            "wage": 1.0,
-        },
+        "iskhakov_et_al_2017_discrete": {
+            "beta": 1.0,
+            "utility": {"disutility_of_work": 1.0},
+            "next_wealth": {
+                "interest_rate": 0.05,
+                "wage": 1.0,
+            },
+        }
     }
 
     state_space_info = create_state_space_info(
@@ -223,7 +240,8 @@ def test_get_max_Q_over_c_with_discrete_model():
     Q_and_F = get_Q_and_F(
         regime=regime,
         internal_functions=internal_regime.internal_functions,
-        next_state_space_info=state_space_info,
+        next_state_space_infos={regime.name: state_space_info},
+        grids=internal_regime.grids,
         is_last_period=True,
     )
 
@@ -239,7 +257,7 @@ def test_get_max_Q_over_c_with_discrete_model():
         wealth=jnp.array(2),
         params=params,
         period=2,
-        next_V_arr=jnp.empty(0),
+        next_V_arr={regime.name: jnp.empty(0)},
     )
     assert val == iskhakov_et_al_2017_utility(
         consumption=jnp.array(2),
@@ -255,15 +273,19 @@ def test_get_max_Q_over_c_with_discrete_model():
 
 def test_argmax_and_max_Q_over_c():
     regime = get_regime("iskhakov_et_al_2017_stripped_down")
-    internal_regime = process_regime(regime, n_periods=3, enable_jit=True)
+    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
+        "iskhakov_et_al_2017_stripped_down"
+    ]
 
     params = {
-        "beta": 1.0,
-        "utility": {"disutility_of_work": 1.0},
-        "next_wealth": {
-            "interest_rate": 0.05,
-            "wage": 1.0,
-        },
+        "iskhakov_et_al_2017_stripped_down": {
+            "beta": 1.0,
+            "utility": {"disutility_of_work": 1.0},
+            "next_wealth": {
+                "interest_rate": 0.05,
+                "wage": 1.0,
+            },
+        }
     }
 
     state_space_info = create_state_space_info(
@@ -274,7 +296,8 @@ def test_argmax_and_max_Q_over_c():
     Q_and_F = get_Q_and_F(
         regime=regime,
         internal_functions=internal_regime.internal_functions,
-        next_state_space_info=state_space_info,
+        next_state_space_infos={regime.name: state_space_info},
+        grids=internal_regime.grids,
         is_last_period=True,
     )
 
@@ -289,7 +312,7 @@ def test_argmax_and_max_Q_over_c():
         wealth=jnp.array(30),
         params=params,
         period=2,
-        next_V_arr=jnp.empty(0),
+        next_V_arr={regime.name: jnp.empty(0)},
     )
     assert policy == 2
     assert val == iskhakov_et_al_2017_utility(
@@ -301,15 +324,19 @@ def test_argmax_and_max_Q_over_c():
 
 def test_argmax_and_max_Q_over_c_with_discrete_model():
     regime = get_regime("iskhakov_et_al_2017_discrete")
-    internal_regime = process_regime(regime, n_periods=3, enable_jit=True)
+    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
+        "iskhakov_et_al_2017_discrete"
+    ]
 
     params = {
-        "beta": 1.0,
-        "utility": {"disutility_of_work": 1.0},
-        "next_wealth": {
-            "interest_rate": 0.05,
-            "wage": 1.0,
-        },
+        "iskhakov_et_al_2017_discrete": {
+            "beta": 1.0,
+            "utility": {"disutility_of_work": 1.0},
+            "next_wealth": {
+                "interest_rate": 0.05,
+                "wage": 1.0,
+            },
+        }
     }
 
     state_space_info = create_state_space_info(
@@ -320,7 +347,8 @@ def test_argmax_and_max_Q_over_c_with_discrete_model():
     Q_and_F = get_Q_and_F(
         regime=regime,
         internal_functions=internal_regime.internal_functions,
-        next_state_space_info=state_space_info,
+        next_state_space_infos={regime.name: state_space_info},
+        grids=internal_regime.grids,
         is_last_period=True,
     )
 
@@ -335,7 +363,7 @@ def test_argmax_and_max_Q_over_c_with_discrete_model():
         wealth=jnp.array(2),
         params=params,
         period=2,
-        next_V_arr=jnp.empty(0),
+        next_V_arr={regime.name: jnp.empty(0)},
     )
     assert _argmax == 1
     assert _max == iskhakov_et_al_2017_utility(
@@ -367,8 +395,8 @@ def test_solve_with_period_argument_in_constraint():
     constraints["absorbing_retirement_constraint"] = absorbing_retirement_constraint
     regime = regime.replace(constraints=constraints)
 
-    model = Model(regime=regime, n_periods=3)
-    params = tree_map(lambda _: 0.2, model.internal_regime.params_template)
+    model = Model(regimes=[regime], n_periods=3)
+    params = tree_map(lambda _: 0.2, model.params_template)
     model.solve(params)
 
 
@@ -391,9 +419,9 @@ def test_order_of_states_and_actions_does_not_matter():
         actions=_reverse_dict(regime.actions),
     )
 
-    model = Model(regime=regime, n_periods=3)
-    model_swapped = Model(regime=regime_swapped, n_periods=3)
-    params = tree_map(lambda _: 0.2, model.internal_regime.params_template)
+    model = Model(regimes=[regime], n_periods=3)
+    model_swapped = Model(regimes=[regime_swapped], n_periods=3)
+    params = tree_map(lambda _: 0.2, model.params_template)
     V_arr_dict = model.solve(params)
 
     V_arr_dict_swapped = model_swapped.solve(params)
