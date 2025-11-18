@@ -191,10 +191,13 @@ def _validate_model_inputs(n_periods: int, regimes: list[Regime]) -> None:
     elif n_periods <= 1:
         error_messages.append("n_periods must be at least 2.")
 
-    for regime in regimes:
-        if not isinstance(regime, Regime):
-            error_messages.append("regimes must be instances of lcm.Regime.")
-            break
+    error_messages.extend(
+        [
+            "regimes must be instances of lcm.Regime."
+            for regime in regimes
+            if not isinstance(regime, Regime)
+        ]
+    )
 
     if error_messages:
         msg = format_messages(error_messages)

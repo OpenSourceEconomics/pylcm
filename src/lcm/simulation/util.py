@@ -6,7 +6,7 @@ from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.random import generate_simulation_keys
 from lcm.state_action_space import create_state_action_space
-from lcm.typing import Int1D, ParamsDict, RegimeName
+from lcm.typing import Bool1D, Int1D, ParamsDict, RegimeName
 from lcm.utils import flatten_regime_namespace
 
 
@@ -64,7 +64,7 @@ def calculate_next_states(
     states: dict[str, Array],
     state_action_space: StateActionSpace,
     key: Array,
-    subjects_in_regime: Array,
+    subjects_in_regime: Bool1D,
 ) -> dict[str, Array]:
     """Calculate next period states for subjects in a regime.
 
@@ -132,7 +132,7 @@ def calculate_next_regime_membership(
     regime_name_to_id: dict[RegimeName, int],
     new_subject_regime_ids: Int1D,
     key: Array,
-    subjects_in_regime: Array,
+    subjects_in_regime: Bool1D,
 ) -> Int1D:
     """Calculate next period regime membership for subjects in a regime.
 
@@ -225,7 +225,7 @@ def draw_key_from_dict(
 def _update_states_for_subjects(
     all_states: dict[str, Array],
     computed_next_states: dict[str, Array],
-    subject_indices: Int1D,
+    subject_indices: Bool1D,
 ) -> dict[str, Array]:
     """Update the global states dictionary with next states for specific subjects.
 

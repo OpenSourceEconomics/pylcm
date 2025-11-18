@@ -276,6 +276,6 @@ def build_regime_transition_probs_functions(
     )
 
     return PhaseVariantContainer(
-        solve=next_regime,
+        solve=jax.jit(next_regime) if enable_jit else next_regime,
         simulate=jax.jit(next_regime_vmapped) if enable_jit else next_regime_vmapped,
     )

@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
     import pandas as pd
 
-    from lcm.typing import FloatND, IntND, ParamsDict, RegimeName
+    from lcm.typing import FloatND, Int1D, IntND, ParamsDict, RegimeName
 
 
 def simulate(
@@ -129,15 +129,15 @@ def _simulate_regime_in_period(
     period: int,
     n_periods: int,
     states: dict[str, Array],
-    subject_regime_ids: Array,
-    new_subject_regime_ids: Array,
+    subject_regime_ids: Int1D,
+    new_subject_regime_ids: Int1D,
     V_arr_dict: dict[int, dict[RegimeName, FloatND]],
     params: dict[RegimeName, ParamsDict],
     regime_name_to_id: dict[RegimeName, int],
     key: Array,
     *,
     is_last_period: bool,
-) -> tuple[SimulationResults, dict[str, Array], Array, Array]:
+) -> tuple[SimulationResults, dict[str, Array], Int1D, Array]:
     """Simulate one regime for one period.
 
     This function processes all subjects in a given regime for a single period,
