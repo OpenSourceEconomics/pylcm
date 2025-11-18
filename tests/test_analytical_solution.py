@@ -30,6 +30,7 @@ TEST_CASES = {
     "iskhakov_2017_five_periods": {
         "model": get_model("iskhakov_et_al_2017", n_periods=5),
         "params": get_params(
+            regime_name="iskhakov_et_al_2017",
             beta=0.98,
             disutility_of_work=1.0,
             interest_rate=0.0,
@@ -39,6 +40,7 @@ TEST_CASES = {
     "iskhakov_2017_low_delta": {
         "model": get_model("iskhakov_et_al_2017", n_periods=3),
         "params": get_params(
+            regime_name="iskhakov_et_al_2017",
             beta=0.98,
             disutility_of_work=0.1,
             interest_rate=0.0,
@@ -71,7 +73,10 @@ def test_analytical_solution(model_name, model_and_params):
     params = model_and_params["params"]
 
     V_arr_dict: dict[int, FloatND] = model.solve(params=params)
-    V_arr_list = list(dict(sorted(V_arr_dict.items(), key=lambda x: x[0])).values())
+    V_arr_list = [
+        period_res["iskhakov_et_al_2017"]
+        for period_res in dict(sorted(V_arr_dict.items(), key=lambda x: x[0])).values()
+    ]
 
     _numerical = np.stack(V_arr_list)
     numerical = {

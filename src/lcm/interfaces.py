@@ -5,11 +5,9 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from lcm.utils import first_non_none
+from lcm.utils import first_non_none, flatten_regime_namespace
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     import pandas as pd
     from jax import Array
 
@@ -20,12 +18,13 @@ if TYPE_CHECKING:
         ContinuousState,
         DiscreteAction,
         DiscreteState,
-        Float1D,
-        Int1D,
         InternalUserFunction,
         MaxQOverAFunction,
         NextStateSimulationFunction,
         ParamsDict,
+        RegimeTransitionFunction,
+        TransitionFunctionsDict,
+        VmappedRegimeTransitionFunction,
     )
 
 
@@ -78,6 +77,16 @@ class StateActionSpace:
         """Tuple with names of all action variables."""
         return tuple(self.discrete_actions) + tuple(self.continuous_actions)
 
+    @property
+    def actions(self) -> dict[str, DiscreteAction | ContinuousAction]:
+        """Dictionary with all action variables."""
+        return self.discrete_actions | self.continuous_actions
+
+    @property
+    def actions_grid_shapes(self) -> tuple[int, ...]:
+        """Dictionary with all action variables."""
+        return tuple(len(grid) for grid in self.actions.values())
+
     def replace(
         self,
         states: dict[str, ContinuousState | DiscreteState] | None = None,
@@ -123,8 +132,8 @@ class StateSpaceInfo:
     """
 
     states_names: tuple[str, ...]
-    discrete_states: Mapping[str, DiscreteGrid]
-    continuous_states: Mapping[str, ContinuousGrid]
+    discrete_states: dict[str, DiscreteGrid]
+    continuous_states: dict[str, ContinuousGrid]
 
 
 class ShockType(Enum):
@@ -166,6 +175,22 @@ class PeriodVariantContainer[T]:
         return self.non_terminal
 
 
+class PhaseVariantContainer[S, T]:
+    """Container for objects that vary whether we are in the solve or simulate phase.
+
+    Attributes:
+        solve: Object for the solve phase.
+        simulate: Object for the simulate phase.
+
+    """
+
+    __slots__ = ("simulate", "solve")
+
+    def __init__(self, solve: S, simulate: T) -> None:
+        self.solve = solve
+        self.simulate = simulate
+
+
 @dataclasses.dataclass(frozen=True)
 class InternalRegime:
     """Internal representation of a user regime.
@@ -174,13 +199,17 @@ class InternalRegime:
 
     """
 
-    grids: dict[str, Float1D | Int1D]
+    name: str
+    grids: dict[str, Array]
     gridspecs: dict[str, Grid]
     variable_info: pd.DataFrame
     utility: InternalUserFunction
     constraints: dict[str, InternalUserFunction]
-    transitions: dict[str, InternalUserFunction]
+    transitions: TransitionFunctionsDict
     functions: dict[str, InternalUserFunction]
+    regime_transition_probs: PhaseVariantContainer[
+        RegimeTransitionFunction, VmappedRegimeTransitionFunction
+    ]
     internal_functions: InternalFunctions
     params_template: ParamsDict
     state_action_spaces: PeriodVariantContainer[StateActionSpace]
@@ -191,28 +220,15 @@ class InternalRegime:
     # Not properly processed yet
     random_utility_shocks: ShockType
 
-    def get_all_functions(self) -> dict[str, InternalUserFunction]:
-        """Get all regime functions including utility, constraints, and transitions.
-
-        Returns:
-            Dictionary that maps names of all regime functions to the functions.
-
-        """
-        return (
-            self.functions
-            | {"utility": self.utility}
-            | self.constraints
-            | self.transitions
-        )
-
 
 @dataclasses.dataclass(frozen=True)
-class InternalSimulationPeriodResults:
-    """The results of a simulation for one period."""
+class SimulationResults:
+    """The results of a simulation for one period and one regime."""
 
-    value: Array
+    V_arr: Array
     actions: dict[str, Array]
     states: dict[str, Array]
+    in_regime: Array
 
 
 class Target(Enum):
@@ -229,4 +245,23 @@ class InternalFunctions:
     functions: dict[str, InternalUserFunction]
     utility: InternalUserFunction
     constraints: dict[str, InternalUserFunction]
-    transitions: dict[str, InternalUserFunction]
+    transitions: TransitionFunctionsDict
+    regime_transition_probs: PhaseVariantContainer[
+        RegimeTransitionFunction, VmappedRegimeTransitionFunction
+    ]
+
+    def get_all_functions(self) -> dict[str, InternalUserFunction]:
+        """Get all regime functions including utility, constraints, and transitions.
+
+        Returns:
+            Dictionary that maps names of all regime functions to the functions.
+
+        """
+        functions_pool = self.functions | {
+            "utility": self.utility,
+            "regime_transition_probs_solve": self.regime_transition_probs.solve,
+            "regime_transition_probs_simulate": self.regime_transition_probs.simulate,
+            **self.constraints,
+            **self.transitions,
+        }
+        return flatten_regime_namespace(functions_pool)

@@ -6,6 +6,7 @@ import pandas as pd
 from dags import get_ancestors
 
 from lcm.grids import ContinuousGrid, Grid
+from lcm.utils import flatten_regime_namespace
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -44,14 +45,6 @@ def get_variable_info(regime: Regime) -> pd.DataFrame:
         isinstance(spec, ContinuousGrid) for spec in variables.values()
     ]
     info["is_discrete"] = ~info["is_continuous"]
-
-    info["is_stochastic"] = [
-        (
-            var in regime.states
-            and is_stochastic_transition(regime.transitions[f"next_{var}"])
-        )
-        for var in variables
-    ]
 
     info["enters_concurrent_valuation"] = _indicator_enters_concurrent_valuation(
         states_and_actions_names=list(variables),
@@ -116,7 +109,7 @@ def _indicator_enters_transition(
     Special variables such as the "period" or parameters will be ignored.
 
     """
-    next_fn_names = list(regime.transitions)
+    next_fn_names = list(flatten_regime_namespace(regime.transitions))
     user_functions = regime.get_all_functions()
     ancestors = get_ancestors(
         user_functions,

@@ -9,7 +9,8 @@ from dags import concatenate_functions
 from dags.signature import with_signature
 
 from lcm.input_processing.util import is_stochastic_transition
-from lcm.interfaces import InternalFunctions, Target
+from lcm.interfaces import Target
+from lcm.utils import flatten_regime_namespace
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -19,25 +20,27 @@ if TYPE_CHECKING:
     from lcm.typing import (
         DiscreteState,
         FloatND,
+        GridsDict,
+        InternalUserFunction,
         NextStateSimulationFunction,
+        RegimeName,
         StochasticNextFunction,
     )
 
 
 def get_next_state_function(
     *,
-    grids: dict[str, Array],
-    internal_functions: InternalFunctions,
-    next_states: tuple[str, ...],
+    grids: GridsDict,
+    transitions: dict[str, InternalUserFunction],
+    functions: dict[str, InternalUserFunction],
     target: Target,
 ) -> NextStateSimulationFunction:
     """Get function that computes the next states during the solution.
 
     Args:
         grids: Grids of a regime.
-        internal_functions: Internal functions of a regime.
-        next_states: Names of the next states to compute. These states are relevant for
-            the next state space.
+        transitions: Transitions to the next states of a regime.
+        functions: Dict of auxiliary functions of a regime.
         target: Whether to generate the function for the solve or simulate target.
 
     Returns:
@@ -48,26 +51,20 @@ def get_next_state_function(
 
     """
     if target == Target.SOLVE:
-        functions = internal_functions.transitions | internal_functions.functions
+        functions_to_concatenate = transitions | functions
     elif target == Target.SIMULATE:
         # For the simulation target, we need to extend the functions dictionary with
         # stochastic next states functions and their weights.
         extended_transitions = _extend_transitions_for_simulation(
-            grids=grids, internal_functions=internal_functions
+            grids=grids, transitions=transitions
         )
-        functions = extended_transitions | internal_functions.functions
+        functions_to_concatenate = extended_transitions | functions
     else:
         raise ValueError(f"Invalid target: {target}")
 
-    requested_next_states = [
-        next_fn_name
-        for next_fn_name in internal_functions.transitions
-        if next_fn_name.removeprefix("next_") in next_states
-    ]
-
     return concatenate_functions(
-        functions=functions,
-        targets=requested_next_states,
+        functions=functions_to_concatenate,
+        targets=list(transitions.keys()),
         return_type="dict",
         enforce_signature=False,
         set_annotations=True,
@@ -75,24 +72,29 @@ def get_next_state_function(
 
 
 def get_next_stochastic_weights_function(
-    internal_functions: InternalFunctions,
-    next_stochastic_states: tuple[str, ...],
+    regime_name: RegimeName,
+    functions: dict[str, InternalUserFunction],
+    transitions: dict[str, InternalUserFunction],
 ) -> Callable[..., dict[str, Array]]:
     """Get function that computes the weights for the next stochastic states.
 
     Args:
-        internal_functions: Internal functions instance.
-        next_stochastic_states: Names of the stochastic states for which to compute the
-            weights. These variables are relevant for the next state space.
+        regime_name: Name of the regime that the transitions target.
+        functions: Dict containing the auxiliary functions of the model.
+        transitions: Transitions to the target regime.
 
     Returns:
         Function that computes the weights for the next stochastic states.
 
     """
-    targets = [f"weight_next_{name}" for name in next_stochastic_states]
+    targets = [
+        f"weight_{regime_name}__{fn_name}"
+        for fn_name, fn in transitions.items()
+        if is_stochastic_transition(fn)
+    ]
 
     return concatenate_functions(
-        functions=internal_functions.functions,
+        functions=functions,
         targets=targets,
         return_type="dict",
         enforce_signature=False,
@@ -101,23 +103,22 @@ def get_next_stochastic_weights_function(
 
 
 def _extend_transitions_for_simulation(
-    grids: dict[str, Array],
-    internal_functions: InternalFunctions,
+    grids: GridsDict,
+    transitions: dict[str, InternalUserFunction],
 ) -> dict[str, Callable[..., Array]]:
     """Extend the functions dictionary for the simulation target.
 
     Args:
         grids: Dictionary of grids.
-        internal_functions: Internal functions instance.
+        transitions: A dictonary of transitions to extend.
 
     Returns:
         Extended functions dictionary.
 
     """
+    flat_grids = flatten_regime_namespace(grids)
     stochastic_targets = [
-        key
-        for key, next_fn in internal_functions.transitions.items()
-        if is_stochastic_transition(next_fn)
+        fn_name for fn_name, fn in transitions.items() if is_stochastic_transition(fn)
     ]
     # Handle stochastic next states functions
     # ----------------------------------------------------------------------------------
@@ -130,14 +131,14 @@ def _extend_transitions_for_simulation(
     # ----------------------------------------------------------------------------------
     stochastic_next = {
         name: _create_stochastic_next_func(
-            name, labels=grids[name.removeprefix("next_")]
+            name, labels=flat_grids[name.replace("next_", "")]
         )
         for name in stochastic_targets
     }
 
     # Overwrite regime transitions with generated stochastic next states functions
     # ----------------------------------------------------------------------------------
-    return internal_functions.transitions | stochastic_next
+    return transitions | stochastic_next
 
 
 def _create_stochastic_next_func(

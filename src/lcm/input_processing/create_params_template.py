@@ -7,19 +7,21 @@ import jax.numpy as jnp
 from jax import Array
 
 from lcm.input_processing.util import (
-    get_grids,
     get_variable_info,
+    is_stochastic_transition,
 )
+from lcm.utils import unflatten_regime_namespace
 
 if TYPE_CHECKING:
     import pandas as pd
 
     from lcm.regime import Regime
-    from lcm.typing import ParamsDict
+    from lcm.typing import GridsDict, ParamsDict
 
 
 def create_params_template(
     regime: Regime,
+    grids: GridsDict,
     n_periods: int,
     default_params: dict[str, float] = {"beta": jnp.nan},  # noqa: B006
 ) -> ParamsDict:
@@ -27,6 +29,7 @@ def create_params_template(
 
     Args:
         regime: The regime as provided by the user.
+        grids: Dictionary containing the state grids for each regime.
         n_periods: Number of periods of the model.
         default_params: A dictionary of default parameters. Default is None. If None,
             the default {"beta": np.nan} is used. For other lifetime reward objectives,
@@ -38,15 +41,11 @@ def create_params_template(
 
     """
     variable_info = get_variable_info(regime)
-    grids = get_grids(regime)
 
-    if variable_info["is_stochastic"].any():
-        stochastic_transitions = _create_stochastic_transition_params(
-            regime=regime, variable_info=variable_info, grids=grids, n_periods=n_periods
-        )
-        stochastic_transition_params = {"shocks": stochastic_transitions}
-    else:
-        stochastic_transition_params = {}
+    stochastic_transitions = _create_stochastic_transition_params(
+        regime=regime, variable_info=variable_info, grids=grids, n_periods=n_periods
+    )
+    stochastic_transition_params = {"shocks": stochastic_transitions}
 
     function_params = _create_function_params(regime)
 
@@ -95,7 +94,7 @@ def _create_function_params(regime: Regime) -> dict[str, dict[str, float]]:
 def _create_stochastic_transition_params(
     regime: Regime,
     variable_info: pd.DataFrame,
-    grids: dict[str, Array],
+    grids: GridsDict,
     n_periods: int,
 ) -> dict[str, Array]:
     """Create parameters for stochastic transitions.
@@ -111,19 +110,6 @@ def _create_stochastic_transition_params(
         jnp.nan matrices of the correct dimensions.
 
     """
-    stochastic_variables = variable_info.query("is_stochastic").index.tolist()
-
-    # Assert that all stochastic variables are discrete state variables
-    # ==================================================================================
-    discrete_state_vars = set(variable_info.query("is_state & is_discrete").index)
-
-    invalid = set(stochastic_variables) - discrete_state_vars
-    if invalid:
-        raise ValueError(
-            f"The following variables are stochastic, but are not discrete state "
-            f"variables: {invalid}. This is currently not supported.",
-        )
-
     # Create template matrices for stochastic transitions
     # ==================================================================================
 
@@ -132,27 +118,33 @@ def _create_stochastic_transition_params(
 
     stochastic_transition_params = {}
     invalid_dependencies = {}
+    for regime_name, transitions in regime.transitions.items():
+        for func_name, transition in transitions.items():
+            if is_stochastic_transition(transition):
+                # Retrieve corresponding next function and its arguments
+                dependencies = list(inspect.signature(transition).parameters)
 
-    for var in stochastic_variables:
-        # Retrieve corresponding next function and its arguments
-        next_var = regime.transitions[f"next_{var}"]
-        dependencies = list(inspect.signature(next_var).parameters)
+                # If there are invalid dependencies, store them in a dictionary and
+                # continue with the next variable to collect as many invalid
+                # arguments as possible.
+                invalid = set(dependencies) - valid_vars
+                if invalid:
+                    invalid_dependencies[func_name] = invalid
+                else:
+                    # Get the dims of variables that influence the stochastic variable
+                    dimensions_of_deps = [
+                        len(grids[regime_name][arg]) if arg != "period" else n_periods
+                        for arg in dependencies
+                    ]
+                    # Add the dimension of the stochastic variable itself at the end
+                    dimensions = (
+                        *dimensions_of_deps,
+                        len(grids[regime_name][func_name.removeprefix("next_")]),
+                    )
 
-        # If there are invalid dependencies, store them in a dictionary and continue
-        # with the next variable to collect as many invalid arguments as possible.
-        invalid = set(dependencies) - valid_vars
-        if invalid:
-            invalid_dependencies[var] = invalid
-        else:
-            # Get the dimensions of variables that influence the stochastic variable
-            dimensions_of_deps = [
-                len(grids[arg]) if arg != "period" else n_periods
-                for arg in dependencies
-            ]
-            # Add the dimension of the stochastic variable itself at the end
-            dimensions = (*dimensions_of_deps, len(grids[var]))
-
-            stochastic_transition_params[var] = jnp.full(dimensions, jnp.nan)
+                    stochastic_transition_params[f"{regime_name}__{func_name}"] = (
+                        jnp.full(dimensions, jnp.nan)
+                    )
 
     # Raise an error if there are invalid arguments
     # ==================================================================================
@@ -163,4 +155,4 @@ def _create_stochastic_transition_params(
             f"{invalid_dependencies}.",
         )
 
-    return stochastic_transition_params
+    return unflatten_regime_namespace(stochastic_transition_params)

@@ -6,8 +6,9 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_equal
 
-from lcm.input_processing import process_regime
-from lcm.interfaces import InternalFunctions
+import lcm
+from lcm.input_processing import process_regimes
+from lcm.interfaces import InternalFunctions, PhaseVariantContainer
 from lcm.Q_and_F import (
     _get_feasibility,
     _get_joint_weights_function,
@@ -31,15 +32,19 @@ if TYPE_CHECKING:
 @pytest.mark.illustrative
 def test_get_Q_and_F_function():
     regime = get_regime("iskhakov_et_al_2017_stripped_down")
-    internal_regime = process_regime(regime, n_periods=3, enable_jit=True)
+    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
+        "iskhakov_et_al_2017_stripped_down"
+    ]
 
     params = {
-        "beta": 1.0,
-        "utility": {"disutility_of_work": 1.0},
-        "next_wealth": {
-            "interest_rate": 0.05,
-            "wage": 1.0,
-        },
+        "iskhakov_et_al_2017_stripped_down": {
+            "beta": 1.0,
+            "utility": {"disutility_of_work": 1.0},
+            "next_wealth": {
+                "interest_rate": 0.05,
+                "wage": 1.0,
+            },
+        }
     }
 
     state_space_info = create_state_space_info(
@@ -50,7 +55,8 @@ def test_get_Q_and_F_function():
     Q_and_F = get_Q_and_F(
         regime=regime,
         internal_functions=internal_regime.internal_functions,
-        next_state_space_info=state_space_info,
+        next_state_space_infos={regime.name: state_space_info},
+        grids={regime.name: internal_regime.grids},
         is_last_period=True,
     )
 
@@ -119,11 +125,18 @@ def internal_functions_illustrative():
 
     # create an internal regime instance where some attributes are set to None
     # because they are not needed to create the feasibilty mask
+    mock_transition_solve = lambda *args, params, **kwargs: {"mock": 1.0}  # noqa: E731, ARG005
+    mock_transition_simulate = lambda *args, params, **kwargs: {  # noqa: E731, ARG005
+        "mock": jnp.array([1.0])
+    }
     return InternalFunctions(
         utility=lambda: 0,  # type: ignore[arg-type]
         transitions={},
         constraints=constraints,  # type: ignore[arg-type]
         functions=functions,  # type: ignore[arg-type]
+        regime_transition_probs=PhaseVariantContainer(
+            solve=mock_transition_solve, simulate=mock_transition_simulate
+        ),
     )
 
 
@@ -158,14 +171,24 @@ def test_get_combined_constraint_illustrative(internal_functions_illustrative):
 
 
 def test_get_multiply_weights():
+    @lcm.mark.stochastic
+    def next_a():
+        pass
+
+    @lcm.mark.stochastic
+    def next_b():
+        pass
+
+    transitions = {"next_a": next_a, "next_b": next_b}
     multiply_weights = _get_joint_weights_function(
-        stochastic_variables=("a", "b"),
+        regime_name="test",
+        transitions=transitions,
     )
 
     a = jnp.array([1, 2])
     b = jnp.array([3, 4])
 
-    got = multiply_weights(weight_next_a=a, weight_next_b=b)
+    got = multiply_weights(weight_test__next_a=a, weight_test__next_b=b)
     expected = jnp.array([[3, 4], [6, 8]])
     assert_array_equal(got, expected)
 
@@ -180,11 +203,18 @@ def test_get_combined_constraint():
     def h(params):  # noqa: ARG001
         return None
 
+    mock_transition_solve = lambda *args, params, **kwargs: {"mock": 1.0}  # noqa: E731, ARG005
+    mock_transition_simulate = lambda *args, params, **kwargs: {  # noqa: E731, ARG005
+        "mock": jnp.array([1.0])
+    }
     internal_functions = InternalFunctions(
         utility=lambda: 0,  # type: ignore[arg-type]
         constraints={"f": f, "g": g},  # type: ignore[dict-item]
         transitions={},
         functions={"h": h},  # type: ignore[dict-item]
+        regime_transition_probs=PhaseVariantContainer(
+            solve=mock_transition_solve, simulate=mock_transition_simulate
+        ),
     )
     combined_constraint = _get_feasibility(internal_functions)
     feasibility: BoolND = combined_constraint(params={})

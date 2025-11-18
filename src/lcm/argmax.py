@@ -48,12 +48,13 @@ def argmax_and_max(
 
     # Move axis over which to compute the argmax to the back and flatten last dims
     # ==================================================================================
-    a = _move_axes_to_back(a, axes=axis)
-    a = _flatten_last_n_axes(a, n=len(axis))
+    if a.ndim != 0:
+        a = _move_axes_to_back(a, axes=axis)
+        a = _flatten_last_n_axes(a, n=len(axis))
 
     # Do same transformation for where
     # ==================================================================================
-    if where is not None:
+    if where is not None and where.ndim != 0:
         where = _move_axes_to_back(where, axes=axis)
         where = _flatten_last_n_axes(where, n=len(axis))
 

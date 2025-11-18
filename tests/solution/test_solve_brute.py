@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import dataclasses
+from typing import TYPE_CHECKING
+
 import jax.numpy as jnp
 import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
@@ -9,6 +12,22 @@ from lcm.logging import get_logger
 from lcm.max_Q_over_a import get_max_Q_over_a
 from lcm.ndimage import map_coordinates
 from lcm.solution.solve_brute import solve
+
+if TYPE_CHECKING:
+    from lcm.typing import MaxQOverAFunction
+
+
+@dataclasses.dataclass(frozen=True)
+class InternalRegimeMock:
+    """Mock InternalRegime with only the attributes required by solve().
+
+    The solve() function only accesses:
+    - state_action_spaces: PeriodVariantContainer of StateActionSpace objects
+    - max_Q_over_a_functions: PeriodVariantContainer of max_Q_over_a functions
+    """
+
+    state_action_spaces: PeriodVariantContainer[StateActionSpace]
+    max_Q_over_a_functions: PeriodVariantContainer[MaxQOverAFunction]
 
 
 def test_solve_brute():
@@ -54,12 +73,14 @@ def test_solve_brute():
         next_wealth = wealth + working - consumption
         next_lazy = lazy
 
-        if next_V_arr.size == 0:
-            # this is the last period, when next_V_arr = jnp.empty(0)
+        # next_V_arr is now a dict of regime names to arrays
+        regime_name = "default"
+        if regime_name not in next_V_arr or next_V_arr[regime_name].size == 0:
+            # this is the last period, when next_V_arr = {regime_name: jnp.empty(0)}
             expected_V = 0
         else:
             expected_V = map_coordinates(
-                input=next_V_arr[next_lazy],
+                input=next_V_arr[regime_name][next_lazy],
                 coordinates=jnp.array([next_wealth]),
             )
 
@@ -84,15 +105,24 @@ def test_solve_brute():
     # call solve function
     # ==================================================================================
 
+    internal_regime = InternalRegimeMock(
+        state_action_spaces=state_action_spaces,
+        max_Q_over_a_functions=max_Q_over_a_functions,
+    )
+
     solution = solve(
         params=params,
         n_periods=2,
-        state_action_spaces=state_action_spaces,
-        max_Q_over_a_functions=max_Q_over_a_functions,
+        internal_regimes={"default": internal_regime},  # type: ignore[dict-item]
         logger=get_logger(debug_mode=False),
     )
 
+    # Solution is now dict[int, dict[RegimeName, FloatND]]
     assert isinstance(solution, dict)
+    assert 0 in solution
+    assert 1 in solution
+    assert "default" in solution[0]
+    assert "default" in solution[1]
 
 
 def test_solve_brute_single_period_Qc_arr():
@@ -113,6 +143,7 @@ def test_solve_brute_single_period_Qc_arr():
     )
 
     def _Q_and_F(a, c, b, d, next_V_arr, params, period):  # noqa: ARG001
+        # next_V_arr is now a dict but not used in this test
         util = d
         feasib = d <= a + b + c
         return util, feasib
@@ -127,14 +158,20 @@ def test_solve_brute_single_period_Qc_arr():
 
     # by setting max_Qc_over_d to identity, we can test that the max_Q_over_c function
     # is correctly applied to the state_action_space
-    got = solve(
-        params={},
-        n_periods=2,
+
+    internal_regime = InternalRegimeMock(
         state_action_spaces=state_action_spaces,
         max_Q_over_a_functions=PeriodVariantContainer(
             terminal=max_Q_over_a, non_terminal=max_Q_over_a
         ),
+    )
+
+    got = solve(
+        params={},
+        n_periods=2,
+        internal_regimes={"default": internal_regime},  # type: ignore[dict-item]
         logger=get_logger(debug_mode=False),
     )
 
-    aaae(got[0], expected)
+    # Solution is now dict[int, dict[RegimeName, FloatND]], need to extract the V_arr
+    aaae(got[0]["default"], expected)

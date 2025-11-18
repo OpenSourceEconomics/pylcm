@@ -22,9 +22,13 @@ type ScalarInt = int | Int[Scalar, ""]  # noqa: F722
 type ScalarFloat = float | Float[Scalar, ""]  # noqa: F722
 
 type Period = int | Int1D
+type RegimeName = str
 
+type _RegimeGridsDict = dict[str, Array]
+type GridsDict = dict[RegimeName, _RegimeGridsDict]
 
-ParamsDict = dict[str, Any]
+type TransitionFunctionsDict = dict[RegimeName, dict[str, InternalUserFunction]]
+type ParamsDict = dict[RegimeName, Any]
 
 
 class UserFunction(Protocol):
@@ -47,6 +51,30 @@ class InternalUserFunction(Protocol):
     def __call__(  # noqa: D102
         self, *args: Array | int, params: ParamsDict, **kwargs: Array | int
     ) -> Array: ...
+
+
+class RegimeTransitionFunction(Protocol):
+    """The regime transition function provided by the user.
+
+    Only used for type checking.
+
+    """
+
+    def __call__(  # noqa: D102
+        self, *args: Array | int, params: ParamsDict, **kwargs: Array | int
+    ) -> dict[RegimeName, float]: ...
+
+
+class VmappedRegimeTransitionFunction(Protocol):
+    """The regime transition function provided by the user.
+
+    Only used for type checking.
+
+    """
+
+    def __call__(  # noqa: D102
+        self, *args: Array | int, params: ParamsDict, **kwargs: Array | int
+    ) -> dict[RegimeName, Float1D]: ...
 
 
 class QAndFFunction(Protocol):
@@ -79,7 +107,11 @@ class MaxQOverCFunction(Protocol):
     """
 
     def __call__(  # noqa: D102
-        self, next_V_arr: Array, params: ParamsDict, period: Period, **kwargs: Array
+        self,
+        next_V_arr: dict[RegimeName, Array],
+        params: ParamsDict,
+        period: Period,
+        **kwargs: Array,
     ) -> Array: ...
 
 
@@ -94,7 +126,11 @@ class ArgmaxQOverCFunction(Protocol):
     """
 
     def __call__(  # noqa: D102
-        self, next_V_arr: Array, params: ParamsDict, period: Period, **kwargs: Array
+        self,
+        next_V_arr: dict[RegimeName, Array],
+        params: ParamsDict,
+        period: Period,
+        **kwargs: Array,
     ) -> tuple[Array, Array]: ...
 
 
@@ -110,7 +146,7 @@ class MaxQOverAFunction(Protocol):
 
     def __call__(  # noqa: D102
         self,
-        next_V_arr: Array,
+        next_V_arr: dict[RegimeName, Array],
         params: ParamsDict,
         period: Period,
         **states_and_actions: Array,
@@ -129,7 +165,7 @@ class ArgmaxQOverAFunction(Protocol):
 
     def __call__(  # noqa: D102
         self,
-        next_V_arr: Array,
+        next_V_arr: dict[RegimeName, Array],
         params: ParamsDict,
         period: Period,
         **states_and_actions: Array,

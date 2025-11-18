@@ -68,7 +68,7 @@ def get_max_Q_over_c(
 
     @functools.wraps(Q_and_F)
     def max_Q_over_c(
-        next_V_arr: FloatND,
+        next_V_arr: dict[str, FloatND],
         params: ParamsDict,
         period: Period,
         **states_and_actions: Array,
@@ -125,7 +125,7 @@ def get_argmax_and_max_Q_over_c(
 
     @functools.wraps(Q_and_F)
     def argmax_and_max_Q_over_c(
-        next_V_arr: FloatND,
+        next_V_arr: dict[str, FloatND],
         params: ParamsDict,
         period: Period,
         **states_and_actions: Array,
