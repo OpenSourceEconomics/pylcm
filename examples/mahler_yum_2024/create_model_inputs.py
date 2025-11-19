@@ -254,7 +254,7 @@ def create_inputs(
         0,
         1000000,
         lambda i, a: a @ xtrans.T,
-        jnp.full(5, 1 / 5),  # noqa: ARG005
+        jnp.full(5, 1 / 5),
     )
     initial_productivity_shock = random.choice(
         new_keys[2], jnp.arange(5), (n,), p=prod_dist
