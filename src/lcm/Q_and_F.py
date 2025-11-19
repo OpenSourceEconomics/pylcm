@@ -218,7 +218,7 @@ def get_Q_and_F_non_terminal(
         # Calculate the instantaneous utility and feasibility
         # ------------------------------------------------------------------------------
 
-        return Q_arr, F_arr
+        return jnp.asarray(Q_arr), jnp.asarray(F_arr)
 
     return Q_and_F
 
@@ -279,7 +279,7 @@ def get_Q_and_F_terminal(
             params=params[regime.name],
         )
 
-        return U_arr, F_arr
+        return jnp.asarray(U_arr), jnp.asarray(F_arr)
 
     return Q_and_F
 
