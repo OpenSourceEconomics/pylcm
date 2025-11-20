@@ -394,7 +394,7 @@ ALIVE_REGIME = Regime(
         },
         "dead": {"next_dead": lambda: Dead.dead},
     },
-    regime_transition_probs=alive_to_dead,
+    regime_transition_probs=alive_to_dead,  # type: ignore[arg-type]
 )
 
 DEAD_REGIME = Regime(
