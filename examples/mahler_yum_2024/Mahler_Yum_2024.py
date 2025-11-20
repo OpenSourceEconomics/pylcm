@@ -14,26 +14,35 @@ import lcm
 from lcm import DiscreteGrid, LinspaceGrid
 from lcm.model import Model
 from lcm.regime import Regime
+from lcm.typing import (
+    ContinuousAction,
+    ContinuousState,
+    Float1D,
+    FloatND,
+    Int1D,
+    Period,
+    RegimeName,
+)
 
 # --------------------------------------------------------------------------------------
 # Fixed Parameters
 # --------------------------------------------------------------------------------------
-avrgearn = 57706.57
-theta_val = jnp.array([jnp.exp(-0.2898), jnp.exp(0.2898)])
-n = 38
-retirement_age = 19
-taul = 0.128
-lamda = 1.0 - 0.321
-rho = 0.975
-r = 1.04**2.0
-tt0 = 0.115
-winit = jnp.array([43978, 48201])
+avrgearn: float = 57706.57
+theta_val: Float1D = jnp.array([jnp.exp(-0.2898), jnp.exp(0.2898)])
+n: int = 38
+retirement_age: int = 19
+taul: float = 0.128
+lamda: float = 1.0 - 0.321
+rho: float = 0.975
+r: float = 1.04**2.0
+tt0: float = 0.115
+winit: Float1D = jnp.array([43978, 48201])
 avrgearn = avrgearn / winit[1]
-mincon0 = 0.10
+mincon0: float = 0.10
 mincon = mincon0 * avrgearn
 
 
-def calc_savingsgrid(x):
+def calc_savingsgrid(x: float):
     x = ((jnp.log(10.0**2) - jnp.log(10.0**0)) / 49) * x
     x = jnp.exp(x)
     xgrid = x - 10.0 ** (0.0)
@@ -72,7 +81,7 @@ class DiscountFactor:
 
 
 @dataclass
-class Health:
+class HealthStatus:
     bad: int = 0
     good: int = 1
 
@@ -106,7 +115,7 @@ class Dead:
     # ----------------------------------------------------------------------------------
 
 
-eff_grid = jnp.linspace(0, 1, 40)
+eff_grid: Int1D = jnp.linspace(0, 1, 40)
 
 
 # ======================================================================================
@@ -116,28 +125,40 @@ eff_grid = jnp.linspace(0, 1, 40)
 # Utility function
 # --------------------------------------------------------------------------------------
 def utility(
-    period,
-    wealth,  # noqa: ARG001
-    health_type,  # noqa: ARG001
-    education,  # noqa: ARG001
-    adj_cost,
-    fcost,
-    disutil,
-    cons_util,
-    discount_factor,
-    beta_mean,
-    beta_std,
-):
+    period: Period,
+    wealth: ContinuousState,  # noqa: ARG001
+    health_type: HealthType,  # noqa: ARG001
+    education: EducationStatus,  # noqa: ARG001
+    adj_cost: int,
+    fcost: float,
+    disutil: float,
+    cons_util: float,
+    discount_factor: DiscountFactor,
+    beta_mean: float,
+    beta_std: float,
+) -> float:
     beta = beta_mean + jnp.where(discount_factor, beta_std, -beta_std)
     f = cons_util - disutil - fcost - adj_cost
     return f * (beta**period)
 
 
-def disutil(working, health, education, period, phigrid):
+def disutil(
+    working: WorkingStatus,
+    health: HealthStatus,
+    education: EducationStatus,
+    period: Period,
+    phigrid: FloatND,
+) -> float:
     return phigrid[period, education, health] * ((working / 2) ** (2)) / 2
 
 
-def adj_cost(period, adjustment_cost, effort, effort_t_1, chimaxgrid):
+def adj_cost(
+    period: Period,
+    adjustment_cost: int,
+    effort: float,
+    effort_t_1: float,
+    chimaxgrid: Float1D,
+) -> float:
     return jnp.where(
         jnp.logical_not(effort == effort_t_1),
         adjustment_cost * (chimaxgrid[period] / 4),
@@ -145,18 +166,27 @@ def adj_cost(period, adjustment_cost, effort, effort_t_1, chimaxgrid):
     )
 
 
-def cnow(net_income, wealth, saving):
+def cnow(net_income: float, wealth: ContinuousState, saving: ContinuousAction) -> float:
     wealth = calc_savingsgrid(wealth)
     saving = calc_savingsgrid(saving)
     return jnp.maximum(net_income + (wealth) * r - (saving), mincon)
 
 
-def cons_util(health, cnow, kappa, sigma, bb):
+def cons_util(
+    health: HealthStatus, cnow: float, kappa: float, sigma: float, bb: float
+) -> float:
     mucon = jnp.where(health, 1, kappa)
     return mucon * (((cnow) ** (1.0 - sigma)) / (1.0 - sigma)) + mucon * bb
 
 
-def fcost(period, education, health, effort, psi, xigrid):
+def fcost(
+    period: Period,
+    education: EducationStatus,
+    health: HealthStatus,
+    effort: int,
+    psi: float,
+    xigrid: FloatND,
+) -> float:
     return (
         xigrid[period, education, health]
         * (eff_grid[effort] ** (1 + (1 / psi)))
@@ -167,20 +197,20 @@ def fcost(period, education, health, effort, psi, xigrid):
 # --------------------------------------------------------------------------------------
 # Income Calculation
 # --------------------------------------------------------------------------------------
-def net_income(benefits, taxed_income, pension):
+def net_income(benefits: float, taxed_income: float, pension: float) -> float:
     return taxed_income + pension + benefits
 
 
 def income(
-    working,
-    period,
-    health,
-    education,
-    productivity,
-    productivity_shock,
-    xvalues,
-    income_grid,
-):
+    working: WorkingStatus,
+    period: Period,
+    health: HealthStatus,
+    education: EducationStatus,
+    productivity: ProductivityType,
+    productivity_shock: ProductivityShock,
+    xvalues: Float1D,
+    income_grid: FloatND,
+) -> float:
     return (
         income_grid[period, health, education]
         * (working / 2)
@@ -189,18 +219,24 @@ def income(
     )
 
 
-def taxed_income(income):
+def taxed_income(income: float) -> float:
     return lamda * (income ** (1.0 - taul)) * (avrgearn**taul)
 
 
-def benefits(period, health, working):
+def benefits(period: Period, health: HealthStatus, working: WorkingStatus) -> float:
     eligible = jnp.logical_and(health == 0, working == 0)
     return jnp.where(
         jnp.logical_and(eligible, period <= retirement_age), tt0 * avrgearn, 0
     )
 
 
-def pension(period, education, productivity, income_grid, penre):
+def pension(
+    period: Period,
+    education: EducationStatus,
+    productivity: ProductivityType,
+    income_grid: FloatND,
+    penre: float,
+) -> float:
     return jnp.where(
         period > retirement_age,
         income_grid[19, 1, education] * theta_val[productivity] * penre,
@@ -211,47 +247,49 @@ def pension(period, education, productivity, income_grid, penre):
 # --------------------------------------------------------------------------------------
 # State transitions
 # --------------------------------------------------------------------------------------
-def next_wealth(saving):
+def next_wealth(saving: ContinuousAction) -> ContinuousState:
     return saving
 
 
-def next_discount_factor(discount_factor):
+def next_discount_factor(discount_factor: DiscountFactor) -> DiscountFactor:
     return discount_factor
 
 
 @lcm.mark.stochastic
-def next_alive(alive, period, education, health):
+def next_health(
+    period: Period,
+    health: HealthStatus,
+    effort: int,
+    effort_t_1: int,
+    education: EducationStatus,
+    health_type: HealthType,
+):
     pass
 
 
-@lcm.mark.stochastic
-def next_health(period, health, effort, effort_t_1, education, health_type):
-    pass
-
-
-def next_productivity(productivity):
+def next_productivity(productivity: ProductivityType) -> ProductivityType:
     return productivity
 
 
-def next_health_type(health_type):
+def next_health_type(health_type: HealthType) -> HealthType:
     return health_type
 
 
-def next_effort_t_1(effort):
+def next_effort_t_1(effort: int) -> int:
     return effort
 
 
-def next_education(education):
+def next_education(education: EducationStatus) -> EducationStatus:
     return education
 
 
 @lcm.mark.stochastic
-def next_adjustment_cost(adjustment_cost):
+def next_adjustment_cost(adjustment_cost: int):
     pass
 
 
 @lcm.mark.stochastic
-def next_productivity_shock(productivity_shock):
+def next_productivity_shock(productivity_shock: ProductivityShock):
     pass
 
 
@@ -259,16 +297,18 @@ def next_productivity_shock(productivity_shock):
 # Regime Transitions
 # --------------------------------------------------------------------------------------
 
-surv_hs = jnp.array(np.loadtxt("data/surv_hs.txt"))
-surv_cl = jnp.array(np.loadtxt("data/surv_cl.txt"))
-spgrid = jnp.zeros((38, 2, 2))
+surv_hs: FloatND = jnp.array(np.loadtxt("data/surv_hs.txt"))
+surv_cl: FloatND = jnp.array(np.loadtxt("data/surv_cl.txt"))
+spgrid: FloatND = jnp.zeros((38, 2, 2))
 spgrid = spgrid.at[:, 0, 0].set(surv_hs[:, 1])
 spgrid = spgrid.at[:, 1, 0].set(surv_cl[:, 1])
 spgrid = spgrid.at[:, 0, 1].set(surv_hs[:, 0])
 spgrid = spgrid.at[:, 1, 1].set(surv_cl[:, 0])
 
 
-def alive_to_dead(period, education, health):
+def alive_to_dead(
+    period: Period, education: EducationStatus, health: HealthStatus
+) -> dict[RegimeName, float]:
     return {
         "alive": spgrid[period, education, health],
         "dead": 1 - spgrid[period, education, health],
@@ -278,11 +318,13 @@ def alive_to_dead(period, education, health):
 # --------------------------------------------------------------------------------------
 # Constraints
 # --------------------------------------------------------------------------------------
-def retirement_constraint(period, working):
+def retirement_constraint(period: Period, working: WorkingStatus) -> bool:
     return jnp.logical_not(jnp.logical_and(period > retirement_age, working > 0))
 
 
-def savings_constraint(net_income, wealth, saving):
+def savings_constraint(
+    net_income: float, wealth: ContinuousState, saving: ContinuousAction
+) -> bool:
     wealth = calc_savingsgrid(wealth)
     saving = calc_savingsgrid(saving)
     return net_income + (wealth) * r >= (saving)
@@ -317,7 +359,7 @@ ALIVE_REGIME = Regime(
     },
     states={
         "wealth": LinspaceGrid(start=0, stop=49, n_points=50),
-        "health": DiscreteGrid(Health),
+        "health": DiscreteGrid(HealthStatus),
         "productivity_shock": DiscreteGrid(ProductivityShock),
         "effort_t_1": DiscreteGrid(Effort),
         "adjustment_cost": DiscreteGrid(AdjustmentCost),
@@ -362,93 +404,93 @@ MAHLER_YUM_MODEL = Model([ALIVE_REGIME, DEAD_REGIME], n_periods=n)
 ########################
 # Mahler & Yum Params  #
 ########################
-winit = jnp.array([43978, 48201])
+winit: Float1D = jnp.array([43978, 48201])
 
-nuh_1 = 2.63390750888379
-nuh_2 = 1.66602983591164
-nuh_3 = 1.27839561280412
-nuh_4 = 1.71439043350863
+nuh_1: float = 2.63390750888379
+nuh_2: float = 1.66602983591164
+nuh_3: float = 1.27839561280412
+nuh_4: float = 1.71439043350863
 
 # unhealthy
-nuu_1 = 2.41177758126754
-nuu_2 = 1.8133670880598
-nuu_3 = 1.39103558901915
-nuu_4 = 2.41466980231321
+nuu_1: float = 2.41177758126754
+nuu_2: float = 1.8133670880598
+nuu_3: float = 1.39103558901915
+nuu_4: float = 2.41466980231321
 
-nuad = 0.807247922589072
-nuh = jnp.array([nuh_1, nuh_2, nuh_3, nuh_4])
-nuu = jnp.array([nuu_1, nuu_2, nuu_3, nuu_4])
-nu = [nuu, nuh]
+nuad: float = 0.807247922589072
+nuh: Float1D = jnp.array([nuh_1, nuh_2, nuh_3, nuh_4])
+nuu: Float1D = jnp.array([nuu_1, nuu_2, nuu_3, nuu_4])
+nu: list[Float1D] = [nuu, nuh]
 # direct utility cost of effort
 # hs-Healthy
-xihsh_1 = 0.146075197675677
-xihsh_2 = 0.55992411008533
-xihsh_3 = 1.04795036000287
-xihsh_4 = 1.60294886005945
+xihsh_1: float = 0.146075197675677
+xihsh_2: float = 0.55992411008533
+xihsh_3: float = 1.04795036000287
+xihsh_4: float = 1.60294886005945
 
 
 # hs-Unhealthy
-xihsu_1 = 0.628031290227532
-xihsu_2 = 1.36593242946612
-xihsu_3 = 1.64963812690034
-xihsu_4 = 0.734873142494319
+xihsu_1: float = 0.628031290227532
+xihsu_2: float = 1.36593242946612
+xihsu_3: float = 1.64963812690034
+xihsu_4: float = 0.734873142494319
 
 
 # cl-Healthy
-xiclh_1 = 0.091312997289004
-xiclh_2 = 0.302477689083851
-xiclh_3 = 0.739843441095022
-xiclh_4 = 1.36582077051777
+xiclh_1: float = 0.091312997289004
+xiclh_2: float = 0.302477689083851
+xiclh_3: float = 0.739843441095022
+xiclh_4: float = 1.36582077051777
 
 
 # cl-Unhealthy
-xiclu_1 = 0.46921037985024
-xiclu_2 = 0.996665589702672
-xiclu_3 = 1.65388250352532
-xiclu_4 = 1.08866246911941
+xiclu_1: float = 0.46921037985024
+xiclu_2: float = 0.996665589702672
+xiclu_3: float = 1.65388250352532
+xiclu_4: float = 1.08866246911941
 
-xi_hsh = jnp.array([xihsh_1, xihsh_2, xihsh_3, xihsh_4])
-xi_hsu = jnp.array([xihsu_1, xihsu_2, xihsu_3, xihsu_4])
-xi_clu = jnp.array([xiclu_1, xiclu_2, xiclu_3, xiclu_4])
-xi_clh = jnp.array([xiclh_1, xiclh_2, xiclh_3, xiclh_4])
+xi_hsh: Float1D = jnp.array([xihsh_1, xihsh_2, xihsh_3, xihsh_4])
+xi_hsu: Float1D = jnp.array([xihsu_1, xihsu_2, xihsu_3, xihsu_4])
+xi_clu: Float1D = jnp.array([xiclu_1, xiclu_2, xiclu_3, xiclu_4])
+xi_clh: Float1D = jnp.array([xiclh_1, xiclh_2, xiclh_3, xiclh_4])
 
-xi = [[xi_hsu, xi_hsh], [xi_clu, xi_clh]]
+xi: list[Float1D] = [[xi_hsu, xi_hsh], [xi_clu, xi_clh]]
 
-beta_mean = 0.942749393405227
-beta_std = 0.0283688760224992
+beta_mean: float = 0.942749393405227
+beta_std: float = 0.0283688760224992
 
 # effort habit adjustment cost max
-chi_1 = 0.000120437772838191
-chi_2 = 0.14468204213946
+chi_1: float = 0.000120437772838191
+chi_2: float = 0.14468204213946
 
-sigx = 0.0289408524185787
+sigx: float = 0.0289408524185787
 
-penre = 0.358766004066242
+penre: float = 0.358766004066242
 
 
-bb = 13.1079320277342
+bb: float = 13.1079320277342
 
-conp = 0.871503495423925
-psi = 1.11497911620865
+conp: float = 0.871503495423925
+psi: float = 1.11497911620865
 
 # Wage profile for hs + healthy
-yths_s = 0.0615804210614531
-yths_sq = -0.00250769285750586
+yths_s: float = 0.0615804210614531
+yths_sq: float = -0.00250769285750586
 
 # Wage profile for cl + healthy
-ytcl_s = 0.0874283672769353
-ytcl_sq = -0.00293713499239749
+ytcl_s: float = 0.0874283672769353
+ytcl_sq: float = -0.00293713499239749
 
 # wage penalty: depends on education and age
-wagep_hs = 0.17769766414897
-wagep_cl = 0.144836058314823
+wagep_hs: float = 0.17769766414897
+wagep_cl: float = 0.144836058314823
 
 
 # Initial yt(1) for hs relative to cl
-y1_hs = 0.899399488241831
-y1_cl = 1.1654726432446
+y1_hs: float = 0.899399488241831
+y1_cl: float = 1.1654726432446
 
-sigma = 2.0
+sigma: float = 2.0
 
 START_PARAMS = {
     "nuh_1": nuh_1,

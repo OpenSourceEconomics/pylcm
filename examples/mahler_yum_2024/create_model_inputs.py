@@ -6,38 +6,41 @@ from Mahler_Yum_2024 import MAHLER_YUM_MODEL
 from scipy.interpolate import interp1d
 
 from lcm.dispatchers import _base_productmap
+from lcm.typing import Any, Float1D, FloatND, RegimeName
 
 model = MAHLER_YUM_MODEL
 
 # ======================================================================================
 # Fixed Parameters
 # ======================================================================================
-avrgearn = 57706.57
-theta_val = jnp.array([jnp.exp(-0.2898), jnp.exp(0.2898)])
-n = 38
-retirement_age = 19
-taul = 0.128
-lamda = 1.0 - 0.321
-rho = 0.975
-r = 1.04**2.0
-tt0 = 0.115
-winit = jnp.array([43978, 48201])
+avrgearn: float = 57706.57
+theta_val: Float1D = jnp.array([jnp.exp(-0.2898), jnp.exp(0.2898)])
+n: int = 38
+retirement_age: int = 19
+taul: float = 0.128
+lamda: float = 1.0 - 0.321
+rho: float = 0.975
+r: float = 1.04**2.0
+tt0: float = 0.115
+winit: Float1D = jnp.array([43978, 48201])
 avrgearn = avrgearn / winit[1]
-mincon0 = 0.10
+mincon0: float = 0.10
 mincon = mincon0 * avrgearn
-sigma = 2
+sigma: float = 2
 
 # --------------------------------------------------------------------------------------
 # Health Techonology Parameters
 # --------------------------------------------------------------------------------------
 
-const_healthtr = -0.906
-age_const = jnp.asarray([0.0, -0.289, -0.644, -0.881, -1.138, -1.586, -1.586, -1.586])
-eff_param = jnp.asarray([0.693, 0.734])
-eff_sq = 0
-healthy_dummy = 2.311
-htype_dummy = 0.632
-college_dummy = 0.238
+const_healthtr: float = -0.906
+age_const: Float1D = jnp.asarray(
+    [0.0, -0.289, -0.644, -0.881, -1.138, -1.586, -1.586, -1.586]
+)
+eff_param: Float1D = jnp.asarray([0.693, 0.734])
+eff_sq: float = 0
+healthy_dummy: float = 2.311
+htype_dummy: float = 0.632
+college_dummy: float = 0.238
 
 # ======================================================================================
 # Grid Creation
@@ -48,7 +51,7 @@ college_dummy = 0.238
 # --------------------------------------------------------------------------------------
 
 
-def create_phigrid(nu, nu_e):
+def create_phigrid(nu: list[Float1D], nu_e: float) -> FloatND:
     phi_interp_values = jnp.array([1, 8, 13, 20])
     phigrid = jnp.zeros((retirement_age + 1, 2, 2))
     for i in range(2):
@@ -63,7 +66,7 @@ def create_phigrid(nu, nu_e):
     return phigrid
 
 
-def create_xigrid(xi):
+def create_xigrid(xi: list[list[Float1D]]) -> FloatND:
     xi_interp_values = jnp.array([1, 12, 20, 31])
     xigrid = jnp.zeros((n, 2, 2))
     for i in range(2):
@@ -78,20 +81,28 @@ def create_xigrid(xi):
     return xigrid
 
 
-def create_chimaxgrid(chi_1, chi_2):
+def create_chimaxgrid(chi_1: float, chi_2: float) -> Float1D:
     t = jnp.arange(38)
     return jnp.maximum(chi_1 * jnp.exp(chi_2 * t), 0)
 
 
 def create_income_grid(
-    y1_hs, y1_cl, yths_s, yths_sq, wagep_hs, wagep_cl, ytcl_s, ytcl_sq, sigx
-):
+    y1_hs: float,
+    y1_cl: float,
+    yths_s: float,
+    yths_sq: float,
+    wagep_hs: float,
+    wagep_cl: float,
+    ytcl_s: float,
+    ytcl_sq: float,
+    sigx: float,
+) -> FloatND:
     sdztemp = ((sigx**2.0) / (1.0 - rho**2.0)) ** 0.5
     j = jnp.arange(20)
     health = jnp.arange(2)
     education = jnp.arange(2)
 
-    def calc_base(_period, health, education):
+    def calc_base(_period: int, health: int, education: int):
         yt = jnp.where(
             education == 1,
             (y1_cl * jnp.exp(ytcl_s * (_period) + ytcl_sq * (_period) ** 2.0))
@@ -111,16 +122,18 @@ def create_income_grid(
 # --------------------------------------------------------------------------------------
 # Static Grids
 # --------------------------------------------------------------------------------------
-eff_grid = jnp.linspace(0, 1, 40)
-tr2yp_grid = jnp.zeros((38, 2, 40, 40, 2, 2, 2))
-j = jnp.floor_divide(jnp.arange(38), 5)
+eff_grid: Float1D = jnp.linspace(0, 1, 40)
+tr2yp_grid: FloatND = jnp.zeros((38, 2, 40, 40, 2, 2, 2))
+j: Float1D = jnp.floor_divide(jnp.arange(38), 5)
 
 # --------------------------------------------------------------------------------------
 # Health Transition Probability Grid
 # --------------------------------------------------------------------------------------
 
 
-def health_trans(period, health, eff, eff_1, edu, ht):
+def health_trans(
+    period: int, health: int, eff: int, eff_1: int, edu: int, ht: int
+) -> float:
     y = (
         const_healthtr
         + age_const[period]
@@ -147,7 +160,7 @@ tr2yp_grid = tr2yp_grid.at[:, :, :, :, :, :, 0].set(
 )
 
 
-def rouwenhorst(rho, sigma_eps, n):
+def rouwenhorst(rho: float, sigma_eps: float, n: int) -> FloatND:
     mu_eps = 0
 
     q = (rho + 1) / 2
@@ -178,60 +191,60 @@ def rouwenhorst(rho, sigma_eps, n):
 
 
 def create_inputs(
-    seed,
-    n,
-    nuh_1,
-    nuh_2,
-    nuh_3,
-    nuh_4,
-    nuu_1,
-    nuu_2,
-    nuu_3,
-    nuu_4,
-    xihsh_1,
-    xihsh_2,
-    xihsh_3,
-    xihsh_4,
-    xihsu_1,
-    xihsu_2,
-    xihsu_3,
-    xihsu_4,
-    xiclu_1,
-    xiclu_2,
-    xiclu_3,
-    xiclu_4,
-    xiclh_1,
-    xiclh_2,
-    xiclh_3,
-    xiclh_4,
-    y1_hs,
-    y1_cl,
-    yths_s,
-    yths_sq,
-    wagep_hs,
-    wagep_cl,
-    ytcl_s,
-    ytcl_sq,
-    sigx,
-    chi_1,
-    chi_2,
-    psi,
-    nuad,
-    bb,
-    conp,
-    penre,
-    beta_mean,
-    beta_std,
-):
+    seed: int,
+    n: int,
+    nuh_1: float,
+    nuh_2: float,
+    nuh_3: float,
+    nuh_4: float,
+    nuu_1: float,
+    nuu_2: float,
+    nuu_3: float,
+    nuu_4: float,
+    xihsh_1: float,
+    xihsh_2: float,
+    xihsh_3: float,
+    xihsh_4: float,
+    xihsu_1: float,
+    xihsu_2: float,
+    xihsu_3: float,
+    xihsu_4: float,
+    xiclu_1: float,
+    xiclu_2: float,
+    xiclu_3: float,
+    xiclu_4: float,
+    xiclh_1: float,
+    xiclh_2: float,
+    xiclh_3: float,
+    xiclh_4: float,
+    y1_hs: float,
+    y1_cl: float,
+    yths_s: float,
+    yths_sq: float,
+    wagep_hs: float,
+    wagep_cl: float,
+    ytcl_s: float,
+    ytcl_sq: float,
+    sigx: float,
+    chi_1: float,
+    chi_2: float,
+    psi: float,
+    nuad: float,
+    bb: float,
+    conp: float,
+    penre: float,
+    beta_mean: float,
+    beta_std: float,
+) -> tuple[dict[RegimeName, Any], dict[RegimeName, Any], list[RegimeName]]:
     # Gather parameters
-    nuh = jnp.array([nuh_1, nuh_2, nuh_3, nuh_4])
-    nuu = jnp.array([nuu_1, nuu_2, nuu_3, nuu_4])
-    nu = [nuu, nuh]
-    xi_hsh = jnp.array([xihsh_1, xihsh_2, xihsh_3, xihsh_4])
-    xi_hsu = jnp.array([xihsu_1, xihsu_2, xihsu_3, xihsu_4])
-    xi_clu = jnp.array([xiclu_1, xiclu_2, xiclu_3, xiclu_4])
-    xi_clh = jnp.array([xiclh_1, xiclh_2, xiclh_3, xiclh_4])
-    xi = [[xi_hsu, xi_hsh], [xi_clu, xi_clh]]
+    nuh: Float1D = jnp.array([nuh_1, nuh_2, nuh_3, nuh_4])
+    nuu: Float1D = jnp.array([nuu_1, nuu_2, nuu_3, nuu_4])
+    nu: list[Float1D] = [nuu, nuh]
+    xi_hsh: Float1D = jnp.array([xihsh_1, xihsh_2, xihsh_3, xihsh_4])
+    xi_hsu: Float1D = jnp.array([xihsu_1, xihsu_2, xihsu_3, xihsu_4])
+    xi_clu: Float1D = jnp.array([xiclu_1, xiclu_2, xiclu_3, xiclu_4])
+    xi_clh: Float1D = jnp.array([xiclh_1, xiclh_2, xiclh_3, xiclh_4])
+    xi: list[list[Float1D]] = [[xi_hsu, xi_hsh], [xi_clu, xi_clh]]
 
     # Create variable grids from supplied parameters
     income_grid = create_income_grid(

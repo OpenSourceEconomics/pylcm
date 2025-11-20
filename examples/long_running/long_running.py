@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 
 from lcm import DiscreteGrid, LinspaceGrid, Regime
+from lcm.model import Model
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -99,16 +100,15 @@ def borrowing_constraint(
 RETIREMENT_AGE = 65
 
 
-MODEL_CONFIG = Regime(
+LONG_RUNNING_REGIME = Regime(
+    name="long_running",
+    utility=utility,
     functions={
-        "utility": utility,
-        "next_wealth": next_wealth,
-        "next_health": next_health,
-        "borrowing_constraint": borrowing_constraint,
         "labor_income": labor_income,
         "wage": wage,
         "age": age,
     },
+    constraints={"borrowing_constraint": borrowing_constraint},
     actions={
         "working": DiscreteGrid(WorkingStatus),
         "consumption": LinspaceGrid(
@@ -134,7 +134,13 @@ MODEL_CONFIG = Regime(
             n_points=100,
         ),
     },
+    transitions={
+        "long_running": {"next_wealth": next_wealth, "next_health": next_health}
+    },
+    regime_transition_probs=lambda wealth: {"long_running": 1.0},  # noqa: ARG005
 )
+
+LONG_RUNNING_MODEL = Model([LONG_RUNNING_REGIME], n_periods=RETIREMENT_AGE - 18)
 
 PARAMS = {
     "beta": 0.95,
