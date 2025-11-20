@@ -6,14 +6,14 @@ from Mahler_Yum_2024 import MAHLER_YUM_MODEL
 from scipy.interpolate import interp1d
 
 from lcm.dispatchers import _base_productmap
-from lcm.typing import Any, Float1D, FloatND, RegimeName
+from lcm.typing import Any, Float1D, FloatND, Int1D, RegimeName
 
 model = MAHLER_YUM_MODEL
 
 # ======================================================================================
 # Fixed Parameters
 # ======================================================================================
-avrgearn: float = 57706.57
+avrgearn_not_normalized: float = 57706.57
 theta_val: Float1D = jnp.array([jnp.exp(-0.2898), jnp.exp(0.2898)])
 n: int = 38
 retirement_age: int = 19
@@ -23,7 +23,7 @@ rho: float = 0.975
 r: float = 1.04**2.0
 tt0: float = 0.115
 winit: Float1D = jnp.array([43978, 48201])
-avrgearn = avrgearn / winit[1]
+avrgearn = avrgearn_not_normalized / winit[1]
 mincon0: float = 0.10
 mincon = mincon0 * avrgearn
 sigma: float = 2
@@ -102,7 +102,7 @@ def create_income_grid(
     health = jnp.arange(2)
     education = jnp.arange(2)
 
-    def calc_base(_period: int, health: int, education: int):
+    def calc_base(_period: Int1D, health: Int1D, education: Int1D) -> Float1D:
         yt = jnp.where(
             education == 1,
             (y1_cl * jnp.exp(ytcl_s * (_period) + ytcl_sq * (_period) ** 2.0))
@@ -132,8 +132,8 @@ j: Float1D = jnp.floor_divide(jnp.arange(38), 5)
 
 
 def health_trans(
-    period: int, health: int, eff: int, eff_1: int, edu: int, ht: int
-) -> float:
+    period: Int1D, health: Int1D, eff: Int1D, eff_1: Int1D, edu: Int1D, ht: Int1D
+) -> Float1D:
     y = (
         const_healthtr
         + age_const[period]
@@ -160,7 +160,7 @@ tr2yp_grid = tr2yp_grid.at[:, :, :, :, :, :, 0].set(
 )
 
 
-def rouwenhorst(rho: float, sigma_eps: float, n: int) -> FloatND:
+def rouwenhorst(rho: float, sigma_eps: Float1D, n: int) -> tuple[FloatND, FloatND]:
     mu_eps = 0
 
     q = (rho + 1) / 2
