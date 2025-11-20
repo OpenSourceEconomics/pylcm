@@ -1,17 +1,17 @@
 import jax
 import numpy as np
-from interpax import interp1d
 from jax import numpy as jnp
 from jax import random
 from Mahler_Yum_2024 import MAHLER_YUM_MODEL
+from scipy.interpolate import CubicSpline
 
 from lcm.dispatchers import _base_productmap
 
 model = MAHLER_YUM_MODEL
 
-# --------------------------------------------------------------------------------------
+# ======================================================================================
 # Fixed Parameters
-# --------------------------------------------------------------------------------------
+# ======================================================================================
 avrgearn = 57706.57
 theta_val = jnp.array([jnp.exp(-0.2898), jnp.exp(0.2898)])
 n = 38
@@ -26,9 +26,11 @@ avrgearn = avrgearn / winit[1]
 mincon0 = 0.10
 mincon = mincon0 * avrgearn
 sigma = 2
+
 # --------------------------------------------------------------------------------------
-# Health Techonology
+# Health Techonology Parameters
 # --------------------------------------------------------------------------------------
+
 const_healthtr = -0.906
 age_const = jnp.asarray([0.0, -0.289, -0.644, -0.881, -1.138, -1.586, -1.586, -1.586])
 eff_param = jnp.asarray([0.693, 0.734])
@@ -37,33 +39,40 @@ healthy_dummy = 2.311
 htype_dummy = 0.632
 college_dummy = 0.238
 
-# --------------------------------------------------------------------------------------
-# Grid Creation Functions
-# --------------------------------------------------------------------------------------
+# ======================================================================================
+# Grid Creation
+# ======================================================================================
 
-phi_interp_values = jnp.array([1, 8, 13, 20])
+# --------------------------------------------------------------------------------------
+# Dynamic Grid Creation Functions
+# --------------------------------------------------------------------------------------
 
 
 def create_phigrid(nu, nu_e):
+    phi_interp_values = jnp.array([1, 8, 13, 20])
     phigrid = jnp.zeros((retirement_age + 1, 2, 2))
     for i in range(2):
         for j in range(2):
-            temp_grid = jnp.arange(1, retirement_age + 2)
-            temp_grid = interp1d(temp_grid, phi_interp_values, nu[j], method="cubic2")
+            interp_points = jnp.arange(1, retirement_age + 2)
+            spline = CubicSpline(
+                np.asarray(phi_interp_values), np.asarray(nu[j]), bc_type="natural"
+            )
+            temp_grid = jnp.asarray(spline(interp_points))
             temp_grid = jnp.where(i == 0, temp_grid * jnp.exp(nu_e), temp_grid)
             phigrid = phigrid.at[:, i, j].set(temp_grid)
     return phigrid
 
 
-xi_interp_values = jnp.array([1, 12, 20, 31])
-
-
 def create_xigrid(xi):
+    xi_interp_values = jnp.array([1, 12, 20, 31])
     xigrid = jnp.zeros((n, 2, 2))
     for i in range(2):
         for j in range(2):
-            temp_grid = jnp.arange(1, 31)
-            temp_grid = interp1d(temp_grid, xi_interp_values, xi[i][j], method="cubic2")
+            interp_points = np.arange(1, 31)
+            spline = CubicSpline(
+                np.asarray(xi_interp_values), np.asarray(xi[i][j]), bc_type="natural"
+            )
+            temp_grid = jnp.asarray(spline(interp_points))
             xigrid = xigrid.at[0:30, i, j].set(temp_grid)
             xigrid = xigrid.at[30:n, i, j].set(xi[i][j][3])
     return xigrid
@@ -100,11 +109,15 @@ def create_income_grid(
 
 
 # --------------------------------------------------------------------------------------
-# Create static Grids
+# Static Grids
 # --------------------------------------------------------------------------------------
 eff_grid = jnp.linspace(0, 1, 40)
 tr2yp_grid = jnp.zeros((38, 2, 40, 40, 2, 2, 2))
 j = jnp.floor_divide(jnp.arange(38), 5)
+
+# --------------------------------------------------------------------------------------
+# Health Transition Probability Grid
+# --------------------------------------------------------------------------------------
 
 
 def health_trans(period, health, eff, eff_1, edu, ht):
@@ -132,6 +145,36 @@ tr2yp_grid = tr2yp_grid.at[:, :, :, :, :, :, 1].set(
 tr2yp_grid = tr2yp_grid.at[:, :, :, :, :, :, 0].set(
     1.0 - tr2yp_grid[:, :, :, :, :, :, 1]
 )
+
+
+def rouwenhorst(rho, sigma_eps, n):
+    mu_eps = 0
+
+    q = (rho + 1) / 2
+    nu = jnp.sqrt((n - 1) / (1 - rho**2)) * sigma_eps
+    P = jnp.zeros((n, n))
+
+    P = P.at[0, 0].set(q)
+    P = P.at[0, 1].set(1 - q)
+    P = P.at[1, 0].set(1 - q)
+    P = P.at[1, 1].set(q)
+
+    for i in range(2, n):
+        P11 = jnp.zeros((i + 1, i + 1))
+        P12 = jnp.zeros((i + 1, i + 1))
+        P21 = jnp.zeros((i + 1, i + 1))
+        P22 = jnp.zeros((i + 1, i + 1))
+
+        P11 = P11.at[0:i, 0:i].set(P[0:i, 0:i])
+        P12 = P12.at[0:i, 1 : i + 1].set(P[0:i, 0:i])
+        P21 = P21.at[1 : i + 1, 0:i].set(P[0:i, 0:i])
+        P22 = P22.at[1 : i + 1, 1 : i + 1].set(P[0:i, 0:i])
+
+        P = P.at[0 : i + 1, 0 : i + 1].set(
+            q * P11 + (1 - q) * P12 + (1 - q) * P21 + q * P22
+        )
+        P = P.at[1:i, :].set(P[1:i, :] / 2)
+    return jnp.linspace(mu_eps / (1.0 - rho) - nu, mu_eps / (1.0 - rho) + nu, n), P.T
 
 
 def create_inputs(
@@ -218,7 +261,6 @@ def create_inputs(
 
     # Create initial states for the simulation
 
-    # Utility arrays for initial draws
     discount = jnp.zeros((16), dtype=jnp.int8)
     prod = jnp.zeros((16), dtype=jnp.int8)
     ht = jnp.zeros((16), dtype=jnp.int8)
@@ -253,7 +295,7 @@ def create_inputs(
     prod_dist = jax.lax.fori_loop(
         0,
         1000000,
-        lambda i, a: a @ xtrans.T,
+        lambda i, a: a @ xtrans.T,  # noqa: ARG005
         jnp.full(5, 1 / 5),
     )
     initial_productivity_shock = random.choice(
@@ -275,33 +317,3 @@ def create_inputs(
     }
     initial_regimes = ["alive"] * n
     return params, initial_states, initial_regimes
-
-
-def rouwenhorst(rho, sigma_eps, n):
-    mu_eps = 0
-
-    q = (rho + 1) / 2
-    nu = jnp.sqrt((n - 1) / (1 - rho**2)) * sigma_eps
-    P = jnp.zeros((n, n))
-
-    P = P.at[0, 0].set(q)
-    P = P.at[0, 1].set(1 - q)
-    P = P.at[1, 0].set(1 - q)
-    P = P.at[1, 1].set(q)
-
-    for i in range(2, n):
-        P11 = jnp.zeros((i + 1, i + 1))
-        P12 = jnp.zeros((i + 1, i + 1))
-        P21 = jnp.zeros((i + 1, i + 1))
-        P22 = jnp.zeros((i + 1, i + 1))
-
-        P11 = P11.at[0:i, 0:i].set(P[0:i, 0:i])
-        P12 = P12.at[0:i, 1 : i + 1].set(P[0:i, 0:i])
-        P21 = P21.at[1 : i + 1, 0:i].set(P[0:i, 0:i])
-        P22 = P22.at[1 : i + 1, 1 : i + 1].set(P[0:i, 0:i])
-
-        P = P.at[0 : i + 1, 0 : i + 1].set(
-            q * P11 + (1 - q) * P12 + (1 - q) * P21 + q * P22
-        )
-        P = P.at[1:i, :].set(P[1:i, :] / 2)
-    return jnp.linspace(mu_eps / (1.0 - rho) - nu, mu_eps / (1.0 - rho) + nu, n), P.T
