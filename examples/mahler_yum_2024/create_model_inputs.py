@@ -3,7 +3,7 @@ import numpy as np
 from jax import numpy as jnp
 from jax import random
 from Mahler_Yum_2024 import MAHLER_YUM_MODEL
-from scipy.interpolate import CubicSpline
+from scipy.interpolate import interp1d
 
 from lcm.dispatchers import _base_productmap
 
@@ -54,8 +54,8 @@ def create_phigrid(nu, nu_e):
     for i in range(2):
         for j in range(2):
             interp_points = jnp.arange(1, retirement_age + 2)
-            spline = CubicSpline(
-                np.asarray(phi_interp_values), np.asarray(nu[j]), bc_type="natural"
+            spline = interp1d(
+                np.asarray(phi_interp_values), np.asarray(nu[j]), kind="cubic"
             )
             temp_grid = jnp.asarray(spline(interp_points))
             temp_grid = jnp.where(i == 0, temp_grid * jnp.exp(nu_e), temp_grid)
@@ -69,8 +69,8 @@ def create_xigrid(xi):
     for i in range(2):
         for j in range(2):
             interp_points = np.arange(1, 31)
-            spline = CubicSpline(
-                np.asarray(xi_interp_values), np.asarray(xi[i][j]), bc_type="natural"
+            spline = interp1d(
+                np.asarray(xi_interp_values), np.asarray(xi[i][j]), kind="cubic"
             )
             temp_grid = jnp.asarray(spline(interp_points))
             xigrid = xigrid.at[0:30, i, j].set(temp_grid)
