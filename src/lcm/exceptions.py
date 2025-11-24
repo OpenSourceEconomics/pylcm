@@ -8,7 +8,6 @@ class PyLCMError(Exception):
 class InvalidValueFunctionError(PyLCMError):
     """Raised when the value function array is invalid."""
 
-
 class RegimeInitializationError(PyLCMError):
     """Raised when there is an error in the regime initialization."""
 
@@ -16,6 +15,8 @@ class RegimeInitializationError(PyLCMError):
 class ModelInitializationError(PyLCMError):
     """Raised when there is an error in the model initialization."""
 
+class ShockInitializationError(PyLCMError):
+    """Raised when there is an error in the shock initialization."""
 
 class GridInitializationError(PyLCMError):
     """Raised when there is an error in the grid initialization."""
