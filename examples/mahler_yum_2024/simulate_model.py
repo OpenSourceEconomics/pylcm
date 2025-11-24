@@ -1,5 +1,4 @@
-from create_model_inputs import create_inputs
-from Mahler_Yum_2024 import MAHLER_YUM_MODEL, START_PARAMS
+from mahler_yum_2024 import MAHLER_YUM_MODEL, START_PARAMS, create_inputs
 
 seed: int = 32
 params, initial_states, initial_regimes = create_inputs(

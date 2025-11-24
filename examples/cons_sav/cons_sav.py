@@ -59,8 +59,8 @@ def wage(age: int | IntND) -> float | FloatND:
     return 1 + 0.1 * age
 
 
-def age(_period: int | Int1D) -> int | IntND:
-    return _period + 18
+def age(period: int | Int1D) -> int | IntND:
+    return period + 18
 
 
 # --------------------------------------------------------------------------------------
@@ -100,8 +100,8 @@ def borrowing_constraint(
 RETIREMENT_AGE = 65
 
 
-LONG_RUNNING_REGIME = Regime(
-    name="long_running",
+CONS_SAV_REGIME = Regime(
+    name="cons_sav_model",
     utility=utility,
     functions={
         "labor_income": labor_income,
@@ -135,15 +135,17 @@ LONG_RUNNING_REGIME = Regime(
         ),
     },
     transitions={
-        "long_running": {"next_wealth": next_wealth, "next_health": next_health}
+        "cons_sav_model": {"next_wealth": next_wealth, "next_health": next_health}
     },
-    regime_transition_probs=lambda wealth: {"long_running": 1.0},  # noqa: ARG005
+    regime_transition_probs=lambda wealth: {"cons_sav_model": 1.0},  # noqa: ARG005
 )
 
-LONG_RUNNING_MODEL = Model([LONG_RUNNING_REGIME], n_periods=RETIREMENT_AGE - 18)
+CONS_SAV_MODEL = Model([CONS_SAV_REGIME], n_periods=RETIREMENT_AGE - 18)
 
 PARAMS = {
-    "beta": 0.95,
-    "utility": {"disutility_of_work": 0.05},
-    "next_wealth": {"interest_rate": 0.05},
+    "cons_sav_model": {
+        "beta": 0.95,
+        "utility": {"disutility_of_work": 0.05},
+        "cons_sav_model__next_wealth": {"interest_rate": 0.05},
+    }
 }
