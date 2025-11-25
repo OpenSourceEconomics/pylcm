@@ -1,10 +1,10 @@
 import jax.numpy as jnp
-from cons_sav import CONS_SAV_MODEL, PARAMS
+from model_spec import CONSUMPTION_SAVING_MODEL, PARAMS
 
 # number of simulated subjects
-n = 1000
+n = 1_000
 
-simulation_result = CONS_SAV_MODEL.solve_and_simulate(
+simulation_result = CONSUMPTION_SAVING_MODEL.solve_and_simulate(
     params=PARAMS,
     initial_regimes=["cons_sav_model"] * n,
     initial_states={

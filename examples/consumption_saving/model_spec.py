@@ -100,7 +100,7 @@ def borrowing_constraint(
 RETIREMENT_AGE = 65
 
 
-CONS_SAV_REGIME = Regime(
+CONSUMPTION_SAVING_REGIME = Regime(
     name="cons_sav_model",
     utility=utility,
     functions={
@@ -140,7 +140,9 @@ CONS_SAV_REGIME = Regime(
     regime_transition_probs=lambda wealth: {"cons_sav_model": 1.0},  # noqa: ARG005
 )
 
-CONS_SAV_MODEL = Model([CONS_SAV_REGIME], n_periods=RETIREMENT_AGE - 18)
+CONSUMPTION_SAVING_MODEL = Model(
+    [CONSUMPTION_SAVING_REGIME], n_periods=RETIREMENT_AGE - 18
+)
 
 PARAMS = {
     "cons_sav_model": {
