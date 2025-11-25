@@ -55,20 +55,6 @@ avrgearn = avrgearn_not_normalized / winit[1]
 mincon0: float = 0.10
 mincon = mincon0 * avrgearn
 
-# --------------------------------------------------------------------------------------
-# Health Techonology Parameters
-# --------------------------------------------------------------------------------------
-
-const_healthtr: float = -0.906
-age_const: Float1D = jnp.asarray(
-    [0.0, -0.289, -0.644, -0.881, -1.138, -1.586, -1.586, -1.586]
-)
-eff_param: Float1D = jnp.asarray([0.693, 0.734])
-eff_sq: float = 0
-healthy_dummy: float = 2.311
-htype_dummy: float = 0.632
-college_dummy: float = 0.238
-
 
 def calc_savingsgrid(x: Float1D) -> Float1D:
     x = ((jnp.log(10.0**2) - jnp.log(10.0**0)) / 49) * x
@@ -432,135 +418,75 @@ MAHLER_YUM_MODEL = Model([ALIVE_REGIME, DEAD_REGIME], n_periods=n)
 # Mahler & Yum starting params
 # ======================================================================================
 
-nuh_1: float = 2.63390750888379
-nuh_2: float = 1.66602983591164
-nuh_3: float = 1.27839561280412
-nuh_4: float = 1.71439043350863
-
-# unhealthy
-nuu_1: float = 2.41177758126754
-nuu_2: float = 1.8133670880598
-nuu_3: float = 1.39103558901915
-nuu_4: float = 2.41466980231321
-
-nuad: float = 0.807247922589072
-nuh: Float1D = jnp.array([nuh_1, nuh_2, nuh_3, nuh_4])
-nuu: Float1D = jnp.array([nuu_1, nuu_2, nuu_3, nuu_4])
-nu: list[Float1D] = [nuu, nuh]
-# direct utility cost of effort
-# hs-Healthy
-xihsh_1: float = 0.146075197675677
-xihsh_2: float = 0.55992411008533
-xihsh_3: float = 1.04795036000287
-xihsh_4: float = 1.60294886005945
-
-
-# hs-Unhealthy
-xihsu_1: float = 0.628031290227532
-xihsu_2: float = 1.36593242946612
-xihsu_3: float = 1.64963812690034
-xihsu_4: float = 0.734873142494319
-
-
-# cl-Healthy
-xiclh_1: float = 0.091312997289004
-xiclh_2: float = 0.302477689083851
-xiclh_3: float = 0.739843441095022
-xiclh_4: float = 1.36582077051777
-
-
-# cl-Unhealthy
-xiclu_1: float = 0.46921037985024
-xiclu_2: float = 0.996665589702672
-xiclu_3: float = 1.65388250352532
-xiclu_4: float = 1.08866246911941
-
-xi_hsh: Float1D = jnp.array([xihsh_1, xihsh_2, xihsh_3, xihsh_4])
-xi_hsu: Float1D = jnp.array([xihsu_1, xihsu_2, xihsu_3, xihsu_4])
-xi_clu: Float1D = jnp.array([xiclu_1, xiclu_2, xiclu_3, xiclu_4])
-xi_clh: Float1D = jnp.array([xiclh_1, xiclh_2, xiclh_3, xiclh_4])
-
-xi: list[list[Float1D]] = [[xi_hsu, xi_hsh], [xi_clu, xi_clh]]
-
-beta_mean: float = 0.942749393405227
-beta_std: float = 0.0283688760224992
-
-# effort habit adjustment cost max
-chi_1: float = 0.000120437772838191
-chi_2: float = 0.14468204213946
-
-sigx: float = 0.0289408524185787
-
-penre: float = 0.358766004066242
-
-
-bb: float = 13.1079320277342
-
-conp: float = 0.871503495423925
-psi: float = 1.11497911620865
-
-# Wage profile for hs + healthy
-yths_s: float = 0.0615804210614531
-yths_sq: float = -0.00250769285750586
-
-# Wage profile for cl + healthy
-ytcl_s: float = 0.0874283672769353
-ytcl_sq: float = -0.00293713499239749
-
-# wage penalty: depends on education and age
-wagep_hs: float = 0.17769766414897
-wagep_cl: float = 0.144836058314823
-
-
-# Initial yt(1) for hs relative to cl
-y1_hs: float = 0.899399488241831
-y1_cl: float = 1.1654726432446
-
-sigma: float = 2.0
 
 START_PARAMS = {
-    "nuh_1": nuh_1,
-    "nuh_2": nuh_2,
-    "nuh_3": nuh_3,
-    "nuh_4": nuh_4,
-    "nuu_1": nuu_1,
-    "nuu_2": nuu_2,
-    "nuu_3": nuu_3,
-    "nuu_4": nuu_4,
-    "nuad": nuad,
-    "xihsh_1": xihsh_1,
-    "xihsh_2": xihsh_2,
-    "xihsh_3": xihsh_3,
-    "xihsh_4": xihsh_4,
-    "xihsu_1": xihsu_1,
-    "xihsu_2": xihsu_2,
-    "xihsu_3": xihsu_3,
-    "xihsu_4": xihsu_4,
-    "xiclu_1": xiclu_1,
-    "xiclu_2": xiclu_2,
-    "xiclu_3": xiclu_3,
-    "xiclu_4": xiclu_4,
-    "xiclh_1": xiclh_1,
-    "xiclh_2": xiclh_2,
-    "xiclh_3": xiclh_3,
-    "xiclh_4": xiclh_4,
-    "y1_hs": y1_hs,
-    "yths_s": yths_s,
-    "yths_sq": yths_sq,
-    "wagep_hs": wagep_hs,
-    "y1_cl": y1_cl,
-    "ytcl_s": ytcl_s,
-    "ytcl_sq": ytcl_sq,
-    "wagep_cl": wagep_cl,
-    "sigx": sigx,
-    "chi_1": chi_1,
-    "chi_2": chi_2,
-    "psi": psi,
-    "bb": 11,
-    "conp": conp,
-    "penre": penre,
-    "beta_mean": beta_mean,
-    "beta_std": beta_std,
+    # Disutility of work
+    "nu": {
+        "h": [2.63390750888379, 1.66602983591164, 1.27839561280412, 1.71439043350863],
+        "u": [2.41177758126754, 1.8133670880598, 1.39103558901915, 2.41466980231321],
+        "ad": 0.807247922589072,
+    },
+    # Disutility of effort
+    "xi": {
+        "hs": {
+            "h": [
+                0.146075197675677,
+                0.55992411008533,
+                1.04795036000287,
+                1.60294886005945,
+            ],
+            "u": [
+                0.628031290227532,
+                1.36593242946612,
+                1.64963812690034,
+                0.734873142494319,
+            ],
+        },
+        "cl": {
+            "h": [
+                0.091312997289004,
+                0.302477689083851,
+                0.739843441095022,
+                1.36582077051777,
+            ],
+            "u": [
+                0.46921037985024,
+                0.996665589702672,
+                1.65388250352532,
+                1.08866246911941,
+            ],
+        },
+    },
+    # Income process
+    "income_process": {
+        "hs": {
+            "y1": 0.899399488241831,
+            "yt_s": 0.0615804210614531,
+            "yt_sq": -0.00250769285750586,
+            "wagep": 0.17769766414897,
+        },
+        "cl": {
+            "y1": 1.1654726432446,
+            "yt_s": 0.0874283672769353,
+            "yt_sq": -0.00293713499239749,
+            "wagep": 0.144836058314823,
+        },
+        "sigx": 0.0289408524185787,
+    },
+    # Effort habit adjustment cost max
+    "chi": [0.000120437772838191, 0.14468204213946],
+    # Discount ratio
+    "beta": {"mean": 0.942749393405227, "std": 0.0283688760224992},
+    # Elasticity of disutility of effort
+    "psi": 1.11497911620865,
+    # Utility constant
+    "bb": 13.1079320277342,
+    # Consumption utility penalty for unhealthy
+    "conp": 0.871503495423925,
+    # Pension replacement ratio
+    "penre": 0.358766004066242,
+    # Coefficient of relative risk-aversion
+    "sigma": 2,
 }
 
 # ======================================================================================
@@ -568,17 +494,18 @@ START_PARAMS = {
 # ======================================================================================
 
 
-def create_phigrid(nu: list[Float1D], nu_e: float) -> FloatND:
+def create_phigrid(nu: list[Float1D]) -> FloatND:
     phi_interp_values = jnp.array([1, 8, 13, 20])
     phigrid = jnp.zeros((retirement_age + 1, 2, 2))
+    health = ["u", "h"]
     for i in range(2):
         for j in range(2):
             interp_points = jnp.arange(1, retirement_age + 2)
             spline = interp1d(
-                np.asarray(phi_interp_values), np.asarray(nu[j]), kind="cubic"
+                np.asarray(phi_interp_values), np.asarray(nu[health[j]]), kind="cubic"
             )
             temp_grid = jnp.asarray(spline(interp_points))
-            temp_grid = jnp.where(i == 0, temp_grid * jnp.exp(nu_e), temp_grid)
+            temp_grid = jnp.where(i == 0, temp_grid * jnp.exp(nu["ad"]), temp_grid)
             phigrid = phigrid.at[:, i, j].set(temp_grid)
     return phigrid
 
@@ -586,35 +513,29 @@ def create_phigrid(nu: list[Float1D], nu_e: float) -> FloatND:
 def create_xigrid(xi: list[list[Float1D]]) -> FloatND:
     xi_interp_values = jnp.array([1, 12, 20, 31])
     xigrid = jnp.zeros((n, 2, 2))
+    edu = ["hs", "cl"]
+    health = ["u", "h"]
     for i in range(2):
         for j in range(2):
             interp_points = np.arange(1, 31)
             spline = interp1d(
-                np.asarray(xi_interp_values), np.asarray(xi[i][j]), kind="cubic"
+                np.asarray(xi_interp_values),
+                np.asarray(xi[edu[i]][health[j]]),
+                kind="cubic",
             )
             temp_grid = jnp.asarray(spline(interp_points))
             xigrid = xigrid.at[0:30, i, j].set(temp_grid)
-            xigrid = xigrid.at[30:n, i, j].set(xi[i][j][3])
+            xigrid = xigrid.at[30:n, i, j].set(xi[edu[i]][health[j]][3])
     return xigrid
 
 
-def create_chimaxgrid(chi_1: float, chi_2: float) -> Float1D:
+def create_chimaxgrid(chi: list[float]) -> Float1D:
     t = jnp.arange(38)
-    return jnp.maximum(chi_1 * jnp.exp(chi_2 * t), 0)
+    return jnp.maximum(chi[0] * jnp.exp(chi[1] * t), 0)
 
 
-def create_income_grid(
-    y1_hs: float,
-    y1_cl: float,
-    yths_s: float,
-    yths_sq: float,
-    wagep_hs: float,
-    wagep_cl: float,
-    ytcl_s: float,
-    ytcl_sq: float,
-    sigx: float,
-) -> FloatND:
-    sdztemp = ((sigx**2.0) / (1.0 - rho**2.0)) ** 0.5
+def create_income_grid(income_process: dict[str, dict[str, float]]) -> FloatND:
+    sdztemp = ((income_process["sigx"] ** 2.0) / (1.0 - rho**2.0)) ** 0.5
     j = jnp.arange(20)
     health = jnp.arange(2)
     education = jnp.arange(2)
@@ -622,10 +543,22 @@ def create_income_grid(
     def calc_base(period: Period, health: Int1D, education: Int1D) -> Float1D:
         yt = jnp.where(
             education == 1,
-            (y1_cl * jnp.exp(ytcl_s * (period) + ytcl_sq * (period) ** 2.0))
-            * (1.0 - wagep_cl * (1 - health)),
-            (y1_hs * jnp.exp(yths_s * (period) + yths_sq * (period) ** 2.0))
-            * (1.0 - wagep_hs * (1 - health)),
+            (
+                income_process["cl"]["y1"]
+                * jnp.exp(
+                    income_process["cl"]["yt_s"] * (period)
+                    + income_process["cl"]["yt_sq"] * (period) ** 2.0
+                )
+            )
+            * (1.0 - income_process["cl"]["wagep"] * (1 - health)),
+            (
+                income_process["hs"]["y1"]
+                * jnp.exp(
+                    income_process["hs"]["yt_s"] * (period)
+                    + income_process["hs"]["yt_sq"] * (period) ** 2.0
+                )
+            )
+            * (1.0 - income_process["hs"]["wagep"] * (1 - health)),
         )
         return yt / (
             jnp.exp(((jnp.log(theta_val[1]) ** 2.0) ** 2.0) / 2.0)
@@ -646,6 +579,15 @@ j: Float1D = jnp.floor_divide(jnp.arange(38), 5)
 # --------------------------------------------------------------------------------------
 # Health Transition Probability Grid
 # --------------------------------------------------------------------------------------
+
+const_healthtr: float = -0.906
+age_const: Float1D = jnp.asarray(
+    [0.0, -0.289, -0.644, -0.881, -1.138, -1.586, -1.586, -1.586]
+)
+eff_param: Float1D = jnp.asarray([0.693, 0.734])
+healthy_dummy: float = 2.311
+htype_dummy: float = 0.632
+college_dummy: float = 0.238
 
 
 def health_trans(
@@ -710,67 +652,23 @@ def rouwenhorst(rho: float, sigma_eps: Float1D, n: int) -> tuple[FloatND, FloatN
 def create_inputs(
     seed: int,
     n_simulation_subjects: int,
-    nuh_1: float,
-    nuh_2: float,
-    nuh_3: float,
-    nuh_4: float,
-    nuu_1: float,
-    nuu_2: float,
-    nuu_3: float,
-    nuu_4: float,
-    xihsh_1: float,
-    xihsh_2: float,
-    xihsh_3: float,
-    xihsh_4: float,
-    xihsu_1: float,
-    xihsu_2: float,
-    xihsu_3: float,
-    xihsu_4: float,
-    xiclu_1: float,
-    xiclu_2: float,
-    xiclu_3: float,
-    xiclu_4: float,
-    xiclh_1: float,
-    xiclh_2: float,
-    xiclh_3: float,
-    xiclh_4: float,
-    y1_hs: float,
-    y1_cl: float,
-    yths_s: float,
-    yths_sq: float,
-    wagep_hs: float,
-    wagep_cl: float,
-    ytcl_s: float,
-    ytcl_sq: float,
-    sigx: float,
-    chi_1: float,
-    chi_2: float,
+    nu: dict[str, list[float]],
+    xi: dict[str, dict[str, list[float]]],
+    income_process: dict[str, dict[str, float]],
+    chi: list[float],
     psi: float,
-    nuad: float,
     bb: float,
     conp: float,
     penre: float,
-    beta_mean: float,
-    beta_std: float,
+    beta: dict[str, float],
+    sigma: int,
 ) -> tuple[dict[RegimeName, Any], dict[RegimeName, Any], list[RegimeName]]:
-    # Gather parameters
-    nuh: Float1D = jnp.array([nuh_1, nuh_2, nuh_3, nuh_4])
-    nuu: Float1D = jnp.array([nuu_1, nuu_2, nuu_3, nuu_4])
-    nu: list[Float1D] = [nuu, nuh]
-    xi_hsh: Float1D = jnp.array([xihsh_1, xihsh_2, xihsh_3, xihsh_4])
-    xi_hsu: Float1D = jnp.array([xihsu_1, xihsu_2, xihsu_3, xihsu_4])
-    xi_clu: Float1D = jnp.array([xiclu_1, xiclu_2, xiclu_3, xiclu_4])
-    xi_clh: Float1D = jnp.array([xiclh_1, xiclh_2, xiclh_3, xiclh_4])
-    xi: list[list[Float1D]] = [[xi_hsu, xi_hsh], [xi_clu, xi_clh]]
-
     # Create variable grids from supplied parameters
-    income_grid = create_income_grid(
-        y1_hs, y1_cl, yths_s, yths_sq, wagep_hs, wagep_cl, ytcl_s, ytcl_sq, sigx
-    )
-    chimax_grid = create_chimaxgrid(chi_1, chi_2)
-    xvalues, xtrans = rouwenhorst(rho, jnp.sqrt(sigx), 5)
+    income_grid = create_income_grid(income_process)
+    chimax_grid = create_chimaxgrid(chi)
+    xvalues, xtrans = rouwenhorst(rho, jnp.sqrt(income_process["sigx"]), 5)
     xi_grid = create_xigrid(xi)
-    phi_grid = create_phigrid(nu, nuad)
+    phi_grid = create_phigrid(nu)
 
     # Create parameters
     params = {
@@ -778,7 +676,7 @@ def create_inputs(
         "disutil": {"phigrid": phi_grid},
         "fcost": {"psi": psi, "xigrid": xi_grid},
         "cons_util": {"sigma": sigma, "bb": bb, "kappa": conp},
-        "utility": {"beta_mean": beta_mean, "beta_std": beta_std},
+        "utility": {"beta_mean": beta["mean"], "beta_std": beta["std"]},
         "income": {"income_grid": income_grid, "xvalues": xvalues},
         "pension": {"income_grid": income_grid, "penre": penre},
         "adj_cost": {"chimaxgrid": chimax_grid},

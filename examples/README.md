@@ -9,7 +9,8 @@
 
 > [!NOTE]
 > Runtime refers to a single simulation call for 1,000 individuals. CPU times come from
-> a MacBook Pro with M4 Pro chip with 24GB RAM.
+> a MacBook Pro with M4 Pro chip with 24GB RAM. GPU times were recorded on a Nvidia
+> Geforce RTX 3050.
 
 ## Running an example model
 
