@@ -15,7 +15,7 @@ from lcm.utils import unflatten_regime_namespace
 if TYPE_CHECKING:
     import pandas as pd
 
-    from lcm import Regime
+    from lcm.regime import Regime
     from lcm.typing import GridsDict, ParamsDict
 
 

@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
     from jax import Array
 
-    from lcm import Regime
+    from lcm.regime import Regime
     from lcm.typing import Any
 
 

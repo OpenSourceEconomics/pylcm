@@ -19,11 +19,11 @@ If you want to solve and simulate an example locally,
 ```console
 $ git clone https://github.com/opensourceeconomics/pylcm.git
 $ cd pylcm/examples/#example name#
-$ pixi run python simulate_model.py
+$ pixi run python model.py
 ```
 
 If you want to run a model on the GPU you need to use the pixi 'cuda' environment, run
 
 ```console
-$ pixi run -e cuda python simulate_model.py
+$ pixi run -e cuda python model.py
 ```

@@ -142,14 +142,6 @@ class Dead:
     dead: int = 0
 
 
-# --------------------------------------------------------------------------------------
-# Grid Creation
-# --------------------------------------------------------------------------------------
-
-
-eff_grid: Int1D = jnp.linspace(0, 1, 40)
-
-
 # ======================================================================================
 # Model functions
 # ======================================================================================
@@ -859,3 +851,20 @@ def create_inputs(
     }
     initial_regimes = ["alive"] * n_simulation_subjects
     return params, initial_states, initial_regimes
+
+
+# ======================================================================================
+# Solve and simulate the model
+# ======================================================================================
+
+if __name__ == "__main__":
+    params, initial_states, initial_regimes = create_inputs(
+        seed=7235, n_simulation_subjects=1_000, **START_PARAMS
+    )
+
+    simulation_result = MAHLER_YUM_MODEL.solve_and_simulate(
+        params={"alive": params, "dead": params},
+        initial_states=initial_states,
+        initial_regimes=initial_regimes,
+        seed=8295,
+    )
