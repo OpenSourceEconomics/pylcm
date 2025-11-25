@@ -1,8 +1,7 @@
 """Example implementation of Mahler & Yum (2024).
 
-This model implements the life cycle model from the paper 'Lifestyle Behaviors
-and Wealth-Health Gaps in Germany' by Lukas Mahler and Minchul Yum (2024,
-https://doi.org/10.3982/ECTA20603).
+This model replicates the lifecycle model from the paper "Lifestyle Behaviors and
+Wealth-Health Gaps in Germany" by Lukas Mahler and Minchul Yum (Econometrica, 2024)
 """
 
 from __future__ import annotations
@@ -718,7 +717,7 @@ def rouwenhorst(rho: float, sigma_eps: Float1D, n: int) -> tuple[FloatND, FloatN
 
 def create_inputs(
     seed: int,
-    n: int,
+    n_simulation_subjects: int,
     nuh_1: float,
     nuh_2: float,
     nuh_3: float,
@@ -819,10 +818,12 @@ def create_inputs(
     initial_dists = jnp.diff(init_distr_2b2t2h[:, 0], prepend=0)
     eff_grid = jnp.linspace(0, 1, 40)
     key = random.key(seed)
-    initial_wealth = jnp.full((n), 0, dtype=jnp.int8)
-    types = random.choice(key, jnp.arange(16), (n,), p=initial_dists)
+    initial_wealth = jnp.full((n_simulation_subjects), 0, dtype=jnp.int8)
+    types = random.choice(
+        key, jnp.arange(16), (n_simulation_subjects,), p=initial_dists
+    )
     new_keys = random.split(key=key, num=3)
-    health_draw = random.uniform(new_keys[0], (n,))
+    health_draw = random.uniform(new_keys[0], (n_simulation_subjects,))
     health_thresholds = init_distr_2b2t2h[:, 1][types]
     initial_health = jnp.where(health_draw > health_thresholds, 0, 1)
     initial_health_type = 1 - ht[types]
@@ -830,7 +831,9 @@ def create_inputs(
     initial_productivity = prod[types]
     initial_discount = discount[types]
     initial_effort = jnp.searchsorted(eff_grid, init_distr_2b2t2h[:, 2][types])
-    initial_adjustment_cost = random.choice(new_keys[1], jnp.arange(5), (n,))
+    initial_adjustment_cost = random.choice(
+        new_keys[1], jnp.arange(5), (n_simulation_subjects,)
+    )
     prod_dist = jax.lax.fori_loop(
         0,
         1000000,
@@ -838,7 +841,7 @@ def create_inputs(
         jnp.full(5, 1 / 5),
     )
     initial_productivity_shock = random.choice(
-        new_keys[2], jnp.arange(5), (n,), p=prod_dist
+        new_keys[2], jnp.arange(5), (n_simulation_subjects,), p=prod_dist
     )
     initial_states = {
         "alive": {
@@ -852,7 +855,7 @@ def create_inputs(
             "productivity": initial_productivity,
             "discount_factor": initial_discount,
         },
-        "dead": {"dead": jnp.full(n, 0)},
+        "dead": {"dead": jnp.full(n_simulation_subjects, 0)},
     }
-    initial_regimes = ["alive"] * n
+    initial_regimes = ["alive"] * n_simulation_subjects
     return params, initial_states, initial_regimes
