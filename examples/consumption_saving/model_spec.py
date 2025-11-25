@@ -100,7 +100,7 @@ RETIREMENT_AGE = 65
 
 
 CONSUMPTION_SAVING_REGIME = Regime(
-    name="cons_sav_model",
+    name="consumption_saving_regime",
     utility=utility,
     functions={
         "labor_income": labor_income,
@@ -134,9 +134,12 @@ CONSUMPTION_SAVING_REGIME = Regime(
         ),
     },
     transitions={
-        "cons_sav_model": {"next_wealth": next_wealth, "next_health": next_health}
+        "consumption_saving_regime": {
+            "next_wealth": next_wealth,
+            "next_health": next_health,
+        }
     },
-    regime_transition_probs=lambda wealth: {"cons_sav_model": 1.0},  # noqa: ARG005
+    regime_transition_probs=lambda wealth: {"consumption_saving_regime": 1.0},  # noqa: ARG005
 )
 
 CONSUMPTION_SAVING_MODEL = Model(
@@ -144,9 +147,9 @@ CONSUMPTION_SAVING_MODEL = Model(
 )
 
 PARAMS = {
-    "cons_sav_model": {
+    "consumption_saving_regime": {
         "beta": 0.95,
         "utility": {"disutility_of_work": 0.05},
-        "cons_sav_model__next_wealth": {"interest_rate": 0.05},
+        "consumption_saving_regime__next_wealth": {"interest_rate": 0.05},
     }
 }
