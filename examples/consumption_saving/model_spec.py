@@ -16,8 +16,8 @@ if TYPE_CHECKING:
         ContinuousState,
         DiscreteAction,
         FloatND,
-        Int1D,
         IntND,
+        Period,
     )
 
 # ======================================================================================
@@ -58,7 +58,7 @@ def wage(age: int | IntND) -> float | FloatND:
     return 1 + 0.1 * age
 
 
-def age(period: int | Int1D) -> int | IntND:
+def age(period: Period) -> int | IntND:
     return period + 18
 
 

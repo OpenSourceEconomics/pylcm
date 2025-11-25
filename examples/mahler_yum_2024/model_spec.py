@@ -31,6 +31,7 @@ if TYPE_CHECKING:
         Float1D,
         FloatND,
         Int1D,
+        Period,
         RegimeName,
     )
 
@@ -159,7 +160,7 @@ eff_grid: Int1D = jnp.linspace(0, 1, 40)
 # Utility function
 # --------------------------------------------------------------------------------------
 def utility(
-    period: Int1D,
+    period: Period,
     wealth: ContinuousState,  # noqa: ARG001
     health_type: DiscreteState,  # noqa: ARG001
     education: DiscreteState,  # noqa: ARG001
@@ -180,14 +181,14 @@ def disutil(
     working: DiscreteAction,
     health: DiscreteState,
     education: DiscreteState,
-    period: Int1D,
+    period: Period,
     phigrid: FloatND,
 ) -> FloatND:
     return phigrid[period, education, health] * ((working / 2) ** (2)) / 2
 
 
 def adj_cost(
-    period: Int1D,
+    period: Period,
     adjustment_cost: DiscreteState,
     effort: DiscreteAction,
     effort_t_1: DiscreteState,
@@ -216,7 +217,7 @@ def cons_util(
 
 
 def fcost(
-    period: Int1D,
+    period: Period,
     education: DiscreteState,
     health: DiscreteState,
     effort: DiscreteAction,
@@ -239,7 +240,7 @@ def net_income(benefits: FloatND, taxed_income: FloatND, pension: FloatND) -> Fl
 
 def income(
     working: DiscreteAction,
-    period: Int1D,
+    period: Period,
     health: DiscreteState,
     education: DiscreteState,
     productivity: DiscreteState,
@@ -259,7 +260,7 @@ def taxed_income(income: FloatND) -> FloatND:
     return lamda * (income ** (1.0 - taul)) * (avrgearn**taul)
 
 
-def benefits(period: Int1D, health: DiscreteState, working: DiscreteAction) -> FloatND:
+def benefits(period: Period, health: DiscreteState, working: DiscreteAction) -> FloatND:
     eligible = jnp.logical_and(health == 0, working == 0)
     return jnp.where(
         jnp.logical_and(eligible, period <= retirement_age), tt0 * avrgearn, 0
@@ -267,7 +268,7 @@ def benefits(period: Int1D, health: DiscreteState, working: DiscreteAction) -> F
 
 
 def pension(
-    period: Int1D,
+    period: Period,
     education: DiscreteState,
     productivity: DiscreteState,
     income_grid: FloatND,
@@ -293,7 +294,7 @@ def next_discount_factor(discount_factor: DiscreteState) -> DiscreteState:
 
 @lcm.mark.stochastic
 def next_health(  # type: ignore[empty-body]
-    period: Int1D,
+    period: Period,
     health: DiscreteState,
     effort: DiscreteAction,
     effort_t_1: DiscreteState,
@@ -342,7 +343,7 @@ spgrid = spgrid.at[:, 1, 1].set(surv_cl[:, 0])
 
 
 def alive_to_dead(
-    period: Int1D, education: DiscreteState, health: DiscreteState
+    period: Period, education: DiscreteState, health: DiscreteState
 ) -> dict[str, Float1D]:
     return {
         "alive": spgrid[period, education, health],
@@ -353,7 +354,7 @@ def alive_to_dead(
 # --------------------------------------------------------------------------------------
 # Constraints
 # --------------------------------------------------------------------------------------
-def retirement_constraint(period: Int1D, working: DiscreteAction) -> BoolND:
+def retirement_constraint(period: Period, working: DiscreteAction) -> BoolND:
     return jnp.logical_not(jnp.logical_and(period > retirement_age, working > 0))
 
 
@@ -627,12 +628,12 @@ def create_income_grid(
     health = jnp.arange(2)
     education = jnp.arange(2)
 
-    def calc_base(_period: Int1D, health: Int1D, education: Int1D) -> Float1D:
+    def calc_base(period: Period, health: Int1D, education: Int1D) -> Float1D:
         yt = jnp.where(
             education == 1,
-            (y1_cl * jnp.exp(ytcl_s * (_period) + ytcl_sq * (_period) ** 2.0))
+            (y1_cl * jnp.exp(ytcl_s * (period) + ytcl_sq * (period) ** 2.0))
             * (1.0 - wagep_cl * (1 - health)),
-            (y1_hs * jnp.exp(yths_s * (_period) + yths_sq * (_period) ** 2.0))
+            (y1_hs * jnp.exp(yths_s * (period) + yths_sq * (period) ** 2.0))
             * (1.0 - wagep_hs * (1 - health)),
         )
         return yt / (
@@ -657,7 +658,7 @@ j: Float1D = jnp.floor_divide(jnp.arange(38), 5)
 
 
 def health_trans(
-    period: Int1D, health: Int1D, eff: Int1D, eff_1: Int1D, edu: Int1D, ht: Int1D
+    period: Period, health: Int1D, eff: Int1D, eff_1: Int1D, edu: Int1D, ht: Int1D
 ) -> Float1D:
     y = (
         const_healthtr
