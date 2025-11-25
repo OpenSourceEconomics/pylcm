@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     import pandas as pd
     from jax import Array
 
-    from lcm.regime import Regime
+    from lcm import Regime
 
 
 def create_state_action_space(

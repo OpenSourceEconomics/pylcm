@@ -17,10 +17,8 @@ from jax import random
 from scipy.interpolate import interp1d
 
 import lcm
-from lcm import DiscreteGrid, LinspaceGrid
+from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
 from lcm.dispatchers import _base_productmap
-from lcm.model import Model
-from lcm.regime import Regime
 
 if TYPE_CHECKING:
     from lcm.typing import (

@@ -31,7 +31,7 @@ from lcm.utils import flatten_regime_namespace
 if TYPE_CHECKING:
     from jax import Array
 
-    from lcm.regime import Regime
+    from lcm import Regime
     from lcm.typing import (
         ArgmaxQOverAFunction,
         GridsDict,

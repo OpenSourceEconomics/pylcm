@@ -20,8 +20,8 @@ if TYPE_CHECKING:
 
     from jax import Array
 
+    from lcm import Regime
     from lcm.interfaces import StateSpaceInfo
-    from lcm.regime import Regime
     from lcm.typing import (
         BoolND,
         Float1D,

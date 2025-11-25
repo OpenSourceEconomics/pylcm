@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from lcm import Regime
 from lcm.exceptions import ModelInitializationError, format_messages
 from lcm.input_processing.regime_processing import process_regimes
 from lcm.logging import get_logger
-from lcm.regime import Regime
 from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
 

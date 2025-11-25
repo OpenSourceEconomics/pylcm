@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     import pandas as pd
     from jax import Array
 
-    from lcm.regime import Regime
+    from lcm import Regime
     from lcm.typing import (
         DiscreteAction,
         DiscreteState,

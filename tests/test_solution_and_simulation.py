@@ -6,12 +6,12 @@ import jax.numpy as jnp
 import pytest
 from pybaum import tree_equal, tree_map
 
+from lcm import Model
 from lcm.input_processing import process_regimes
 from lcm.max_Q_over_c import (
     get_argmax_and_max_Q_over_c,
     get_max_Q_over_c,
 )
-from lcm.model import Model
 from lcm.Q_and_F import get_Q_and_F
 from lcm.state_action_space import create_state_space_info
 from tests.test_models.deterministic import RetirementStatus

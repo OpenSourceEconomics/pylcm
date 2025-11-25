@@ -7,8 +7,7 @@ from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
-from lcm import DiscreteGrid, LinspaceGrid, Regime
-from lcm.model import Model
+from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
 
 if TYPE_CHECKING:
     from lcm.typing import (
