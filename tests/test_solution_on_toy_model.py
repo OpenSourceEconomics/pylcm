@@ -88,9 +88,9 @@ DETERMINISTIC_REGIME = Regime(
     transitions={
         "test": {
             "next_wealth": next_wealth,
-        }
+        },
+        "next_regime": lambda: {"test": 1.0},
     },
-    regime_transition_probs=lambda: {"test": 1.0},
 )
 
 
@@ -100,7 +100,7 @@ def next_health(health: DiscreteState) -> DiscreteState:  # type: ignore[empty-b
 
 
 STOCHASTIC_REGIME = deepcopy(DETERMINISTIC_REGIME)
-STOCHASTIC_REGIME.transitions["test"]["next_health"] = next_health
+STOCHASTIC_REGIME.transitions["test"]["next_health"] = next_health  # type: ignore[index]
 STOCHASTIC_REGIME.states["health"] = DiscreteGrid(HealthStatus)
 
 DETERMINISTIC_MODEL = Model([DETERMINISTIC_REGIME], n_periods=2)

@@ -86,9 +86,10 @@ def model_and_params():
     regime_deterministic = base_regime.replace(
         transitions={
             "iskhakov_et_al_2017_stochastic": {
-                **base_regime.transitions["iskhakov_et_al_2017_stochastic"],
+                **base_regime.transitions["iskhakov_et_al_2017_stochastic"],  # type: ignore[dict-item]
                 "next_health": next_health_deterministic,
-            }
+            },
+            "next_regime": base_regime.transitions["next_regime"],
         }
     )
 
@@ -96,9 +97,10 @@ def model_and_params():
     regime_stochastic = base_regime.replace(
         transitions={
             "iskhakov_et_al_2017_stochastic": {
-                **base_regime.transitions["iskhakov_et_al_2017_stochastic"],
+                **base_regime.transitions["iskhakov_et_al_2017_stochastic"],  # type: ignore[dict-item]
                 "next_health": next_health_stochastic,
-            }
+            },
+            "next_regime": base_regime.transitions["next_regime"],
         }
     )
 

@@ -118,11 +118,16 @@ def _create_stochastic_transition_params(
 
     stochastic_transition_params = {}
     invalid_dependencies = {}
-    for regime_name, transitions in regime.transitions.items():
-        for func_name, transition in transitions.items():
-            if is_stochastic_transition(transition):
+    for regime_name, regime_transitions in regime.transitions.items():
+        if regime_name == "next_regime":
+            transitions_to_process = {"next_regime": regime_transitions}
+        else:
+            transitions_to_process = regime_transitions  # type: ignore[assignment]
+
+        for func_name, transition in transitions_to_process.items():
+            if is_stochastic_transition(transition):  # type: ignore[arg-type]
                 # Retrieve corresponding next function and its arguments
-                dependencies = list(inspect.signature(transition).parameters)
+                dependencies = list(inspect.signature(transition).parameters)  # type: ignore[arg-type]
 
                 # If there are invalid dependencies, store them in a dictionary and
                 # continue with the next variable to collect as many invalid

@@ -210,6 +210,7 @@ def _get_internal_functions(
     internal_transition = {
         fn_name: functions[fn_name]
         for fn_name in flatten_regime_namespace(regime.transitions)
+        if fn_name != "next_regime"
     }
     internal_utility = functions["utility"]
     internal_constraints = {
@@ -220,11 +221,11 @@ def _get_internal_functions(
         for fn_name in functions
         if fn_name not in flatten_regime_namespace(regime.transitions)
         and fn_name not in regime.constraints
-        and fn_name != "utility"
+        and fn_name not in {"utility", "next_regime"}
     }
     internal_regime_transition_probs = build_regime_transition_probs_functions(
         internal_functions=internal_functions,
-        regime_transition_probs=functions["regime_transition_probs"],
+        regime_transition_probs=functions["next_regime"],
         grids=grids[regime.name],
         enable_jit=enable_jit,
     )

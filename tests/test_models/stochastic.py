@@ -20,6 +20,8 @@ import lcm
 from lcm import DiscreteGrid, LinspaceGrid, Regime
 
 if TYPE_CHECKING:
+    from jax import Array
+
     from lcm.typing import (
         BoolND,
         ContinuousAction,
@@ -104,6 +106,10 @@ def next_partner(  # type: ignore[empty-body]
     pass
 
 
+def next_regime() -> dict[str, float | Array]:
+    return {"iskhakov_et_al_2017_stochastic": 1.0}
+
+
 # --------------------------------------------------------------------------------------
 # Constraints
 # --------------------------------------------------------------------------------------
@@ -150,10 +156,10 @@ ISKHAKOV_ET_AL_2017_STOCHASTIC = Regime(
             "next_wealth": next_wealth,
             "next_health": next_health,
             "next_partner": next_partner,
-        }
+        },
+        "next_regime": next_regime,
     },
     functions={
         "labor_income": labor_income,
     },
-    regime_transition_probs=lambda: {"iskhakov_et_al_2017_stochastic": 1.0},
 )
