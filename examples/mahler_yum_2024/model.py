@@ -494,7 +494,7 @@ START_PARAMS = {
 # ======================================================================================
 
 
-def create_phigrid(nu: list[Float1D]) -> FloatND:
+def create_phigrid(nu: dict[str, list[float]]) -> FloatND:
     phi_interp_values = jnp.array([1, 8, 13, 20])
     phigrid = jnp.zeros((retirement_age + 1, 2, 2))
     health = ["u", "h"]
@@ -502,15 +502,19 @@ def create_phigrid(nu: list[Float1D]) -> FloatND:
         for j in range(2):
             interp_points = jnp.arange(1, retirement_age + 2)
             spline = interp1d(
-                np.asarray(phi_interp_values), np.asarray(nu[health[j]]), kind="cubic"
+                np.asarray(phi_interp_values),
+                np.asarray(nu[health[j]]),
+                kind="cubic",
             )
             temp_grid = jnp.asarray(spline(interp_points))
-            temp_grid = jnp.where(i == 0, temp_grid * jnp.exp(nu["ad"]), temp_grid)
+            temp_grid = jnp.where(
+                i == 0, temp_grid * jnp.exp(jnp.array(nu["ad"])), temp_grid
+            )
             phigrid = phigrid.at[:, i, j].set(temp_grid)
     return phigrid
 
 
-def create_xigrid(xi: list[list[Float1D]]) -> FloatND:
+def create_xigrid(xi: dict[str, dict[str, list[float]]]) -> FloatND:
     xi_interp_values = jnp.array([1, 12, 20, 31])
     xigrid = jnp.zeros((n, 2, 2))
     edu = ["hs", "cl"]
@@ -535,7 +539,7 @@ def create_chimaxgrid(chi: list[float]) -> Float1D:
 
 
 def create_income_grid(income_process: dict[str, dict[str, float]]) -> FloatND:
-    sdztemp = ((income_process["sigx"] ** 2.0) / (1.0 - rho**2.0)) ** 0.5
+    sdztemp = ((income_process["sigx"] ** 2.0) / (1.0 - rho**2.0)) ** 0.5  # type: ignore[operator]
     j = jnp.arange(20)
     health = jnp.arange(2)
     education = jnp.arange(2)
@@ -666,7 +670,7 @@ def create_inputs(
     # Create variable grids from supplied parameters
     income_grid = create_income_grid(income_process)
     chimax_grid = create_chimaxgrid(chi)
-    xvalues, xtrans = rouwenhorst(rho, jnp.sqrt(income_process["sigx"]), 5)
+    xvalues, xtrans = rouwenhorst(rho, jnp.sqrt(income_process["sigx"]), 5)  # type: ignore[arg-type]
     xi_grid = create_xigrid(xi)
     phi_grid = create_phigrid(nu)
 
@@ -757,7 +761,9 @@ def create_inputs(
 
 if __name__ == "__main__":
     params, initial_states, initial_regimes = create_inputs(
-        seed=7235, n_simulation_subjects=1_000, **START_PARAMS
+        seed=7235,
+        n_simulation_subjects=1_000,
+        **START_PARAMS,  # type: ignore[arg-type]
     )
 
     simulation_result = MAHLER_YUM_MODEL.solve_and_simulate(
