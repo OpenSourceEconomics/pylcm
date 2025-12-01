@@ -14,8 +14,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
 import lcm
-from lcm import DiscreteGrid, LinspaceGrid, Regime
-from lcm.model import Model
+from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
 
 if TYPE_CHECKING:
     from lcm.typing import (

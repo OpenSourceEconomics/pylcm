@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
-from lcm.model import Model
+from lcm import Model
 from tests.test_models.deterministic import (
     ISKHAKOV_ET_AL_2017,
     ISKHAKOV_ET_AL_2017_STRIPPED_DOWN,
@@ -14,7 +14,7 @@ from tests.test_models.discrete_deterministic import ISKHAKOV_ET_AL_2017_DISCRET
 from tests.test_models.stochastic import ISKHAKOV_ET_AL_2017_STOCHASTIC
 
 if TYPE_CHECKING:
-    from lcm.regime import Regime
+    from lcm import Regime
 
 TEST_REGIMES = {
     "iskhakov_et_al_2017": ISKHAKOV_ET_AL_2017,

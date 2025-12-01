@@ -13,9 +13,7 @@ import jax.numpy as jnp
 from jax import Array
 
 import lcm
-from lcm import DiscreteGrid, LinspaceGrid
-from lcm.model import Model
-from lcm.regime import Regime
+from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
 
 if TYPE_CHECKING:
     from lcm.typing import (

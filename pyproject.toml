@@ -234,7 +234,7 @@ none_representation = "null"
 # ======================================================================================
 
 [tool.mypy]
-files = ["src", "tests"]
+files = ["src", "tests", "examples"]
 check_untyped_defs = true
 disallow_any_generics = true
 disallow_untyped_defs = true

@@ -45,7 +45,7 @@ def process_simulated_data(
     """
     n_initial_states = len(results[0].V_arr)
 
-    nan_array = jnp.full(n_initial_states, jnp.nan, dtype=jnp.float64)
+    nan_array = jnp.full(n_initial_states, jnp.nan)
 
     list_of_dicts = [
         {

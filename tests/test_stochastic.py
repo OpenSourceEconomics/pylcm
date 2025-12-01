@@ -8,7 +8,7 @@ import pytest
 from numpy.testing import assert_array_almost_equal
 
 import lcm
-from lcm.model import Model
+from lcm import Model
 from tests.test_models.utils import get_model, get_params, get_regime
 
 if TYPE_CHECKING:
