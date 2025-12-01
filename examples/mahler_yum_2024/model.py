@@ -20,6 +20,8 @@ from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
 from lcm.dispatchers import _base_productmap
 
 if TYPE_CHECKING:
+    from jax import Array
+
     from lcm.typing import (
         Any,
         BoolND,
@@ -319,9 +321,9 @@ spgrid = spgrid.at[:, 0, 1].set(surv_hs[:, 0])
 spgrid = spgrid.at[:, 1, 1].set(surv_cl[:, 0])
 
 
-def alive_to_dead(
+def next_regime_from_alive(
     period: Period, education: DiscreteState, health: DiscreteState
-) -> dict[str, Float1D]:
+) -> dict[str, float | Array]:
     return {
         "alive": spgrid[period, education, health],
         "dead": 1 - spgrid[period, education, health],
@@ -398,8 +400,8 @@ ALIVE_REGIME = Regime(
             "next_productivity": next_productivity,
         },
         "dead": {"next_dead": lambda: Dead.dead},
+        "next_regime": next_regime_from_alive,
     },
-    regime_transition_probs=alive_to_dead,  # type: ignore[arg-type]
 )
 
 DEAD_REGIME = Regime(
@@ -407,8 +409,10 @@ DEAD_REGIME = Regime(
     utility=lambda dead: jnp.asarray([0.0]),  # noqa: ARG005
     states={"dead": DiscreteGrid(Dead)},
     actions={},
-    transitions={"dead": {"next_dead": lambda dead: Dead.dead}},  # noqa: ARG005
-    regime_transition_probs=lambda: {"alive": 0.0, "dead": 1.0},
+    transitions={
+        "dead": {"next_dead": lambda dead: Dead.dead},  # noqa: ARG005
+        "next_regime": lambda: {"alive": 0.0, "dead": 1.0},
+    },
 )
 
 MAHLER_YUM_MODEL = Model([ALIVE_REGIME, DEAD_REGIME], n_periods=n)
