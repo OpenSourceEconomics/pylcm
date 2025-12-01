@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
+from lcm import Regime
 from lcm.exceptions import RegimeInitializationError
 from lcm.grids import DiscreteGrid
-from lcm.regime import Regime
 
 
 def test_regime_invalid_states():

@@ -6,9 +6,9 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_almost_equal, assert_array_equal
 
+from lcm import Model
 from lcm.input_processing import process_regimes
 from lcm.logging import get_logger
-from lcm.model import Model
 from lcm.simulation.simulate import (
     _lookup_values_from_indices,
     simulate,
