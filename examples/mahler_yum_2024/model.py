@@ -272,7 +272,7 @@ def next_discount_factor(discount_factor: DiscreteState) -> DiscreteState:
 
 
 @lcm.mark.stochastic
-def next_health(  # type: ignore[empty-body]
+def next_health(
     period: Period,
     health: DiscreteState,
     effort: DiscreteAction,
