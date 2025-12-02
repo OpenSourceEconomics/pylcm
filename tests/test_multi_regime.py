@@ -82,8 +82,8 @@ def next_wealth(
 
 
 @lcm.mark.stochastic
-def next_health(health: DiscreteState) -> DiscreteState:  # type: ignore[empty-body]
-    pass
+def next_health(health: DiscreteState, health_transition: FloatND) -> FloatND:
+    return health_transition[health]
 
 
 def borrowing_constraint(
@@ -201,12 +201,9 @@ def test_work_retirement_model_solution():
         "labor_income": {"wage": 25},
         "work__next_wealth": {"interest_rate": 0.1},
         "retirement__next_wealth": {"interest_rate": 0.1},
-        "work__next_health": {},
+        "work__next_health": {"health_transition": health_transition},
+        "retirement__next_health": {"health_transition": health_transition},
         "borrowing_constraint": {},
-        "shocks": {
-            "work__next_health": health_transition,
-            "retirement__next_health": health_transition,
-        },
     }
 
     params_retired = {
@@ -215,14 +212,10 @@ def test_work_retirement_model_solution():
         "labor_income": {"wage": 20},
         "work__next_wealth": {"interest_rate": 0.1},
         "retirement__next_wealth": {"interest_rate": 0.1},
-        "work__next_health": {},
-        "retirement__next_health": {},
+        "work__next_health": {"health_transition": health_transition},
+        "retirement__next_health": {"health_transition": health_transition},
         "working": {},
         "borrowing_constraint": {},
-        "shocks": {
-            "work__next_health": health_transition,
-            "retirement__next_health": health_transition,
-        },
     }
 
     params: dict[RegimeName, ParamsDict] = {

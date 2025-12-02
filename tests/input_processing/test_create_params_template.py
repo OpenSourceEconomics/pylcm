@@ -34,7 +34,6 @@ def test_create_params_without_shocks(binary_category_class):
         "beta": jnp.nan,
         "utility": {"c": jnp.nan},
         "mock__next_b": {},
-        "shocks": {},
     }
 
 

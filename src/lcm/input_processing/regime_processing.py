@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import functools
-import inspect
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, cast
 
 from dags import get_annotations
 from dags.signature import with_signature
 
-from lcm.functools import convert_kwargs_to_args
 from lcm.input_processing.create_params_template import create_params_template
 from lcm.input_processing.regime_components import (
     build_argmax_and_max_Q_over_a_functions,
@@ -29,14 +27,10 @@ from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
 from lcm.utils import flatten_regime_namespace, unflatten_regime_namespace
 
 if TYPE_CHECKING:
-    import pandas as pd
     from jax import Array
 
     from lcm.regime import Regime
     from lcm.typing import (
-        DiscreteAction,
-        DiscreteState,
-        FloatND,
         Int1D,
         InternalUserFunction,
         ParamsDict,
@@ -93,6 +87,7 @@ def process_regimes(
         internal_functions = _get_internal_functions(
             regime, grids=grids, params=params_template, enable_jit=enable_jit
         )
+
         Q_and_F_functions = build_Q_and_F_functions(
             regime=regime,
             internal_functions=internal_functions,
@@ -157,55 +152,67 @@ def _get_internal_functions(
         The processed regime functions.
 
     """
-    variable_info = get_variable_info(regime)
-
-    raw_functions = deepcopy(regime.get_all_functions())
     flat_grids = flatten_regime_namespace(grids)
-    # ==================================================================================
-    # Create functions for stochastic transitions
-    # ==================================================================================
-    for next_fn_name, next_fn in flatten_regime_namespace(regime.transitions).items():
-        if is_stochastic_transition(next_fn):
-            raw_functions[next_fn_name] = _get_stochastic_next_function(
-                raw_func=next_fn,
-                grid=flat_grids[next_fn_name.replace("next_", "")],
-            )
-
-            raw_functions[f"weight_{next_fn_name}"] = _get_stochastic_weight_function(
-                raw_func=next_fn,
-                name=next_fn_name,
-                variable_info=variable_info,
-            )
 
     # ==================================================================================
     # Add 'params' argument to functions
     # ==================================================================================
     # We wrap the user functions such that they can be called with the 'params' argument
-    # instead of the individual parameters. This is done for all functions except for
-    # the dynamically generated weighting functions for stochastic next functions, since
-    # they are constructed to accept the 'params' argument by default.
+    # instead of the individual parameters.
+
+    all_functions = deepcopy(regime.get_all_functions())
+
+    stochastic_transition_functions = {
+        fn_name: fn
+        for fn_name, fn in all_functions.items()
+        if is_stochastic_transition(fn)
+    }
+
+    deterministic_transition_functions = {
+        fn_name: fn
+        for fn_name, fn in all_functions.items()
+        if fn_name in flatten_regime_namespace(regime.transitions)
+        and fn_name not in stochastic_transition_functions
+    }
+
+    deterministic_functions = {
+        fn_name: fn
+        for fn_name, fn in all_functions.items()
+        if fn_name
+        not in (stochastic_transition_functions, deterministic_transition_functions)
+    }
 
     functions: dict[str, InternalUserFunction] = {}
 
-    for func_name, func in raw_functions.items():
-        is_weight_next_function = func_name.startswith("weight_")
+    for fn_name, fn in deterministic_functions.items():
+        functions[fn_name] = _ensure_fn_only_depends_on_params(
+            fn=fn,
+            fn_name=fn_name,
+            params=params,
+        )
 
-        if is_weight_next_function:
-            processed_func = cast("InternalUserFunction", func)
+    for fn_name, fn in deterministic_transition_functions.items():
+        regime_name = None if fn_name == "next_regime" else fn_name.split("__", 1)[0]
+        functions[fn_name] = _ensure_fn_only_depends_on_params(
+            fn=fn,
+            fn_name=fn_name,
+            params=params,
+            regime_name=regime_name,
+        )
 
-        # params[name] contains the dictionary of parameters for the function, which
-        # is empty if the function does not depend on any regime parameters.
-        elif params[func_name]:
-            processed_func = _replace_func_parameters_by_params(
-                func=func,
-                params=params,
-                name=func_name,
-            )
-
-        else:
-            processed_func = _add_dummy_params_argument(func)
-
-        functions[func_name] = processed_func
+    for fn_name, fn in stochastic_transition_functions.items():
+        # The user-specified next function is the weighting function for the
+        # stochastic transition. For the solution, we must also define a next function
+        # that returns the whole grid of possible values.
+        functions[f"weight_{fn_name}"] = _ensure_fn_only_depends_on_params(
+            fn=fn,
+            fn_name=fn_name,
+            params=params,
+        )
+        functions[fn_name] = _get_stochastic_next_function(
+            fn=fn,
+            grid=flat_grids[fn_name.replace("next_", "")],
+        )
 
     internal_transition = {
         fn_name: functions[fn_name]
@@ -240,103 +247,62 @@ def _get_internal_functions(
 
 
 def _replace_func_parameters_by_params(
-    func: UserFunction, params: ParamsDict, name: str
+    fn: UserFunction, params: ParamsDict, name: str, regime_name: str | None
 ) -> InternalUserFunction:
     annotations = {
-        k: v for k, v in get_annotations(func).items() if k not in params[name]
+        k: v for k, v in get_annotations(fn).items() if k not in params[name]
     }
     annotations_with_params = annotations | {"params": "ParamsDict"}
     return_annotation = annotations_with_params.pop("return")
 
     @with_signature(args=annotations_with_params, return_annotation=return_annotation)
-    @functools.wraps(func)
+    @functools.wraps(fn)
     def processed_func(*args: Array, params: ParamsDict, **kwargs: Array) -> Array:
-        return func(*args, **kwargs, **params[name])
+        return fn(*args, **kwargs, **params[name])
 
-    return cast("InternalUserFunction", processed_func)
+    @with_signature(args=annotations_with_params, return_annotation=return_annotation)
+    @functools.wraps(fn)
+    def processed_func_regime(
+        *args: Array, params: ParamsDict, **kwargs: Array
+    ) -> Array:
+        return fn(*args, **kwargs, **params[name])
+
+    if regime_name is None:
+        return cast("InternalUserFunction", processed_func)
+    return cast("InternalUserFunction", processed_func_regime)
 
 
-def _add_dummy_params_argument(func: UserFunction) -> InternalUserFunction:
-    annotations = get_annotations(func) | {"params": "ParamsDict"}
+def _add_dummy_params_argument(fn: UserFunction) -> InternalUserFunction:
+    annotations = get_annotations(fn) | {"params": "ParamsDict"}
     return_annotation = annotations.pop("return")
 
     @with_signature(args=annotations, return_annotation=return_annotation)
-    @functools.wraps(func)
+    @functools.wraps(fn)
     def processed_func(*args: Array, params: ParamsDict, **kwargs: Array) -> Array:  # noqa: ARG001
-        return func(*args, **kwargs)
+        return fn(*args, **kwargs)
 
     return cast("InternalUserFunction", processed_func)
 
 
-def _get_stochastic_next_function(raw_func: UserFunction, grid: Int1D) -> UserFunction:
-    annotations = get_annotations(raw_func)
-    annotations.pop("return")
-
-    @with_signature(args=annotations, return_annotation="Int1D")
-    @functools.wraps(raw_func)
+def _get_stochastic_next_function(fn: UserFunction, grid: Int1D) -> UserFunction:
+    @with_signature(args=None, return_annotation="Int1D")
+    @functools.wraps(fn)
     def next_func(**kwargs: Any) -> Int1D:  # noqa: ARG001, ANN401
         return grid
 
     return next_func
 
 
-def _get_stochastic_weight_function(
-    raw_func: UserFunction, name: str, variable_info: pd.DataFrame
+def _ensure_fn_only_depends_on_params(
+    fn: UserFunction, fn_name: str, params: ParamsDict, regime_name: str | None = None
 ) -> InternalUserFunction:
-    """Get a function that returns the transition weights of a stochastic variable.
-
-    Example:
-    Consider a stochastic variable 'health' that takes two values {0, 1}. The transition
-    matrix is thus 2x2. We create the weighting function and then select the weights
-    that correspond to the case where 'health' is 0.
-
-    >>> from lcm.mark import StochasticInfo
-    >>> def next_health(health):
-    >>>     pass
-    >>> next_health._stochastic_info = StochasticInfo()
-    >>> params = {"shocks": {"health": np.arange(4).reshape(2, 2)}}
-    >>> weight_func = _get_stochastic_weight_function(
-    >>>     raw_func=next_health,
-    >>>     name="health"
-    >>>     variable_info=variable_info,
-    >>>     grids=grids,
-    >>> )
-    >>> weight_func(health=0, params=params)
-    >>> array([0, 1])
-
-
-    Args:
-        raw_func: The raw next function of the stochastic variable.
-        name: The name of the stochastic variable.
-        variable_info: A table with information about regime variables.
-
-    Returns:
-        A function that returns the transition weights of the stochastic variable.
-
-    """
-    function_parameters = list(inspect.signature(raw_func).parameters)
-
-    # Assert that stochastic next function only depends on discrete variables or period
-    invalid = {
-        arg
-        for arg in function_parameters
-        if arg != "period" and not variable_info.loc[arg, "is_discrete"]
-    }
-
-    if invalid:
-        raise ValueError(
-            "Stochastic variables can only depend on discrete variables and 'period', "
-            f"but {name} depends on {invalid}.",
+    # params[fn_name] contains the dictionary of parameters used by the function, which
+    # is empty if the function does not depend on any regime parameters.
+    if params[fn_name]:
+        return _replace_func_parameters_by_params(
+            fn=fn,
+            params=params,
+            name=fn_name,
+            regime_name=regime_name,
         )
-
-    annotations = get_annotations(raw_func) | {"params": "ParamsDict"}
-    annotations.pop("return")
-
-    @with_signature(args=annotations, return_annotation="FloatND")
-    def weight_func(
-        params: ParamsDict, **kwargs: DiscreteState | DiscreteAction | int
-    ) -> FloatND:
-        args = convert_kwargs_to_args(kwargs, parameters=function_parameters)
-        return params["shocks"][name][*args]
-
-    return cast("InternalUserFunction", weight_func)
+    return _add_dummy_params_argument(fn)

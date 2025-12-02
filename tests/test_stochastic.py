@@ -12,7 +12,7 @@ from lcm import Model
 from tests.test_models.utils import get_model, get_params, get_regime
 
 if TYPE_CHECKING:
-    from lcm.typing import FloatND
+    from lcm.typing import DiscreteState, FloatND
 
 # ======================================================================================
 # Simulate
@@ -21,9 +21,10 @@ if TYPE_CHECKING:
 
 def test_model_solve_and_simulate_with_stochastic_model():
     model = get_model("iskhakov_et_al_2017_stochastic", n_periods=3)
+    params = get_params("iskhakov_et_al_2017_stochastic")
 
     res: pd.DataFrame = model.solve_and_simulate(
-        params=get_params("iskhakov_et_al_2017_stochastic"),
+        params=params,
         initial_states={
             "iskhakov_et_al_2017_stochastic": {
                 "health": jnp.array([1, 1, 0, 0]),
@@ -73,10 +74,12 @@ def model_and_params():
 
     # Define functions first
     @lcm.mark.stochastic
-    def next_health_stochastic(health):
-        pass
+    def next_health_stochastic(
+        health: DiscreteState, health_transition: FloatND
+    ) -> FloatND:
+        return health_transition[health]
 
-    def next_health_deterministic(health):
+    def next_health_deterministic(health: DiscreteState) -> DiscreteState:
         return health
 
     # Get the base models and create modified versions
@@ -113,8 +116,8 @@ def model_and_params():
         health_transition=jnp.identity(2),
     )
 
-    model_deterministic = Model([regime_deterministic], n_periods=3)
     model_stochastic = Model([regime_stochastic], n_periods=3)
+    model_deterministic = Model([regime_deterministic], n_periods=3)
     return model_deterministic, model_stochastic, params
 
 

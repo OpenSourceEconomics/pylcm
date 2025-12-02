@@ -7,7 +7,6 @@ import jax.numpy as jnp
 from jax import Array
 
 from lcm.input_processing.util import (
-    get_variable_info,
     is_stochastic_transition,
 )
 from lcm.utils import unflatten_regime_namespace
@@ -21,8 +20,8 @@ if TYPE_CHECKING:
 
 def create_params_template(
     regime: Regime,
-    grids: GridsDict,
-    n_periods: int,
+    grids: GridsDict,  # noqa: ARG001
+    n_periods: int,  # noqa: ARG001
     default_params: dict[str, float] = {"beta": jnp.nan},  # noqa: B006
 ) -> ParamsDict:
     """Create parameter template from a regime specification.
@@ -40,16 +39,9 @@ def create_params_template(
         A nested dictionary of regime parameters.
 
     """
-    variable_info = get_variable_info(regime)
-
-    stochastic_transitions = _create_stochastic_transition_params(
-        regime=regime, variable_info=variable_info, grids=grids, n_periods=n_periods
-    )
-    stochastic_transition_params = {"shocks": stochastic_transitions}
-
     function_params = _create_function_params(regime)
 
-    return default_params | function_params | stochastic_transition_params
+    return default_params | function_params
 
 
 def _create_function_params(regime: Regime) -> dict[str, dict[str, float]]:
@@ -76,9 +68,6 @@ def _create_function_params(regime: Regime) -> dict[str, dict[str, float]]:
         *regime.states,
         "period",
     }
-
-    if hasattr(regime, "shocks"):
-        variables = variables | set(regime.shocks)
 
     function_params = {}
     # For each user function, capture the arguments of the function that are not in the
