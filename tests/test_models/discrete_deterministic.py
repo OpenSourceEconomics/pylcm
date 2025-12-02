@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
-from lcm import DiscreteGrid, Model
+from lcm import DiscreteGrid, Regime
 from tests.test_models.deterministic import (
     RetirementStatus,
     borrowing_constraint,
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     )
 
 # ======================================================================================
-# Model functions
+# Regime functions
 # ======================================================================================
 
 
@@ -86,21 +86,14 @@ def next_wealth_discrete(
 
 
 # ======================================================================================
-# Model specifications
+# Regime specifications
 # ======================================================================================
-ISKHAKOV_ET_AL_2017_DISCRETE = Model(
+ISKHAKOV_ET_AL_2017_DISCRETE = Regime(
+    name="iskhakov_et_al_2017_discrete",
     description=(
         "Starts from Iskhakov et al. (2017), removes absorbing retirement constraint "
         "and the lagged_retirement state, and makes the consumption decision discrete."
     ),
-    n_periods=3,
-    functions={
-        "utility": utility_discrete,
-        "next_wealth": next_wealth_discrete,
-        "borrowing_constraint": borrowing_constraint,
-        "labor_income": labor_income,
-        "working": working,
-    },
     actions={
         "retirement": DiscreteGrid(RetirementStatus),
         "consumption": DiscreteGrid(ConsumptionChoice),
@@ -108,4 +101,18 @@ ISKHAKOV_ET_AL_2017_DISCRETE = Model(
     states={
         "wealth": DiscreteGrid(WealthStatus),
     },
+    utility=utility_discrete,
+    constraints={
+        "borrowing_constraint": borrowing_constraint,
+    },
+    transitions={
+        "iskhakov_et_al_2017_discrete": {
+            "next_wealth": next_wealth_discrete,
+        }
+    },
+    functions={
+        "labor_income": labor_income,
+        "working": working,
+    },
+    regime_transition_probs=lambda: {"iskhakov_et_al_2017_discrete": 1.0},
 )

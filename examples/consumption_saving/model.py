@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
-from lcm import DiscreteGrid, LinspaceGrid, Model
+from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -16,8 +16,8 @@ if TYPE_CHECKING:
         ContinuousState,
         DiscreteAction,
         FloatND,
-        Int1D,
         IntND,
+        Period,
     )
 
 # ======================================================================================
@@ -58,8 +58,8 @@ def wage(age: int | IntND) -> float | FloatND:
     return 1 + 0.1 * age
 
 
-def age(_period: int | Int1D) -> int | IntND:
-    return _period + 18
+def age(period: Period) -> int | IntND:
+    return period + 18
 
 
 # --------------------------------------------------------------------------------------
@@ -99,17 +99,15 @@ def borrowing_constraint(
 RETIREMENT_AGE = 65
 
 
-MODEL_CONFIG = Model(
-    n_periods=RETIREMENT_AGE - 18,
+CONSUMPTION_SAVING_REGIME = Regime(
+    name="consumption_saving_regime",
+    utility=utility,
     functions={
-        "utility": utility,
-        "next_wealth": next_wealth,
-        "next_health": next_health,
-        "borrowing_constraint": borrowing_constraint,
         "labor_income": labor_income,
         "wage": wage,
         "age": age,
     },
+    constraints={"borrowing_constraint": borrowing_constraint},
     actions={
         "working": DiscreteGrid(WorkingStatus),
         "consumption": LinspaceGrid(
@@ -135,10 +133,41 @@ MODEL_CONFIG = Model(
             n_points=100,
         ),
     },
+    transitions={
+        "consumption_saving_regime": {
+            "next_wealth": next_wealth,
+            "next_health": next_health,
+        }
+    },
+    regime_transition_probs=lambda wealth: {"consumption_saving_regime": 1.0},  # noqa: ARG005
+)
+
+CONSUMPTION_SAVING_MODEL = Model(
+    [CONSUMPTION_SAVING_REGIME], n_periods=RETIREMENT_AGE - 18
 )
 
 PARAMS = {
-    "beta": 0.95,
-    "utility": {"disutility_of_work": 0.05},
-    "next_wealth": {"interest_rate": 0.05},
+    "consumption_saving_regime": {
+        "beta": 0.95,
+        "utility": {"disutility_of_work": 0.05},
+        "consumption_saving_regime__next_wealth": {"interest_rate": 0.05},
+    }
 }
+
+# ======================================================================================
+# Solve and simulate the model
+# ======================================================================================
+
+if __name__ == "__main__":
+    n_simulation_subjects = 1_000
+
+    simulation_result = CONSUMPTION_SAVING_MODEL.solve_and_simulate(
+        params=PARAMS,
+        initial_regimes=["consumption_saving_regime"] * n_simulation_subjects,
+        initial_states={
+            "consumption_saving_regime": {
+                "wealth": jnp.full(n_simulation_subjects, 1),
+                "health": jnp.full(n_simulation_subjects, 1),
+            }
+        },
+    )

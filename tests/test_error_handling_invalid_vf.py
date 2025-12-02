@@ -5,9 +5,9 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 import pytest
 
+from lcm import Model, Regime
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.grids import LinspaceGrid
-from lcm.user_model import Model
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -15,11 +15,12 @@ if TYPE_CHECKING:
         ContinuousAction,
         ContinuousState,
         FloatND,
+        ParamsDict,
     )
 
 
 @pytest.fixture
-def valid_model() -> Model:
+def valid_regime() -> Regime:
     def utility(
         consumption: ContinuousAction,
         wealth: ContinuousState,  # noqa: ARG001
@@ -41,14 +42,8 @@ def valid_model() -> Model:
     ) -> BoolND:
         return consumption <= wealth
 
-    return Model(
-        n_periods=2,
-        functions={
-            "utility": utility,
-            "next_wealth": next_wealth,
-            "next_health": next_health,
-            "borrowing_constraint": borrowing_constraint,
-        },
+    return Regime(
+        name="test",
         actions={
             "consumption": LinspaceGrid(
                 start=1,
@@ -68,11 +63,27 @@ def valid_model() -> Model:
                 n_points=3,
             ),
         },
+        utility=utility,
+        constraints={
+            "borrowing_constraint": borrowing_constraint,
+        },
+        transitions={
+            "test": {
+                "next_wealth": next_wealth,
+                "next_health": next_health,
+            }
+        },
+        regime_transition_probs=lambda: {"test": 1.0},
     )
 
 
 @pytest.fixture
-def nan_value_model(valid_model: Model) -> Model:
+def valid_model(valid_regime: Regime) -> Model:
+    return Model(regimes=[valid_regime], n_periods=2)
+
+
+@pytest.fixture
+def nan_value_model(valid_regime: Regime) -> Model:
     def invalid_utility(
         consumption: ContinuousAction,
         wealth: ContinuousState,
@@ -85,16 +96,12 @@ def nan_value_model(valid_model: Model) -> Model:
         )
         return jnp.log(consumption) + nan_term
 
-    updated_functions = valid_model.functions.copy()
-    updated_functions["utility"] = invalid_utility
-
-    return valid_model.replace(
-        functions=updated_functions,
-    )
+    invalid_regime = valid_regime.replace(utility=invalid_utility)
+    return Model(regimes=[invalid_regime], n_periods=2)
 
 
 @pytest.fixture
-def inf_value_model(valid_model: Model) -> Model:
+def inf_value_model(valid_regime: Regime) -> Model:
     def invalid_utility(
         consumption: ContinuousAction,
         wealth: ContinuousState,
@@ -107,49 +114,56 @@ def inf_value_model(valid_model: Model) -> Model:
         )
         return jnp.log(consumption) + inf_term
 
-    updated_functions = valid_model.functions.copy()
-    updated_functions["utility"] = invalid_utility
+    inf_model = valid_regime.replace(utility=invalid_utility)
+    return Model(regimes=[inf_model], n_periods=2)
 
-    return valid_model.replace(
-        functions=updated_functions,
-    )
+
+@pytest.fixture
+def params() -> ParamsDict:
+    return {"test": {"beta": 0.95}}
 
 
 def test_solve_model_with_nan_value_function_array_raises_error(
-    nan_value_model: Model,
+    nan_value_model: Model, params: ParamsDict
 ) -> None:
     with pytest.raises(InvalidValueFunctionError):
-        nan_value_model.solve({"beta": 0.95})
+        nan_value_model.solve(params)
 
 
 def test_solve_model_with_inf_value_function_does_not_raise_error(
-    inf_value_model: Model,
+    inf_value_model: Model, params: ParamsDict
 ) -> None:
     # This should not raise an error
-    inf_value_model.solve({"beta": 0.95})
+    inf_value_model.solve(params)
 
 
 def test_simulate_model_with_nan_value_function_array_raises_error(
-    nan_value_model: Model,
+    nan_value_model: Model, params: ParamsDict
 ) -> None:
     initial_states = {
-        "wealth": jnp.array([0.9, 1.0]),
-        "health": jnp.array([1.0, 1.0]),
+        "test": {
+            "wealth": jnp.array([0.9, 1.0]),
+            "health": jnp.array([1.0, 1.0]),
+        }
     }
 
     with pytest.raises(InvalidValueFunctionError):
         nan_value_model.solve_and_simulate(
-            {"beta": 0.95}, initial_states=initial_states
+            params, initial_states=initial_states, initial_regimes=["test"] * 2
         )
 
 
 def test_simulate_model_with_inf_value_function_array_does_not_raise_error(
-    inf_value_model: Model,
+    inf_value_model: Model, params: ParamsDict
 ) -> None:
     initial_states = {
-        "wealth": jnp.array([0.9, 1.0]),
-        "health": jnp.array([1.0, 1.0]),
+        "test": {
+            "wealth": jnp.array([0.9, 1.0]),
+            "health": jnp.array([1.0, 1.0]),
+        }
     }
 
     # This should not raise an error
-    inf_value_model.solve_and_simulate({"beta": 0.95}, initial_states=initial_states)
+    inf_value_model.solve_and_simulate(
+        params, initial_states=initial_states, initial_regimes=["test"] * 2
+    )

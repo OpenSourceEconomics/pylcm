@@ -11,16 +11,16 @@ from jax import Array
 from lcm.dispatchers import vmap_1d
 
 if TYPE_CHECKING:
-    from lcm.interfaces import InternalModel, InternalSimulationPeriodResults
-    from lcm.typing import InternalUserFunction, ParamsDict
+    from lcm.interfaces import InternalRegime, SimulationResults
+    from lcm.typing import InternalUserFunction, ParamsDict, RegimeName
 
 
 def process_simulated_data(
-    results: dict[int, InternalSimulationPeriodResults],
-    internal_model: InternalModel,
+    results: dict[int, SimulationResults],
+    internal_regime: InternalRegime,
     params: ParamsDict,
-    additional_targets: list[str] | None = None,
-) -> dict[str, Array]:
+    additional_targets: dict[RegimeName, list[str]] | None = None,
+) -> pd.DataFrame:
     """Process and flatten the simulation results.
 
     This function produces a dict of arrays for each var with dimension (n_periods *
@@ -33,69 +33,62 @@ def process_simulated_data(
         results: Dict with simulation results. Each dict contains the value,
             actions, and states for one period. Actions and states are stored in a
             nested dictionary.
-        internal_model: Internal model instance.
+        internal_regime: Internal regime instance.
         params: Parameters.
         additional_targets: List of additional targets to compute.
 
     Returns:
-        Dict with processed simulation results. The keys are the variable names and the
-        values are the flattened arrays, with dimension (n_periods * n_initial_states,).
-        Additionally, the _period variable is added.
+        DataFrame with processed simulation results. The columns are the variable names
+        and their values are the flattened arrays, with dimension (n_periods *
+        n_initial_states,). Additionally, the period variable is added.
 
     """
-    n_periods = len(results)
-    n_initial_states = len(results[0].value)
+    n_initial_states = len(results[0].V_arr)
 
-    nan_array = jnp.full(n_initial_states, jnp.nan, dtype=jnp.float64)
+    nan_array = jnp.full(n_initial_states, jnp.nan)
 
     list_of_dicts = [
-        {"value": d.value, **d.actions, **d.states} for d in results.values()
+        {
+            "period": jnp.full(n_initial_states, period),
+            "subject_id": jnp.arange(n_initial_states),
+            "in_regime": d.in_regime,
+            "value": d.V_arr,
+            **d.actions,
+            **d.states,
+        }
+        for period, d in results.items()
     ]
     dict_of_lists = {
         key: [d.get(key, nan_array) for d in list_of_dicts]
         for key in list(list_of_dicts[0])
     }
     out = {key: jnp.concatenate(values) for key, values in dict_of_lists.items()}
-    out["_period"] = jnp.repeat(jnp.arange(n_periods), n_initial_states)
+    if additional_targets is not None and internal_regime.name in additional_targets:
+        functions_pool = {
+            **internal_regime.functions,
+            **internal_regime.constraints,
+            "utility": internal_regime.utility,
+            "regime_transition_probs": internal_regime.regime_transition_probs.simulate,
+        }
 
-    if additional_targets is not None:
         calculated_targets = _compute_targets(
             out,
-            targets=additional_targets,
-            model_functions=internal_model.functions,
-            params=params,
+            targets=additional_targets[internal_regime.name],
+            # Have to ignore the type error here because regime_transition_probs does
+            # not conform to InternalUserFunction protocol, but fixing that would
+            # require significant refactoring.
+            functions=functions_pool,  # type: ignore[arg-type]
+            params=params[internal_regime.name],
         )
         out = {**out, **calculated_targets}
-
-    return out
-
-
-def as_panel(processed: dict[str, Array], n_periods: int) -> pd.DataFrame:
-    """Convert processed simulation results to panel.
-
-    Args:
-        processed: Dict with processed simulation results.
-        n_periods: Number of periods.
-
-    Returns:
-        Panel with the simulation results. The index is a multi-index with the first
-        level corresponding to the initial state id and the second level corresponding
-        to the period. The columns correspond to the value, and the action and state
-        variables, and potentially auxiliary variables.
-
-    """
-    n_initial_states = len(processed["value"]) // n_periods
-    index = pd.MultiIndex.from_product(
-        [list(range(n_periods)), list(range(n_initial_states))],
-        names=["period", "initial_state_id"],
-    )
-    return pd.DataFrame(processed, index=index)
+    df = pd.DataFrame(out)
+    return df[df["in_regime"] == 1].drop("in_regime", axis=1)
 
 
 def _compute_targets(
     processed_results: dict[str, Array],
     targets: list[str],
-    model_functions: dict[str, InternalUserFunction],
+    functions: dict[str, InternalUserFunction],
     params: ParamsDict,
 ) -> dict[str, Array]:
     """Compute targets.
@@ -104,15 +97,15 @@ def _compute_targets(
         processed_results: Dict with processed simulation results. Values must be
             one-dimensional arrays.
         targets: List of targets to compute.
-        model_functions: Dict with model functions.
-        params: Dict with model parameters.
+        functions: Dict with functions that are used to compute targets.
+        params: Dict with parameters.
 
     Returns:
         Dict with computed targets.
 
     """
     target_func = concatenate_functions(
-        functions=model_functions,
+        functions=functions,
         targets=targets,
         return_type="dict",
         set_annotations=True,

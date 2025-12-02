@@ -33,7 +33,7 @@ repos:
       - id: name-tests-test
         args:
           - --pytest-test-first
-        exclude: ^tests/test_models/
+        exclude: tests/regime_mock.py|^tests/test_models/
       - id: no-commit-to-branch
         args:
           - --branch

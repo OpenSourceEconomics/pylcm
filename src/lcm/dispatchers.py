@@ -129,7 +129,7 @@ def vmap_1d(
     vmapped.__signature__ = signature  # type: ignore[attr-defined]
 
     if callable_with == "only_kwargs":
-        out = allow_only_kwargs(vmapped)
+        out = allow_only_kwargs(vmapped, enforce=False)
     elif callable_with == "only_args":
         out = vmapped
     else:
@@ -202,7 +202,7 @@ def _base_productmap(
     signature = inspect.signature(func)
     parameters = list(signature.parameters)
 
-    positions = [parameters.index(ax) for ax in product_axes]
+    positions = [parameters.index(ax) for ax in product_axes if ax in parameters]
 
     vmap_specs = []
     # We iterate in reverse order such that the output dimensions are in the same order

@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
-from lcm import DiscreteGrid, LinspaceGrid, Model
+from lcm import DiscreteGrid, LinspaceGrid, Regime
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -24,12 +24,12 @@ if TYPE_CHECKING:
         DiscreteAction,
         DiscreteState,
         FloatND,
-        Int1D,
         IntND,
+        Period,
     )
 
 # ======================================================================================
-# Model functions
+# Regime functions
 # ======================================================================================
 
 
@@ -66,8 +66,8 @@ def wage(age: int | IntND) -> float | FloatND:
     return 1 + 0.1 * age
 
 
-def age(_period: int | Int1D) -> int | IntND:
-    return _period + 18
+def age(period: Period) -> int | IntND:
+    return period + 18
 
 
 # --------------------------------------------------------------------------------------
@@ -105,25 +105,16 @@ def absorbing_retirement_constraint(
 
 
 # ======================================================================================
-# Model specifications
+# Regime specifications
 # ======================================================================================
 
-ISKHAKOV_ET_AL_2017 = Model(
+ISKHAKOV_ET_AL_2017 = Regime(
+    name="iskhakov_et_al_2017",
     description=(
         "Corresponds to the example model in Iskhakov et al. (2017). In comparison to "
         "the extensions below, wage is treated as a constant parameter and therefore "
         "there is no need for the wage and age functions."
     ),
-    n_periods=3,
-    functions={
-        "utility": utility,
-        "next_wealth": next_wealth,
-        "next_lagged_retirement": next_lagged_retirement,
-        "borrowing_constraint": borrowing_constraint,
-        "absorbing_retirement_constraint": absorbing_retirement_constraint,
-        "labor_income": labor_income,
-        "working": working,
-    },
     actions={
         "retirement": DiscreteGrid(RetirementStatus),
         "consumption": LinspaceGrid(
@@ -140,24 +131,31 @@ ISKHAKOV_ET_AL_2017 = Model(
         ),
         "lagged_retirement": DiscreteGrid(RetirementStatus),
     },
+    utility=utility,
+    constraints={
+        "borrowing_constraint": borrowing_constraint,
+        "absorbing_retirement_constraint": absorbing_retirement_constraint,
+    },
+    transitions={
+        "iskhakov_et_al_2017": {
+            "next_wealth": next_wealth,
+            "next_lagged_retirement": next_lagged_retirement,
+        }
+    },
+    functions={
+        "labor_income": labor_income,
+        "working": working,
+    },
+    regime_transition_probs=lambda: {"iskhakov_et_al_2017": 1.0},
 )
 
 
-ISKHAKOV_ET_AL_2017_STRIPPED_DOWN = Model(
+ISKHAKOV_ET_AL_2017_STRIPPED_DOWN = Regime(
+    name="iskhakov_et_al_2017_stripped_down",
     description=(
         "Starts from Iskhakov et al. (2017), removes absorbing retirement constraint "
         "and the lagged_retirement state, and adds wage function that depends on age."
     ),
-    n_periods=3,
-    functions={
-        "utility": utility,
-        "next_wealth": next_wealth,
-        "borrowing_constraint": borrowing_constraint,
-        "labor_income": labor_income,
-        "working": working,
-        "wage": wage,
-        "age": age,
-    },
     actions={
         "retirement": DiscreteGrid(RetirementStatus),
         "consumption": LinspaceGrid(
@@ -173,4 +171,16 @@ ISKHAKOV_ET_AL_2017_STRIPPED_DOWN = Model(
             n_points=100,
         ),
     },
+    utility=utility,
+    constraints={
+        "borrowing_constraint": borrowing_constraint,
+    },
+    transitions={"iskhakov_et_al_2017_stripped_down": {"next_wealth": next_wealth}},
+    functions={
+        "labor_income": labor_income,
+        "working": working,
+        "wage": wage,
+        "age": age,
+    },
+    regime_transition_probs=lambda: {"iskhakov_et_al_2017_stripped_down": 1.0},
 )

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 
 import lcm
-from lcm import DiscreteGrid, LinspaceGrid, Model
+from lcm import DiscreteGrid, LinspaceGrid, Regime
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
         DiscreteAction,
         DiscreteState,
         FloatND,
-        Int1D,
+        Period,
     )
 
 # ======================================================================================
@@ -64,6 +64,7 @@ def utility(
     working: DiscreteAction,
     health: DiscreteState,
     disutility_of_work: float,
+    partner: DiscreteState,  # noqa: ARG001
 ) -> FloatND:
     return jnp.log(consumption) - (1 - health / 2) * disutility_of_work * working
 
@@ -98,7 +99,7 @@ def next_health(health: DiscreteState, partner: DiscreteState) -> DiscreteState:
 
 @lcm.mark.stochastic
 def next_partner(  # type: ignore[empty-body]
-    _period: int | Int1D, working: DiscreteAction, partner: DiscreteState
+    period: Period, working: DiscreteAction, partner: DiscreteState
 ) -> DiscreteState:
     pass
 
@@ -116,21 +117,13 @@ def borrowing_constraint(
 # Model specification
 # ======================================================================================
 
-ISKHAKOV_ET_AL_2017_STOCHASTIC = Model(
+ISKHAKOV_ET_AL_2017_STOCHASTIC = Regime(
+    name="iskhakov_et_al_2017_stochastic",
     description=(
         "Starts from Iskhakov et al. (2017), removes absorbing retirement constraint "
         "and the lagged_retirement state, and adds discrete stochastic state variables "
         "health and partner."
     ),
-    n_periods=3,
-    functions={
-        "utility": utility,
-        "next_wealth": next_wealth,
-        "next_health": next_health,
-        "next_partner": next_partner,
-        "borrowing_constraint": borrowing_constraint,
-        "labor_income": labor_income,
-    },
     actions={
         "working": DiscreteGrid(WorkingStatus),
         "consumption": LinspaceGrid(
@@ -148,4 +141,19 @@ ISKHAKOV_ET_AL_2017_STOCHASTIC = Model(
             n_points=100,
         ),
     },
+    utility=utility,
+    constraints={
+        "borrowing_constraint": borrowing_constraint,
+    },
+    transitions={
+        "iskhakov_et_al_2017_stochastic": {
+            "next_wealth": next_wealth,
+            "next_health": next_health,
+            "next_partner": next_partner,
+        }
+    },
+    functions={
+        "labor_income": labor_income,
+    },
+    regime_transition_probs=lambda: {"iskhakov_et_al_2017_stochastic": 1.0},
 )

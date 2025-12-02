@@ -8,61 +8,63 @@ import jax
 from dags import concatenate_functions
 from dags.signature import with_signature
 
+from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import Target
+from lcm.utils import flatten_regime_namespace
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from jax import Array
 
-    from lcm.interfaces import InternalModel
     from lcm.typing import (
-        ContinuousState,
         DiscreteState,
         FloatND,
+        GridsDict,
+        InternalUserFunction,
+        NextStateSimulationFunction,
+        RegimeName,
         StochasticNextFunction,
     )
 
 
 def get_next_state_function(
     *,
-    internal_model: InternalModel,
-    next_states: tuple[str, ...],
+    grids: GridsDict,
+    transitions: dict[str, InternalUserFunction],
+    functions: dict[str, InternalUserFunction],
     target: Target,
-) -> Callable[..., dict[str, DiscreteState | ContinuousState]]:
+) -> NextStateSimulationFunction:
     """Get function that computes the next states during the solution.
 
     Args:
-        internal_model: Internal model instance.
-        next_states: Names of the next states to compute. These states are relevant for
-            the next state space.
+        grids: Grids of a regime.
+        transitions: Transitions to the next states of a regime.
+        functions: Dict of auxiliary functions of a regime.
         target: Whether to generate the function for the solve or simulate target.
 
     Returns:
         Function that computes the next states. Depends on states and actions of the
-        current period, and the model parameters ("params"). If target is "simulate",
+        current period, and the regime parameters ("params"). If target is "simulate",
         the function also depends on the dictionary of random keys ("keys"), which
         corresponds to the names of stochastic next functions.
 
     """
     if target == Target.SOLVE:
-        functions_dict = internal_model.functions
+        functions_to_concatenate = transitions | functions
     elif target == Target.SIMULATE:
         # For the simulation target, we need to extend the functions dictionary with
         # stochastic next states functions and their weights.
-        functions_dict = _extend_functions_dict_for_simulation(internal_model)
+        extended_transitions = _extend_transitions_for_simulation(
+            grids=grids, transitions=transitions
+        )
+        functions_to_concatenate = extended_transitions | functions
     else:
         raise ValueError(f"Invalid target: {target}")
 
-    requested_next_states = [
-        next_state
-        for next_state in internal_model.function_info.query("is_next").index
-        if next_state.replace("next_", "") in next_states
-    ]
-
     return concatenate_functions(
-        functions=functions_dict,
-        targets=requested_next_states,
+        functions=functions_to_concatenate,
+        targets=list(transitions.keys()),
         return_type="dict",
         enforce_signature=False,
         set_annotations=True,
@@ -70,24 +72,29 @@ def get_next_state_function(
 
 
 def get_next_stochastic_weights_function(
-    internal_model: InternalModel,
-    next_stochastic_states: tuple[str, ...],
+    regime_name: RegimeName,
+    functions: dict[str, InternalUserFunction],
+    transitions: dict[str, InternalUserFunction],
 ) -> Callable[..., dict[str, Array]]:
     """Get function that computes the weights for the next stochastic states.
 
     Args:
-        internal_model: Internal model instance.
-        next_stochastic_states: Names of the stochastic states for which to compute the
-            weights. These variables are relevant for the next state space.
+        regime_name: Name of the regime that the transitions target.
+        functions: Dict containing the auxiliary functions of the model.
+        transitions: Transitions to the target regime.
 
     Returns:
         Function that computes the weights for the next stochastic states.
 
     """
-    targets = [f"weight_next_{name}" for name in next_stochastic_states]
+    targets = [
+        f"weight_{regime_name}__{fn_name}"
+        for fn_name, fn in transitions.items()
+        if is_stochastic_transition(fn)
+    ]
 
     return concatenate_functions(
-        functions=internal_model.functions,
+        functions=functions,
         targets=targets,
         return_type="dict",
         enforce_signature=False,
@@ -95,20 +102,24 @@ def get_next_stochastic_weights_function(
     )
 
 
-def _extend_functions_dict_for_simulation(
-    internal_model: InternalModel,
+def _extend_transitions_for_simulation(
+    grids: GridsDict,
+    transitions: dict[str, InternalUserFunction],
 ) -> dict[str, Callable[..., Array]]:
     """Extend the functions dictionary for the simulation target.
 
     Args:
-        internal_model: Internal model instance.
+        grids: Dictionary of grids.
+        transitions: A dictonary of transitions to extend.
 
     Returns:
         Extended functions dictionary.
 
     """
-    stochastic_targets = internal_model.function_info.query("is_stochastic_next").index
-
+    flat_grids = flatten_regime_namespace(grids)
+    stochastic_targets = [
+        fn_name for fn_name, fn in transitions.items() if is_stochastic_transition(fn)
+    ]
     # Handle stochastic next states functions
     # ----------------------------------------------------------------------------------
     # We generate stochastic next states functions that simulate the next state given
@@ -120,19 +131,14 @@ def _extend_functions_dict_for_simulation(
     # ----------------------------------------------------------------------------------
     stochastic_next = {
         name: _create_stochastic_next_func(
-            name, labels=internal_model.grids[name.removeprefix("next_")]
+            name, labels=flat_grids[name.replace("next_", "")]
         )
         for name in stochastic_targets
     }
 
-    stochastic_weights = {
-        f"weight_{name}": internal_model.functions[f"weight_{name}"]
-        for name in stochastic_targets
-    }
-
-    # Overwrite model.functions with generated stochastic next states functions
+    # Overwrite regime transitions with generated stochastic next states functions
     # ----------------------------------------------------------------------------------
-    return internal_model.functions | stochastic_next | stochastic_weights
+    return transitions | stochastic_next
 
 
 def _create_stochastic_next_func(

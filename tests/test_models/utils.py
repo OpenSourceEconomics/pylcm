@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
+from lcm import Model
 from tests.test_models.deterministic import (
     ISKHAKOV_ET_AL_2017,
     ISKHAKOV_ET_AL_2017_STRIPPED_DOWN,
@@ -13,9 +14,9 @@ from tests.test_models.discrete_deterministic import ISKHAKOV_ET_AL_2017_DISCRET
 from tests.test_models.stochastic import ISKHAKOV_ET_AL_2017_STOCHASTIC
 
 if TYPE_CHECKING:
-    from lcm.user_model import Model
+    from lcm import Regime
 
-TEST_MODELS = {
+TEST_REGIMES = {
     "iskhakov_et_al_2017": ISKHAKOV_ET_AL_2017,
     "iskhakov_et_al_2017_stripped_down": ISKHAKOV_ET_AL_2017_STRIPPED_DOWN,
     "iskhakov_et_al_2017_discrete": ISKHAKOV_ET_AL_2017_DISCRETE,
@@ -24,11 +25,15 @@ TEST_MODELS = {
 
 
 def get_model(model_name: str, n_periods: int) -> Model:
-    model = deepcopy(TEST_MODELS[model_name])
-    return model.replace(n_periods=n_periods)
+    return Model([get_regime(model_name)], n_periods=n_periods)
+
+
+def get_regime(regime_name: str) -> Regime:
+    return deepcopy(TEST_REGIMES[regime_name])
 
 
 def get_params(
+    regime_name,
     beta=0.95,
     disutility_of_work=0.5,
     interest_rate=0.05,
@@ -119,14 +124,16 @@ def get_params(
     # Model parameters
     # ----------------------------------------------------------------------------------
     return {
-        "beta": beta,
-        "utility": {"disutility_of_work": disutility_of_work},
-        "next_wealth": {"interest_rate": interest_rate},
-        "next_health": {},
-        "borrowing_constraint": {},
-        "labor_income": {"wage": wage},
-        "shocks": {
-            "health": health_transition,
-            "partner": partner_transition,
-        },
+        regime_name: {
+            "beta": beta,
+            "utility": {"disutility_of_work": disutility_of_work},
+            f"{regime_name}__next_wealth": {"interest_rate": interest_rate},
+            f"{regime_name}__next_health": {},
+            "borrowing_constraint": {},
+            "labor_income": {"wage": wage},
+            "shocks": {
+                f"{regime_name}__next_health": health_transition,
+                f"{regime_name}__next_partner": partner_transition,
+            },
+        }
     }
