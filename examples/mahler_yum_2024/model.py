@@ -279,8 +279,9 @@ def next_health(  # type: ignore[empty-body]
     effort_t_1: DiscreteState,
     education: DiscreteState,
     health_type: DiscreteState,
-) -> DiscreteState:
-    pass
+    health_transition: FloatND,
+) -> FloatND:
+    return health_transition[period, health, effort, effort_t_1, education, health_type]
 
 
 def next_productivity(productivity: DiscreteState) -> DiscreteState:
@@ -300,33 +301,31 @@ def next_education(education: DiscreteState) -> DiscreteState:
 
 
 @lcm.mark.stochastic
-def next_adjustment_cost(adjustment_cost: DiscreteState) -> DiscreteState:  # type: ignore[empty-body]
-    pass
+def next_adjustment_cost(
+    adjustment_cost: DiscreteState, adjustment_cost_transition: FloatND
+) -> FloatND:
+    return adjustment_cost_transition[adjustment_cost]
 
 
 @lcm.mark.stochastic
-def next_productivity_shock(productivity_shock: DiscreteState) -> DiscreteState:  # type: ignore[empty-body]
-    pass
+def next_productivity_shock(
+    productivity_shock: DiscreteState, productivity_shock_transition: FloatND
+) -> FloatND:
+    return productivity_shock_transition[productivity_shock]
 
 
 # --------------------------------------------------------------------------------------
 # Regime Transitions
 # --------------------------------------------------------------------------------------
-surv_hs: FloatND = jnp.array(np.loadtxt("data/surv_hs.txt", skiprows=1))
-surv_cl: FloatND = jnp.array(np.loadtxt("data/surv_cl.txt", skiprows=1))
-spgrid: FloatND = jnp.zeros((38, 2, 2))
-spgrid = spgrid.at[:, 0, 0].set(surv_hs[:, 1])
-spgrid = spgrid.at[:, 1, 0].set(surv_cl[:, 1])
-spgrid = spgrid.at[:, 0, 1].set(surv_hs[:, 0])
-spgrid = spgrid.at[:, 1, 1].set(surv_cl[:, 0])
-
-
 def next_regime_from_alive(
-    period: Period, education: DiscreteState, health: DiscreteState
+    period: Period,
+    education: DiscreteState,
+    health: DiscreteState,
+    regime_transition_from_alive: FloatND,
 ) -> dict[str, float | Array]:
     return {
-        "alive": spgrid[period, education, health],
-        "dead": 1 - spgrid[period, education, health],
+        "alive": regime_transition_from_alive[period, education, health],
+        "dead": 1 - regime_transition_from_alive[period, education, health],
     }
 
 
@@ -657,6 +656,16 @@ def rouwenhorst(rho: float, sigma_eps: Float1D, n: int) -> tuple[FloatND, FloatN
     return jnp.linspace(mu_eps / (1.0 - rho) - nu, mu_eps / (1.0 - rho) + nu, n), P.T
 
 
+def create_regime_transition_grid() -> FloatND:
+    surv_hs: FloatND = jnp.array(np.loadtxt("data/surv_hs.txt", skiprows=1))
+    surv_cl: FloatND = jnp.array(np.loadtxt("data/surv_cl.txt", skiprows=1))
+    spgrid: FloatND = jnp.zeros((38, 2, 2))
+    spgrid = spgrid.at[:, 0, 0].set(surv_hs[:, 1])
+    spgrid = spgrid.at[:, 1, 0].set(surv_cl[:, 1])
+    spgrid = spgrid.at[:, 0, 1].set(surv_hs[:, 0])
+    return spgrid.at[:, 1, 1].set(surv_cl[:, 0])
+
+
 def create_inputs(
     seed: int,
     n_simulation_subjects: int,
@@ -678,6 +687,8 @@ def create_inputs(
     xi_grid = create_xigrid(xi)
     phi_grid = create_phigrid(nu)
 
+    regime_transition_from_alive = create_regime_transition_grid()
+
     # Create parameters
     params = {
         "beta": 1,
@@ -688,11 +699,12 @@ def create_inputs(
         "income": {"income_grid": income_grid, "xvalues": xvalues},
         "pension": {"income_grid": income_grid, "penre": penre},
         "adj_cost": {"chimaxgrid": chimax_grid},
-        "shocks": {
-            "alive__next_productivity_shock": xtrans.T,
-            "alive__next_health": tr2yp_grid,
-            "alive__next_adjustment_cost": jnp.full((5, 5), 1 / 5),
+        "alive__next_productivity_shock": {"productivity_shock_transition": xtrans.T},
+        "alive__next_health": {"health_transition": tr2yp_grid},
+        "alive__next_adjustment_cost": {
+            "adjustment_cost_transition": jnp.full((5, 5), 1 / 5)
         },
+        "next_regime": {"regime_transition_from_alive": regime_transition_from_alive},
     }
 
     # Create initial states for the simulation
