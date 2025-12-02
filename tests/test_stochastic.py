@@ -74,10 +74,8 @@ def model_and_params():
 
     # Define functions first
     @lcm.mark.stochastic
-    def next_health_stochastic(
-        health: DiscreteState, health_transition: FloatND
-    ) -> FloatND:
-        return health_transition[health]
+    def next_health_stochastic(health: DiscreteState) -> FloatND:
+        return jnp.identity(2)[health]
 
     def next_health_deterministic(health: DiscreteState) -> DiscreteState:
         return health
@@ -113,7 +111,6 @@ def model_and_params():
         disutility_of_work=1.0,
         interest_rate=0.05,
         wage=10.0,
-        health_transition=jnp.identity(2),
     )
 
     model_stochastic = Model([regime_stochastic], n_periods=3)

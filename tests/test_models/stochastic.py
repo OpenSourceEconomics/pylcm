@@ -95,10 +95,21 @@ def next_wealth(
 # Stochastic state transitions
 # --------------------------------------------------------------------------------------
 @lcm.mark.stochastic
-def next_health(
-    health: DiscreteState, partner: DiscreteState, health_transition: FloatND
-) -> FloatND:
-    return health_transition[health, partner]
+def next_health(health: DiscreteState, partner: DiscreteState) -> FloatND:
+    """Stochastic transition with JIT-calculated markov transition probabilities."""
+    return jnp.where(
+        health == HealthStatus.bad,
+        jnp.where(
+            partner == PartnerStatus.single,
+            jnp.array([0.9, 0.1]),
+            jnp.array([0.5, 0.5]),
+        ),
+        jnp.where(
+            partner == PartnerStatus.partnered,
+            jnp.array([0.5, 0.5]),
+            jnp.array([0.1, 0.9]),
+        ),
+    )
 
 
 @lcm.mark.stochastic
@@ -108,6 +119,7 @@ def next_partner(
     partner: DiscreteState,
     partner_transition: FloatND,
 ) -> FloatND:
+    """Stochastic transition using pre-calculated markov transition probabilities."""
     return partner_transition[period, working, partner]
 
 
