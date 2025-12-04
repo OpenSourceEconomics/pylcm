@@ -173,11 +173,11 @@ def test_get_combined_constraint_illustrative(internal_functions_illustrative):
 def test_get_multiply_weights():
     @lcm.mark.stochastic
     def next_a():
-        pass
+        return jnp.array([0.1, 0.9])
 
     @lcm.mark.stochastic
     def next_b():
-        pass
+        return jnp.array([0.2, 0.8])
 
     transitions = {"next_a": next_a, "next_b": next_b}
     multiply_weights = _get_joint_weights_function(

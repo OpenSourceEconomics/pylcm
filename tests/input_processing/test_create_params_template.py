@@ -53,11 +53,11 @@ def test_create_function_params():
 
 def test_create_shock_params():
     @lcm.mark.stochastic
-    def next_a(a, period):
-        pass
+    def next_a(a, period, a_transition):
+        return a_transition[a, period]
 
     variable_info = pd.DataFrame(
-        {"is_stochastic": True, "is_state": True, "is_discrete": True},
+        {"is_stochastic": True, "is_state": True, "is_continuous": False},
         index=["a"],
     )
 
@@ -77,11 +77,11 @@ def test_create_shock_params():
 
 def test_create_shock_params_invalid_variable():
     @lcm.mark.stochastic
-    def next_a(a):
-        pass
+    def next_a(a, a_transition):
+        return a_transition[a]
 
     variable_info = pd.DataFrame(
-        {"is_stochastic": True, "is_state": True, "is_discrete": False},
+        {"is_stochastic": True, "is_state": True, "is_continuous": True},
         index=["a"],
     )
 
@@ -89,7 +89,9 @@ def test_create_shock_params_invalid_variable():
         transitions={"mock": {"next_a": next_a}},
     )
 
-    with pytest.raises(ValueError, match="Stochastic transition functions can only"):
+    with pytest.raises(
+        ValueError, match="Stochastic transition functions cannot depend on continuous"
+    ):
         _create_stochastic_transition_params(
             regime=regime,  # type: ignore[arg-type]
             variable_info=variable_info,
@@ -100,14 +102,14 @@ def test_create_shock_params_invalid_variable():
 
 def test_create_shock_params_invalid_dependency():
     @lcm.mark.stochastic
-    def next_a(a, b, period):
-        pass
+    def next_a(a, b, period, a_transition):
+        return a_transition[a, b, period]
 
     variable_info = pd.DataFrame(
         {
             "is_stochastic": [True, False],
             "is_state": [True, False],
-            "is_discrete": [True, False],
+            "is_continuous": [False, True],
         },
         index=["a", "b"],
     )
@@ -116,7 +118,9 @@ def test_create_shock_params_invalid_dependency():
         transitions={"mock": {"next_a": next_a}},
     )
 
-    with pytest.raises(ValueError, match="Stochastic transition functions can only"):
+    with pytest.raises(
+        ValueError, match="Stochastic transition functions cannot depend on continuous"
+    ):
         _create_stochastic_transition_params(
             regime=regime,  # type: ignore[arg-type]
             variable_info=variable_info,
