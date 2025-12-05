@@ -39,11 +39,12 @@ class Regime:
     _: KW_ONLY
     utility: UserFunction
     constraints: dict[str, UserFunction] = field(default_factory=dict)
-    transitions: dict[str, dict[str, UserFunction]] = field(default_factory=dict)
+    transitions: dict[
+        str, dict[str, UserFunction] | Callable[..., dict[str, float | Array]]
+    ] = field(default_factory=dict)
     functions: dict[str, UserFunction] = field(default_factory=dict)
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
-    regime_transition_probs: Callable[..., dict[str, float | Array]] | None = None
 
     def __post_init__(self) -> None:
         _validate_attribute_types(self)
@@ -61,7 +62,6 @@ class Regime:
             | {"utility": self.utility}
             | self.constraints
             | self.transitions
-            | {"regime_transition_probs": self.regime_transition_probs}
         )
 
     def replace(self, **kwargs: Any) -> Regime:  # noqa: ANN401
@@ -123,10 +123,11 @@ def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
                 "callables."
             )
 
+    if "next_regime" not in regime.transitions:
+        error_messages.append("transitions must include a 'next_regime' function.")
+
     if not callable(regime.utility):
         error_messages.append("utility must be a callable.")
-    if not callable(regime.regime_transition_probs):
-        error_messages.append("regime_transition_probs must be a callable.")
 
     if error_messages:
         msg = format_messages(error_messages)
@@ -143,15 +144,12 @@ def _validate_logical_consistency(regime: Regime) -> None:
             "functions dictionary. Please use the utility attribute instead.",
         )
 
-    invalid_transitions = [
-        tran_name
-        for tran_name in [
-            key
-            for transition_dict in regime.transitions.values()
-            for key in transition_dict
-        ]
-        if not tran_name.startswith("next_")
-    ]
+    invalid_transitions = []
+    for k, v in regime.transitions.items():
+        if k != "next_regime" and isinstance(v, dict):
+            invalid_transitions.extend(
+                [fn_name for fn_name in v if not fn_name.startswith("next_")]
+            )
     if invalid_transitions:
         error_messages.append(
             "Each transitions name must start with 'next_'. "
@@ -160,9 +158,12 @@ def _validate_logical_consistency(regime: Regime) -> None:
         )
 
     states = set(regime.states)
-    states_via_transition = {
-        s.removeprefix("next_") for s in regime.transitions[regime.name]
-    }
+    own_regime_transitions = regime.transitions[regime.name]
+    states_via_transition = (
+        {s.removeprefix("next_") for s in own_regime_transitions if s != "next_regime"}
+        if isinstance(own_regime_transitions, dict)
+        else set()
+    )
 
     if states - states_via_transition:
         error_messages.append(

@@ -20,6 +20,8 @@ import lcm
 from lcm import DiscreteGrid, LinspaceGrid, Regime
 
 if TYPE_CHECKING:
+    from jax import Array
+
     from lcm.typing import (
         BoolND,
         ContinuousAction,
@@ -93,15 +95,36 @@ def next_wealth(
 # Stochastic state transitions
 # --------------------------------------------------------------------------------------
 @lcm.mark.stochastic
-def next_health(health: DiscreteState, partner: DiscreteState) -> DiscreteState:  # type: ignore[empty-body]
-    pass
+def next_health(health: DiscreteState, partner: DiscreteState) -> FloatND:
+    """Stochastic transition with JIT-calculated markov transition probabilities."""
+    return jnp.where(
+        health == HealthStatus.bad,
+        jnp.where(
+            partner == PartnerStatus.single,
+            jnp.array([0.9, 0.1]),
+            jnp.array([0.5, 0.5]),
+        ),
+        jnp.where(
+            partner == PartnerStatus.partnered,
+            jnp.array([0.5, 0.5]),
+            jnp.array([0.1, 0.9]),
+        ),
+    )
 
 
 @lcm.mark.stochastic
-def next_partner(  # type: ignore[empty-body]
-    period: Period, working: DiscreteAction, partner: DiscreteState
-) -> DiscreteState:
-    pass
+def next_partner(
+    period: Period,
+    working: DiscreteAction,
+    partner: DiscreteState,
+    partner_transition: FloatND,
+) -> FloatND:
+    """Stochastic transition using pre-calculated markov transition probabilities."""
+    return partner_transition[period, working, partner]
+
+
+def next_regime() -> dict[str, float | Array]:
+    return {"iskhakov_et_al_2017_stochastic": 1.0}
 
 
 # --------------------------------------------------------------------------------------
@@ -150,10 +173,10 @@ ISKHAKOV_ET_AL_2017_STOCHASTIC = Regime(
             "next_wealth": next_wealth,
             "next_health": next_health,
             "next_partner": next_partner,
-        }
+        },
+        "next_regime": next_regime,
     },
     functions={
         "labor_income": labor_income,
     },
-    regime_transition_probs=lambda: {"iskhakov_et_al_2017_stochastic": 1.0},
 )

@@ -12,7 +12,7 @@ from lcm import Model
 from tests.test_models.utils import get_model, get_params, get_regime
 
 if TYPE_CHECKING:
-    from lcm.typing import FloatND
+    from lcm.typing import DiscreteState, FloatND
 
 # ======================================================================================
 # Simulate
@@ -21,9 +21,10 @@ if TYPE_CHECKING:
 
 def test_model_solve_and_simulate_with_stochastic_model():
     model = get_model("iskhakov_et_al_2017_stochastic", n_periods=3)
+    params = get_params("iskhakov_et_al_2017_stochastic")
 
     res: pd.DataFrame = model.solve_and_simulate(
-        params=get_params("iskhakov_et_al_2017_stochastic"),
+        params=params,
         initial_states={
             "iskhakov_et_al_2017_stochastic": {
                 "health": jnp.array([1, 1, 0, 0]),
@@ -73,10 +74,10 @@ def model_and_params():
 
     # Define functions first
     @lcm.mark.stochastic
-    def next_health_stochastic(health):
-        pass
+    def next_health_stochastic(health: DiscreteState) -> FloatND:
+        return jnp.identity(2)[health]
 
-    def next_health_deterministic(health):
+    def next_health_deterministic(health: DiscreteState) -> DiscreteState:
         return health
 
     # Get the base models and create modified versions
@@ -86,9 +87,10 @@ def model_and_params():
     regime_deterministic = base_regime.replace(
         transitions={
             "iskhakov_et_al_2017_stochastic": {
-                **base_regime.transitions["iskhakov_et_al_2017_stochastic"],
+                **base_regime.transitions["iskhakov_et_al_2017_stochastic"],  # type: ignore[dict-item]
                 "next_health": next_health_deterministic,
-            }
+            },
+            "next_regime": base_regime.transitions["next_regime"],
         }
     )
 
@@ -96,9 +98,10 @@ def model_and_params():
     regime_stochastic = base_regime.replace(
         transitions={
             "iskhakov_et_al_2017_stochastic": {
-                **base_regime.transitions["iskhakov_et_al_2017_stochastic"],
+                **base_regime.transitions["iskhakov_et_al_2017_stochastic"],  # type: ignore[dict-item]
                 "next_health": next_health_stochastic,
-            }
+            },
+            "next_regime": base_regime.transitions["next_regime"],
         }
     )
 
@@ -108,11 +111,10 @@ def model_and_params():
         disutility_of_work=1.0,
         interest_rate=0.05,
         wage=10.0,
-        health_transition=jnp.identity(2),
     )
 
-    model_deterministic = Model([regime_deterministic], n_periods=3)
     model_stochastic = Model([regime_stochastic], n_periods=3)
+    model_deterministic = Model([regime_deterministic], n_periods=3)
     return model_deterministic, model_stochastic, params
 
 
