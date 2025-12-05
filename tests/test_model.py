@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pytest
 
 from lcm import Model, Regime
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.grids import DiscreteGrid
+from lcm.input_processing.regime_processing import create_default_regime_id_cls
+from lcm.model import validate_regime_id_cls
 
 
 def test_regime_invalid_states():
@@ -222,3 +226,91 @@ def test_multi_regime_without_next_regime_raises(binary_category_class):
     )
     with pytest.raises(ModelInitializationError, match="next_regime"):
         Model(regimes=[regime1, regime2], n_periods=2)
+
+
+# ======================================================================================
+# Tests for validate_regime_id_cls
+# ======================================================================================
+
+
+def test_validate_regime_id_cls_valid():
+    """Valid RegimeID class should return empty error list."""
+
+    @dataclass
+    class RegimeID:
+        work: int = 0
+        retirement: int = 1
+
+    errors = validate_regime_id_cls(RegimeID, ["work", "retirement"])
+    assert errors == []
+
+
+def test_validate_regime_id_cls_missing_regime():
+    """RegimeID missing a regime attribute should return error."""
+
+    @dataclass
+    class RegimeID:
+        work: int = 0
+
+    errors = validate_regime_id_cls(RegimeID, ["work", "retirement"])
+    assert len(errors) == 1
+    assert "missing attributes" in errors[0]
+    assert "retirement" in errors[0]
+
+
+def test_validate_regime_id_cls_extra_regime():
+    """RegimeID with extra attribute should return error."""
+
+    @dataclass
+    class RegimeID:
+        work: int = 0
+        retirement: int = 1
+        unknown: int = 2
+
+    errors = validate_regime_id_cls(RegimeID, ["work", "retirement"])
+    assert len(errors) == 1
+    assert "extra attributes" in errors[0]
+    assert "unknown" in errors[0]
+
+
+def test_validate_regime_id_cls_non_consecutive():
+    """RegimeID with non-consecutive values should return error."""
+
+    @dataclass
+    class RegimeID:
+        work: int = 0
+        retirement: int = 2  # Should be 1
+
+    errors = validate_regime_id_cls(RegimeID, ["work", "retirement"])
+    assert len(errors) == 1
+    assert "consecutive integers" in errors[0]
+
+
+def test_validate_regime_id_cls_not_dataclass():
+    """Non-dataclass should return error."""
+
+    class RegimeID:
+        work = 0
+        retirement = 1
+
+    errors = validate_regime_id_cls(RegimeID, ["work", "retirement"])
+    assert len(errors) == 1
+    assert "must be a dataclass" in errors[0]
+
+
+# ======================================================================================
+# Tests for create_default_regime_id_cls
+# ======================================================================================
+
+
+def test_create_default_regime_id_cls():
+    """Auto-generated RegimeID should be a valid dataclass with correct attribute."""
+    regime_id_cls = create_default_regime_id_cls("my_regime")
+
+    # Should be a valid category class
+    errors = validate_regime_id_cls(regime_id_cls, ["my_regime"])
+    assert errors == []
+
+    # Should have the correct attribute
+    assert hasattr(regime_id_cls, "my_regime")
+    assert regime_id_cls.my_regime == 0

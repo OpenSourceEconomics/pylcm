@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools
 import warnings
 from copy import deepcopy
+from dataclasses import make_dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from dags import get_annotations
@@ -334,3 +335,16 @@ def _ensure_fn_only_depends_on_params(
             regime_name=regime_name,
         )
     return _add_dummy_params_argument(fn)
+
+
+def create_default_regime_id_cls(regime_name: str) -> type:
+    """Create a default RegimeID class for single-regime models.
+
+    Args:
+        regime_name: The name of the single regime.
+
+    Returns:
+        A dataclass with a single field mapping the regime name to index 0.
+
+    """
+    return make_dataclass("RegimeID", [(regime_name, int, 0)])

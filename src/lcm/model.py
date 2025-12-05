@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from lcm.exceptions import ModelInitializationError, format_messages
+from lcm.grids import _get_field_names_and_values, validate_category_class
 from lcm.input_processing.regime_processing import process_regimes
 from lcm.logging import get_logger
 from lcm.regime import Regime
@@ -210,3 +211,50 @@ def _validate_model_inputs(n_periods: int, regimes: list[Regime]) -> None:
     if error_messages:
         msg = format_messages(error_messages)
         raise ModelInitializationError(msg)
+
+
+def validate_regime_id_cls(
+    regime_id_cls: type,
+    regime_names: list[str],
+) -> list[str]:
+    """Validate RegimeID class against regime names.
+
+    This validates that:
+    - The class passes standard category class validation (dataclass, consecutive ints)
+    - Attribute names exactly match the regime names
+
+    Args:
+        regime_id_cls: The user-provided RegimeID dataclass.
+        regime_names: List of regime names from the model.
+
+    Returns:
+        A list of error messages. Empty list if validation passes.
+
+    """
+    error_messages: list[str] = []
+
+    # Reuse category class validation (dataclass, scalar ints, consecutive from 0)
+    category_errors = validate_category_class(regime_id_cls)
+    error_messages.extend(f"regime_id_cls: {error}" for error in category_errors)
+
+    # If basic validation failed, skip attribute name check
+    if category_errors:
+        return error_messages
+
+    # Check attribute names match regime names
+    regime_id_names = set(_get_field_names_and_values(regime_id_cls).keys())
+    regime_name_set = set(regime_names)
+
+    if regime_id_names != regime_name_set:
+        missing = regime_name_set - regime_id_names
+        extra = regime_id_names - regime_name_set
+        if missing:
+            error_messages.append(
+                f"regime_id_cls is missing attributes for regimes: {missing}"
+            )
+        if extra:
+            error_messages.append(
+                f"regime_id_cls has extra attributes not matching any regime: {extra}"
+            )
+
+    return error_messages
