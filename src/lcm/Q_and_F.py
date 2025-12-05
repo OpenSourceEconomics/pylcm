@@ -164,7 +164,7 @@ def get_Q_and_F_non_terminal(
 
         """
         regime_transition_prob = regime_transition_prob_func(
-            **states_and_actions, period=period, params=params
+            **states_and_actions, period=period, params=params[regime.name]
         )
         U_arr, F_arr = U_and_F(
             **states_and_actions,

@@ -82,8 +82,8 @@ def next_wealth(
 
 
 @lcm.mark.stochastic
-def next_health(health: DiscreteState) -> DiscreteState:  # type: ignore[empty-body]
-    pass
+def next_health(health: DiscreteState, health_transition: FloatND) -> FloatND:
+    return health_transition[health]
 
 
 def borrowing_constraint(
@@ -106,14 +106,14 @@ def next_wealth_regime_transition(
     return (1 + interest_rate) * (wealth - consumption)
 
 
-def regime_transition_probs_working_to_retirement(period: int) -> dict[str, Array]:
+def next_regime_from_working(period: int) -> dict[str, float | Array]:
     return {
         "work": jnp.where(period < 6, 1, 0.5),
         "retirement": jnp.where(period < 6, 0, 0.5),
     }
 
 
-def regime_transition_probs_retirement_absorbing() -> dict[str, float]:
+def next_regime_from_retirement() -> dict[str, float | Array]:
     return {"work": 0.0, "retirement": 1.0}
 
 
@@ -148,8 +148,8 @@ def test_work_retirement_model_solution():
                 "next_wealth": next_wealth_regime_transition,
                 "next_health": next_health,
             },
+            "next_regime": next_regime_from_working,
         },
-        regime_transition_probs=regime_transition_probs_working_to_retirement,  # type: ignore[arg-type]
     )
 
     # Create retirement regime
@@ -174,8 +174,8 @@ def test_work_retirement_model_solution():
                 "next_health": next_health,
             },
             "retirement": {"next_wealth": next_wealth, "next_health": next_health},
-        },  # Retirement is absorbing
-        regime_transition_probs=regime_transition_probs_retirement_absorbing,  # type: ignore[arg-type]
+            "next_regime": next_regime_from_retirement,
+        },
     )
 
     # Create complete model using new regime-based API
@@ -201,12 +201,9 @@ def test_work_retirement_model_solution():
         "labor_income": {"wage": 25},
         "work__next_wealth": {"interest_rate": 0.1},
         "retirement__next_wealth": {"interest_rate": 0.1},
-        "work__next_health": {},
+        "work__next_health": {"health_transition": health_transition},
+        "retirement__next_health": {"health_transition": health_transition},
         "borrowing_constraint": {},
-        "shocks": {
-            "work__next_health": health_transition,
-            "retirement__next_health": health_transition,
-        },
     }
 
     params_retired = {
@@ -215,14 +212,10 @@ def test_work_retirement_model_solution():
         "labor_income": {"wage": 20},
         "work__next_wealth": {"interest_rate": 0.1},
         "retirement__next_wealth": {"interest_rate": 0.1},
-        "work__next_health": {},
-        "retirement__next_health": {},
+        "work__next_health": {"health_transition": health_transition},
+        "retirement__next_health": {"health_transition": health_transition},
         "working": {},
         "borrowing_constraint": {},
-        "shocks": {
-            "work__next_health": health_transition,
-            "retirement__next_health": health_transition,
-        },
     }
 
     params: dict[RegimeName, ParamsDict] = {

@@ -9,13 +9,11 @@ from pandas.testing import assert_frame_equal
 
 from lcm import DiscreteGrid, LinspaceGrid, grid_helpers
 from lcm.input_processing.regime_processing import (
-    _get_stochastic_weight_function,
     get_grids,
     get_gridspecs,
     get_variable_info,
     process_regimes,
 )
-from lcm.mark import StochasticInfo
 from tests.regime_mock import RegimeMock
 from tests.test_models.utils import get_regime
 
@@ -184,49 +182,6 @@ def test_process_regime():
     assert internal_regime.transitions is not None
     assert internal_regime.constraints is not None
     assert internal_regime.utility is not None
-
-
-def test_get_stochastic_weight_function():
-    def raw_func(health, wealth):
-        pass
-
-    raw_func._stochastic_info = StochasticInfo()  # type: ignore[attr-defined]
-
-    variable_info = pd.DataFrame(
-        {"is_discrete": [True, True]},
-        index=["health", "wealth"],
-    )
-
-    got_function = _get_stochastic_weight_function(
-        raw_func,
-        name="health",
-        variable_info=variable_info,
-    )
-
-    params = {"shocks": {"health": np.arange(12).reshape(2, 3, 2)}}
-
-    got = got_function(health=1, wealth=0, params=params)
-    expected = np.array([6, 7])
-    assert_array_equal(got, expected)
-
-
-def test_get_stochastic_weight_function_non_state_dependency():
-    def raw_func(health, wealth):
-        pass
-
-    raw_func._stochastic_info = StochasticInfo()  # type: ignore[attr-defined]
-
-    variable_info = pd.DataFrame(
-        {"is_discrete": [False, True]},
-        index=["health", "wealth"],
-    )
-
-    with pytest.raises(ValueError, match="Stochastic variables"):
-        _get_stochastic_weight_function(
-            raw_func,
-            name="health",
-            variable_info=variable_info,
-        )
 
 
 def test_variable_info_with_continuous_constraint_has_unique_index():
