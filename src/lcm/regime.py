@@ -40,7 +40,7 @@ class Regime:
     utility: UserFunction
     constraints: dict[str, UserFunction] = field(default_factory=dict)
     transitions: dict[
-        str, dict[str, UserFunction] | Callable[..., dict[str, float | Array]]
+        str, dict[str, UserFunction] | Callable[..., dict[str, float | Array] | Array]
     ] = field(default_factory=dict)
     functions: dict[str, UserFunction] = field(default_factory=dict)
     actions: dict[str, Grid] = field(default_factory=dict)
