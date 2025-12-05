@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import functools
+import warnings
 from copy import deepcopy
+from dataclasses import make_dataclass
 from typing import TYPE_CHECKING, Any, cast
 
+import jax.numpy as jnp
 from dags import get_annotations
 from dags.signature import with_signature
 
@@ -40,7 +43,11 @@ if TYPE_CHECKING:
 
 
 def process_regimes(
-    regimes: list[Regime], n_periods: int, *, enable_jit: bool
+    regimes: list[Regime],
+    n_periods: int,
+    regime_id_cls: type,
+    *,
+    enable_jit: bool,
 ) -> dict[str, InternalRegime]:
     """Process the user regime.
 
@@ -53,12 +60,40 @@ def process_regimes(
     Args:
         regimes: The regimes as provided by the user.
         n_periods: Number of periods of the model.
+        regime_id_cls: A dataclass mapping regime names to integer indices.
         enable_jit: Whether to jit the functions of the internal regime.
 
     Returns:
         The processed regime.
 
     """
+    # ----------------------------------------------------------------------------------
+    # Override next_regime for single-regime models to ensure probability is always 1.0
+    # ----------------------------------------------------------------------------------
+    if len(regimes) == 1:
+        regime = regimes[0]
+
+        if "next_regime" in regime.transitions:
+            warnings.warn(
+                f"Single-regime model '{regime.name}' has a user-defined 'next_regime' "
+                "function, but this will be ignored. For single-regime models, the "
+                "regime transition probability is always 1.0 for the same regime.",
+                UserWarning,
+                stacklevel=3,
+            )
+
+        def _default_next_regime() -> Array:
+            return jnp.array([1.0])
+
+        regimes = [
+            regime.replace(
+                transitions={
+                    k: v for k, v in regime.transitions.items() if k != "next_regime"
+                }
+                | {"next_regime": _default_next_regime}
+            )
+        ]
+
     # ----------------------------------------------------------------------------------
     # Stage 1: Initialize regime components that do not depend on other regimes
     # ----------------------------------------------------------------------------------
@@ -85,7 +120,11 @@ def process_regimes(
         )
 
         internal_functions = _get_internal_functions(
-            regime, grids=grids, params=params_template, enable_jit=enable_jit
+            regime,
+            grids=grids,
+            params=params_template,
+            regime_id_cls=regime_id_cls,
+            enable_jit=enable_jit,
         )
 
         Q_and_F_functions = build_Q_and_F_functions(
@@ -137,6 +176,7 @@ def _get_internal_functions(
     regime: Regime,
     grids: dict[RegimeName, dict[str, Array]],
     params: ParamsDict,
+    regime_id_cls: type,
     *,
     enable_jit: bool,
 ) -> InternalFunctions:
@@ -146,6 +186,7 @@ def _get_internal_functions(
         regime: The regime as provided by the user.
         grids: Dict containing the state grids for each regime.
         params: The parameters of the regime.
+        regime_id_cls: Dataclass mapping regime names to integer indices.
         enable_jit: Whether to jit the internal functions.
 
     Returns:
@@ -234,6 +275,7 @@ def _get_internal_functions(
         internal_functions=internal_functions,
         regime_transition_probs=functions["next_regime"],
         grids=grids[regime.name],
+        regime_id_cls=regime_id_cls,
         enable_jit=enable_jit,
     )
 
@@ -306,3 +348,16 @@ def _ensure_fn_only_depends_on_params(
             regime_name=regime_name,
         )
     return _add_dummy_params_argument(fn)
+
+
+def create_default_regime_id_cls(regime_name: str) -> type:
+    """Create a default RegimeID class for single-regime models.
+
+    Args:
+        regime_name: The name of the single regime.
+
+    Returns:
+        A dataclass with a single field mapping the regime name to index 0.
+
+    """
+    return make_dataclass("RegimeID", [(regime_name, int, 0)])

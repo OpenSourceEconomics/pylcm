@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import functools
 import inspect
-from typing import TYPE_CHECKING
+from dataclasses import fields
+from typing import TYPE_CHECKING, Any
 
 import jax
-from dags import concatenate_functions
+from dags import concatenate_functions, get_annotations
 from dags.signature import with_signature
+from jax import Array
 
 from lcm.dispatchers import simulation_spacemap, vmap_1d
 from lcm.input_processing.util import get_grids, get_variable_info
@@ -29,8 +32,6 @@ from lcm.state_action_space import (
 from lcm.utils import flatten_regime_namespace
 
 if TYPE_CHECKING:
-    from jax import Array
-
     from lcm.regime import Regime
     from lcm.typing import (
         ArgmaxQOverAFunction,
@@ -239,11 +240,17 @@ def build_regime_transition_probs_functions(
     internal_functions: dict[str, InternalUserFunction],
     regime_transition_probs: InternalUserFunction,
     grids: dict[str, Array],
+    regime_id_cls: type,
     *,
     enable_jit: bool,
 ) -> PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]:
+    # Wrap the user function to convert array output to dict if needed
+    wrapped_regime_transition_probs = _wrap_regime_transition_probs(
+        regime_transition_probs, regime_id_cls
+    )
+
     functions_pool = internal_functions | {
-        "regime_transition_probs": regime_transition_probs
+        "regime_transition_probs": wrapped_regime_transition_probs
     }
 
     next_regime = concatenate_functions(
@@ -279,3 +286,48 @@ def build_regime_transition_probs_functions(
         solve=jax.jit(next_regime) if enable_jit else next_regime,
         simulate=jax.jit(next_regime_vmapped) if enable_jit else next_regime_vmapped,
     )
+
+
+def _wrap_regime_transition_probs(
+    fn: InternalUserFunction,
+    regime_id_cls: type,
+) -> InternalUserFunction:
+    """Wrap next_regime function to convert array output to dict format.
+
+    The next_regime function returns a JAX array of probabilities indexed by
+    the regime_id_cls. This wrapper converts the array to dict format for internal
+    processing.
+
+    Args:
+        fn: The user's next_regime function (already wrapped with params).
+        regime_id_cls: Dataclass mapping regime names to integer indices.
+
+    Returns:
+        A wrapped function that returns dict[str, float|Array].
+
+    """
+    # Get regime names in index order from regime_id_cls
+    regime_names_by_id: list[tuple[int, str]] = sorted(
+        [
+            (int(field.default), field.name)  # type: ignore[arg-type]
+            for field in fields(regime_id_cls)
+        ],
+        key=lambda x: x[0],
+    )
+    regime_names = [name for _, name in regime_names_by_id]
+
+    # Preserve original annotations
+    annotations = get_annotations(fn)
+    annotations_with_params = annotations.copy()
+    return_annotation = annotations_with_params.pop("return", "dict[str, Any]")
+
+    @with_signature(args=annotations_with_params, return_annotation=return_annotation)
+    @functools.wraps(fn)
+    def wrapped(
+        *args: Array | int, params: dict[str, Any], **kwargs: Array | int
+    ) -> dict[str, Any]:
+        result = fn(*args, params=params, **kwargs)
+        # Convert array to dict using regime_id_cls ordering
+        return {name: result[idx] for idx, name in enumerate(regime_names)}
+
+    return wrapped  # type: ignore[return-value]

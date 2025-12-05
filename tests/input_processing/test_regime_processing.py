@@ -9,6 +9,7 @@ from pandas.testing import assert_frame_equal
 
 from lcm import DiscreteGrid, LinspaceGrid, grid_helpers
 from lcm.input_processing.regime_processing import (
+    create_default_regime_id_cls,
     get_grids,
     get_gridspecs,
     get_variable_info,
@@ -74,9 +75,12 @@ def test_get_grids(regime):
 
 def test_process_regime_iskhakov_et_al_2017():
     regime = get_regime("iskhakov_et_al_2017")
-    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
-        "iskhakov_et_al_2017"
-    ]
+    internal_regime = process_regimes(
+        [regime],
+        n_periods=3,
+        regime_id_cls=create_default_regime_id_cls(regime.name),
+        enable_jit=True,
+    )[regime.name]
 
     # Variable Info
     assert (
@@ -134,9 +138,12 @@ def test_process_regime_iskhakov_et_al_2017():
 
 def test_process_regime():
     regime = get_regime("iskhakov_et_al_2017_stripped_down")
-    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
-        "iskhakov_et_al_2017_stripped_down"
-    ]
+    internal_regime = process_regimes(
+        [regime],
+        n_periods=3,
+        regime_id_cls=create_default_regime_id_cls(regime.name),
+        enable_jit=True,
+    )[regime.name]
 
     # Variable Info
     assert (

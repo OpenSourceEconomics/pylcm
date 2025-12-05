@@ -72,7 +72,6 @@ def valid_regime() -> Regime:
                 "next_wealth": next_wealth,
                 "next_health": next_health,
             },
-            "next_regime": lambda: {"test": 1.0},
         },
     )
 

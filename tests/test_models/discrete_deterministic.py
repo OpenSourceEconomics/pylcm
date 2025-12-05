@@ -109,7 +109,6 @@ ISKHAKOV_ET_AL_2017_DISCRETE = Regime(
         "iskhakov_et_al_2017_discrete": {
             "next_wealth": next_wealth_discrete,
         },
-        "next_regime": lambda: {"iskhakov_et_al_2017_discrete": 1.0},
     },
     functions={
         "labor_income": labor_income,

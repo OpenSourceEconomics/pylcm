@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from dataclasses import make_dataclass
 
 import numpy as np
@@ -14,12 +13,13 @@ from lcm.grids import (
     _get_field_names_and_values,
     _validate_continuous_grid,
     _validate_discrete_grid,
+    validate_category_class,
 )
 
 
 def test_validate_discrete_grid_empty():
     category_class = make_dataclass("Category", [])
-    error_msg = "category_class passed to DiscreteGrid must have at least one field"
+    error_msg = "category_class must have at least one field"
     with pytest.raises(GridInitializationError, match=error_msg):
         _validate_discrete_grid(category_class)
 
@@ -27,43 +27,40 @@ def test_validate_discrete_grid_empty():
 def test_validate_discrete_grid_non_scalar_input():
     category_class = make_dataclass("Category", [("a", int, 1), ("b", str, "s")])
     error_msg = (
-        "Field values of the category_class passed to DiscreteGrid can only be "
-        "scalar int or float values. The values to the following fields are not: ['b']"
+        "Field values of the category_class can only be scalar int or float "
+        r"values. The values to the following fields are not: \['b'\]"
     )
-    with pytest.raises(GridInitializationError, match=re.escape(error_msg)):
+    with pytest.raises(GridInitializationError, match=error_msg):
         _validate_discrete_grid(category_class)
 
 
 def test_validate_discrete_grid_none_input():
     category_class = make_dataclass("Category", [("a", int), ("b", int, 1)])
     error_msg = (
-        "Field values of the category_class passed to DiscreteGrid can only be "
-        "scalar int or float values. The values to the following fields are not: ['a']"
+        "Field values of the category_class can only be scalar int or float "
+        r"values. The values to the following fields are not: \['a'\]"
     )
-    with pytest.raises(GridInitializationError, match=re.escape(error_msg)):
+    with pytest.raises(GridInitializationError, match=error_msg):
         _validate_discrete_grid(category_class)
 
 
 def test_validate_discrete_grid_non_unique():
     category_class = make_dataclass("Category", [("a", int, 1), ("b", int, 1)])
-    error_msg = (
-        "Field values of the category_class passed to DiscreteGrid must be unique. "
-        "The following values are duplicated: {1}"
-    )
+    error_msg = "Field values of the category_class must be unique."
     with pytest.raises(GridInitializationError, match=error_msg):
         _validate_discrete_grid(category_class)
 
 
 def test_validate_discrete_grid_non_consecutive_unordered():
     category_class = make_dataclass("Category", [("a", int, 1), ("b", int, 0)])
-    error_msg = "Field values of the category_class passed to DiscreteGrid must be "
+    error_msg = "Field values of the category_class must be consecutive integers"
     with pytest.raises(GridInitializationError, match=error_msg):
         _validate_discrete_grid(category_class)
 
 
 def test_validate_discrete_grid_non_consecutive_jumps():
     category_class = make_dataclass("Category", [("a", int, 0), ("b", int, 2)])
-    error_msg = "Field values of the category_class passed to DiscreteGrid must be "
+    error_msg = "Field values of the category_class must be consecutive integers"
     with pytest.raises(GridInitializationError, match=error_msg):
         _validate_discrete_grid(category_class)
 
@@ -152,7 +149,7 @@ def test_discrete_grid_invalid_category_class():
     )
     with pytest.raises(
         GridInitializationError,
-        match="Field values of the category_class passed to DiscreteGrid can only be",
+        match="Field values of the category_class can only be scalar int or float",
     ):
         DiscreteGrid(category_class)
 
@@ -163,3 +160,43 @@ def test_replace_mixin():
     assert new_grid.start == 0
     assert new_grid.stop == 5
     assert new_grid.n_points == 5
+
+
+# ======================================================================================
+# Tests for validate_category_class (reusable validation)
+# ======================================================================================
+
+
+def test_validate_category_class_valid():
+    """Valid category class should return empty error list."""
+    category_class = make_dataclass("Category", [("a", int, 0), ("b", int, 1)])
+    errors = validate_category_class(category_class)
+    assert errors == []
+
+
+def test_validate_category_class_not_dataclass():
+    """Non-dataclass should return error."""
+
+    class NotDataclass:
+        a = 0
+        b = 1
+
+    errors = validate_category_class(NotDataclass)
+    assert len(errors) == 1
+    assert "must be a dataclass" in errors[0]
+
+
+def test_validate_category_class_non_consecutive():
+    """Non-consecutive values should return error."""
+    category_class = make_dataclass("Category", [("a", int, 0), ("b", int, 2)])
+    errors = validate_category_class(category_class)
+    assert len(errors) == 1
+    assert "consecutive integers" in errors[0]
+
+
+def test_validate_category_class_not_starting_at_zero():
+    """Values not starting at 0 should return error."""
+    category_class = make_dataclass("Category", [("a", int, 1), ("b", int, 2)])
+    errors = validate_category_class(category_class)
+    assert len(errors) == 1
+    assert "consecutive integers starting from 0" in errors[0]

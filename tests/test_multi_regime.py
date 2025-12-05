@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
-from jax import Array
 
 import lcm
 from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
@@ -43,6 +42,12 @@ class WorkingStatus:
 class HealthStatus:
     bad: int = 0
     good: int = 1
+
+
+@dataclass
+class RegimeID:
+    work: int = 0
+    retirement: int = 1
 
 
 # ======================================================================================
@@ -106,15 +111,19 @@ def next_wealth_regime_transition(
     return (1 + interest_rate) * (wealth - consumption)
 
 
-def next_regime_from_working(period: int) -> dict[str, float | Array]:
-    return {
-        "work": jnp.where(period < 6, 1, 0.5),
-        "retirement": jnp.where(period < 6, 0, 0.5),
-    }
+def next_regime_from_working(period: int) -> FloatND:
+    """Return probability array [P(work), P(retirement)] indexed by RegimeID."""
+    return jnp.array(
+        [
+            jnp.where(period < 6, 1.0, 0.5),  # P(work)
+            jnp.where(period < 6, 0.0, 0.5),  # P(retirement)
+        ]
+    )
 
 
-def next_regime_from_retirement() -> dict[str, float | Array]:
-    return {"work": 0.0, "retirement": 1.0}
+def next_regime_from_retirement() -> FloatND:
+    """Return probability array [P(work), P(retirement)] indexed by RegimeID."""
+    return jnp.array([0.0, 1.0])  # Always stay in retirement
 
 
 def working_during_retirement() -> IntND:
@@ -179,7 +188,11 @@ def test_work_retirement_model_solution():
     )
 
     # Create complete model using new regime-based API
-    model = Model(regimes=[work_regime, retirement_regime], n_periods=10)
+    model = Model(
+        regimes=[work_regime, retirement_regime],
+        n_periods=10,
+        regime_id_cls=RegimeID,
+    )
 
     # Verify model properties
     assert model.n_periods == 10
