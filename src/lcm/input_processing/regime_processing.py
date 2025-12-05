@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 def process_regimes(
     regimes: list[Regime],
     n_periods: int,
-    regime_id_cls: type,  # noqa: ARG001
+    regime_id_cls: type,
     *,
     enable_jit: bool,
 ) -> dict[str, InternalRegime]:
@@ -119,7 +119,11 @@ def process_regimes(
         )
 
         internal_functions = _get_internal_functions(
-            regime, grids=grids, params=params_template, enable_jit=enable_jit
+            regime,
+            grids=grids,
+            params=params_template,
+            regime_id_cls=regime_id_cls,
+            enable_jit=enable_jit,
         )
 
         Q_and_F_functions = build_Q_and_F_functions(
@@ -171,6 +175,7 @@ def _get_internal_functions(
     regime: Regime,
     grids: dict[RegimeName, dict[str, Array]],
     params: ParamsDict,
+    regime_id_cls: type,
     *,
     enable_jit: bool,
 ) -> InternalFunctions:
@@ -180,6 +185,7 @@ def _get_internal_functions(
         regime: The regime as provided by the user.
         grids: Dict containing the state grids for each regime.
         params: The parameters of the regime.
+        regime_id_cls: Dataclass mapping regime names to integer indices.
         enable_jit: Whether to jit the internal functions.
 
     Returns:
@@ -268,6 +274,7 @@ def _get_internal_functions(
         internal_functions=internal_functions,
         regime_transition_probs=functions["next_regime"],
         grids=grids[regime.name],
+        regime_id_cls=regime_id_cls,
         enable_jit=enable_jit,
     )
 
