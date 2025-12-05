@@ -102,7 +102,6 @@ def _create_stochastic_transition_params(
     # Create template matrices for stochastic transitions
     # ==================================================================================
 
-    # Stochastic transition functions can only depend on discrete vars or 'period'.
     invalid_vars = set(variable_info.query("is_continuous").index)
 
     stochastic_transition_params = {}
