@@ -292,19 +292,18 @@ def _wrap_regime_transition_probs(
     fn: InternalUserFunction,
     regime_id_cls: type,
 ) -> InternalUserFunction:
-    """Wrap next_regime function to convert array output to dict if needed.
+    """Wrap next_regime function to convert array output to dict format.
 
-    This provides backward compatibility by allowing next_regime functions to return
-    either:
-    - dict[str, float]: The original format {"regime1": 0.5, "regime2": 0.5}
-    - Array: The new format jnp.array([0.5, 0.5]) indexed by regime_id_cls
+    The next_regime function returns a JAX array of probabilities indexed by
+    the regime_id_cls. This wrapper converts the array to dict format for internal
+    processing.
 
     Args:
         fn: The user's next_regime function (already wrapped with params).
         regime_id_cls: Dataclass mapping regime names to integer indices.
 
     Returns:
-        A wrapped function that always returns dict[str, float|Array].
+        A wrapped function that returns dict[str, float|Array].
 
     """
     # Get regime names in index order from regime_id_cls
@@ -328,11 +327,6 @@ def _wrap_regime_transition_probs(
         *args: Array | int, params: dict[str, Any], **kwargs: Array | int
     ) -> dict[str, Any]:
         result = fn(*args, params=params, **kwargs)
-
-        # If already a dict, return as-is
-        if isinstance(result, dict):
-            return result
-
         # Convert array to dict using regime_id_cls ordering
         return {name: result[idx] for idx, name in enumerate(regime_names)}
 

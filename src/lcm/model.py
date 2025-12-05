@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING
 
 from lcm.exceptions import ModelInitializationError, format_messages
@@ -92,6 +93,14 @@ class Model:
 
         # Auto-generate regime_id_cls for single-regime models
         if len(regimes) == 1:
+            if regime_id_cls is not None:
+                warnings.warn(
+                    f"Single-regime model '{regimes[0].name}' has a user-provided "
+                    "'regime_id_cls', but this will be ignored. For single-regime "
+                    "models, the regime_id_cls is auto-generated internally.",
+                    UserWarning,
+                    stacklevel=2,
+                )
             self.regime_id_cls = create_default_regime_id_cls(regimes[0].name)
         else:
             # Multi-regime: regime_id_cls is required and validated
@@ -226,12 +235,7 @@ def _validate_model_inputs(
         ]
     )
 
-    # Single-regime model validation
-    if len(regimes) == 1 and regime_id_cls is not None:
-        error_messages.append(
-            "regime_id_cls must not be provided for single-regime models. "
-            "It will be auto-generated."
-        )
+    # Single-regime: regime_id_cls warning is handled in Model.__init__
 
     # Multi-regime model validation
     if len(regimes) > 1:

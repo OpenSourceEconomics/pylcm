@@ -6,6 +6,7 @@ from copy import deepcopy
 from dataclasses import make_dataclass
 from typing import TYPE_CHECKING, Any, cast
 
+import jax.numpy as jnp
 from dags import get_annotations
 from dags.signature import with_signature
 
@@ -81,8 +82,8 @@ def process_regimes(
                 stacklevel=3,
             )
 
-        def _default_next_regime() -> dict[str, float]:
-            return {regime.name: 1.0}
+        def _default_next_regime() -> Array:
+            return jnp.array([1.0])
 
         regimes = [
             regime.replace(

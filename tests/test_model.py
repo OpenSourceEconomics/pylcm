@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import jax.numpy as jnp
 import pytest
 
 from lcm import Model, Regime
@@ -189,9 +190,8 @@ def test_single_regime_with_next_regime_warns(binary_category_class):
         utility=lambda health: health,
         transitions={
             "test": {"next_health": lambda health: health},
-            "next_regime": lambda: {
-                "test": 0.5
-            },  # Invalid probability, should be ignored
+            # Invalid probability (0.5 instead of 1.0), should be ignored
+            "next_regime": lambda: jnp.array([0.5]),
         },
     )
     with pytest.warns(UserWarning, match="will be ignored"):
@@ -227,15 +227,15 @@ def test_multi_regime_without_next_regime_raises(binary_category_class):
         transitions={
             "regime1": {"next_health": lambda health: health},
             "regime2": {"next_health": lambda health: health},
-            "next_regime": lambda: {"regime1": 0.5, "regime2": 0.5},
+            "next_regime": lambda: jnp.array([0.5, 0.5]),
         },
     )
     with pytest.raises(ModelInitializationError, match="next_regime"):
         Model(regimes=[regime1, regime2], n_periods=2, regime_id_cls=RegimeID)
 
 
-def test_single_regime_with_regime_id_cls_raises(binary_category_class):
-    """Single-regime models must not have regime_id_cls provided."""
+def test_single_regime_with_regime_id_cls_warns(binary_category_class):
+    """Single-regime models with user-defined regime_id_cls should warn and ignore."""
 
     @dataclass
     class RegimeID:
@@ -248,8 +248,10 @@ def test_single_regime_with_regime_id_cls_raises(binary_category_class):
         utility=lambda health: health,
         transitions={"test": {"next_health": lambda health: health}},
     )
-    with pytest.raises(ModelInitializationError, match="must not be provided"):
-        Model(regimes=regime, n_periods=2, regime_id_cls=RegimeID)
+    with pytest.warns(UserWarning, match="will be ignored"):
+        model = Model(regimes=regime, n_periods=2, regime_id_cls=RegimeID)
+    # Model should still work
+    assert model.internal_regimes is not None
 
 
 def test_multi_regime_without_regime_id_cls_raises(binary_category_class):
@@ -262,7 +264,7 @@ def test_multi_regime_without_regime_id_cls_raises(binary_category_class):
         transitions={
             "regime1": {"next_health": lambda health: health},
             "regime2": {"next_health": lambda health: health},
-            "next_regime": lambda: {"regime1": 0.5, "regime2": 0.5},
+            "next_regime": lambda: jnp.array([0.5, 0.5]),
         },
     )
     regime2 = Regime(
@@ -273,7 +275,7 @@ def test_multi_regime_without_regime_id_cls_raises(binary_category_class):
         transitions={
             "regime1": {"next_health": lambda health: health},
             "regime2": {"next_health": lambda health: health},
-            "next_regime": lambda: {"regime1": 0.5, "regime2": 0.5},
+            "next_regime": lambda: jnp.array([0.5, 0.5]),
         },
     )
     with pytest.raises(ModelInitializationError, match="must be provided"):
@@ -296,7 +298,7 @@ def test_multi_regime_with_invalid_regime_id_cls_raises(binary_category_class):
         transitions={
             "regime1": {"next_health": lambda health: health},
             "regime2": {"next_health": lambda health: health},
-            "next_regime": lambda: {"regime1": 0.5, "regime2": 0.5},
+            "next_regime": lambda: jnp.array([0.5, 0.5]),
         },
     )
     regime2 = Regime(
@@ -307,7 +309,7 @@ def test_multi_regime_with_invalid_regime_id_cls_raises(binary_category_class):
         transitions={
             "regime1": {"next_health": lambda health: health},
             "regime2": {"next_health": lambda health: health},
-            "next_regime": lambda: {"regime1": 0.5, "regime2": 0.5},
+            "next_regime": lambda: jnp.array([0.5, 0.5]),
         },
     )
     with pytest.raises(ModelInitializationError, match="regime_id_cls"):
