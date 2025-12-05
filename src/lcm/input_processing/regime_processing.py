@@ -42,7 +42,11 @@ if TYPE_CHECKING:
 
 
 def process_regimes(
-    regimes: list[Regime], n_periods: int, *, enable_jit: bool
+    regimes: list[Regime],
+    n_periods: int,
+    regime_id_cls: type,  # noqa: ARG001
+    *,
+    enable_jit: bool,
 ) -> dict[str, InternalRegime]:
     """Process the user regime.
 
@@ -55,6 +59,7 @@ def process_regimes(
     Args:
         regimes: The regimes as provided by the user.
         n_periods: Number of periods of the model.
+        regime_id_cls: A dataclass mapping regime names to integer indices.
         enable_jit: Whether to jit the functions of the internal regime.
 
     Returns:

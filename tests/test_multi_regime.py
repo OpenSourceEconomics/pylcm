@@ -45,6 +45,12 @@ class HealthStatus:
     good: int = 1
 
 
+@dataclass
+class RegimeID:
+    work: int = 0
+    retirement: int = 1
+
+
 # ======================================================================================
 # Model Functions (shared where possible)
 # ======================================================================================
@@ -179,7 +185,11 @@ def test_work_retirement_model_solution():
     )
 
     # Create complete model using new regime-based API
-    model = Model(regimes=[work_regime, retirement_regime], n_periods=10)
+    model = Model(
+        regimes=[work_regime, retirement_regime],
+        n_periods=10,
+        regime_id_cls=RegimeID,
+    )
 
     # Verify model properties
     assert model.n_periods == 10

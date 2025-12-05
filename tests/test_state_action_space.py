@@ -4,6 +4,7 @@ import jax.numpy as jnp
 from numpy.testing import assert_array_equal
 
 from lcm.input_processing import process_regimes
+from lcm.input_processing.regime_processing import create_default_regime_id_cls
 from lcm.interfaces import StateActionSpace, StateSpaceInfo
 from lcm.state_action_space import (
     create_state_action_space,
@@ -14,9 +15,12 @@ from tests.test_models.utils import get_regime
 
 def test_create_state_action_space_solution():
     regime = get_regime("iskhakov_et_al_2017_stripped_down")
-    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
-        "iskhakov_et_al_2017_stripped_down"
-    ]
+    internal_regime = process_regimes(
+        [regime],
+        n_periods=3,
+        regime_id_cls=create_default_regime_id_cls(regime.name),
+        enable_jit=True,
+    )[regime.name]
 
     state_action_space = create_state_action_space(
         variable_info=internal_regime.variable_info,
@@ -36,9 +40,12 @@ def test_create_state_action_space_solution():
 
 def test_create_state_action_space_simulation():
     regime = get_regime("iskhakov_et_al_2017")
-    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
-        "iskhakov_et_al_2017"
-    ]
+    internal_regime = process_regimes(
+        [regime],
+        n_periods=3,
+        regime_id_cls=create_default_regime_id_cls(regime.name),
+        enable_jit=True,
+    )[regime.name]
     got_space = create_state_action_space(
         variable_info=internal_regime.variable_info,
         grids=internal_regime.grids,
@@ -68,9 +75,12 @@ def test_create_state_space_info():
 
 def test_create_state_action_space_replace():
     regime = get_regime("iskhakov_et_al_2017")
-    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
-        "iskhakov_et_al_2017"
-    ]
+    internal_regime = process_regimes(
+        [regime],
+        n_periods=3,
+        regime_id_cls=create_default_regime_id_cls(regime.name),
+        enable_jit=True,
+    )[regime.name]
     space = create_state_action_space(
         variable_info=internal_regime.variable_info,
         grids=internal_regime.grids,

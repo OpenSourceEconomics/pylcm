@@ -6,7 +6,10 @@ from typing import TYPE_CHECKING
 
 from lcm.exceptions import ModelInitializationError, format_messages
 from lcm.grids import _get_field_names_and_values, validate_category_class
-from lcm.input_processing.regime_processing import process_regimes
+from lcm.input_processing.regime_processing import (
+    create_default_regime_id_cls,
+    process_regimes,
+)
 from lcm.logging import get_logger
 from lcm.regime import Regime
 from lcm.simulation.simulate import simulate
@@ -34,16 +37,19 @@ class Model:
         description: Description of the model.
         n_periods: Number of periods in the model.
         enable_jit: Whether to jit the functions of the internal regime.
-        regime: The user provided regime that contains the information
-            about the models regime.
-        internal_regime: The internal regime instance created by LCM, which allows
+        regime_id_cls: The RegimeID class mapping regime names to indices.
+        regimes: The user provided regimes that contain the information
+            about the model's regimes.
+        internal_regimes: The internal regime instances created by LCM, which allow
             to solve and simulate the model.
+        params_template: Template for the model parameters.
 
     """
 
     description: str | None = None
     n_periods: int
     enable_jit: bool = True
+    regime_id_cls: type
     regimes: dict[str, Regime]
     internal_regimes: dict[str, InternalRegime]
     params_template: ParamsDict
@@ -53,6 +59,7 @@ class Model:
         regimes: Regime | list[Regime],
         *,
         n_periods: int,
+        regime_id_cls: type | None = None,
         description: str | None = None,
         enable_jit: bool = True,
     ) -> None:
@@ -60,7 +67,10 @@ class Model:
 
         Args:
             regimes: User provided regimes.
-            n_periods: Numper of periods of the model.
+            n_periods: Number of periods of the model.
+            regime_id_cls: A dataclass mapping regime names to integer indices.
+                Required for multi-regime models. Must not be provided for single-regime
+                models (will be auto-generated).
             description: Description of the model.
             enable_jit: Whether to jit the functions of the internal regime.
 
@@ -77,10 +87,22 @@ class Model:
         _validate_model_inputs(
             n_periods=n_periods,
             regimes=regimes,
+            regime_id_cls=regime_id_cls,
         )
+
+        # Auto-generate regime_id_cls for single-regime models
+        if len(regimes) == 1:
+            self.regime_id_cls = create_default_regime_id_cls(regimes[0].name)
+        else:
+            # Multi-regime: regime_id_cls is required and validated
+            self.regime_id_cls = regime_id_cls  # type: ignore[assignment]
+
         self.regimes = {regime.name: regime for regime in regimes}
         self.internal_regimes = process_regimes(
-            regimes=regimes, n_periods=n_periods, enable_jit=enable_jit
+            regimes=regimes,
+            n_periods=n_periods,
+            regime_id_cls=self.regime_id_cls,
+            enable_jit=enable_jit,
         )
         self.params_template = {
             name: regime.params_template
@@ -184,7 +206,11 @@ class Model:
         )
 
 
-def _validate_model_inputs(n_periods: int, regimes: list[Regime]) -> None:
+def _validate_model_inputs(
+    n_periods: int,
+    regimes: list[Regime],
+    regime_id_cls: type | None,
+) -> None:
     error_messages: list[str] = []
 
     if not isinstance(n_periods, int):
@@ -200,13 +226,32 @@ def _validate_model_inputs(n_periods: int, regimes: list[Regime]) -> None:
         ]
     )
 
+    # Single-regime model validation
+    if len(regimes) == 1 and regime_id_cls is not None:
+        error_messages.append(
+            "regime_id_cls must not be provided for single-regime models. "
+            "It will be auto-generated."
+        )
+
+    # Multi-regime model validation
     if len(regimes) > 1:
+        # Check next_regime is defined in each regime
         error_messages.extend(
             f"Multi-regime models require 'next_regime' in transitions for "
             f"each regime. Missing in regime '{regime.name}'."
             for regime in regimes
             if "next_regime" not in regime.transitions
         )
+
+        # Check regime_id_cls is provided
+        if regime_id_cls is None:
+            error_messages.append(
+                "regime_id_cls must be provided for multi-regime models."
+            )
+        else:
+            # Validate regime_id_cls structure and names
+            regime_names = [regime.name for regime in regimes]
+            error_messages.extend(validate_regime_id_cls(regime_id_cls, regime_names))
 
     if error_messages:
         msg = format_messages(error_messages)

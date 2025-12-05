@@ -202,6 +202,12 @@ def test_single_regime_with_next_regime_warns(binary_category_class):
 
 def test_multi_regime_without_next_regime_raises(binary_category_class):
     """Multi-regime models must have next_regime in each regime."""
+
+    @dataclass
+    class RegimeID:
+        regime1: int = 0
+        regime2: int = 1
+
     regime1 = Regime(
         name="regime1",
         states={"health": DiscreteGrid(binary_category_class)},
@@ -225,7 +231,87 @@ def test_multi_regime_without_next_regime_raises(binary_category_class):
         },
     )
     with pytest.raises(ModelInitializationError, match="next_regime"):
+        Model(regimes=[regime1, regime2], n_periods=2, regime_id_cls=RegimeID)
+
+
+def test_single_regime_with_regime_id_cls_raises(binary_category_class):
+    """Single-regime models must not have regime_id_cls provided."""
+
+    @dataclass
+    class RegimeID:
+        test: int = 0
+
+    regime = Regime(
+        name="test",
+        states={"health": DiscreteGrid(binary_category_class)},
+        actions={},
+        utility=lambda health: health,
+        transitions={"test": {"next_health": lambda health: health}},
+    )
+    with pytest.raises(ModelInitializationError, match="must not be provided"):
+        Model(regimes=regime, n_periods=2, regime_id_cls=RegimeID)
+
+
+def test_multi_regime_without_regime_id_cls_raises(binary_category_class):
+    """Multi-regime models must have regime_id_cls provided."""
+    regime1 = Regime(
+        name="regime1",
+        states={"health": DiscreteGrid(binary_category_class)},
+        actions={},
+        utility=lambda health: health,
+        transitions={
+            "regime1": {"next_health": lambda health: health},
+            "regime2": {"next_health": lambda health: health},
+            "next_regime": lambda: {"regime1": 0.5, "regime2": 0.5},
+        },
+    )
+    regime2 = Regime(
+        name="regime2",
+        states={"health": DiscreteGrid(binary_category_class)},
+        actions={},
+        utility=lambda health: health,
+        transitions={
+            "regime1": {"next_health": lambda health: health},
+            "regime2": {"next_health": lambda health: health},
+            "next_regime": lambda: {"regime1": 0.5, "regime2": 0.5},
+        },
+    )
+    with pytest.raises(ModelInitializationError, match="must be provided"):
         Model(regimes=[regime1, regime2], n_periods=2)
+
+
+def test_multi_regime_with_invalid_regime_id_cls_raises(binary_category_class):
+    """Multi-regime models must have valid regime_id_cls."""
+
+    @dataclass
+    class RegimeID:
+        regime1: int = 0
+        wrong_name: int = 1  # Should be "regime2"
+
+    regime1 = Regime(
+        name="regime1",
+        states={"health": DiscreteGrid(binary_category_class)},
+        actions={},
+        utility=lambda health: health,
+        transitions={
+            "regime1": {"next_health": lambda health: health},
+            "regime2": {"next_health": lambda health: health},
+            "next_regime": lambda: {"regime1": 0.5, "regime2": 0.5},
+        },
+    )
+    regime2 = Regime(
+        name="regime2",
+        states={"health": DiscreteGrid(binary_category_class)},
+        actions={},
+        utility=lambda health: health,
+        transitions={
+            "regime1": {"next_health": lambda health: health},
+            "regime2": {"next_health": lambda health: health},
+            "next_regime": lambda: {"regime1": 0.5, "regime2": 0.5},
+        },
+    )
+    with pytest.raises(ModelInitializationError, match="regime_id_cls"):
+        Model(regimes=[regime1, regime2], n_periods=2, regime_id_cls=RegimeID)
 
 
 # ======================================================================================
