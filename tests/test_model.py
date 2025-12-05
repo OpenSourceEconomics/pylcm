@@ -176,6 +176,26 @@ def test_single_regime_without_next_regime_works(binary_category_class):
     assert model.internal_regimes is not None
 
 
+def test_single_regime_with_next_regime_warns(binary_category_class):
+    """Single-regime models with user-defined next_regime should warn and override."""
+    regime = Regime(
+        name="test",
+        states={"health": DiscreteGrid(binary_category_class)},
+        actions={},
+        utility=lambda health: health,
+        transitions={
+            "test": {"next_health": lambda health: health},
+            "next_regime": lambda: {
+                "test": 0.5
+            },  # Invalid probability, should be ignored
+        },
+    )
+    with pytest.warns(UserWarning, match="will be ignored"):
+        model = Model(regimes=regime, n_periods=2)
+    # Model should still work
+    assert model.internal_regimes is not None
+
+
 def test_multi_regime_without_next_regime_raises(binary_category_class):
     """Multi-regime models must have next_regime in each regime."""
     regime1 = Regime(

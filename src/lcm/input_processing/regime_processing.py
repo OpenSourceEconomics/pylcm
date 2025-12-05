@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import warnings
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, cast
 
@@ -60,17 +61,29 @@ def process_regimes(
 
     """
     # ----------------------------------------------------------------------------------
-    # Inject default next_regime for single-regime models
+    # Override next_regime for single-regime models to ensure probability is always 1.0
     # ----------------------------------------------------------------------------------
-    if len(regimes) == 1 and "next_regime" not in regimes[0].transitions:
+    if len(regimes) == 1:
         regime = regimes[0]
+
+        if "next_regime" in regime.transitions:
+            warnings.warn(
+                f"Single-regime model '{regime.name}' has a user-defined 'next_regime' "
+                "function, but this will be ignored. For single-regime models, the "
+                "regime transition probability is always 1.0 for the same regime.",
+                UserWarning,
+                stacklevel=3,
+            )
 
         def _default_next_regime() -> dict[str, float]:
             return {regime.name: 1.0}
 
         regimes = [
             regime.replace(
-                transitions=regime.transitions | {"next_regime": _default_next_regime}
+                transitions={
+                    k: v for k, v in regime.transitions.items() if k != "next_regime"
+                }
+                | {"next_regime": _default_next_regime}
             )
         ]
 
