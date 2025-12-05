@@ -89,7 +89,6 @@ DETERMINISTIC_REGIME = Regime(
         "test": {
             "next_wealth": next_wealth,
         },
-        "next_regime": lambda: {"test": 1.0},
     },
 )
 
