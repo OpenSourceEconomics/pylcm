@@ -123,9 +123,6 @@ def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
                 "callables."
             )
 
-    if "next_regime" not in regime.transitions:
-        error_messages.append("transitions must include a 'next_regime' function.")
-
     if not callable(regime.utility):
         error_messages.append("utility must be a callable.")
 

@@ -60,6 +60,21 @@ def process_regimes(
 
     """
     # ----------------------------------------------------------------------------------
+    # Inject default next_regime for single-regime models
+    # ----------------------------------------------------------------------------------
+    if len(regimes) == 1 and "next_regime" not in regimes[0].transitions:
+        regime = regimes[0]
+
+        def _default_next_regime() -> dict[str, float]:
+            return {regime.name: 1.0}
+
+        regimes = [
+            regime.replace(
+                transitions=regime.transitions | {"next_regime": _default_next_regime}
+            )
+        ]
+
+    # ----------------------------------------------------------------------------------
     # Stage 1: Initialize regime components that do not depend on other regimes
     # ----------------------------------------------------------------------------------
     grids = {}
