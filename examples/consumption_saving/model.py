@@ -138,7 +138,6 @@ CONSUMPTION_SAVING_REGIME = Regime(
             "next_wealth": next_wealth,
             "next_health": next_health,
         },
-        "next_regime": lambda wealth: {"consumption_saving_regime": 1.0},  # noqa: ARG005
     },
 )
 

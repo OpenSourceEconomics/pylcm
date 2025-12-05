@@ -8,6 +8,7 @@ from numpy.testing import assert_array_almost_equal, assert_array_equal
 
 from lcm import Model
 from lcm.input_processing import process_regimes
+from lcm.input_processing.regime_processing import create_default_regime_id_cls
 from lcm.logging import get_logger
 from lcm.simulation.simulate import (
     _lookup_values_from_indices,
@@ -33,7 +34,12 @@ def simulate_inputs():
             "consumption": _orig_regime.actions["consumption"].replace(stop=100),  # type: ignore[attr-defined]
         }
     )
-    internal_regimes = process_regimes([regime], n_periods=1, enable_jit=True)
+    internal_regimes = process_regimes(
+        [regime],
+        n_periods=1,
+        regime_id_cls=create_default_regime_id_cls(regime.name),
+        enable_jit=True,
+    )
 
     return {
         "internal_regimes": internal_regimes,

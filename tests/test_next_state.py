@@ -6,6 +6,7 @@ import jax.numpy as jnp
 from pybaum import tree_equal
 
 from lcm.input_processing import process_regimes
+from lcm.input_processing.regime_processing import create_default_regime_id_cls
 from lcm.interfaces import InternalFunctions, PhaseVariantContainer, Target
 from lcm.next_state import _create_stochastic_next_func, get_next_state_function
 from tests.test_models.utils import get_regime
@@ -16,9 +17,12 @@ if TYPE_CHECKING:
 
 def test_get_next_state_function_with_solve_target():
     regime = get_regime("iskhakov_et_al_2017_stripped_down")
-    internal_regime = process_regimes(regimes=[regime], n_periods=3, enable_jit=True)[
-        "iskhakov_et_al_2017_stripped_down"
-    ]
+    internal_regime = process_regimes(
+        regimes=[regime],
+        n_periods=3,
+        regime_id_cls=create_default_regime_id_cls(regime.name),
+        enable_jit=True,
+    )[regime.name]
     got_func = get_next_state_function(
         transitions=internal_regime.transitions["iskhakov_et_al_2017_stripped_down"],
         functions=internal_regime.functions,

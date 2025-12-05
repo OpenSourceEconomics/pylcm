@@ -39,9 +39,9 @@ class Regime:
     _: KW_ONLY
     utility: UserFunction
     constraints: dict[str, UserFunction] = field(default_factory=dict)
-    transitions: dict[
-        str, dict[str, UserFunction] | Callable[..., dict[str, float | Array]]
-    ] = field(default_factory=dict)
+    transitions: dict[str, dict[str, UserFunction] | Callable[..., Array]] = field(
+        default_factory=dict
+    )
     functions: dict[str, UserFunction] = field(default_factory=dict)
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
@@ -122,9 +122,6 @@ def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
                 "transitions, constraints, and functions must be a dictionary of "
                 "callables."
             )
-
-    if "next_regime" not in regime.transitions:
-        error_messages.append("transitions must include a 'next_regime' function.")
 
     if not callable(regime.utility):
         error_messages.append("utility must be a callable.")

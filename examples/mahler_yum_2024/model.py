@@ -20,8 +20,6 @@ from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
 from lcm.dispatchers import _base_productmap
 
 if TYPE_CHECKING:
-    from jax import Array
-
     from lcm.typing import (
         Any,
         BoolND,
@@ -128,6 +126,14 @@ class ProductivityShock:
 @dataclass
 class Dead:
     dead: int = 0
+
+
+@dataclass
+class RegimeID:
+    """Maps regime names to integer indices for regime transition probabilities."""
+
+    alive: int = 0
+    dead: int = 1
 
 
 # ======================================================================================
@@ -322,11 +328,10 @@ def next_regime_from_alive(
     education: DiscreteState,
     health: DiscreteState,
     regime_transition_from_alive: FloatND,
-) -> dict[str, float | Array]:
-    return {
-        "alive": regime_transition_from_alive[period, education, health],
-        "dead": 1 - regime_transition_from_alive[period, education, health],
-    }
+) -> FloatND:
+    """Return probability array [P(alive), P(dead)] indexed by RegimeID."""
+    survival_prob = regime_transition_from_alive[period, education, health]
+    return jnp.array([survival_prob, 1 - survival_prob])
 
 
 # --------------------------------------------------------------------------------------
@@ -410,11 +415,13 @@ DEAD_REGIME = Regime(
     actions={},
     transitions={
         "dead": {"next_dead": lambda dead: Dead.dead},  # noqa: ARG005
-        "next_regime": lambda: {"alive": 0.0, "dead": 1.0},
+        "next_regime": lambda: jnp.array([0.0, 1.0]),  # [P(alive), P(dead)]
     },
 )
 
-MAHLER_YUM_MODEL = Model([ALIVE_REGIME, DEAD_REGIME], n_periods=n)
+MAHLER_YUM_MODEL = Model(
+    [ALIVE_REGIME, DEAD_REGIME], n_periods=n, regime_id_cls=RegimeID
+)
 
 
 # ======================================================================================

@@ -141,7 +141,6 @@ ISKHAKOV_ET_AL_2017 = Regime(
             "next_wealth": next_wealth,
             "next_lagged_retirement": next_lagged_retirement,
         },
-        "next_regime": lambda: {"iskhakov_et_al_2017": 1.0},
     },
     functions={
         "labor_income": labor_income,
@@ -177,7 +176,6 @@ ISKHAKOV_ET_AL_2017_STRIPPED_DOWN = Regime(
     },
     transitions={
         "iskhakov_et_al_2017_stripped_down": {"next_wealth": next_wealth},
-        "next_regime": lambda: {"iskhakov_et_al_2017_stripped_down": 1.0},
     },
     functions={
         "labor_income": labor_income,
