@@ -134,10 +134,8 @@ CONSUMPTION_SAVING_REGIME = Regime(
         ),
     },
     transitions={
-        "consumption_saving_regime": {
-            "next_wealth": next_wealth,
-            "next_health": next_health,
-        },
+        "next_wealth": next_wealth,
+        "next_health": next_health,
     },
 )
 
@@ -149,7 +147,7 @@ PARAMS = {
     "consumption_saving_regime": {
         "beta": 0.95,
         "utility": {"disutility_of_work": 0.05},
-        "consumption_saving_regime__next_wealth": {"interest_rate": 0.05},
+        "next_wealth": {"interest_rate": 0.05},
     }
 }
 

@@ -9,6 +9,7 @@ from pandas.testing import assert_frame_equal
 
 from lcm import DiscreteGrid, LinspaceGrid, grid_helpers
 from lcm.input_processing.regime_processing import (
+    convert_flat_to_nested_transitions,
     create_default_regime_id_cls,
     get_grids,
     get_gridspecs,
@@ -17,6 +18,144 @@ from lcm.input_processing.regime_processing import (
 )
 from tests.regime_mock import RegimeMock
 from tests.test_models.utils import get_regime
+
+# ======================================================================================
+# Tests for convert_flat_to_nested_transitions
+# ======================================================================================
+
+
+def test_convert_flat_to_nested_single_regime():
+    """Single regime: flat transitions become nested under the regime name."""
+
+    def next_wealth():
+        pass
+
+    def next_health():
+        pass
+
+    flat_transitions = {
+        "next_wealth": next_wealth,
+        "next_health": next_health,
+    }
+
+    result = convert_flat_to_nested_transitions(
+        flat_transitions=flat_transitions,
+        regime_names=["work"],
+    )
+
+    expected = {
+        "work": {
+            "next_wealth": next_wealth,
+            "next_health": next_health,
+        },
+    }
+
+    assert result == expected
+
+
+def test_convert_flat_to_nested_multi_regime():
+    """Multi regime: flat transitions replicated for each target regime."""
+
+    def next_wealth():
+        pass
+
+    def next_health():
+        pass
+
+    flat_transitions = {
+        "next_wealth": next_wealth,
+        "next_health": next_health,
+    }
+
+    result = convert_flat_to_nested_transitions(
+        flat_transitions=flat_transitions,
+        regime_names=["work", "retirement"],
+    )
+
+    expected = {
+        "work": {
+            "next_wealth": next_wealth,
+            "next_health": next_health,
+        },
+        "retirement": {
+            "next_wealth": next_wealth,
+            "next_health": next_health,
+        },
+    }
+
+    assert result == expected
+
+
+def test_convert_flat_to_nested_with_next_regime():
+    """next_regime should stay at top level, not nested."""
+
+    def next_wealth():
+        pass
+
+    def next_regime():
+        pass
+
+    flat_transitions = {
+        "next_wealth": next_wealth,
+        "next_regime": next_regime,
+    }
+
+    result = convert_flat_to_nested_transitions(
+        flat_transitions=flat_transitions,
+        regime_names=["alive", "dead"],
+    )
+
+    expected = {
+        "alive": {
+            "next_wealth": next_wealth,
+        },
+        "dead": {
+            "next_wealth": next_wealth,
+        },
+        "next_regime": next_regime,
+    }
+
+    assert result == expected
+
+
+def test_convert_flat_to_nested_only_next_regime():
+    """Regime with only next_regime (like dead regime with no state transitions)."""
+
+    def next_regime():
+        pass
+
+    flat_transitions = {
+        "next_regime": next_regime,
+    }
+
+    result = convert_flat_to_nested_transitions(
+        flat_transitions=flat_transitions,
+        regime_names=["alive", "dead"],
+    )
+
+    expected = {
+        "alive": {},
+        "dead": {},
+        "next_regime": next_regime,
+    }
+
+    assert result == expected
+
+
+def test_convert_flat_to_nested_empty_transitions():
+    """Empty transitions (single-regime model without explicit transitions)."""
+    flat_transitions = {}
+
+    result = convert_flat_to_nested_transitions(
+        flat_transitions=flat_transitions,
+        regime_names=["single"],
+    )
+
+    expected = {
+        "single": {},
+    }
+
+    assert result == expected
 
 
 @pytest.fixture
@@ -35,7 +174,7 @@ def regime(binary_category_class):
             "c": DiscreteGrid(binary_category_class),
         },
         utility=utility,
-        transitions={"mock": {"next_c": next_c}},
+        transitions={"next_c": next_c},
     )
 
 

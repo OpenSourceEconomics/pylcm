@@ -86,20 +86,16 @@ def model_and_params():
     # Create deterministic model with modified function
     regime_deterministic = base_regime.replace(
         transitions={
-            "iskhakov_et_al_2017_stochastic": {
-                **base_regime.transitions["iskhakov_et_al_2017_stochastic"],  # type: ignore[dict-item]
-                "next_health": next_health_deterministic,
-            },
+            **base_regime.transitions,
+            "next_health": next_health_deterministic,
         }
     )
 
     # Create stochastic model with modified function
     regime_stochastic = base_regime.replace(
         transitions={
-            "iskhakov_et_al_2017_stochastic": {
-                **base_regime.transitions["iskhakov_et_al_2017_stochastic"],  # type: ignore[dict-item]
-                "next_health": next_health_stochastic,
-            },
+            **base_regime.transitions,
+            "next_health": next_health_stochastic,
         }
     )
 

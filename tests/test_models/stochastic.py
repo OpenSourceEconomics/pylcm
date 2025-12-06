@@ -163,11 +163,9 @@ ISKHAKOV_ET_AL_2017_STOCHASTIC = Regime(
         "borrowing_constraint": borrowing_constraint,
     },
     transitions={
-        "iskhakov_et_al_2017_stochastic": {
-            "next_wealth": next_wealth,
-            "next_health": next_health,
-            "next_partner": next_partner,
-        },
+        "next_wealth": next_wealth,
+        "next_health": next_health,
+        "next_partner": next_partner,
     },
     functions={
         "labor_income": labor_income,

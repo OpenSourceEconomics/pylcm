@@ -9,10 +9,6 @@ from lcm.grids import Grid
 from lcm.utils import flatten_regime_namespace
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from jax import Array
-
     from lcm.typing import (
         UserFunction,
     )
@@ -39,9 +35,7 @@ class Regime:
     _: KW_ONLY
     utility: UserFunction
     constraints: dict[str, UserFunction] = field(default_factory=dict)
-    transitions: dict[str, dict[str, UserFunction] | Callable[..., Array | int]] = (
-        field(default_factory=dict)
-    )
+    transitions: dict[str, UserFunction] = field(default_factory=dict)
     functions: dict[str, UserFunction] = field(default_factory=dict)
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
@@ -141,12 +135,12 @@ def _validate_logical_consistency(regime: Regime) -> None:
             "functions dictionary. Please use the utility attribute instead.",
         )
 
-    invalid_transitions = []
-    for k, v in regime.transitions.items():
-        if k != "next_regime" and isinstance(v, dict):
-            invalid_transitions.extend(
-                [fn_name for fn_name in v if not fn_name.startswith("next_")]
-            )
+    # Validate transition function names start with 'next_'
+    invalid_transitions = [
+        fn_name
+        for fn_name in regime.transitions
+        if fn_name != "next_regime" and not fn_name.startswith("next_")
+    ]
     if invalid_transitions:
         error_messages.append(
             "Each transitions name must start with 'next_'. "
@@ -154,13 +148,13 @@ def _validate_logical_consistency(regime: Regime) -> None:
             f"{invalid_transitions}.",
         )
 
+    # Validate each state has a corresponding transition and vice versa
     states = set(regime.states)
-    own_regime_transitions = regime.transitions[regime.name]
-    states_via_transition = (
-        {s.removeprefix("next_") for s in own_regime_transitions if s != "next_regime"}
-        if isinstance(own_regime_transitions, dict)
-        else set()
-    )
+    states_via_transition = {
+        fn_name.removeprefix("next_")
+        for fn_name in regime.transitions
+        if fn_name != "next_regime"
+    }
 
     if states - states_via_transition:
         error_messages.append(

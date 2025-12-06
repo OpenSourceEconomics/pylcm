@@ -26,14 +26,14 @@ def test_create_params_without_shocks(binary_category_class):
         n_periods=None,
         utility=lambda a, b, c: None,  # noqa: ARG005
         transitions={
-            "mock": {"next_b": lambda b: b},
+            "next_b": lambda b: b,
         },
     )
     got = create_params_template(regime, grids=get_grids(regime), n_periods=3)  # type: ignore[arg-type]
     assert got == {
         "beta": jnp.nan,
         "utility": {"c": jnp.nan},
-        "mock__next_b": {},
+        "next_b": {},
     }
 
 
@@ -63,7 +63,7 @@ def test_create_shock_params():
 
     regime = RegimeMock(
         utility=lambda a: None,  # noqa: ARG005
-        transitions={"mock": {"next_a": next_a}},
+        transitions={"next_a": next_a},
     )
 
     got = _create_stochastic_transition_params(
@@ -86,7 +86,7 @@ def test_create_shock_params_invalid_variable():
     )
 
     regime = RegimeMock(
-        transitions={"mock": {"next_a": next_a}},
+        transitions={"next_a": next_a},
     )
 
     with pytest.raises(
@@ -115,7 +115,7 @@ def test_create_shock_params_invalid_dependency():
     )
 
     regime = RegimeMock(
-        transitions={"mock": {"next_a": next_a}},
+        transitions={"next_a": next_a},
     )
 
     with pytest.raises(

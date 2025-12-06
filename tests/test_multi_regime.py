@@ -103,14 +103,6 @@ def borrowing_constraint(
 # ======================================================================================
 
 
-def next_wealth_regime_transition(
-    wealth: ContinuousState,
-    consumption: ContinuousAction,
-    interest_rate: float,
-) -> ContinuousState:
-    return (1 + interest_rate) * (wealth - consumption)
-
-
 @lcm.mark.stochastic
 def next_regime_from_working(period: int) -> FloatND:
     """Return probability array [P(work), P(retirement)] indexed by RegimeID."""
@@ -150,14 +142,8 @@ def test_work_retirement_model_solution():
             "labor_income": labor_income,
         },
         transitions={
-            "work": {
-                "next_wealth": next_wealth,
-                "next_health": next_health,
-            },
-            "retirement": {
-                "next_wealth": next_wealth_regime_transition,
-                "next_health": next_health,
-            },
+            "next_wealth": next_wealth,
+            "next_health": next_health,
             "next_regime": next_regime_from_working,
         },
     )
@@ -179,11 +165,8 @@ def test_work_retirement_model_solution():
             "labor_income": labor_income,
         },
         transitions={
-            "work": {
-                "next_wealth": next_wealth_regime_transition,
-                "next_health": next_health,
-            },
-            "retirement": {"next_wealth": next_wealth, "next_health": next_health},
+            "next_wealth": next_wealth,
+            "next_health": next_health,
             "next_regime": next_regime_from_retirement,
         },
     )
@@ -213,10 +196,8 @@ def test_work_retirement_model_solution():
         "beta": 0.9,
         "utility": {"disutility_of_work": 2.0},
         "labor_income": {"wage": 25},
-        "work__next_wealth": {"interest_rate": 0.1},
-        "retirement__next_wealth": {"interest_rate": 0.1},
-        "work__next_health": {"health_transition": health_transition},
-        "retirement__next_health": {"health_transition": health_transition},
+        "next_wealth": {"interest_rate": 0.1},
+        "next_health": {"health_transition": health_transition},
         "borrowing_constraint": {},
     }
 
@@ -224,10 +205,8 @@ def test_work_retirement_model_solution():
         "beta": 0.8,
         "utility": {"disutility_of_work": 2.0},
         "labor_income": {"wage": 20},
-        "work__next_wealth": {"interest_rate": 0.1},
-        "retirement__next_wealth": {"interest_rate": 0.1},
-        "work__next_health": {"health_transition": health_transition},
-        "retirement__next_health": {"health_transition": health_transition},
+        "next_wealth": {"interest_rate": 0.1},
+        "next_health": {"health_transition": health_transition},
         "working": {},
         "borrowing_constraint": {},
     }

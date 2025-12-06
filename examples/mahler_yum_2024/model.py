@@ -398,18 +398,15 @@ ALIVE_REGIME = Regime(
         "savings_constraint": savings_constraint,
     },
     transitions={
-        "alive": {
-            "next_wealth": next_wealth,
-            "next_health": next_health,
-            "next_productivity_shock": next_productivity_shock,
-            "next_discount_factor": next_discount_factor,
-            "next_adjustment_cost": next_adjustment_cost,
-            "next_effort_t_1": next_effort_t_1,
-            "next_health_type": next_health_type,
-            "next_education": next_education,
-            "next_productivity": next_productivity,
-        },
-        "dead": {"next_dead": lambda: Dead.dead},
+        "next_wealth": next_wealth,
+        "next_health": next_health,
+        "next_productivity_shock": next_productivity_shock,
+        "next_discount_factor": next_discount_factor,
+        "next_adjustment_cost": next_adjustment_cost,
+        "next_effort_t_1": next_effort_t_1,
+        "next_health_type": next_health_type,
+        "next_education": next_education,
+        "next_productivity": next_productivity,
         "next_regime": next_regime_from_alive,
     },
 )
@@ -420,7 +417,7 @@ DEAD_REGIME = Regime(
     states={"dead": DiscreteGrid(Dead)},
     actions={},
     transitions={
-        "dead": {"next_dead": lambda dead: Dead.dead},  # noqa: ARG005
+        "next_dead": lambda dead: Dead.dead,  # noqa: ARG005
         "next_regime": next_regime_from_dead,
     },
 )
@@ -712,11 +709,9 @@ def create_inputs(
         "income": {"income_grid": income_grid, "xvalues": xvalues},
         "pension": {"income_grid": income_grid, "penre": penre},
         "adj_cost": {"chimaxgrid": chimax_grid},
-        "alive__next_productivity_shock": {"productivity_shock_transition": xtrans.T},
-        "alive__next_health": {"health_transition": tr2yp_grid},
-        "alive__next_adjustment_cost": {
-            "adjustment_cost_transition": jnp.full((5, 5), 1 / 5)
-        },
+        "next_productivity_shock": {"productivity_shock_transition": xtrans.T},
+        "next_health": {"health_transition": tr2yp_grid},
+        "next_adjustment_cost": {"adjustment_cost_transition": jnp.full((5, 5), 1 / 5)},
         "next_regime": {"regime_transition_from_alive": regime_transition_from_alive},
     }
 

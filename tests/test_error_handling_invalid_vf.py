@@ -68,10 +68,8 @@ def valid_regime() -> Regime:
             "borrowing_constraint": borrowing_constraint,
         },
         transitions={
-            "test": {
-                "next_wealth": next_wealth,
-                "next_health": next_health,
-            },
+            "next_wealth": next_wealth,
+            "next_health": next_health,
         },
     )
 

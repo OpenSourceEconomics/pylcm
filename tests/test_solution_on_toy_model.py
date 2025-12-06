@@ -86,9 +86,7 @@ DETERMINISTIC_REGIME = Regime(
         "borrowing_constraint": borrowing_constraint,
     },
     transitions={
-        "test": {
-            "next_wealth": next_wealth,
-        },
+        "next_wealth": next_wealth,
     },
 )
 
@@ -99,7 +97,7 @@ def next_health(health: DiscreteState, health_transition: FloatND) -> FloatND:
 
 
 STOCHASTIC_REGIME = deepcopy(DETERMINISTIC_REGIME)
-STOCHASTIC_REGIME.transitions["test"]["next_health"] = next_health  # type: ignore[index]
+STOCHASTIC_REGIME.transitions["next_health"] = next_health  # type: ignore[index]
 STOCHASTIC_REGIME.states["health"] = DiscreteGrid(HealthStatus)
 
 DETERMINISTIC_MODEL = Model([DETERMINISTIC_REGIME], n_periods=2)

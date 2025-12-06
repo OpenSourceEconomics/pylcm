@@ -97,6 +97,20 @@ def process_regimes(
         ]
 
     # ----------------------------------------------------------------------------------
+    # Convert flat transitions to nested format
+    # ----------------------------------------------------------------------------------
+    # User provides: {"next_wealth": fn, "next_regime": fn}
+    # Internal: {"regime1": {"next_wealth": fn}, "next_regime": fn}
+    regime_names = [regime.name for regime in regimes]
+    nested_transitions = {
+        regime.name: convert_flat_to_nested_transitions(
+            flat_transitions=regime.transitions,
+            regime_names=regime_names,
+        )
+        for regime in regimes
+    }
+
+    # ----------------------------------------------------------------------------------
     # Stage 1: Initialize regime components that do not depend on other regimes
     # ----------------------------------------------------------------------------------
     grids = {}
@@ -117,12 +131,17 @@ def process_regimes(
     # ----------------------------------------------------------------------------------
     internal_regimes = {}
     for regime in regimes:
+        # Create a regime with nested transitions for internal processing
+        regime_with_nested_transitions = regime.replace(
+            transitions=nested_transitions[regime.name]
+        )
+
         params_template = create_params_template(
-            regime, grids=grids, n_periods=n_periods
+            regime_with_nested_transitions, grids=grids, n_periods=n_periods
         )
 
         internal_functions = _get_internal_functions(
-            regime,
+            regime_with_nested_transitions,
             grids=grids,
             params=params_template,
             regime_id_cls=regime_id_cls,
@@ -373,3 +392,46 @@ def create_default_regime_id_cls(regime_name: str) -> type:
 
     """
     return make_dataclass("RegimeID", [(regime_name, int, 0)])
+
+
+def convert_flat_to_nested_transitions(
+    flat_transitions: dict[str, UserFunction],
+    regime_names: list[str],
+) -> dict[str, dict[str, UserFunction] | UserFunction]:
+    """Convert flat transitions dictionary to nested format.
+
+    Takes a user-provided flat transitions dictionary and converts it to the nested
+    format expected by internal processing. State transitions are replicated for each
+    target regime, while `next_regime` stays at the top level.
+
+    Args:
+        flat_transitions: Flat dictionary mapping transition names to functions.
+            Example: {"next_wealth": fn, "next_health": fn, "next_regime": fn}
+        regime_names: List of regime names in the model.
+
+    Returns:
+        Nested dictionary with state transitions under each regime key and
+        `next_regime` at the top level.
+        Example: {
+            "work": {"next_wealth": fn, "next_health": fn},
+            "retirement": {"next_wealth": fn, "next_health": fn},
+            "next_regime": fn
+        }
+
+    """
+    # Separate next_regime from state transitions
+    next_regime_fn = flat_transitions.get("next_regime")
+    state_transitions = {
+        name: fn for name, fn in flat_transitions.items() if name != "next_regime"
+    }
+
+    # Create nested structure with state transitions replicated for each regime
+    nested: dict[str, dict[str, UserFunction] | UserFunction] = {
+        regime_name: dict(state_transitions) for regime_name in regime_names
+    }
+
+    # Add next_regime at top level if it exists
+    if next_regime_fn is not None:
+        nested["next_regime"] = next_regime_fn
+
+    return nested
