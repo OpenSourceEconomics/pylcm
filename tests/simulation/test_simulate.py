@@ -34,15 +34,17 @@ def simulate_inputs():
             "consumption": _orig_regime.actions["consumption"].replace(stop=100),  # type: ignore[attr-defined]
         }
     )
+    regime_id_cls = create_default_regime_id_cls(regime.name)
     internal_regimes = process_regimes(
         [regime],
         n_periods=1,
-        regime_id_cls=create_default_regime_id_cls(regime.name),
+        regime_id_cls=regime_id_cls,
         enable_jit=True,
     )
 
     return {
         "internal_regimes": internal_regimes,
+        "regime_id_cls": regime_id_cls,
     }
 
 
