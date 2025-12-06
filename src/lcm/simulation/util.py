@@ -1,3 +1,5 @@
+from dataclasses import fields
+
 import jax
 from jax import Array, vmap
 from jax import numpy as jnp
@@ -10,13 +12,17 @@ from lcm.typing import Bool1D, Int1D, ParamsDict, RegimeName
 from lcm.utils import flatten_regime_namespace
 
 
-def get_regime_name_to_id_mapping(
-    internal_regimes: dict[RegimeName, InternalRegime],
-) -> dict[RegimeName, int]:
-    return {
-        internal_regime.name: _id
-        for _id, internal_regime in enumerate(internal_regimes.values())
-    }
+def get_regime_name_to_id_mapping(regime_id_cls: type) -> dict[RegimeName, int]:
+    """Get mapping from regime names to integer IDs from regime_id_cls.
+
+    Args:
+        regime_id_cls: Dataclass mapping regime names to integer indices.
+
+    Returns:
+        Dict mapping regime names to their integer IDs.
+
+    """
+    return {field.name: int(field.default) for field in fields(regime_id_cls)}  # type: ignore[arg-type]
 
 
 def create_regime_state_action_space(
