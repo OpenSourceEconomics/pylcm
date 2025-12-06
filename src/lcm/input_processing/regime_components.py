@@ -242,11 +242,20 @@ def build_regime_transition_probs_functions(
     grids: dict[str, Array],
     regime_id_cls: type,
     *,
+    is_stochastic: bool,
     enable_jit: bool,
 ) -> PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]:
-    # Wrap the user function to convert array output to dict if needed
+    # Wrap deterministic next_regime to return one-hot probability array
+    if is_stochastic:
+        probs_fn = regime_transition_probs
+    else:
+        probs_fn = _wrap_deterministic_regime_transition(
+            regime_transition_probs, regime_id_cls
+        )
+
+    # Wrap to convert array output to dict format
     wrapped_regime_transition_probs = _wrap_regime_transition_probs(
-        regime_transition_probs, regime_id_cls
+        probs_fn, regime_id_cls
     )
 
     functions_pool = internal_functions | {
@@ -331,3 +340,39 @@ def _wrap_regime_transition_probs(
         return {name: result[idx] for idx, name in enumerate(regime_names)}
 
     return wrapped  # type: ignore[return-value]
+
+
+def _wrap_deterministic_regime_transition(
+    fn: InternalUserFunction,
+    regime_id_cls: type,
+) -> InternalUserFunction:
+    """Wrap deterministic next_regime to return one-hot probability array.
+
+    Converts a deterministic regime transition function that returns an integer
+    regime ID to a function that returns a one-hot probability array, matching
+    the interface of stochastic regime transitions.
+
+    Args:
+        fn: The user's deterministic next_regime function (returns int).
+        regime_id_cls: Dataclass mapping regime names to integer indices.
+
+    Returns:
+        A wrapped function that returns a one-hot probability array.
+
+    """
+    n_regimes = len(fields(regime_id_cls))
+
+    # Preserve original annotations but update return type
+    annotations = get_annotations(fn)
+    annotations_with_params = annotations.copy()
+    annotations_with_params.pop("return", None)
+
+    @with_signature(args=annotations_with_params, return_annotation="Array")
+    @functools.wraps(fn)
+    def wrapped(
+        *args: Array | int, params: dict[str, Any], **kwargs: Array | int
+    ) -> Array:
+        regime_id = fn(*args, params=params, **kwargs)
+        return jax.nn.one_hot(regime_id, n_regimes)
+
+    return wrapped
