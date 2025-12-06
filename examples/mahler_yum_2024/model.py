@@ -323,6 +323,7 @@ def next_productivity_shock(
 # --------------------------------------------------------------------------------------
 # Regime Transitions
 # --------------------------------------------------------------------------------------
+@lcm.mark.stochastic
 def next_regime_from_alive(
     period: Period,
     education: DiscreteState,
@@ -332,6 +333,11 @@ def next_regime_from_alive(
     """Return probability array [P(alive), P(dead)] indexed by RegimeID."""
     survival_prob = regime_transition_from_alive[period, education, health]
     return jnp.array([survival_prob, 1 - survival_prob])
+
+
+def next_regime_from_dead() -> int:
+    """Deterministic: once dead, always dead."""
+    return RegimeID.dead
 
 
 # --------------------------------------------------------------------------------------
@@ -415,7 +421,7 @@ DEAD_REGIME = Regime(
     actions={},
     transitions={
         "dead": {"next_dead": lambda dead: Dead.dead},  # noqa: ARG005
-        "next_regime": lambda: jnp.array([0.0, 1.0]),  # [P(alive), P(dead)]
+        "next_regime": next_regime_from_dead,
     },
 )
 
