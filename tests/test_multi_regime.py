@@ -111,6 +111,7 @@ def next_wealth_regime_transition(
     return (1 + interest_rate) * (wealth - consumption)
 
 
+@lcm.mark.stochastic
 def next_regime_from_working(period: int) -> FloatND:
     """Return probability array [P(work), P(retirement)] indexed by RegimeID."""
     return jnp.array(
@@ -121,9 +122,9 @@ def next_regime_from_working(period: int) -> FloatND:
     )
 
 
-def next_regime_from_retirement() -> FloatND:
-    """Return probability array [P(work), P(retirement)] indexed by RegimeID."""
-    return jnp.array([0.0, 1.0])  # Always stay in retirement
+def next_regime_from_retirement() -> int:
+    """Return deterministic next regime (always stay in retirement)."""
+    return RegimeID.retirement
 
 
 def working_during_retirement() -> IntND:

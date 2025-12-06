@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import jax.numpy as jnp
 import pytest
 
+import lcm
 from lcm import Model, Regime
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.grids import DiscreteGrid
@@ -191,7 +192,7 @@ def test_single_regime_with_next_regime_warns(binary_category_class):
         transitions={
             "test": {"next_health": lambda health: health},
             # Invalid probability (0.5 instead of 1.0), should be ignored
-            "next_regime": lambda: jnp.array([0.5]),
+            "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5])),
         },
     )
     with pytest.warns(UserWarning, match="will be ignored"):
@@ -227,7 +228,7 @@ def test_multi_regime_without_next_regime_raises(binary_category_class):
         transitions={
             "regime1": {"next_health": lambda health: health},
             "regime2": {"next_health": lambda health: health},
-            "next_regime": lambda: jnp.array([0.5, 0.5]),
+            "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
         },
     )
     with pytest.raises(ModelInitializationError, match="next_regime"):
@@ -264,7 +265,7 @@ def test_multi_regime_without_regime_id_cls_raises(binary_category_class):
         transitions={
             "regime1": {"next_health": lambda health: health},
             "regime2": {"next_health": lambda health: health},
-            "next_regime": lambda: jnp.array([0.5, 0.5]),
+            "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
         },
     )
     regime2 = Regime(
@@ -275,7 +276,7 @@ def test_multi_regime_without_regime_id_cls_raises(binary_category_class):
         transitions={
             "regime1": {"next_health": lambda health: health},
             "regime2": {"next_health": lambda health: health},
-            "next_regime": lambda: jnp.array([0.5, 0.5]),
+            "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
         },
     )
     with pytest.raises(ModelInitializationError, match="must be provided"):
@@ -298,7 +299,7 @@ def test_multi_regime_with_invalid_regime_id_cls_raises(binary_category_class):
         transitions={
             "regime1": {"next_health": lambda health: health},
             "regime2": {"next_health": lambda health: health},
-            "next_regime": lambda: jnp.array([0.5, 0.5]),
+            "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
         },
     )
     regime2 = Regime(
@@ -309,7 +310,7 @@ def test_multi_regime_with_invalid_regime_id_cls_raises(binary_category_class):
         transitions={
             "regime1": {"next_health": lambda health: health},
             "regime2": {"next_health": lambda health: health},
-            "next_regime": lambda: jnp.array([0.5, 0.5]),
+            "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
         },
     )
     with pytest.raises(ModelInitializationError, match="regime_id_cls"):
