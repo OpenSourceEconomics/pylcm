@@ -173,6 +173,7 @@ class Model:
             initial_states=initial_states,
             initial_regimes=initial_regimes,
             internal_regimes=self.internal_regimes,
+            regime_id_cls=self.regime_id_cls,
             logger=logger,
             V_arr_dict=V_arr_dict,
             additional_targets=additional_targets,

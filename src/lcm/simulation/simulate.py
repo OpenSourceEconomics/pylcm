@@ -34,6 +34,7 @@ def simulate(
     initial_states: dict[RegimeName, dict[str, Array]],
     initial_regimes: list[RegimeName],
     internal_regimes: dict[RegimeName, InternalRegime],
+    regime_id_cls: type,
     logger: logging.Logger,
     V_arr_dict: dict[int, dict[RegimeName, FloatND]],
     *,
@@ -47,6 +48,7 @@ def simulate(
         initial_states: List of initial states to start from. Typically from the
             observed dataset.
         internal_regimes: Dict of internal regime instances.
+        regime_id_cls: Dataclass mapping regime names to integer indices.
         initial_regimes: List containing the names of the regimes the subjects start in.
         logger: Logger that logs to stdout.
         V_arr_dict: Dict of value function arrays of length n_periods.
@@ -66,7 +68,7 @@ def simulate(
 
     # Preparations
     # ----------------------------------------------------------------------------------
-    regime_name_to_id = get_regime_name_to_id_mapping(internal_regimes)
+    regime_name_to_id = get_regime_name_to_id_mapping(regime_id_cls)
 
     # The following variables are updated during the forward simulation
     states = flatten_regime_namespace(initial_states)
