@@ -100,11 +100,10 @@ def process_regimes(
     # Convert flat transitions to nested format
     # ----------------------------------------------------------------------------------
     # User provides flat format, internal processing uses nested format.
-    regime_names = [regime.name for regime in regimes]
     nested_transitions = {
         regime.name: convert_flat_to_nested_transitions(
             flat_transitions=regime.transitions,
-            regime_names=regime_names,
+            current_regime_name=regime.name,
         )
         for regime in regimes
     }
@@ -428,25 +427,24 @@ def create_default_regime_id_cls(regime_name: str) -> type:
 
 def convert_flat_to_nested_transitions(
     flat_transitions: dict[str, UserFunction],
-    regime_names: list[str],
+    current_regime_name: str,
 ) -> dict[str, dict[str, UserFunction] | UserFunction]:
     """Convert flat transitions dictionary to nested format.
 
     Takes a user-provided flat transitions dictionary and converts it to the nested
-    format expected by internal processing. State transitions are replicated for each
-    target regime, while `next_regime` stays at the top level.
+    format expected by internal processing. State transitions are placed under the
+    current regime's key, while `next_regime` stays at the top level.
 
     Args:
         flat_transitions: Flat dictionary mapping transition names to functions.
             Example: {"next_wealth": fn, "next_health": fn, "next_regime": fn}
-        regime_names: List of regime names in the model.
+        current_regime_name: Name of the current regime being processed.
 
     Returns:
-        Nested dictionary with state transitions under each regime key and
+        Nested dictionary with state transitions under the current regime key and
         `next_regime` at the top level.
         Example: {
             "work": {"next_wealth": fn, "next_health": fn},
-            "retirement": {"next_wealth": fn, "next_health": fn},
             "next_regime": fn
         }
 
@@ -457,9 +455,9 @@ def convert_flat_to_nested_transitions(
         name: fn for name, fn in flat_transitions.items() if name != "next_regime"
     }
 
-    # Create nested structure with state transitions replicated for each regime
+    # Create nested structure with state transitions under current regime only
     nested: dict[str, dict[str, UserFunction] | UserFunction] = {
-        regime_name: dict(state_transitions) for regime_name in regime_names
+        current_regime_name: dict(state_transitions)
     }
 
     # Add next_regime at top level if it exists

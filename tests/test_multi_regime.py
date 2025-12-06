@@ -241,3 +241,161 @@ def test_work_retirement_model_solution():
 
     assert isinstance(simulation, dict)
     assert len(simulation) == 2
+
+
+# ======================================================================================
+# Test for regimes with different states (like alive/dead in Mahler & Yum)
+# ======================================================================================
+
+
+@dataclass
+class AliveDeadRegimeID:
+    alive: int = 0
+    dead: int = 1
+
+
+@dataclass
+class DeadStatus:
+    dead: int = 0
+
+
+@lcm.mark.stochastic
+def next_regime_from_alive(health: DiscreteState) -> FloatND:
+    """Return probability array [P(alive), P(dead)] based on health."""
+    survival_prob = jnp.where(health == 1, 0.95, 0.8)
+    return jnp.array([survival_prob, 1 - survival_prob])
+
+
+def next_regime_from_dead() -> int:
+    """Deterministic: once dead, always dead."""
+    return AliveDeadRegimeID.dead
+
+
+def alive_borrowing_constraint(
+    consumption: ContinuousAction,
+    wealth: ContinuousState,
+) -> BoolND:
+    """Borrowing constraint: consumption must not exceed wealth."""
+    return consumption <= wealth
+
+
+def alive_utility(
+    consumption: ContinuousAction,
+    health: DiscreteState,
+) -> FloatND:
+    """Utility function for alive regime."""
+    return jnp.log(consumption) * (1 + health)
+
+
+def dead_utility(dead: DiscreteState) -> FloatND:  # noqa: ARG001
+    """Utility function for dead regime (always zero)."""
+    return jnp.asarray([0.0])
+
+
+def next_wealth_fn(
+    wealth: ContinuousState,
+    consumption: ContinuousAction,
+) -> ContinuousState:
+    """State transition for wealth."""
+    return wealth - consumption
+
+
+def next_dead_fn(dead: DiscreteState) -> int:  # noqa: ARG001
+    """State transition for dead (always stay dead)."""
+    return DeadStatus.dead
+
+
+def test_multi_regime_with_different_states():
+    """Test that regimes with different states work correctly.
+
+    This tests the pattern used in Mahler & Yum (2024) where:
+    - alive regime has states: wealth, health
+    - dead regime has states: dead
+
+    The key issue this tests is that flat transitions should only apply
+    to the current regime, not create entries for all regimes.
+    """
+    # Create alive regime with wealth and health states
+    alive_regime = Regime(
+        name="alive",
+        actions={
+            "consumption": LinspaceGrid(start=1, stop=100, n_points=10),
+        },
+        states={
+            "wealth": LinspaceGrid(start=1, stop=100, n_points=10),
+            "health": DiscreteGrid(HealthStatus),
+        },
+        utility=alive_utility,
+        constraints={"borrowing_constraint": alive_borrowing_constraint},
+        transitions={
+            "next_wealth": next_wealth_fn,
+            "next_health": next_health,
+            "next_regime": next_regime_from_alive,
+        },
+    )
+
+    # Create dead regime with only dead state
+    dead_regime = Regime(
+        name="dead",
+        utility=dead_utility,
+        states={"dead": DiscreteGrid(DeadStatus)},
+        actions={},
+        transitions={
+            "next_dead": next_dead_fn,
+            "next_regime": next_regime_from_dead,
+        },
+    )
+
+    # Create model
+    model = Model(
+        regimes=[alive_regime, dead_regime],
+        n_periods=3,
+        regime_id_cls=AliveDeadRegimeID,
+    )
+
+    # Verify model properties
+    assert model.n_periods == 3
+    assert len(model.internal_regimes) == 2
+
+    # Check params template has correct keys for each regime
+    alive_params_keys = set(model.params_template["alive"].keys())
+    dead_params_keys = set(model.params_template["dead"].keys())
+
+    # alive should have next_wealth, next_health, next_regime
+    assert "next_wealth" in alive_params_keys
+    assert "next_health" in alive_params_keys
+    assert "next_regime" in alive_params_keys
+
+    # dead should have next_dead, next_regime (NOT next_wealth, next_health)
+    assert "next_dead" in dead_params_keys
+    assert "next_regime" in dead_params_keys
+    assert "next_wealth" not in dead_params_keys
+    assert "next_health" not in dead_params_keys
+
+    # Define parameters
+    health_transition = jnp.array([[0.9, 0.1], [0.5, 0.5]])
+
+    params = {
+        "alive": {
+            "beta": 0.9,
+            "utility": {},
+            "borrowing_constraint": {},
+            "next_wealth": {},
+            "next_health": {"health_transition": health_transition},
+            "next_regime": {},
+        },
+        "dead": {
+            "beta": 0.9,
+            "utility": {},
+            "next_dead": {},
+            "next_regime": {},
+        },
+    }
+
+    # Solve model - this should not raise KeyError for dead__health
+    solution = model.solve(params)
+
+    # Basic checks
+    assert isinstance(solution, dict)
+    assert len(solution) == 3
+    assert all(period in solution for period in range(3))

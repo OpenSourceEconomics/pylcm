@@ -42,44 +42,11 @@ def test_convert_flat_to_nested_single_regime():
 
     result = convert_flat_to_nested_transitions(
         flat_transitions=flat_transitions,
-        regime_names=["work"],
+        current_regime_name="work",
     )
 
     expected = {
         "work": {
-            "next_wealth": next_wealth,
-            "next_health": next_health,
-        },
-    }
-
-    assert result == expected
-
-
-def test_convert_flat_to_nested_multi_regime():
-    """Multi regime: flat transitions replicated for each target regime."""
-
-    def next_wealth():
-        pass
-
-    def next_health():
-        pass
-
-    flat_transitions = {
-        "next_wealth": next_wealth,
-        "next_health": next_health,
-    }
-
-    result = convert_flat_to_nested_transitions(
-        flat_transitions=flat_transitions,
-        regime_names=["work", "retirement"],
-    )
-
-    expected = {
-        "work": {
-            "next_wealth": next_wealth,
-            "next_health": next_health,
-        },
-        "retirement": {
             "next_wealth": next_wealth,
             "next_health": next_health,
         },
@@ -104,14 +71,11 @@ def test_convert_flat_to_nested_with_next_regime():
 
     result = convert_flat_to_nested_transitions(
         flat_transitions=flat_transitions,
-        regime_names=["alive", "dead"],
+        current_regime_name="alive",
     )
 
     expected = {
         "alive": {
-            "next_wealth": next_wealth,
-        },
-        "dead": {
             "next_wealth": next_wealth,
         },
         "next_regime": next_regime,
@@ -132,11 +96,10 @@ def test_convert_flat_to_nested_only_next_regime():
 
     result = convert_flat_to_nested_transitions(
         flat_transitions=flat_transitions,
-        regime_names=["alive", "dead"],
+        current_regime_name="dead",
     )
 
     expected = {
-        "alive": {},
         "dead": {},
         "next_regime": next_regime,
     }
@@ -150,7 +113,7 @@ def test_convert_flat_to_nested_empty_transitions():
 
     result = convert_flat_to_nested_transitions(
         flat_transitions=flat_transitions,
-        regime_names=["single"],
+        current_regime_name="single",
     )
 
     expected: dict[str, Any] = {
