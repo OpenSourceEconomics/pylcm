@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -144,14 +146,14 @@ def test_convert_flat_to_nested_only_next_regime():
 
 def test_convert_flat_to_nested_empty_transitions():
     """Empty transitions (single-regime model without explicit transitions)."""
-    flat_transitions = {}
+    flat_transitions: dict[str, Any] = {}
 
     result = convert_flat_to_nested_transitions(
         flat_transitions=flat_transitions,
         regime_names=["single"],
     )
 
-    expected = {
+    expected: dict[str, Any] = {
         "single": {},
     }
 

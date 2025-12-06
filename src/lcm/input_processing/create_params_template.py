@@ -9,17 +9,18 @@ from jax import Array
 from lcm.input_processing.util import (
     is_stochastic_transition,
 )
-from lcm.utils import unflatten_regime_namespace
+from lcm.utils import flatten_regime_namespace, unflatten_regime_namespace
 
 if TYPE_CHECKING:
     import pandas as pd
 
     from lcm.regime import Regime
-    from lcm.typing import GridsDict, ParamsDict
+    from lcm.typing import GridsDict, ParamsDict, UserFunction
 
 
 def create_params_template(
     regime: Regime,
+    nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
     grids: GridsDict,  # noqa: ARG001
     n_periods: int,  # noqa: ARG001
     default_params: dict[str, float] = {"beta": jnp.nan},  # noqa: B006
@@ -28,6 +29,8 @@ def create_params_template(
 
     Args:
         regime: The regime as provided by the user.
+        nested_transitions: Nested transitions dict for internal processing.
+            Format: {"regime_name": {"next_state": fn, ...}, "next_regime": fn}
         grids: Dictionary containing the state grids for each regime.
         n_periods: Number of periods of the model.
         default_params: A dictionary of default parameters. Default is None. If None,
@@ -39,12 +42,15 @@ def create_params_template(
         A nested dictionary of regime parameters.
 
     """
-    function_params = _create_function_params(regime)
+    function_params = _create_function_params(regime, nested_transitions)
 
     return default_params | function_params
 
 
-def _create_function_params(regime: Regime) -> dict[str, dict[str, float]]:
+def _create_function_params(
+    regime: Regime,
+    nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],  # noqa: ARG001
+) -> dict[str, dict[str, float]]:
     """Get function parameters from a regime specification.
 
     Explanation: We consider the arguments of all regime functions, from which we
@@ -54,6 +60,7 @@ def _create_function_params(regime: Regime) -> dict[str, dict[str, float]]:
 
     Args:
         regime: The regime as provided by the user.
+        nested_transitions: Nested transitions dict for internal processing.
 
     Returns:
         A dictionary for each regime function, containing a parameters required in the
@@ -69,10 +76,20 @@ def _create_function_params(regime: Regime) -> dict[str, dict[str, float]]:
         "period",
     }
 
+    # Build all_functions using flat transitions (user-facing names without prefix)
+    # The user provides flat transitions like {"next_wealth": fn, "next_regime": fn}
+    # and params should use the same flat names
+    all_functions = flatten_regime_namespace(
+        regime.functions
+        | {"utility": regime.utility}
+        | regime.constraints
+        | regime.transitions  # Use flat transitions for flat param keys
+    )
+
     function_params = {}
     # For each user function, capture the arguments of the function that are not in the
     # set of regime variables, and initialize them.
-    for name, func in regime.get_all_functions().items():
+    for name, func in all_functions.items():
         arguments = set(inspect.signature(func).parameters)
         params = sorted(arguments.difference(variables))
         function_params[name] = dict.fromkeys(params, jnp.nan)
@@ -113,9 +130,9 @@ def _create_stochastic_transition_params(
             transitions_to_process = regime_transitions  # type: ignore[assignment]
 
         for func_name, transition in transitions_to_process.items():
-            if is_stochastic_transition(transition):  # type: ignore[arg-type]
+            if is_stochastic_transition(transition):
                 # Retrieve corresponding next function and its arguments
-                dependencies = list(inspect.signature(transition).parameters)  # type: ignore[arg-type]
+                dependencies = list(inspect.signature(transition).parameters)
 
                 # Filter out parameters (arguments that are not model variables).
                 # Model variables are in variable_info or are 'period'.

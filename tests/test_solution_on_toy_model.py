@@ -97,7 +97,7 @@ def next_health(health: DiscreteState, health_transition: FloatND) -> FloatND:
 
 
 STOCHASTIC_REGIME = deepcopy(DETERMINISTIC_REGIME)
-STOCHASTIC_REGIME.transitions["next_health"] = next_health  # type: ignore[index]
+STOCHASTIC_REGIME.transitions["next_health"] = next_health
 STOCHASTIC_REGIME.states["health"] = DiscreteGrid(HealthStatus)
 
 DETERMINISTIC_MODEL = Model([DETERMINISTIC_REGIME], n_periods=2)
@@ -234,7 +234,7 @@ def policy_second_period_stochastic(wealth, health):
 
 def value_first_period_stochastic(wealth, health, params):
     """Value function in the first period. Computed using pen and paper."""
-    health_transition = params["test__next_health"]["health_transition"]
+    health_transition = params["next_health"]["health_transition"]
 
     index = (wealth < 1).astype(int)  # map wealth to indices 0 and 1
 
@@ -246,7 +246,7 @@ def value_first_period_stochastic(wealth, health, params):
     )
     value_health_0 = _values[index]
 
-    new_beta = params["beta"] * params["test__next_health"]["health_transition"][1, 1]
+    new_beta = params["beta"] * params["next_health"]["health_transition"][1, 1]
     value_health_1 = value_first_period_deterministic(wealth, params={"beta": new_beta})
 
     # Combined
@@ -255,7 +255,7 @@ def value_first_period_stochastic(wealth, health, params):
 
 def policy_first_period_stochastic(wealth, health, params):
     """Policy function in the first period. Computed using pen and paper."""
-    health_transition = params["test__next_health"]["health_transition"]
+    health_transition = params["next_health"]["health_transition"]
 
     index = (wealth < 1).astype(int)  # map wealth to indices 0 and 1
     _policies = np.array(
@@ -271,7 +271,7 @@ def policy_first_period_stochastic(wealth, health, params):
     )
     policy_health_0 = _policies[index]
 
-    new_beta = params["beta"] * params["test__next_health"]["health_transition"][1, 1]
+    new_beta = params["beta"] * params["next_health"]["health_transition"][1, 1]
     _policy_health_1 = policy_first_period_deterministic(
         wealth,
         params={"beta": new_beta},
@@ -424,10 +424,11 @@ def test_stochastic_solve(beta, n_wealth_points, health_transition):
     model = Model([STOCHASTIC_REGIME.replace(states=new_states)], n_periods=2)
 
     # Solve model using LCM
+    # With flat transitions, param keys are flat (no regime prefix)
     # ==================================================================================
     params = {
         "beta": beta,
-        "test__next_health": {"health_transition": health_transition},
+        "next_health": {"health_transition": health_transition},
     }
     got = model.solve(params={"test": params})
 
@@ -472,10 +473,11 @@ def test_stochastic_simulate(beta, n_wealth_points, health_transition):
     model = Model([STOCHASTIC_REGIME.replace(states=new_states)], n_periods=2)
 
     # Simulate model using LCM
+    # With flat transitions, param keys are flat (no regime prefix)
     # ==================================================================================
     params = {
         "beta": beta,
-        "test__next_health": {"health_transition": health_transition},
+        "next_health": {"health_transition": health_transition},
     }
     initial_states = {
         "wealth": jnp.array([0.25, 0.75, 1.25, 1.75, 2.0]),
