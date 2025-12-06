@@ -10,6 +10,7 @@ import jax.numpy as jnp
 from dags import get_annotations
 from dags.signature import with_signature
 
+from lcm import mark
 from lcm.input_processing.create_params_template import create_params_template
 from lcm.input_processing.regime_components import (
     build_argmax_and_max_Q_over_a_functions,
@@ -82,6 +83,7 @@ def process_regimes(
                 stacklevel=3,
             )
 
+        @mark.stochastic
         def _default_next_regime() -> Array:
             return jnp.array([1.0])
 
@@ -206,7 +208,7 @@ def _get_internal_functions(
     stochastic_transition_functions = {
         fn_name: fn
         for fn_name, fn in all_functions.items()
-        if is_stochastic_transition(fn)
+        if is_stochastic_transition(fn) and fn_name != "next_regime"
     }
 
     deterministic_transition_functions = {
@@ -271,11 +273,21 @@ def _get_internal_functions(
         and fn_name not in regime.constraints
         and fn_name not in {"utility", "next_regime"}
     }
+    # Determine if next_regime is stochastic (decorated with @lcm.mark.stochastic)
+    next_regime_fn = regime.transitions.get("next_regime")
+    is_stochastic_regime_transition = (
+        next_regime_fn is not None
+        and is_stochastic_transition(
+            next_regime_fn  # type: ignore[arg-type]
+        )
+    )
+
     internal_regime_transition_probs = build_regime_transition_probs_functions(
         internal_functions=internal_functions,
         regime_transition_probs=functions["next_regime"],
         grids=grids[regime.name],
         regime_id_cls=regime_id_cls,
+        is_stochastic=is_stochastic_regime_transition,
         enable_jit=enable_jit,
     )
 
