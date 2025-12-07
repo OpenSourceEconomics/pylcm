@@ -531,6 +531,7 @@ def _handle_absorbing_regimes(regimes: list[Regime]) -> list[Regime]:
                 *,
                 _n_regimes: int = n_regimes,
                 _regime_idx: int = regime_idx,
+                **_kwargs: object,  # Accept and ignore extra params
             ) -> Array:
                 probs = jnp.zeros(_n_regimes)
                 return probs.at[_regime_idx].set(1.0)

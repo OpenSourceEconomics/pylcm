@@ -839,15 +839,11 @@ def test_absorbing_regime_auto_generates_next_regime():
         },
     )
 
-    @dataclass
-    class SingleDeadRegimeID:
-        dead: int = 0
-
     # Single absorbing regime model should work
+    # (no regime_id_cls needed for single-regime models)
     model = Model(
         regimes=[dead_regime],
         n_periods=3,
-        regime_id_cls=SingleDeadRegimeID,
     )
 
     assert model.n_periods == 3
@@ -945,15 +941,10 @@ def test_single_regime_model_treated_as_absorbing():
         },
     )
 
-    @dataclass
-    class SingleRegimeID:
-        single: int = 0
-
-    # Should work without error
+    # Should work without error (no regime_id_cls needed for single-regime models)
     model = Model(
         regimes=[single_regime],
         n_periods=3,
-        regime_id_cls=SingleRegimeID,
     )
 
     assert model.n_periods == 3

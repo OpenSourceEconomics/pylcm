@@ -336,7 +336,12 @@ def next_regime_from_alive(
 
 
 def next_dead(dead: DiscreteState) -> int:  # noqa: ARG001
-    """When transitioning to dead regime, always in dead state."""
+    """When in dead regime, remain dead."""
+    return Dead.dead
+
+
+def next_dead_from_alive() -> int:
+    """When transitioning from alive to dead regime, always enter dead state."""
     return Dead.dead
 
 
@@ -407,7 +412,7 @@ ALIVE_REGIME = Regime(
         "next_health_type": next_health_type,
         "next_education": next_education,
         "next_productivity": next_productivity,
-        "next_dead": next_dead,  # Required: transition to dead regime's state
+        "next_dead": next_dead_from_alive,  # Transition to dead regime's state
         "next_regime": next_regime_from_alive,
     },
 )
@@ -714,6 +719,7 @@ def create_inputs(
         "next_productivity_shock": {"productivity_shock_transition": xtrans.T},
         "next_health": {"health_transition": tr2yp_grid},
         "next_adjustment_cost": {"adjustment_cost_transition": jnp.full((5, 5), 1 / 5)},
+        "next_dead": {},  # Deterministic transition - no parameters needed
         "next_regime": {"regime_transition_from_alive": regime_transition_from_alive},
     }
 
