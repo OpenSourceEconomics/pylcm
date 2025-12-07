@@ -6,10 +6,12 @@ the target specification for the implementation.
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
+import pytest
 
 import lcm
 from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
@@ -611,3 +613,308 @@ def test_multi_regime_with_overlapping_states():
     assert isinstance(solution, dict)
     assert len(solution) == 3
     assert all(period in solution for period in range(3))
+
+
+# ======================================================================================
+# Tests for absorbing regimes and transition completeness validation
+# ======================================================================================
+
+# Note: AliveDeadRegimeID and DeadStatus are already defined above (around line 252)
+
+
+def test_non_absorbing_regime_missing_transitions_raises_error():
+    """Non-absorbing regime must have transitions for ALL states across ALL regimes.
+
+    If alive regime can transition to dead regime, alive must have next_dead.
+    """
+
+    def alive_utility(consumption: ContinuousAction) -> FloatND:
+        return jnp.log(consumption)
+
+    def dead_utility(dead: DiscreteState) -> FloatND:  # noqa: ARG001
+        return jnp.array(0.0)
+
+    def next_wealth(
+        wealth: ContinuousState, consumption: ContinuousAction
+    ) -> ContinuousState:
+        return wealth - consumption
+
+    @lcm.mark.stochastic
+    def next_regime_from_alive() -> FloatND:
+        return jnp.array([0.9, 0.1])  # 90% stay alive, 10% die
+
+    # Alive regime is MISSING next_dead!
+    alive_regime = Regime(
+        name="alive",
+        utility=alive_utility,
+        states={"wealth": LinspaceGrid(start=1, stop=10, n_points=5)},
+        actions={"consumption": LinspaceGrid(start=1, stop=5, n_points=5)},
+        constraints={"budget": lambda wealth, consumption: consumption <= wealth},
+        transitions={
+            "next_wealth": next_wealth,
+            # MISSING: "next_dead": ...,  <-- This should cause an error!
+            "next_regime": next_regime_from_alive,
+        },
+    )
+
+    dead_regime = Regime(  # type: ignore[call-arg,unused-ignore]
+        name="dead",
+        absorbing=True,
+        utility=dead_utility,
+        states={"dead": DiscreteGrid(DeadStatus)},
+        actions={},
+        transitions={
+            "next_dead": lambda dead: DeadStatus.dead,  # noqa: ARG005
+        },
+    )
+
+    # This should raise an error because alive is missing next_dead
+    with pytest.raises(ValueError, match="missing transitions"):
+        Model(
+            regimes=[alive_regime, dead_regime],
+            n_periods=3,
+            regime_id_cls=AliveDeadRegimeID,
+        )
+
+
+def test_missing_transitions_error_message_is_descriptive():
+    """Error message should clearly state which transitions are missing."""
+
+    def utility(consumption: ContinuousAction) -> FloatND:
+        return jnp.log(consumption)
+
+    def next_wealth(
+        wealth: ContinuousState, consumption: ContinuousAction
+    ) -> ContinuousState:
+        return wealth - consumption
+
+    @lcm.mark.stochastic
+    def next_regime() -> FloatND:
+        return jnp.array([0.5, 0.5])
+
+    # Regime A has states: wealth, health
+    # Regime B has states: wealth, pension
+    # Each regime is missing transitions for the other's unique state
+
+    regime_a = Regime(
+        name="regime_a",
+        utility=utility,
+        states={
+            "wealth": LinspaceGrid(start=1, stop=10, n_points=5),
+            "health": DiscreteGrid(HealthStatus),
+        },
+        actions={"consumption": LinspaceGrid(start=1, stop=5, n_points=5)},
+        transitions={
+            "next_wealth": next_wealth,
+            "next_health": lambda health: health,
+            # Note: next_pension is intentionally missing
+            "next_regime": next_regime,
+        },
+    )
+
+    regime_b = Regime(
+        name="regime_b",
+        utility=utility,
+        states={
+            "wealth": LinspaceGrid(start=1, stop=10, n_points=5),
+            "pension": DiscreteGrid(HealthStatus),  # Reuse HealthStatus for simplicity
+        },
+        actions={"consumption": LinspaceGrid(start=1, stop=5, n_points=5)},
+        transitions={
+            "next_wealth": next_wealth,
+            "next_pension": lambda pension: pension,
+            # Note: next_health is intentionally missing
+            "next_regime": next_regime,
+        },
+    )
+
+    @dataclass
+    class ABRegimeID:
+        regime_a: int = 0
+        regime_b: int = 1
+
+    with pytest.raises(ValueError, match="next_pension") as exc_info:
+        Model(
+            regimes=[regime_a, regime_b],
+            n_periods=3,
+            regime_id_cls=ABRegimeID,
+        )
+
+    # Error should mention both regimes and their missing transitions
+    error_msg = str(exc_info.value)
+    assert "regime_a" in error_msg
+    assert "next_pension" in error_msg
+    assert "regime_b" in error_msg
+    assert "next_health" in error_msg
+
+
+def test_absorbing_regime_only_needs_own_state_transitions():
+    """Absorbing regime should only require transitions for its own states.
+
+    Dead regime with absorbing=True should NOT need next_wealth.
+    """
+
+    def alive_utility(consumption: ContinuousAction) -> FloatND:
+        return jnp.log(consumption)
+
+    def dead_utility(dead: DiscreteState) -> FloatND:  # noqa: ARG001
+        return jnp.array(0.0)
+
+    def next_wealth(
+        wealth: ContinuousState, consumption: ContinuousAction
+    ) -> ContinuousState:
+        return wealth - consumption
+
+    @lcm.mark.stochastic
+    def next_regime_from_alive() -> FloatND:
+        return jnp.array([0.9, 0.1])
+
+    alive_regime = Regime(
+        name="alive",
+        utility=alive_utility,
+        states={"wealth": LinspaceGrid(start=1, stop=10, n_points=5)},
+        actions={"consumption": LinspaceGrid(start=1, stop=5, n_points=5)},
+        constraints={"budget": lambda wealth, consumption: consumption <= wealth},
+        transitions={
+            "next_wealth": next_wealth,
+            "next_dead": lambda dead: DeadStatus.dead,  # noqa: ARG005
+            "next_regime": next_regime_from_alive,
+        },
+    )
+
+    # Dead regime with absorbing=True - only needs next_dead, NOT next_wealth
+    dead_regime = Regime(  # type: ignore[call-arg,unused-ignore]
+        name="dead",
+        absorbing=True,
+        utility=dead_utility,
+        states={"dead": DiscreteGrid(DeadStatus)},
+        actions={},
+        transitions={
+            "next_dead": lambda dead: DeadStatus.dead,  # noqa: ARG005
+            # No next_wealth needed because absorbing=True!
+        },
+    )
+
+    # This should work without error
+    model = Model(
+        regimes=[alive_regime, dead_regime],
+        n_periods=3,
+        regime_id_cls=AliveDeadRegimeID,
+    )
+
+    assert model.n_periods == 3
+    assert len(model.internal_regimes) == 2
+
+
+def test_absorbing_regime_auto_generates_next_regime():
+    """Absorbing regime without next_regime should auto-generate it."""
+
+    def dead_utility(dead: DiscreteState) -> FloatND:  # noqa: ARG001
+        return jnp.array(0.0)
+
+    # Dead regime without explicit next_regime
+    dead_regime = Regime(  # type: ignore[call-arg,unused-ignore]
+        name="dead",
+        absorbing=True,
+        utility=dead_utility,
+        states={"dead": DiscreteGrid(DeadStatus)},
+        actions={},
+        transitions={
+            "next_dead": lambda dead: DeadStatus.dead,  # noqa: ARG005
+            # No next_regime - should be auto-generated!
+        },
+    )
+
+    @dataclass
+    class SingleDeadRegimeID:
+        dead: int = 0
+
+    # Single absorbing regime model should work
+    model = Model(
+        regimes=[dead_regime],
+        n_periods=3,
+        regime_id_cls=SingleDeadRegimeID,
+    )
+
+    assert model.n_periods == 3
+
+    # Verify next_regime was auto-generated (returns 100% for dead)
+    internal_dead = model.internal_regimes["dead"]
+    # The regime_transition_probs function should exist
+    assert internal_dead.regime_transition_probs is not None
+
+
+def test_absorbing_regime_with_explicit_next_regime_warns():
+    """Absorbing regime with explicit next_regime should warn (redundant)."""
+
+    def dead_utility(dead: DiscreteState) -> FloatND:  # noqa: ARG001
+        return jnp.array(0.0)
+
+    @lcm.mark.stochastic
+    def explicit_next_regime() -> FloatND:
+        return jnp.array([1.0])  # 100% stay dead
+
+    dead_regime = Regime(  # type: ignore[call-arg,unused-ignore]
+        name="dead",
+        absorbing=True,
+        utility=dead_utility,
+        states={"dead": DiscreteGrid(DeadStatus)},
+        actions={},
+        transitions={
+            "next_dead": lambda dead: DeadStatus.dead,  # noqa: ARG005
+            "next_regime": explicit_next_regime,  # Redundant for absorbing regime
+        },
+    )
+
+    @dataclass
+    class SingleDeadRegimeID:
+        dead: int = 0
+
+    # Should warn about redundant next_regime
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        Model(
+            regimes=[dead_regime],
+            n_periods=3,
+            regime_id_cls=SingleDeadRegimeID,
+        )
+        # Check that a warning was issued
+        assert any("absorbing" in str(warning.message).lower() for warning in w)
+
+
+def test_single_regime_model_treated_as_absorbing():
+    """Single-regime models should be treated as absorbing internally."""
+
+    def utility(consumption: ContinuousAction) -> FloatND:
+        return jnp.log(consumption)
+
+    def next_wealth(
+        wealth: ContinuousState, consumption: ContinuousAction
+    ) -> ContinuousState:
+        return wealth - consumption
+
+    # Single regime without absorbing=True or next_regime
+    single_regime = Regime(
+        name="single",
+        utility=utility,
+        states={"wealth": LinspaceGrid(start=1, stop=10, n_points=5)},
+        actions={"consumption": LinspaceGrid(start=1, stop=5, n_points=5)},
+        transitions={
+            "next_wealth": next_wealth,
+            # No next_regime needed for single-regime model
+        },
+    )
+
+    @dataclass
+    class SingleRegimeID:
+        single: int = 0
+
+    # Should work without error
+    model = Model(
+        regimes=[single_regime],
+        n_periods=3,
+        regime_id_cls=SingleRegimeID,
+    )
+
+    assert model.n_periods == 3
+    assert len(model.internal_regimes) == 1
