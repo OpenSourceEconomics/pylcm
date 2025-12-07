@@ -11,10 +11,7 @@ from lcm.input_processing.create_params_template import (
     _create_stochastic_transition_params,
     create_params_template,
 )
-from lcm.input_processing.regime_processing import (
-    convert_flat_to_nested_transitions,
-    get_grids,
-)
+from lcm.input_processing.regime_processing import get_grids
 from tests.regime_mock import RegimeMock
 
 
@@ -32,12 +29,8 @@ def test_create_params_without_shocks(binary_category_class):
             "next_b": lambda b: b,
         },
     )
-    nested_transitions = convert_flat_to_nested_transitions(
-        regime.transitions, states_per_regime={regime.name: {"b"}}
-    )
     got = create_params_template(
         regime,  # type: ignore[arg-type]
-        nested_transitions=nested_transitions,
         grids={regime.name: get_grids(regime)},  # type: ignore[arg-type]
         n_periods=3,
     )
@@ -59,10 +52,7 @@ def test_create_function_params():
         },
         utility=lambda a, b, c: None,  # noqa: ARG005
     )
-    nested_transitions = convert_flat_to_nested_transitions(
-        regime.transitions, states_per_regime={regime.name: {"b"}}
-    )
-    got = _create_function_params(regime, nested_transitions)  # type: ignore[arg-type]
+    got = _create_function_params(regime)  # type: ignore[arg-type]
     assert got == {"utility": {"c": jnp.nan}}
 
 

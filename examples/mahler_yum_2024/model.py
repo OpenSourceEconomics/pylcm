@@ -306,6 +306,16 @@ def next_education(education: DiscreteState) -> DiscreteState:
     return education
 
 
+def next_dead() -> DiscreteState:
+    """Transition of dead-state.
+
+    The dead state is currently necessary since PyLCM requires at least one state
+    variable per regime.
+
+    """
+    return Dead.dead
+
+
 @lcm.mark.stochastic
 def next_adjustment_cost(
     adjustment_cost: DiscreteState, adjustment_cost_transition: FloatND
@@ -333,16 +343,6 @@ def next_regime_from_alive(
     """Return probability array [P(alive), P(dead)] indexed by RegimeID."""
     survival_prob = regime_transition_from_alive[period, education, health]
     return jnp.array([survival_prob, 1 - survival_prob])
-
-
-def next_dead(dead: DiscreteState) -> int:  # noqa: ARG001
-    """When in dead regime, remain dead."""
-    return Dead.dead
-
-
-def next_dead_from_alive() -> int:
-    """When transitioning from alive to dead regime, always enter dead state."""
-    return Dead.dead
 
 
 # --------------------------------------------------------------------------------------
@@ -412,20 +412,19 @@ ALIVE_REGIME = Regime(
         "next_health_type": next_health_type,
         "next_education": next_education,
         "next_productivity": next_productivity,
-        "next_dead": next_dead_from_alive,  # Transition to dead regime's state
+        "next_dead": next_dead,
         "next_regime": next_regime_from_alive,
     },
 )
 
 DEAD_REGIME = Regime(
     name="dead",
-    absorbing=True,  # Absorbing regime - auto-generates next_regime
+    absorbing=True,
     utility=lambda dead: jnp.asarray([0.0]),  # noqa: ARG005
     states={"dead": DiscreteGrid(Dead)},
     actions={},
     transitions={
-        "next_dead": lambda dead: Dead.dead,  # noqa: ARG005
-        # No next_regime needed - auto-generated for absorbing regimes
+        "next_dead": next_dead,
     },
 )
 
@@ -719,7 +718,7 @@ def create_inputs(
         "next_productivity_shock": {"productivity_shock_transition": xtrans.T},
         "next_health": {"health_transition": tr2yp_grid},
         "next_adjustment_cost": {"adjustment_cost_transition": jnp.full((5, 5), 1 / 5)},
-        "next_dead": {},  # Deterministic transition - no parameters needed
+        "next_dead": {},
         "next_regime": {"regime_transition_from_alive": regime_transition_from_alive},
     }
 

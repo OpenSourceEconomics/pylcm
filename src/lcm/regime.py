@@ -27,17 +27,11 @@ class Regime:
         functions: Dictionary of auxiliary functions.
         actions: Dictionary of action grids.
         states: Dictionary of state grids.
-        absorbing: Whether this is an absorbing regime. An absorbing regime is one that
-            agents transition into and never leave (e.g., death). Absorbing regimes only
-            need transition functions for their own states, not for states in other
-            regimes. If True, next_regime will be auto-generated to always return to
-            this regime with probability 1.0.
+        absorbing: Whether this is an absorbing regime.
 
     """
 
-    # regime specification information (provided by the User)
     name: str
-    description: str | None = None
     _: KW_ONLY
     utility: UserFunction
     constraints: dict[str, UserFunction] = field(default_factory=dict)
@@ -46,6 +40,7 @@ class Regime:
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
     absorbing: bool = False
+    description: str | None = None
 
     def __post_init__(self) -> None:
         _validate_attribute_types(self)
@@ -58,7 +53,7 @@ class Regime:
             Dictionary that maps names of all regime functions to the functions.
 
         """
-        return flatten_regime_namespace(
+        return (
             self.functions
             | {"utility": self.utility}
             | self.constraints
@@ -143,37 +138,28 @@ def _validate_logical_consistency(regime: Regime) -> None:
         )
 
     # Validate transition function names start with 'next_'
-    invalid_transitions = [
-        fn_name
-        for fn_name in regime.transitions
-        if fn_name != "next_regime" and not fn_name.startswith("next_")
+    transitions_with_invalid_name = [
+        fn_name for fn_name in regime.transitions if not fn_name.startswith("next_")
     ]
-    if invalid_transitions:
+    if transitions_with_invalid_name:
         error_messages.append(
-            "Each transitions name must start with 'next_'. "
-            "The following transition names are invalid:"
-            f"{invalid_transitions}.",
+            "Each transitions name must start with 'next_'. The following transition "
+            f"names are invalid: {transitions_with_invalid_name}.",
         )
 
-    # Validate each state has a corresponding transition and vice versa
+    # Validate each state has a corresponding transition. We do not check the other way
+    # because transitions can target states in other regimes.
     states = set(regime.states)
     states_via_transition = {
-        fn_name.removeprefix("next_")
-        for fn_name in regime.transitions
-        if fn_name != "next_regime"
+        fn_name.removeprefix("next_") for fn_name in regime.transitions
     }
 
     if states - states_via_transition:
         error_messages.append(
             "Each state must have a corresponding transition function. For the "
-            f"following states, no transition function was found: "
+            "following states, no transition function was found: "
             f"{states - states_via_transition}.",
         )
-
-    # Note: We do NOT check that each transition corresponds to a state in THIS regime,
-    # because transitions can target states in OTHER regimes. For example, if regime A
-    # can transition to regime B, then A needs transition functions for B's states.
-    # This validation happens at model creation time when all regimes are known.
 
     states_and_actions_overlap = set(regime.states) & set(regime.actions)
     if states_and_actions_overlap:

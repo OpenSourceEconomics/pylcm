@@ -15,12 +15,11 @@ if TYPE_CHECKING:
     import pandas as pd
 
     from lcm.regime import Regime
-    from lcm.typing import GridsDict, ParamsDict, UserFunction
+    from lcm.typing import GridsDict, ParamsDict
 
 
 def create_params_template(
     regime: Regime,
-    nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
     grids: GridsDict,  # noqa: ARG001
     n_periods: int,  # noqa: ARG001
     default_params: dict[str, float] = {"beta": jnp.nan},  # noqa: B006
@@ -29,8 +28,6 @@ def create_params_template(
 
     Args:
         regime: The regime as provided by the user.
-        nested_transitions: Nested transitions dict for internal processing.
-            Format: {"regime_name": {"next_state": fn, ...}, "next_regime": fn}
         grids: Dictionary containing the state grids for each regime.
         n_periods: Number of periods of the model.
         default_params: A dictionary of default parameters. Default is None. If None,
@@ -39,17 +36,16 @@ def create_params_template(
             np.nan} for beta-delta discounting.
 
     Returns:
-        A nested dictionary of regime parameters.
+        The regime parameter template.
 
     """
-    function_params = _create_function_params(regime, nested_transitions)
+    function_params = _create_function_params(regime)
 
     return default_params | function_params
 
 
 def _create_function_params(
     regime: Regime,
-    nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],  # noqa: ARG001
 ) -> dict[str, dict[str, float]]:
     """Get function parameters from a regime specification.
 
@@ -60,7 +56,6 @@ def _create_function_params(
 
     Args:
         regime: The regime as provided by the user.
-        nested_transitions: Nested transitions dict for internal processing.
 
     Returns:
         A dictionary for each regime function, containing a parameters required in the

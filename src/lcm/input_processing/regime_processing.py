@@ -149,7 +149,6 @@ def process_regimes(
     for regime in regimes:
         params_template = create_params_template(
             regime,
-            nested_transitions=nested_transitions[regime.name],
             grids=grids,
             n_periods=n_periods,
         )

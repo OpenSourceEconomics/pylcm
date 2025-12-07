@@ -122,7 +122,6 @@ def get_params(
 
     # ----------------------------------------------------------------------------------
     # Model parameters
-    # With flat transitions, param keys are flat (no regime prefix)
     # ----------------------------------------------------------------------------------
     return {
         regime_name: {
