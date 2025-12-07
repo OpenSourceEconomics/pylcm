@@ -97,6 +97,12 @@ def process_regimes(
         ]
 
     # ----------------------------------------------------------------------------------
+    # Auto-generate next_regime for absorbing regimes in multi-regime models
+    # ----------------------------------------------------------------------------------
+    if len(regimes) > 1:
+        regimes = _handle_absorbing_regimes(regimes)
+
+    # ----------------------------------------------------------------------------------
     # Convert flat transitions to nested format
     # ----------------------------------------------------------------------------------
     # User provides flat format, internal processing uses nested format.
@@ -429,6 +435,60 @@ def create_default_regime_id_cls(regime_name: str) -> type:
 
     """
     return make_dataclass("RegimeID", [(regime_name, int, 0)])
+
+
+def _handle_absorbing_regimes(regimes: list[Regime]) -> list[Regime]:
+    """Process absorbing regimes in multi-regime models.
+
+    For absorbing regimes, auto-generate next_regime to always return to the same
+    regime with probability 1.0. If an absorbing regime has an explicit next_regime
+    function, warn and ignore it.
+
+    Args:
+        regimes: List of regimes to process.
+
+    Returns:
+        List of regimes with absorbing regimes having auto-generated next_regime.
+
+    """
+    processed_regimes: list[Regime] = []
+    n_regimes = len(regimes)
+
+    for regime in regimes:
+        updated_regime = regime
+        if regime.absorbing:
+            if "next_regime" in regime.transitions:
+                warnings.warn(
+                    f"Absorbing regime '{regime.name}' has a user-defined "
+                    "'next_regime' function, but this will be ignored. For "
+                    "absorbing regimes, the regime transition probability is "
+                    "always 1.0 for the same regime.",
+                    UserWarning,
+                    stacklevel=4,
+                )
+
+            # Create auto-generated next_regime that returns 100% for this regime
+            # The array position corresponds to the regime's position in regime_id_cls
+            regime_idx = len(processed_regimes)
+
+            @mark.stochastic
+            def _absorbing_next_regime(
+                *,
+                _n_regimes: int = n_regimes,
+                _regime_idx: int = regime_idx,
+            ) -> Array:
+                probs = jnp.zeros(_n_regimes)
+                return probs.at[_regime_idx].set(1.0)
+
+            updated_regime = regime.replace(
+                transitions={
+                    k: v for k, v in regime.transitions.items() if k != "next_regime"
+                }
+                | {"next_regime": _absorbing_next_regime}
+            )
+        processed_regimes.append(updated_regime)
+
+    return processed_regimes
 
 
 def convert_flat_to_nested_transitions(

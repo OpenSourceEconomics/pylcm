@@ -847,12 +847,40 @@ def test_absorbing_regime_auto_generates_next_regime():
 def test_absorbing_regime_with_explicit_next_regime_warns():
     """Absorbing regime with explicit next_regime should warn (redundant)."""
 
+    def alive_utility(consumption: ContinuousAction) -> FloatND:
+        return jnp.log(consumption)
+
     def dead_utility(dead: DiscreteState) -> FloatND:  # noqa: ARG001
         return jnp.array(0.0)
 
+    def next_wealth(
+        wealth: ContinuousState, consumption: ContinuousAction
+    ) -> ContinuousState:
+        return wealth - consumption
+
     @lcm.mark.stochastic
-    def explicit_next_regime() -> FloatND:
-        return jnp.array([1.0])  # 100% stay dead
+    def next_regime_from_alive() -> FloatND:
+        return jnp.array([0.9, 0.1])  # 90% stay alive, 10% die
+
+    @lcm.mark.stochastic
+    def explicit_next_regime_from_dead() -> FloatND:
+        return jnp.array([0.0, 1.0])  # 100% stay dead - redundant for absorbing!
+
+    def budget(wealth: ContinuousState, consumption: ContinuousAction) -> BoolND:
+        return consumption <= wealth
+
+    alive_regime = Regime(
+        name="alive",
+        utility=alive_utility,
+        states={"wealth": LinspaceGrid(start=1, stop=10, n_points=5)},
+        actions={"consumption": LinspaceGrid(start=1, stop=5, n_points=5)},
+        constraints={"budget": budget},
+        transitions={
+            "next_wealth": next_wealth,
+            "next_dead": lambda dead: DeadStatus.dead,  # noqa: ARG005
+            "next_regime": next_regime_from_alive,
+        },
+    )
 
     dead_regime = Regime(
         name="dead",
@@ -862,23 +890,19 @@ def test_absorbing_regime_with_explicit_next_regime_warns():
         actions={},
         transitions={
             "next_dead": lambda dead: DeadStatus.dead,  # noqa: ARG005
-            "next_regime": explicit_next_regime,  # Redundant for absorbing regime
+            "next_regime": explicit_next_regime_from_dead,  # Redundant for absorbing!
         },
     )
 
-    @dataclass
-    class SingleDeadRegimeID:
-        dead: int = 0
-
-    # Should warn about redundant next_regime
+    # Should warn about redundant next_regime on absorbing regime
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         Model(
-            regimes=[dead_regime],
+            regimes=[alive_regime, dead_regime],
             n_periods=3,
-            regime_id_cls=SingleDeadRegimeID,
+            regime_id_cls=AliveDeadRegimeID,
         )
-        # Check that a warning was issued
+        # Check that a warning was issued about absorbing regime
         assert any("absorbing" in str(warning.message).lower() for warning in w)
 
 
