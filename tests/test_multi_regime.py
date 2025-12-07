@@ -399,3 +399,215 @@ def test_multi_regime_with_different_states():
     assert isinstance(solution, dict)
     assert len(solution) == 3
     assert all(period in solution for period in range(3))
+
+
+# ======================================================================================
+# Test for regimes with OVERLAPPING state-spaces (neither is subset of the other)
+# ======================================================================================
+
+
+@dataclass
+class EducationLevel:
+    low: int = 0
+    high: int = 1
+
+
+@dataclass
+class PensionType:
+    basic: int = 0
+    premium: int = 1
+
+
+@dataclass
+class YoungOldRegimeID:
+    young: int = 0
+    old: int = 1
+
+
+@lcm.mark.stochastic
+def next_regime_young_to_old(education: DiscreteState) -> FloatND:
+    """Probability of transitioning from young to old based on education."""
+    # Higher education -> lower probability of aging (stay young longer)
+    stay_young_prob = jnp.where(education == 1, 0.8, 0.6)
+    return jnp.array([stay_young_prob, 1 - stay_young_prob])
+
+
+def next_regime_stay_old() -> int:
+    """Once old, always old (absorbing state)."""
+    return YoungOldRegimeID.old
+
+
+def young_utility(
+    consumption: ContinuousAction,
+    education: DiscreteState,
+) -> FloatND:
+    """Utility for young regime."""
+    return jnp.log(consumption) * (1 + 0.5 * education)
+
+
+def old_utility(
+    consumption: ContinuousAction,
+    pension: DiscreteState,
+) -> FloatND:
+    """Utility for old regime."""
+    return jnp.log(consumption) * (1 + 0.3 * pension)
+
+
+def young_borrowing_constraint(
+    consumption: ContinuousAction,
+    wealth: ContinuousState,
+) -> BoolND:
+    """Borrowing constraint for young."""
+    return consumption <= wealth
+
+
+def old_borrowing_constraint(
+    consumption: ContinuousAction,
+    wealth: ContinuousState,
+) -> BoolND:
+    """Borrowing constraint for old."""
+    return consumption <= wealth
+
+
+def next_wealth_young(
+    wealth: ContinuousState,
+    consumption: ContinuousAction,
+) -> ContinuousState:
+    """Wealth transition for young (can save)."""
+    return wealth - consumption + 10  # Young earn income
+
+
+def next_wealth_old(
+    wealth: ContinuousState,
+    consumption: ContinuousAction,
+) -> ContinuousState:
+    """Wealth transition for old (pension income)."""
+    return wealth - consumption + 5  # Old get pension
+
+
+def next_education(education: DiscreteState) -> DiscreteState:
+    """Education stays constant."""
+    return education
+
+
+def next_pension(education: DiscreteState) -> DiscreteState:
+    """Pension type determined by education when transitioning to old."""
+    # High education -> premium pension, low education -> basic pension
+    return education  # Maps education level to pension type
+
+
+def test_multi_regime_with_overlapping_states():
+    """Test regimes with overlapping but non-subset state-spaces.
+
+    This tests a critical case where:
+    - young regime has states: {wealth, education}
+    - old regime has states: {wealth, pension}
+    - Shared state: wealth
+    - Unique to young: education
+    - Unique to old: pension
+
+    When young transitions to old, it needs:
+    - next_wealth (shared state)
+    - next_pension (old's unique state, derived from education)
+
+    The flat transitions interface should automatically map:
+    - next_wealth -> both young and old regimes (shared)
+    - next_education -> young regime only
+    - next_pension -> old regime only
+    """
+    # Young regime: has wealth (shared) and education (unique)
+    young_regime = Regime(
+        name="young",
+        actions={
+            "consumption": LinspaceGrid(start=1, stop=50, n_points=10),
+        },
+        states={
+            "wealth": LinspaceGrid(start=1, stop=100, n_points=10),
+            "education": DiscreteGrid(EducationLevel),
+        },
+        utility=young_utility,
+        constraints={"borrowing_constraint": young_borrowing_constraint},
+        transitions={
+            "next_wealth": next_wealth_young,
+            "next_education": next_education,
+            "next_pension": next_pension,  # Needed for transition to old!
+            "next_regime": next_regime_young_to_old,
+        },
+    )
+
+    # Old regime: has wealth (shared) and pension (unique)
+    old_regime = Regime(
+        name="old",
+        actions={
+            "consumption": LinspaceGrid(start=1, stop=50, n_points=10),
+        },
+        states={
+            "wealth": LinspaceGrid(start=1, stop=100, n_points=10),
+            "pension": DiscreteGrid(PensionType),
+        },
+        utility=old_utility,
+        constraints={"borrowing_constraint": old_borrowing_constraint},
+        transitions={
+            "next_wealth": next_wealth_old,
+            "next_pension": lambda pension: pension,  # Pension stays constant
+            "next_regime": next_regime_stay_old,
+        },
+    )
+
+    # Create model - this should work with correct flat->nested conversion
+    model = Model(
+        regimes=[young_regime, old_regime],
+        n_periods=3,
+        regime_id_cls=YoungOldRegimeID,
+    )
+
+    # Verify model properties
+    assert model.n_periods == 3
+    assert len(model.internal_regimes) == 2
+
+    # Check params template structure
+    young_params_keys = set(model.params_template["young"].keys())
+    old_params_keys = set(model.params_template["old"].keys())
+
+    # Young should have: next_wealth, next_education, next_pension, next_regime
+    assert "next_wealth" in young_params_keys
+    assert "next_education" in young_params_keys
+    assert "next_pension" in young_params_keys  # For transition to old!
+    assert "next_regime" in young_params_keys
+
+    # Old should have: next_wealth, next_pension, next_regime
+    assert "next_wealth" in old_params_keys
+    assert "next_pension" in old_params_keys
+    assert "next_regime" in old_params_keys
+    # Old should NOT have next_education (not in old's state space)
+    assert "next_education" not in old_params_keys
+
+    # Define parameters
+    params = {
+        "young": {
+            "beta": 0.95,
+            "utility": {},
+            "borrowing_constraint": {},
+            "next_wealth": {},
+            "next_education": {},
+            "next_pension": {},
+            "next_regime": {},
+        },
+        "old": {
+            "beta": 0.95,
+            "utility": {},
+            "borrowing_constraint": {},
+            "next_wealth": {},
+            "next_pension": {},
+            "next_regime": {},
+        },
+    }
+
+    # Solve model - this will fail if flat->nested conversion is broken
+    # because young regime needs next_pension mapped to old regime's state space
+    solution = model.solve(params)
+
+    # Basic checks
+    assert isinstance(solution, dict)
+    assert len(solution) == 3
+    assert all(period in solution for period in range(3))
