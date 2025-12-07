@@ -335,9 +335,9 @@ def next_regime_from_alive(
     return jnp.array([survival_prob, 1 - survival_prob])
 
 
-def next_regime_from_dead() -> int:
-    """Deterministic: once dead, always dead."""
-    return RegimeID.dead
+def next_dead(dead: DiscreteState) -> int:  # noqa: ARG001
+    """When transitioning to dead regime, always in dead state."""
+    return Dead.dead
 
 
 # --------------------------------------------------------------------------------------
@@ -407,18 +407,20 @@ ALIVE_REGIME = Regime(
         "next_health_type": next_health_type,
         "next_education": next_education,
         "next_productivity": next_productivity,
+        "next_dead": next_dead,  # Required: transition to dead regime's state
         "next_regime": next_regime_from_alive,
     },
 )
 
 DEAD_REGIME = Regime(
     name="dead",
+    absorbing=True,  # Absorbing regime - auto-generates next_regime
     utility=lambda dead: jnp.asarray([0.0]),  # noqa: ARG005
     states={"dead": DiscreteGrid(Dead)},
     actions={},
     transitions={
         "next_dead": lambda dead: Dead.dead,  # noqa: ARG005
-        "next_regime": next_regime_from_dead,
+        # No next_regime needed - auto-generated for absorbing regimes
     },
 )
 

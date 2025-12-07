@@ -307,6 +307,11 @@ def next_dead_fn(dead: DiscreteState) -> int:  # noqa: ARG001
     return DeadStatus.dead
 
 
+def next_dead_from_alive() -> int:
+    """Transition to dead state when entering dead regime from alive."""
+    return DeadStatus.dead
+
+
 def test_multi_regime_with_different_states():
     """Test that regimes with different states work correctly.
 
@@ -332,19 +337,21 @@ def test_multi_regime_with_different_states():
         transitions={
             "next_wealth": next_wealth_fn,
             "next_health": next_health,
+            "next_dead": next_dead_from_alive,  # Required for transition to dead regime
             "next_regime": next_regime_from_alive,
         },
     )
 
-    # Create dead regime with only dead state
+    # Create dead regime with only dead state (absorbing - never leaves)
     dead_regime = Regime(
         name="dead",
+        absorbing=True,  # Absorbing regime - auto-generates next_regime
         utility=dead_utility,
         states={"dead": DiscreteGrid(DeadStatus)},
         actions={},
         transitions={
             "next_dead": next_dead_fn,
-            "next_regime": next_regime_from_dead,
+            # No next_regime needed - auto-generated for absorbing regimes
         },
     )
 
@@ -538,8 +545,10 @@ def test_multi_regime_with_overlapping_states():
     )
 
     # Old regime: has wealth (shared) and pension (unique)
+    # Marked as absorbing since agents can't leave old regime
     old_regime = Regime(
         name="old",
+        absorbing=True,  # Absorbing regime - can't transition back to young
         actions={
             "consumption": LinspaceGrid(start=1, stop=50, n_points=10),
         },
@@ -552,7 +561,7 @@ def test_multi_regime_with_overlapping_states():
         transitions={
             "next_wealth": next_wealth_old,
             "next_pension": lambda pension: pension,  # Pension stays constant
-            "next_regime": next_regime_stay_old,
+            # No next_regime needed - auto-generated for absorbing regimes
         },
     )
 
