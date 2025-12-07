@@ -657,7 +657,7 @@ def test_non_absorbing_regime_missing_transitions_raises_error():
         },
     )
 
-    dead_regime = Regime(  # type: ignore[call-arg,unused-ignore]
+    dead_regime = Regime(
         name="dead",
         absorbing=True,
         utility=dead_utility,
@@ -783,7 +783,7 @@ def test_absorbing_regime_only_needs_own_state_transitions():
     )
 
     # Dead regime with absorbing=True - only needs next_dead, NOT next_wealth
-    dead_regime = Regime(  # type: ignore[call-arg,unused-ignore]
+    dead_regime = Regime(
         name="dead",
         absorbing=True,
         utility=dead_utility,
@@ -813,7 +813,7 @@ def test_absorbing_regime_auto_generates_next_regime():
         return jnp.array(0.0)
 
     # Dead regime without explicit next_regime
-    dead_regime = Regime(  # type: ignore[call-arg,unused-ignore]
+    dead_regime = Regime(
         name="dead",
         absorbing=True,
         utility=dead_utility,
@@ -854,7 +854,7 @@ def test_absorbing_regime_with_explicit_next_regime_warns():
     def explicit_next_regime() -> FloatND:
         return jnp.array([1.0])  # 100% stay dead
 
-    dead_regime = Regime(  # type: ignore[call-arg,unused-ignore]
+    dead_regime = Regime(
         name="dead",
         absorbing=True,
         utility=dead_utility,

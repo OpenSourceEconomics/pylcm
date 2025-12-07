@@ -19,13 +19,19 @@ class Regime:
     """A user regime which can be processed into an internal regime.
 
     Attributes:
+        name: Name of the regime.
         description: Description of the regime.
-        n_periods: Number of periods in the regime.
-        functions: Dictionary of user provided functions that define the functional
-            relationships between regime variables. It must include at least a function
-            called 'utility'.
-        actions: Dictionary of user provided actions.
-        states: Dictionary of user provided states.
+        utility: Utility function for this regime.
+        constraints: Dictionary of constraint functions.
+        transitions: Dictionary of transition functions (must start with 'next_').
+        functions: Dictionary of auxiliary functions.
+        actions: Dictionary of action grids.
+        states: Dictionary of state grids.
+        absorbing: Whether this is an absorbing regime. An absorbing regime is one that
+            agents transition into and never leave (e.g., death). Absorbing regimes only
+            need transition functions for their own states, not for states in other
+            regimes. If True, next_regime will be auto-generated to always return to
+            this regime with probability 1.0.
 
     """
 
@@ -39,6 +45,7 @@ class Regime:
     functions: dict[str, UserFunction] = field(default_factory=dict)
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
+    absorbing: bool = False
 
     def __post_init__(self) -> None:
         _validate_attribute_types(self)
