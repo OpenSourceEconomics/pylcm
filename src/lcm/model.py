@@ -240,12 +240,13 @@ def _validate_model_inputs(
 
     # Multi-regime model validation
     if len(regimes) > 1:
-        # Check next_regime is defined in each regime
+        # Check next_regime is defined in each non-absorbing regime
+        # (absorbing regimes get next_regime auto-generated during processing)
         error_messages.extend(
             f"Multi-regime models require 'next_regime' in transitions for "
-            f"each regime. Missing in regime '{regime.name}'."
+            f"each non-absorbing regime. Missing in regime '{regime.name}'."
             for regime in regimes
-            if "next_regime" not in regime.transitions
+            if "next_regime" not in regime.transitions and not regime.absorbing
         )
 
         # Check regime_id_cls is provided

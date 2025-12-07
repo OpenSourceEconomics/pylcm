@@ -769,12 +769,17 @@ def test_absorbing_regime_only_needs_own_state_transitions():
     def next_regime_from_alive() -> FloatND:
         return jnp.array([0.9, 0.1])
 
+    def borrowing_constraint(
+        wealth: ContinuousState, consumption: ContinuousAction
+    ) -> BoolND:
+        return consumption <= wealth
+
     alive_regime = Regime(
         name="alive",
         utility=alive_utility,
         states={"wealth": LinspaceGrid(start=1, stop=10, n_points=5)},
         actions={"consumption": LinspaceGrid(start=1, stop=5, n_points=5)},
-        constraints={"budget": lambda wealth, consumption: consumption <= wealth},
+        constraints={"borrowing_constraint": borrowing_constraint},
         transitions={
             "next_wealth": next_wealth,
             "next_dead": lambda dead: DeadStatus.dead,  # noqa: ARG005
@@ -866,7 +871,9 @@ def test_absorbing_regime_with_explicit_next_regime_warns():
     def explicit_next_regime_from_dead() -> FloatND:
         return jnp.array([0.0, 1.0])  # 100% stay dead - redundant for absorbing!
 
-    def budget(wealth: ContinuousState, consumption: ContinuousAction) -> BoolND:
+    def borrowing_constraint(
+        wealth: ContinuousState, consumption: ContinuousAction
+    ) -> BoolND:
         return consumption <= wealth
 
     alive_regime = Regime(
@@ -874,7 +881,7 @@ def test_absorbing_regime_with_explicit_next_regime_warns():
         utility=alive_utility,
         states={"wealth": LinspaceGrid(start=1, stop=10, n_points=5)},
         actions={"consumption": LinspaceGrid(start=1, stop=5, n_points=5)},
-        constraints={"budget": budget},
+        constraints={"borrowing_constraint": borrowing_constraint},
         transitions={
             "next_wealth": next_wealth,
             "next_dead": lambda dead: DeadStatus.dead,  # noqa: ARG005

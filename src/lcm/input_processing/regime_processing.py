@@ -103,6 +103,12 @@ def process_regimes(
         regimes = _handle_absorbing_regimes(regimes)
 
     # ----------------------------------------------------------------------------------
+    # Validate transition completeness for multi-regime models
+    # ----------------------------------------------------------------------------------
+    if len(regimes) > 1:
+        _validate_transition_completeness(regimes)
+
+    # ----------------------------------------------------------------------------------
     # Convert flat transitions to nested format
     # ----------------------------------------------------------------------------------
     # User provides flat format, internal processing uses nested format.
@@ -435,6 +441,55 @@ def create_default_regime_id_cls(regime_name: str) -> type:
 
     """
     return make_dataclass("RegimeID", [(regime_name, int, 0)])
+
+
+def _validate_transition_completeness(regimes: list[Regime]) -> None:
+    """Validate that non-absorbing regimes have complete transitions.
+
+    Non-absorbing regimes must have transition functions for ALL states across ALL
+    regimes, since they can potentially transition to any other regime.
+
+    Absorbing regimes only need transitions for their own states.
+
+    Args:
+        regimes: List of regimes to validate.
+
+    Raises:
+        ValueError: If any non-absorbing regime is missing transitions.
+
+    """
+    # Collect all states across all regimes
+    all_states: set[str] = set()
+    for regime in regimes:
+        all_states.update(regime.states.keys())
+
+    # For each non-absorbing regime, check that it has transitions for all states
+    missing_transitions: dict[str, set[str]] = {}
+
+    for regime in regimes:
+        # Absorbing regimes only need transitions for their own states.
+        # Non-absorbing regimes need transitions for ALL states across ALL regimes.
+        required_states = set(regime.states.keys()) if regime.absorbing else all_states
+
+        # Get states that have transition functions in this regime
+        states_with_transitions = {
+            name.removeprefix("next_")
+            for name in regime.transitions
+            if name != "next_regime"
+        }
+
+        # Check for missing transitions
+        missing = required_states - states_with_transitions
+        if missing:
+            missing_transitions[regime.name] = missing
+
+    if missing_transitions:
+        error_parts = ["Non-absorbing regimes have missing transitions:"]
+        for regime_name, missing in sorted(missing_transitions.items()):
+            missing_list = ", ".join(f"next_{s}" for s in sorted(missing))
+            error_parts.append(f"  - Regime '{regime_name}' is missing: {missing_list}")
+
+        raise ValueError("\n".join(error_parts))
 
 
 def _handle_absorbing_regimes(regimes: list[Regime]) -> list[Regime]:
