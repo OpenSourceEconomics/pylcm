@@ -42,7 +42,7 @@ def test_convert_flat_to_nested_single_regime():
 
     result = convert_flat_to_nested_transitions(
         flat_transitions=flat_transitions,
-        current_regime_name="work",
+        states_per_regime={"work": {"wealth", "health"}},
     )
 
     expected = {
@@ -71,7 +71,7 @@ def test_convert_flat_to_nested_with_next_regime():
 
     result = convert_flat_to_nested_transitions(
         flat_transitions=flat_transitions,
-        current_regime_name="alive",
+        states_per_regime={"alive": {"wealth"}},
     )
 
     expected = {
@@ -96,9 +96,10 @@ def test_convert_flat_to_nested_only_next_regime():
 
     result = convert_flat_to_nested_transitions(
         flat_transitions=flat_transitions,
-        current_regime_name="dead",
+        states_per_regime={"dead": set()},
     )
 
+    # Empty regimes (no states) get complete transitions by definition
     expected = {
         "dead": {},
         "next_regime": next_regime,
@@ -113,11 +114,98 @@ def test_convert_flat_to_nested_empty_transitions():
 
     result = convert_flat_to_nested_transitions(
         flat_transitions=flat_transitions,
-        current_regime_name="single",
+        states_per_regime={"single": set()},
     )
 
+    # Empty regime with no transitions is valid
     expected: dict[str, Any] = {
         "single": {},
+    }
+
+    assert result == expected
+
+
+def test_convert_flat_to_nested_multi_regime_complete():
+    """Multi-regime case: only regimes with complete transitions are included."""
+
+    def next_wealth():
+        pass
+
+    def next_education():
+        pass
+
+    def next_pension():
+        pass
+
+    def next_regime():
+        pass
+
+    flat_transitions = {
+        "next_wealth": next_wealth,
+        "next_education": next_education,
+        "next_pension": next_pension,
+        "next_regime": next_regime,
+    }
+
+    result = convert_flat_to_nested_transitions(
+        flat_transitions=flat_transitions,
+        states_per_regime={
+            "young": {"wealth", "education"},
+            "old": {"wealth", "pension"},
+        },
+    )
+
+    # Both regimes have complete transitions
+    expected = {
+        "young": {
+            "next_wealth": next_wealth,
+            "next_education": next_education,
+        },
+        "old": {
+            "next_wealth": next_wealth,
+            "next_pension": next_pension,
+        },
+        "next_regime": next_regime,
+    }
+
+    assert result == expected
+
+
+def test_convert_flat_to_nested_multi_regime_incomplete():
+    """Multi-regime case: regimes with incomplete transitions are excluded."""
+
+    def next_wealth():
+        pass
+
+    def next_pension():
+        pass
+
+    def next_regime():
+        pass
+
+    # Old regime's transitions: only has next_wealth, next_pension
+    # Does NOT have next_education (because old can't transition to young)
+    flat_transitions = {
+        "next_wealth": next_wealth,
+        "next_pension": next_pension,
+        "next_regime": next_regime,
+    }
+
+    result = convert_flat_to_nested_transitions(
+        flat_transitions=flat_transitions,
+        states_per_regime={
+            "young": {"wealth", "education"},  # Incomplete: missing next_education
+            "old": {"wealth", "pension"},  # Complete
+        },
+    )
+
+    # Only "old" is included because "young" has incomplete transitions
+    expected = {
+        "old": {
+            "next_wealth": next_wealth,
+            "next_pension": next_pension,
+        },
+        "next_regime": next_regime,
     }
 
     assert result == expected

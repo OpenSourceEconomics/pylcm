@@ -100,10 +100,16 @@ def process_regimes(
     # Convert flat transitions to nested format
     # ----------------------------------------------------------------------------------
     # User provides flat format, internal processing uses nested format.
+    # First, collect state names for each regime to know which transitions map where.
+    states_per_regime: dict[str, set[str]] = {
+        regime.name: set(regime.states.keys()) for regime in regimes
+    }
+
+    # Convert each regime's flat transitions to nested format
     nested_transitions = {
         regime.name: convert_flat_to_nested_transitions(
             flat_transitions=regime.transitions,
-            current_regime_name=regime.name,
+            states_per_regime=states_per_regime,
         )
         for regime in regimes
     }
@@ -427,24 +433,30 @@ def create_default_regime_id_cls(regime_name: str) -> type:
 
 def convert_flat_to_nested_transitions(
     flat_transitions: dict[str, UserFunction],
-    current_regime_name: str,
+    states_per_regime: dict[str, set[str]],
 ) -> dict[str, dict[str, UserFunction] | UserFunction]:
     """Convert flat transitions dictionary to nested format.
 
     Takes a user-provided flat transitions dictionary and converts it to the nested
-    format expected by internal processing. State transitions are placed under the
-    current regime's key, while `next_regime` stays at the top level.
+    format expected by internal processing. Each transition function is mapped to
+    all target regimes that have the corresponding state.
+
+    Only regimes with COMPLETE transitions are included. A regime has complete
+    transitions if there is a transition function for every state in that regime.
+    This ensures we don't create entries for regimes that cannot be transitioned to.
 
     Args:
         flat_transitions: Flat dictionary mapping transition names to functions.
             Example: {"next_wealth": fn, "next_health": fn, "next_regime": fn}
-        current_regime_name: Name of the current regime being processed.
+        states_per_regime: Dictionary mapping regime names to their state names.
+            Example: {"work": {"wealth", "health"}, "retirement": {"wealth", "health"}}
 
     Returns:
-        Nested dictionary with state transitions under the current regime key and
-        `next_regime` at the top level.
+        Nested dictionary with state transitions mapped to their target regimes.
+        Only includes regimes where ALL states have transition functions.
         Example: {
             "work": {"next_wealth": fn, "next_health": fn},
+            "retirement": {"next_wealth": fn, "next_health": fn},
             "next_regime": fn
         }
 
@@ -455,10 +467,20 @@ def convert_flat_to_nested_transitions(
         name: fn for name, fn in flat_transitions.items() if name != "next_regime"
     }
 
-    # Create nested structure with state transitions under current regime only
-    nested: dict[str, dict[str, UserFunction] | UserFunction] = {
-        current_regime_name: dict(state_transitions)
-    }
+    # Get the set of states that have transition functions
+    states_with_transitions = {name.removeprefix("next_") for name in state_transitions}
+
+    # Build nested structure, only including regimes with complete transitions
+    nested: dict[str, dict[str, UserFunction] | UserFunction] = {}
+
+    for regime_name, state_names in states_per_regime.items():
+        # Check if ALL states in this regime have transition functions
+        if state_names <= states_with_transitions:
+            # All states covered - include this regime
+            nested[regime_name] = {
+                f"next_{state}": state_transitions[f"next_{state}"]
+                for state in state_names
+            }
 
     # Add next_regime at top level if it exists
     if next_regime_fn is not None:

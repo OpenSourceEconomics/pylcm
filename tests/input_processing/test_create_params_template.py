@@ -33,7 +33,7 @@ def test_create_params_without_shocks(binary_category_class):
         },
     )
     nested_transitions = convert_flat_to_nested_transitions(
-        regime.transitions, current_regime_name=regime.name
+        regime.transitions, states_per_regime={regime.name: {"b"}}
     )
     got = create_params_template(
         regime,  # type: ignore[arg-type]
@@ -60,7 +60,7 @@ def test_create_function_params():
         utility=lambda a, b, c: None,  # noqa: ARG005
     )
     nested_transitions = convert_flat_to_nested_transitions(
-        regime.transitions, current_regime_name=regime.name
+        regime.transitions, states_per_regime={regime.name: {"b"}}
     )
     got = _create_function_params(regime, nested_transitions)  # type: ignore[arg-type]
     assert got == {"utility": {"c": jnp.nan}}
