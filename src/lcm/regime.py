@@ -163,12 +163,10 @@ def _validate_logical_consistency(regime: Regime) -> None:
             f"{states - states_via_transition}.",
         )
 
-    if states_via_transition - states:
-        error_messages.append(
-            "Each transition function must correspond to a state. For the following "
-            f"transition functions, no corresponding state was found: "
-            f"{states_via_transition - states}.",
-        )
+    # Note: We do NOT check that each transition corresponds to a state in THIS regime,
+    # because transitions can target states in OTHER regimes. For example, if regime A
+    # can transition to regime B, then A needs transition functions for B's states.
+    # This validation happens at model creation time when all regimes are known.
 
     states_and_actions_overlap = set(regime.states) & set(regime.actions)
     if states_and_actions_overlap:
