@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
 def simulate(
     params: dict[RegimeName, ParamsDict],
-    initial_states: "FlatInitialStates",
+    initial_states: FlatInitialStates,
     initial_regimes: list[RegimeName],
     internal_regimes: dict[RegimeName, InternalRegime],
     regime_id_cls: type,

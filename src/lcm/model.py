@@ -143,7 +143,7 @@ class Model:
     def simulate(
         self,
         params: ParamsDict,
-        initial_states: "FlatInitialStates",
+        initial_states: FlatInitialStates,
         initial_regimes: list[RegimeName],
         V_arr_dict: dict[int, dict[RegimeName, FloatND]],
         *,
@@ -155,10 +155,9 @@ class Model:
 
         Args:
             params: Model parameters matching the template from self.params_template
-            initial_states: Flat dict mapping state names to arrays. All arrays must
-                have the same length (number of subjects). Each state name should
-                correspond to a state variable defined in at least one regime.
-                Example: {"wealth": jnp.array([10.0, 50.0]), "health": jnp.array([0, 1])}
+            initial_states: Dict mapping state names to arrays. All arrays must have the
+                same length (number of subjects). Each state name should correspond to a
+                state variable defined in at least one regime.
             initial_regimes: List containing the names of the regimes the subjects
                 start in.
             V_arr_dict: Value function arrays from solve()
@@ -186,7 +185,7 @@ class Model:
     def solve_and_simulate(
         self,
         params: ParamsDict,
-        initial_states: "FlatInitialStates",
+        initial_states: FlatInitialStates,
         initial_regimes: list[RegimeName],
         *,
         additional_targets: dict[RegimeName, list[str]] | None = None,
@@ -197,10 +196,9 @@ class Model:
 
         Args:
             params: Model parameters matching the template from self.params_template
-            initial_states: Flat dict mapping state names to arrays. All arrays must
-                have the same length (number of subjects). Each state name should
-                correspond to a state variable defined in at least one regime.
-                Example: {"wealth": jnp.array([10.0, 50.0]), "health": jnp.array([0, 1])}
+            initial_states: Dict mapping state names to arrays. All arrays must have the
+                same length (number of subjects). Each state name should correspond to a
+                state variable defined in at least one regime.
             initial_regimes: List containing the names of the regimes the subjects
                 start in.
             additional_targets: Additional targets to compute
