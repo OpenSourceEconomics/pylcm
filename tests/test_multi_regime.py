@@ -219,19 +219,12 @@ class TestBasicModel:
 
         solution = model.solve(params)
 
-        # Simulate starting from work regime - need to provide initial states for all
-        # regimes
+        # Simulate starting from work regime
         simulation = model.simulate(
             params=params,
             initial_states={
-                "work": {
-                    "wealth": jnp.array([10.0, 50.0]),
-                    "health": jnp.array([0, 1]),
-                },
-                "retirement": {
-                    "wealth": jnp.array([10.0, 50.0]),
-                    "health": jnp.array([0, 1]),
-                },
+                "wealth": jnp.array([10.0, 50.0]),
+                "health": jnp.array([0, 1]),
             },
             initial_regimes=["work", "work"],
             V_arr_dict=solution,
