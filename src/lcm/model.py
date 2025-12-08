@@ -18,10 +18,10 @@ from lcm.solution.solve_brute import solve
 
 if TYPE_CHECKING:
     import pandas as pd
-    from jax import Array
 
     from lcm.input_processing.regime_processing import InternalRegime
     from lcm.typing import (
+        FlatInitialStates,
         FloatND,
         ParamsDict,
         RegimeName,
@@ -143,7 +143,7 @@ class Model:
     def simulate(
         self,
         params: ParamsDict,
-        initial_states: dict[RegimeName, dict[str, Array]],
+        initial_states: "FlatInitialStates",
         initial_regimes: list[RegimeName],
         V_arr_dict: dict[int, dict[RegimeName, FloatND]],
         *,
@@ -154,8 +154,11 @@ class Model:
         """Simulate the model forward using pre-computed functions.
 
         Args:
-            params: Model parameters
-            initial_states: Initial state values
+            params: Model parameters matching the template from self.params_template
+            initial_states: Flat dict mapping state names to arrays. All arrays must
+                have the same length (number of subjects). Each state name should
+                correspond to a state variable defined in at least one regime.
+                Example: {"wealth": jnp.array([10.0, 50.0]), "health": jnp.array([0, 1])}
             initial_regimes: List containing the names of the regimes the subjects
                 start in.
             V_arr_dict: Value function arrays from solve()
@@ -183,7 +186,7 @@ class Model:
     def solve_and_simulate(
         self,
         params: ParamsDict,
-        initial_states: dict[RegimeName, dict[str, Array]],
+        initial_states: "FlatInitialStates",
         initial_regimes: list[RegimeName],
         *,
         additional_targets: dict[RegimeName, list[str]] | None = None,
@@ -193,8 +196,11 @@ class Model:
         """Solve and then simulate the model in one call.
 
         Args:
-            params: Model parameters
-            initial_states: Initial state values
+            params: Model parameters matching the template from self.params_template
+            initial_states: Flat dict mapping state names to arrays. All arrays must
+                have the same length (number of subjects). Each state name should
+                correspond to a state variable defined in at least one regime.
+                Example: {"wealth": jnp.array([10.0, 50.0]), "health": jnp.array([0, 1])}
             initial_regimes: List containing the names of the regimes the subjects
                 start in.
             additional_targets: Additional targets to compute
