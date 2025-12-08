@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from lcm.exceptions import RegimeInitializationError, format_messages
 from lcm.grids import Grid
-from lcm.utils import flatten_regime_namespace
+from lcm.utils import REGIME_SEPARATOR, flatten_regime_namespace
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -130,6 +130,41 @@ def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
 def _validate_logical_consistency(regime: Regime) -> None:
     """Validate the logical consistency of the regime."""
     error_messages = []
+
+    # Validate regime name does not contain the separator
+    if REGIME_SEPARATOR in regime.name:
+        error_messages.append(
+            f"Regime name '{regime.name}' contains the reserved separator "
+            f"'{REGIME_SEPARATOR}'. Please use a different name.",
+        )
+
+    # Validate function names do not contain the separator
+    all_function_names = (
+        list(regime.transitions.keys())
+        + list(regime.constraints.keys())
+        + list(regime.functions.keys())
+    )
+    invalid_function_names = [
+        name for name in all_function_names if REGIME_SEPARATOR in name
+    ]
+    if invalid_function_names:
+        error_messages.append(
+            f"Function names cannot contain the reserved separator "
+            f"'{REGIME_SEPARATOR}'. The following names are invalid: "
+            f"{invalid_function_names}.",
+        )
+
+    # Validate state and action names do not contain the separator
+    all_variable_names = list(regime.states.keys()) + list(regime.actions.keys())
+    invalid_variable_names = [
+        name for name in all_variable_names if REGIME_SEPARATOR in name
+    ]
+    if invalid_variable_names:
+        error_messages.append(
+            f"State and action names cannot contain the reserved separator "
+            f"'{REGIME_SEPARATOR}'. The following names are invalid: "
+            f"{invalid_variable_names}.",
+        )
 
     if "utility" in regime.functions:
         error_messages.append(

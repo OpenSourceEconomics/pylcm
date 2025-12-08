@@ -28,7 +28,11 @@ from lcm.input_processing.util import (
     is_stochastic_transition,
 )
 from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
-from lcm.utils import flatten_regime_namespace, unflatten_regime_namespace
+from lcm.utils import (
+    REGIME_SEPARATOR,
+    flatten_regime_namespace,
+    unflatten_regime_namespace,
+)
 
 if TYPE_CHECKING:
     from jax import Array
@@ -286,10 +290,9 @@ def _get_internal_functions(
         # extract the flat param key "next_wealth" to look up in params
         if fn_name == "next_regime":
             param_key = fn_name
-        elif "__" in fn_name:
-            param_key = fn_name.split("__", 1)[
-                1
-            ]  # "work__next_wealth" -> "next_wealth"
+        elif REGIME_SEPARATOR in fn_name:
+            # "work__next_wealth" -> "next_wealth"
+            param_key = fn_name.split(REGIME_SEPARATOR, 1)[1]
         else:
             param_key = fn_name
         functions[fn_name] = _ensure_fn_only_depends_on_params(
@@ -304,7 +307,11 @@ def _get_internal_functions(
         # stochastic transition. For the solution, we must also define a next function
         # that returns the whole grid of possible values.
         # For prefixed names, extract the flat param key
-        param_key = fn_name.split("__", 1)[1] if "__" in fn_name else fn_name
+        param_key = (
+            fn_name.split(REGIME_SEPARATOR, 1)[1]
+            if REGIME_SEPARATOR in fn_name
+            else fn_name
+        )
         functions[f"weight_{fn_name}"] = _ensure_fn_only_depends_on_params(
             fn=fn,
             fn_name=fn_name,
