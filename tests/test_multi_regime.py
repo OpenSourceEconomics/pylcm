@@ -100,7 +100,7 @@ def next_regime_from_work(period: int) -> FloatND:
 
 def retired_working() -> IntND:
     """Retired agents don't work."""
-    return WorkingStatus.not_working
+    return jnp.array(WorkingStatus.not_working)
 
 
 # --------------------------------------------------------------------------------------
