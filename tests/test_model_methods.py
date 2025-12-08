@@ -65,13 +65,8 @@ def test_model_simulate_method():
     # Solve first
     solution = model.solve(params)
 
-    # Create initial states
-    initial_states = {
-        "iskhakov_et_al_2017_stripped_down": {
-            "wealth": jnp.array([10.0, 20.0]),
-            "lagged_retirement": jnp.array([0, 0]),
-        }
-    }
+    # Create initial states (iskhakov_et_al_2017_stripped_down only has wealth state)
+    initial_states = {"wealth": jnp.array([10.0, 20.0])}
 
     # Test simulate method
     results = model.simulate(
@@ -90,13 +85,8 @@ def test_model_solve_and_simulate_method():
     model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
     params = tree_map(lambda _: 0.2, model.params_template)
 
-    # Create initial states
-    initial_states = {
-        "iskhakov_et_al_2017_stripped_down": {
-            "wealth": jnp.array([10.0, 20.0]),
-            "lagged_retirement": jnp.array([0, 0]),
-        }
-    }
+    # Create initial states (iskhakov_et_al_2017_stripped_down only has wealth state)
+    initial_states = {"wealth": jnp.array([10.0, 20.0])}
 
     # Test combined method
     results = model.solve_and_simulate(

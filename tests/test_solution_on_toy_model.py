@@ -392,7 +392,7 @@ def test_deterministic_simulate(beta, n_wealth_points):
     params = {"beta": beta, "utility": {"health": 1}}
     got: dict[str, pd.DataFrame] = model.solve_and_simulate(
         params={"test": params},
-        initial_states={"test": {"wealth": jnp.array([0.25, 0.75, 1.25, 1.75])}},
+        initial_states={"wealth": jnp.array([0.25, 0.75, 1.25, 1.75])},
         initial_regimes=["test"] * 4,
     )
 
@@ -485,7 +485,7 @@ def test_stochastic_simulate(beta, n_wealth_points, health_transition):
     }
     _got: pd.DataFrame = model.solve_and_simulate(
         params={"test": params},
-        initial_states={"test": initial_states},
+        initial_states=initial_states,
         initial_regimes=["test"] * 5,
     )["test"]
 

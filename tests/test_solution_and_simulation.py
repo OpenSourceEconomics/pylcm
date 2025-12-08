@@ -65,11 +65,7 @@ def test_solve_and_simulate_stripped_down():
 
     model.solve_and_simulate(
         params,
-        initial_states={
-            "iskhakov_et_al_2017_stripped_down": {
-                "wealth": jnp.array([1.0, 10.0, 50.0])
-            }
-        },
+        initial_states={"wealth": jnp.array([1.0, 10.0, 50.0])},
         initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 3,
         additional_targets={"iskhakov_et_al_2017_discrete": ["age"]}
         if "age"
@@ -85,9 +81,7 @@ def test_solve_and_simulate_fully_discrete():
 
     model.solve_and_simulate(
         params,
-        initial_states={
-            "iskhakov_et_al_2017_discrete": {"wealth": jnp.array([1.0, 10.0, 50.0])}
-        },
+        initial_states={"wealth": jnp.array([1.0, 10.0, 50.0])},
         initial_regimes=["iskhakov_et_al_2017_discrete"] * 3,
         additional_targets={"iskhakov_et_al_2017_discrete": ["age"]}
         if "age" in model.internal_regimes["iskhakov_et_al_2017_discrete"].functions
@@ -115,7 +109,7 @@ def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(
     solve_then_simulate = model.simulate(
         params,
         V_arr_dict=V_arr_dict,
-        initial_states={model_name: {"wealth": jnp.array([1.0, 10.0, 50.0])}},
+        initial_states={"wealth": jnp.array([1.0, 10.0, 50.0])},
         initial_regimes=[model_name] * 3,
     )
 
@@ -123,7 +117,7 @@ def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(
     # ==================================================================================
     solve_and_simulate = model.solve_and_simulate(
         params,
-        initial_states={model_name: {"wealth": jnp.array([1.0, 10.0, 50.0])}},
+        initial_states={"wealth": jnp.array([1.0, 10.0, 50.0])},
         initial_regimes=[model_name] * 3,
     )
 
@@ -145,16 +139,14 @@ def test_simulate_iskhakov_et_al_2017(model: Model) -> None:
         params,
         V_arr_dict=V_arr_dict,
         initial_states={
-            "iskhakov_et_al_2017": {
-                "wealth": jnp.array([10.0, 10.0, 20.0]),
-                "lagged_retirement": jnp.array(
-                    [
-                        RetirementStatus.working,
-                        RetirementStatus.retired,
-                        RetirementStatus.retired,
-                    ]
-                ),
-            }
+            "wealth": jnp.array([10.0, 10.0, 20.0]),
+            "lagged_retirement": jnp.array(
+                [
+                    RetirementStatus.working,
+                    RetirementStatus.retired,
+                    RetirementStatus.retired,
+                ]
+            ),
         },
         initial_regimes=["iskhakov_et_al_2017"] * 3,
     )

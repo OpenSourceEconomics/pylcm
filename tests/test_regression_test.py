@@ -40,11 +40,7 @@ def test_regression_test():
 
     got_simulate = model.solve_and_simulate(
         params=params,
-        initial_states={
-            "iskhakov_et_al_2017_stripped_down": {
-                "wealth": jnp.array([5.0, 20, 40, 70])
-            }
-        },
+        initial_states={"wealth": jnp.array([5.0, 20, 40, 70])},
         initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 4,
     )
     # Compare
