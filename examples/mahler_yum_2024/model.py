@@ -755,18 +755,16 @@ def create_inputs(
         new_keys[2], jnp.arange(5), (n_simulation_subjects,), p=prod_dist
     )
     initial_states = {
-        "alive": {
-            "wealth": initial_wealth,
-            "health": initial_health,
-            "health_type": initial_health_type,
-            "effort_t_1": initial_effort,
-            "productivity_shock": initial_productivity_shock,
-            "adjustment_cost": initial_adjustment_cost,
-            "education": initial_education,
-            "productivity": initial_productivity,
-            "discount_factor": initial_discount,
-        },
-        "dead": {"dead": jnp.full(n_simulation_subjects, 0)},
+        "wealth": initial_wealth,
+        "health": initial_health,
+        "health_type": initial_health_type,
+        "effort_t_1": initial_effort,
+        "productivity_shock": initial_productivity_shock,
+        "adjustment_cost": initial_adjustment_cost,
+        "education": initial_education,
+        "productivity": initial_productivity,
+        "discount_factor": initial_discount,
+        "dead": jnp.full(n_simulation_subjects, 0),  # for dead regime
     }
     initial_regimes = ["alive"] * n_simulation_subjects
     return params, initial_states, initial_regimes

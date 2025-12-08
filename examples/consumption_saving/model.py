@@ -162,9 +162,7 @@ if __name__ == "__main__":
         params=PARAMS,
         initial_regimes=["consumption_saving_regime"] * n_simulation_subjects,
         initial_states={
-            "consumption_saving_regime": {
-                "wealth": jnp.full(n_simulation_subjects, 1),
-                "health": jnp.full(n_simulation_subjects, 1),
-            }
+            "wealth": jnp.full(n_simulation_subjects, 1),
+            "health": jnp.full(n_simulation_subjects, 1),
         },
     )
