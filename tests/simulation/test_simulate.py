@@ -62,9 +62,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
     got = simulate(
         params=params,
         V_arr_dict={0: {"iskhakov_et_al_2017_stripped_down": jnp.empty(0)}},
-        initial_states={
-            "iskhakov_et_al_2017_stripped_down": {"wealth": jnp.array([1.0, 50.400803])}
-        },
+        initial_states={"wealth": jnp.array([1.0, 50.400803])},
         initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 2,
         logger=get_logger(debug_mode=False),
         **simulate_inputs,
@@ -112,11 +110,7 @@ def test_simulate_using_model_methods(
     res: pd.DataFrame = model.simulate(
         params,
         V_arr_dict=V_arr_dict,
-        initial_states={
-            "iskhakov_et_al_2017_stripped_down__wealth": jnp.array(
-                [20.0, 150, 250, 320]
-            ),
-        },
+        initial_states={"wealth": jnp.array([20.0, 150, 250, 320])},
         initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 4,
         additional_targets={
             "iskhakov_et_al_2017_stripped_down": ["utility", "borrowing_constraint"]
@@ -154,7 +148,7 @@ def test_simulate_with_only_discrete_actions():
 
     res: pd.DataFrame = model.solve_and_simulate(
         params,
-        initial_states={"iskhakov_et_al_2017_discrete": {"wealth": jnp.array([0, 4])}},
+        initial_states={"wealth": jnp.array([0, 4])},
         additional_targets={
             "iskhakov_et_al_2017_discrete": ["labor_income", "working"]
         },
@@ -199,18 +193,14 @@ def test_effect_of_beta_on_last_period():
     res_low: pd.DataFrame = model.simulate(
         params_low,
         V_arr_dict=solution_low,
-        initial_states={
-            "iskhakov_et_al_2017_stripped_down": {"wealth": initial_wealth}
-        },
+        initial_states={"wealth": initial_wealth},
         initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 3,
     )["iskhakov_et_al_2017_stripped_down"]
 
     res_high: pd.DataFrame = model.simulate(
         params_high,
         V_arr_dict=solution_high,
-        initial_states={
-            "iskhakov_et_al_2017_stripped_down": {"wealth": initial_wealth}
-        },
+        initial_states={"wealth": initial_wealth},
         initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 3,
     )["iskhakov_et_al_2017_stripped_down"]
 
@@ -251,18 +241,14 @@ def test_effect_of_disutility_of_work():
     res_low: pd.DataFrame = model.simulate(
         params_low,
         V_arr_dict=solution_low,
-        initial_states={
-            "iskhakov_et_al_2017_stripped_down": {"wealth": initial_wealth}
-        },
+        initial_states={"wealth": initial_wealth},
         initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 3,
     )["iskhakov_et_al_2017_stripped_down"]
 
     res_high: pd.DataFrame = model.simulate(
         params_high,
         V_arr_dict=solution_high,
-        initial_states={
-            "iskhakov_et_al_2017_stripped_down": {"wealth": initial_wealth}
-        },
+        initial_states={"wealth": initial_wealth},
         initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 3,
     )["iskhakov_et_al_2017_stripped_down"]
 
