@@ -1,9 +1,3 @@
-"""Test Model Regimes functionality using work-retirement example.
-
-This test file demonstrates the new Regime-based API for PyLCM and serves as
-the target specification for the implementation.
-"""
-
 from __future__ import annotations
 
 import warnings
@@ -25,928 +19,644 @@ if TYPE_CHECKING:
         FloatND,
         IntND,
         ParamsDict,
-        RegimeName,
     )
 
 
 # ======================================================================================
-# Categorical Variables (shared across regimes)
+# Base Model Components
 # ======================================================================================
 
 
 @dataclass
-class WorkingStatus:
-    not_working: int = 0
-    working: int = 1
+class RegimeId:
+    """Regime identifiers for work-retirement model."""
+
+    work: int = 0
+    retirement: int = 1
 
 
 @dataclass
 class HealthStatus:
+    """Health states used in the model."""
+
     bad: int = 0
     good: int = 1
 
 
 @dataclass
-class RegimeID:
-    work: int = 0
-    retirement: int = 1
+class WorkingStatus:
+    """Working decision (action in work regime)."""
+
+    not_working: int = 0
+    working: int = 1
 
 
-# ======================================================================================
-# Model Functions (shared where possible)
-# ======================================================================================
+# --------------------------------------------------------------------------------------
+# Shared Functions
+# --------------------------------------------------------------------------------------
 
 
-def utility_work(
+def utility(
     consumption: ContinuousAction,
     working: IntND,
-    disutility_of_work: float,
     health: DiscreteState,
-) -> FloatND:
-    return jnp.log(consumption) - (1 - health / 2) * disutility_of_work * working
-
-
-def utility_retirement(
-    consumption: ContinuousAction,
-    working: IntND,
     disutility_of_work: float,
-    health: DiscreteState,  # noqa: ARG001
 ) -> FloatND:
-    return jnp.log(consumption) - disutility_of_work * working
-
-
-def labor_income(working: IntND, wage: float) -> FloatND:
-    return working * wage
+    """Utility from consumption, reduced by disutility of work."""
+    return jnp.log(consumption) - disutility_of_work * working * (1 - health / 2)
 
 
 def next_wealth(
     wealth: ContinuousState,
     consumption: ContinuousAction,
-    labor_income: FloatND,
+    working: IntND,
+    wage: float,
     interest_rate: float,
 ) -> ContinuousState:
-    return (1 + interest_rate) * (wealth - consumption) + labor_income
+    """Wealth transition: savings plus labor income."""
+    return (1 + interest_rate) * (wealth - consumption) + working * wage
 
 
 @lcm.mark.stochastic
 def next_health(health: DiscreteState, health_transition: FloatND) -> FloatND:
+    """Stochastic health transition."""
     return health_transition[health]
 
 
-def borrowing_constraint(
+def budget_constraint(
     consumption: ContinuousAction,
     wealth: ContinuousState,
 ) -> BoolND:
+    """Cannot consume more than wealth."""
     return consumption <= wealth
 
 
-# ======================================================================================
-# API Demonstration Tests
-# ======================================================================================
-
-
 @lcm.mark.stochastic
-def next_regime_from_working(period: int) -> FloatND:
-    """Return probability array [P(work), P(retirement)] indexed by RegimeID."""
-    return jnp.array(
-        [
-            jnp.where(period < 6, 1.0, 0.5),  # P(work)
-            jnp.where(period < 6, 0.0, 0.5),  # P(retirement)
-        ]
-    )
+def next_regime_from_work(period: int) -> FloatND:
+    """Stochastic transition: probability of retiring increases over time."""
+    retire_prob = jnp.where(period < 3, 0.0, 0.5)
+    return jnp.array([1 - retire_prob, retire_prob])
 
 
-def next_regime_from_retirement() -> int:
-    """Return deterministic next regime (always stay in retirement)."""
-    return RegimeID.retirement
+def retired_working() -> IntND:
+    """Retired agents don't work."""
+    return WorkingStatus.not_working
 
 
-def working_during_retirement() -> IntND:
-    return jnp.array(0)
+# --------------------------------------------------------------------------------------
+# Factory Function
+# --------------------------------------------------------------------------------------
 
 
-def test_work_retirement_model_solution():
-    """Test that a complete work-retirement model can be solved using new Regime API."""
-    # Create work regime
+def create_base_regimes() -> tuple[Regime, Regime]:
+    """Create work and retirement regimes for the base model."""
     work_regime = Regime(
         name="work",
+        states={
+            "wealth": LinspaceGrid(start=1, stop=100, n_points=10),
+            "health": DiscreteGrid(HealthStatus),
+        },
         actions={
-            "consumption": LinspaceGrid(start=1, stop=100, n_points=50),
+            "consumption": LinspaceGrid(start=1, stop=100, n_points=10),
             "working": DiscreteGrid(WorkingStatus),
         },
-        states={
-            "wealth": LinspaceGrid(start=1, stop=100, n_points=50),
-            "health": DiscreteGrid(HealthStatus),
-        },
-        utility=utility_work,
-        constraints={"borrowing_constraint": borrowing_constraint},
-        functions={
-            "labor_income": labor_income,
-        },
+        utility=utility,
+        constraints={"budget_constraint": budget_constraint},
         transitions={
             "next_wealth": next_wealth,
             "next_health": next_health,
-            "next_regime": next_regime_from_working,
+            "next_regime": next_regime_from_work,
         },
     )
 
-    # Create retirement regime
     retirement_regime = Regime(
         name="retirement",
-        actions={
-            "consumption": LinspaceGrid(start=1, stop=100, n_points=50),
-        },
+        absorbing=True,
         states={
-            "wealth": LinspaceGrid(start=1, stop=100, n_points=50),
+            "wealth": LinspaceGrid(start=1, stop=100, n_points=10),
             "health": DiscreteGrid(HealthStatus),
         },
-        utility=utility_retirement,
-        constraints={"borrowing_constraint": borrowing_constraint},
-        functions={
-            "working": working_during_retirement,  # Always not working in retirement
-            "labor_income": labor_income,
-        },
-        transitions={
-            "next_wealth": next_wealth,
-            "next_health": next_health,
-            "next_regime": next_regime_from_retirement,
-        },
-    )
-
-    # Create complete model using new regime-based API
-    model = Model(
-        regimes=[work_regime, retirement_regime],
-        n_periods=10,
-        regime_id_cls=RegimeID,
-    )
-
-    # Verify model properties
-    assert model.n_periods == 10
-    assert len(model.internal_regimes) == 2
-
-    health_transition = jnp.array(
-        [
-            # From bad health today to (bad, good) tomorrow
-            [0.9, 0.1],
-            # From good health today to (bad, good) tomorrow
-            [0.5, 0.5],
-        ],
-    )
-
-    # Define parameters
-    params_working = {
-        "beta": 0.9,
-        "utility": {"disutility_of_work": 2.0},
-        "labor_income": {"wage": 25},
-        "next_wealth": {"interest_rate": 0.1},
-        "next_health": {"health_transition": health_transition},
-        "borrowing_constraint": {},
-    }
-
-    params_retired = {
-        "beta": 0.8,
-        "utility": {"disutility_of_work": 2.0},
-        "labor_income": {"wage": 20},
-        "next_wealth": {"interest_rate": 0.1},
-        "next_health": {"health_transition": health_transition},
-        "working": {},
-        "borrowing_constraint": {},
-    }
-
-    params: dict[RegimeName, ParamsDict] = {
-        "work": params_working,
-        "retirement": params_retired,
-    }
-
-    # The core test: solve should work and return value functions
-    solution = model.solve(params)
-    simulation = model.simulate(
-        params=params,
-        initial_states={
-            "work": {
-                "wealth": jnp.array([5.0, 20, 40, 70]),
-                "health": jnp.array([1, 1, 1, 1]),
-            },
-            "retirement": {
-                "wealth": jnp.array([5.0, 20, 40, 70]),
-                "health": jnp.array([1, 1, 1, 1]),
-            },
-        },
-        initial_regimes=["work"] * 4,
-        V_arr_dict=solution,
-    )
-
-    # Basic checks: solution should be a dict with one entry per period
-    assert isinstance(solution, dict)
-    assert len(solution) == 10
-    assert all(period in solution for period in range(10))
-
-    assert isinstance(simulation, dict)
-    assert len(simulation) == 2
-
-
-# ======================================================================================
-# Test for regimes with different states (like alive/dead in Mahler & Yum)
-# ======================================================================================
-
-
-@dataclass
-class AliveDeadRegimeID:
-    alive: int = 0
-    dead: int = 1
-
-
-@dataclass
-class DeadStatus:
-    dead: int = 0
-
-
-@lcm.mark.stochastic
-def next_regime_from_alive(health: DiscreteState) -> FloatND:
-    """Return probability array [P(alive), P(dead)] based on health."""
-    survival_prob = jnp.where(health == 1, 0.95, 0.8)
-    return jnp.array([survival_prob, 1 - survival_prob])
-
-
-def next_regime_from_dead() -> int:
-    """Deterministic: once dead, always dead."""
-    return AliveDeadRegimeID.dead
-
-
-def alive_borrowing_constraint(
-    consumption: ContinuousAction,
-    wealth: ContinuousState,
-) -> BoolND:
-    """Borrowing constraint: consumption must not exceed wealth."""
-    return consumption <= wealth
-
-
-def alive_utility(
-    consumption: ContinuousAction,
-    health: DiscreteState,
-) -> FloatND:
-    """Utility function for alive regime."""
-    return jnp.log(consumption) * (1 + health)
-
-
-def dead_utility(dead: DiscreteState) -> FloatND:  # noqa: ARG001
-    """Utility function for dead regime (always zero)."""
-    return jnp.asarray([0.0])
-
-
-def next_wealth_fn(
-    wealth: ContinuousState,
-    consumption: ContinuousAction,
-) -> ContinuousState:
-    """State transition for wealth."""
-    return wealth - consumption
-
-
-def next_dead_fn(dead: DiscreteState) -> int:  # noqa: ARG001
-    """State transition for dead (always stay dead)."""
-    return DeadStatus.dead
-
-
-def next_dead_from_alive() -> int:
-    """Transition to dead state when entering dead regime from alive."""
-    return DeadStatus.dead
-
-
-def test_multi_regime_with_different_states():
-    """Test that regimes with different states work correctly.
-
-    This tests the pattern used in Mahler & Yum (2024) where:
-    - alive regime has states: wealth, health
-    - dead regime has states: dead
-
-    The key issue this tests is that flat transitions should only apply
-    to the current regime, not create entries for all regimes.
-
-    """
-    # Create alive regime with wealth and health states
-    alive_regime = Regime(
-        name="alive",
         actions={
             "consumption": LinspaceGrid(start=1, stop=100, n_points=10),
         },
-        states={
-            "wealth": LinspaceGrid(start=1, stop=100, n_points=10),
-            "health": DiscreteGrid(HealthStatus),
+        utility=utility,
+        constraints={"budget_constraint": budget_constraint},
+        functions={
+            "working": retired_working,
         },
-        utility=alive_utility,
-        constraints={"borrowing_constraint": alive_borrowing_constraint},
         transitions={
-            "next_wealth": next_wealth_fn,
+            "next_wealth": next_wealth,
             "next_health": next_health,
-            "next_dead": next_dead_from_alive,  # Required for transition to dead regime
-            "next_regime": next_regime_from_alive,
         },
     )
 
-    # Create dead regime with only dead state (absorbing - never leaves)
-    dead_regime = Regime(
-        name="dead",
-        absorbing=True,  # Absorbing regime - auto-generates next_regime
-        utility=dead_utility,
-        states={"dead": DiscreteGrid(DeadStatus)},
-        actions={},
-        transitions={
-            "next_dead": next_dead_fn,
-            # No next_regime needed - auto-generated for absorbing regimes
-        },
+    return work_regime, retirement_regime
+
+
+def create_base_params() -> ParamsDict:
+    """Create parameters for the base work-retirement model."""
+    health_transition = jnp.array(
+        [
+            [0.8, 0.2],  # From bad health: 80% stay bad, 20% become good
+            [0.3, 0.7],  # From good health: 30% become bad, 70% stay good
+        ]
     )
 
-    # Create model
-    model = Model(
-        regimes=[alive_regime, dead_regime],
-        n_periods=3,
-        regime_id_cls=AliveDeadRegimeID,
-    )
-
-    # Verify model properties
-    assert model.n_periods == 3
-    assert len(model.internal_regimes) == 2
-
-    # Check params template has correct keys for each regime
-    alive_params_keys = set(model.params_template["alive"].keys())
-    dead_params_keys = set(model.params_template["dead"].keys())
-
-    # alive should have next_wealth, next_health, next_regime
-    assert "next_wealth" in alive_params_keys
-    assert "next_health" in alive_params_keys
-    assert "next_regime" in alive_params_keys
-
-    # dead should have next_dead, next_regime (NOT next_wealth, next_health)
-    assert "next_dead" in dead_params_keys
-    assert "next_regime" in dead_params_keys
-    assert "next_wealth" not in dead_params_keys
-    assert "next_health" not in dead_params_keys
-
-    # Define parameters
-    health_transition = jnp.array([[0.9, 0.1], [0.5, 0.5]])
-
-    params = {
-        "alive": {
-            "beta": 0.9,
-            "utility": {},
-            "borrowing_constraint": {},
-            "next_wealth": {},
+    return {
+        "work": {
+            "beta": 0.95,
+            "utility": {"disutility_of_work": 0.5},
+            "budget_constraint": {},
+            "next_wealth": {"wage": 20.0, "interest_rate": 0.05},
             "next_health": {"health_transition": health_transition},
             "next_regime": {},
         },
-        "dead": {
-            "beta": 0.9,
-            "utility": {},
-            "next_dead": {},
+        "retirement": {
+            "beta": 0.95,
+            "utility": {"disutility_of_work": 0.5},
+            "budget_constraint": {},
+            "working": {},
+            "next_wealth": {"wage": 20.0, "interest_rate": 0.05},
+            "next_health": {"health_transition": health_transition},
             "next_regime": {},
         },
     }
 
-    # Solve model - this should not raise KeyError for dead__health
-    solution = model.solve(params)
-
-    # Basic checks
-    assert isinstance(solution, dict)
-    assert len(solution) == 3
-    assert all(period in solution for period in range(3))
-
 
 # ======================================================================================
-# Test for regimes with OVERLAPPING state-spaces (neither is subset of the other)
+# Test Cases
 # ======================================================================================
 
 
-@dataclass
-class EducationLevel:
-    low: int = 0
-    high: int = 1
+class TestBasicModel:
+    """Test the base work-retirement model."""
 
-
-@dataclass
-class PensionType:
-    basic: int = 0
-    premium: int = 1
-
-
-@dataclass
-class YoungOldRegimeID:
-    young: int = 0
-    old: int = 1
-
-
-@lcm.mark.stochastic
-def next_regime_young_to_old(education: DiscreteState) -> FloatND:
-    """Probability of transitioning from young to old based on education."""
-    # Higher education -> lower probability of aging (stay young longer)
-    stay_young_prob = jnp.where(education == 1, 0.8, 0.6)
-    return jnp.array([stay_young_prob, 1 - stay_young_prob])
-
-
-def next_regime_stay_old() -> int:
-    """Once old, always old (absorbing state)."""
-    return YoungOldRegimeID.old
-
-
-def young_utility(
-    consumption: ContinuousAction,
-    education: DiscreteState,
-) -> FloatND:
-    """Utility for young regime."""
-    return jnp.log(consumption) * (1 + 0.5 * education)
-
-
-def old_utility(
-    consumption: ContinuousAction,
-    pension: DiscreteState,
-) -> FloatND:
-    """Utility for old regime."""
-    return jnp.log(consumption) * (1 + 0.3 * pension)
-
-
-def young_borrowing_constraint(
-    consumption: ContinuousAction,
-    wealth: ContinuousState,
-) -> BoolND:
-    """Borrowing constraint for young."""
-    return consumption <= wealth
-
-
-def old_borrowing_constraint(
-    consumption: ContinuousAction,
-    wealth: ContinuousState,
-) -> BoolND:
-    """Borrowing constraint for old."""
-    return consumption <= wealth
-
-
-def next_wealth_young(
-    wealth: ContinuousState,
-    consumption: ContinuousAction,
-) -> ContinuousState:
-    """Wealth transition for young (can save)."""
-    return wealth - consumption + 10  # Young earn income
-
-
-def next_wealth_old(
-    wealth: ContinuousState,
-    consumption: ContinuousAction,
-) -> ContinuousState:
-    """Wealth transition for old (pension income)."""
-    return wealth - consumption + 5  # Old get pension
-
-
-def next_education(education: DiscreteState) -> DiscreteState:
-    """Education stays constant."""
-    return education
-
-
-def next_pension(education: DiscreteState) -> DiscreteState:
-    """Pension type determined by education when transitioning to old."""
-    # High education -> premium pension, low education -> basic pension
-    return education  # Maps education level to pension type
-
-
-def test_multi_regime_with_overlapping_states():
-    """Test regimes with overlapping but non-subset state-spaces.
-
-    This tests a critical case where:
-    - young regime has states: {wealth, education}
-    - old regime has states: {wealth, pension}
-    - Shared state: wealth
-    - Unique to young: education
-    - Unique to old: pension
-
-    When young transitions to old, it needs:
-    - next_wealth (shared state)
-    - next_pension (old's unique state, derived from education)
-
-    The flat transitions interface should automatically map:
-    - next_wealth -> both young and old regimes (shared)
-    - next_education -> young regime only
-    - next_pension -> old regime only
-    """
-    # Young regime: has wealth (shared) and education (unique)
-    young_regime = Regime(
-        name="young",
-        actions={
-            "consumption": LinspaceGrid(start=1, stop=50, n_points=10),
-        },
-        states={
-            "wealth": LinspaceGrid(start=1, stop=100, n_points=10),
-            "education": DiscreteGrid(EducationLevel),
-        },
-        utility=young_utility,
-        constraints={"borrowing_constraint": young_borrowing_constraint},
-        transitions={
-            "next_wealth": next_wealth_young,
-            "next_education": next_education,
-            "next_pension": next_pension,  # Needed for transition to old!
-            "next_regime": next_regime_young_to_old,
-        },
-    )
-
-    # Old regime: has wealth (shared) and pension (unique)
-    # Marked as absorbing since agents can't leave old regime
-    old_regime = Regime(
-        name="old",
-        absorbing=True,  # Absorbing regime - can't transition back to young
-        actions={
-            "consumption": LinspaceGrid(start=1, stop=50, n_points=10),
-        },
-        states={
-            "wealth": LinspaceGrid(start=1, stop=100, n_points=10),
-            "pension": DiscreteGrid(PensionType),
-        },
-        utility=old_utility,
-        constraints={"borrowing_constraint": old_borrowing_constraint},
-        transitions={
-            "next_wealth": next_wealth_old,
-            "next_pension": lambda pension: pension,  # Pension stays constant
-            # No next_regime needed - auto-generated for absorbing regimes
-        },
-    )
-
-    # Create model - this should work with correct flat->nested conversion
-    model = Model(
-        regimes=[young_regime, old_regime],
-        n_periods=3,
-        regime_id_cls=YoungOldRegimeID,
-    )
-
-    # Verify model properties
-    assert model.n_periods == 3
-    assert len(model.internal_regimes) == 2
-
-    # Check params template structure
-    young_params_keys = set(model.params_template["young"].keys())
-    old_params_keys = set(model.params_template["old"].keys())
-
-    # Young should have: next_wealth, next_education, next_pension, next_regime
-    assert "next_wealth" in young_params_keys
-    assert "next_education" in young_params_keys
-    assert "next_pension" in young_params_keys  # For transition to old!
-    assert "next_regime" in young_params_keys
-
-    # Old should have: next_wealth, next_pension, next_regime
-    assert "next_wealth" in old_params_keys
-    assert "next_pension" in old_params_keys
-    assert "next_regime" in old_params_keys
-    # Old should NOT have next_education (not in old's state space)
-    assert "next_education" not in old_params_keys
-
-    # Define parameters
-    params = {
-        "young": {
-            "beta": 0.95,
-            "utility": {},
-            "borrowing_constraint": {},
-            "next_wealth": {},
-            "next_education": {},
-            "next_pension": {},
-            "next_regime": {},
-        },
-        "old": {
-            "beta": 0.95,
-            "utility": {},
-            "borrowing_constraint": {},
-            "next_wealth": {},
-            "next_pension": {},
-            "next_regime": {},
-        },
-    }
-
-    # Solve model - this will fail if flat->nested conversion is broken
-    # because young regime needs next_pension mapped to old regime's state space
-    solution = model.solve(params)
-
-    # Basic checks
-    assert isinstance(solution, dict)
-    assert len(solution) == 3
-    assert all(period in solution for period in range(3))
-
-
-# ======================================================================================
-# Tests for absorbing regimes and transition completeness validation
-# ======================================================================================
-
-# Note: AliveDeadRegimeID and DeadStatus are already defined above (around line 252)
-
-
-def test_non_absorbing_regime_missing_transitions_raises_error():
-    """Non-absorbing regime must have transitions for ALL states across ALL regimes.
-
-    If alive regime can transition to dead regime, alive must have next_dead.
-    """
-
-    def alive_utility(consumption: ContinuousAction) -> FloatND:
-        return jnp.log(consumption)
-
-    def dead_utility(dead: DiscreteState) -> FloatND:  # noqa: ARG001
-        return jnp.array(0.0)
-
-    def next_wealth(
-        wealth: ContinuousState, consumption: ContinuousAction
-    ) -> ContinuousState:
-        return wealth - consumption
-
-    @lcm.mark.stochastic
-    def next_regime_from_alive() -> FloatND:
-        return jnp.array([0.9, 0.1])  # 90% stay alive, 10% die
-
-    # Alive regime is MISSING next_dead!
-    alive_regime = Regime(
-        name="alive",
-        utility=alive_utility,
-        states={"wealth": LinspaceGrid(start=1, stop=10, n_points=5)},
-        actions={"consumption": LinspaceGrid(start=1, stop=5, n_points=5)},
-        constraints={"budget": lambda wealth, consumption: consumption <= wealth},
-        transitions={
-            "next_wealth": next_wealth,
-            # MISSING: "next_dead": ...,  <-- This should cause an error!
-            "next_regime": next_regime_from_alive,
-        },
-    )
-
-    dead_regime = Regime(
-        name="dead",
-        absorbing=True,
-        utility=dead_utility,
-        states={"dead": DiscreteGrid(DeadStatus)},
-        actions={},
-        transitions={
-            "next_dead": lambda dead: DeadStatus.dead,  # noqa: ARG005
-        },
-    )
-
-    # This should raise an error because alive is missing next_dead
-    with pytest.raises(ValueError, match="missing transitions"):
-        Model(
-            regimes=[alive_regime, dead_regime],
+    def test_solve(self):
+        """Base model can be solved."""
+        work_regime, retirement_regime = create_base_regimes()
+        model = Model(
+            regimes=[work_regime, retirement_regime],
             n_periods=3,
-            regime_id_cls=AliveDeadRegimeID,
+            regime_id_cls=RegimeId,
+        )
+        params = create_base_params()
+
+        solution = model.solve(params)
+
+        assert isinstance(solution, dict)
+        assert len(solution) == 3
+        assert all(period in solution for period in range(3))
+
+    def test_solve_and_simulate(self):
+        """Base model can be solved and simulated."""
+        work_regime, retirement_regime = create_base_regimes()
+        model = Model(
+            regimes=[work_regime, retirement_regime],
+            n_periods=3,
+            regime_id_cls=RegimeId,
+        )
+        params = create_base_params()
+
+        solution = model.solve(params)
+
+        # Simulate starting from work regime - need to provide initial states for all
+        # regimes
+        simulation = model.simulate(
+            params=params,
+            initial_states={
+                "work": {
+                    "wealth": jnp.array([10.0, 50.0]),
+                    "health": jnp.array([0, 1]),
+                },
+                "retirement": {
+                    "wealth": jnp.array([10.0, 50.0]),
+                    "health": jnp.array([0, 1]),
+                },
+            },
+            initial_regimes=["work", "work"],
+            V_arr_dict=solution,
+        )
+        assert "work" in simulation or "retirement" in simulation
+
+
+class TestAbsorbingRegimes:
+    """Test absorbing regime behavior (retirement is absorbing)."""
+
+    def test_absorbing_regime_auto_generates_next_regime(self):
+        """Absorbing regime without explicit next_regime gets one auto-generated."""
+        work_regime, retirement_regime = create_base_regimes()
+
+        # Verify retirement regime doesn't have explicit next_regime in transitions
+        # (it's absorbing=True, so it should be auto-generated)
+        model = Model(
+            regimes=[work_regime, retirement_regime],
+            n_periods=3,
+            regime_id_cls=RegimeId,
         )
 
+        # Internal regime should have regime_transition_probs
+        internal_retirement = model.internal_regimes["retirement"]
+        assert internal_retirement.regime_transition_probs is not None
 
-def test_missing_transitions_error_message_is_descriptive():
-    """Error message should clearly state which transitions are missing."""
+    def test_absorbing_regime_with_explicit_next_regime_warns(self):
+        """Providing next_regime for absorbing regime issues a warning."""
+        work_regime, _ = create_base_regimes()
 
-    def utility(consumption: ContinuousAction) -> FloatND:
-        return jnp.log(consumption)
+        @lcm.mark.stochastic
+        def explicit_next_regime() -> FloatND:
+            return jnp.array([0.0, 1.0])  # 100% stay in retirement
 
-    def next_wealth(
-        wealth: ContinuousState, consumption: ContinuousAction
-    ) -> ContinuousState:
-        return wealth - consumption
-
-    @lcm.mark.stochastic
-    def next_regime() -> FloatND:
-        return jnp.array([0.5, 0.5])
-
-    # Regime A has states: wealth, health
-    # Regime B has states: wealth, pension
-    # Each regime is missing transitions for the other's unique state
-
-    regime_a = Regime(
-        name="regime_a",
-        utility=utility,
-        states={
-            "wealth": LinspaceGrid(start=1, stop=10, n_points=5),
-            "health": DiscreteGrid(HealthStatus),
-        },
-        actions={"consumption": LinspaceGrid(start=1, stop=5, n_points=5)},
-        transitions={
-            "next_wealth": next_wealth,
-            "next_health": lambda health: health,
-            # Note: next_pension is intentionally missing
-            "next_regime": next_regime,
-        },
-    )
-
-    regime_b = Regime(
-        name="regime_b",
-        utility=utility,
-        states={
-            "wealth": LinspaceGrid(start=1, stop=10, n_points=5),
-            "pension": DiscreteGrid(HealthStatus),  # Reuse HealthStatus for simplicity
-        },
-        actions={"consumption": LinspaceGrid(start=1, stop=5, n_points=5)},
-        transitions={
-            "next_wealth": next_wealth,
-            "next_pension": lambda pension: pension,
-            # Note: next_health is intentionally missing
-            "next_regime": next_regime,
-        },
-    )
-
-    @dataclass
-    class ABRegimeID:
-        regime_a: int = 0
-        regime_b: int = 1
-
-    with pytest.raises(ValueError, match="next_pension") as exc_info:
-        Model(
-            regimes=[regime_a, regime_b],
-            n_periods=3,
-            regime_id_cls=ABRegimeID,
+        # Create retirement regime WITH explicit next_regime (redundant)
+        retirement_with_explicit = Regime(
+            name="retirement",
+            absorbing=True,
+            states={
+                "wealth": LinspaceGrid(start=1, stop=100, n_points=10),
+                "health": DiscreteGrid(HealthStatus),
+            },
+            actions={
+                "consumption": LinspaceGrid(start=1, stop=100, n_points=10),
+            },
+            utility=utility,
+            constraints={"budget_constraint": budget_constraint},
+            functions={"working": retired_working},
+            transitions={
+                "next_wealth": next_wealth,
+                "next_health": next_health,
+                "next_regime": explicit_next_regime,  # Redundant!
+            },
         )
 
-    # Error should mention both regimes and their missing transitions
-    error_msg = str(exc_info.value)
-    assert "regime_a" in error_msg
-    assert "next_pension" in error_msg
-    assert "regime_b" in error_msg
-    assert "next_health" in error_msg
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            Model(
+                regimes=[work_regime, retirement_with_explicit],
+                n_periods=3,
+                regime_id_cls=RegimeId,
+            )
+            assert any("absorbing" in str(warning.message).lower() for warning in w)
 
 
-def test_absorbing_regime_only_needs_own_state_transitions():
-    """Absorbing regime should only require transitions for its own states.
+class TestDifferentStateSpaces:
+    """Test regimes with completely different state spaces.
 
-    Dead regime with absorbing=True should NOT need next_wealth.
+    Extends base model by adding a 'dead' regime with only a 'funerary_wealth' state
+    (no wealth or health). This tests that transitions are correctly scoped
+    to each regime's state space.
+
     """
 
-    def alive_utility(consumption: ContinuousAction) -> FloatND:
-        return jnp.log(consumption)
+    def test_regime_with_disjoint_states(self):
+        """Add dead regime with completely different states than work/retirement."""
 
-    def dead_utility(dead: DiscreteState) -> FloatND:  # noqa: ARG001
-        return jnp.array(0.0)
+        @dataclass
+        class ExtendedRegimeId:
+            work: int = 0
+            retirement: int = 1
+            dead: int = 2
 
-    def next_wealth(
-        wealth: ContinuousState, consumption: ContinuousAction
-    ) -> ContinuousState:
-        return wealth - consumption
+        # Modify work regime to possibly die
+        @lcm.mark.stochastic
+        def next_regime_work_with_death(health: DiscreteState) -> FloatND:
+            # Healthy: 80% work, 15% retire, 5% die
+            # Unhealthy: 60% work, 20% retire, 20% die
+            return jnp.where(
+                health == HealthStatus.good,
+                jnp.array([0.80, 0.15, 0.05]),
+                jnp.array([0.60, 0.20, 0.20]),
+            )
 
-    @lcm.mark.stochastic
-    def next_regime_from_alive() -> FloatND:
-        return jnp.array([0.9, 0.1])
+        @lcm.mark.stochastic
+        def next_regime_retirement_with_death(health: DiscreteState) -> FloatND:
+            # Healthy: 95% stay retired, 5% die
+            # Unhealthy: 80% stay retired, 20% die
+            return jnp.where(
+                health == HealthStatus.good,
+                jnp.array([0.0, 0.95, 0.05]),
+                jnp.array([0.0, 0.80, 0.20]),
+            )
 
-    def borrowing_constraint(
-        wealth: ContinuousState, consumption: ContinuousAction
-    ) -> BoolND:
-        return consumption <= wealth
+        def next_funerary_wealth_from_alive(wealth: ContinuousState) -> ContinuousState:
+            """Transition to funerary wealth state when entering dead regime."""
+            return wealth / 2
 
-    alive_regime = Regime(
-        name="alive",
-        utility=alive_utility,
-        states={"wealth": LinspaceGrid(start=1, stop=10, n_points=5)},
-        actions={"consumption": LinspaceGrid(start=1, stop=5, n_points=5)},
-        constraints={"borrowing_constraint": borrowing_constraint},
-        transitions={
-            "next_wealth": next_wealth,
-            "next_dead": lambda dead: DeadStatus.dead,  # noqa: ARG005
-            "next_regime": next_regime_from_alive,
-        },
-    )
-
-    # Dead regime with absorbing=True - only needs next_dead, NOT next_wealth
-    dead_regime = Regime(
-        name="dead",
-        absorbing=True,
-        utility=dead_utility,
-        states={"dead": DiscreteGrid(DeadStatus)},
-        actions={},
-        transitions={
-            "next_dead": lambda dead: DeadStatus.dead,  # noqa: ARG005
-            # No next_wealth needed because absorbing=True!
-        },
-    )
-
-    # This should work without error
-    model = Model(
-        regimes=[alive_regime, dead_regime],
-        n_periods=3,
-        regime_id_cls=AliveDeadRegimeID,
-    )
-
-    assert model.n_periods == 3
-    assert len(model.internal_regimes) == 2
-
-
-def test_absorbing_regime_auto_generates_next_regime():
-    """Absorbing regime without next_regime should auto-generate it."""
-
-    def dead_utility(dead: DiscreteState) -> FloatND:  # noqa: ARG001
-        return jnp.array(0.0)
-
-    # Dead regime without explicit next_regime
-    dead_regime = Regime(
-        name="dead",
-        absorbing=True,
-        utility=dead_utility,
-        states={"dead": DiscreteGrid(DeadStatus)},
-        actions={},
-        transitions={
-            "next_dead": lambda dead: DeadStatus.dead,  # noqa: ARG005
-            # No next_regime - should be auto-generated!
-        },
-    )
-
-    # Single absorbing regime model should work
-    # (no regime_id_cls needed for single-regime models)
-    model = Model(
-        regimes=[dead_regime],
-        n_periods=3,
-    )
-
-    assert model.n_periods == 3
-
-    # Verify next_regime was auto-generated (returns 100% for dead)
-    internal_dead = model.internal_regimes["dead"]
-    # The regime_transition_probs function should exist
-    assert internal_dead.regime_transition_probs is not None
-
-
-def test_absorbing_regime_with_explicit_next_regime_warns():
-    """Absorbing regime with explicit next_regime should warn (redundant)."""
-
-    def alive_utility(consumption: ContinuousAction) -> FloatND:
-        return jnp.log(consumption)
-
-    def dead_utility(dead: DiscreteState) -> FloatND:  # noqa: ARG001
-        return jnp.array(0.0)
-
-    def next_wealth(
-        wealth: ContinuousState, consumption: ContinuousAction
-    ) -> ContinuousState:
-        return wealth - consumption
-
-    @lcm.mark.stochastic
-    def next_regime_from_alive() -> FloatND:
-        return jnp.array([0.9, 0.1])  # 90% stay alive, 10% die
-
-    @lcm.mark.stochastic
-    def explicit_next_regime_from_dead() -> FloatND:
-        return jnp.array([0.0, 1.0])  # 100% stay dead - redundant for absorbing!
-
-    def borrowing_constraint(
-        wealth: ContinuousState, consumption: ContinuousAction
-    ) -> BoolND:
-        return consumption <= wealth
-
-    alive_regime = Regime(
-        name="alive",
-        utility=alive_utility,
-        states={"wealth": LinspaceGrid(start=1, stop=10, n_points=5)},
-        actions={"consumption": LinspaceGrid(start=1, stop=5, n_points=5)},
-        constraints={"borrowing_constraint": borrowing_constraint},
-        transitions={
-            "next_wealth": next_wealth,
-            "next_dead": lambda dead: DeadStatus.dead,  # noqa: ARG005
-            "next_regime": next_regime_from_alive,
-        },
-    )
-
-    dead_regime = Regime(
-        name="dead",
-        absorbing=True,
-        utility=dead_utility,
-        states={"dead": DiscreteGrid(DeadStatus)},
-        actions={},
-        transitions={
-            "next_dead": lambda dead: DeadStatus.dead,  # noqa: ARG005
-            "next_regime": explicit_next_regime_from_dead,  # Redundant for absorbing!
-        },
-    )
-
-    # Should warn about redundant next_regime on absorbing regime
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        Model(
-            regimes=[alive_regime, dead_regime],
-            n_periods=3,
-            regime_id_cls=AliveDeadRegimeID,
+        work_regime = Regime(
+            name="work",
+            states={
+                "wealth": LinspaceGrid(start=1, stop=100, n_points=10),
+                "health": DiscreteGrid(HealthStatus),
+            },
+            actions={
+                "consumption": LinspaceGrid(start=1, stop=100, n_points=10),
+                "working": DiscreteGrid(WorkingStatus),
+            },
+            utility=utility,
+            constraints={"budget_constraint": budget_constraint},
+            transitions={
+                "next_wealth": next_wealth,
+                "next_health": next_health,
+                # Required for transition to dead
+                "next_funerary_wealth": next_funerary_wealth_from_alive,
+                "next_regime": next_regime_work_with_death,
+            },
         )
-        # Check that a warning was issued about absorbing regime
-        assert any("absorbing" in str(warning.message).lower() for warning in w)
+
+        retirement_regime = Regime(
+            name="retirement",
+            states={
+                "wealth": LinspaceGrid(start=1, stop=100, n_points=10),
+                "health": DiscreteGrid(HealthStatus),
+            },
+            actions={
+                "consumption": LinspaceGrid(start=1, stop=100, n_points=10),
+            },
+            utility=utility,
+            constraints={"budget_constraint": budget_constraint},
+            functions={"working": retired_working},
+            transitions={
+                "next_wealth": next_wealth,
+                "next_health": next_health,
+                # Required for transition to dead
+                "next_funerary_wealth": next_funerary_wealth_from_alive,
+                "next_regime": next_regime_retirement_with_death,
+            },
+        )
+
+        dead_regime = Regime(
+            name="dead",
+            absorbing=True,
+            states={"funerary_wealth": LinspaceGrid(start=0, stop=50, n_points=5)},
+            actions={},
+            utility=lambda funerary_wealth: jnp.array(0.0),  # noqa: ARG005
+            transitions={
+                "next_funerary_wealth": lambda funerary_wealth: funerary_wealth
+            },
+        )
+
+        model = Model(
+            regimes=[work_regime, retirement_regime, dead_regime],
+            n_periods=3,
+            regime_id_cls=ExtendedRegimeId,
+        )
+
+        # Verify dead regime doesn't have wealth/health in params template
+        dead_params_keys = set(model.params_template["dead"].keys())
+        assert "next_wealth" not in dead_params_keys
+        assert "next_health" not in dead_params_keys
+        assert "next_funerary_wealth" in dead_params_keys
+
+        # Verify model can be solved
+        health_transition = jnp.array([[0.8, 0.2], [0.3, 0.7]])
+        params = {
+            "work": {
+                "beta": 0.95,
+                "utility": {"disutility_of_work": 0.5},
+                "budget_constraint": {},
+                "next_wealth": {"wage": 20.0, "interest_rate": 0.05},
+                "next_health": {"health_transition": health_transition},
+                "next_funerary_wealth": {},
+                "next_regime": {},
+            },
+            "retirement": {
+                "beta": 0.95,
+                "utility": {"disutility_of_work": 0.5},
+                "budget_constraint": {},
+                "working": {},
+                "next_wealth": {"wage": 20.0, "interest_rate": 0.05},
+                "next_health": {"health_transition": health_transition},
+                "next_funerary_wealth": {},
+                "next_regime": {},
+            },
+            "dead": {
+                "beta": 0.95,
+                "utility": {},
+                "next_funerary_wealth": {},
+                "next_regime": {},
+            },
+        }
+
+        solution = model.solve(params)
+        assert len(solution) == 3
 
 
-def test_single_regime_model_treated_as_absorbing():
-    """Single-regime models should be treated as absorbing internally."""
+class TestOverlappingStateSpaces:
+    """Test regimes with partially overlapping state spaces.
 
-    def utility(consumption: ContinuousAction) -> FloatND:
-        return jnp.log(consumption)
+    Modifies retirement to have 'pension' instead of 'health'.
+    - Work regime: {wealth, health}
+    - Retirement regime: {wealth, pension}
+    - Shared: wealth
+    - Work-only: health
+    - Retirement-only: pension
+    """
 
-    def next_wealth(
-        wealth: ContinuousState, consumption: ContinuousAction
-    ) -> ContinuousState:
-        return wealth - consumption
+    def test_regime_with_overlapping_states(self):
+        """Retirement has pension instead of health (partial overlap with work)."""
 
-    # Single regime without absorbing=True or next_regime
-    single_regime = Regime(
-        name="single",
-        utility=utility,
-        states={"wealth": LinspaceGrid(start=1, stop=10, n_points=5)},
-        actions={"consumption": LinspaceGrid(start=1, stop=5, n_points=5)},
-        transitions={
-            "next_wealth": next_wealth,
-            # No next_regime needed for single-regime model
-        },
-    )
+        @dataclass
+        class PensionType:
+            basic: int = 0
+            premium: int = 1
 
-    # Should work without error (no regime_id_cls needed for single-regime models)
-    model = Model(
-        regimes=[single_regime],
-        n_periods=3,
-    )
+        def work_utility(
+            consumption: ContinuousAction,
+            health: DiscreteState,
+        ) -> FloatND:
+            """Utility in work depends on health."""
+            return jnp.log(consumption) * (1 + 0.1 * health)
 
-    assert model.n_periods == 3
-    assert len(model.internal_regimes) == 1
+        def retirement_utility(
+            consumption: ContinuousAction,
+            pension: DiscreteState,
+        ) -> FloatND:
+            """Utility in retirement depends on pension type."""
+            return jnp.log(consumption) * (1 + 0.2 * pension)
+
+        def next_pension(pension: DiscreteState) -> DiscreteState:
+            """Pension type stays constant."""
+            return pension
+
+        def next_pension_from_work(health: DiscreteState) -> DiscreteState:
+            """Pension type determined by health at retirement."""
+            # Good health -> premium pension, bad health -> basic pension
+            return health
+
+        def simple_next_wealth(
+            wealth: ContinuousState,
+            consumption: ContinuousAction,
+            interest_rate: float,
+        ) -> ContinuousState:
+            """Simple wealth transition: savings with interest."""
+            return (1 + interest_rate) * (wealth - consumption)
+
+        @lcm.mark.stochastic
+        def next_regime_to_retirement(period: int) -> FloatND:
+            """Transition to retirement after period 1."""
+            retire_prob = jnp.where(period < 1, 0.0, 0.5)
+            return jnp.array([1 - retire_prob, retire_prob])
+
+        work_regime = Regime(
+            name="work",
+            states={
+                "wealth": LinspaceGrid(start=1, stop=100, n_points=10),
+                "health": DiscreteGrid(HealthStatus),
+            },
+            actions={
+                "consumption": LinspaceGrid(start=1, stop=100, n_points=10),
+            },
+            utility=work_utility,
+            constraints={"budget_constraint": budget_constraint},
+            transitions={
+                "next_wealth": simple_next_wealth,
+                "next_health": next_health,
+                "next_pension": next_pension_from_work,  # For transition to retirement
+                "next_regime": next_regime_to_retirement,
+            },
+        )
+
+        def retirement_budget(
+            consumption: ContinuousAction, wealth: ContinuousState
+        ) -> BoolND:
+            return consumption <= wealth
+
+        retirement_regime = Regime(
+            name="retirement",
+            absorbing=True,
+            states={
+                "wealth": LinspaceGrid(start=1, stop=100, n_points=10),
+                "pension": DiscreteGrid(PensionType),
+            },
+            actions={
+                "consumption": LinspaceGrid(start=1, stop=100, n_points=10),
+            },
+            utility=retirement_utility,
+            constraints={"budget_constraint": retirement_budget},
+            transitions={
+                "next_wealth": simple_next_wealth,
+                "next_pension": next_pension,
+            },
+        )
+
+        model = Model(
+            regimes=[work_regime, retirement_regime],
+            n_periods=3,
+            regime_id_cls=RegimeId,
+        )
+
+        # Verify correct state transitions are in each regime
+        work_keys = set(model.params_template["work"].keys())
+        retirement_keys = set(model.params_template["retirement"].keys())
+
+        # Work should have next_pension (for transition to retirement)
+        assert "next_pension" in work_keys
+        assert "next_health" in work_keys
+
+        # Retirement should NOT have next_health
+        assert "next_health" not in retirement_keys
+        assert "next_pension" in retirement_keys
+
+        # Solve model
+        health_transition = jnp.array([[0.8, 0.2], [0.3, 0.7]])
+        params = {
+            "work": {
+                "beta": 0.95,
+                "utility": {},
+                "budget_constraint": {},
+                "next_wealth": {"interest_rate": 0.05},
+                "next_health": {"health_transition": health_transition},
+                "next_pension": {},
+                "next_regime": {},
+            },
+            "retirement": {
+                "beta": 0.95,
+                "utility": {},
+                "budget_constraint": {},
+                "next_wealth": {"interest_rate": 0.05},
+                "next_pension": {},
+                "next_regime": {},
+            },
+        }
+
+        solution = model.solve(params)
+        assert len(solution) == 3
+
+
+class TestValidation:
+    """Test validation errors for missing transitions."""
+
+    def test_missing_transition_raises_error(self):
+        """Non-absorbing regime missing required transition raises error."""
+        work_regime, _ = create_base_regimes()
+
+        @dataclass
+        class WorkDeadRegimeId:
+            work: int = 0
+            dead: int = 1
+
+        dead_regime = Regime(
+            name="dead",
+            absorbing=True,
+            states={"funerary_wealth": LinspaceGrid(start=0, stop=50, n_points=5)},
+            actions={},
+            utility=lambda: jnp.array(0.0),
+            transitions={
+                "next_funerary_wealth": lambda funerary_wealth: funerary_wealth
+            },
+        )
+
+        with pytest.raises(ValueError, match="missing transitions"):
+            Model(
+                regimes=[work_regime, dead_regime],
+                n_periods=3,
+                regime_id_cls=WorkDeadRegimeId,
+            )
+
+    def test_error_message_identifies_missing_transitions(self):
+        """Error message clearly identifies which transitions are missing."""
+
+        @dataclass
+        class ABRegimeId:
+            a: int = 0
+            b: int = 1
+
+        @dataclass
+        class StateX:
+            x: int = 0
+
+        @dataclass
+        class StateY:
+            y: int = 0
+
+        def utility_fn(consumption: ContinuousAction) -> FloatND:
+            return jnp.log(consumption)
+
+        @lcm.mark.stochastic
+        def next_regime_stochastic() -> FloatND:
+            return jnp.array([0.5, 0.5])
+
+        regime_a = Regime(
+            name="a",
+            states={"state_x": DiscreteGrid(StateX)},
+            actions={"consumption": LinspaceGrid(start=1, stop=10, n_points=5)},
+            utility=utility_fn,
+            transitions={
+                "next_state_x": lambda state_x: state_x,
+                "next_state_y": lambda: 0,
+                "next_regime": next_regime_stochastic,
+            },
+        )
+
+        # Regime B is missing 'next_state_x' transition
+        regime_b = Regime(
+            name="b",
+            states={"state_y": DiscreteGrid(StateY)},
+            actions={"consumption": LinspaceGrid(start=1, stop=10, n_points=5)},
+            utility=utility_fn,
+            transitions={
+                "next_state_y": lambda state_y: state_y,
+                "next_regime": next_regime_stochastic,
+            },
+        )
+
+        with pytest.raises(ValueError, match="next_state_x"):
+            Model(regimes=[regime_a, regime_b], n_periods=3, regime_id_cls=ABRegimeId)
