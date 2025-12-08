@@ -30,7 +30,6 @@ def test_create_params_without_shocks(binary_category_class):
         grids={regime.name: get_grids(regime)},  # type: ignore[arg-type]
         n_periods=3,
     )
-    # With flat transitions, param keys are flat (no regime prefix)
     assert got == {
         "beta": jnp.nan,
         "utility": {"c": jnp.nan},

@@ -424,7 +424,6 @@ def test_stochastic_solve(beta, n_wealth_points, health_transition):
     model = Model([STOCHASTIC_REGIME.replace(states=new_states)], n_periods=2)
 
     # Solve model using LCM
-    # With flat transitions, param keys are flat (no regime prefix)
     # ==================================================================================
     params = {
         "beta": beta,
@@ -473,7 +472,6 @@ def test_stochastic_simulate(beta, n_wealth_points, health_transition):
     model = Model([STOCHASTIC_REGIME.replace(states=new_states)], n_periods=2)
 
     # Simulate model using LCM
-    # With flat transitions, param keys are flat (no regime prefix)
     # ==================================================================================
     params = {
         "beta": beta,
