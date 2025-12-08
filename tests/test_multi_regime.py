@@ -321,6 +321,7 @@ def test_multi_regime_with_different_states():
 
     The key issue this tests is that flat transitions should only apply
     to the current regime, not create entries for all regimes.
+
     """
     # Create alive regime with wealth and health states
     alive_regime = Regime(

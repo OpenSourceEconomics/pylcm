@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -26,38 +24,7 @@ from tests.test_models.utils import get_regime
 # ======================================================================================
 
 
-def test_convert_flat_to_nested_single_regime():
-    """Single regime: flat transitions become nested under the regime name."""
-
-    def next_wealth():
-        pass
-
-    def next_health():
-        pass
-
-    flat_transitions = {
-        "next_wealth": next_wealth,
-        "next_health": next_health,
-    }
-
-    result = convert_flat_to_nested_transitions(
-        flat_transitions=flat_transitions,
-        states_per_regime={"work": {"wealth", "health"}},
-    )
-
-    expected = {
-        "work": {
-            "next_wealth": next_wealth,
-            "next_health": next_health,
-        },
-    }
-
-    assert result == expected
-
-
-def test_convert_flat_to_nested_with_next_regime():
-    """next_regime should stay at top level, not nested."""
-
+def test_convert_flat_to_nested_transitions():
     def next_wealth():
         pass
 
@@ -108,26 +75,7 @@ def test_convert_flat_to_nested_only_next_regime():
     assert result == expected
 
 
-def test_convert_flat_to_nested_empty_transitions():
-    """Empty transitions (single-regime model without explicit transitions)."""
-    flat_transitions: dict[str, Any] = {}
-
-    result = convert_flat_to_nested_transitions(
-        flat_transitions=flat_transitions,
-        states_per_regime={"single": set()},
-    )
-
-    # Empty regime with no transitions is valid
-    expected: dict[str, Any] = {
-        "single": {},
-    }
-
-    assert result == expected
-
-
-def test_convert_flat_to_nested_multi_regime_complete():
-    """Multi-regime case: only regimes with complete transitions are included."""
-
+def test_convert_flat_to_nested_multi_regime():
     def next_wealth():
         pass
 
@@ -171,39 +119,30 @@ def test_convert_flat_to_nested_multi_regime_complete():
     assert result == expected
 
 
-def test_convert_flat_to_nested_multi_regime_incomplete():
-    """Multi-regime case: regimes with incomplete transitions are excluded."""
-
+def test_convert_flat_to_nested_absorbing_multi_regime():
     def next_wealth():
-        pass
-
-    def next_pension():
         pass
 
     def next_regime():
         pass
 
-    # Old regime's transitions: only has next_wealth, next_pension
-    # Does NOT have next_education (because old can't transition to young)
-    flat_transitions = {
+    flat_transitions_dead = {
         "next_wealth": next_wealth,
-        "next_pension": next_pension,
         "next_regime": next_regime,
     }
 
     result = convert_flat_to_nested_transitions(
-        flat_transitions=flat_transitions,
+        flat_transitions=flat_transitions_dead,
         states_per_regime={
-            "young": {"wealth", "education"},  # Incomplete: missing next_education
-            "old": {"wealth", "pension"},  # Complete
+            "alive": {"wealth", "retired"},
+            "dead": {"wealth"},
         },
     )
 
-    # Only "old" is included because "young" has incomplete transitions
+    # Since "next_retired" is missing, "alive" is not included in the nested structure
     expected = {
-        "old": {
+        "dead": {
             "next_wealth": next_wealth,
-            "next_pension": next_pension,
         },
         "next_regime": next_regime,
     }
@@ -212,7 +151,7 @@ def test_convert_flat_to_nested_multi_regime_incomplete():
 
 
 @pytest.fixture
-def regime(binary_category_class):
+def regime_mock(binary_category_class):
     def utility(c):
         pass
 
@@ -231,8 +170,8 @@ def regime(binary_category_class):
     )
 
 
-def test_get_variable_info(regime):
-    got = get_variable_info(regime)
+def test_get_variable_info(regime_mock):
+    got = get_variable_info(regime_mock)
     exp = pd.DataFrame(
         {
             "is_state": [False, True],
@@ -248,8 +187,8 @@ def test_get_variable_info(regime):
     assert_frame_equal(got.loc[exp.index], exp)  # we don't care about the id order here
 
 
-def test_get_gridspecs(regime):
-    got = get_gridspecs(regime)
+def test_get_gridspecs(regime_mock):
+    got = get_gridspecs(regime_mock)
     assert isinstance(got["a"], DiscreteGrid)
     assert got["a"].categories == ("cat0", "cat1")
     assert got["a"].codes == (0, 1)
@@ -259,8 +198,8 @@ def test_get_gridspecs(regime):
     assert got["c"].codes == (0, 1)
 
 
-def test_get_grids(regime):
-    got = get_grids(regime)
+def test_get_grids(regime_mock):
+    got = get_grids(regime_mock)
     assert_array_equal(got["a"], jnp.array([0, 1]))
     assert_array_equal(got["c"], jnp.array([0, 1]))
 

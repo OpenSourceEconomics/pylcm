@@ -23,7 +23,7 @@ class Regime:
         description: Description of the regime.
         utility: Utility function for this regime.
         constraints: Dictionary of constraint functions.
-        transitions: Dictionary of transition functions (must start with 'next_').
+        transitions: Dictionary of transition functions (keys must start with 'next_').
         functions: Dictionary of auxiliary functions.
         actions: Dictionary of action grids.
         states: Dictionary of state grids.

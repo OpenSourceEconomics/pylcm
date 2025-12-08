@@ -556,49 +556,30 @@ def convert_flat_to_nested_transitions(
     format expected by internal processing. Each transition function is mapped to
     all target regimes that have the corresponding state.
 
-    Only regimes with COMPLETE transitions are included. A regime has complete
-    transitions if there is a transition function for every state in that regime.
-    This ensures we don't create entries for regimes that cannot be transitioned to.
-
     Args:
-        flat_transitions: Flat dictionary mapping transition names to functions.
-            Example: {"next_wealth": fn, "next_health": fn, "next_regime": fn}
+        flat_transitions: Dictionary mapping transition names to functions.
         states_per_regime: Dictionary mapping regime names to their state names.
-            Example: {"work": {"wealth", "health"}, "retirement": {"wealth", "health"}}
 
     Returns:
         Nested dictionary with state transitions mapped to their target regimes.
-        Only includes regimes where ALL states have transition functions.
-        Example: {
-            "work": {"next_wealth": fn, "next_health": fn},
-            "retirement": {"next_wealth": fn, "next_health": fn},
-            "next_regime": fn
-        }
 
     """
-    # Separate next_regime from state transitions
-    next_regime_fn = flat_transitions.get("next_regime")
+    next_regime_fn = flat_transitions["next_regime"]
     state_transitions = {
         name: fn for name, fn in flat_transitions.items() if name != "next_regime"
     }
 
-    # Get the set of states that have transition functions
     states_with_transitions = {name.removeprefix("next_") for name in state_transitions}
 
-    # Build nested structure, only including regimes with complete transitions
     nested: dict[str, dict[str, UserFunction] | UserFunction] = {}
 
+    nested["next_regime"] = next_regime_fn
+
     for regime_name, state_names in states_per_regime.items():
-        # Check if ALL states in this regime have transition functions
         if state_names <= states_with_transitions:
-            # All states covered - include this regime
             nested[regime_name] = {
                 f"next_{state}": state_transitions[f"next_{state}"]
-                for state in state_names
+                for state in state_names.intersection(states_with_transitions)
             }
-
-    # Add next_regime at top level if it exists
-    if next_regime_fn is not None:
-        nested["next_regime"] = next_regime_fn
 
     return nested

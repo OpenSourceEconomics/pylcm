@@ -124,11 +124,6 @@ class ProductivityShock:
 
 
 @dataclass
-class Dead:
-    dead: int = 0
-
-
-@dataclass
 class RegimeID:
     """Maps regime names to integer indices for regime transition probabilities."""
 
@@ -306,16 +301,6 @@ def next_education(education: DiscreteState) -> DiscreteState:
     return education
 
 
-def next_dead() -> DiscreteState:
-    """Transition of dead-state.
-
-    The dead state is currently necessary since PyLCM requires at least one state
-    variable per regime.
-
-    """
-    return Dead.dead
-
-
 @lcm.mark.stochastic
 def next_adjustment_cost(
     adjustment_cost: DiscreteState, adjustment_cost_transition: FloatND
@@ -412,7 +397,6 @@ ALIVE_REGIME = Regime(
         "next_health_type": next_health_type,
         "next_education": next_education,
         "next_productivity": next_productivity,
-        "next_dead": next_dead,
         "next_regime": next_regime_from_alive,
     },
 )
@@ -420,11 +404,13 @@ ALIVE_REGIME = Regime(
 DEAD_REGIME = Regime(
     name="dead",
     absorbing=True,
-    utility=lambda dead: jnp.asarray([0.0]),  # noqa: ARG005
-    states={"dead": DiscreteGrid(Dead)},
+    utility=lambda wealth: jnp.array(0.0),  # noqa: ARG005
+    # PyLCM requires at least one state variable per regime, which is why we add
+    # "wealth" here.
+    states={"wealth": LinspaceGrid(start=0, stop=49, n_points=2)},
     actions={},
     transitions={
-        "next_dead": next_dead,
+        "next_wealth": lambda wealth: wealth,
     },
 )
 
