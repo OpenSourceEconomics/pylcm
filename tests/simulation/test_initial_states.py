@@ -6,9 +6,13 @@ from unittest.mock import MagicMock
 
 import jax.numpy as jnp
 import pandas as pd
+import pytest
 from pybaum import tree_equal
 
-from lcm.simulation.util import convert_flat_to_nested_initial_states
+from lcm.simulation.util import (
+    convert_flat_to_nested_initial_states,
+    validate_flat_initial_states,
+)
 
 
 def _create_mock_internal_regime(name: str, state_names: list[str]) -> MagicMock:
@@ -195,3 +199,155 @@ class TestConvertFlatToNestedInitialStates:
 
         assert result["regime1"]["continuous"].dtype == jnp.float32
         assert result["regime1"]["discrete"].dtype == jnp.int32
+
+
+class TestValidateFlatInitialStates:
+    """Tests for validate_flat_initial_states function."""
+
+    def test_valid_input_passes(self):
+        """Valid input should not raise any errors."""
+        internal_regimes = {
+            "work": _create_mock_internal_regime("work", ["wealth", "health"]),
+            "retirement": _create_mock_internal_regime(
+                "retirement", ["wealth", "pension"]
+            ),
+        }
+
+        flat_initial_states = {
+            "wealth": jnp.array([10.0, 50.0]),
+            "health": jnp.array([0, 1]),
+            "pension": jnp.array([1, 0]),
+        }
+
+        # Should not raise
+        validate_flat_initial_states(
+            flat_initial_states,
+            internal_regimes,  # type: ignore[arg-type]
+        )
+
+    def test_missing_state_raises(self):
+        """Missing required state should raise ValueError."""
+        internal_regimes = {
+            "regime1": _create_mock_internal_regime("regime1", ["wealth", "health"]),
+        }
+
+        flat_initial_states = {
+            "wealth": jnp.array([10.0, 50.0]),
+            # Missing "health"
+        }
+
+        with pytest.raises(ValueError, match="Missing initial states"):
+            validate_flat_initial_states(
+                flat_initial_states,
+                internal_regimes,  # type: ignore[arg-type]
+            )
+
+    def test_extra_state_raises(self):
+        """Extra/unknown state should raise ValueError."""
+        internal_regimes = {
+            "regime1": _create_mock_internal_regime("regime1", ["wealth"]),
+        }
+
+        flat_initial_states = {
+            "wealth": jnp.array([10.0, 50.0]),
+            "unknown_state": jnp.array([1, 2]),
+        }
+
+        with pytest.raises(ValueError, match="Unknown initial states"):
+            validate_flat_initial_states(
+                flat_initial_states,
+                internal_regimes,  # type: ignore[arg-type]
+            )
+
+    def test_inconsistent_array_lengths_raises(self):
+        """Arrays with different lengths should raise ValueError."""
+        internal_regimes = {
+            "regime1": _create_mock_internal_regime("regime1", ["wealth", "health"]),
+        }
+
+        flat_initial_states = {
+            "wealth": jnp.array([10.0, 50.0, 100.0]),  # Length 3
+            "health": jnp.array([0, 1]),  # Length 2
+        }
+
+        with pytest.raises(ValueError, match="same length"):
+            validate_flat_initial_states(
+                flat_initial_states,
+                internal_regimes,  # type: ignore[arg-type]
+            )
+
+    def test_error_message_lists_missing_states(self):
+        """Error message should list the missing states."""
+        internal_regimes = {
+            "regime1": _create_mock_internal_regime(
+                "regime1", ["wealth", "health", "age"]
+            ),
+        }
+
+        flat_initial_states = {
+            "wealth": jnp.array([10.0]),
+        }
+
+        with pytest.raises(ValueError, match="'age'") as excinfo:
+            validate_flat_initial_states(
+                flat_initial_states,
+                internal_regimes,  # type: ignore[arg-type]
+            )
+
+        # Should mention both missing states
+        assert "health" in str(excinfo.value)
+        assert "age" in str(excinfo.value)
+
+    def test_error_message_lists_valid_states(self):
+        """Error message should list valid states when extra states provided."""
+        internal_regimes = {
+            "regime1": _create_mock_internal_regime("regime1", ["wealth"]),
+        }
+
+        flat_initial_states = {
+            "wealth": jnp.array([10.0]),
+            "invalid": jnp.array([1]),
+        }
+
+        with pytest.raises(ValueError, match="Valid states") as excinfo:
+            validate_flat_initial_states(
+                flat_initial_states,
+                internal_regimes,  # type: ignore[arg-type]
+            )
+
+        assert "wealth" in str(excinfo.value)
+
+    def test_empty_regimes_with_no_states(self):
+        """Regimes with no states should validate with empty initial_states."""
+        internal_regimes = {
+            "terminal": _create_mock_internal_regime("terminal", []),
+        }
+
+        flat_initial_states: dict[str, jnp.ndarray] = {}
+
+        # Should not raise
+        validate_flat_initial_states(
+            flat_initial_states,
+            internal_regimes,  # type: ignore[arg-type]
+        )
+
+    def test_multi_regime_collects_all_required_states(self):
+        """Validation should collect states from all regimes."""
+        internal_regimes = {
+            "work": _create_mock_internal_regime("work", ["wealth", "health"]),
+            "retirement": _create_mock_internal_regime(
+                "retirement", ["wealth", "pension"]
+            ),
+        }
+
+        # Missing "pension" which is only in retirement regime
+        flat_initial_states = {
+            "wealth": jnp.array([10.0]),
+            "health": jnp.array([0]),
+        }
+
+        with pytest.raises(ValueError, match="pension"):
+            validate_flat_initial_states(
+                flat_initial_states,
+                internal_regimes,  # type: ignore[arg-type]
+            )
