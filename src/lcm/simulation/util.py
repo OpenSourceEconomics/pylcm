@@ -1,4 +1,5 @@
 from dataclasses import fields
+from typing import TYPE_CHECKING
 
 import jax
 from jax import Array, vmap
@@ -10,6 +11,9 @@ from lcm.random import generate_simulation_keys
 from lcm.state_action_space import create_state_action_space
 from lcm.typing import Bool1D, Int1D, ParamsDict, RegimeName
 from lcm.utils import flatten_regime_namespace
+
+if TYPE_CHECKING:
+    from lcm.typing import FlatInitialStates, NestedInitialStates
 
 
 def get_regime_name_to_id_mapping(regime_id_cls: type) -> dict[RegimeName, int]:
@@ -258,3 +262,34 @@ def _update_states_for_subjects(
         )
 
     return updated_states
+
+
+def convert_flat_to_nested_initial_states(
+    flat_initial_states: "FlatInitialStates",
+    internal_regimes: dict[RegimeName, InternalRegime],
+) -> "NestedInitialStates":
+    """Convert flat initial_states dict to nested format.
+
+    Takes user-provided flat format and converts to the nested format
+    expected by internal simulation code.
+
+    Args:
+        flat_initial_states: Dict mapping state names to arrays.
+            Example: {"wealth": arr, "health": arr}
+        internal_regimes: Dict of internal regime instances.
+
+    Returns:
+        Nested dict mapping regime names to state dicts.
+            Example: {"work": {"wealth": arr, "health": arr}, ...}
+
+    """
+    nested: NestedInitialStates = {}
+
+    for regime_name, internal_regime in internal_regimes.items():
+        regime_state_names = set(internal_regime.variable_info.query("is_state").index)
+        nested[regime_name] = {
+            state_name: flat_initial_states[state_name]
+            for state_name in regime_state_names
+        }
+
+    return nested
