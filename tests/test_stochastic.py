@@ -26,11 +26,9 @@ def test_model_solve_and_simulate_with_stochastic_model():
     res: pd.DataFrame = model.solve_and_simulate(
         params=params,
         initial_states={
-            "iskhakov_et_al_2017_stochastic": {
-                "health": jnp.array([1, 1, 0, 0]),
-                "partner": jnp.array([0, 0, 1, 0]),
-                "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
-            }
+            "health": jnp.array([1, 1, 0, 0]),
+            "partner": jnp.array([0, 0, 1, 0]),
+            "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
         },
         initial_regimes=["iskhakov_et_al_2017_stochastic"] * 4,
     )["iskhakov_et_al_2017_stochastic"]
@@ -133,11 +131,9 @@ def test_compare_deterministic_and_stochastic_results_value_function(model_and_p
     # Compare simulation results
     # ==================================================================================
     initial_states = {
-        "iskhakov_et_al_2017_stochastic": {
-            "health": jnp.array([1, 1, 0, 0]),
-            "partner": jnp.array([0, 0, 0, 0]),
-            "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
-        }
+        "health": jnp.array([1, 1, 0, 0]),
+        "partner": jnp.array([0, 0, 0, 0]),
+        "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
     }
     initial_regimes = ["iskhakov_et_al_2017_stochastic"] * 4
 
