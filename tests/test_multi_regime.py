@@ -83,7 +83,7 @@ def next_health(health: DiscreteState, health_transition: FloatND) -> FloatND:
     return health_transition[health]
 
 
-def budget_constraint(
+def borrowing_constraint(
     consumption: ContinuousAction,
     wealth: ContinuousState,
 ) -> BoolND:
@@ -121,7 +121,7 @@ def create_base_regimes() -> tuple[Regime, Regime]:
             "working": DiscreteGrid(WorkingStatus),
         },
         utility=utility,
-        constraints={"budget_constraint": budget_constraint},
+        constraints={"borrowing_constraint": borrowing_constraint},
         transitions={
             "next_wealth": next_wealth,
             "next_health": next_health,
@@ -140,7 +140,7 @@ def create_base_regimes() -> tuple[Regime, Regime]:
             "consumption": LinspaceGrid(start=1, stop=100, n_points=10),
         },
         utility=utility,
-        constraints={"budget_constraint": budget_constraint},
+        constraints={"borrowing_constraint": borrowing_constraint},
         functions={
             "working": retired_working,
         },
@@ -166,7 +166,7 @@ def create_base_params() -> ParamsDict:
         "work": {
             "beta": 0.95,
             "utility": {"disutility_of_work": 0.5},
-            "budget_constraint": {},
+            "borrowing_constraint": {},
             "next_wealth": {"wage": 20.0, "interest_rate": 0.05},
             "next_health": {"health_transition": health_transition},
             "next_regime": {},
@@ -174,7 +174,7 @@ def create_base_params() -> ParamsDict:
         "retirement": {
             "beta": 0.95,
             "utility": {"disutility_of_work": 0.5},
-            "budget_constraint": {},
+            "borrowing_constraint": {},
             "working": {},
             "next_wealth": {"wage": 20.0, "interest_rate": 0.05},
             "next_health": {"health_transition": health_transition},
@@ -278,7 +278,7 @@ class TestAbsorbingRegimes:
                 "consumption": LinspaceGrid(start=1, stop=100, n_points=10),
             },
             utility=utility,
-            constraints={"budget_constraint": budget_constraint},
+            constraints={"borrowing_constraint": borrowing_constraint},
             functions={"working": retired_working},
             transitions={
                 "next_wealth": next_wealth,
@@ -351,7 +351,7 @@ class TestDifferentStateSpaces:
                 "working": DiscreteGrid(WorkingStatus),
             },
             utility=utility,
-            constraints={"budget_constraint": budget_constraint},
+            constraints={"borrowing_constraint": borrowing_constraint},
             transitions={
                 "next_wealth": next_wealth,
                 "next_health": next_health,
@@ -371,7 +371,7 @@ class TestDifferentStateSpaces:
                 "consumption": LinspaceGrid(start=1, stop=100, n_points=10),
             },
             utility=utility,
-            constraints={"budget_constraint": budget_constraint},
+            constraints={"borrowing_constraint": borrowing_constraint},
             functions={"working": retired_working},
             transitions={
                 "next_wealth": next_wealth,
@@ -411,7 +411,7 @@ class TestDifferentStateSpaces:
             "work": {
                 "beta": 0.95,
                 "utility": {"disutility_of_work": 0.5},
-                "budget_constraint": {},
+                "borrowing_constraint": {},
                 "next_wealth": {"wage": 20.0, "interest_rate": 0.05},
                 "next_health": {"health_transition": health_transition},
                 "next_funerary_wealth": {},
@@ -420,7 +420,7 @@ class TestDifferentStateSpaces:
             "retirement": {
                 "beta": 0.95,
                 "utility": {"disutility_of_work": 0.5},
-                "budget_constraint": {},
+                "borrowing_constraint": {},
                 "working": {},
                 "next_wealth": {"wage": 20.0, "interest_rate": 0.05},
                 "next_health": {"health_transition": health_transition},
@@ -505,7 +505,7 @@ class TestOverlappingStateSpaces:
                 "consumption": LinspaceGrid(start=1, stop=100, n_points=10),
             },
             utility=work_utility,
-            constraints={"budget_constraint": budget_constraint},
+            constraints={"borrowing_constraint": borrowing_constraint},
             transitions={
                 "next_wealth": simple_next_wealth,
                 "next_health": next_health,
@@ -530,7 +530,7 @@ class TestOverlappingStateSpaces:
                 "consumption": LinspaceGrid(start=1, stop=100, n_points=10),
             },
             utility=retirement_utility,
-            constraints={"budget_constraint": retirement_budget},
+            constraints={"borrowing_constraint": retirement_budget},
             transitions={
                 "next_wealth": simple_next_wealth,
                 "next_pension": next_pension,
@@ -561,7 +561,7 @@ class TestOverlappingStateSpaces:
             "work": {
                 "beta": 0.95,
                 "utility": {},
-                "budget_constraint": {},
+                "borrowing_constraint": {},
                 "next_wealth": {"interest_rate": 0.05},
                 "next_health": {"health_transition": health_transition},
                 "next_pension": {},
@@ -570,7 +570,7 @@ class TestOverlappingStateSpaces:
             "retirement": {
                 "beta": 0.95,
                 "utility": {},
-                "budget_constraint": {},
+                "borrowing_constraint": {},
                 "next_wealth": {"interest_rate": 0.05},
                 "next_pension": {},
                 "next_regime": {},
