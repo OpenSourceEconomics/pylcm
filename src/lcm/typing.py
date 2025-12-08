@@ -221,8 +221,3 @@ class NextStateSimulationFunction(Protocol):
         self,
         **kwargs: Array | Period | ParamsDict,
     ) -> dict[str, DiscreteState | ContinuousState]: ...
-
-
-# Type aliases for initial states formats
-type FlatInitialStates = dict[str, Array]
-type NestedInitialStates = dict[RegimeName, dict[str, Array]]

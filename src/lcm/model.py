@@ -18,10 +18,10 @@ from lcm.solution.solve_brute import solve
 
 if TYPE_CHECKING:
     import pandas as pd
+    from jax import Array
 
     from lcm.input_processing.regime_processing import InternalRegime
     from lcm.typing import (
-        FlatInitialStates,
         FloatND,
         ParamsDict,
         RegimeName,
@@ -143,7 +143,7 @@ class Model:
     def simulate(
         self,
         params: ParamsDict,
-        initial_states: FlatInitialStates,
+        initial_states: dict[str, Array],
         initial_regimes: list[RegimeName],
         V_arr_dict: dict[int, dict[RegimeName, FloatND]],
         *,
@@ -185,7 +185,7 @@ class Model:
     def solve_and_simulate(
         self,
         params: ParamsDict,
-        initial_states: FlatInitialStates,
+        initial_states: dict[str, Array],
         initial_regimes: list[RegimeName],
         *,
         additional_targets: dict[RegimeName, list[str]] | None = None,

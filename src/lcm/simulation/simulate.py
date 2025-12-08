@@ -29,7 +29,6 @@ if TYPE_CHECKING:
     import pandas as pd
 
     from lcm.typing import (
-        FlatInitialStates,
         FloatND,
         Int1D,
         IntND,
@@ -40,7 +39,7 @@ if TYPE_CHECKING:
 
 def simulate(
     params: dict[RegimeName, ParamsDict],
-    initial_states: FlatInitialStates,
+    initial_states: dict[str, Array],
     initial_regimes: list[RegimeName],
     internal_regimes: dict[RegimeName, InternalRegime],
     regime_id_cls: type,

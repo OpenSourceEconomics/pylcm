@@ -1,5 +1,4 @@
 from dataclasses import fields
-from typing import TYPE_CHECKING
 
 import jax
 from jax import Array, vmap
@@ -11,9 +10,6 @@ from lcm.random import generate_simulation_keys
 from lcm.state_action_space import create_state_action_space
 from lcm.typing import Bool1D, Int1D, ParamsDict, RegimeName
 from lcm.utils import flatten_regime_namespace
-
-if TYPE_CHECKING:
-    from lcm.typing import FlatInitialStates, NestedInitialStates
 
 
 def get_regime_name_to_id_mapping(regime_id_cls: type) -> dict[RegimeName, int]:
@@ -265,7 +261,7 @@ def _update_states_for_subjects(
 
 
 def validate_flat_initial_states(
-    flat_initial_states: "FlatInitialStates",
+    flat_initial_states: "dict[str, Array]",
     internal_regimes: dict[RegimeName, InternalRegime],
 ) -> None:
     """Validate flat initial_states dict.
@@ -319,9 +315,9 @@ def validate_flat_initial_states(
 
 
 def convert_flat_to_nested_initial_states(
-    flat_initial_states: "FlatInitialStates",
+    flat_initial_states: "dict[str, Array]",
     internal_regimes: dict[RegimeName, InternalRegime],
-) -> "NestedInitialStates":
+) -> "dict[RegimeName, dict[str, Array]]":
     """Convert flat initial_states dict to nested format.
 
     Takes user-provided flat format and converts to the nested format
@@ -337,7 +333,7 @@ def convert_flat_to_nested_initial_states(
             Example: {"work": {"wealth": arr, "health": arr}, ...}
 
     """
-    nested: NestedInitialStates = {}
+    nested: dict[RegimeName, dict[str, Array]] = {}
 
     for regime_name, internal_regime in internal_regimes.items():
         regime_state_names = set(internal_regime.variable_info.query("is_state").index)
