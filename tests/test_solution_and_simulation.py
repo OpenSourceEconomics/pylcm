@@ -6,12 +6,13 @@ import jax.numpy as jnp
 import pytest
 from pybaum import tree_equal, tree_map
 
+from lcm import Model
 from lcm.input_processing import process_regimes
+from lcm.input_processing.regime_processing import create_default_regime_id_cls
 from lcm.max_Q_over_c import (
     get_argmax_and_max_Q_over_c,
     get_max_Q_over_c,
 )
-from lcm.model import Model
 from lcm.Q_and_F import get_Q_and_F
 from lcm.state_action_space import create_state_space_info
 from tests.test_models.deterministic import RetirementStatus
@@ -64,11 +65,7 @@ def test_solve_and_simulate_stripped_down():
 
     model.solve_and_simulate(
         params,
-        initial_states={
-            "iskhakov_et_al_2017_stripped_down": {
-                "wealth": jnp.array([1.0, 10.0, 50.0])
-            }
-        },
+        initial_states={"wealth": jnp.array([1.0, 10.0, 50.0])},
         initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 3,
         additional_targets={"iskhakov_et_al_2017_discrete": ["age"]}
         if "age"
@@ -84,9 +81,7 @@ def test_solve_and_simulate_fully_discrete():
 
     model.solve_and_simulate(
         params,
-        initial_states={
-            "iskhakov_et_al_2017_discrete": {"wealth": jnp.array([1.0, 10.0, 50.0])}
-        },
+        initial_states={"wealth": jnp.array([1.0, 10.0, 50.0])},
         initial_regimes=["iskhakov_et_al_2017_discrete"] * 3,
         additional_targets={"iskhakov_et_al_2017_discrete": ["age"]}
         if "age" in model.internal_regimes["iskhakov_et_al_2017_discrete"].functions
@@ -114,7 +109,7 @@ def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(
     solve_then_simulate = model.simulate(
         params,
         V_arr_dict=V_arr_dict,
-        initial_states={model_name: {"wealth": jnp.array([1.0, 10.0, 50.0])}},
+        initial_states={"wealth": jnp.array([1.0, 10.0, 50.0])},
         initial_regimes=[model_name] * 3,
     )
 
@@ -122,7 +117,7 @@ def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(
     # ==================================================================================
     solve_and_simulate = model.solve_and_simulate(
         params,
-        initial_states={model_name: {"wealth": jnp.array([1.0, 10.0, 50.0])}},
+        initial_states={"wealth": jnp.array([1.0, 10.0, 50.0])},
         initial_regimes=[model_name] * 3,
     )
 
@@ -144,16 +139,14 @@ def test_simulate_iskhakov_et_al_2017(model: Model) -> None:
         params,
         V_arr_dict=V_arr_dict,
         initial_states={
-            "iskhakov_et_al_2017": {
-                "wealth": jnp.array([10.0, 10.0, 20.0]),
-                "lagged_retirement": jnp.array(
-                    [
-                        RetirementStatus.working,
-                        RetirementStatus.retired,
-                        RetirementStatus.retired,
-                    ]
-                ),
-            }
+            "wealth": jnp.array([10.0, 10.0, 20.0]),
+            "lagged_retirement": jnp.array(
+                [
+                    RetirementStatus.working,
+                    RetirementStatus.retired,
+                    RetirementStatus.retired,
+                ]
+            ),
         },
         initial_regimes=["iskhakov_et_al_2017"] * 3,
     )
@@ -166,9 +159,12 @@ def test_simulate_iskhakov_et_al_2017(model: Model) -> None:
 
 def test_get_max_Q_over_c():
     regime = get_regime("iskhakov_et_al_2017_stripped_down")
-    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
-        "iskhakov_et_al_2017_stripped_down"
-    ]
+    internal_regime = process_regimes(
+        [regime],
+        n_periods=3,
+        regime_id_cls=create_default_regime_id_cls(regime.name),
+        enable_jit=True,
+    )[regime.name]
 
     params = {
         "iskhakov_et_al_2017_stripped_down": {
@@ -217,9 +213,12 @@ def test_get_max_Q_over_c():
 
 def test_get_max_Q_over_c_with_discrete_model():
     regime = get_regime("iskhakov_et_al_2017_discrete")
-    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
-        "iskhakov_et_al_2017_discrete"
-    ]
+    internal_regime = process_regimes(
+        [regime],
+        n_periods=3,
+        regime_id_cls=create_default_regime_id_cls(regime.name),
+        enable_jit=True,
+    )[regime.name]
 
     params = {
         "iskhakov_et_al_2017_discrete": {
@@ -273,9 +272,12 @@ def test_get_max_Q_over_c_with_discrete_model():
 
 def test_argmax_and_max_Q_over_c():
     regime = get_regime("iskhakov_et_al_2017_stripped_down")
-    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
-        "iskhakov_et_al_2017_stripped_down"
-    ]
+    internal_regime = process_regimes(
+        [regime],
+        n_periods=3,
+        regime_id_cls=create_default_regime_id_cls(regime.name),
+        enable_jit=True,
+    )[regime.name]
 
     params = {
         "iskhakov_et_al_2017_stripped_down": {
@@ -324,9 +326,12 @@ def test_argmax_and_max_Q_over_c():
 
 def test_argmax_and_max_Q_over_c_with_discrete_model():
     regime = get_regime("iskhakov_et_al_2017_discrete")
-    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
-        "iskhakov_et_al_2017_discrete"
-    ]
+    internal_regime = process_regimes(
+        [regime],
+        n_periods=3,
+        regime_id_cls=create_default_regime_id_cls(regime.name),
+        enable_jit=True,
+    )[regime.name]
 
     params = {
         "iskhakov_et_al_2017_discrete": {

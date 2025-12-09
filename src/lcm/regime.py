@@ -6,13 +6,9 @@ from typing import TYPE_CHECKING, Any
 
 from lcm.exceptions import RegimeInitializationError, format_messages
 from lcm.grids import Grid
-from lcm.utils import flatten_regime_namespace
+from lcm.utils import REGIME_SEPARATOR, flatten_regime_namespace
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from jax import Array
-
     from lcm.typing import (
         UserFunction,
     )
@@ -23,27 +19,28 @@ class Regime:
     """A user regime which can be processed into an internal regime.
 
     Attributes:
+        name: Name of the regime.
         description: Description of the regime.
-        n_periods: Number of periods in the regime.
-        functions: Dictionary of user provided functions that define the functional
-            relationships between regime variables. It must include at least a function
-            called 'utility'.
-        actions: Dictionary of user provided actions.
-        states: Dictionary of user provided states.
+        utility: Utility function for this regime.
+        constraints: Dictionary of constraint functions.
+        transitions: Dictionary of transition functions (keys must start with 'next_').
+        functions: Dictionary of auxiliary functions.
+        actions: Dictionary of action grids.
+        states: Dictionary of state grids.
+        absorbing: Whether this is an absorbing regime.
 
     """
 
-    # regime specification information (provided by the User)
     name: str
-    description: str | None = None
     _: KW_ONLY
     utility: UserFunction
     constraints: dict[str, UserFunction] = field(default_factory=dict)
-    transitions: dict[str, dict[str, UserFunction]] = field(default_factory=dict)
+    transitions: dict[str, UserFunction] = field(default_factory=dict)
     functions: dict[str, UserFunction] = field(default_factory=dict)
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
-    regime_transition_probs: Callable[..., dict[str, float | Array]] | None = None
+    absorbing: bool = False
+    description: str | None = None
 
     def __post_init__(self) -> None:
         _validate_attribute_types(self)
@@ -56,12 +53,11 @@ class Regime:
             Dictionary that maps names of all regime functions to the functions.
 
         """
-        return flatten_regime_namespace(
+        return (
             self.functions
             | {"utility": self.utility}
             | self.constraints
             | self.transitions
-            | {"regime_transition_probs": self.regime_transition_probs}
         )
 
     def replace(self, **kwargs: Any) -> Regime:  # noqa: ANN401
@@ -125,8 +121,6 @@ def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
 
     if not callable(regime.utility):
         error_messages.append("utility must be a callable.")
-    if not callable(regime.regime_transition_probs):
-        error_messages.append("regime_transition_probs must be a callable.")
 
     if error_messages:
         msg = format_messages(error_messages)
@@ -137,45 +131,69 @@ def _validate_logical_consistency(regime: Regime) -> None:
     """Validate the logical consistency of the regime."""
     error_messages = []
 
+    # Validate regime name does not contain the separator
+    if REGIME_SEPARATOR in regime.name:
+        error_messages.append(
+            f"Regime name '{regime.name}' contains the reserved separator "
+            f"'{REGIME_SEPARATOR}'. Please use a different name.",
+        )
+
+    # Validate function names do not contain the separator
+    all_function_names = (
+        list(regime.transitions.keys())
+        + list(regime.constraints.keys())
+        + list(regime.functions.keys())
+    )
+    invalid_function_names = [
+        name for name in all_function_names if REGIME_SEPARATOR in name
+    ]
+    if invalid_function_names:
+        error_messages.append(
+            f"Function names cannot contain the reserved separator "
+            f"'{REGIME_SEPARATOR}'. The following names are invalid: "
+            f"{invalid_function_names}.",
+        )
+
+    # Validate state and action names do not contain the separator
+    all_variable_names = list(regime.states.keys()) + list(regime.actions.keys())
+    invalid_variable_names = [
+        name for name in all_variable_names if REGIME_SEPARATOR in name
+    ]
+    if invalid_variable_names:
+        error_messages.append(
+            f"State and action names cannot contain the reserved separator "
+            f"'{REGIME_SEPARATOR}'. The following names are invalid: "
+            f"{invalid_variable_names}.",
+        )
+
     if "utility" in regime.functions:
         error_messages.append(
             "The function name 'utility' is reserved and cannot be used in the "
             "functions dictionary. Please use the utility attribute instead.",
         )
 
-    invalid_transitions = [
-        tran_name
-        for tran_name in [
-            key
-            for transition_dict in regime.transitions.values()
-            for key in transition_dict
-        ]
-        if not tran_name.startswith("next_")
+    # Validate transition function names start with 'next_'
+    transitions_with_invalid_name = [
+        fn_name for fn_name in regime.transitions if not fn_name.startswith("next_")
     ]
-    if invalid_transitions:
+    if transitions_with_invalid_name:
         error_messages.append(
-            "Each transitions name must start with 'next_'. "
-            "The following transition names are invalid:"
-            f"{invalid_transitions}.",
+            "Each transitions name must start with 'next_'. The following transition "
+            f"names are invalid: {transitions_with_invalid_name}.",
         )
 
+    # Validate each state has a corresponding transition. We do not check the other way
+    # because transitions can target states in other regimes.
     states = set(regime.states)
     states_via_transition = {
-        s.removeprefix("next_") for s in regime.transitions[regime.name]
+        fn_name.removeprefix("next_") for fn_name in regime.transitions
     }
 
     if states - states_via_transition:
         error_messages.append(
             "Each state must have a corresponding transition function. For the "
-            f"following states, no transition function was found: "
+            "following states, no transition function was found: "
             f"{states - states_via_transition}.",
-        )
-
-    if states_via_transition - states:
-        error_messages.append(
-            "Each transition function must correspond to a state. For the following "
-            f"transition functions, no corresponding state was found: "
-            f"{states_via_transition - states}.",
         )
 
     states_and_actions_overlap = set(regime.states) & set(regime.actions)

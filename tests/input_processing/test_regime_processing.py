@@ -9,19 +9,149 @@ from pandas.testing import assert_frame_equal
 
 from lcm import DiscreteGrid, LinspaceGrid, grid_helpers
 from lcm.input_processing.regime_processing import (
-    _get_stochastic_weight_function,
+    convert_flat_to_nested_transitions,
+    create_default_regime_id_cls,
     get_grids,
     get_gridspecs,
     get_variable_info,
     process_regimes,
 )
-from lcm.mark import StochasticInfo
 from tests.regime_mock import RegimeMock
 from tests.test_models.utils import get_regime
 
+# ======================================================================================
+# Tests for convert_flat_to_nested_transitions
+# ======================================================================================
+
+
+def test_convert_flat_to_nested_transitions():
+    def next_wealth():
+        pass
+
+    def next_regime():
+        pass
+
+    flat_transitions = {
+        "next_wealth": next_wealth,
+        "next_regime": next_regime,
+    }
+
+    result = convert_flat_to_nested_transitions(
+        flat_transitions=flat_transitions,
+        states_per_regime={"alive": {"wealth"}},
+    )
+
+    expected = {
+        "alive": {
+            "next_wealth": next_wealth,
+        },
+        "next_regime": next_regime,
+    }
+
+    assert result == expected
+
+
+def test_convert_flat_to_nested_only_next_regime():
+    """Regime with only next_regime (like dead regime with no state transitions)."""
+
+    def next_regime():
+        pass
+
+    flat_transitions = {
+        "next_regime": next_regime,
+    }
+
+    result = convert_flat_to_nested_transitions(
+        flat_transitions=flat_transitions,
+        states_per_regime={"dead": set()},
+    )
+
+    # Empty regimes (no states) get complete transitions by definition
+    expected = {
+        "dead": {},
+        "next_regime": next_regime,
+    }
+
+    assert result == expected
+
+
+def test_convert_flat_to_nested_multi_regime():
+    def next_wealth():
+        pass
+
+    def next_education():
+        pass
+
+    def next_pension():
+        pass
+
+    def next_regime():
+        pass
+
+    flat_transitions = {
+        "next_wealth": next_wealth,
+        "next_education": next_education,
+        "next_pension": next_pension,
+        "next_regime": next_regime,
+    }
+
+    result = convert_flat_to_nested_transitions(
+        flat_transitions=flat_transitions,
+        states_per_regime={
+            "young": {"wealth", "education"},
+            "old": {"wealth", "pension"},
+        },
+    )
+
+    # Both regimes have complete transitions
+    expected = {
+        "young": {
+            "next_wealth": next_wealth,
+            "next_education": next_education,
+        },
+        "old": {
+            "next_wealth": next_wealth,
+            "next_pension": next_pension,
+        },
+        "next_regime": next_regime,
+    }
+
+    assert result == expected
+
+
+def test_convert_flat_to_nested_absorbing_multi_regime():
+    def next_wealth():
+        pass
+
+    def next_regime():
+        pass
+
+    flat_transitions_dead = {
+        "next_wealth": next_wealth,
+        "next_regime": next_regime,
+    }
+
+    result = convert_flat_to_nested_transitions(
+        flat_transitions=flat_transitions_dead,
+        states_per_regime={
+            "alive": {"wealth", "retired"},
+            "dead": {"wealth"},
+        },
+    )
+
+    # Since "next_retired" is missing, "alive" is not included in the nested structure
+    expected = {
+        "dead": {
+            "next_wealth": next_wealth,
+        },
+        "next_regime": next_regime,
+    }
+
+    assert result == expected
+
 
 @pytest.fixture
-def regime(binary_category_class):
+def regime_mock(binary_category_class):
     def utility(c):
         pass
 
@@ -36,12 +166,12 @@ def regime(binary_category_class):
             "c": DiscreteGrid(binary_category_class),
         },
         utility=utility,
-        transitions={"mock": {"next_c": next_c}},
+        transitions={"next_c": next_c},
     )
 
 
-def test_get_variable_info(regime):
-    got = get_variable_info(regime)
+def test_get_variable_info(regime_mock):
+    got = get_variable_info(regime_mock)
     exp = pd.DataFrame(
         {
             "is_state": [False, True],
@@ -57,8 +187,8 @@ def test_get_variable_info(regime):
     assert_frame_equal(got.loc[exp.index], exp)  # we don't care about the id order here
 
 
-def test_get_gridspecs(regime):
-    got = get_gridspecs(regime)
+def test_get_gridspecs(regime_mock):
+    got = get_gridspecs(regime_mock)
     assert isinstance(got["a"], DiscreteGrid)
     assert got["a"].categories == ("cat0", "cat1")
     assert got["a"].codes == (0, 1)
@@ -68,17 +198,20 @@ def test_get_gridspecs(regime):
     assert got["c"].codes == (0, 1)
 
 
-def test_get_grids(regime):
-    got = get_grids(regime)
+def test_get_grids(regime_mock):
+    got = get_grids(regime_mock)
     assert_array_equal(got["a"], jnp.array([0, 1]))
     assert_array_equal(got["c"], jnp.array([0, 1]))
 
 
 def test_process_regime_iskhakov_et_al_2017():
     regime = get_regime("iskhakov_et_al_2017")
-    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
-        "iskhakov_et_al_2017"
-    ]
+    internal_regime = process_regimes(
+        [regime],
+        n_periods=3,
+        regime_id_cls=create_default_regime_id_cls(regime.name),
+        enable_jit=True,
+    )[regime.name]
 
     # Variable Info
     assert (
@@ -136,9 +269,12 @@ def test_process_regime_iskhakov_et_al_2017():
 
 def test_process_regime():
     regime = get_regime("iskhakov_et_al_2017_stripped_down")
-    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
-        "iskhakov_et_al_2017_stripped_down"
-    ]
+    internal_regime = process_regimes(
+        [regime],
+        n_periods=3,
+        regime_id_cls=create_default_regime_id_cls(regime.name),
+        enable_jit=True,
+    )[regime.name]
 
     # Variable Info
     assert (
@@ -184,49 +320,6 @@ def test_process_regime():
     assert internal_regime.transitions is not None
     assert internal_regime.constraints is not None
     assert internal_regime.utility is not None
-
-
-def test_get_stochastic_weight_function():
-    def raw_func(health, wealth):
-        pass
-
-    raw_func._stochastic_info = StochasticInfo()  # type: ignore[attr-defined]
-
-    variable_info = pd.DataFrame(
-        {"is_discrete": [True, True]},
-        index=["health", "wealth"],
-    )
-
-    got_function = _get_stochastic_weight_function(
-        raw_func,
-        name="health",
-        variable_info=variable_info,
-    )
-
-    params = {"shocks": {"health": np.arange(12).reshape(2, 3, 2)}}
-
-    got = got_function(health=1, wealth=0, params=params)
-    expected = np.array([6, 7])
-    assert_array_equal(got, expected)
-
-
-def test_get_stochastic_weight_function_non_state_dependency():
-    def raw_func(health, wealth):
-        pass
-
-    raw_func._stochastic_info = StochasticInfo()  # type: ignore[attr-defined]
-
-    variable_info = pd.DataFrame(
-        {"is_discrete": [False, True]},
-        index=["health", "wealth"],
-    )
-
-    with pytest.raises(ValueError, match="Stochastic variables"):
-        _get_stochastic_weight_function(
-            raw_func,
-            name="health",
-            variable_info=variable_info,
-        )
 
 
 def test_variable_info_with_continuous_constraint_has_unique_index():

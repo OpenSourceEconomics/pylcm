@@ -163,11 +163,8 @@ def get_Q_and_F_non_terminal(
             A tuple containing the arrays with state-action values and feasibilities.
 
         """
-        # ------------------------------------------------------------------------------
-        # Calculate the expected continuation values
-        # ------------------------------------------------------------------------------
         regime_transition_prob = regime_transition_prob_func(
-            **states_and_actions, period=period, params=params
+            **states_and_actions, period=period, params=params[regime.name]
         )
         U_arr, F_arr = U_and_F(
             **states_and_actions,
@@ -214,11 +211,9 @@ def get_Q_and_F_non_terminal(
                 * next_V_expected_arr
             )
 
-        # ------------------------------------------------------------------------------
-        # Calculate the instantaneous utility and feasibility
-        # ------------------------------------------------------------------------------
-
-        return Q_arr, F_arr
+        # Handle cases when there is only one state. (Q_arr and F_arr are then scalars
+        # but we require arrays as output).
+        return jnp.asarray(Q_arr), jnp.asarray(F_arr)
 
     return Q_and_F
 
@@ -279,7 +274,7 @@ def get_Q_and_F_terminal(
             params=params[regime.name],
         )
 
-        return U_arr, F_arr
+        return jnp.asarray(U_arr), jnp.asarray(F_arr)
 
     return Q_and_F
 

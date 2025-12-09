@@ -8,6 +8,7 @@ from numpy.testing import assert_array_equal
 
 import lcm
 from lcm.input_processing import process_regimes
+from lcm.input_processing.regime_processing import create_default_regime_id_cls
 from lcm.interfaces import InternalFunctions, PhaseVariantContainer
 from lcm.Q_and_F import (
     _get_feasibility,
@@ -32,9 +33,12 @@ if TYPE_CHECKING:
 @pytest.mark.illustrative
 def test_get_Q_and_F_function():
     regime = get_regime("iskhakov_et_al_2017_stripped_down")
-    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
-        "iskhakov_et_al_2017_stripped_down"
-    ]
+    internal_regime = process_regimes(
+        [regime],
+        n_periods=3,
+        regime_id_cls=create_default_regime_id_cls(regime.name),
+        enable_jit=True,
+    )[regime.name]
 
     params = {
         "iskhakov_et_al_2017_stripped_down": {
@@ -173,11 +177,11 @@ def test_get_combined_constraint_illustrative(internal_functions_illustrative):
 def test_get_multiply_weights():
     @lcm.mark.stochastic
     def next_a():
-        pass
+        return jnp.array([0.1, 0.9])
 
     @lcm.mark.stochastic
     def next_b():
-        pass
+        return jnp.array([0.2, 0.8])
 
     transitions = {"next_a": next_a, "next_b": next_b}
     multiply_weights = _get_joint_weights_function(

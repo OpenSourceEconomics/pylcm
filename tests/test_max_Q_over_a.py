@@ -10,6 +10,7 @@ from numpy.testing import assert_array_equal
 
 from lcm.dispatchers import simulation_spacemap, vmap_1d
 from lcm.input_processing import process_regimes
+from lcm.input_processing.regime_processing import create_default_regime_id_cls
 from lcm.interfaces import StateActionSpace, Target
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a, get_max_Q_over_a
 from lcm.max_Q_over_c import get_argmax_and_max_Q_over_c, get_max_Q_over_c
@@ -35,9 +36,12 @@ def regime_input():
     actions = regime.actions
     actions["consumption"] = actions["consumption"].replace(stop=20)  # type: ignore[attr-defined]
     regime = regime.replace(actions=actions)
-    internal_regime = process_regimes([regime], n_periods=3, enable_jit=True)[
-        "iskhakov_et_al_2017_stripped_down"
-    ]
+    internal_regime = process_regimes(
+        [regime],
+        n_periods=3,
+        regime_id_cls=create_default_regime_id_cls(regime.name),
+        enable_jit=True,
+    )[regime.name]
 
     state_space_info = create_state_space_info(
         regime=regime,

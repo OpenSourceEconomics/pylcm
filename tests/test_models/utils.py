@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
-from lcm.model import Model
+from lcm import Model
 from tests.test_models.deterministic import (
     ISKHAKOV_ET_AL_2017,
     ISKHAKOV_ET_AL_2017_STRIPPED_DOWN,
@@ -14,7 +14,7 @@ from tests.test_models.discrete_deterministic import ISKHAKOV_ET_AL_2017_DISCRET
 from tests.test_models.stochastic import ISKHAKOV_ET_AL_2017_STOCHASTIC
 
 if TYPE_CHECKING:
-    from lcm.regime import Regime
+    from lcm import Regime
 
 TEST_REGIMES = {
     "iskhakov_et_al_2017": ISKHAKOV_ET_AL_2017,
@@ -127,13 +127,10 @@ def get_params(
         regime_name: {
             "beta": beta,
             "utility": {"disutility_of_work": disutility_of_work},
-            f"{regime_name}__next_wealth": {"interest_rate": interest_rate},
-            f"{regime_name}__next_health": {},
+            "next_wealth": {"interest_rate": interest_rate},
+            "next_health": {},
+            "next_partner": {"partner_transition": partner_transition},
             "borrowing_constraint": {},
             "labor_income": {"wage": wage},
-            "shocks": {
-                f"{regime_name}__next_health": health_transition,
-                f"{regime_name}__next_partner": partner_transition,
-            },
         }
     }

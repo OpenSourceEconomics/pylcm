@@ -106,13 +106,10 @@ ISKHAKOV_ET_AL_2017_DISCRETE = Regime(
         "borrowing_constraint": borrowing_constraint,
     },
     transitions={
-        "iskhakov_et_al_2017_discrete": {
-            "next_wealth": next_wealth_discrete,
-        }
+        "next_wealth": next_wealth_discrete,
     },
     functions={
         "labor_income": labor_income,
         "working": working,
     },
-    regime_transition_probs=lambda: {"iskhakov_et_al_2017_discrete": 1.0},
 )

@@ -5,10 +5,9 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 import pytest
 
+from lcm import Model, Regime
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.grids import LinspaceGrid
-from lcm.model import Model
-from lcm.regime import Regime
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -69,12 +68,9 @@ def valid_regime() -> Regime:
             "borrowing_constraint": borrowing_constraint,
         },
         transitions={
-            "test": {
-                "next_wealth": next_wealth,
-                "next_health": next_health,
-            }
+            "next_wealth": next_wealth,
+            "next_health": next_health,
         },
-        regime_transition_probs=lambda: {"test": 1.0},
     )
 
 
@@ -142,10 +138,8 @@ def test_simulate_model_with_nan_value_function_array_raises_error(
     nan_value_model: Model, params: ParamsDict
 ) -> None:
     initial_states = {
-        "test": {
-            "wealth": jnp.array([0.9, 1.0]),
-            "health": jnp.array([1.0, 1.0]),
-        }
+        "wealth": jnp.array([0.9, 1.0]),
+        "health": jnp.array([1.0, 1.0]),
     }
 
     with pytest.raises(InvalidValueFunctionError):
@@ -158,10 +152,8 @@ def test_simulate_model_with_inf_value_function_array_does_not_raise_error(
     inf_value_model: Model, params: ParamsDict
 ) -> None:
     initial_states = {
-        "test": {
-            "wealth": jnp.array([0.9, 1.0]),
-            "health": jnp.array([1.0, 1.0]),
-        }
+        "wealth": jnp.array([0.9, 1.0]),
+        "health": jnp.array([1.0, 1.0]),
     }
 
     # This should not raise an error

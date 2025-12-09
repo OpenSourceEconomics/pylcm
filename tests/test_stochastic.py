@@ -8,11 +8,11 @@ import pytest
 from numpy.testing import assert_array_almost_equal
 
 import lcm
-from lcm.model import Model
+from lcm import Model
 from tests.test_models.utils import get_model, get_params, get_regime
 
 if TYPE_CHECKING:
-    from lcm.typing import FloatND
+    from lcm.typing import DiscreteState, FloatND
 
 # ======================================================================================
 # Simulate
@@ -21,15 +21,14 @@ if TYPE_CHECKING:
 
 def test_model_solve_and_simulate_with_stochastic_model():
     model = get_model("iskhakov_et_al_2017_stochastic", n_periods=3)
+    params = get_params("iskhakov_et_al_2017_stochastic")
 
     res: pd.DataFrame = model.solve_and_simulate(
-        params=get_params("iskhakov_et_al_2017_stochastic"),
+        params=params,
         initial_states={
-            "iskhakov_et_al_2017_stochastic": {
-                "health": jnp.array([1, 1, 0, 0]),
-                "partner": jnp.array([0, 0, 1, 0]),
-                "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
-            }
+            "health": jnp.array([1, 1, 0, 0]),
+            "partner": jnp.array([0, 0, 1, 0]),
+            "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
         },
         initial_regimes=["iskhakov_et_al_2017_stochastic"] * 4,
     )["iskhakov_et_al_2017_stochastic"]
@@ -73,10 +72,10 @@ def model_and_params():
 
     # Define functions first
     @lcm.mark.stochastic
-    def next_health_stochastic(health):
-        pass
+    def next_health_stochastic(health: DiscreteState) -> FloatND:
+        return jnp.identity(2)[health]
 
-    def next_health_deterministic(health):
+    def next_health_deterministic(health: DiscreteState) -> DiscreteState:
         return health
 
     # Get the base models and create modified versions
@@ -85,20 +84,16 @@ def model_and_params():
     # Create deterministic model with modified function
     regime_deterministic = base_regime.replace(
         transitions={
-            "iskhakov_et_al_2017_stochastic": {
-                **base_regime.transitions["iskhakov_et_al_2017_stochastic"],
-                "next_health": next_health_deterministic,
-            }
+            **base_regime.transitions,
+            "next_health": next_health_deterministic,
         }
     )
 
     # Create stochastic model with modified function
     regime_stochastic = base_regime.replace(
         transitions={
-            "iskhakov_et_al_2017_stochastic": {
-                **base_regime.transitions["iskhakov_et_al_2017_stochastic"],
-                "next_health": next_health_stochastic,
-            }
+            **base_regime.transitions,
+            "next_health": next_health_stochastic,
         }
     )
 
@@ -108,11 +103,10 @@ def model_and_params():
         disutility_of_work=1.0,
         interest_rate=0.05,
         wage=10.0,
-        health_transition=jnp.identity(2),
     )
 
-    model_deterministic = Model([regime_deterministic], n_periods=3)
     model_stochastic = Model([regime_stochastic], n_periods=3)
+    model_deterministic = Model([regime_deterministic], n_periods=3)
     return model_deterministic, model_stochastic, params
 
 
@@ -137,11 +131,9 @@ def test_compare_deterministic_and_stochastic_results_value_function(model_and_p
     # Compare simulation results
     # ==================================================================================
     initial_states = {
-        "iskhakov_et_al_2017_stochastic": {
-            "health": jnp.array([1, 1, 0, 0]),
-            "partner": jnp.array([0, 0, 0, 0]),
-            "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
-        }
+        "health": jnp.array([1, 1, 0, 0]),
+        "partner": jnp.array([0, 0, 0, 0]),
+        "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
     }
     initial_regimes = ["iskhakov_et_al_2017_stochastic"] * 4
 

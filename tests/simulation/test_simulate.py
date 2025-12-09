@@ -6,9 +6,10 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_almost_equal, assert_array_equal
 
+from lcm import Model
 from lcm.input_processing import process_regimes
+from lcm.input_processing.regime_processing import create_default_regime_id_cls
 from lcm.logging import get_logger
-from lcm.model import Model
 from lcm.simulation.simulate import (
     _lookup_values_from_indices,
     simulate,
@@ -33,10 +34,17 @@ def simulate_inputs():
             "consumption": _orig_regime.actions["consumption"].replace(stop=100),  # type: ignore[attr-defined]
         }
     )
-    internal_regimes = process_regimes([regime], n_periods=1, enable_jit=True)
+    regime_id_cls = create_default_regime_id_cls(regime.name)
+    internal_regimes = process_regimes(
+        [regime],
+        n_periods=1,
+        regime_id_cls=regime_id_cls,
+        enable_jit=True,
+    )
 
     return {
         "internal_regimes": internal_regimes,
+        "regime_id_cls": regime_id_cls,
     }
 
 
@@ -54,9 +62,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
     got = simulate(
         params=params,
         V_arr_dict={0: {"iskhakov_et_al_2017_stripped_down": jnp.empty(0)}},
-        initial_states={
-            "iskhakov_et_al_2017_stripped_down": {"wealth": jnp.array([1.0, 50.400803])}
-        },
+        initial_states={"wealth": jnp.array([1.0, 50.400803])},
         initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 2,
         logger=get_logger(debug_mode=False),
         **simulate_inputs,
@@ -104,11 +110,7 @@ def test_simulate_using_model_methods(
     res: pd.DataFrame = model.simulate(
         params,
         V_arr_dict=V_arr_dict,
-        initial_states={
-            "iskhakov_et_al_2017_stripped_down__wealth": jnp.array(
-                [20.0, 150, 250, 320]
-            ),
-        },
+        initial_states={"wealth": jnp.array([20.0, 150, 250, 320])},
         initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 4,
         additional_targets={
             "iskhakov_et_al_2017_stripped_down": ["utility", "borrowing_constraint"]
@@ -146,7 +148,7 @@ def test_simulate_with_only_discrete_actions():
 
     res: pd.DataFrame = model.solve_and_simulate(
         params,
-        initial_states={"iskhakov_et_al_2017_discrete": {"wealth": jnp.array([0, 4])}},
+        initial_states={"wealth": jnp.array([0, 4])},
         additional_targets={
             "iskhakov_et_al_2017_discrete": ["labor_income", "working"]
         },
@@ -191,18 +193,14 @@ def test_effect_of_beta_on_last_period():
     res_low: pd.DataFrame = model.simulate(
         params_low,
         V_arr_dict=solution_low,
-        initial_states={
-            "iskhakov_et_al_2017_stripped_down": {"wealth": initial_wealth}
-        },
+        initial_states={"wealth": initial_wealth},
         initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 3,
     )["iskhakov_et_al_2017_stripped_down"]
 
     res_high: pd.DataFrame = model.simulate(
         params_high,
         V_arr_dict=solution_high,
-        initial_states={
-            "iskhakov_et_al_2017_stripped_down": {"wealth": initial_wealth}
-        },
+        initial_states={"wealth": initial_wealth},
         initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 3,
     )["iskhakov_et_al_2017_stripped_down"]
 
@@ -243,18 +241,14 @@ def test_effect_of_disutility_of_work():
     res_low: pd.DataFrame = model.simulate(
         params_low,
         V_arr_dict=solution_low,
-        initial_states={
-            "iskhakov_et_al_2017_stripped_down": {"wealth": initial_wealth}
-        },
+        initial_states={"wealth": initial_wealth},
         initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 3,
     )["iskhakov_et_al_2017_stripped_down"]
 
     res_high: pd.DataFrame = model.simulate(
         params_high,
         V_arr_dict=solution_high,
-        initial_states={
-            "iskhakov_et_al_2017_stripped_down": {"wealth": initial_wealth}
-        },
+        initial_states={"wealth": initial_wealth},
         initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 3,
     )["iskhakov_et_al_2017_stripped_down"]
 
