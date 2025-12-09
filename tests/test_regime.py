@@ -51,3 +51,56 @@ def test_state_name_does_not_contain_separator():
             actions={"consumption": CONSUMPTION_GRID},
             transitions={f"next_my{REGIME_SEPARATOR}wealth": next_wealth},
         )
+
+
+# ======================================================================================
+# Terminal Regime Tests
+# ======================================================================================
+
+
+def test_terminal_regime_creation():
+    """Terminal regime can be created with states and utility."""
+    regime = Regime(
+        name="dead",
+        utility=lambda wealth: wealth * 0.5,
+        states={"wealth": WEALTH_GRID},
+        terminal=True,
+    )
+    assert regime.terminal is True
+    assert regime.transitions == {}
+
+
+def test_terminal_regime_with_actions():
+    """Terminal regime can have actions for final decisions."""
+    regime = Regime(
+        name="dead",
+        utility=lambda wealth, bequest_share: wealth * bequest_share,
+        states={"wealth": WEALTH_GRID},
+        actions={"bequest_share": LinspaceGrid(start=0, stop=1, n_points=11)},
+        terminal=True,
+    )
+    assert regime.terminal is True
+    assert "bequest_share" in regime.actions
+
+
+def test_terminal_regime_cannot_have_transitions():
+    """Terminal regime cannot have transitions."""
+    with pytest.raises(RegimeInitializationError, match="cannot have transitions"):
+        Regime(
+            name="dead",
+            utility=lambda wealth: wealth,
+            states={"wealth": WEALTH_GRID},
+            transitions={"next_wealth": lambda wealth: wealth},
+            terminal=True,
+        )
+
+
+def test_terminal_regime_must_have_states():
+    """Terminal regime must have at least one state."""
+    with pytest.raises(RegimeInitializationError, match="at least one state"):
+        Regime(
+            name="dead",
+            utility=lambda: 0,
+            states={},
+            terminal=True,
+        )

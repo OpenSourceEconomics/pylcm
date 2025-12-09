@@ -20,7 +20,6 @@ class Regime:
 
     Attributes:
         name: Name of the regime.
-        description: Description of the regime.
         utility: Utility function for this regime.
         constraints: Dictionary of constraint functions.
         transitions: Dictionary of transition functions (keys must start with 'next_').
@@ -28,6 +27,8 @@ class Regime:
         actions: Dictionary of action grids.
         states: Dictionary of state grids.
         absorbing: Whether this is an absorbing regime.
+        terminal: Whether this is a terminal regime.
+        description: Description of the regime.
 
     """
 
@@ -40,6 +41,7 @@ class Regime:
     actions: dict[str, Grid] = field(default_factory=dict)
     states: dict[str, Grid] = field(default_factory=dict)
     absorbing: bool = False
+    terminal: bool = False
     description: str | None = None
 
     def __post_init__(self) -> None:
@@ -129,7 +131,7 @@ def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
 
 def _validate_logical_consistency(regime: Regime) -> None:
     """Validate the logical consistency of the regime."""
-    error_messages = []
+    error_messages: list[str] = []
 
     # Validate regime name does not contain the separator
     if REGIME_SEPARATOR in regime.name:
@@ -172,29 +174,7 @@ def _validate_logical_consistency(regime: Regime) -> None:
             "functions dictionary. Please use the utility attribute instead.",
         )
 
-    # Validate transition function names start with 'next_'
-    transitions_with_invalid_name = [
-        fn_name for fn_name in regime.transitions if not fn_name.startswith("next_")
-    ]
-    if transitions_with_invalid_name:
-        error_messages.append(
-            "Each transitions name must start with 'next_'. The following transition "
-            f"names are invalid: {transitions_with_invalid_name}.",
-        )
-
-    # Validate each state has a corresponding transition. We do not check the other way
-    # because transitions can target states in other regimes.
-    states = set(regime.states)
-    states_via_transition = {
-        fn_name.removeprefix("next_") for fn_name in regime.transitions
-    }
-
-    if states - states_via_transition:
-        error_messages.append(
-            "Each state must have a corresponding transition function. For the "
-            "following states, no transition function was found: "
-            f"{states - states_via_transition}.",
-        )
+    error_messages.extend(_validate_terminal_or_transitions(regime))
 
     states_and_actions_overlap = set(regime.states) & set(regime.actions)
     if states_and_actions_overlap:
@@ -206,3 +186,46 @@ def _validate_logical_consistency(regime: Regime) -> None:
     if error_messages:
         msg = format_messages(error_messages)
         raise RegimeInitializationError(msg)
+
+
+def _validate_terminal_or_transitions(regime: Regime) -> list[str]:
+    """Validate terminal regime constraints or transition requirements."""
+    errors: list[str] = []
+
+    if regime.terminal:
+        if regime.transitions:
+            errors.append(
+                "Terminal regimes cannot have transitions. Remove the transitions "
+                "or set terminal=False.",
+            )
+        if not regime.states:
+            errors.append(
+                "Terminal regimes must have at least one state. The terminal utility "
+                "function should depend on the states that agents bring into the "
+                "terminal regime.",
+            )
+    else:
+        # Validate transition function names start with 'next_'
+        transitions_with_invalid_name = [
+            fn_name for fn_name in regime.transitions if not fn_name.startswith("next_")
+        ]
+        if transitions_with_invalid_name:
+            errors.append(
+                "Each transitions name must start with 'next_'. The following "
+                f"transition names are invalid: {transitions_with_invalid_name}.",
+            )
+
+        # Validate each state has a corresponding transition
+        states = set(regime.states)
+        states_via_transition = {
+            fn_name.removeprefix("next_") for fn_name in regime.transitions
+        }
+
+        if states - states_via_transition:
+            errors.append(
+                "Each state must have a corresponding transition function. For the "
+                "following states, no transition function was found: "
+                f"{states - states_via_transition}.",
+            )
+
+    return errors
