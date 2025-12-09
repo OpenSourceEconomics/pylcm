@@ -104,3 +104,59 @@ def test_terminal_regime_must_have_states():
             states={},
             terminal=True,
         )
+
+
+# ======================================================================================
+# Active Attribute Tests
+# ======================================================================================
+
+
+def test_regime_with_active_periods():
+    """Regime can specify active periods with various iterable types."""
+    # Tuple
+    regime = Regime(
+        name="work",
+        utility=utility,
+        states={"wealth": WEALTH_GRID},
+        actions={"consumption": CONSUMPTION_GRID},
+        transitions={"next_wealth": next_wealth},
+        active=(0, 1, 2),
+    )
+    assert regime.active is not None
+    assert list(regime.active) == [0, 1, 2]
+
+    # Range
+    regime2 = Regime(
+        name="work",
+        utility=utility,
+        states={"wealth": WEALTH_GRID},
+        actions={"consumption": CONSUMPTION_GRID},
+        transitions={"next_wealth": next_wealth},
+        active=range(5),
+    )
+    assert regime2.active is not None
+    assert list(regime2.active) == [0, 1, 2, 3, 4]
+
+
+def test_active_validation_rejects_invalid_values():
+    """Active attribute must be iterable of non-negative unique integers."""
+    # Empty list
+    with pytest.raises(RegimeInitializationError, match="cannot be empty"):
+        Regime(
+            name="work",
+            utility=utility,
+            states={"wealth": WEALTH_GRID},
+            actions={"consumption": CONSUMPTION_GRID},
+            transitions={"next_wealth": next_wealth},
+            active=[],
+        )
+
+    # Negative periods
+    with pytest.raises(RegimeInitializationError, match="cannot be negative"):
+        Regime(
+            name="dead",
+            utility=lambda wealth: wealth,
+            states={"wealth": WEALTH_GRID},
+            terminal=True,
+            active=[-1, 0, 1],
+        )

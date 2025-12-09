@@ -9,6 +9,8 @@ from lcm.grids import Grid
 from lcm.utils import REGIME_SEPARATOR, flatten_regime_namespace
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from lcm.typing import (
         UserFunction,
     )
@@ -28,6 +30,7 @@ class Regime:
         states: Dictionary of state grids.
         absorbing: Whether this is an absorbing regime.
         terminal: Whether this is a terminal regime.
+        active: Periods when regime is active. None means all periods.
         description: Description of the regime.
 
     """
@@ -42,6 +45,7 @@ class Regime:
     states: dict[str, Grid] = field(default_factory=dict)
     absorbing: bool = False
     terminal: bool = False
+    active: Iterable[int] | None = None
     description: str | None = None
 
     def __post_init__(self) -> None:
@@ -175,6 +179,7 @@ def _validate_logical_consistency(regime: Regime) -> None:
         )
 
     error_messages.extend(_validate_terminal_or_transitions(regime))
+    error_messages.extend(_validate_active(regime.active))
 
     states_and_actions_overlap = set(regime.states) & set(regime.actions)
     if states_and_actions_overlap:
@@ -228,4 +233,24 @@ def _validate_terminal_or_transitions(regime: Regime) -> list[str]:
                 f"{states - states_via_transition}.",
             )
 
+    return errors
+
+
+def _validate_active(active: Iterable[int] | None) -> list[str]:
+    """Validate the active attribute."""
+    if active is None:
+        return []
+    try:
+        periods = list(active)
+    except TypeError:
+        return ["active must be iterable of ints or None."]
+    errors: list[str] = []
+    if not periods:
+        errors.append("active cannot be empty. Use None for all periods.")
+    elif not all(isinstance(p, int) for p in periods):
+        errors.append("active must contain only integers.")
+    elif any(p < 0 for p in periods):
+        errors.append("active periods cannot be negative.")
+    elif len(periods) != len(set(periods)):
+        errors.append("active periods must be unique.")
     return errors
