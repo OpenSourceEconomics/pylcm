@@ -16,8 +16,10 @@ from lcm.simulation.processing import process_simulated_data
 from lcm.simulation.util import (
     calculate_next_regime_membership,
     calculate_next_states,
+    convert_flat_to_nested_initial_states,
     create_regime_state_action_space,
     get_regime_name_to_id_mapping,
+    validate_flat_initial_states,
 )
 from lcm.utils import flatten_regime_namespace
 
@@ -26,12 +28,18 @@ if TYPE_CHECKING:
 
     import pandas as pd
 
-    from lcm.typing import FloatND, Int1D, IntND, ParamsDict, RegimeName
+    from lcm.typing import (
+        FloatND,
+        Int1D,
+        IntND,
+        ParamsDict,
+        RegimeName,
+    )
 
 
 def simulate(
     params: dict[RegimeName, ParamsDict],
-    initial_states: dict[RegimeName, dict[str, Array]],
+    initial_states: dict[str, Array],
     initial_regimes: list[RegimeName],
     internal_regimes: dict[RegimeName, InternalRegime],
     regime_id_cls: type,
@@ -45,8 +53,10 @@ def simulate(
 
     Args:
         params: Dict of model parameters.
-        initial_states: List of initial states to start from. Typically from the
-            observed dataset.
+        initial_states: Flat dict mapping state names to arrays. All arrays must have
+            the same length (number of subjects). Each state name should correspond to
+            a state variable defined in at least one regime.
+            Example: {"wealth": jnp.array([10.0, 50.0]), "health": jnp.array([0, 1])}
         internal_regimes: Dict of internal regime instances.
         regime_id_cls: Dataclass mapping regime names to integer indices.
         initial_regimes: List containing the names of the regimes the subjects start in.
@@ -66,12 +76,19 @@ def simulate(
 
     logger.info("Starting simulation")
 
+    # Validate and convert flat initial_states to nested format
+    # ----------------------------------------------------------------------------------
+    validate_flat_initial_states(initial_states, internal_regimes)
+    nested_initial_states = convert_flat_to_nested_initial_states(
+        initial_states, internal_regimes
+    )
+
     # Preparations
     # ----------------------------------------------------------------------------------
     regime_name_to_id = get_regime_name_to_id_mapping(regime_id_cls)
 
     # The following variables are updated during the forward simulation
-    states = flatten_regime_namespace(initial_states)
+    states = flatten_regime_namespace(nested_initial_states)
     subject_regime_ids = jnp.asarray(
         [regime_name_to_id[initial_regime] for initial_regime in initial_regimes]
     )

@@ -33,7 +33,7 @@ def test_get_next_state_function_with_solve_target():
     params = {
         "beta": 1.0,
         "utility": {"disutility_of_work": 1.0},
-        "iskhakov_et_al_2017_stripped_down__next_wealth": {
+        "next_wealth": {
             "interest_rate": 0.05,
         },
     }

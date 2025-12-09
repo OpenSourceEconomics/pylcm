@@ -20,7 +20,7 @@ def test_regime_invalid_states():
             states="health",  # type: ignore[arg-type]
             actions={},
             utility=lambda: 0,
-            transitions={"test": {"next_health": lambda: 0}},
+            transitions={"next_health": lambda: 0},
         )
 
 
@@ -31,7 +31,7 @@ def test_regime_invalid_actions():
             states={},
             actions="exercise",  # type: ignore[arg-type]
             utility=lambda: 0,
-            transitions={"test": {"next_health": lambda: 0}},
+            transitions={"next_health": lambda: 0},
         )
 
 
@@ -43,7 +43,7 @@ def test_regime_invalid_functions():
             name="test",
             states={},
             actions={},
-            transitions={"test": {"next_health": lambda: 0}},
+            transitions={"next_health": lambda: 0},
             utility=lambda: 0,
             functions="utility",  # type: ignore[arg-type]
         )
@@ -59,7 +59,7 @@ def test_regime_invalid_functions_values():
             states={},
             actions={},
             utility=lambda: 0,
-            transitions={"test": {"next_health": lambda: 0}},
+            transitions={"next_health": lambda: 0},
             functions={"function": 0},  # type: ignore[dict-item]
         )
 
@@ -73,7 +73,7 @@ def test_regime_invalid_functions_keys():
             states={},
             actions={},
             utility=lambda: 0,
-            transitions={"test": {"next_health": lambda: 0}},
+            transitions={"next_health": lambda: 0},
             functions={0: lambda: 0},  # type: ignore[dict-item]
         )
 
@@ -87,7 +87,7 @@ def test_regime_invalid_actions_values():
             states={},
             actions={"exercise": 0},  # type: ignore[dict-item]
             utility=lambda: 0,
-            transitions={"test": {"next_health": lambda: 0}},
+            transitions={"next_health": lambda: 0},
         )
 
 
@@ -100,7 +100,7 @@ def test_regime_invalid_states_values():
             states={"health": 0},  # type: ignore[dict-item]
             actions={},
             utility=lambda: 0,
-            transitions={"test": {"next_health": lambda: 0}},
+            transitions={"next_health": lambda: 0},
         )
 
 
@@ -117,7 +117,7 @@ def test_regime_missing_next_func(binary_category_class):
             },
             actions={"exercise": DiscreteGrid(binary_category_class)},
             utility=lambda: 0,
-            transitions={"test": {"next_health": lambda: 0}},
+            transitions={"next_health": lambda: 0},
         )
 
 
@@ -132,7 +132,7 @@ def test_regime_invalid_utility():
             actions={},
             functions={},
             utility=0,  # type: ignore[arg-type]
-            transitions={"test": {"next_health": lambda: 0}},
+            transitions={"next_health": lambda: 0},
         )
 
 
@@ -147,7 +147,7 @@ def test_regime_invalid_transition_names():
             actions={},
             functions={},
             utility=lambda: 0,
-            transitions={"test": {"invalid_name": lambda: 0}},
+            transitions={"invalid_name": lambda: 0},
         )
 
 
@@ -161,7 +161,7 @@ def test_regime_overlapping_states_actions(binary_category_class):
             states={"health": DiscreteGrid(binary_category_class)},
             actions={"health": DiscreteGrid(binary_category_class)},
             utility=lambda: 0,
-            transitions={"test": {"next_health": lambda: 0}},
+            transitions={"next_health": lambda: 0},
         )
 
 
@@ -172,7 +172,7 @@ def test_single_regime_without_next_regime_works(binary_category_class):
         states={"health": DiscreteGrid(binary_category_class)},
         actions={},
         utility=lambda health: health,
-        transitions={"test": {"next_health": lambda health: health}},
+        transitions={"next_health": lambda health: health},
         # Note: no next_regime defined
     )
     model = Model(regimes=regime, n_periods=2)
@@ -190,7 +190,7 @@ def test_single_regime_with_next_regime_warns(binary_category_class):
         actions={},
         utility=lambda health: health,
         transitions={
-            "test": {"next_health": lambda health: health},
+            "next_health": lambda health: health,
             # Invalid probability (0.5 instead of 1.0), should be ignored
             "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5])),
         },
@@ -215,8 +215,7 @@ def test_multi_regime_without_next_regime_raises(binary_category_class):
         actions={},
         utility=lambda health: health,
         transitions={
-            "regime1": {"next_health": lambda health: health},
-            "regime2": {"next_health": lambda health: health},
+            "next_health": lambda health: health,
             # Missing next_regime
         },
     )
@@ -226,8 +225,7 @@ def test_multi_regime_without_next_regime_raises(binary_category_class):
         actions={},
         utility=lambda health: health,
         transitions={
-            "regime1": {"next_health": lambda health: health},
-            "regime2": {"next_health": lambda health: health},
+            "next_health": lambda health: health,
             "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
         },
     )
@@ -247,7 +245,7 @@ def test_single_regime_with_regime_id_cls_warns(binary_category_class):
         states={"health": DiscreteGrid(binary_category_class)},
         actions={},
         utility=lambda health: health,
-        transitions={"test": {"next_health": lambda health: health}},
+        transitions={"next_health": lambda health: health},
     )
     with pytest.warns(UserWarning, match="will be ignored"):
         model = Model(regimes=regime, n_periods=2, regime_id_cls=RegimeID)
@@ -263,8 +261,7 @@ def test_multi_regime_without_regime_id_cls_raises(binary_category_class):
         actions={},
         utility=lambda health: health,
         transitions={
-            "regime1": {"next_health": lambda health: health},
-            "regime2": {"next_health": lambda health: health},
+            "next_health": lambda health: health,
             "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
         },
     )
@@ -274,8 +271,7 @@ def test_multi_regime_without_regime_id_cls_raises(binary_category_class):
         actions={},
         utility=lambda health: health,
         transitions={
-            "regime1": {"next_health": lambda health: health},
-            "regime2": {"next_health": lambda health: health},
+            "next_health": lambda health: health,
             "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
         },
     )
@@ -297,8 +293,7 @@ def test_multi_regime_with_invalid_regime_id_cls_raises(binary_category_class):
         actions={},
         utility=lambda health: health,
         transitions={
-            "regime1": {"next_health": lambda health: health},
-            "regime2": {"next_health": lambda health: health},
+            "next_health": lambda health: health,
             "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
         },
     )
@@ -308,8 +303,7 @@ def test_multi_regime_with_invalid_regime_id_cls_raises(binary_category_class):
         actions={},
         utility=lambda health: health,
         transitions={
-            "regime1": {"next_health": lambda health: health},
-            "regime2": {"next_health": lambda health: health},
+            "next_health": lambda health: health,
             "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
         },
     )

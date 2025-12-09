@@ -124,11 +124,6 @@ class ProductivityShock:
 
 
 @dataclass
-class Dead:
-    dead: int = 0
-
-
-@dataclass
 class RegimeID:
     """Maps regime names to integer indices for regime transition probabilities."""
 
@@ -335,11 +330,6 @@ def next_regime_from_alive(
     return jnp.array([survival_prob, 1 - survival_prob])
 
 
-def next_regime_from_dead() -> int:
-    """Deterministic: once dead, always dead."""
-    return RegimeID.dead
-
-
 # --------------------------------------------------------------------------------------
 # Constraints
 # --------------------------------------------------------------------------------------
@@ -398,30 +388,29 @@ ALIVE_REGIME = Regime(
         "savings_constraint": savings_constraint,
     },
     transitions={
-        "alive": {
-            "next_wealth": next_wealth,
-            "next_health": next_health,
-            "next_productivity_shock": next_productivity_shock,
-            "next_discount_factor": next_discount_factor,
-            "next_adjustment_cost": next_adjustment_cost,
-            "next_effort_t_1": next_effort_t_1,
-            "next_health_type": next_health_type,
-            "next_education": next_education,
-            "next_productivity": next_productivity,
-        },
-        "dead": {"next_dead": lambda: Dead.dead},
+        "next_wealth": next_wealth,
+        "next_health": next_health,
+        "next_productivity_shock": next_productivity_shock,
+        "next_discount_factor": next_discount_factor,
+        "next_adjustment_cost": next_adjustment_cost,
+        "next_effort_t_1": next_effort_t_1,
+        "next_health_type": next_health_type,
+        "next_education": next_education,
+        "next_productivity": next_productivity,
         "next_regime": next_regime_from_alive,
     },
 )
 
 DEAD_REGIME = Regime(
     name="dead",
-    utility=lambda dead: jnp.asarray([0.0]),  # noqa: ARG005
-    states={"dead": DiscreteGrid(Dead)},
+    absorbing=True,
+    utility=lambda wealth: jnp.array(0.0),  # noqa: ARG005
+    # PyLCM requires at least one state variable per regime, which is why we add
+    # "wealth" here.
+    states={"wealth": LinspaceGrid(start=0, stop=49, n_points=2)},
     actions={},
     transitions={
-        "dead": {"next_dead": lambda dead: Dead.dead},  # noqa: ARG005
-        "next_regime": next_regime_from_dead,
+        "next_wealth": lambda wealth: wealth,
     },
 )
 
@@ -712,11 +701,10 @@ def create_inputs(
         "income": {"income_grid": income_grid, "xvalues": xvalues},
         "pension": {"income_grid": income_grid, "penre": penre},
         "adj_cost": {"chimaxgrid": chimax_grid},
-        "alive__next_productivity_shock": {"productivity_shock_transition": xtrans.T},
-        "alive__next_health": {"health_transition": tr2yp_grid},
-        "alive__next_adjustment_cost": {
-            "adjustment_cost_transition": jnp.full((5, 5), 1 / 5)
-        },
+        "next_productivity_shock": {"productivity_shock_transition": xtrans.T},
+        "next_health": {"health_transition": tr2yp_grid},
+        "next_adjustment_cost": {"adjustment_cost_transition": jnp.full((5, 5), 1 / 5)},
+        "next_dead": {},
         "next_regime": {"regime_transition_from_alive": regime_transition_from_alive},
     }
 
@@ -767,18 +755,16 @@ def create_inputs(
         new_keys[2], jnp.arange(5), (n_simulation_subjects,), p=prod_dist
     )
     initial_states = {
-        "alive": {
-            "wealth": initial_wealth,
-            "health": initial_health,
-            "health_type": initial_health_type,
-            "effort_t_1": initial_effort,
-            "productivity_shock": initial_productivity_shock,
-            "adjustment_cost": initial_adjustment_cost,
-            "education": initial_education,
-            "productivity": initial_productivity,
-            "discount_factor": initial_discount,
-        },
-        "dead": {"dead": jnp.full(n_simulation_subjects, 0)},
+        "wealth": initial_wealth,
+        "health": initial_health,
+        "health_type": initial_health_type,
+        "effort_t_1": initial_effort,
+        "productivity_shock": initial_productivity_shock,
+        "adjustment_cost": initial_adjustment_cost,
+        "education": initial_education,
+        "productivity": initial_productivity,
+        "discount_factor": initial_discount,
+        "dead": jnp.full(n_simulation_subjects, 0),  # for dead regime
     }
     initial_regimes = ["alive"] * n_simulation_subjects
     return params, initial_states, initial_regimes

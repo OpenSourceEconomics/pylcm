@@ -143,7 +143,7 @@ class Model:
     def simulate(
         self,
         params: ParamsDict,
-        initial_states: dict[RegimeName, dict[str, Array]],
+        initial_states: dict[str, Array],
         initial_regimes: list[RegimeName],
         V_arr_dict: dict[int, dict[RegimeName, FloatND]],
         *,
@@ -154,8 +154,10 @@ class Model:
         """Simulate the model forward using pre-computed functions.
 
         Args:
-            params: Model parameters
-            initial_states: Initial state values
+            params: Model parameters matching the template from self.params_template
+            initial_states: Dict mapping state names to arrays. All arrays must have the
+                same length (number of subjects). Each state name should correspond to a
+                state variable defined in at least one regime.
             initial_regimes: List containing the names of the regimes the subjects
                 start in.
             V_arr_dict: Value function arrays from solve()
@@ -183,7 +185,7 @@ class Model:
     def solve_and_simulate(
         self,
         params: ParamsDict,
-        initial_states: dict[RegimeName, dict[str, Array]],
+        initial_states: dict[str, Array],
         initial_regimes: list[RegimeName],
         *,
         additional_targets: dict[RegimeName, list[str]] | None = None,
@@ -193,8 +195,10 @@ class Model:
         """Solve and then simulate the model in one call.
 
         Args:
-            params: Model parameters
-            initial_states: Initial state values
+            params: Model parameters matching the template from self.params_template
+            initial_states: Dict mapping state names to arrays. All arrays must have the
+                same length (number of subjects). Each state name should correspond to a
+                state variable defined in at least one regime.
             initial_regimes: List containing the names of the regimes the subjects
                 start in.
             additional_targets: Additional targets to compute
@@ -240,12 +244,13 @@ def _validate_model_inputs(
 
     # Multi-regime model validation
     if len(regimes) > 1:
-        # Check next_regime is defined in each regime
+        # Check next_regime is defined in each non-absorbing regime
+        # (absorbing regimes get next_regime auto-generated during processing)
         error_messages.extend(
             f"Multi-regime models require 'next_regime' in transitions for "
-            f"each regime. Missing in regime '{regime.name}'."
+            f"each non-absorbing regime. Missing in regime '{regime.name}'."
             for regime in regimes
-            if "next_regime" not in regime.transitions
+            if "next_regime" not in regime.transitions and not regime.absorbing
         )
 
         # Check regime_id_cls is provided

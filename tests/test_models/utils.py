@@ -127,9 +127,9 @@ def get_params(
         regime_name: {
             "beta": beta,
             "utility": {"disutility_of_work": disutility_of_work},
-            f"{regime_name}__next_wealth": {"interest_rate": interest_rate},
-            f"{regime_name}__next_health": {},
-            f"{regime_name}__next_partner": {"partner_transition": partner_transition},
+            "next_wealth": {"interest_rate": interest_rate},
+            "next_health": {},
+            "next_partner": {"partner_transition": partner_transition},
             "borrowing_constraint": {},
             "labor_income": {"wage": wage},
         }

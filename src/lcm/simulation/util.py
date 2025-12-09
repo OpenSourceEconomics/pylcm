@@ -258,3 +258,88 @@ def _update_states_for_subjects(
         )
 
     return updated_states
+
+
+def validate_flat_initial_states(
+    flat_initial_states: "dict[str, Array]",
+    internal_regimes: dict[RegimeName, InternalRegime],
+) -> None:
+    """Validate flat initial_states dict.
+
+    Checks that:
+    1. All required state names (across all regimes) are provided
+    2. No extra/unknown state names are provided
+    3. All arrays have the same length (same number of subjects)
+
+    Args:
+        flat_initial_states: Dict mapping state names to arrays.
+        internal_regimes: Dict of internal regime instances.
+
+    Raises:
+        ValueError: If validation fails with descriptive message.
+
+    """
+    # Collect all required state names across all regimes
+    required_states: set[str] = set()
+    for internal_regime in internal_regimes.values():
+        regime_states = set(internal_regime.variable_info.query("is_state").index)
+        required_states.update(regime_states)
+
+    provided_states = set(flat_initial_states.keys())
+
+    # Check for missing states
+    missing = required_states - provided_states
+    if missing:
+        raise ValueError(
+            f"Missing initial states: {sorted(missing)}. "
+            f"Required states are: {sorted(required_states)}"
+        )
+
+    # Check for extra states
+    extra = provided_states - required_states
+    if extra:
+        raise ValueError(
+            f"Unknown initial states: {sorted(extra)}. "
+            f"Valid states are: {sorted(required_states)}"
+        )
+
+    # Check array lengths are consistent
+    if flat_initial_states:
+        lengths = {name: len(arr) for name, arr in flat_initial_states.items()}
+        unique_lengths = set(lengths.values())
+        if len(unique_lengths) > 1:
+            raise ValueError(
+                f"All initial state arrays must have the same length. "
+                f"Got lengths: {lengths}"
+            )
+
+
+def convert_flat_to_nested_initial_states(
+    flat_initial_states: "dict[str, Array]",
+    internal_regimes: dict[RegimeName, InternalRegime],
+) -> "dict[RegimeName, dict[str, Array]]":
+    """Convert flat initial_states dict to nested format.
+
+    Takes user-provided flat format and converts to the nested format
+    expected by internal simulation code.
+
+    Args:
+        flat_initial_states: Dict mapping state names to arrays.
+            Example: {"wealth": arr, "health": arr}
+        internal_regimes: Dict of internal regime instances.
+
+    Returns:
+        Nested dict mapping regime names to state dicts.
+            Example: {"work": {"wealth": arr, "health": arr}, ...}
+
+    """
+    nested: dict[RegimeName, dict[str, Array]] = {}
+
+    for regime_name, internal_regime in internal_regimes.items():
+        regime_state_names = set(internal_regime.variable_info.query("is_state").index)
+        nested[regime_name] = {
+            state_name: flat_initial_states[state_name]
+            for state_name in regime_state_names
+        }
+
+    return nested
