@@ -137,10 +137,8 @@ ISKHAKOV_ET_AL_2017 = Regime(
         "absorbing_retirement_constraint": absorbing_retirement_constraint,
     },
     transitions={
-        "iskhakov_et_al_2017": {
-            "next_wealth": next_wealth,
-            "next_lagged_retirement": next_lagged_retirement,
-        },
+        "next_wealth": next_wealth,
+        "next_lagged_retirement": next_lagged_retirement,
     },
     functions={
         "labor_income": labor_income,
@@ -175,7 +173,7 @@ ISKHAKOV_ET_AL_2017_STRIPPED_DOWN = Regime(
         "borrowing_constraint": borrowing_constraint,
     },
     transitions={
-        "iskhakov_et_al_2017_stripped_down": {"next_wealth": next_wealth},
+        "next_wealth": next_wealth,
     },
     functions={
         "labor_income": labor_income,

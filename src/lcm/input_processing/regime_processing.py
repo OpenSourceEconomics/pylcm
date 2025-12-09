@@ -28,7 +28,11 @@ from lcm.input_processing.util import (
     is_stochastic_transition,
 )
 from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
-from lcm.utils import flatten_regime_namespace, unflatten_regime_namespace
+from lcm.utils import (
+    REGIME_SEPARATOR,
+    flatten_regime_namespace,
+    unflatten_regime_namespace,
+)
 
 if TYPE_CHECKING:
     from jax import Array
@@ -97,6 +101,36 @@ def process_regimes(
         ]
 
     # ----------------------------------------------------------------------------------
+    # Auto-generate next_regime for absorbing regimes in multi-regime models
+    # ----------------------------------------------------------------------------------
+    if len(regimes) > 1:
+        regimes = _handle_absorbing_regimes(regimes)
+
+    # ----------------------------------------------------------------------------------
+    # Validate transition completeness for multi-regime models
+    # ----------------------------------------------------------------------------------
+    if len(regimes) > 1:
+        _validate_transition_completeness(regimes)
+
+    # ----------------------------------------------------------------------------------
+    # Convert flat transitions to nested format
+    # ----------------------------------------------------------------------------------
+    # User provides flat format, internal processing uses nested format.
+    # First, collect state names for each regime to know which transitions map where.
+    states_per_regime: dict[str, set[str]] = {
+        regime.name: set(regime.states.keys()) for regime in regimes
+    }
+
+    # Convert each regime's flat transitions to nested format
+    nested_transitions = {
+        regime.name: convert_flat_to_nested_transitions(
+            flat_transitions=regime.transitions,
+            states_per_regime=states_per_regime,
+        )
+        for regime in regimes
+    }
+
+    # ----------------------------------------------------------------------------------
     # Stage 1: Initialize regime components that do not depend on other regimes
     # ----------------------------------------------------------------------------------
     grids = {}
@@ -118,11 +152,14 @@ def process_regimes(
     internal_regimes = {}
     for regime in regimes:
         params_template = create_params_template(
-            regime, grids=grids, n_periods=n_periods
+            regime,
+            grids=grids,
+            n_periods=n_periods,
         )
 
         internal_functions = _get_internal_functions(
             regime,
+            nested_transitions=nested_transitions[regime.name],
             grids=grids,
             params=params_template,
             regime_id_cls=regime_id_cls,
@@ -176,6 +213,7 @@ def process_regimes(
 
 def _get_internal_functions(
     regime: Regime,
+    nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
     grids: dict[RegimeName, dict[str, Array]],
     params: ParamsDict,
     regime_id_cls: type,
@@ -186,6 +224,8 @@ def _get_internal_functions(
 
     Args:
         regime: The regime as provided by the user.
+        nested_transitions: Nested transitions dict for internal processing.
+            Format: {"regime_name": {"next_state": fn, ...}, "next_regime": fn}
         grids: Dict containing the state grids for each regime.
         params: The parameters of the regime.
         regime_id_cls: Dataclass mapping regime names to integer indices.
@@ -197,13 +237,24 @@ def _get_internal_functions(
     """
     flat_grids = flatten_regime_namespace(grids)
 
+    # Flatten nested transitions to get prefixed names like "regime__next_wealth"
+    flat_nested_transitions = flatten_regime_namespace(nested_transitions)
+
     # ==================================================================================
     # Add 'params' argument to functions
     # ==================================================================================
     # We wrap the user functions such that they can be called with the 'params' argument
     # instead of the individual parameters.
 
-    all_functions = deepcopy(regime.get_all_functions())
+    # Build all_functions using nested_transitions (to get prefixed names)
+    all_functions = deepcopy(
+        flatten_regime_namespace(
+            regime.functions
+            | {"utility": regime.utility}
+            | regime.constraints
+            | nested_transitions
+        )
+    )
 
     stochastic_transition_functions = {
         fn_name: fn
@@ -214,15 +265,15 @@ def _get_internal_functions(
     deterministic_transition_functions = {
         fn_name: fn
         for fn_name, fn in all_functions.items()
-        if fn_name in flatten_regime_namespace(regime.transitions)
+        if fn_name in flat_nested_transitions
         and fn_name not in stochastic_transition_functions
     }
 
     deterministic_functions = {
         fn_name: fn
         for fn_name, fn in all_functions.items()
-        if fn_name
-        not in (stochastic_transition_functions, deterministic_transition_functions)
+        if fn_name not in stochastic_transition_functions
+        and fn_name not in deterministic_transition_functions
     }
 
     functions: dict[str, InternalUserFunction] = {}
@@ -235,21 +286,36 @@ def _get_internal_functions(
         )
 
     for fn_name, fn in deterministic_transition_functions.items():
-        regime_name = None if fn_name == "next_regime" else fn_name.split("__", 1)[0]
+        # For transition functions with prefixed names like "work__next_wealth",
+        # extract the flat param key "next_wealth" to look up in params
+        if fn_name == "next_regime":
+            param_key = fn_name
+        elif REGIME_SEPARATOR in fn_name:
+            # "work__next_wealth" -> "next_wealth"
+            param_key = fn_name.split(REGIME_SEPARATOR, 1)[1]
+        else:
+            param_key = fn_name
         functions[fn_name] = _ensure_fn_only_depends_on_params(
             fn=fn,
             fn_name=fn_name,
+            param_key=param_key,
             params=params,
-            regime_name=regime_name,
         )
 
     for fn_name, fn in stochastic_transition_functions.items():
         # The user-specified next function is the weighting function for the
         # stochastic transition. For the solution, we must also define a next function
         # that returns the whole grid of possible values.
+        # For prefixed names, extract the flat param key
+        param_key = (
+            fn_name.split(REGIME_SEPARATOR, 1)[1]
+            if REGIME_SEPARATOR in fn_name
+            else fn_name
+        )
         functions[f"weight_{fn_name}"] = _ensure_fn_only_depends_on_params(
             fn=fn,
             fn_name=fn_name,
+            param_key=param_key,
             params=params,
         )
         functions[fn_name] = _get_stochastic_next_function(
@@ -259,7 +325,7 @@ def _get_internal_functions(
 
     internal_transition = {
         fn_name: functions[fn_name]
-        for fn_name in flatten_regime_namespace(regime.transitions)
+        for fn_name in flat_nested_transitions
         if fn_name != "next_regime"
     }
     internal_utility = functions["utility"]
@@ -269,12 +335,13 @@ def _get_internal_functions(
     internal_functions = {
         fn_name: functions[fn_name]
         for fn_name in functions
-        if fn_name not in flatten_regime_namespace(regime.transitions)
+        if fn_name not in flat_nested_transitions
         and fn_name not in regime.constraints
         and fn_name not in {"utility", "next_regime"}
     }
     # Determine if next_regime is stochastic (decorated with @lcm.mark.stochastic)
-    next_regime_fn = regime.transitions.get("next_regime")
+    # next_regime is at top level in both flat and nested formats
+    next_regime_fn = nested_transitions.get("next_regime")
     is_stochastic_regime_transition = (
         next_regime_fn is not None
         and is_stochastic_transition(
@@ -301,10 +368,22 @@ def _get_internal_functions(
 
 
 def _replace_func_parameters_by_params(
-    fn: UserFunction, params: ParamsDict, name: str, regime_name: str | None
+    fn: UserFunction,
+    params: ParamsDict,
+    param_key: str,
 ) -> InternalUserFunction:
+    """Wrap a function to get its parameters from the params dict.
+
+    Args:
+        fn: The user function to wrap.
+        params: The params dict template.
+        param_key: The key to look up in params (e.g., "next_wealth").
+
+    Returns:
+        A wrapped function that accepts a params dict and extracts its parameters.
+    """
     annotations = {
-        k: v for k, v in get_annotations(fn).items() if k not in params[name]
+        k: v for k, v in get_annotations(fn).items() if k not in params[param_key]
     }
     annotations_with_params = annotations | {"params": "ParamsDict"}
     return_annotation = annotations_with_params.pop("return")
@@ -312,18 +391,9 @@ def _replace_func_parameters_by_params(
     @with_signature(args=annotations_with_params, return_annotation=return_annotation)
     @functools.wraps(fn)
     def processed_func(*args: Array, params: ParamsDict, **kwargs: Array) -> Array:
-        return fn(*args, **kwargs, **params[name])
+        return fn(*args, **kwargs, **params[param_key])
 
-    @with_signature(args=annotations_with_params, return_annotation=return_annotation)
-    @functools.wraps(fn)
-    def processed_func_regime(
-        *args: Array, params: ParamsDict, **kwargs: Array
-    ) -> Array:
-        return fn(*args, **kwargs, **params[name])
-
-    if regime_name is None:
-        return cast("InternalUserFunction", processed_func)
-    return cast("InternalUserFunction", processed_func_regime)
+    return cast("InternalUserFunction", processed_func)
 
 
 def _add_dummy_params_argument(fn: UserFunction) -> InternalUserFunction:
@@ -348,16 +418,20 @@ def _get_stochastic_next_function(fn: UserFunction, grid: Int1D) -> UserFunction
 
 
 def _ensure_fn_only_depends_on_params(
-    fn: UserFunction, fn_name: str, params: ParamsDict, regime_name: str | None = None
+    fn: UserFunction,
+    fn_name: str,
+    params: ParamsDict,
+    param_key: str | None = None,
 ) -> InternalUserFunction:
-    # params[fn_name] contains the dictionary of parameters used by the function, which
+    # param_key is the key to look up in params (may differ from fn_name).
+    key = param_key if param_key is not None else fn_name
+    # params[key] contains the dictionary of parameters used by the function, which
     # is empty if the function does not depend on any regime parameters.
-    if params[fn_name]:
+    if params[key]:
         return _replace_func_parameters_by_params(
             fn=fn,
             params=params,
-            name=fn_name,
-            regime_name=regime_name,
+            param_key=key,
         )
     return _add_dummy_params_argument(fn)
 
@@ -373,3 +447,146 @@ def create_default_regime_id_cls(regime_name: str) -> type:
 
     """
     return make_dataclass("RegimeID", [(regime_name, int, 0)])
+
+
+def _validate_transition_completeness(regimes: list[Regime]) -> None:
+    """Validate that non-absorbing regimes have complete transitions.
+
+    Non-absorbing regimes must have transition functions for ALL states across ALL
+    regimes, since they can potentially transition to any other regime.
+
+    Absorbing regimes only need transitions for their own states.
+
+    Args:
+        regimes: List of regimes to validate.
+
+    Raises:
+        ValueError: If any non-absorbing regime is missing transitions.
+
+    """
+    # Collect all states across all regimes
+    all_states: set[str] = set()
+    for regime in regimes:
+        all_states.update(regime.states.keys())
+
+    # For each non-absorbing regime, check that it has transitions for all states
+    missing_transitions: dict[str, set[str]] = {}
+
+    for regime in regimes:
+        # Absorbing regimes only need transitions for their own states.
+        # Non-absorbing regimes need transitions for ALL states across ALL regimes.
+        required_states = set(regime.states.keys()) if regime.absorbing else all_states
+
+        # Get states that have transition functions in this regime
+        states_with_transitions = {
+            name.removeprefix("next_")
+            for name in regime.transitions
+            if name != "next_regime"
+        }
+
+        # Check for missing transitions
+        missing = required_states - states_with_transitions
+        if missing:
+            missing_transitions[regime.name] = missing
+
+    if missing_transitions:
+        error_parts = ["Non-absorbing regimes have missing transitions:"]
+        for regime_name, missing in sorted(missing_transitions.items()):
+            missing_list = ", ".join(f"next_{s}" for s in sorted(missing))
+            error_parts.append(f"  - Regime '{regime_name}' is missing: {missing_list}")
+
+        raise ValueError("\n".join(error_parts))
+
+
+def _handle_absorbing_regimes(regimes: list[Regime]) -> list[Regime]:
+    """Process absorbing regimes in multi-regime models.
+
+    For absorbing regimes, auto-generate next_regime to always return to the same
+    regime with probability 1.0. If an absorbing regime has an explicit next_regime
+    function, warn and ignore it.
+
+    Args:
+        regimes: List of regimes to process.
+
+    Returns:
+        List of regimes with absorbing regimes having auto-generated next_regime.
+
+    """
+    processed_regimes: list[Regime] = []
+    n_regimes = len(regimes)
+
+    for regime in regimes:
+        updated_regime = regime
+        if regime.absorbing:
+            if "next_regime" in regime.transitions:
+                warnings.warn(
+                    f"Absorbing regime '{regime.name}' has a user-defined "
+                    "'next_regime' function, but this will be ignored. For "
+                    "absorbing regimes, the regime transition probability is "
+                    "always 1.0 for the same regime.",
+                    UserWarning,
+                    stacklevel=4,
+                )
+
+            # Create auto-generated next_regime that returns 100% for this regime
+            # The array position corresponds to the regime's position in regime_id_cls
+            regime_idx = len(processed_regimes)
+
+            @mark.stochastic
+            def _absorbing_next_regime(
+                *,
+                _n_regimes: int = n_regimes,
+                _regime_idx: int = regime_idx,
+                **_kwargs: object,  # Accept and ignore extra params
+            ) -> Array:
+                probs = jnp.zeros(_n_regimes)
+                return probs.at[_regime_idx].set(1.0)
+
+            updated_regime = regime.replace(
+                transitions={
+                    k: v for k, v in regime.transitions.items() if k != "next_regime"
+                }
+                | {"next_regime": _absorbing_next_regime}
+            )
+        processed_regimes.append(updated_regime)
+
+    return processed_regimes
+
+
+def convert_flat_to_nested_transitions(
+    flat_transitions: dict[str, UserFunction],
+    states_per_regime: dict[str, set[str]],
+) -> dict[str, dict[str, UserFunction] | UserFunction]:
+    """Convert flat transitions dictionary to nested format.
+
+    Takes a user-provided flat transitions dictionary and converts it to the nested
+    format expected by internal processing. Each transition function is mapped to
+    all target regimes that have the corresponding state.
+
+    Args:
+        flat_transitions: Dictionary mapping transition names to functions.
+        states_per_regime: Dictionary mapping regime names to their state names.
+
+    Returns:
+        Nested dictionary with state transitions mapped to their target regimes.
+
+    """
+    next_regime_fn = flat_transitions["next_regime"]
+    state_transitions = {
+        name: fn for name, fn in flat_transitions.items() if name != "next_regime"
+    }
+
+    states_with_transitions = {name.removeprefix("next_") for name in state_transitions}
+
+    nested: dict[str, dict[str, UserFunction] | UserFunction] = {}
+
+    nested["next_regime"] = next_regime_fn
+
+    for regime_name, state_names in states_per_regime.items():
+        if state_names <= states_with_transitions:
+            nested[regime_name] = {
+                f"next_{state}": state_transitions[f"next_{state}"]
+                for state in state_names.intersection(states_with_transitions)
+            }
+
+    return nested

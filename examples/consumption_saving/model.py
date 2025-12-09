@@ -134,10 +134,8 @@ CONSUMPTION_SAVING_REGIME = Regime(
         ),
     },
     transitions={
-        "consumption_saving_regime": {
-            "next_wealth": next_wealth,
-            "next_health": next_health,
-        },
+        "next_wealth": next_wealth,
+        "next_health": next_health,
     },
 )
 
@@ -149,7 +147,7 @@ PARAMS = {
     "consumption_saving_regime": {
         "beta": 0.95,
         "utility": {"disutility_of_work": 0.05},
-        "consumption_saving_regime__next_wealth": {"interest_rate": 0.05},
+        "next_wealth": {"interest_rate": 0.05},
     }
 }
 
@@ -164,9 +162,7 @@ if __name__ == "__main__":
         params=PARAMS,
         initial_regimes=["consumption_saving_regime"] * n_simulation_subjects,
         initial_states={
-            "consumption_saving_regime": {
-                "wealth": jnp.full(n_simulation_subjects, 1),
-                "health": jnp.full(n_simulation_subjects, 1),
-            }
+            "wealth": jnp.full(n_simulation_subjects, 1),
+            "health": jnp.full(n_simulation_subjects, 1),
         },
     )
