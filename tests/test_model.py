@@ -397,3 +397,32 @@ def test_create_default_regime_id_cls():
     # Should have the correct attribute
     assert hasattr(regime_id_cls, "my_regime")
     assert regime_id_cls.my_regime == 0
+
+
+# ======================================================================================
+# Tests for terminal regime validation in Model
+# ======================================================================================
+
+
+def test_model_rejects_multiple_terminal_regimes(binary_category_class):
+    """Model cannot have more than one terminal regime."""
+
+    @dataclass
+    class RegimeID:
+        dead1: int = 0
+        dead2: int = 1
+
+    dead1 = Regime(
+        name="dead1",
+        states={"health": DiscreteGrid(binary_category_class)},
+        utility=lambda health: health * 0,
+        terminal=True,
+    )
+    dead2 = Regime(
+        name="dead2",
+        states={"health": DiscreteGrid(binary_category_class)},
+        utility=lambda health: health * 0,
+        terminal=True,
+    )
+    with pytest.raises(ModelInitializationError, match="exactly one terminal regime"):
+        Model(regimes=[dead1, dead2], n_periods=2, regime_id_cls=RegimeID)

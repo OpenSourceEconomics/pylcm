@@ -240,17 +240,31 @@ def _validate_model_inputs(
         ]
     )
 
+    # Validate exactly one terminal regime
+    # Once all tests are updated, require exactly one terminal regime.
+    # For now, we only enforce "at most one" to maintain backward compatibility.
+    terminal_regimes = [r for r in regimes if r.terminal]
+    if len(terminal_regimes) > 1:
+        names = [r.name for r in terminal_regimes]
+        error_messages.append(
+            f"Model must have exactly one terminal regime, but found "
+            f"{len(terminal_regimes)}: {names}."
+        )
+
     # Single-regime: regime_id_cls warning is handled in Model.__init__
 
     # Multi-regime model validation
     if len(regimes) > 1:
-        # Check next_regime is defined in each non-absorbing regime
+        # Check next_regime is defined in each non-terminal, non-absorbing regime
         # (absorbing regimes get next_regime auto-generated during processing)
+        # (terminal regimes cannot have transitions)
         error_messages.extend(
             f"Multi-regime models require 'next_regime' in transitions for "
-            f"each non-absorbing regime. Missing in regime '{regime.name}'."
+            f"each non-terminal regime. Missing in regime '{regime.name}'."
             for regime in regimes
-            if "next_regime" not in regime.transitions and not regime.absorbing
+            if "next_regime" not in regime.transitions
+            and not regime.absorbing
+            and not regime.terminal
         )
 
         # Check regime_id_cls is provided
