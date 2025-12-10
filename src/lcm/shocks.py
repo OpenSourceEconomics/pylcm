@@ -2,8 +2,11 @@ from jax import Array
 from jax import numpy as jnp
 from jax.scipy.stats.norm import cdf
 
+from copy import deepcopy
 from lcm.exceptions import ShockInitializationError
-from lcm.typing import Float1D, FloatND
+from lcm.interfaces import InternalRegime
+from lcm.typing import Float1D, FloatND, ParamsDict
+from lcm.input_processing.util import is_stochastic_transition
 
 
 class UniformShock:
@@ -207,3 +210,19 @@ def rouwenhorst(
         P = P.at[1:i, :].set(P[1:i, :] / 2)
 
     return jnp.linspace(mu_eps / (1.0 - rho) - nu, mu_eps / (1.0 - rho) + nu, n), P.T
+
+SHOCK_FUNCTIONS = {
+    "uniform": discretized_uniform_distribution,
+    "normal": discretized_normal_distribution,
+    "tauchen": tauchen,
+    "rouwenhorst": rouwenhorst
+}
+
+
+def pre_compute(internal_regimes: dict[str, InternalRegime], params: ParamsDict):
+    new_params = deepcopy(params)
+    for regime_name, internal_regime in internal_regimes.items():
+            for trans_name, trans in internal_regime.transitions.items():
+                    if is_stochastic_transition(trans) and trans._stochastic_info.type != "custom":
+                        new_params[regime_name][trans_name] = {"pre_computed": SHOCK_FUNCTIONS[trans._stochastic_info.type](**params[regime_name][trans_name])[1]}
+    return new_params

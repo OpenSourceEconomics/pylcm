@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 
 from lcm.error_handling import validate_value_function_array
-
+from lcm.shocks import pre_compute
 if TYPE_CHECKING:
     import logging
 
@@ -38,6 +38,7 @@ def solve(
     next_V_arr: dict[RegimeName, FloatND] = {
         name: jnp.empty(0) for name in internal_regimes
     }
+    params = pre_compute(internal_regimes=internal_regimes, params=params)
 
     logger.info("Starting solution")
 

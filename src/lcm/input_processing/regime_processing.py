@@ -312,12 +312,21 @@ def _get_internal_functions(
             if REGIME_SEPARATOR in fn_name
             else fn_name
         )
-        functions[f"weight_{fn_name}"] = _ensure_fn_only_depends_on_params(
-            fn=fn,
-            fn_name=fn_name,
-            param_key=param_key,
-            params=params,
-        )
+        if fn._stochastic_info.type != "custom":
+            fn_with_pre_computed_weights = _get_fn_with_precomputed_weights(fn )
+            functions[f"weight_{fn_name}"] = _ensure_fn_only_depends_on_params(
+                fn=fn_with_pre_computed_weights,
+                fn_name=fn_name,
+                param_key=param_key,
+                params=params,
+            )
+        else:
+            functions[f"weight_{fn_name}"] = _ensure_fn_only_depends_on_params(
+                fn=fn,
+                fn_name=fn_name,
+                param_key=param_key,
+                params=params,
+            )
         functions[fn_name] = _get_stochastic_next_function(
             fn=fn,
             grid=flat_grids[fn_name.replace("next_", "")],
@@ -415,6 +424,14 @@ def _get_stochastic_next_function(fn: UserFunction, grid: Int1D) -> UserFunction
         return grid
 
     return next_func
+
+def _get_fn_with_precomputed_weights(fn: UserFunction) -> UserFunction:
+    @with_signature(args={"pre_computed": "FloatND"}, return_annotation="FloatND")
+    @functools.wraps(fn)
+    def weights_func(*args: Any, pre_computed: Any, **kwargs: Any) -> Int1D:  # noqa: ARG001, ANN401
+        return pre_computed[*args]
+
+    return weights_func
 
 
 def _ensure_fn_only_depends_on_params(
