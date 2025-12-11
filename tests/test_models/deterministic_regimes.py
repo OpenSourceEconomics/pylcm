@@ -35,9 +35,6 @@ class RegimeID:
     dead: int = 2
 
 
-N_PERIODS = 8
-
-
 # --------------------------------------------------------------------------------------
 # Utility functions
 # --------------------------------------------------------------------------------------
@@ -89,8 +86,9 @@ def next_wealth(
 def next_regime_from_working(
     retirement: DiscreteAction,
     period: Period,
+    n_periods: int,
 ) -> int:
-    certain_death_transition = period == N_PERIODS - 2  # dead in last period
+    certain_death_transition = period == n_periods - 2  # dead in last period
     return jnp.where(
         certain_death_transition,
         RegimeID.dead,
@@ -102,8 +100,8 @@ def next_regime_from_working(
     )
 
 
-def next_regime_from_retired(period: Period) -> int:
-    certain_death_transition = period == N_PERIODS - 2  # dead in last period
+def next_regime_from_retired(period: Period, n_periods: int) -> int:
+    certain_death_transition = period == n_periods - 2  # dead in last period
     return jnp.where(
         certain_death_transition,
         RegimeID.dead,
@@ -126,7 +124,6 @@ def borrowing_constraint(
 
 working = Regime(
     name="working",
-    active=range(6),  # only active in periods 0 to 5
     actions={
         "retirement": DiscreteGrid(RetirementStatus),
         "consumption": LinspaceGrid(
@@ -158,7 +155,6 @@ working = Regime(
 
 retired = Regime(
     name="retired",
-    active=range(4, N_PERIODS - 1),  # only active in periods 4 to 6
     actions={"consumption": LinspaceGrid(start=1, stop=400, n_points=500)},
     states={
         "wealth": LinspaceGrid(
@@ -182,13 +178,41 @@ retired = Regime(
 dead = Regime(
     name="dead",
     terminal=True,
-    utility=lambda wealth: 0.0,
+    utility=lambda wealth: jnp.array([0.0]),
     states={"wealth": LinspaceGrid(start=1, stop=2, n_points=2)},
 )
 
 
-model = Model(
-    [working, retired, dead],
-    n_periods=N_PERIODS,
-    regime_id_cls=RegimeID,
-)
+def get_model(n_periods: int) -> Model:
+    return Model(
+        [working, retired, dead],
+        n_periods=n_periods,
+        regime_id_cls=RegimeID,
+    )
+
+
+def get_params(
+    n_periods,
+    beta=0.95,
+    disutility_of_work=0.5,
+    interest_rate=0.05,
+    wage=10.0,
+):
+    return {
+        "working": {
+            "beta": beta,
+            "utility": {"disutility_of_work": disutility_of_work},
+            "next_wealth": {"interest_rate": interest_rate},
+            "next_regime": {"n_periods": n_periods},
+            "borrowing_constraint": {},
+            "labor_income": {"wage": wage},
+        },
+        "retired": {
+            "beta": beta,
+            "utility": {},
+            "next_wealth": {"interest_rate": interest_rate, "labor_income": 0.0},
+            "next_regime": {"n_periods": n_periods},
+            "borrowing_constraint": {},
+        },
+        "dead": {},
+    }
