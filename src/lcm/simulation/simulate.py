@@ -108,7 +108,13 @@ def simulate(
         is_last_period = period == n_periods - 1
         new_subject_regime_ids = jnp.empty(n_initial_subjects)
 
-        for regime_name, internal_regime in internal_regimes.items():
+        active_regimes = {
+            regime_name: regime
+            for regime_name, regime in internal_regimes.items()
+            if period in regime.active
+        }
+
+        for regime_name, internal_regime in active_regimes.items():
             result, new_states, new_subject_regime_ids, key = (
                 _simulate_regime_in_period(
                     regime_name=regime_name,
@@ -137,6 +143,7 @@ def simulate(
             internal_regime=internal_regimes[regime_name],
             params=params,
             additional_targets=additional_targets,
+            n_initial_subjects=n_initial_subjects,
         )
 
     return processed
@@ -205,14 +212,12 @@ def _simulate_regime_in_period(
     # The Q-function values contain the information of how much value each
     # action combination is worth. To find the optimal discrete action, we
     # therefore only need to maximize the Q-function values over all actions.
-    argmax_and_max_Q_over_a = internal_regime.argmax_and_max_Q_over_a_functions(
-        period, n_periods=n_periods
-    )
+    argmax_and_max_Q_over_a = internal_regime.argmax_and_max_Q_over_a_functions[period]
+
     indices_optimal_actions, V_arr = argmax_and_max_Q_over_a(
         **state_action_space.states,
         **state_action_space.discrete_actions,
         **state_action_space.continuous_actions,
-        period=period,
         next_V_arr=next_V_arr,
         params=params,
     )

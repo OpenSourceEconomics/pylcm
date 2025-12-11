@@ -124,7 +124,7 @@ def borrowing_constraint(
 # Regime specifications
 # ======================================================================================
 
-working_regime = Regime(
+working = Regime(
     name="working",
     active=range(6),  # only active in periods 0 to 5
     actions={
@@ -156,7 +156,7 @@ working_regime = Regime(
     },
 )
 
-retired_regime = Regime(
+retired = Regime(
     name="retired",
     active=range(4, N_PERIODS - 1),  # only active in periods 4 to 6
     actions={"consumption": LinspaceGrid(start=1, stop=400, n_points=500)},
@@ -179,7 +179,7 @@ retired_regime = Regime(
 )
 
 
-dead_regime = Regime(
+dead = Regime(
     name="dead",
     terminal=True,
     utility=lambda wealth: 0.0,
@@ -188,7 +188,7 @@ dead_regime = Regime(
 
 
 model = Model(
-    [working_regime, retired_regime, dead_regime],
+    [working, retired, dead],
     n_periods=N_PERIODS,
     regime_id_cls=RegimeID,
 )

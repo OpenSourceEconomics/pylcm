@@ -19,6 +19,7 @@ def process_simulated_data(
     results: dict[int, SimulationResults],
     internal_regime: InternalRegime,
     params: ParamsDict,
+    n_initial_subjects: int,
     additional_targets: dict[RegimeName, list[str]] | None = None,
 ) -> pd.DataFrame:
     """Process and flatten the simulation results.
@@ -43,14 +44,12 @@ def process_simulated_data(
         n_initial_states,). Additionally, the period variable is added.
 
     """
-    n_initial_states = len(results[0].V_arr)
-
-    nan_array = jnp.full(n_initial_states, jnp.nan)
+    nan_array = jnp.full(n_initial_subjects, jnp.nan)
 
     list_of_dicts = [
         {
-            "period": jnp.full(n_initial_states, period),
-            "subject_id": jnp.arange(n_initial_states),
+            "period": jnp.full(n_initial_subjects, period),
+            "subject_id": jnp.arange(n_initial_subjects),
             "in_regime": d.in_regime,
             "value": d.V_arr,
             **d.actions,

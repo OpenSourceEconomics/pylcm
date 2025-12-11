@@ -20,7 +20,6 @@ if TYPE_CHECKING:
         IntND,
         MaxQOverAFunction,
         ParamsDict,
-        Period,
         RegimeName,
     )
 
@@ -128,11 +127,10 @@ def get_argmax_and_max_Q_over_a(
     def argmax_and_max_Q_over_a(
         next_V_arr: dict[RegimeName, FloatND],
         params: ParamsDict,
-        period: Period,
         **states_and_actions: Array,
     ) -> tuple[IntND, FloatND]:
         Q_arr, F_arr = Q_and_F(
-            params=params, next_V_arr=next_V_arr, period=period, **states_and_actions
+            params=params, next_V_arr=next_V_arr, **states_and_actions
         )
         return argmax_and_max(Q_arr, where=F_arr, initial=-jnp.inf)
 

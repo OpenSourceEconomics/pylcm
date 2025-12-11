@@ -75,7 +75,7 @@ def get_Q_and_F(
 
     for target_regime in active_target_regimes:
         # Transitions from the current regime to the target regime
-        transitions = internal_functions.transitions[regime.name]
+        transitions = internal_functions.transitions[target_regime]
 
         # Functions required to calculate the expected continuation values
         state_transitions[target_regime] = get_next_state_function(
