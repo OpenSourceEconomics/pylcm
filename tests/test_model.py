@@ -10,7 +10,7 @@ from lcm import Model, Regime
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.grids import DiscreteGrid
 from lcm.input_processing.regime_processing import create_default_regime_id_cls
-from lcm.model import validate_regime_id_cls
+from lcm.model import _validate_regime_id_cls
 
 
 def test_regime_invalid_states():
@@ -324,7 +324,7 @@ def test_validate_regime_id_cls_valid():
         work: int = 0
         retirement: int = 1
 
-    errors = validate_regime_id_cls(RegimeID, ["work", "retirement"])
+    errors = _validate_regime_id_cls(RegimeID, ["work", "retirement"])
     assert errors == []
 
 
@@ -335,7 +335,7 @@ def test_validate_regime_id_cls_missing_regime():
     class RegimeID:
         work: int = 0
 
-    errors = validate_regime_id_cls(RegimeID, ["work", "retirement"])
+    errors = _validate_regime_id_cls(RegimeID, ["work", "retirement"])
     assert len(errors) == 1
     assert "missing attributes" in errors[0]
     assert "retirement" in errors[0]
@@ -350,7 +350,7 @@ def test_validate_regime_id_cls_extra_regime():
         retirement: int = 1
         unknown: int = 2
 
-    errors = validate_regime_id_cls(RegimeID, ["work", "retirement"])
+    errors = _validate_regime_id_cls(RegimeID, ["work", "retirement"])
     assert len(errors) == 1
     assert "extra attributes" in errors[0]
     assert "unknown" in errors[0]
@@ -364,7 +364,7 @@ def test_validate_regime_id_cls_non_consecutive():
         work: int = 0
         retirement: int = 2  # Should be 1
 
-    errors = validate_regime_id_cls(RegimeID, ["work", "retirement"])
+    errors = _validate_regime_id_cls(RegimeID, ["work", "retirement"])
     assert len(errors) == 1
     assert "consecutive integers" in errors[0]
 
@@ -376,7 +376,7 @@ def test_validate_regime_id_cls_not_dataclass():
         work = 0
         retirement = 1
 
-    errors = validate_regime_id_cls(RegimeID, ["work", "retirement"])
+    errors = _validate_regime_id_cls(RegimeID, ["work", "retirement"])
     assert len(errors) == 1
     assert "must be a dataclass" in errors[0]
 
@@ -391,7 +391,7 @@ def test_create_default_regime_id_cls():
     regime_id_cls = create_default_regime_id_cls("my_regime")
 
     # Should be a valid category class
-    errors = validate_regime_id_cls(regime_id_cls, ["my_regime"])
+    errors = _validate_regime_id_cls(regime_id_cls, ["my_regime"])
     assert errors == []
 
     # Should have the correct attribute

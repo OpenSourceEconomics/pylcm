@@ -1,16 +1,12 @@
 from __future__ import annotations
 
 import functools
-import warnings
 from copy import deepcopy
-from dataclasses import make_dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-import jax.numpy as jnp
 from dags import get_annotations
 from dags.signature import with_signature
 
-from lcm import mark
 from lcm.input_processing.create_params_template import create_params_template
 from lcm.input_processing.regime_components import (
     build_argmax_and_max_Q_over_a_functions,
@@ -18,8 +14,8 @@ from lcm.input_processing.regime_components import (
     build_next_state_simulation_functions,
     build_Q_and_F_functions,
     build_regime_transition_probs_functions,
-    build_state_action_spaces,
-    build_state_space_infos,
+    build_state_action_space,
+    build_state_space_info,
 )
 from lcm.input_processing.util import (
     get_grids,
@@ -73,46 +69,6 @@ def process_regimes(
 
     """
     # ----------------------------------------------------------------------------------
-    # Override next_regime for single-regime models to ensure probability is always 1.0
-    # ----------------------------------------------------------------------------------
-    if len(regimes) == 1:
-        regime = regimes[0]
-
-        if "next_regime" in regime.transitions:
-            warnings.warn(
-                f"Single-regime model '{regime.name}' has a user-defined 'next_regime' "
-                "function, but this will be ignored. For single-regime models, the "
-                "regime transition probability is always 1.0 for the same regime.",
-                UserWarning,
-                stacklevel=3,
-            )
-
-        @mark.stochastic
-        def _default_next_regime() -> Array:
-            return jnp.array([1.0])
-
-        regimes = [
-            regime.replace(
-                transitions={
-                    k: v for k, v in regime.transitions.items() if k != "next_regime"
-                }
-                | {"next_regime": _default_next_regime}
-            )
-        ]
-
-    # ----------------------------------------------------------------------------------
-    # Auto-generate next_regime for absorbing regimes in multi-regime models
-    # ----------------------------------------------------------------------------------
-    if len(regimes) > 1:
-        regimes = _handle_absorbing_regimes(regimes)
-
-    # ----------------------------------------------------------------------------------
-    # Validate transition completeness for multi-regime models
-    # ----------------------------------------------------------------------------------
-    if len(regimes) > 1:
-        _validate_transition_completeness(regimes)
-
-    # ----------------------------------------------------------------------------------
     # Convert flat transitions to nested format
     # ----------------------------------------------------------------------------------
     # User provides flat format, internal processing uses nested format.
@@ -123,10 +79,7 @@ def process_regimes(
 
     # Convert each regime's flat transitions to nested format
     nested_transitions = {
-        regime.name: convert_flat_to_nested_transitions(
-            flat_transitions=regime.transitions,
-            states_per_regime=states_per_regime,
-        )
+        regime.name: _convert_flat_to_nested_transitions(regime, states_per_regime)
         for regime in regimes
     }
 
@@ -138,13 +91,15 @@ def process_regimes(
     variable_info = {}
     state_space_infos = {}
     state_action_spaces = {}
+    active_periods = {}
 
     for regime in regimes:
         grids[regime.name] = get_grids(regime)
         gridspecs[regime.name] = get_gridspecs(regime)
         variable_info[regime.name] = get_variable_info(regime)
-        state_space_infos[regime.name] = build_state_space_infos(regime)
-        state_action_spaces[regime.name] = build_state_action_spaces(regime)
+        state_space_infos[regime.name] = build_state_space_info(regime)
+        state_action_spaces[regime.name] = build_state_action_space(regime)
+        active_periods[regime.name] = get_active_periods(regime, n_periods)
 
     # ----------------------------------------------------------------------------------
     # Stage 2: Initialize regime components that depend on other regimes
@@ -171,9 +126,11 @@ def process_regimes(
             internal_functions=internal_functions,
             state_space_infos=state_space_infos,
             grids=grids,
+            active_periods=active_periods,
+            n_periods=n_periods,
         )
         max_Q_over_a_functions = build_max_Q_over_a_functions(
-            regime=regime, Q_and_F_functions=Q_and_F_functions, enable_jit=enable_jit
+            regime=regime, Q_and_F_function=Q_and_F_functions, enable_jit=enable_jit
         )
         argmax_and_max_Q_over_a_functions = build_argmax_and_max_Q_over_a_functions(
             regime=regime, Q_and_F_functions=Q_and_F_functions, enable_jit=enable_jit
@@ -195,6 +152,8 @@ def process_regimes(
             functions=internal_functions.functions,
             utility=internal_functions.utility,
             constraints=internal_functions.constraints,
+            active=active_periods[regime.name],
+            active_periods=active_periods,
             regime_transition_probs=internal_functions.regime_transition_probs,
             internal_functions=internal_functions,
             transitions=internal_functions.transitions,
@@ -209,6 +168,25 @@ def process_regimes(
         )
 
     return internal_regimes
+
+
+def get_active_periods(regime: Regime, n_periods: int) -> list[int]:
+    if regime.active is None:
+        return _get_default_active_periods(regime, n_periods)
+
+    if regime.terminal and n_periods - 1 not in regime.active:
+        return [n_periods - 1, *list(regime.active)]
+
+    if not regime.terminal and n_periods - 1 in regime.active:
+        return [p for p in regime.active if p == n_periods - 1]
+
+    return list(regime.active)
+
+
+def _get_default_active_periods(regime: Regime, n_periods: int) -> list[int]:
+    if regime.terminal:
+        return list(range(n_periods))
+    return list(range(n_periods - 1))
 
 
 def _get_internal_functions(
@@ -248,12 +226,10 @@ def _get_internal_functions(
 
     # Build all_functions using nested_transitions (to get prefixed names)
     all_functions = deepcopy(
-        flatten_regime_namespace(
-            regime.functions
-            | {"utility": regime.utility}
-            | regime.constraints
-            | nested_transitions
-        )
+        regime.functions
+        | {"utility": regime.utility}
+        | regime.constraints
+        | flatten_regime_namespace(nested_transitions)
     )
 
     stochastic_transition_functions = {
@@ -349,14 +325,17 @@ def _get_internal_functions(
         )
     )
 
-    internal_regime_transition_probs = build_regime_transition_probs_functions(
-        internal_functions=internal_functions,
-        regime_transition_probs=functions["next_regime"],
-        grids=grids[regime.name],
-        regime_id_cls=regime_id_cls,
-        is_stochastic=is_stochastic_regime_transition,
-        enable_jit=enable_jit,
-    )
+    if regime.terminal:
+        internal_regime_transition_probs = None
+    else:
+        internal_regime_transition_probs = build_regime_transition_probs_functions(
+            internal_functions=internal_functions,
+            regime_transition_probs=functions["next_regime"],
+            grids=grids[regime.name],
+            regime_id_cls=regime_id_cls,
+            is_stochastic=is_stochastic_regime_transition,
+            enable_jit=enable_jit,
+        )
 
     return InternalFunctions(
         functions=internal_functions,
@@ -436,125 +415,8 @@ def _ensure_fn_only_depends_on_params(
     return _add_dummy_params_argument(fn)
 
 
-def create_default_regime_id_cls(regime_name: str) -> type:
-    """Create a default RegimeID class for single-regime models.
-
-    Args:
-        regime_name: The name of the single regime.
-
-    Returns:
-        A dataclass with a single field mapping the regime name to index 0.
-
-    """
-    return make_dataclass("RegimeID", [(regime_name, int, 0)])
-
-
-def _validate_transition_completeness(regimes: list[Regime]) -> None:
-    """Validate that non-absorbing regimes have complete transitions.
-
-    Non-absorbing regimes must have transition functions for ALL states across ALL
-    regimes, since they can potentially transition to any other regime.
-
-    Absorbing regimes only need transitions for their own states.
-
-    Args:
-        regimes: List of regimes to validate.
-
-    Raises:
-        ValueError: If any non-absorbing regime is missing transitions.
-
-    """
-    # Collect all states across all regimes
-    all_states: set[str] = set()
-    for regime in regimes:
-        all_states.update(regime.states.keys())
-
-    # For each non-absorbing regime, check that it has transitions for all states
-    missing_transitions: dict[str, set[str]] = {}
-
-    for regime in regimes:
-        # Absorbing regimes only need transitions for their own states.
-        # Non-absorbing regimes need transitions for ALL states across ALL regimes.
-        required_states = set(regime.states.keys()) if regime.absorbing else all_states
-
-        # Get states that have transition functions in this regime
-        states_with_transitions = {
-            name.removeprefix("next_")
-            for name in regime.transitions
-            if name != "next_regime"
-        }
-
-        # Check for missing transitions
-        missing = required_states - states_with_transitions
-        if missing:
-            missing_transitions[regime.name] = missing
-
-    if missing_transitions:
-        error_parts = ["Non-absorbing regimes have missing transitions:"]
-        for regime_name, missing in sorted(missing_transitions.items()):
-            missing_list = ", ".join(f"next_{s}" for s in sorted(missing))
-            error_parts.append(f"  - Regime '{regime_name}' is missing: {missing_list}")
-
-        raise ValueError("\n".join(error_parts))
-
-
-def _handle_absorbing_regimes(regimes: list[Regime]) -> list[Regime]:
-    """Process absorbing regimes in multi-regime models.
-
-    For absorbing regimes, auto-generate next_regime to always return to the same
-    regime with probability 1.0. If an absorbing regime has an explicit next_regime
-    function, warn and ignore it.
-
-    Args:
-        regimes: List of regimes to process.
-
-    Returns:
-        List of regimes with absorbing regimes having auto-generated next_regime.
-
-    """
-    processed_regimes: list[Regime] = []
-    n_regimes = len(regimes)
-
-    for regime in regimes:
-        updated_regime = regime
-        if regime.absorbing:
-            if "next_regime" in regime.transitions:
-                warnings.warn(
-                    f"Absorbing regime '{regime.name}' has a user-defined "
-                    "'next_regime' function, but this will be ignored. For "
-                    "absorbing regimes, the regime transition probability is "
-                    "always 1.0 for the same regime.",
-                    UserWarning,
-                    stacklevel=4,
-                )
-
-            # Create auto-generated next_regime that returns 100% for this regime
-            # The array position corresponds to the regime's position in regime_id_cls
-            regime_idx = len(processed_regimes)
-
-            @mark.stochastic
-            def _absorbing_next_regime(
-                *,
-                _n_regimes: int = n_regimes,
-                _regime_idx: int = regime_idx,
-                **_kwargs: object,  # Accept and ignore extra params
-            ) -> Array:
-                probs = jnp.zeros(_n_regimes)
-                return probs.at[_regime_idx].set(1.0)
-
-            updated_regime = regime.replace(
-                transitions={
-                    k: v for k, v in regime.transitions.items() if k != "next_regime"
-                }
-                | {"next_regime": _absorbing_next_regime}
-            )
-        processed_regimes.append(updated_regime)
-
-    return processed_regimes
-
-
-def convert_flat_to_nested_transitions(
-    flat_transitions: dict[str, UserFunction],
+def _convert_flat_to_nested_transitions(
+    regime: Regime,
     states_per_regime: dict[str, set[str]],
 ) -> dict[str, dict[str, UserFunction] | UserFunction]:
     """Convert flat transitions dictionary to nested format.
@@ -571,9 +433,12 @@ def convert_flat_to_nested_transitions(
         Nested dictionary with state transitions mapped to their target regimes.
 
     """
-    next_regime_fn = flat_transitions["next_regime"]
+    if regime.terminal:
+        return {}
+
+    next_regime_fn = regime.transitions["next_regime"]
     state_transitions = {
-        name: fn for name, fn in flat_transitions.items() if name != "next_regime"
+        name: fn for name, fn in regime.transitions.items() if name != "next_regime"
     }
 
     states_with_transitions = {name.removeprefix("next_") for name in state_transitions}

@@ -9,7 +9,7 @@ from pandas.testing import assert_frame_equal
 
 from lcm import DiscreteGrid, LinspaceGrid, grid_helpers
 from lcm.input_processing.regime_processing import (
-    convert_flat_to_nested_transitions,
+    _convert_flat_to_nested_transitions,
     create_default_regime_id_cls,
     get_grids,
     get_gridspecs,
@@ -36,7 +36,7 @@ def test_convert_flat_to_nested_transitions():
         "next_regime": next_regime,
     }
 
-    result = convert_flat_to_nested_transitions(
+    result = _convert_flat_to_nested_transitions(
         flat_transitions=flat_transitions,
         states_per_regime={"alive": {"wealth"}},
     )
@@ -61,7 +61,7 @@ def test_convert_flat_to_nested_only_next_regime():
         "next_regime": next_regime,
     }
 
-    result = convert_flat_to_nested_transitions(
+    result = _convert_flat_to_nested_transitions(
         flat_transitions=flat_transitions,
         states_per_regime={"dead": set()},
     )
@@ -95,7 +95,7 @@ def test_convert_flat_to_nested_multi_regime():
         "next_regime": next_regime,
     }
 
-    result = convert_flat_to_nested_transitions(
+    result = _convert_flat_to_nested_transitions(
         flat_transitions=flat_transitions,
         states_per_regime={
             "young": {"wealth", "education"},
@@ -131,7 +131,7 @@ def test_convert_flat_to_nested_absorbing_multi_regime():
         "next_regime": next_regime,
     }
 
-    result = convert_flat_to_nested_transitions(
+    result = _convert_flat_to_nested_transitions(
         flat_transitions=flat_transitions_dead,
         states_per_regime={
             "alive": {"wealth", "retired"},

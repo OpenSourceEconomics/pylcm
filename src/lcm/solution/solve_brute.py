@@ -45,20 +45,20 @@ def solve(
     for period in reversed(range(n_periods)):
         period_solution: dict[RegimeName, FloatND] = {}
 
-        for name, internal_regime in internal_regimes.items():
-            max_Q_over_a = internal_regime.max_Q_over_a_functions(
-                period, n_periods=n_periods
-            )
-            state_action_space = internal_regime.state_action_spaces(
-                period, n_periods=n_periods
-            )
+        active_regimes = {
+            regime_name: regime
+            for regime_name, regime in internal_regimes.items()
+            if period in regime.active
+        }
+
+        for name, internal_regime in active_regimes.items():
+            state_action_space = internal_regime.state_action_spaces
+            max_Q_over_a = internal_regime.max_Q_over_a_functions[period]
 
             # evaluate Q-function on states and actions, and maximize over actions
             V_arr = max_Q_over_a(
                 **state_action_space.states,
-                **state_action_space.discrete_actions,
-                **state_action_space.continuous_actions,
-                period=period,
+                **state_action_space.actions,
                 next_V_arr=next_V_arr,
                 params=params,
             )
@@ -68,6 +68,7 @@ def solve(
                 period=period,
             )
             period_solution[name] = V_arr
+
         next_V_arr = period_solution
         solution[period] = period_solution
         logger.info("Period: %s", period)
