@@ -11,7 +11,6 @@ from tests.test_models.deterministic import (
     ISKHAKOV_ET_AL_2017_STRIPPED_DOWN,
 )
 from tests.test_models.discrete_deterministic import ISKHAKOV_ET_AL_2017_DISCRETE
-from tests.test_models.stochastic import ISKHAKOV_ET_AL_2017_STOCHASTIC
 
 if TYPE_CHECKING:
     from lcm import Regime
@@ -20,7 +19,6 @@ TEST_REGIMES = {
     "iskhakov_et_al_2017": ISKHAKOV_ET_AL_2017,
     "iskhakov_et_al_2017_stripped_down": ISKHAKOV_ET_AL_2017_STRIPPED_DOWN,
     "iskhakov_et_al_2017_discrete": ISKHAKOV_ET_AL_2017_DISCRETE,
-    "iskhakov_et_al_2017_stochastic": ISKHAKOV_ET_AL_2017_STOCHASTIC,
 }
 
 

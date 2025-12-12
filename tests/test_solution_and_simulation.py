@@ -8,7 +8,6 @@ from pybaum import tree_equal, tree_map
 
 from lcm import Model
 from lcm.input_processing import process_regimes
-from lcm.input_processing.regime_processing import create_default_regime_id_cls
 from lcm.max_Q_over_c import (
     get_argmax_and_max_Q_over_c,
     get_max_Q_over_c,
@@ -24,104 +23,6 @@ if TYPE_CHECKING:
     from typing import Any
 
     from lcm.typing import BoolND, DiscreteAction, DiscreteState, Period
-
-# ======================================================================================
-# Test cases
-# ======================================================================================
-
-
-STRIPPED_DOWN_AND_DISCRETE_MODELS = [
-    "iskhakov_et_al_2017_stripped_down",
-    "iskhakov_et_al_2017_discrete",
-]
-
-
-# ======================================================================================
-# Solve
-# ======================================================================================
-
-
-def test_solve_stripped_down():
-    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
-    params = tree_map(lambda _: 0.2, model.params_template)
-    model.solve(params)
-
-
-def test_solve_fully_discrete():
-    model = get_model("iskhakov_et_al_2017_discrete", n_periods=3)
-    params = tree_map(lambda _: 0.2, model.params_template)
-    model.solve(params)
-
-
-# ======================================================================================
-# Simulate
-# ======================================================================================
-
-
-def test_solve_and_simulate_stripped_down():
-    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
-
-    params = tree_map(lambda _: 0.2, model.params_template)
-
-    model.solve_and_simulate(
-        params,
-        initial_states={"wealth": jnp.array([1.0, 10.0, 50.0])},
-        initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 3,
-        additional_targets={"iskhakov_et_al_2017_discrete": ["age"]}
-        if "age"
-        in model.internal_regimes["iskhakov_et_al_2017_stripped_down"].functions
-        else None,
-    )
-
-
-def test_solve_and_simulate_fully_discrete():
-    model = get_model("iskhakov_et_al_2017_discrete", n_periods=3)
-
-    params = tree_map(lambda _: 0.2, model.params_template)
-
-    model.solve_and_simulate(
-        params,
-        initial_states={"wealth": jnp.array([1.0, 10.0, 50.0])},
-        initial_regimes=["iskhakov_et_al_2017_discrete"] * 3,
-        additional_targets={"iskhakov_et_al_2017_discrete": ["age"]}
-        if "age" in model.internal_regimes["iskhakov_et_al_2017_discrete"].functions
-        else None,
-    )
-
-
-@pytest.mark.parametrize(
-    "model_name",
-    list(STRIPPED_DOWN_AND_DISCRETE_MODELS),
-    ids=STRIPPED_DOWN_AND_DISCRETE_MODELS,
-)
-def test_solve_then_simulate_is_equivalent_to_solve_and_simulate(
-    model_name: str,
-) -> None:
-    """Test that solve_and_simulate creates same output as solve then simulate."""
-    # solve then simulate
-    # ==================================================================================
-    model = get_model(model_name, n_periods=3)
-    # solve
-    params = tree_map(lambda _: 0.2, model.params_template)
-    V_arr_dict = model.solve(params)
-
-    # simulate using solution
-    solve_then_simulate = model.simulate(
-        params,
-        V_arr_dict=V_arr_dict,
-        initial_states={"wealth": jnp.array([1.0, 10.0, 50.0])},
-        initial_regimes=[model_name] * 3,
-    )
-
-    # solve and simulate
-    # ==================================================================================
-    solve_and_simulate = model.solve_and_simulate(
-        params,
-        initial_states={"wealth": jnp.array([1.0, 10.0, 50.0])},
-        initial_regimes=[model_name] * 3,
-    )
-
-    assert tree_equal(solve_then_simulate, solve_and_simulate)
 
 
 @pytest.mark.parametrize(

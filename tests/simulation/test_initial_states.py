@@ -54,12 +54,11 @@ def test_validate_flat_initial_states_extra_state():
 
 def test_validate_flat_initial_states_inconsistent_lengths():
     """Arrays with different lengths should raise ValueError."""
-    model = get_model("iskhakov_et_al_2017_stochastic", n_periods=2)
+    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=2)
 
     flat = {
-        "wealth": jnp.array([10.0, 50.0, 100.0]),  # Length 3
-        "health": jnp.array([0, 1]),  # Length 2
-        "partner": jnp.array([0, 1]),  # Length 2
+        "wealth": jnp.array([10.0, 20.0]),
+        "unknown": jnp.array([1.0]),
     }
 
     with pytest.raises(ValueError, match="same length"):
