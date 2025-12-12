@@ -245,7 +245,7 @@ def _simulate_regime_in_period(
 
     # Update states and regime membership for next period
     # ---------------------------------------------------------------------------------
-    if not is_last_period:
+    if not internal_regime.terminal:
         next_states_key, next_regime_key, key = jax.random.split(key, 3)
 
         next_states = calculate_next_states(

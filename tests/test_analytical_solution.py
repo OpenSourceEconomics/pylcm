@@ -30,7 +30,7 @@ TEST_CASES = {
     "iskhakov_2017_five_periods": {
         "model": get_model(n_periods=6),
         "params": get_params(
-            n_periods=5,
+            n_periods=6,
             beta=0.98,
             disutility_of_work=1.0,
             interest_rate=0.0,
@@ -40,7 +40,7 @@ TEST_CASES = {
     "iskhakov_2017_low_delta": {
         "model": get_model(n_periods=4),
         "params": get_params(
-            n_periods=3,
+            n_periods=4,
             beta=0.98,
             disutility_of_work=0.1,
             interest_rate=0.0,

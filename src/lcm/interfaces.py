@@ -168,6 +168,7 @@ class InternalRegime:
     """
 
     name: str
+    terminal: bool
     grids: dict[str, Array]
     gridspecs: dict[str, Grid]
     variable_info: pd.DataFrame

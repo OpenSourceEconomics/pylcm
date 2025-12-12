@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 # Categorical variables and constants
 # --------------------------------------------------------------------------------------
 @dataclass
-class RetirementStatus:
+class LaborStatus:
     work: int = 0
     retire: int = 1
 
@@ -39,9 +39,10 @@ class RegimeID:
 # Utility functions
 # --------------------------------------------------------------------------------------
 def utility_working(
-    consumption: ContinuousAction, is_working: IntND, disutility_of_work: float
+    consumption: ContinuousAction, is_working: BoolND, disutility_of_work: float
 ) -> FloatND:
-    return jnp.log(consumption) - disutility_of_work * is_working
+    work_disutility = jnp.where(is_working, disutility_of_work, 0.0)
+    return jnp.log(consumption) - work_disutility
 
 
 def utility_retired(consumption: ContinuousAction) -> FloatND:
@@ -51,16 +52,12 @@ def utility_retired(consumption: ContinuousAction) -> FloatND:
 # --------------------------------------------------------------------------------------
 # Auxiliary variables
 # --------------------------------------------------------------------------------------
-def labor_income(is_working: IntND, wage: float | FloatND) -> FloatND:
-    return is_working * wage
+def labor_income(is_working: BoolND, wage: float | FloatND) -> FloatND:
+    return jnp.where(is_working, wage, 0.0)
 
 
-def is_working(retirement: DiscreteAction) -> IntND:
-    return jnp.where(
-        retirement == RetirementStatus.retire,
-        0,
-        1,
-    )
+def is_working(labor_choice: DiscreteAction) -> BoolND:
+    return labor_choice == LaborStatus.work
 
 
 def wage(age: int | IntND) -> float | FloatND:
@@ -84,7 +81,7 @@ def next_wealth(
 
 
 def next_regime_from_working(
-    retirement: DiscreteAction,
+    labor_choice: DiscreteAction,
     period: Period,
     n_periods: int,
 ) -> int:
@@ -93,7 +90,7 @@ def next_regime_from_working(
         certain_death_transition,
         RegimeID.dead,
         jnp.where(
-            retirement == RetirementStatus.retire,
+            labor_choice == LaborStatus.retire,
             RegimeID.retired,
             RegimeID.working,
         ),
@@ -113,7 +110,7 @@ def next_regime_from_retired(period: Period, n_periods: int) -> int:
 # Constraints
 # --------------------------------------------------------------------------------------
 def borrowing_constraint(
-    consumption: ContinuousAction | DiscreteAction, wealth: ContinuousState
+    consumption: ContinuousAction, wealth: ContinuousState
 ) -> BoolND:
     return consumption <= wealth
 
@@ -125,7 +122,7 @@ def borrowing_constraint(
 working = Regime(
     name="working",
     actions={
-        "retirement": DiscreteGrid(RetirementStatus),
+        "labor_choice": DiscreteGrid(LaborStatus),
         "consumption": LinspaceGrid(
             start=1,
             stop=400,
@@ -171,7 +168,6 @@ retired = Regime(
         "next_wealth": next_wealth,
         "next_regime": next_regime_from_retired,
     },
-    functions={},
 )
 
 
@@ -179,7 +175,7 @@ dead = Regime(
     name="dead",
     terminal=True,
     utility=lambda wealth: jnp.array([0.0]),
-    states={"wealth": LinspaceGrid(start=1, stop=2, n_points=2)},
+    states={"wealth": LinspaceGrid(start=1, stop=100, n_points=2)},
 )
 
 

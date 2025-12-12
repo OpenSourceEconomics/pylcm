@@ -146,6 +146,7 @@ def process_regimes(
         # ------------------------------------------------------------------------------
         internal_regimes[regime.name] = InternalRegime(
             name=regime.name,
+            terminal=regime.terminal,
             grids=grids[regime.name],
             gridspecs=gridspecs[regime.name],
             variable_info=variable_info[regime.name],
