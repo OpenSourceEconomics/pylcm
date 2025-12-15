@@ -18,6 +18,7 @@ if TYPE_CHECKING:
         FloatND,
         IntND,
         Period,
+        ScalarInt,
     )
 
 # ======================================================================================
@@ -95,7 +96,7 @@ def next_health(
     return health * (1 + exercise - working / 2)
 
 
-def next_regime(period: int, n_periods: int) -> int:
+def next_regime(period: int, n_periods: int) -> ScalarInt:
     certain_retirement = period >= n_periods - 2
     return jnp.where(certain_retirement, RegimeID.retirement, RegimeID.working)
 

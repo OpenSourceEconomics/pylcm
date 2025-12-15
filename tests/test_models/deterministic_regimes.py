@@ -15,6 +15,7 @@ if TYPE_CHECKING:
         DiscreteAction,
         FloatND,
         Period,
+        ScalarInt,
     )
 
 
@@ -75,7 +76,7 @@ def next_regime_from_working(
     labor_choice: DiscreteAction,
     period: Period,
     n_periods: int,
-) -> int:
+) -> ScalarInt:
     certain_death_transition = period == n_periods - 2  # dead in last period
     return jnp.where(
         certain_death_transition,
@@ -88,7 +89,7 @@ def next_regime_from_working(
     )
 
 
-def next_regime_from_retired(period: Period, n_periods: int) -> int:
+def next_regime_from_retired(period: Period, n_periods: int) -> ScalarInt:
     certain_death_transition = period == n_periods - 2  # dead in last period
     return jnp.where(
         certain_death_transition,
@@ -165,7 +166,7 @@ retired = Regime(
 dead = Regime(
     name="dead",
     terminal=True,
-    utility=lambda wealth: jnp.array([0.0]),
+    utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
     states={"wealth": LinspaceGrid(start=1, stop=100, n_points=2)},
 )
 

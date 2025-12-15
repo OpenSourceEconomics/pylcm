@@ -11,7 +11,7 @@ continuous version.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 
@@ -31,6 +31,7 @@ if TYPE_CHECKING:
         DiscreteState,
         FloatND,
         Period,
+        ScalarInt,
     )
 
 # ======================================================================================
@@ -91,7 +92,7 @@ def next_wealth_discrete(
     )
 
 
-def next_regime(period: Period, n_periods: int) -> int:
+def next_regime(period: Period, n_periods: int) -> ScalarInt:
     certain_death_transition = period == n_periods - 2  # dead in last period
     return jnp.where(
         certain_death_transition,
@@ -134,7 +135,7 @@ working = Regime(
 dead = Regime(
     name="dead",
     terminal=True,
-    utility=lambda wealth: jnp.array([0.0]),
+    utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
     states={"wealth": DiscreteGrid(WealthStatus)},
 )
 
@@ -153,7 +154,7 @@ def get_params(
     disutility_of_work: float = 0.5,
     interest_rate: float = 0.05,
     wage: float = 10.0,
-):
+) -> dict[str, Any]:
     return {
         "working": {
             "beta": beta,

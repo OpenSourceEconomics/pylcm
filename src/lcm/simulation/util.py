@@ -165,6 +165,7 @@ def calculate_next_regime_membership(
     """
     # Compute regime transition probabilities
     # ---------------------------------------------------------------------------------
+    assert internal_regime.internal_functions.regime_transition_probs is not None
     regime_transition_probs = (
         internal_regime.internal_functions.regime_transition_probs.simulate(
             **state_action_space.states,

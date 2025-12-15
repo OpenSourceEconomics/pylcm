@@ -201,7 +201,7 @@ class Model:
         )
 
 
-def _validate_model_inputs(
+def _validate_model_inputs(  # noqa: C901
     n_periods: int,
     regimes: list[Regime],
     regime_id_cls: type | None,
@@ -250,7 +250,8 @@ def _validate_model_inputs(
             )
 
     regime_names = [r.name for r in regimes]
-    error_messages.extend(_validate_regime_id_cls(regime_id_cls, regime_names))
+    if regime_id_cls is not None:
+        error_messages.extend(_validate_regime_id_cls(regime_id_cls, regime_names))
     error_messages.extend(_validate_transition_completeness(regimes))
 
     if error_messages:
@@ -305,7 +306,7 @@ def _validate_regime_id_cls(
     return error_messages
 
 
-def _validate_transition_completeness(regimes: list[Regime]) -> None:
+def _validate_transition_completeness(regimes: list[Regime]) -> list[str]:
     """Validate that non-terminal regimes have complete transitions.
 
     Non-terminal regimes must have transition functions for ALL states across ALL

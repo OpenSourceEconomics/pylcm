@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -259,65 +258,6 @@ class TestBasicModel:
         assert "work" in simulation or "retirement" in simulation
 
 
-class TestAbsorbingRegimes:
-    """Test absorbing regime behavior (retirement is absorbing)."""
-
-    def test_absorbing_regime_auto_generates_next_regime(self):
-        """Absorbing regime without explicit next_regime gets one auto-generated."""
-        work_regime, retirement_regime, dead_regime = create_base_regimes()
-
-        # Note: retirement now has next_regime in create_base_regimes, so we test
-        # that the internal regime has regime_transition_probs
-        model = Model(
-            regimes=[work_regime, retirement_regime, dead_regime],
-            n_periods=3,
-            regime_id_cls=RegimeId,
-        )
-
-        # Internal regime should have regime_transition_probs
-        internal_retirement = model.internal_regimes["retirement"]
-        assert internal_retirement.regime_transition_probs is not None
-
-    @pytest.mark.skip(reason="Absorbing regime warning not implemented")
-    def test_absorbing_regime_with_explicit_next_regime_warns(self):
-        """Providing next_regime for absorbing regime issues a warning."""
-        work_regime, _, dead_regime = create_base_regimes()
-
-        @lcm.mark.stochastic
-        def explicit_next_regime() -> FloatND:
-            return jnp.array([0.0, 1.0, 0.0])  # 100% stay in retirement
-
-        # Create retirement regime WITH explicit next_regime (redundant for absorbing)
-        retirement_with_explicit = Regime(
-            name="retirement",
-            absorbing=True,
-            states={
-                "wealth": LinspaceGrid(start=1, stop=100, n_points=10),
-                "health": DiscreteGrid(HealthStatus),
-            },
-            actions={
-                "consumption": LinspaceGrid(start=1, stop=100, n_points=10),
-            },
-            utility=utility,
-            constraints={"borrowing_constraint": borrowing_constraint},
-            functions={"working": retired_working},
-            transitions={
-                "next_wealth": next_wealth,
-                "next_health": next_health,
-                "next_regime": explicit_next_regime,  # Redundant!
-            },
-        )
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            Model(
-                regimes=[work_regime, retirement_with_explicit, dead_regime],
-                n_periods=3,
-                regime_id_cls=RegimeId,
-            )
-            assert any("absorbing" in str(warning.message).lower() for warning in w)
-
-
 class TestDifferentStateSpaces:
     """Test regimes with completely different state spaces.
 
@@ -554,7 +494,11 @@ class TestOverlappingStateSpaces:
             return consumption <= wealth
 
         def dummy_next_health_from_retirement() -> DiscreteState:
-            """Dummy transition - retirement doesn't use health but validation requires it."""
+            """Dummy transition.
+
+            Retirement doesn't use health but validation requires it.
+
+            """
             return jnp.array(0)  # Never used since retirement can only go to dead
 
         retirement_regime = Regime(
@@ -571,7 +515,7 @@ class TestOverlappingStateSpaces:
             transitions={
                 "next_wealth": simple_next_wealth,
                 "next_pension": next_pension,
-                "next_health": dummy_next_health_from_retirement,  # Required by validation
+                "next_health": dummy_next_health_from_retirement,
                 "next_regime": next_regime_from_retirement,
             },
         )

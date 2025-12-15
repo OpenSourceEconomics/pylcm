@@ -45,9 +45,11 @@ def get_Q_and_F(
 
     Args:
         regime: Regime instance.
+        active_periods: Dictionary mapping regime names to their active periods.
         internal_functions: Internal functions instance.
         next_state_space_infos: The state space information of the next period.
         grids: Dict containing the state frids for all regimes.
+        period: The current period.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -60,6 +62,7 @@ def get_Q_and_F(
 
     # Function required to calculate instantaneous utility and feasibility
     U_and_F = _get_U_and_F(internal_functions)
+    assert internal_functions.regime_transition_probs is not None
     regime_transition_prob_func = internal_functions.regime_transition_probs.solve
     state_transitions = {}
     next_stochastic_states_weights = {}
@@ -132,7 +135,6 @@ def get_Q_and_F(
 
         Args:
             params: The parameters.
-            period: The current period.
             next_V_arr: The next period's value function array.
             **states_and_actions: The current states and actions.
 
@@ -212,6 +214,7 @@ def get_Q_and_F_terminal(
     Args:
         regime: The current regime.
         internal_functions: Internal functions instance.
+        period: The current period.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -244,7 +247,6 @@ def get_Q_and_F_terminal(
 
         Args:
             params: The parameters.
-            period: The current period.
             next_V_arr: The next period's value function array (unused here).
             **states_and_actions: The current states and actions.
 

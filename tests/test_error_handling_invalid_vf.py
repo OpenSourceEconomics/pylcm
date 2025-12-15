@@ -17,6 +17,7 @@ if TYPE_CHECKING:
         ContinuousState,
         FloatND,
         ParamsDict,
+        ScalarInt,
     )
 
 
@@ -26,7 +27,7 @@ def n_periods() -> int:
 
 
 @pytest.fixture
-def regimes_and_id_cls() -> Regime:
+def regimes_and_id_cls() -> tuple[dict[str, Regime], type]:
     @dataclass
     class RegimeID:
         non_terminal: int = 0
@@ -48,7 +49,7 @@ def regimes_and_id_cls() -> Regime:
     def next_health(health: ContinuousState) -> ContinuousState:
         return health
 
-    def next_regime(period: int, n_periods: int) -> int:
+    def next_regime(period: int, n_periods: int) -> ScalarInt:
         transition_into_terminal = period == (n_periods - 2)
         return jnp.where(
             transition_into_terminal, RegimeID.terminal, RegimeID.non_terminal
@@ -97,7 +98,7 @@ def regimes_and_id_cls() -> Regime:
         states={
             "wealth": LinspaceGrid(start=1, stop=2, n_points=3),
         },
-        utility=lambda wealth: jnp.array([0.0]),
+        utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
     )
 
     return {"non_terminal": non_terminal, "terminal": terminal}, RegimeID

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 import pandas as pd
@@ -36,6 +36,7 @@ def process_simulated_data(
             nested dictionary.
         internal_regime: Internal regime instance.
         params: Parameters.
+        n_initial_subjects: Number of initial subjects.
         additional_targets: List of additional targets to compute.
 
     Returns:
@@ -63,20 +64,20 @@ def process_simulated_data(
     }
     out = {key: jnp.concatenate(values) for key, values in dict_of_lists.items()}
     if additional_targets is not None and internal_regime.name in additional_targets:
-        functions_pool = {
+        functions_pool: dict[str, Any] = {
             **internal_regime.functions,
             **internal_regime.constraints,
             "utility": internal_regime.utility,
-            "regime_transition_probs": internal_regime.regime_transition_probs.simulate,
         }
+        if internal_regime.regime_transition_probs is not None:
+            functions_pool["regime_transition_probs"] = (
+                internal_regime.regime_transition_probs.simulate
+            )
 
         calculated_targets = _compute_targets(
             out,
             targets=additional_targets[internal_regime.name],
-            # Have to ignore the type error here because regime_transition_probs does
-            # not conform to InternalUserFunction protocol, but fixing that would
-            # require significant refactoring.
-            functions=functions_pool,  # type: ignore[arg-type]
+            functions=functions_pool,
             params=params[internal_regime.name],
         )
         out = {**out, **calculated_targets}

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 import pandas as pd
@@ -9,7 +9,14 @@ from numpy.testing import assert_array_almost_equal
 
 import lcm
 from lcm import Model
-from tests.test_models.stochastic import get_model, get_params
+from tests.test_models.stochastic import (
+    RegimeID,
+    dead,
+    get_model,
+    get_params,
+    retired,
+    working,
+)
 
 if TYPE_CHECKING:
     from lcm.typing import DiscreteState, FloatND
@@ -88,13 +95,12 @@ def test_model_solve_with_stochastic_model():
 
 
 @pytest.fixture
-def models_and_params() -> tuple[Model, Model, dict]:
+def models_and_params() -> tuple[Model, Model, dict[str, Any]]:
     """Return a deterministic and stochastic model with parameters.
 
     TODO(@timmens): Add this to tests/test_models/stochastic.py.
 
     """
-    from tests.test_models.stochastic import RegimeID, dead, retired, working
 
     # Define functions first
     @lcm.mark.stochastic
@@ -148,8 +154,8 @@ def models_and_params() -> tuple[Model, Model, dict]:
 
 
 def test_compare_deterministic_and_stochastic_results_value_function(
-    models_and_params: tuple[Model, Model, dict],
-):
+    models_and_params: tuple[Model, Model, dict[str, Any]],
+) -> None:
     """Test that the deterministic and stochastic models produce the same results."""
     model_deterministic, model_stochastic, params = models_and_params
 

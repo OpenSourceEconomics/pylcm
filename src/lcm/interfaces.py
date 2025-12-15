@@ -178,9 +178,10 @@ class InternalRegime:
     functions: dict[str, InternalUserFunction]
     active: list[int]
     active_periods: dict[str, list[int]]
-    regime_transition_probs: PhaseVariantContainer[
-        RegimeTransitionFunction, VmappedRegimeTransitionFunction
-    ]
+    regime_transition_probs: (
+        PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]
+        | None
+    )
     internal_functions: InternalFunctions
     params_template: ParamsDict
     state_action_spaces: StateActionSpace
@@ -217,9 +218,10 @@ class InternalFunctions:
     utility: InternalUserFunction
     constraints: dict[str, InternalUserFunction]
     transitions: TransitionFunctionsDict
-    regime_transition_probs: PhaseVariantContainer[
-        RegimeTransitionFunction, VmappedRegimeTransitionFunction
-    ]
+    regime_transition_probs: (
+        PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]
+        | None
+    )
 
     def get_all_functions(self) -> dict[str, InternalUserFunction]:
         """Get all regime functions including utility, constraints, and transitions.
@@ -230,9 +232,14 @@ class InternalFunctions:
         """
         functions_pool = self.functions | {
             "utility": self.utility,
-            "regime_transition_probs_solve": self.regime_transition_probs.solve,
-            "regime_transition_probs_simulate": self.regime_transition_probs.simulate,
             **self.constraints,
             **self.transitions,
         }
+        if self.regime_transition_probs is not None:
+            functions_pool["regime_transition_probs_solve"] = (
+                self.regime_transition_probs.solve
+            )
+            functions_pool["regime_transition_probs_simulate"] = (
+                self.regime_transition_probs.simulate
+            )
         return flatten_regime_namespace(functions_pool)

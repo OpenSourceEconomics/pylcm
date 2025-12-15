@@ -96,7 +96,7 @@ def build_Q_and_F_functions(
 
 def build_max_Q_over_a_functions(
     regime: Regime,
-    Q_and_F_function: dict[int, QAndFFunction] | QAndFFunction,
+    Q_and_F_function: dict[int, QAndFFunction],
     *,
     enable_jit: bool,
 ) -> dict[int, MaxQOverAFunction]:
@@ -133,7 +133,7 @@ def build_argmax_and_max_Q_over_a_functions(
     Q_and_F_functions: dict[int, QAndFFunction],
     *,
     enable_jit: bool,
-) -> ArgmaxQOverAFunction:
+) -> dict[int, ArgmaxQOverAFunction]:
     state_action_space = build_state_action_space(regime)
     argmax_and_max_Q_over_a_functions = {}
     for period, Q_and_F in Q_and_F_functions.items():

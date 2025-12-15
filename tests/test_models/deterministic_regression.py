@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 
@@ -16,6 +16,7 @@ if TYPE_CHECKING:
         FloatND,
         IntND,
         Period,
+        ScalarInt,
     )
 
 
@@ -75,7 +76,7 @@ def next_wealth(
     return (1 + interest_rate) * (wealth - consumption) + labor_income
 
 
-def next_regime(period: Period, n_periods: int) -> int:
+def next_regime(period: Period, n_periods: int) -> ScalarInt:
     certain_death_transition = period == n_periods - 2  # dead in last period
     return jnp.where(
         certain_death_transition,
@@ -134,7 +135,7 @@ working = Regime(
 dead = Regime(
     name="dead",
     terminal=True,
-    utility=lambda wealth: jnp.array([0.0]),
+    utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
     states={"wealth": LinspaceGrid(start=1, stop=100, n_points=2)},
 )
 
@@ -152,7 +153,7 @@ def get_params(
     beta: float = 0.95,
     disutility_of_work: float = 0.5,
     interest_rate: float = 0.05,
-):
+) -> dict[str, Any]:
     return {
         "working": {
             "beta": beta,

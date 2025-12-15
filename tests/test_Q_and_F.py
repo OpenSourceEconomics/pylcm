@@ -14,7 +14,14 @@ from lcm.Q_and_F import (
     _get_joint_weights_function,
     get_Q_and_F_terminal,
 )
-from tests.test_models.deterministic import utility
+from tests.test_models.deterministic_regression import (
+    LaborStatus,
+    RegimeID,
+    dead,
+    get_params,
+    utility,
+    working,
+)
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -29,13 +36,6 @@ if TYPE_CHECKING:
 
 @pytest.mark.illustrative
 def test_get_Q_and_F_function():
-    from tests.test_models.deterministic_regression import (
-        RegimeID,
-        dead,
-        get_params,
-        working,
-    )
-
     internal_regimes = process_regimes(
         [working, dead],
         n_periods=4,
@@ -61,14 +61,14 @@ def test_get_Q_and_F_function():
         labor_choice=labor_choice,
         wealth=wealth,
         params=params,
-        next_V_arr={},
+        next_V_arr=jnp.empty(0),  # Terminal period doesn't use continuation value
     )
 
     assert_array_equal(
         Q_arr,
         utility(
             consumption=consumption,
-            working=1 - labor_choice,
+            is_working=labor_choice == LaborStatus.work,
             disutility_of_work=0.5,  # matches get_params default
         ),
     )

@@ -23,6 +23,7 @@ if TYPE_CHECKING:
         DiscreteAction,
         DiscreteState,
         FloatND,
+        ScalarInt,
     )
 
 
@@ -68,7 +69,7 @@ def next_wealth(
     return wealth - consumption + working
 
 
-def next_regime(period: int, n_periods: int) -> int:
+def next_regime(period: int, n_periods: int) -> ScalarInt:
     death_condition = period >= n_periods - 2  # is dead in last period
     return jnp.where(death_condition, RegimeID.dead, RegimeID.alive)
 
@@ -106,7 +107,7 @@ dead = Regime(
     name="dead",
     terminal=True,
     states={"wealth": LinspaceGrid(start=0, stop=1, n_points=2)},
-    utility=lambda wealth: jnp.array([0.0]),
+    utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
 )
 
 

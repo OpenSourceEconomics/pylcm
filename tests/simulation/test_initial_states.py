@@ -16,7 +16,7 @@ from lcm.simulation.util import (
 )
 
 if TYPE_CHECKING:
-    from lcm.typing import ContinuousState, DiscreteState, FloatND
+    from lcm.typing import ContinuousState, DiscreteState, FloatND, ScalarInt
 
 
 @pytest.fixture
@@ -33,10 +33,10 @@ def model() -> Model:
         active: int = 0
         terminal: int = 1
 
-    def utility(wealth: ContinuousState, health: DiscreteState) -> FloatND:
-        return 0.0
+    def utility(wealth: ContinuousState, health: DiscreteState) -> FloatND:  # noqa: ARG001
+        return jnp.array(0.0)
 
-    def next_regime(period: int) -> int:
+    def next_regime(period: int) -> ScalarInt:
         return jnp.where(
             period + 1 >= 2,
             RegimeID.terminal,
@@ -60,7 +60,7 @@ def model() -> Model:
     dead = Regime(
         name="terminal",
         terminal=True,
-        utility=lambda wealth, health: jnp.array([0.0]),
+        utility=lambda wealth, health: jnp.array([0.0]),  # noqa: ARG005
         states={
             "wealth": LinspaceGrid(start=1, stop=100, n_points=2),
             "health": DiscreteGrid(HealthStatus),
