@@ -78,10 +78,13 @@ def process_regimes(
     }
 
     # Convert each regime's flat transitions to nested format
-    nested_transitions = {
-        regime.name: _convert_flat_to_nested_transitions(regime, states_per_regime)
-        for regime in regimes
-    }
+    nested_transitions = {}
+    for regime in regimes:
+        nested_transitions[regime.name] = _convert_flat_to_nested_transitions(
+            flat_transitions=regime.transitions,
+            states_per_regime=states_per_regime,
+            terminal=regime.terminal,
+        )
 
     # ----------------------------------------------------------------------------------
     # Stage 1: Initialize regime components that do not depend on other regimes
@@ -417,8 +420,9 @@ def _ensure_fn_only_depends_on_params(
 
 
 def _convert_flat_to_nested_transitions(
-    regime: Regime,
+    flat_transitions: dict[str, UserFunction],
     states_per_regime: dict[str, set[str]],
+    terminal: bool = False,
 ) -> dict[str, dict[str, UserFunction] | UserFunction]:
     """Convert flat transitions dictionary to nested format.
 
@@ -429,17 +433,18 @@ def _convert_flat_to_nested_transitions(
     Args:
         flat_transitions: Dictionary mapping transition names to functions.
         states_per_regime: Dictionary mapping regime names to their state names.
+        terminal: Whether the regime is terminal (no transitions).
 
     Returns:
         Nested dictionary with state transitions mapped to their target regimes.
 
     """
-    if regime.terminal:
+    if terminal:
         return {}
 
-    next_regime_fn = regime.transitions["next_regime"]
+    next_regime_fn = flat_transitions["next_regime"]
     state_transitions = {
-        name: fn for name, fn in regime.transitions.items() if name != "next_regime"
+        name: fn for name, fn in flat_transitions.items() if name != "next_regime"
     }
 
     states_with_transitions = {name.removeprefix("next_") for name in state_transitions}

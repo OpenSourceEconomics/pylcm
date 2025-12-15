@@ -148,10 +148,10 @@ def get_model(n_periods: int) -> Model:
 
 
 def get_params(
-    n_periods,
-    beta=0.95,
-    disutility_of_work=0.5,
-    interest_rate=0.05,
+    n_periods: int,
+    beta: float = 0.95,
+    disutility_of_work: float = 0.5,
+    interest_rate: float = 0.05,
 ):
     return {
         "working": {

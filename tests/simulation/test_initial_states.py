@@ -1,65 +1,130 @@
 """Tests for initial states conversion and validation utilities."""
 
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
 import jax.numpy as jnp
 import pytest
 
+from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
+from lcm.exceptions import InvalidInitialStatesError
 from lcm.simulation.util import (
     convert_flat_to_nested_initial_states,
     validate_flat_initial_states,
 )
-from tests.test_models.utils import get_model
+
+if TYPE_CHECKING:
+    from lcm.typing import ContinuousState, DiscreteState, FloatND
 
 
-def test_convert_flat_to_nested_single_regime():
+@pytest.fixture
+def model() -> Model:
+    """Minimal model with two states (wealth, health) for initial states tests."""
+
+    @dataclass
+    class HealthStatus:
+        healthy: int = 0
+        sick: int = 1
+
+    @dataclass
+    class RegimeID:
+        active: int = 0
+        terminal: int = 1
+
+    def utility(wealth: ContinuousState, health: DiscreteState) -> FloatND:
+        return 0.0
+
+    def next_regime(period: int) -> int:
+        return jnp.where(
+            period + 1 >= 2,
+            RegimeID.terminal,
+            RegimeID.active,
+        )
+
+    alive = Regime(
+        name="active",
+        utility=utility,
+        states={
+            "wealth": LinspaceGrid(start=1, stop=100, n_points=10),
+            "health": DiscreteGrid(HealthStatus),
+        },
+        transitions={
+            "next_wealth": lambda wealth: wealth,
+            "next_health": lambda health: health,
+            "next_regime": next_regime,
+        },
+    )
+
+    dead = Regime(
+        name="terminal",
+        terminal=True,
+        utility=lambda wealth, health: jnp.array([0.0]),
+        states={
+            "wealth": LinspaceGrid(start=1, stop=100, n_points=2),
+            "health": DiscreteGrid(HealthStatus),
+        },
+    )
+
+    return Model(
+        [alive, dead],
+        n_periods=2,
+        regime_id_cls=RegimeID,
+    )
+
+
+# ==============================================================================
+# Tests
+# ==============================================================================
+def test_convert_flat_to_nested_single_regime(model: Model) -> None:
     """Single regime gets its states from flat dict."""
-    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=2)
-
-    flat = {"wealth": jnp.array([10.0, 50.0])}
+    flat = {
+        "wealth": jnp.array([10.0, 50.0]),
+        "health": jnp.array([0, 1]),
+    }
     nested = convert_flat_to_nested_initial_states(flat, model.internal_regimes)
 
-    assert "iskhakov_et_al_2017_stripped_down" in nested
-    assert "wealth" in nested["iskhakov_et_al_2017_stripped_down"]
+    assert set(nested) == {"active", "terminal"}
+    assert "wealth" in nested["active"]
+    assert "health" in nested["active"]
 
 
-def test_validate_flat_initial_states_valid_input():
+def test_validate_flat_initial_states_valid_input(model: Model) -> None:
     """Valid input should not raise."""
-    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=2)
-
-    flat = {"wealth": jnp.array([10.0, 50.0])}
+    flat = {
+        "wealth": jnp.array([10.0, 50.0]),
+        "health": jnp.array([0, 1]),
+    }
     validate_flat_initial_states(flat, model.internal_regimes)
 
 
-def test_validate_flat_initial_states_missing_state():
-    """Missing state should raise ValueError."""
-    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=2)
+def test_validate_flat_initial_states_missing_state(model: Model) -> None:
+    """Missing state should raise InvalidInitialStatesError."""
+    flat = {"wealth": jnp.array([10.0, 50.0])}  # Missing "health"
 
-    flat: dict[str, jnp.ndarray] = {}  # Missing "wealth"
-
-    with pytest.raises(ValueError, match="Missing initial states"):
+    with pytest.raises(InvalidInitialStatesError, match="Missing initial states"):
         validate_flat_initial_states(flat, model.internal_regimes)
 
 
-def test_validate_flat_initial_states_extra_state():
-    """Extra state should raise ValueError."""
-    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=2)
-
+def test_validate_flat_initial_states_extra_state(model: Model) -> None:
+    """Extra state should raise InvalidInitialStatesError."""
     flat = {
         "wealth": jnp.array([10.0]),
+        "health": jnp.array([0]),
         "unknown": jnp.array([1.0]),
     }
 
-    with pytest.raises(ValueError, match="Unknown initial states"):
+    with pytest.raises(InvalidInitialStatesError, match="Unknown initial states"):
         validate_flat_initial_states(flat, model.internal_regimes)
 
 
-def test_validate_flat_initial_states_inconsistent_lengths():
-    """Arrays with different lengths should raise ValueError."""
-    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=2)
-
+def test_validate_flat_initial_states_inconsistent_lengths(model: Model) -> None:
+    """Arrays with different lengths should raise InvalidInitialStatesError."""
     flat = {
         "wealth": jnp.array([10.0, 20.0]),
-        "unknown": jnp.array([1.0]),
+        "health": jnp.array([0]),
     }
 
-    with pytest.raises(ValueError, match="same length"):
+    with pytest.raises(InvalidInitialStatesError, match="same length"):
         validate_flat_initial_states(flat, model.internal_regimes)

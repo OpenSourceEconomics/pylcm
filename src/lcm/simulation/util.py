@@ -4,6 +4,7 @@ import jax
 from jax import Array, vmap
 from jax import numpy as jnp
 
+from lcm.exceptions import InvalidInitialStatesError
 from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.random import generate_simulation_keys
@@ -276,7 +277,7 @@ def validate_flat_initial_states(
         internal_regimes: Dict of internal regime instances.
 
     Raises:
-        ValueError: If validation fails with descriptive message.
+        InvalidInitialStatesError: If validation fails with descriptive message.
 
     """
     # Collect all required state names across all regimes
@@ -290,7 +291,7 @@ def validate_flat_initial_states(
     # Check for missing states
     missing = required_states - provided_states
     if missing:
-        raise ValueError(
+        raise InvalidInitialStatesError(
             f"Missing initial states: {sorted(missing)}. "
             f"Required states are: {sorted(required_states)}"
         )
@@ -298,7 +299,7 @@ def validate_flat_initial_states(
     # Check for extra states
     extra = provided_states - required_states
     if extra:
-        raise ValueError(
+        raise InvalidInitialStatesError(
             f"Unknown initial states: {sorted(extra)}. "
             f"Valid states are: {sorted(required_states)}"
         )
@@ -308,7 +309,7 @@ def validate_flat_initial_states(
         lengths = {name: len(arr) for name, arr in flat_initial_states.items()}
         unique_lengths = set(lengths.values())
         if len(unique_lengths) > 1:
-            raise ValueError(
+            raise InvalidInitialStatesError(
                 f"All initial state arrays must have the same length. "
                 f"Got lengths: {lengths}"
             )

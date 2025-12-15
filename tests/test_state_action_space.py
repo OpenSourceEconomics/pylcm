@@ -1,66 +1,131 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import jax.numpy as jnp
+import pandas as pd
 from numpy.testing import assert_array_equal
 
-from lcm.input_processing import process_regimes
-from lcm.input_processing.regime_processing import create_default_regime_id_cls
+from lcm.grids import DiscreteGrid, LinspaceGrid
 from lcm.interfaces import StateActionSpace, StateSpaceInfo
+from lcm.regime import Regime
 from lcm.state_action_space import (
     create_state_action_space,
     create_state_space_info,
 )
-from tests.test_models.utils import get_regime
 
 
-def test_create_state_action_space_solution():
-    regime = get_regime("iskhakov_et_al_2017_stripped_down")
-    internal_regime = process_regimes(
-        [regime],
-        n_periods=3,
-        regime_id_cls=create_default_regime_id_cls(regime.name),
-        enable_jit=True,
-    )[regime.name]
+def _create_variable_info(
+    discrete_states: list[str],
+    continuous_states: list[str],
+    discrete_actions: list[str],
+    continuous_actions: list[str],
+) -> pd.DataFrame:
+    ordered_vars = (
+        discrete_states + discrete_actions + continuous_states + continuous_actions
+    )
+    info = pd.DataFrame(index=ordered_vars)
+    info["is_state"] = info.index.isin(discrete_states + continuous_states)
+    info["is_action"] = ~info["is_state"]
+    info["is_discrete"] = info.index.isin(discrete_states + discrete_actions)
+    info["is_continuous"] = ~info["is_discrete"]
+    info["enters_concurrent_valuation"] = True
+    info["enters_transition"] = True
+    return info
 
-    state_action_space = create_state_action_space(
-        variable_info=internal_regime.variable_info,
-        grids=internal_regime.grids,
+
+def test_create_state_action_space_solution_discrete_action_continuous_state():
+    variable_info = _create_variable_info(
+        continuous_states=["wealth"],
+        discrete_actions=["work"],
+        discrete_states=[],
+        continuous_actions=[],
+    )
+    grids = {
+        "wealth": jnp.array([0.0, 50.0, 100.0]),
+        "work": jnp.array([0, 1]),
+    }
+
+    space = create_state_action_space(
+        variable_info=variable_info,
+        grids=grids,
         is_last_period=False,
     )
 
-    assert isinstance(state_action_space, StateActionSpace)
-    assert jnp.array_equal(
-        state_action_space.discrete_actions["retirement"],
-        regime.actions["retirement"].to_jax(),
-    )
-    assert jnp.array_equal(
-        state_action_space.states["wealth"], regime.states["wealth"].to_jax()
-    )
+    assert isinstance(space, StateActionSpace)
+    assert_array_equal(space.states["wealth"], grids["wealth"])
+    assert_array_equal(space.discrete_actions["work"], grids["work"])
+    assert space.continuous_actions == {}
+    assert space.states_and_discrete_actions_names == ("work", "wealth")
 
 
-def test_create_state_action_space_simulation():
-    regime = get_regime("iskhakov_et_al_2017")
-    internal_regime = process_regimes(
-        [regime],
-        n_periods=3,
-        regime_id_cls=create_default_regime_id_cls(regime.name),
-        enable_jit=True,
-    )[regime.name]
-    got_space = create_state_action_space(
-        variable_info=internal_regime.variable_info,
-        grids=internal_regime.grids,
-        states={
-            "wealth": jnp.array([10.0, 20.0]),
-            "lagged_retirement": jnp.array([0, 1]),
-        },
+def test_create_state_action_space_solution_continuous_action():
+    variable_info = _create_variable_info(
+        continuous_states=["wealth"],
+        continuous_actions=["consumption"],
+        discrete_states=[],
+        discrete_actions=[],
     )
-    assert_array_equal(got_space.discrete_actions["retirement"], jnp.array([0, 1]))
-    assert_array_equal(got_space.states["wealth"], jnp.array([10.0, 20.0]))
-    assert_array_equal(got_space.states["lagged_retirement"], jnp.array([0, 1]))
+    grids = {
+        "wealth": jnp.array([0.0, 50.0, 100.0]),
+        "consumption": jnp.array([0.0, 25.0, 50.0]),
+    }
+
+    space = create_state_action_space(
+        variable_info=variable_info,
+        grids=grids,
+        is_last_period=False,
+    )
+
+    assert isinstance(space, StateActionSpace)
+    assert_array_equal(space.states["wealth"], grids["wealth"])
+    assert space.discrete_actions == {}
+    assert_array_equal(space.continuous_actions["consumption"], grids["consumption"])
+    assert space.states_and_discrete_actions_names == ("wealth",)
+
+
+def test_state_action_space_replace_method():
+    variable_info = _create_variable_info(
+        continuous_states=["wealth"],
+        discrete_actions=["work"],
+        discrete_states=[],
+        continuous_actions=[],
+    )
+    grids = {
+        "wealth": jnp.array([0.0, 50.0, 100.0]),
+        "work": jnp.array([0, 1]),
+    }
+
+    space = create_state_action_space(
+        variable_info=variable_info,
+        grids=grids,
+        states={"wealth": jnp.array([10.0, 20.0])},
+    )
+
+    new_space = space.replace(states={"wealth": jnp.array([30.0, 40.0])})
+
+    assert_array_equal(new_space.states["wealth"], jnp.array([30.0, 40.0]))
 
 
 def test_create_state_space_info():
-    regime = get_regime("iskhakov_et_al_2017_stripped_down")
+    @dataclass
+    class HealthStatus:
+        good: int = 0
+        bad: int = 1
+
+    regime = Regime(
+        name="test",
+        utility=lambda wealth: wealth,
+        states={
+            "wealth": LinspaceGrid(start=0, stop=100, n_points=5),
+            "health": DiscreteGrid(HealthStatus),
+        },
+        transitions={
+            "next_wealth": lambda wealth: wealth,
+            "next_health": lambda health: health,
+        },
+        terminal=False,
+    )
 
     state_space_info = create_state_space_info(
         regime=regime,
@@ -68,28 +133,6 @@ def test_create_state_space_info():
     )
 
     assert isinstance(state_space_info, StateSpaceInfo)
-    assert state_space_info.states_names == ("wealth",)
-    assert state_space_info.discrete_states == {}
-    assert state_space_info.continuous_states == regime.states
-
-
-def test_create_state_action_space_replace():
-    regime = get_regime("iskhakov_et_al_2017")
-    internal_regime = process_regimes(
-        [regime],
-        n_periods=3,
-        regime_id_cls=create_default_regime_id_cls(regime.name),
-        enable_jit=True,
-    )[regime.name]
-    space = create_state_action_space(
-        variable_info=internal_regime.variable_info,
-        grids=internal_regime.grids,
-        states={
-            "wealth": jnp.array([10.0, 20.0]),
-            "lagged_retirement": jnp.array([0, 1]),
-        },
-    )
-    new_space = space.replace(
-        states={"wealth": jnp.array([10.0, 30.0])},
-    )
-    assert_array_equal(new_space.states["wealth"], jnp.array([10.0, 30.0]))
+    assert set(state_space_info.states_names) == {"wealth", "health"}
+    assert "health" in state_space_info.discrete_states
+    assert "wealth" in state_space_info.continuous_states

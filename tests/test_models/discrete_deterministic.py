@@ -15,10 +15,11 @@ from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
-from lcm import DiscreteGrid, Regime
-from tests.test_models.deterministic import (
-    RetirementStatus,
+from lcm import DiscreteGrid, Model, Regime
+from tests.test_models.deterministic_regression import (
+    LaborStatus,
     borrowing_constraint,
+    is_working,
     labor_income,
     next_wealth,
     utility,
@@ -27,10 +28,11 @@ from tests.test_models.deterministic import (
 
 if TYPE_CHECKING:
     from lcm.typing import (
+        BoolND,
         DiscreteAction,
         DiscreteState,
         FloatND,
-        IntND,
+        Period,
     )
 
 # ======================================================================================
@@ -54,22 +56,28 @@ class WealthStatus:
     high: int = 2
 
 
+@dataclass
+class RegimeID:
+    working: int = 0
+    dead: int = 1
+
+
 # --------------------------------------------------------------------------------------
 # Utility functions
 # --------------------------------------------------------------------------------------
 def utility_discrete(
     consumption: DiscreteAction,
-    working: IntND,
+    is_working: BoolND,
     disutility_of_work: float,
 ) -> FloatND:
     # In the discrete model, consumption is defined as "low" or "high". This can be
     # translated to the levels 1 and 2.
     consumption_level = 1 + (consumption == ConsumptionChoice.high)
-    return utility(consumption_level, working, disutility_of_work)
+    return utility(consumption_level, is_working, disutility_of_work)
 
 
 # --------------------------------------------------------------------------------------
-# State transitions
+# State and regime transitions
 # --------------------------------------------------------------------------------------
 def next_wealth_discrete(
     wealth: DiscreteState,
@@ -85,17 +93,22 @@ def next_wealth_discrete(
     )
 
 
+def next_regime(period: Period, n_periods: int) -> int:
+    certain_death_transition = period == n_periods - 2  # dead in last period
+    return jnp.where(
+        certain_death_transition,
+        RegimeID.dead,
+        RegimeID.working,
+    )
+
+
 # ======================================================================================
 # Regime specifications
 # ======================================================================================
-ISKHAKOV_ET_AL_2017_DISCRETE = Regime(
-    name="iskhakov_et_al_2017_discrete",
-    description=(
-        "Starts from Iskhakov et al. (2017), removes absorbing retirement constraint "
-        "and the lagged_retirement state, and makes the consumption decision discrete."
-    ),
+working = Regime(
+    name="working",
     actions={
-        "retirement": DiscreteGrid(RetirementStatus),
+        "labor_choice": DiscreteGrid(LaborStatus),
         "consumption": DiscreteGrid(ConsumptionChoice),
     },
     states={
@@ -107,9 +120,46 @@ ISKHAKOV_ET_AL_2017_DISCRETE = Regime(
     },
     transitions={
         "next_wealth": next_wealth_discrete,
+        "next_regime": next_regime,
     },
     functions={
         "labor_income": labor_income,
-        "working": working,
+        "is_working": is_working,
     },
 )
+
+
+dead = Regime(
+    name="dead",
+    terminal=True,
+    utility=lambda wealth: jnp.array([0.0]),
+    states={"wealth": DiscreteGrid(WealthStatus)},
+)
+
+
+def get_model(n_periods: int) -> Model:
+    return Model(
+        [working, dead],
+        n_periods=n_periods,
+        regime_id_cls=RegimeID,
+    )
+
+
+def get_params(
+    n_periods: int,
+    beta: float = 0.95,
+    disutility_of_work: float = 0.5,
+    interest_rate: float = 0.05,
+    wage: float = 10.0,
+):
+    return {
+        "working": {
+            "beta": beta,
+            "utility": {"disutility_of_work": disutility_of_work},
+            "next_wealth": {"interest_rate": interest_rate},
+            "next_regime": {"n_periods": n_periods},
+            "borrowing_constraint": {},
+            "labor_income": {"wage": wage},
+        },
+        "dead": {},
+    }

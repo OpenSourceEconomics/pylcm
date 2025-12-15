@@ -6,27 +6,31 @@ import jax.numpy as jnp
 from pybaum import tree_equal
 
 from lcm.input_processing import process_regimes
-from lcm.input_processing.regime_processing import create_default_regime_id_cls
 from lcm.interfaces import InternalFunctions, PhaseVariantContainer, Target
 from lcm.next_state import _create_stochastic_next_func, get_next_state_function
-from tests.test_models.utils import get_regime
+from tests.test_models.deterministic_regression import RegimeID, dead, working
 
 if TYPE_CHECKING:
     from lcm.typing import ContinuousState, FloatND, InternalUserFunction, ParamsDict
 
 
 def test_get_next_state_function_with_solve_target():
-    regime = get_regime("iskhakov_et_al_2017_stripped_down")
-    internal_regime = process_regimes(
-        regimes=[regime],
-        n_periods=3,
-        regime_id_cls=create_default_regime_id_cls(regime.name),
+    internal_regimes = process_regimes(
+        regimes=[working, dead],
+        n_periods=4,
+        regime_id_cls=RegimeID,
         enable_jit=True,
-    )[regime.name]
+    )
+
+    internal_working = internal_regimes[working.name]
+
     got_func = get_next_state_function(
-        transitions=internal_regime.transitions["iskhakov_et_al_2017_stripped_down"],
-        functions=internal_regime.functions,
-        grids={"iskhakov_et_al_2017_stripped_down": internal_regime.grids},
+        transitions=internal_working.transitions[working.name],
+        functions=internal_working.functions,
+        grids={
+            working.name: internal_working.grids,
+            dead.name: internal_regimes[dead.name].grids,
+        },
         target=Target.SOLVE,
     )
 
@@ -38,7 +42,7 @@ def test_get_next_state_function_with_solve_target():
         },
     }
 
-    action = {"retirement": 1, "consumption": 10}
+    action = {"labor_choice": 1, "consumption": 10}
     state = {"wealth": 20}
 
     got = got_func(**action, **state, period=1, params=params)
