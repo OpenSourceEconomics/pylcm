@@ -18,12 +18,10 @@ import jax.numpy as jnp
 from lcm import DiscreteGrid, Model, Regime
 from tests.test_models.deterministic_regression import (
     LaborStatus,
-    borrowing_constraint,
     is_working,
     labor_income,
     next_wealth,
     utility,
-    working,
 )
 
 if TYPE_CHECKING:
@@ -100,6 +98,10 @@ def next_regime(period: Period, n_periods: int) -> int:
         RegimeID.dead,
         RegimeID.working,
     )
+
+
+def borrowing_constraint(consumption: DiscreteAction, wealth: DiscreteState) -> BoolND:
+    return consumption <= wealth
 
 
 # ======================================================================================

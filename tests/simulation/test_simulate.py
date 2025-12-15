@@ -8,13 +8,11 @@ from numpy.testing import assert_array_almost_equal, assert_array_equal
 
 from lcm import Model
 from lcm.input_processing import process_regimes
-from lcm.input_processing.regime_processing import create_default_regime_id_cls
 from lcm.logging import get_logger
 from lcm.simulation.simulate import (
     _lookup_values_from_indices,
     simulate,
 )
-from tests.test_models.utils import get_model, get_params, get_regime
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -27,48 +25,55 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def simulate_inputs():
-    _orig_regime = get_regime("iskhakov_et_al_2017_stripped_down")
-    regime = _orig_regime.replace(
+    from tests.test_models.deterministic_regression import RegimeID, dead, working
+
+    updated_working = working.replace(
         actions={
-            **_orig_regime.actions,
-            "consumption": _orig_regime.actions["consumption"].replace(stop=100),  # type: ignore[attr-defined]
+            **working.actions,
+            "consumption": working.actions["consumption"].replace(stop=100),  # type: ignore[attr-defined]
         }
     )
-    regime_id_cls = create_default_regime_id_cls(regime.name)
     internal_regimes = process_regimes(
-        [regime],
-        n_periods=1,
-        regime_id_cls=regime_id_cls,
+        [updated_working, dead],
+        n_periods=2,
+        regime_id_cls=RegimeID,
         enable_jit=True,
     )
 
     return {
         "internal_regimes": internal_regimes,
-        "regime_id_cls": regime_id_cls,
+        "regime_id_cls": RegimeID,
     }
 
 
 def test_simulate_using_raw_inputs(simulate_inputs):
     params = {
-        "iskhakov_et_al_2017_stripped_down": {
+        "working": {
             "beta": 1.0,
             "utility": {"disutility_of_work": 1.0},
             "next_wealth": {
                 "interest_rate": 0.05,
             },
-        }
+            "next_regime": {"n_periods": 2},
+            "borrowing_constraint": {},
+            "labor_income": {},
+        },
+        "dead": {},
     }
 
     got = simulate(
         params=params,
-        V_arr_dict={0: {"iskhakov_et_al_2017_stripped_down": jnp.empty(0)}},
+        V_arr_dict={
+            0: {"working": jnp.zeros(100), "dead": jnp.zeros(2)},
+            1: {"working": jnp.zeros(100), "dead": jnp.zeros(2)},
+        },
         initial_states={"wealth": jnp.array([1.0, 50.400803])},
-        initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 2,
+        initial_regimes=["working"] * 2,
         logger=get_logger(debug_mode=False),
         **simulate_inputs,
-    )["iskhakov_et_al_2017_stripped_down"]
+    )["working"]
 
-    assert_array_equal(got.loc[:]["retirement"], 1)
+    assert_array_equal(got.loc[:]["labor_choice"], 1)
     assert_array_almost_equal(got.loc[:]["consumption"], jnp.array([1.0, 50.400803]))
 
 
@@ -79,20 +84,28 @@ def test_simulate_using_raw_inputs(simulate_inputs):
 
 @pytest.fixture
 def iskhakov_et_al_2017_stripped_down_model_solution():
+    from tests.test_models.deterministic_regression import (
+        RegimeID,
+        dead,
+        get_params,
+        working,
+    )
+
     def _model_solution(n_periods):
-        regime = get_regime(
-            "iskhakov_et_al_2017_stripped_down",
-        )
         updated_functions = {
             # remove dependency on age, so that wage becomes a parameter
             name: func
-            for name, func in regime.functions.items()
+            for name, func in working.functions.items()
             if name not in ["age", "wage"]
         }
-        regime = regime.replace(functions=updated_functions)
+        updated_working = working.replace(functions=updated_functions)
 
-        params = get_params(regime_name="iskhakov_et_al_2017_stripped_down")
-        model = Model([regime], n_periods=n_periods)
+        params = get_params(n_periods=n_periods)
+        # Since wage function is removed, wage becomes a parameter for labor_income
+        params["working"]["labor_income"] = {"wage": 1.5}
+        model = Model(
+            [updated_working, dead], n_periods=n_periods, regime_id_cls=RegimeID
+        )
         V_arr_dict = model.solve(params=params)
         return V_arr_dict, params, model
 
@@ -102,7 +115,7 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
 def test_simulate_using_model_methods(
     iskhakov_et_al_2017_stripped_down_model_solution,
 ):
-    n_periods = 3
+    n_periods = 4
     V_arr_dict, params, model = iskhakov_et_al_2017_stripped_down_model_solution(
         n_periods=n_periods,
     )
@@ -111,16 +124,14 @@ def test_simulate_using_model_methods(
         params,
         V_arr_dict=V_arr_dict,
         initial_states={"wealth": jnp.array([20.0, 150, 250, 320])},
-        initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 4,
-        additional_targets={
-            "iskhakov_et_al_2017_stripped_down": ["utility", "borrowing_constraint"]
-        },
-    )["iskhakov_et_al_2017_stripped_down"]
+        initial_regimes=["working"] * 4,
+        additional_targets={"working": ["utility", "borrowing_constraint"]},
+    )["working"]
 
     assert {
         "period",
         "value",
-        "retirement",
+        "labor_choice",
         "consumption",
         "wealth",
         "utility",
@@ -130,7 +141,7 @@ def test_simulate_using_model_methods(
 
     # assert that everyone retires in the last period
     last_period_index = n_periods - 1
-    assert_array_equal(res.loc[last_period_index, :]["retirement"], 1)
+    assert_array_equal(res.loc[last_period_index, :]["labor_choice"], 1)
 
     for period in range(n_periods):
         # assert that higher wealth leads to higher consumption in each period
@@ -141,21 +152,18 @@ def test_simulate_using_model_methods(
 
 
 def test_simulate_with_only_discrete_actions():
-    model = get_model("iskhakov_et_al_2017_discrete", n_periods=2)
-    params = get_params(
-        regime_name="iskhakov_et_al_2017_discrete", wage=1.5, beta=1, interest_rate=0
-    )
+    from tests.test_models.discrete_deterministic import get_model, get_params
+
+    model = get_model(n_periods=3)
+    params = get_params(n_periods=3, wage=1.5, beta=1, interest_rate=0)
 
     res: pd.DataFrame = model.solve_and_simulate(
         params,
         initial_states={"wealth": jnp.array([0, 4])},
-        additional_targets={
-            "iskhakov_et_al_2017_discrete": ["labor_income", "working"]
-        },
-        initial_regimes=["iskhakov_et_al_2017_discrete"] * 2,
-    )["iskhakov_et_al_2017_discrete"]
+        initial_regimes=["working"] * 2,
+    )["working"]
 
-    assert_array_equal(res["retirement"], jnp.array([0, 1, 1, 1]))
+    assert_array_equal(res["labor_choice"], jnp.array([0, 1, 1, 1]))
     assert_array_equal(res["consumption"], jnp.array([0, 1, 1, 1]))
     assert_array_equal(res["wealth"], jnp.array([0, 4, 2, 2]))
 
@@ -166,18 +174,21 @@ def test_simulate_with_only_discrete_actions():
 
 
 def test_effect_of_beta_on_last_period():
-    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=5)
+    from tests.test_models.deterministic_regression import get_model, get_params
+
+    n_periods = 6
+    model = get_model(n_periods=n_periods)
 
     # low beta
     params_low = get_params(
-        regime_name="iskhakov_et_al_2017_stripped_down",
+        n_periods=n_periods,
         beta=0.9,
         disutility_of_work=1.0,
     )
 
     # high beta
     params_high = get_params(
-        regime_name="iskhakov_et_al_2017_stripped_down",
+        n_periods=n_periods,
         beta=0.99,
         disutility_of_work=1.0,
     )
@@ -194,15 +205,15 @@ def test_effect_of_beta_on_last_period():
         params_low,
         V_arr_dict=solution_low,
         initial_states={"wealth": initial_wealth},
-        initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 3,
-    )["iskhakov_et_al_2017_stripped_down"]
+        initial_regimes=["working"] * 3,
+    )["working"]
 
     res_high: pd.DataFrame = model.simulate(
         params_high,
         V_arr_dict=solution_high,
         initial_states={"wealth": initial_wealth},
-        initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 3,
-    )["iskhakov_et_al_2017_stripped_down"]
+        initial_regimes=["working"] * 3,
+    )["working"]
 
     # Asserting
     # ==================================================================================
@@ -214,18 +225,21 @@ def test_effect_of_beta_on_last_period():
 
 
 def test_effect_of_disutility_of_work():
-    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=5)
+    from tests.test_models.deterministic_regression import get_model, get_params
+
+    n_periods = 6
+    model = get_model(n_periods=n_periods)
 
     # low disutility_of_work
     params_low = get_params(
-        regime_name="iskhakov_et_al_2017_stripped_down",
+        n_periods=n_periods,
         beta=1.0,
         disutility_of_work=0.2,
     )
 
     # high disutility_of_work
     params_high = get_params(
-        regime_name="iskhakov_et_al_2017_stripped_down",
+        n_periods=n_periods,
         beta=1.0,
         disutility_of_work=1.5,
     )
@@ -242,15 +256,15 @@ def test_effect_of_disutility_of_work():
         params_low,
         V_arr_dict=solution_low,
         initial_states={"wealth": initial_wealth},
-        initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 3,
-    )["iskhakov_et_al_2017_stripped_down"]
+        initial_regimes=["working"] * 3,
+    )["working"]
 
     res_high: pd.DataFrame = model.simulate(
         params_high,
         V_arr_dict=solution_high,
         initial_states={"wealth": initial_wealth},
-        initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 3,
-    )["iskhakov_et_al_2017_stripped_down"]
+        initial_regimes=["working"] * 3,
+    )["working"]
 
     # Asserting
     # ==================================================================================
@@ -263,7 +277,7 @@ def test_effect_of_disutility_of_work():
 
         # We expect that individuals with lower disutility of work retire (weakly) later
         assert (
-            res_low.loc[period]["retirement"] <= res_high.loc[period]["retirement"]
+            res_low.loc[period]["labor_choice"] <= res_high.loc[period]["labor_choice"]
         ).all()
 
 

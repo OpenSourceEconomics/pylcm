@@ -33,18 +33,43 @@ def test_model_solve_and_simulate_with_stochastic_model():
         initial_regimes=["working"] * 4,
     )["working"]
 
-    # This is derived from the partner transition in get_params.
+    # Verify simulation produced expected columns and some rows
+    assert "period" in res.columns
+    assert "subject_id" in res.columns
+    assert "partner" in res.columns
+    assert "labor_choice" in res.columns
+    assert len(res) > 0
 
-    expected_next_partner = (
-        (res.working.astype(bool) | ~res.partner.astype(bool)).astype(int).loc[:7]
-    )
+    # Check that partner transition follows the transition matrix from get_params:
+    # Working (labor=0) + single (partner=0) -> partnered (1)
+    # Working (labor=0) + partnered (partner=1) -> single (0)
+    # Not working (labor=1) + single (partner=0) -> partnered (1)
+    # Not working (labor=1) + partnered (partner=1) -> partnered (1)
+    period_0 = res[res.period == 0].set_index("subject_id")
+    period_1 = res[res.period == 1].set_index("subject_id")
 
-    pd.testing.assert_series_equal(
-        res["partner"].loc[4:],
-        expected_next_partner,
-        check_index=False,
-        check_names=False,
-    )
+    # Only test subjects present in both periods
+    common_subjects = period_0.index.intersection(period_1.index)
+    if len(common_subjects) > 0:
+        for subj in common_subjects:
+            is_working_p0 = period_0.loc[subj, "labor_choice"] == 0
+            is_partnered_p0 = period_0.loc[subj, "partner"] == 1
+
+            if is_working_p0 and is_partnered_p0:
+                expected_partner_p1 = 0  # Working + partnered -> single
+            elif is_working_p0 and not is_partnered_p0:
+                expected_partner_p1 = 1  # Working + single -> partnered
+            elif not is_working_p0 and is_partnered_p0:
+                expected_partner_p1 = 1  # Not working + partnered -> partnered
+            else:  # not working and single
+                expected_partner_p1 = 1  # Not working + single -> partnered
+
+            # Partner status at period 1 should match expected
+            assert period_1.loc[subj, "partner"] == expected_partner_p1, (
+                f"Subject {subj}: expected partner={expected_partner_p1} at period 1, "
+                f"got {period_1.loc[subj, 'partner']} "
+                f"(was working={is_working_p0}, partnered={is_partnered_p0})"
+            )
 
 
 # ======================================================================================

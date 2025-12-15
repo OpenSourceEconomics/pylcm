@@ -95,15 +95,16 @@ def test_terminal_regime_cannot_have_transitions():
         )
 
 
-def test_terminal_regime_must_have_states():
-    """Terminal regime must have at least one state."""
-    with pytest.raises(RegimeInitializationError, match="at least one state"):
-        Regime(
-            name="dead",
-            utility=lambda: 0,
-            states={},
-            terminal=True,
-        )
+def test_terminal_regime_can_be_created_without_states():
+    """Terminal regime can be created without states (e.g., absorbing death state)."""
+    regime = Regime(
+        name="dead",
+        utility=lambda: 0,
+        states={},
+        terminal=True,
+    )
+    assert regime.terminal is True
+    assert regime.states == {}
 
 
 # ======================================================================================
