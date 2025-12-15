@@ -196,8 +196,8 @@ def test_model_requires_terminal_regime(binary_category_class):
         Model(regimes=[regime], n_periods=2, regime_id_cls=RegimeID)
 
 
-def test_model_requires_regular_regime(binary_category_class):
-    """Model must have at least one regular (non-terminal) regime."""
+def test_model_requires_non_terminal_regime(binary_category_class):
+    """Model must have at least one non-terminal regime."""
 
     @dataclass
     class RegimeID:
@@ -209,7 +209,7 @@ def test_model_requires_regular_regime(binary_category_class):
         utility=lambda health: health * 0,
         terminal=True,
     )
-    with pytest.raises(ModelInitializationError, match="at least one regular regime"):
+    with pytest.raises(ModelInitializationError, match="at least one non-terminal"):
         Model(regimes=[dead], n_periods=2, regime_id_cls=RegimeID)
 
 

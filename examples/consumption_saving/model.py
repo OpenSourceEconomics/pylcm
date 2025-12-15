@@ -26,12 +26,18 @@ if TYPE_CHECKING:
 
 
 # --------------------------------------------------------------------------------------
-# Categorical variables
+# Categorical variables and regime ID
 # --------------------------------------------------------------------------------------
 @dataclass
 class WorkingStatus:
     retired: int = 0
     working: int = 1
+
+
+@dataclass
+class RegimeID:
+    working: int = 0
+    retirement: int = 1
 
 
 # --------------------------------------------------------------------------------------
@@ -45,6 +51,13 @@ def utility(
     disutility_of_work: ContinuousAction,
 ) -> FloatND:
     return jnp.log(consumption) - (disutility_of_work - health) * working - exercise
+
+
+def utility_retired(
+    wealth: ContinuousState,
+    health: ContinuousState,
+) -> FloatND:
+    return jnp.log(wealth) * health
 
 
 # --------------------------------------------------------------------------------------
@@ -63,7 +76,7 @@ def age(period: Period) -> int | IntND:
 
 
 # --------------------------------------------------------------------------------------
-# State transitions
+# State and regime transitions
 # --------------------------------------------------------------------------------------
 def next_wealth(
     wealth: ContinuousState,
@@ -82,6 +95,11 @@ def next_health(
     return health * (1 + exercise - working / 2)
 
 
+def next_regime(period: int, n_periods: int) -> int:
+    certain_retirement = period >= n_periods - 2
+    return jnp.where(certain_retirement, RegimeID.retirement, RegimeID.working)
+
+
 # --------------------------------------------------------------------------------------
 # Constraints
 # --------------------------------------------------------------------------------------
@@ -96,11 +114,11 @@ def borrowing_constraint(
 # ======================================================================================
 # Model specification and parameters
 # ======================================================================================
-RETIREMENT_AGE = 65
+RETIREMENT_AGE = 24
 
 
-CONSUMPTION_SAVING_REGIME = Regime(
-    name="consumption_saving_regime",
+working = Regime(
+    name="working",
     utility=utility,
     functions={
         "labor_income": labor_income,
@@ -136,19 +154,42 @@ CONSUMPTION_SAVING_REGIME = Regime(
     transitions={
         "next_wealth": next_wealth,
         "next_health": next_health,
+        "next_regime": next_regime,
     },
 )
 
-CONSUMPTION_SAVING_MODEL = Model(
-    [CONSUMPTION_SAVING_REGIME], n_periods=RETIREMENT_AGE - 18
+
+retired = Regime(
+    name="retirement",
+    terminal=True,
+    utility=utility_retired,
+    states={
+        "wealth": LinspaceGrid(
+            start=1,
+            stop=100,
+            n_points=100,
+        ),
+        "health": LinspaceGrid(
+            start=0,
+            stop=1,
+            n_points=100,
+        ),
+    },
 )
 
-PARAMS = {
-    "consumption_saving_regime": {
+
+model = Model(
+    [working, retired], n_periods=(RETIREMENT_AGE - 18) + 1, regime_id_cls=RegimeID
+)
+
+params = {
+    "working": {
         "beta": 0.95,
         "utility": {"disutility_of_work": 0.05},
         "next_wealth": {"interest_rate": 0.05},
-    }
+        "next_regime": {"n_periods": model.n_periods},
+    },
+    "retirement": {},
 }
 
 # ======================================================================================
@@ -158,9 +199,9 @@ PARAMS = {
 if __name__ == "__main__":
     n_simulation_subjects = 1_000
 
-    simulation_result = CONSUMPTION_SAVING_MODEL.solve_and_simulate(
-        params=PARAMS,
-        initial_regimes=["consumption_saving_regime"] * n_simulation_subjects,
+    simulation_result = model.solve_and_simulate(
+        params=params,
+        initial_regimes=["working"] * n_simulation_subjects,
         initial_states={
             "wealth": jnp.full(n_simulation_subjects, 1),
             "health": jnp.full(n_simulation_subjects, 1),

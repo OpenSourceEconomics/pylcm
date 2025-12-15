@@ -215,7 +215,7 @@ def _validate_model_inputs(
 
     if not regimes:
         error_messages.append(
-            "At least one regular and one terminal regime must be provided."
+            "At least one non-terminal and one terminal regime must be provided."
         )
 
     if not all(isinstance(regime, Regime) for regime in regimes):
@@ -234,19 +234,19 @@ def _validate_model_inputs(
             "lcm.Model must have at least one terminal regime, but none found."
         )
 
-    regular_regimes = [r for r in regimes if not r.terminal]
-    if len(regular_regimes) < 1:
+    non_terminal_regimes = [r for r in regimes if not r.terminal]
+    if len(non_terminal_regimes) < 1:
         error_messages.append(
-            "lcm.Model must have at least one regular regime, but none found."
+            "lcm.Model must have at least one non-terminal regime, but none found."
         )
     else:
-        regular_regimes_without_next_regime = [
-            r.name for r in regular_regimes if "next_regime" not in r.transitions
+        non_terminal_regimes_without_next_regime = [
+            r.name for r in non_terminal_regimes if "next_regime" not in r.transitions
         ]
-        if regular_regimes_without_next_regime:
+        if non_terminal_regimes_without_next_regime:
             error_messages.append(
-                "The following regular regimes are missing 'next_regime' in their "
-                f"transitions: {regular_regimes_without_next_regime}."
+                "The following regimes are missing 'next_regime' in their transitions: "
+                f"{non_terminal_regimes_without_next_regime}."
             )
 
     regime_names = [r.name for r in regimes]

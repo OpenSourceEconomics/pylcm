@@ -125,8 +125,6 @@ class ProductivityShock:
 
 @dataclass
 class RegimeID:
-    """Maps regime names to integer indices for regime transition probabilities."""
-
     alive: int = 0
     dead: int = 1
 
@@ -403,15 +401,11 @@ ALIVE_REGIME = Regime(
 
 DEAD_REGIME = Regime(
     name="dead",
-    absorbing=True,
-    utility=lambda wealth: jnp.array(0.0),  # noqa: ARG005
+    terminal=True,
+    utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
     # PyLCM requires at least one state variable per regime, which is why we add
     # "wealth" here.
     states={"wealth": LinspaceGrid(start=0, stop=49, n_points=2)},
-    actions={},
-    transitions={
-        "next_wealth": lambda wealth: wealth,
-    },
 )
 
 MAHLER_YUM_MODEL = Model(
