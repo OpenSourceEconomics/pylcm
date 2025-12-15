@@ -16,10 +16,12 @@ R = TypeVar("R")
 @dataclass(frozen=True)
 class StochasticInfo:
     """Information on the stochastic nature of user provided functions."""
+
     type: str = "custom"
 
+
 def stochastic(
-    func: Callable[..., Any],
+    func: Callable[..., Any] = None,
     *args: tuple[Any, ...],
     **kwargs: dict[str, Any],
 ) -> Callable[..., Any]:

@@ -203,6 +203,7 @@ class InternalRegime:
     grids: dict[str, Array]
     gridspecs: dict[str, Grid]
     variable_info: pd.DataFrame
+    transition_info: pd.DataFrame
     utility: InternalUserFunction
     constraints: dict[str, InternalUserFunction]
     transitions: TransitionFunctionsDict

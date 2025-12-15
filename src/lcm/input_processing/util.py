@@ -21,6 +21,22 @@ def is_stochastic_transition(fn: Callable[..., Any]) -> bool:
     return hasattr(fn, "_stochastic_info")
 
 
+def get_transition_info(regime: Regime) -> pd.DataFrame:
+    info = pd.DataFrame(index=list(regime.transitions))
+    stochastic_transitions = [
+        name
+        for name, trans in regime.transitions.items()
+        if is_stochastic_transition(trans)
+    ]
+    transition_type = [
+        trans._stochastic_info.type if is_stochastic_transition(trans) else "none"
+        for name, trans in regime.transitions.items()
+    ]
+    info["is_stochastic"] = info.index.isin(stochastic_transitions)
+    info["type"] = transition_type
+    return info
+
+
 def get_variable_info(regime: Regime) -> pd.DataFrame:
     """Derive information about all variables in the regime.
 

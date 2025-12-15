@@ -9,6 +9,7 @@ import pytest
 
 import lcm
 from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
+from lcm.grids import ShockGrid
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -77,9 +78,9 @@ def next_wealth(
     return (1 + interest_rate) * (wealth - consumption) + working * wage
 
 
+@lcm.mark.stochastic(type="uniform")
 def next_health() -> FloatND:
     """Stochastic health transition."""
-    pass
 
 
 def borrowing_constraint(
@@ -113,7 +114,7 @@ def create_base_regimes() -> tuple[Regime, Regime]:
         name="work",
         states={
             "wealth": LinspaceGrid(start=1, stop=100, n_points=10),
-            "health": DiscreteGrid(HealthStatus),
+            "health": ShockGrid(start=0, stop=1, n_points=2, type="uniform"),
         },
         actions={
             "consumption": LinspaceGrid(start=1, stop=100, n_points=10),
@@ -123,7 +124,7 @@ def create_base_regimes() -> tuple[Regime, Regime]:
         constraints={"borrowing_constraint": borrowing_constraint},
         transitions={
             "next_wealth": next_wealth,
-            "next_health": lcm.mark.stochastic(next_health, type="uniform"),
+            "next_health": next_health,
             "next_regime": next_regime_from_work,
         },
     )
@@ -143,10 +144,7 @@ def create_base_regimes() -> tuple[Regime, Regime]:
         functions={
             "working": retired_working,
         },
-        transitions={
-            "next_wealth": next_wealth,
-            "next_health": lcm.mark.stochastic(next_health, type="uniform")
-        },
+        transitions={"next_wealth": next_wealth, "next_health": next_health},
     )
 
     return work_regime, retirement_regime
@@ -167,7 +165,7 @@ def create_base_params() -> ParamsDict:
             "utility": {"disutility_of_work": 0.5},
             "borrowing_constraint": {},
             "next_wealth": {"wage": 20.0, "interest_rate": 0.05},
-            "next_health": {"n": 2,  "x_min": 0, "x_max": 1},
+            "next_health": {"n_points": 2, "start": 0, "stop": 1},
             "next_regime": {},
         },
         "retirement": {
@@ -176,7 +174,7 @@ def create_base_params() -> ParamsDict:
             "borrowing_constraint": {},
             "working": {},
             "next_wealth": {"wage": 20.0, "interest_rate": 0.05},
-            "next_health": {"n": 2,  "x_min": 0, "x_max": 1},
+            "next_health": {"n_points": 2, "start": 0, "stop": 1},
             "next_regime": {},
         },
     }
@@ -274,7 +272,7 @@ class TestAbsorbingRegimes:
             functions={"working": retired_working},
             transitions={
                 "next_wealth": next_wealth,
-                "next_health": lcm.mark.stochastic(next_health, type="uniform"),
+                "next_health": next_health,
                 "next_regime": explicit_next_regime,  # Redundant!
             },
         )
@@ -346,7 +344,7 @@ class TestDifferentStateSpaces:
             constraints={"borrowing_constraint": borrowing_constraint},
             transitions={
                 "next_wealth": next_wealth,
-                "next_health": lcm.mark.stochastic(next_health, type="uniform"),
+                "next_health": next_health,
                 # Required for transition to dead
                 "next_funerary_wealth": next_funerary_wealth_from_alive,
                 "next_regime": next_regime_work_with_death,
@@ -367,7 +365,7 @@ class TestDifferentStateSpaces:
             functions={"working": retired_working},
             transitions={
                 "next_wealth": next_wealth,
-                "next_health": lcm.mark.stochastic(next_health, type="uniform"),
+                "next_health": next_health,
                 # Required for transition to dead
                 "next_funerary_wealth": next_funerary_wealth_from_alive,
                 "next_regime": next_regime_retirement_with_death,
@@ -405,7 +403,7 @@ class TestDifferentStateSpaces:
                 "utility": {"disutility_of_work": 0.5},
                 "borrowing_constraint": {},
                 "next_wealth": {"wage": 20.0, "interest_rate": 0.05},
-                "next_health": {"n": 2,  "x_min": 0, "x_max": 1},
+                "next_health": {"n": 2, "x_min": 0, "x_max": 1},
                 "next_funerary_wealth": {},
                 "next_regime": {},
             },
@@ -415,7 +413,7 @@ class TestDifferentStateSpaces:
                 "borrowing_constraint": {},
                 "working": {},
                 "next_wealth": {"wage": 20.0, "interest_rate": 0.05},
-                "next_health": {"n": 2,  "x_min": 0, "x_max": 1},
+                "next_health": {"n": 2, "x_min": 0, "x_max": 1},
                 "next_funerary_wealth": {},
                 "next_regime": {},
             },
@@ -500,7 +498,7 @@ class TestOverlappingStateSpaces:
             constraints={"borrowing_constraint": borrowing_constraint},
             transitions={
                 "next_wealth": simple_next_wealth,
-                "next_health": lcm.mark.stochastic(next_health, type="uniform"),
+                "next_health": next_health,
                 "next_pension": next_pension_from_work,  # For transition to retirement
                 "next_regime": next_regime_to_retirement,
             },
@@ -555,7 +553,7 @@ class TestOverlappingStateSpaces:
                 "utility": {},
                 "borrowing_constraint": {},
                 "next_wealth": {"interest_rate": 0.05},
-                "next_health": {"n": 2,  "x_min": 0, "x_max": 1},
+                "next_health": {"n": 2, "x_min": 0, "x_max": 1},
                 "next_pension": {},
                 "next_regime": {},
             },

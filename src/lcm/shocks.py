@@ -1,12 +1,12 @@
+from copy import deepcopy
+
 from jax import Array
 from jax import numpy as jnp
 from jax.scipy.stats.norm import cdf
 
-from copy import deepcopy
 from lcm.exceptions import ShockInitializationError
 from lcm.interfaces import InternalRegime
 from lcm.typing import Float1D, FloatND, ParamsDict
-from lcm.input_processing.util import is_stochastic_transition
 
 
 class UniformShock:
@@ -61,7 +61,7 @@ class AR1Shock:
 
 
 def discretized_uniform_distribution(
-    n: int, x_min: float, x_max: float
+    n_points: int, start: float, stop: float
 ) -> tuple[Float1D, FloatND]:
     """Discretize the specified uniform distribution.
 
@@ -74,8 +74,8 @@ def discretized_uniform_distribution(
         Values at discretization points and transition matrix.
 
     """
-    return jnp.linspace(start=x_min, stop=x_max, num=n), jnp.full(
-        (n, n), fill_value=1 / n
+    return jnp.linspace(start=start, stop=stop, num=n_points), jnp.full(
+        (n_points, n_points), fill_value=1 / n_points
     )
 
 
@@ -211,18 +211,24 @@ def rouwenhorst(
 
     return jnp.linspace(mu_eps / (1.0 - rho) - nu, mu_eps / (1.0 - rho) + nu, n), P.T
 
+
 SHOCK_FUNCTIONS = {
     "uniform": discretized_uniform_distribution,
     "normal": discretized_normal_distribution,
     "tauchen": tauchen,
-    "rouwenhorst": rouwenhorst
+    "rouwenhorst": rouwenhorst,
 }
 
 
 def pre_compute(internal_regimes: dict[str, InternalRegime], params: ParamsDict):
     new_params = deepcopy(params)
-    for regime_name, internal_regime in internal_regimes.items():
-            for trans_name, trans in internal_regime.transitions.items():
-                    if is_stochastic_transition(trans) and trans._stochastic_info.type != "custom":
-                        new_params[regime_name][trans_name] = {"pre_computed": SHOCK_FUNCTIONS[trans._stochastic_info.type](**params[regime_name][trans_name])[1]}
+    for regime_name, params in params.items():
+        transition_info = internal_regimes[regime_name].transition_info
+        need_precompute = transition_info.index[
+            ~transition_info["type"].isin(["custom", "none"])
+        ].tolist()
+        for trans_name in need_precompute:
+            new_params[regime_name][trans_name]["pre_computed"] = SHOCK_FUNCTIONS[
+                transition_info.loc[trans_name, "type"]
+            ](**params[trans_name])[1]
     return new_params

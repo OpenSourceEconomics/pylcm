@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 
 if TYPE_CHECKING:
-    from lcm.typing import Float1D, ScalarFloat
+    from lcm.typing import Float1D, ParamsDict, ScalarFloat
 
 
 def linspace(start: ScalarFloat, stop: ScalarFloat, n_points: int) -> Float1D:
@@ -113,3 +113,24 @@ def get_logspace_coordinate(
     # gridpoints.
     decimal_part = distance_from_lower_gridpoint / logarithmic_step_size_at_coordinate
     return rank_lower_gridpoint + decimal_part
+
+
+def get_shock_coordinate(
+    value: ScalarFloat, n_points: int, params: ParamsDict, type: str
+) -> ScalarFloat:
+    """Map a value into the input needed for jax.scipy.ndimage.map_coordinates."""
+    if type == "uniform":
+        return get_linspace_coordinate(value=value, **params)
+    if type == "normal":
+        start = params["mu_eps"] - params["sigma_eps"] * params["n_std"]
+        stop = params["mu_eps"] + params["sigma_eps"] * params["n_std"]
+        return get_linspace_coordinate(
+            value=value, start=start, stop=stop, n_points=n_points
+        )
+    demeaned_sigma_eps = jnp.sqrt(params["sigma_eps"] ** 2 / (1 - params["rho"] ** 2))
+    demeaned_mu_eps = params["mu_eps"] / (1 - params["rho"])
+    start = demeaned_mu_eps - demeaned_sigma_eps * params["n_std"]
+    stop = demeaned_mu_eps + demeaned_sigma_eps * params["n_std"]
+    return get_linspace_coordinate(
+        value=value, start=start, stop=stop, n_points=n_points
+    )

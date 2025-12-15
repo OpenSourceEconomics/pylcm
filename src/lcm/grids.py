@@ -12,7 +12,7 @@ from lcm.exceptions import GridInitializationError, format_messages
 from lcm.utils import find_duplicates
 
 if TYPE_CHECKING:
-    from lcm.typing import Float1D, Int1D, ScalarFloat
+    from lcm.typing import Float1D, Int1D, ParamsDict, ScalarFloat
 
 
 class Grid(ABC):
@@ -91,7 +91,7 @@ class ContinuousGrid(Grid, ABC):
         """Convert the grid to a Jax array."""
 
     @abstractmethod
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
+    def get_coordinate(self, value: ScalarFloat, params: ParamsDict) -> ScalarFloat:
         """Get the generalized coordinate of a value in the grid."""
 
     def replace(self, **kwargs: float) -> ContinuousGrid:
@@ -130,7 +130,7 @@ class LinspaceGrid(ContinuousGrid):
         """Convert the grid to a Jax array."""
         return grid_helpers.linspace(self.start, self.stop, self.n_points)
 
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
+    def get_coordinate(self, value: ScalarFloat, params: ParamsDict) -> ScalarFloat:
         """Get the generalized coordinate of a value in the grid."""
         return grid_helpers.get_linspace_coordinate(
             value, self.start, self.stop, self.n_points
@@ -155,10 +155,40 @@ class LogspaceGrid(ContinuousGrid):
         """Convert the grid to a Jax array."""
         return grid_helpers.logspace(self.start, self.stop, self.n_points)
 
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
+    def get_coordinate(self, value: ScalarFloat, params: ParamsDict) -> ScalarFloat:
         """Get the generalized coordinate of a value in the grid."""
         return grid_helpers.get_logspace_coordinate(
             value, self.start, self.stop, self.n_points
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ShockGrid(ContinuousGrid):
+    """A linear grid of continuous values.
+
+    Example:
+    --------
+    Let `start = 1`, `stop = 100`, and `n_points = 3`. The grid is `[1, 50.5, 100]`.
+
+    Attributes:
+        start: The start value of the grid. Must be a scalar int or float value.
+        stop: The stop value of the grid. Must be a scalar int or float value.
+        n_points: The number of points in the grid. Must be an int greater than 0.
+        type:
+
+    """
+
+    type: str
+
+    def to_jax(self) -> Float1D:
+        """Convert the grid to a Jax array."""
+        return grid_helpers.linspace(self.start, self.stop, self.n_points)
+
+    def get_coordinate(self, value: ScalarFloat, params: ParamsDict) -> ScalarFloat:
+        """Get the generalized coordinate of a value in the grid."""
+        params.pop("pre_computed")
+        return grid_helpers.get_shock_coordinate(
+            value, n_points=self.n_points, params=params, type=self.type
         )
 
 
