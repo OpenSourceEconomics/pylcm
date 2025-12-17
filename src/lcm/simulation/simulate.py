@@ -12,6 +12,7 @@ from lcm.interfaces import (
     SimulationResults,
 )
 from lcm.random import draw_random_seed
+from lcm.shocks import fill_shock_grids, pre_compute_shock_probabilities
 from lcm.simulation.processing import process_simulated_data
 from lcm.simulation.util import (
     calculate_next_regime_membership,
@@ -75,7 +76,8 @@ def simulate(
         seed = draw_random_seed()
 
     logger.info("Starting simulation")
-
+    params = pre_compute_shock_probabilities(internal_regimes, params)
+    internal_regimes = fill_shock_grids(internal_regimes, params)
     # Validate and convert flat initial_states to nested format
     # ----------------------------------------------------------------------------------
     validate_flat_initial_states(initial_states, internal_regimes)

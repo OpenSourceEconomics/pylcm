@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields, is_dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import jax.numpy as jnp
 
@@ -164,25 +164,28 @@ class LogspaceGrid(ContinuousGrid):
 
 @dataclass(frozen=True, kw_only=True)
 class ShockGrid(ContinuousGrid):
-    """A linear grid of continuous values.
+    """An empty grid for discretized continuous shocks.
 
-    Example:
-    --------
-    Let `start = 1`, `stop = 100`, and `n_points = 3`. The grid is `[1, 50.5, 100]`.
+    The actual values will be calculated once the prameters for the shock are
+    available during the solution or simulation.
+
 
     Attributes:
-        start: The start value of the grid. Must be a scalar int or float value.
-        stop: The stop value of the grid. Must be a scalar int or float value.
+        start: This argument is not used.
+        stop: This argument is not used.
         n_points: The number of points in the grid. Must be an int greater than 0.
-        type:
+        type: The shock type.
 
     """
 
-    type: str
+    start: int | float = 0
+    stop: int | float = 1
+    type: Literal["uniform", "normal", "tauchen", "rouwenhorst"]
+    n_points: int
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
-        return grid_helpers.linspace(self.start, self.stop, self.n_points)
+        return jnp.zeros(shape=self.n_points)
 
     def get_coordinate(self, value: ScalarFloat, params: ParamsDict) -> ScalarFloat:
         """Get the generalized coordinate of a value in the grid."""

@@ -1,63 +1,10 @@
 from copy import deepcopy
 
-from jax import Array
 from jax import numpy as jnp
 from jax.scipy.stats.norm import cdf
 
-from lcm.exceptions import ShockInitializationError
 from lcm.interfaces import InternalRegime
 from lcm.typing import Float1D, FloatND, ParamsDict
-
-
-class UniformShock:
-    values: Array
-    transition_probs: Array
-
-    def init(self, n: int, x_min: float, x_max: float) -> None:
-        self.values, self.transition_probs = discretized_uniform_distribution(
-            n, x_min, x_max
-        )
-
-
-class IIDShock:
-    values: Array
-    transition_probs: Array
-
-    def init(self, n: int, mu_eps: float, sigma_eps: float, n_std: int = 3) -> None:
-        self.values, self.transition_probs = discretized_normal_distribution(
-            n, mu_eps, sigma_eps, n_std
-        )
-
-
-class AR1Shock:
-    values: Array
-    transition_probs: Array
-
-    def init(
-        self,
-        method: str,
-        n: int,
-        rho: float,
-        sigma_eps: float,
-        mu_eps: float = 0.0,
-        n_std: int = 1,
-    ) -> None:
-        if method == "tauchen":
-            values, transition_probs = tauchen(
-                n=n, rho=rho, sigma_eps=sigma_eps, mu_eps=mu_eps, n_std=n_std
-            )
-            self.values = values
-            self.transition_probs = transition_probs
-        elif method == "rouwenhorst":
-            values, transition_probs = rouwenhorst(
-                n=n, rho=rho, sigma_eps=sigma_eps, mu_eps=mu_eps, n_std=n_std
-            )
-            self.values = values
-            self.transition_probs = transition_probs
-        else:
-            raise ShockInitializationError(
-                "The requested discretization method does not exist.",
-            )
 
 
 def discretized_uniform_distribution(
@@ -107,11 +54,11 @@ def discretized_normal_distribution(
 
 
 def tauchen(
-    n: int, rho: float, sigma_eps: float, mu_eps: float = 0.0, n_std: int = 2
+    n_points: int, rho: float, sigma_eps: float, mu_eps: float = 0.0, n_std: int = 2
 ) -> tuple[Float1D, FloatND]:
     r"""Discretize the specified AR1 process with the 'Tauchen'-method.
 
-    X_t = \rho*X_(t-1) + \\eps_t, \\eps_t= N(mu_eps, sigma_eps)
+    X_t = \rho*X_(t-1) + \\eps_t, \\eps_t= N(0, sigma_eps)
 
     Args:
         n: Number of discretization points
@@ -135,14 +82,14 @@ def tauchen(
     x_min = -x_max
 
     # discretized state space for demeaned y_t
-    x = jnp.linspace(x_min, x_max, n)
+    x = jnp.linspace(x_min, x_max, n_points)
 
-    step = (x_max - x_min) / (n - 1)
+    step = (x_max - x_min) / (n_points - 1)
     half_step = 0.5 * step
 
     # approximate Markov transition matrix for
     # demeaned y_t
-    P = _fill_tauchen(x, n, rho, sigma_eps, half_step)
+    P = _fill_tauchen(x, n_points, rho, sigma_eps, half_step)
 
     # shifts the state values by the long run mean of y_t
     mu_eps = mu_eps / (1 - rho)
@@ -220,7 +167,24 @@ SHOCK_FUNCTIONS = {
 }
 
 
-def pre_compute(internal_regimes: dict[str, InternalRegime], params: ParamsDict):
+def pre_compute_shock_probabilities(
+    internal_regimes: dict[str, InternalRegime], params: ParamsDict
+) -> ParamsDict:
+    """Pre-compute the discretized probabilities for shocks.
+
+    The parameters for the transition functions will be augmented with the pre-calculated
+    probability distributions of the given shock.
+
+    Args:
+        internal_regimes: The internal regimes containing the shocks.
+        params: The parameters that need augmentation as given by the user.
+
+    Returns:
+        A ParamsDict where every transition function that uses a pre-implemented shock
+        is augmented with a new entry containing the shocks discretized probability
+        distribution.
+
+    """
     new_params = deepcopy(params)
     for regime_name, params in params.items():
         transition_info = internal_regimes[regime_name].transition_info
@@ -232,3 +196,71 @@ def pre_compute(internal_regimes: dict[str, InternalRegime], params: ParamsDict)
                 transition_info.loc[trans_name, "type"]
             ](**params[trans_name])[1]
     return new_params
+
+
+def fill_shock_grids(
+    new_internal_regimes: dict[str, InternalRegime], params: ParamsDict
+) -> dict[str, InternalRegime]:
+    """Fill the shock grids.
+
+    As the values for the shock grids depend on the parameters that the user supplies,
+    they have to be calculated at the start of the solution or simulation respectively.
+
+    Args:
+        internal_regimes: The internal regimes whose grids need to be replaced.
+        params: The parameters as given by the user.
+
+    Returns:
+        The original internal regimes, but with the filled shock grids.
+
+    """
+    new_internal_regimes = deepcopy(new_internal_regimes)
+    for regime_name, regime in new_internal_regimes.items():
+        transition_info = regime.transition_info
+        need_precompute = transition_info.index[
+            ~transition_info["type"].isin(["custom", "none"])
+        ].tolist()
+        for trans_name in need_precompute:
+            param_copy = params[regime_name][trans_name].copy()
+            param_copy.pop("pre_computed")
+            new_values = SHOCK_FUNCTIONS[transition_info.loc[trans_name, "type"]](
+                **param_copy
+            )[0]
+            # This will be replaced once terminal regimes are implemented
+            if (
+                trans_name.removeprefix("next_")
+                in regime.state_action_spaces.before_terminal.states
+            ):
+                new_internal_regimes[
+                    regime_name
+                ].state_action_spaces.before_terminal = (
+                    regime.state_action_spaces.before_terminal.replace(
+                        states=regime.state_action_spaces.before_terminal.states
+                        | {trans_name.removeprefix("next_"): new_values}
+                    )
+                )
+            if (
+                trans_name.removeprefix("next_")
+                in regime.state_action_spaces.before_terminal.states
+            ):
+                new_internal_regimes[
+                    regime_name
+                ].state_action_spaces.terminal = (
+                    regime.state_action_spaces.terminal.replace(
+                        states=regime.state_action_spaces.before_terminal.states
+                        | {trans_name.removeprefix("next_"): new_values}
+                    )
+                )
+            if (
+                trans_name.removeprefix("next_")
+                in regime.state_action_spaces.before_terminal.states
+            ):
+                new_internal_regimes[
+                    regime_name
+                ].state_action_spaces.non_terminal = (
+                    regime.state_action_spaces.non_terminal.replace(
+                        states=regime.state_action_spaces.before_terminal.states
+                        | {trans_name.removeprefix("next_"): new_values}
+                    )
+                )
+    return new_internal_regimes

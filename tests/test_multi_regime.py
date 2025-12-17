@@ -60,7 +60,7 @@ class WorkingStatus:
 def utility(
     consumption: ContinuousAction,
     working: IntND,
-    health: DiscreteState,
+    health: ContinuousState,
     disutility_of_work: float,
 ) -> FloatND:
     """Utility from consumption, reduced by disutility of work."""
@@ -78,17 +78,16 @@ def next_wealth(
     return (1 + interest_rate) * (wealth - consumption) + working * wage
 
 
-@lcm.mark.stochastic(type="uniform")
+@lcm.mark.stochastic(type="tauchen")
 def next_health() -> FloatND:
     """Stochastic health transition."""
 
 
 def borrowing_constraint(
-    consumption: ContinuousAction,
-    wealth: ContinuousState,
+    consumption: ContinuousAction, wealth: ContinuousState, health: ContinuousState
 ) -> BoolND:
     """Cannot consume more than wealth."""
-    return consumption <= wealth
+    return consumption <= wealth + health
 
 
 @lcm.mark.stochastic
@@ -114,7 +113,7 @@ def create_base_regimes() -> tuple[Regime, Regime]:
         name="work",
         states={
             "wealth": LinspaceGrid(start=1, stop=100, n_points=10),
-            "health": ShockGrid(start=0, stop=1, n_points=2, type="uniform"),
+            "health": ShockGrid(n_points=5, type="tauchen"),
         },
         actions={
             "consumption": LinspaceGrid(start=1, stop=100, n_points=10),
@@ -134,7 +133,7 @@ def create_base_regimes() -> tuple[Regime, Regime]:
         absorbing=True,
         states={
             "wealth": LinspaceGrid(start=1, stop=100, n_points=10),
-            "health": DiscreteGrid(HealthStatus),
+            "health": ShockGrid(n_points=5, type="tauchen"),
         },
         actions={
             "consumption": LinspaceGrid(start=1, stop=100, n_points=10),
@@ -165,7 +164,13 @@ def create_base_params() -> ParamsDict:
             "utility": {"disutility_of_work": 0.5},
             "borrowing_constraint": {},
             "next_wealth": {"wage": 20.0, "interest_rate": 0.05},
-            "next_health": {"n_points": 2, "start": 0, "stop": 1},
+            "next_health": {
+                "n_points": 5,
+                "rho": 0.9,
+                "sigma_eps": 0.5,
+                "mu_eps": 1,
+                "n_std": 2,
+            },
             "next_regime": {},
         },
         "retirement": {
@@ -174,7 +179,13 @@ def create_base_params() -> ParamsDict:
             "borrowing_constraint": {},
             "working": {},
             "next_wealth": {"wage": 20.0, "interest_rate": 0.05},
-            "next_health": {"n_points": 2, "start": 0, "stop": 1},
+            "next_health": {
+                "n_points": 5,
+                "rho": 0.9,
+                "sigma_eps": 0.5,
+                "mu_eps": 1,
+                "n_std": 2,
+            },
             "next_regime": {},
         },
     }

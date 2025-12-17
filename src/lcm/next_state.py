@@ -117,8 +117,15 @@ def _extend_transitions_for_simulation(
 
     """
     flat_grids = flatten_regime_namespace(grids)
-    stochastic_targets = [
-        fn_name for fn_name, fn in transitions.items() if is_stochastic_transition(fn)
+    discrete_stochastic_targets = [
+        fn_name
+        for fn_name, fn in transitions.items()
+        if is_stochastic_transition(fn) and fn._stochastic_info.type == "custom"
+    ]
+    continuous_stochastic_targets = [
+        (fn_name, fn)
+        for fn_name, fn in transitions.items()
+        if is_stochastic_transition(fn) and fn._stochastic_info.type != "custom"
     ]
     # Handle stochastic next states functions
     # ----------------------------------------------------------------------------------
@@ -129,19 +136,23 @@ def _extend_transitions_for_simulation(
     # generates a function that computes the weights and simulates the next state in
     # one go.
     # ----------------------------------------------------------------------------------
-    stochastic_next = {
-        name: _create_stochastic_next_func(
+    discrete_stochastic_next = {
+        name: _create_discrete_stochastic_next_func(
             name, labels=flat_grids[name.replace("next_", "")]
         )
-        for name in stochastic_targets
+        for name in discrete_stochastic_targets
+    }
+    continuous_stochastic_next = {
+        name: _create_continuous_stochastic_next_func(name, fn)
+        for name, fn in continuous_stochastic_targets
     }
 
     # Overwrite regime transitions with generated stochastic next states functions
     # ----------------------------------------------------------------------------------
-    return transitions | stochastic_next
+    return transitions | discrete_stochastic_next | continuous_stochastic_next
 
 
-def _create_stochastic_next_func(
+def _create_discrete_stochastic_next_func(
     name: str, labels: DiscreteState
 ) -> StochasticNextFunction:
     """Get function that simulates the next state of a stochastic variable.
@@ -172,3 +183,60 @@ def _create_stochastic_next_func(
         )
 
     return next_stochastic_state
+
+
+def _create_continuous_stochastic_next_func(
+    name: str, fn: InternalUserFunction
+) -> StochasticNextFunction:
+    """Get function that simulates the next state of a stochastic variable.
+
+    Args:
+        name: Name of the stochastic variable.
+        labels: 1d array of labels.
+
+    Returns:
+        A function that simulates the next state of the stochastic variable. The
+        function must be called with keyword arguments:
+        - weight_{name}: 2d array of weights. The first dimension corresponds to the
+          number of simulation units. The second dimension corresponds to the number of
+          grid points (labels).
+        - key_{name}: PRNG key for the stochastic next function, e.g. 'next_health'.
+
+    """
+    args = {
+        "params": "ParamsDict",
+        f"key_{name}": "dict[str, Array]",
+        "f{name}": "Array",
+    }
+    type = fn._stochastic_info.type
+
+    @with_signature(
+        args=args,
+        return_annotation="ContinuousState",
+    )
+    def next_stochastic_state(**kwargs: FloatND) -> DiscreteState:
+        if type == "uniform":
+            return uniform(
+                params=kwargs["params"]["next_health"], key=kwargs[f"key_{name}"]
+            )
+        if type == "normal":
+            return normal(params=kwargs["params"][f"{name}"], key=kwargs[f"key_{name}"])
+        return ar1(
+            params=kwargs["params"][f"{name}"],
+            prev_value=kwargs["params"][f"{name}"],
+            key=kwargs[f"key_{name}"],
+        )
+
+    return next_stochastic_state
+
+
+def uniform(params, key):
+    return jax.random.uniform(minval=params["start"], maxval=params["stop"], key=key)
+
+
+def normal(params, key):
+    return jax.random.normal(key=key) * params["sigma_eps"] + params["mu_eps"]
+
+
+def ar1(params, prev_value, key):
+    return prev_value * params["rho"] + jax.random.normal(key=key) * params["sigma_eps"]

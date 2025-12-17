@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 
 from lcm.error_handling import validate_value_function_array
-from lcm.shocks import pre_compute
+from lcm.shocks import fill_shock_grids, pre_compute_shock_probabilities
 
 if TYPE_CHECKING:
     import logging
@@ -39,8 +39,8 @@ def solve(
     next_V_arr: dict[RegimeName, FloatND] = {
         name: jnp.empty(0) for name in internal_regimes
     }
-    params = pre_compute(internal_regimes=internal_regimes, params=params)
-    print(params)
+    params = pre_compute_shock_probabilities(internal_regimes, params)
+    internal_regimes = fill_shock_grids(internal_regimes, params)
     logger.info("Starting solution")
 
     # backwards induction loop
@@ -54,7 +54,6 @@ def solve(
             state_action_space = internal_regime.state_action_spaces(
                 period, n_periods=n_periods
             )
-
             # evaluate Q-function on states and actions, and maximize over actions
             V_arr = max_Q_over_a(
                 **state_action_space.states,
