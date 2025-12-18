@@ -1,4 +1,10 @@
-"""Example specification for a consumption-savings model with health and exercise."""
+"""Example specification for a consumption-savings model with health and exercise.
+
+People work for n-1 periods and are retired in the last period.
+
+Note that the parameterization of the model does not make a whole lot of sense, so don't
+look too closely inside the functions as opposed to their interfaces.
+"""
 
 from __future__ import annotations
 
