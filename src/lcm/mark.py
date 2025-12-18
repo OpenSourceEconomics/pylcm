@@ -21,7 +21,7 @@ class StochasticInfo:
 
 
 def stochastic(
-    func: Callable[..., Any] = None,
+    func: Callable[..., Any] = None,  # noqa: RUF013
     *args: tuple[Any, ...],
     **kwargs: dict[str, Any],
 ) -> Callable[..., Any]:

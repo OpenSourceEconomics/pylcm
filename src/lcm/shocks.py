@@ -1,5 +1,6 @@
 from copy import deepcopy
 
+import jax
 from jax import numpy as jnp
 from jax.scipy.stats.norm import cdf
 
@@ -13,9 +14,9 @@ def discretized_uniform_distribution(
     """Discretize the specified uniform distribution.
 
     Args:
-        n: Number of discretization points
-        x_min: Min value of the distribution.
-        x_max: Max value of the distribution.
+        n_points: Number of discretization points
+        start: Min value of the distribution.
+        stop: Max value of the distribution.
 
     Returns:
         Values at discretization points and transition matrix.
@@ -27,12 +28,12 @@ def discretized_uniform_distribution(
 
 
 def discretized_normal_distribution(
-    n: int, mu_eps: float, sigma_eps: float, n_std: int = 3
+    n_points: int, mu_eps: float, sigma_eps: float, n_std: int = 3
 ) -> tuple[Float1D, FloatND]:
     """Discretize the specified normal distribution.
 
     Args:
-        n: Number of discretization points
+        n_points: Number of discretization points
         mu_eps: Mean of the distribution.
         sigma_eps: Std. Dev. of the distribution.
         n_std: Distance from mean to the values of the lowest and highest
@@ -44,13 +45,13 @@ def discretized_normal_distribution(
     """
     x_min = mu_eps - n_std * sigma_eps
     x_max = mu_eps + n_std * sigma_eps
-    x, stepsize = jnp.linspace(start=x_min, stop=x_max, num=n, retstep=True)
-    P = jnp.zeros(n)
+    x, stepsize = jnp.linspace(start=x_min, stop=x_max, num=n_points, retstep=True)
+    P = jnp.zeros(n_points)
     P = P.at[1:].set(jnp.diff(cdf(x + 0.5 * stepsize, loc=mu_eps, scale=sigma_eps)))
     P = P.at[0].set(cdf(x_min + 0.5 * stepsize, loc=mu_eps, scale=sigma_eps))
     P = P.at[-1].set(1 - cdf(x_max - 0.5 * stepsize, loc=mu_eps, scale=sigma_eps))
 
-    return x, jnp.full((n, n), fill_value=P)
+    return x, jnp.full((n_points, n_points), fill_value=P)
 
 
 def tauchen(
@@ -61,7 +62,7 @@ def tauchen(
     X_t = \rho*X_(t-1) + \\eps_t, \\eps_t= N(0, sigma_eps)
 
     Args:
-        n: Number of discretization points
+        n_points: Number of discretization points
         rho: See AR1-process equation.
         mu_eps: See AR1-process equation.
         sigma_eps: See AR1-process equation.
@@ -113,34 +114,35 @@ def _fill_tauchen(
 
 
 def rouwenhorst(
-    rho: float, sigma_eps: float, n: int, mu_eps: float = 0.0, n_std: int = 2
+    rho: float, sigma_eps: float, n_points: int, mu_eps: float = 0.0
 ) -> tuple[Float1D, FloatND]:
     r"""Discretize the specified AR1 process with the 'Rouwenhorst'-method.
 
     X_t = \rho*X_(t-1) + \\eps_t, \\eps_t= N(mu_eps, sigma_eps)
 
+    The distance between the outermost points and the mean is always two times
+    the standard deviation.
+
     Args:
-        n: Number of discretization points
+        n_points: Number of discretization points
         rho: See AR1-process equation.
         mu_eps: See AR1-process equation.
         sigma_eps: See AR1-process equation.
-        n_std: Distance from mean to the values of the lowest and highest
-            discretized value.
 
     Returns:
         Values at discretization points and transition matrix.
 
     """
     q = (rho + 1) / 2
-    nu = jnp.sqrt((n - 1) / (1 - rho**2)) * sigma_eps
-    P = jnp.zeros((n, n))
+    nu = jnp.sqrt((n_points - 1) / (1 - rho**2)) * sigma_eps
+    P = jnp.zeros((n_points, n_points))
 
     P = P.at[0, 0].set(q)
     P = P.at[0, 1].set(1 - q)
     P = P.at[1, 0].set(1 - q)
     P = P.at[1, 1].set(q)
 
-    for i in range(2, n):
+    for i in range(2, n_points):
         P11 = jnp.zeros((i + 1, i + 1))
         P12 = jnp.zeros((i + 1, i + 1))
         P21 = jnp.zeros((i + 1, i + 1))
@@ -156,14 +158,40 @@ def rouwenhorst(
         )
         P = P.at[1:i, :].set(P[1:i, :] / 2)
 
-    return jnp.linspace(mu_eps / (1.0 - rho) - nu, mu_eps / (1.0 - rho) + nu, n), P.T
+    return jnp.linspace(
+        mu_eps / (1.0 - rho) - nu, mu_eps / (1.0 - rho) + nu, n_points
+    ), P.T
 
 
-SHOCK_FUNCTIONS = {
+SHOCK_DISCRETIZATION_FUNCTIONS = {
     "uniform": discretized_uniform_distribution,
     "normal": discretized_normal_distribution,
     "tauchen": tauchen,
     "rouwenhorst": rouwenhorst,
+}
+
+
+def uniform(params: ParamsDict, key: Float1D, prev_value: Float1D) -> Float1D:  # noqa: ARG001
+    return jax.random.uniform(minval=params["start"], maxval=params["stop"], key=key)
+
+
+def normal(params: ParamsDict, key: Float1D, prev_value: Float1D) -> Float1D:  # noqa: ARG001
+    return jax.random.normal(key=key) * params["sigma_eps"] + params["mu_eps"]
+
+
+def ar1_tauchen(params: ParamsDict, key: Float1D, prev_value: Float1D) -> Float1D:
+    return prev_value * params["rho"] + jax.random.normal(key=key) * params["sigma_eps"]
+
+
+def ar1_rouwenhorst(params: ParamsDict, key: Float1D, prev_value: Float1D) -> Float1D:
+    return prev_value * params["rho"] + jax.random.normal(key=key) * params["sigma_eps"]
+
+
+SHOCK_CALCULATION_FUNCTIONS = {
+    "uniform": uniform,
+    "normal": normal,
+    "tauchen": ar1_tauchen,
+    "rouwenhorst": ar1_rouwenhorst,
 }
 
 
@@ -172,8 +200,8 @@ def pre_compute_shock_probabilities(
 ) -> ParamsDict:
     """Pre-compute the discretized probabilities for shocks.
 
-    The parameters for the transition functions will be augmented with the pre-calculated
-    probability distributions of the given shock.
+    The parameters for the transition functions will be augmented with the
+    pre-calculated probability distributions of the given shock.
 
     Args:
         internal_regimes: The internal regimes containing the shocks.
@@ -186,20 +214,28 @@ def pre_compute_shock_probabilities(
 
     """
     new_params = deepcopy(params)
-    for regime_name, params in params.items():
+    for regime_name, regime_params in params.items():
         transition_info = internal_regimes[regime_name].transition_info
         need_precompute = transition_info.index[
             ~transition_info["type"].isin(["custom", "none"])
         ].tolist()
+
         for trans_name in need_precompute:
-            new_params[regime_name][trans_name]["pre_computed"] = SHOCK_FUNCTIONS[
-                transition_info.loc[trans_name, "type"]
-            ](**params[trans_name])[1]
+            n_points = (
+                internal_regimes[regime_name]
+                .gridspecs[trans_name.removeprefix("next_")]
+                .n_points
+            )
+            new_params[regime_name][trans_name]["pre_computed"] = (
+                SHOCK_DISCRETIZATION_FUNCTIONS[transition_info.loc[trans_name, "type"]](
+                    **(regime_params[trans_name] | {"n_points": n_points})
+                )[1]
+            )
     return new_params
 
 
 def fill_shock_grids(
-    new_internal_regimes: dict[str, InternalRegime], params: ParamsDict
+    internal_regimes: dict[str, InternalRegime], params: ParamsDict
 ) -> dict[str, InternalRegime]:
     """Fill the shock grids.
 
@@ -214,18 +250,19 @@ def fill_shock_grids(
         The original internal regimes, but with the filled shock grids.
 
     """
-    new_internal_regimes = deepcopy(new_internal_regimes)
+    new_internal_regimes = deepcopy(internal_regimes)
     for regime_name, regime in new_internal_regimes.items():
         transition_info = regime.transition_info
         need_precompute = transition_info.index[
             ~transition_info["type"].isin(["custom", "none"])
         ].tolist()
         for trans_name in need_precompute:
+            n_points = regime.gridspecs[trans_name.removeprefix("next_")].n_points
             param_copy = params[regime_name][trans_name].copy()
             param_copy.pop("pre_computed")
-            new_values = SHOCK_FUNCTIONS[transition_info.loc[trans_name, "type"]](
-                **param_copy
-            )[0]
+            new_values = SHOCK_DISCRETIZATION_FUNCTIONS[
+                transition_info.loc[trans_name, "type"]
+            ](**(param_copy | {"n_points": n_points}))[0]
             # This will be replaced once terminal regimes are implemented
             if (
                 trans_name.removeprefix("next_")

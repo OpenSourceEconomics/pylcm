@@ -130,7 +130,7 @@ class LinspaceGrid(ContinuousGrid):
         """Convert the grid to a Jax array."""
         return grid_helpers.linspace(self.start, self.stop, self.n_points)
 
-    def get_coordinate(self, value: ScalarFloat, params: ParamsDict) -> ScalarFloat:
+    def get_coordinate(self, value: ScalarFloat, params: ParamsDict) -> ScalarFloat:  # noqa: ARG002
         """Get the generalized coordinate of a value in the grid."""
         return grid_helpers.get_linspace_coordinate(
             value, self.start, self.stop, self.n_points
@@ -155,7 +155,7 @@ class LogspaceGrid(ContinuousGrid):
         """Convert the grid to a Jax array."""
         return grid_helpers.logspace(self.start, self.stop, self.n_points)
 
-    def get_coordinate(self, value: ScalarFloat, params: ParamsDict) -> ScalarFloat:
+    def get_coordinate(self, value: ScalarFloat, params: ParamsDict) -> ScalarFloat:  # noqa: ARG002
         """Get the generalized coordinate of a value in the grid."""
         return grid_helpers.get_logspace_coordinate(
             value, self.start, self.stop, self.n_points
@@ -181,7 +181,6 @@ class ShockGrid(ContinuousGrid):
     start: int | float = 0
     stop: int | float = 1
     type: Literal["uniform", "normal", "tauchen", "rouwenhorst"]
-    n_points: int
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
@@ -189,9 +188,8 @@ class ShockGrid(ContinuousGrid):
 
     def get_coordinate(self, value: ScalarFloat, params: ParamsDict) -> ScalarFloat:
         """Get the generalized coordinate of a value in the grid."""
-        params.pop("pre_computed")
         return grid_helpers.get_shock_coordinate(
-            value, n_points=self.n_points, params=params, type=self.type
+            value, n_points=self.n_points, params=params, distribution_type=self.type
         )
 
 

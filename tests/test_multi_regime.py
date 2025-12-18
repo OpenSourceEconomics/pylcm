@@ -87,7 +87,7 @@ def borrowing_constraint(
     consumption: ContinuousAction, wealth: ContinuousState, health: ContinuousState
 ) -> BoolND:
     """Cannot consume more than wealth."""
-    return consumption <= wealth + health
+    return consumption <= wealth
 
 
 @lcm.mark.stochastic
@@ -167,7 +167,7 @@ def create_base_params() -> ParamsDict:
             "next_health": {
                 "n_points": 5,
                 "rho": 0.9,
-                "sigma_eps": 0.5,
+                "sigma_eps": 100,
                 "mu_eps": 1,
                 "n_std": 2,
             },
@@ -182,7 +182,7 @@ def create_base_params() -> ParamsDict:
             "next_health": {
                 "n_points": 5,
                 "rho": 0.9,
-                "sigma_eps": 0.5,
+                "sigma_eps": 3,
                 "mu_eps": 1,
                 "n_std": 2,
             },

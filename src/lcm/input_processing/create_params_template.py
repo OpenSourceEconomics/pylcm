@@ -71,9 +71,8 @@ def _create_function_params(
     for name, func in regime.get_all_functions().items():
         arguments = set(inspect.signature(func).parameters)
         params = sorted(arguments.difference(variables))
-        if is_stochastic_transition(func):
-            if func._stochastic_info.type != "custom":
-                params = ["pre_computed"]
+        if is_stochastic_transition(func) and func._stochastic_info.type != "custom":
+            params = ["pre_computed"]
         function_params[name] = dict.fromkeys(params, jnp.nan)
 
     return function_params

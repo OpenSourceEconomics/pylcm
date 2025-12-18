@@ -17,10 +17,6 @@ class ModelInitializationError(PyLCMError):
     """Raised when there is an error in the model initialization."""
 
 
-class ShockInitializationError(PyLCMError):
-    """Raised when there is an error in the shock initialization."""
-
-
 class GridInitializationError(PyLCMError):
     """Raised when there is an error in the grid initialization."""
 

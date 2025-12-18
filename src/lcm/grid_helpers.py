@@ -116,21 +116,31 @@ def get_logspace_coordinate(
 
 
 def get_shock_coordinate(
-    value: ScalarFloat, n_points: int, params: ParamsDict, type: str
+    value: ScalarFloat, n_points: int, params: ParamsDict, distribution_type: str
 ) -> ScalarFloat:
     """Map a value into the input needed for jax.scipy.ndimage.map_coordinates."""
-    if type == "uniform":
-        return get_linspace_coordinate(value=value, **params)
-    if type == "normal":
+    if distribution_type == "uniform":
+        start = params["start"]
+        stop = params["stop"]
+        return get_linspace_coordinate(
+            value=value, start=start, stop=stop, n_points=n_points
+        )
+    if distribution_type == "normal":
         start = params["mu_eps"] - params["sigma_eps"] * params["n_std"]
         stop = params["mu_eps"] + params["sigma_eps"] * params["n_std"]
         return get_linspace_coordinate(
             value=value, start=start, stop=stop, n_points=n_points
         )
+
+    # Demean values for ar1 processes
     demeaned_sigma_eps = jnp.sqrt(params["sigma_eps"] ** 2 / (1 - params["rho"] ** 2))
     demeaned_mu_eps = params["mu_eps"] / (1 - params["rho"])
-    start = demeaned_mu_eps - demeaned_sigma_eps * params["n_std"]
-    stop = demeaned_mu_eps + demeaned_sigma_eps * params["n_std"]
+
+    # Rouwenhorst method always uses 2 times std
+    n_std = 2 if distribution_type == "rouwenhorst" else params["n_std"]
+
+    start = demeaned_mu_eps - demeaned_sigma_eps * n_std
+    stop = demeaned_mu_eps + demeaned_sigma_eps * n_std
     return get_linspace_coordinate(
         value=value, start=start, stop=stop, n_points=n_points
     )
