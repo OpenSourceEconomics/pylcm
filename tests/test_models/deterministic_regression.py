@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 # Categorical variables and constants
 # --------------------------------------------------------------------------------------
 @dataclass
-class LaborStatus:
+class LaborSupply:
     work: int = 0
     retire: int = 1
 
@@ -52,8 +52,8 @@ def labor_income(is_working: BoolND, wage: float | FloatND) -> FloatND:
     return jnp.where(is_working, wage, 0.0)
 
 
-def is_working(labor_choice: DiscreteAction) -> BoolND:
-    return labor_choice == LaborStatus.work
+def is_working(labor_supply: DiscreteAction) -> BoolND:
+    return labor_supply == LaborSupply.work
 
 
 def wage(age: int | IntND) -> float | FloatND:
@@ -101,7 +101,7 @@ def borrowing_constraint(
 working = Regime(
     name="working",
     actions={
-        "labor_choice": DiscreteGrid(LaborStatus),
+        "labor_supply": DiscreteGrid(LaborSupply),
         "consumption": LinspaceGrid(
             start=1,
             stop=400,

@@ -44,7 +44,7 @@ def test_model_solve_and_simulate_with_stochastic_model():
     assert "period" in res.columns
     assert "subject_id" in res.columns
     assert "partner" in res.columns
-    assert "labor_choice" in res.columns
+    assert "labor_supply" in res.columns
     assert len(res) > 0
 
     # Check that partner transition follows the transition matrix from get_params:
@@ -59,7 +59,7 @@ def test_model_solve_and_simulate_with_stochastic_model():
     common_subjects = period_0.index.intersection(period_1.index)
     if len(common_subjects) > 0:
         for subj in common_subjects:
-            is_working_p0 = period_0.loc[subj, "labor_choice"] == 0
+            is_working_p0 = period_0.loc[subj, "labor_supply"] == 0
             is_partnered_p0 = period_0.loc[subj, "partner"] == 1
 
             if is_working_p0 and is_partnered_p0:

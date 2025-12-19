@@ -52,7 +52,7 @@ class PartnerStatus:
 
 
 @dataclass
-class LaborStatus:
+class LaborSupply:
     work: int = 0
     retire: int = 1
 
@@ -93,8 +93,8 @@ def labor_income(is_working: BoolND, wage: FloatND) -> FloatND:
     return jnp.where(is_working, wage, 0.0)
 
 
-def is_working(labor_choice: DiscreteAction) -> BoolND:
-    return labor_choice == LaborStatus.work
+def is_working(labor_supply: DiscreteAction) -> BoolND:
+    return labor_supply == LaborSupply.work
 
 
 # --------------------------------------------------------------------------------------
@@ -111,7 +111,7 @@ def next_wealth(
 
 
 def next_regime_from_working(
-    labor_choice: DiscreteAction,
+    labor_supply: DiscreteAction,
     period: Period,
     n_periods: int,
 ) -> ScalarInt:
@@ -120,7 +120,7 @@ def next_regime_from_working(
         certain_death_transition,
         RegimeID.dead,
         jnp.where(
-            labor_choice == LaborStatus.retire,
+            labor_supply == LaborSupply.retire,
             RegimeID.retired,
             RegimeID.working,
         ),
@@ -160,12 +160,12 @@ def next_health(health: DiscreteState, partner: DiscreteState) -> FloatND:
 @lcm.mark.stochastic
 def next_partner(
     period: Period,
-    labor_choice: DiscreteAction,
+    labor_supply: DiscreteAction,
     partner: DiscreteState,
     partner_transition: FloatND,
 ) -> FloatND:
     """Stochastic transition using pre-calculated markov transition probabilities."""
-    return partner_transition[period, labor_choice, partner]
+    return partner_transition[period, labor_supply, partner]
 
 
 # --------------------------------------------------------------------------------------
@@ -184,7 +184,7 @@ def borrowing_constraint(
 working = Regime(
     name="working",
     actions={
-        "labor_choice": DiscreteGrid(LaborStatus),
+        "labor_supply": DiscreteGrid(LaborSupply),
         "consumption": LinspaceGrid(
             start=1,
             stop=100,
@@ -324,7 +324,7 @@ def get_params(
             "next_wealth": {"interest_rate": interest_rate, "labor_income": 0.0},
             "next_health": {},
             "next_partner": {
-                "labor_choice": LaborStatus.retire,
+                "labor_supply": LaborSupply.retire,
                 "partner_transition": partner_transition,
             },
             "next_regime": {"n_periods": n_periods},
