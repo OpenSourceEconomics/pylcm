@@ -101,9 +101,11 @@ def test_validate_flat_initial_states_valid_input(model: Model) -> None:
 
 def test_validate_flat_initial_states_missing_state(model: Model) -> None:
     """Missing state should raise InvalidInitialStatesError."""
-    flat = {"wealth": jnp.array([10.0, 50.0])}  # Missing "health"
+    flat = {"wealth": jnp.array([10.0, 50.0])}
 
-    with pytest.raises(InvalidInitialStatesError, match="Missing initial states"):
+    with pytest.raises(
+        InvalidInitialStatesError, match=r"Missing initial states: \['health'\].*"
+    ):
         validate_flat_initial_states(flat, model.internal_regimes)
 
 
