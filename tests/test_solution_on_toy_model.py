@@ -49,7 +49,7 @@ class HealthStatus:
 
 
 @dataclass
-class RegimeID:
+class RegimeId:
     alive: int = 0
     dead: int = 1
 
@@ -71,7 +71,7 @@ def next_wealth(
 
 def next_regime(period: int, n_periods: int) -> ScalarInt:
     death_condition = period >= n_periods - 2  # is dead in last period
-    return jnp.where(death_condition, RegimeID.dead, RegimeID.alive)
+    return jnp.where(death_condition, RegimeId.dead, RegimeId.alive)
 
 
 def borrowing_constraint(
@@ -121,9 +121,9 @@ alive_stochastic.transitions["next_health"] = next_health
 alive_stochastic.states["health"] = DiscreteGrid(HealthStatus)
 
 model_deterministic = Model(
-    [alive_deterministic, dead], regime_id_cls=RegimeID, n_periods=2
+    [alive_deterministic, dead], regime_id_cls=RegimeId, n_periods=2
 )
-model_stochastic = Model([alive_stochastic, dead], regime_id_cls=RegimeID, n_periods=2)
+model_stochastic = Model([alive_stochastic, dead], regime_id_cls=RegimeId, n_periods=2)
 
 
 # ======================================================================================
@@ -382,7 +382,7 @@ def test_deterministic_solve(beta, n_wealth_points):
             alive_deterministic.replace(states=new_states),
             dead.replace(active=[n_periods - 1]),
         ],
-        regime_id_cls=RegimeID,
+        regime_id_cls=RegimeId,
         n_periods=n_periods,
     )
 
@@ -426,7 +426,7 @@ def test_deterministic_simulate(beta, n_wealth_points):
             dead.replace(active=[n_periods - 1]),
         ],
         n_periods=n_periods,
-        regime_id_cls=RegimeID,
+        regime_id_cls=RegimeId,
     )
 
     # Simulate model using LCM
@@ -473,7 +473,7 @@ def test_stochastic_solve(beta, n_wealth_points, health_transition):
             alive_stochastic.replace(states=new_states),
             dead.replace(active=[n_periods - 1]),
         ],
-        regime_id_cls=RegimeID,
+        regime_id_cls=RegimeId,
         n_periods=n_periods,
     )
 
@@ -531,7 +531,7 @@ def test_stochastic_simulate(beta, n_wealth_points, health_transition):
             dead.replace(active=[n_periods - 1]),
         ],
         n_periods=n_periods,
-        regime_id_cls=RegimeID,
+        regime_id_cls=RegimeId,
     )
 
     # Simulate model using LCM

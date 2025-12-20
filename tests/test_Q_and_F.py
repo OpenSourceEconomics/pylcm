@@ -16,7 +16,7 @@ from lcm.Q_and_F import (
 )
 from tests.test_models.deterministic_regression import (
     LaborStatus,
-    RegimeID,
+    RegimeId,
     dead,
     get_params,
     utility,
@@ -39,7 +39,7 @@ def test_get_Q_and_F_function():
     internal_regimes = process_regimes(
         [working, dead],
         n_periods=4,
-        regime_id_cls=RegimeID,
+        regime_id_cls=RegimeId,
         enable_jit=True,
     )
 

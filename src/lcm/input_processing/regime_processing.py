@@ -94,7 +94,7 @@ def process_regimes(
     variable_info = {}
     state_space_infos = {}
     state_action_spaces = {}
-    active_periods = {}
+    regimes_to_active_periods = {}
 
     for regime in regimes:
         grids[regime.name] = get_grids(regime)
@@ -102,7 +102,7 @@ def process_regimes(
         variable_info[regime.name] = get_variable_info(regime)
         state_space_infos[regime.name] = build_state_space_info(regime)
         state_action_spaces[regime.name] = build_state_action_space(regime)
-        active_periods[regime.name] = get_active_periods(regime, n_periods)
+        regimes_to_active_periods[regime.name] = get_active_periods(regime, n_periods)
 
     # ----------------------------------------------------------------------------------
     # Stage 2: Initialize regime components that depend on other regimes
@@ -126,14 +126,14 @@ def process_regimes(
 
         Q_and_F_functions = build_Q_and_F_functions(
             regime=regime,
+            regimes_to_active_periods=regimes_to_active_periods,
             internal_functions=internal_functions,
             state_space_infos=state_space_infos,
             grids=grids,
-            active_periods=active_periods,
             n_periods=n_periods,
         )
         max_Q_over_a_functions = build_max_Q_over_a_functions(
-            regime=regime, Q_and_F_function=Q_and_F_functions, enable_jit=enable_jit
+            regime=regime, Q_and_F_functions=Q_and_F_functions, enable_jit=enable_jit
         )
         argmax_and_max_Q_over_a_functions = build_argmax_and_max_Q_over_a_functions(
             regime=regime, Q_and_F_functions=Q_and_F_functions, enable_jit=enable_jit
@@ -156,8 +156,7 @@ def process_regimes(
             functions=internal_functions.functions,
             utility=internal_functions.utility,
             constraints=internal_functions.constraints,
-            active=active_periods[regime.name],
-            active_periods=active_periods,
+            active_periods=regimes_to_active_periods[regime.name],
             regime_transition_probs=internal_functions.regime_transition_probs,
             internal_functions=internal_functions,
             transitions=internal_functions.transitions,

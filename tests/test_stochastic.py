@@ -10,7 +10,7 @@ from numpy.testing import assert_array_almost_equal
 import lcm
 from lcm import Model
 from tests.test_models.stochastic import (
-    RegimeID,
+    RegimeId,
     dead,
     get_model,
     get_params,
@@ -141,13 +141,13 @@ def models_and_params() -> tuple[Model, Model, dict[str, Any]]:
     model_deterministic = Model(
         [working_deterministic, retired_deterministic, dead],
         n_periods=4,
-        regime_id_cls=RegimeID,
+        regime_id_cls=RegimeId,
     )
 
     model_stochastic = Model(
         [working_stochastic, retired_stochastic, dead],
         n_periods=4,
-        regime_id_cls=RegimeID,
+        regime_id_cls=RegimeId,
     )
 
     return model_deterministic, model_stochastic, get_params(n_periods=4)

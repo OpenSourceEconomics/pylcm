@@ -199,12 +199,12 @@ def test_get_grids(regime_mock):
 
 
 def test_process_regimes():
-    from tests.test_models.deterministic_regimes import RegimeID, dead, working
+    from tests.test_models.deterministic_regimes import RegimeId, dead, working
 
     internal_regimes = process_regimes(
         [working, dead],
         n_periods=4,
-        regime_id_cls=RegimeID,
+        regime_id_cls=RegimeId,
         enable_jit=True,
     )
     internal_working_regime = internal_regimes[working.name]

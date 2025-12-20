@@ -36,7 +36,7 @@ class WorkingStatus:
 
 
 @dataclass
-class RegimeID:
+class RegimeId:
     working: int = 0
     retirement: int = 1
 
@@ -98,7 +98,7 @@ def next_health(
 
 def next_regime(period: int, n_periods: int) -> ScalarInt:
     certain_retirement = period >= n_periods - 2
-    return jnp.where(certain_retirement, RegimeID.retirement, RegimeID.working)
+    return jnp.where(certain_retirement, RegimeId.retirement, RegimeId.working)
 
 
 # --------------------------------------------------------------------------------------
@@ -180,7 +180,7 @@ retired = Regime(
 
 
 model = Model(
-    [working, retired], n_periods=(RETIREMENT_AGE - 18) + 1, regime_id_cls=RegimeID
+    [working, retired], n_periods=(RETIREMENT_AGE - 18) + 1, regime_id_cls=RegimeId
 )
 
 params = {

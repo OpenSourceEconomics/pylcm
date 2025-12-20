@@ -35,9 +35,9 @@ if TYPE_CHECKING:
 
 def get_Q_and_F(
     regime: Regime,
-    active_periods: dict[str, list[int]],
+    regimes_to_active_periods: dict[RegimeName, list[int]],
     internal_functions: InternalFunctions,
-    next_state_space_infos: dict[str, StateSpaceInfo],
+    next_state_space_infos: dict[RegimeName, StateSpaceInfo],
     grids: dict[RegimeName, Any],
     period: int,
 ) -> QAndFFunction:
@@ -73,7 +73,7 @@ def get_Q_and_F(
     active_target_regimes = [
         regime_name
         for regime_name in target_regimes
-        if period + 1 in active_periods[regime_name]
+        if period + 1 in regimes_to_active_periods[regime_name]
     ]
 
     for target_regime in active_target_regimes:
@@ -155,7 +155,7 @@ def get_Q_and_F(
         active_target_regimes = [
             regime_name
             for regime_name in target_regimes
-            if period + 1 in active_periods[regime_name]
+            if period + 1 in regimes_to_active_periods[regime_name]
         ]
 
         for regime_name in active_target_regimes:

@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def simulate_inputs():
-    from tests.test_models.deterministic_regression import RegimeID, dead, working
+    from tests.test_models.deterministic_regression import RegimeId, dead, working
 
     updated_working = working.replace(
         actions={
@@ -36,13 +36,13 @@ def simulate_inputs():
     internal_regimes = process_regimes(
         [updated_working, dead],
         n_periods=2,
-        regime_id_cls=RegimeID,
+        regime_id_cls=RegimeId,
         enable_jit=True,
     )
 
     return {
         "internal_regimes": internal_regimes,
-        "regime_id_cls": RegimeID,
+        "regime_id_cls": RegimeId,
     }
 
 
@@ -85,7 +85,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
 @pytest.fixture
 def iskhakov_et_al_2017_stripped_down_model_solution():
     from tests.test_models.deterministic_regression import (
-        RegimeID,
+        RegimeId,
         dead,
         get_params,
         working,
@@ -104,7 +104,7 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
         # Since wage function is removed, wage becomes a parameter for labor_income
         params["working"]["labor_income"] = {"wage": 1.5}
         model = Model(
-            [updated_working, dead], n_periods=n_periods, regime_id_cls=RegimeID
+            [updated_working, dead], n_periods=n_periods, regime_id_cls=RegimeId
         )
         V_arr_dict = model.solve(params=params)
         return V_arr_dict, params, model

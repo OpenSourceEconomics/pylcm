@@ -111,7 +111,7 @@ def simulate(
         active_regimes = {
             regime_name: regime
             for regime_name, regime in internal_regimes.items()
-            if period in regime.active
+            if period in regime.active_periods
         }
 
         for regime_name, internal_regime in active_regimes.items():

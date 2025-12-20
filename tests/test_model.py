@@ -179,7 +179,7 @@ def test_model_requires_terminal_regime(binary_category_class):
     """Model must have at least one terminal regime."""
 
     @dataclass
-    class RegimeID:
+    class RegimeId:
         test: int = 0
 
     regime = Regime(
@@ -193,14 +193,14 @@ def test_model_requires_terminal_regime(binary_category_class):
         },
     )
     with pytest.raises(ModelInitializationError, match="at least one terminal regime"):
-        Model(regimes=[regime], n_periods=2, regime_id_cls=RegimeID)
+        Model(regimes=[regime], n_periods=2, regime_id_cls=RegimeId)
 
 
 def test_model_requires_non_terminal_regime(binary_category_class):
     """Model must have at least one non-terminal regime."""
 
     @dataclass
-    class RegimeID:
+    class RegimeId:
         dead: int = 0
 
     dead = Regime(
@@ -210,14 +210,14 @@ def test_model_requires_non_terminal_regime(binary_category_class):
         terminal=True,
     )
     with pytest.raises(ModelInitializationError, match="at least one non-terminal"):
-        Model(regimes=[dead], n_periods=2, regime_id_cls=RegimeID)
+        Model(regimes=[dead], n_periods=2, regime_id_cls=RegimeId)
 
 
 def test_multi_regime_without_next_regime_raises(binary_category_class):
     """Multi-regime models must have next_regime in each regime."""
 
     @dataclass
-    class RegimeID:
+    class RegimeId:
         regime1: int = 0
         regime2: int = 1
 
@@ -242,7 +242,7 @@ def test_multi_regime_without_next_regime_raises(binary_category_class):
         },
     )
     with pytest.raises(ModelInitializationError, match="next_regime"):
-        Model(regimes=[regime1, regime2], n_periods=2, regime_id_cls=RegimeID)
+        Model(regimes=[regime1, regime2], n_periods=2, regime_id_cls=RegimeId)
 
 
 def test_model_requires_regime_id_cls():
@@ -256,7 +256,7 @@ def test_multi_regime_with_invalid_regime_id_cls_raises(binary_category_class):
     """Multi-regime models must have valid regime_id_cls."""
 
     @dataclass
-    class RegimeID:
+    class RegimeId:
         regime1: int = 0
         wrong_name: int = 1  # Should be "regime2"
 
@@ -281,58 +281,58 @@ def test_multi_regime_with_invalid_regime_id_cls_raises(binary_category_class):
         },
     )
     with pytest.raises(ModelInitializationError, match="regime_id_cls"):
-        Model(regimes=[regime1, regime2], n_periods=2, regime_id_cls=RegimeID)
+        Model(regimes=[regime1, regime2], n_periods=2, regime_id_cls=RegimeId)
 
 
 def test_validate_regime_id_cls_valid():
-    """Valid RegimeID class should return empty error list."""
+    """Valid RegimeId class should return empty error list."""
 
     @dataclass
-    class RegimeID:
+    class RegimeId:
         work: int = 0
         retirement: int = 1
 
-    errors = _validate_regime_id_cls(RegimeID, ["work", "retirement"])
+    errors = _validate_regime_id_cls(RegimeId, ["work", "retirement"])
     assert errors == []
 
 
 def test_validate_regime_id_cls_missing_regime():
-    """RegimeID missing a regime attribute should return error."""
+    """RegimeId missing a regime attribute should return error."""
 
     @dataclass
-    class RegimeID:
+    class RegimeId:
         work: int = 0
 
-    errors = _validate_regime_id_cls(RegimeID, ["work", "retirement"])
+    errors = _validate_regime_id_cls(RegimeId, ["work", "retirement"])
     assert len(errors) == 1
     assert "missing attributes" in errors[0]
     assert "retirement" in errors[0]
 
 
 def test_validate_regime_id_cls_extra_regime():
-    """RegimeID with extra attribute should return error."""
+    """RegimeId with extra attribute should return error."""
 
     @dataclass
-    class RegimeID:
+    class RegimeId:
         work: int = 0
         retirement: int = 1
         unknown: int = 2
 
-    errors = _validate_regime_id_cls(RegimeID, ["work", "retirement"])
+    errors = _validate_regime_id_cls(RegimeId, ["work", "retirement"])
     assert len(errors) == 1
     assert "extra attributes" in errors[0]
     assert "unknown" in errors[0]
 
 
 def test_validate_regime_id_cls_non_consecutive():
-    """RegimeID with non-consecutive values should return error."""
+    """RegimeId with non-consecutive values should return error."""
 
     @dataclass
-    class RegimeID:
+    class RegimeId:
         work: int = 0
         retirement: int = 2  # Should be 1
 
-    errors = _validate_regime_id_cls(RegimeID, ["work", "retirement"])
+    errors = _validate_regime_id_cls(RegimeId, ["work", "retirement"])
     assert len(errors) == 1
     assert "consecutive integers" in errors[0]
 
@@ -340,11 +340,11 @@ def test_validate_regime_id_cls_non_consecutive():
 def test_validate_regime_id_cls_not_dataclass():
     """Non-dataclass should return error."""
 
-    class RegimeID:
+    class RegimeId:
         work = 0
         retirement = 1
 
-    errors = _validate_regime_id_cls(RegimeID, ["work", "retirement"])
+    errors = _validate_regime_id_cls(RegimeId, ["work", "retirement"])
     assert len(errors) == 1
     assert "must be a dataclass" in errors[0]
 
@@ -353,7 +353,7 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
     """Model can have multiple terminal regimes."""
 
     @dataclass
-    class RegimeID:
+    class RegimeId:
         alive: int = 0
         dead1: int = 1
         dead2: int = 2
@@ -380,5 +380,5 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
         terminal=True,
     )
     # Should not raise - multiple terminal regimes are allowed
-    model = Model(regimes=[alive, dead1, dead2], n_periods=2, regime_id_cls=RegimeID)
+    model = Model(regimes=[alive, dead1, dead2], n_periods=2, regime_id_cls=RegimeId)
     assert model.internal_regimes is not None

@@ -8,7 +8,7 @@ from pybaum import tree_equal
 from lcm.input_processing import process_regimes
 from lcm.interfaces import InternalFunctions, PhaseVariantContainer, Target
 from lcm.next_state import _create_stochastic_next_func, get_next_state_function
-from tests.test_models.deterministic_regression import RegimeID, dead, working
+from tests.test_models.deterministic_regression import RegimeId, dead, working
 
 if TYPE_CHECKING:
     from lcm.typing import ContinuousState, FloatND, InternalUserFunction, ParamsDict
@@ -18,7 +18,7 @@ def test_get_next_state_function_with_solve_target():
     internal_regimes = process_regimes(
         regimes=[working, dead],
         n_periods=4,
-        regime_id_cls=RegimeID,
+        regime_id_cls=RegimeId,
         enable_jit=True,
     )
 

@@ -66,10 +66,10 @@ def build_state_action_space(
 
 def build_Q_and_F_functions(
     regime: Regime,
+    regimes_to_active_periods: dict[RegimeName, list[int]],
     internal_functions: InternalFunctions,
     state_space_infos: dict[RegimeName, StateSpaceInfo],
     grids: GridsDict,
-    active_periods: dict[str, list[int]],
     n_periods: int,
 ) -> dict[int, QAndFFunction]:
     Q_and_F_functions = {}
@@ -83,10 +83,10 @@ def build_Q_and_F_functions(
         else:
             Q_and_F = get_Q_and_F(
                 regime=regime,
+                regimes_to_active_periods=regimes_to_active_periods,
                 internal_functions=internal_functions,
                 next_state_space_infos=state_space_infos,
                 grids=grids,
-                active_periods=active_periods,
                 period=period,
             )
         Q_and_F_functions[period] = Q_and_F
@@ -96,13 +96,13 @@ def build_Q_and_F_functions(
 
 def build_max_Q_over_a_functions(
     regime: Regime,
-    Q_and_F_function: dict[int, QAndFFunction],
+    Q_and_F_functions: dict[int, QAndFFunction],
     *,
     enable_jit: bool,
 ) -> dict[int, MaxQOverAFunction]:
     state_action_space = build_state_action_space(regime)
     max_Q_over_a_functions = {}
-    for period, Q_and_F in Q_and_F_function.items():
+    for period, Q_and_F in Q_and_F_functions.items():
         max_Q_over_a_functions[period] = _build_max_Q_over_a_function(
             state_action_space=state_action_space,
             Q_and_F=Q_and_F,

@@ -124,7 +124,7 @@ class ProductivityShock:
 
 
 @dataclass
-class RegimeID:
+class RegimeId:
     alive: int = 0
     dead: int = 1
 
@@ -323,7 +323,7 @@ def next_regime_from_alive(
     health: DiscreteState,
     regime_transition_from_alive: FloatND,
 ) -> FloatND:
-    """Return probability array [P(alive), P(dead)] indexed by RegimeID."""
+    """Return probability array [P(alive), P(dead)] indexed by RegimeId."""
     survival_prob = regime_transition_from_alive[period, education, health]
     return jnp.array([survival_prob, 1 - survival_prob])
 
@@ -409,7 +409,7 @@ DEAD_REGIME = Regime(
 )
 
 MAHLER_YUM_MODEL = Model(
-    [ALIVE_REGIME, DEAD_REGIME], n_periods=n, regime_id_cls=RegimeID
+    [ALIVE_REGIME, DEAD_REGIME], n_periods=n, regime_id_cls=RegimeId
 )
 
 

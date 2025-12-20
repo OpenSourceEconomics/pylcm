@@ -37,7 +37,7 @@ class Model:
         description: Description of the model.
         n_periods: Number of periods in the model.
         enable_jit: Whether to jit the functions of the internal regime.
-        regime_id_cls: The RegimeID class mapping regime names to indices.
+        regime_id_cls: The RegimeId class mapping regime names to indices.
         regimes: The user provided regimes that contain the information
             about the model's regimes.
         internal_regimes: The internal regime instances created by LCM, which allow
@@ -263,14 +263,14 @@ def _validate_regime_id_cls(
     regime_id_cls: type,
     regime_names: list[str],
 ) -> list[str]:
-    """Validate RegimeID class against regime names.
+    """Validate RegimeId class against regime names.
 
     This validates that:
     - The class passes standard category class validation (dataclass, consecutive ints)
     - Attribute names exactly match the regime names
 
     Args:
-        regime_id_cls: The user-provided RegimeID dataclass.
+        regime_id_cls: The user-provided RegimeId dataclass.
         regime_names: List of regime names from the model.
 
     Returns:

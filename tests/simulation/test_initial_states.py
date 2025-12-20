@@ -29,7 +29,7 @@ def model() -> Model:
         sick: int = 1
 
     @dataclass
-    class RegimeID:
+    class RegimeId:
         active: int = 0
         terminal: int = 1
 
@@ -39,8 +39,8 @@ def model() -> Model:
     def next_regime(period: int) -> ScalarInt:
         return jnp.where(
             period + 1 >= 2,
-            RegimeID.terminal,
-            RegimeID.active,
+            RegimeId.terminal,
+            RegimeId.active,
         )
 
     alive = Regime(
@@ -70,7 +70,7 @@ def model() -> Model:
     return Model(
         [alive, dead],
         n_periods=2,
-        regime_id_cls=RegimeID,
+        regime_id_cls=RegimeId,
     )
 
 

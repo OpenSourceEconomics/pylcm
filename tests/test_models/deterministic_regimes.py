@@ -29,7 +29,7 @@ class LaborStatus:
 
 
 @dataclass
-class RegimeID:
+class RegimeId:
     working: int = 0
     retired: int = 1
     dead: int = 2
@@ -80,11 +80,11 @@ def next_regime_from_working(
     certain_death_transition = period == n_periods - 2  # dead in last period
     return jnp.where(
         certain_death_transition,
-        RegimeID.dead,
+        RegimeId.dead,
         jnp.where(
             labor_choice == LaborStatus.retire,
-            RegimeID.retired,
-            RegimeID.working,
+            RegimeId.retired,
+            RegimeId.working,
         ),
     )
 
@@ -93,8 +93,8 @@ def next_regime_from_retired(period: Period, n_periods: int) -> ScalarInt:
     certain_death_transition = period == n_periods - 2  # dead in last period
     return jnp.where(
         certain_death_transition,
-        RegimeID.dead,
-        RegimeID.retired,
+        RegimeId.dead,
+        RegimeId.retired,
     )
 
 
@@ -175,7 +175,7 @@ def get_model(n_periods: int) -> Model:
     return Model(
         [working, retired, dead],
         n_periods=n_periods,
-        regime_id_cls=RegimeID,
+        regime_id_cls=RegimeId,
     )
 
 

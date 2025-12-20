@@ -176,8 +176,7 @@ class InternalRegime:
     constraints: dict[str, InternalUserFunction]
     transitions: TransitionFunctionsDict
     functions: dict[str, InternalUserFunction]
-    active: list[int]
-    active_periods: dict[str, list[int]]
+    active_periods: list[int]
     regime_transition_probs: (
         PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]
         | None

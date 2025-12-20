@@ -29,7 +29,7 @@ def n_periods() -> int:
 @pytest.fixture
 def regimes_and_id_cls() -> tuple[dict[str, Regime], type]:
     @dataclass
-    class RegimeID:
+    class RegimeId:
         non_terminal: int = 0
         terminal: int = 1
 
@@ -52,7 +52,7 @@ def regimes_and_id_cls() -> tuple[dict[str, Regime], type]:
     def next_regime(period: int, n_periods: int) -> ScalarInt:
         transition_into_terminal = period == (n_periods - 2)
         return jnp.where(
-            transition_into_terminal, RegimeID.terminal, RegimeID.non_terminal
+            transition_into_terminal, RegimeId.terminal, RegimeId.non_terminal
         )
 
     def borrowing_constraint(
@@ -101,7 +101,7 @@ def regimes_and_id_cls() -> tuple[dict[str, Regime], type]:
         utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
     )
 
-    return {"non_terminal": non_terminal, "terminal": terminal}, RegimeID
+    return {"non_terminal": non_terminal, "terminal": terminal}, RegimeId
 
 
 @pytest.fixture
