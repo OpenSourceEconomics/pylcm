@@ -265,13 +265,19 @@ def value_first_period_stochastic(wealth, health, params):
     _values = np.array(
         [
             params["discount_factor"] * health_transition[0, 1] * np.log(2),
-            np.maximum(0, params["discount_factor"] * health_transition[0, 1] * np.log(2) - 0.5),
+            np.maximum(
+                0, params["discount_factor"] * health_transition[0, 1] * np.log(2) - 0.5
+            ),
         ],
     )
     value_health_0 = _values[index]
 
-    new_discount_factor = params["discount_factor"] * params["next_health"]["health_transition"][1, 1]
-    value_health_1 = value_first_period_deterministic(wealth, params={"discount_factor": new_discount_factor})
+    new_discount_factor = (
+        params["discount_factor"] * params["next_health"]["health_transition"][1, 1]
+    )
+    value_health_1 = value_first_period_deterministic(
+        wealth, params={"discount_factor": new_discount_factor}
+    )
 
     # Combined
     return np.where(health, value_health_1, value_health_0)
@@ -288,14 +294,20 @@ def policy_first_period_stochastic(wealth, health, params):
             [
                 0,
                 np.argmax(
-                    (0, params["discount_factor"] * health_transition[0, 1] * np.log(2) - 0.5),
+                    (
+                        0,
+                        params["discount_factor"] * health_transition[0, 1] * np.log(2)
+                        - 0.5,
+                    ),
                 ),
             ],
         ],
     )
     policy_health_0 = _policies[index]
 
-    new_discount_factor = params["discount_factor"] * params["next_health"]["health_transition"][1, 1]
+    new_discount_factor = (
+        params["discount_factor"] * params["next_health"]["health_transition"][1, 1]
+    )
     _policy_health_1 = policy_first_period_deterministic(
         wealth,
         params={"discount_factor": new_discount_factor},
