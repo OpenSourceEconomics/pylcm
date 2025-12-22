@@ -438,10 +438,16 @@ def test_deterministic_simulate(beta, n_wealth_points):
         "utility": {"health": 1},
         "next_regime": {"n_periods": model.n_periods},
     }
-    got: dict[str, pd.DataFrame] = model.solve_and_simulate(
+    result = model.solve_and_simulate(
         params={"alive": params_alive, "dead": {}},
         initial_states={"wealth": jnp.array([0.25, 0.75, 1.25, 1.75])},
         initial_regimes=["alive"] * 4,
+    )
+    got = (
+        result.to_dataframe()
+        .query('regime == "alive"')
+        .drop(columns="regime")
+        .reset_index(drop=True)
     )
 
     # Compute analytical simulation
@@ -450,8 +456,10 @@ def test_deterministic_simulate(beta, n_wealth_points):
         initial_wealth=np.array([0.25, 0.75, 1.25, 1.75]),
         params=params_alive,
     )
+    # Sort both DataFrames the same way for comparison
+    expected = expected.sort_values(["subject_id", "period"]).reset_index(drop=True)
 
-    assert_frame_equal(got["alive"], expected, check_like=True, check_dtype=False)
+    assert_frame_equal(got, expected, check_like=True, check_dtype=False)
 
 
 HEALTH_TRANSITION = [
@@ -547,11 +555,17 @@ def test_stochastic_simulate(beta, n_wealth_points, health_transition):
         "wealth": jnp.array([0.25, 0.75, 1.25, 1.75, 2.0]),
         "health": jnp.array([0, 1, 0, 1, 1]),
     }
-    _got: pd.DataFrame = model.solve_and_simulate(
+    result = model.solve_and_simulate(
         params={"alive": params_alive, "dead": {}},
         initial_states=initial_states,
         initial_regimes=["alive"] * 5,
-    )["alive"]
+    )
+    _got = (
+        result.to_dataframe()
+        .query('regime == "alive"')
+        .drop(columns="regime")
+        .reset_index(drop=True)
+    )
 
     # Compute analytical simulation
     # ==================================================================================
@@ -567,6 +581,15 @@ def test_stochastic_simulate(beta, n_wealth_points, health_transition):
     )
 
     # Drop all rows that contain wealth levels at the boundary.
-    got = _got.query("wealth != 2")
-    expected = _expected.query("wealth != 2")
+    # Sort both DataFrames the same way for comparison
+    got = (
+        _got.query("wealth != 2")
+        .sort_values(["subject_id", "period"])
+        .reset_index(drop=True)
+    )
+    expected = (
+        _expected.query("wealth != 2")
+        .sort_values(["subject_id", "period"])
+        .reset_index(drop=True)
+    )
     assert_frame_equal(got, expected, check_like=True, check_dtype=False)

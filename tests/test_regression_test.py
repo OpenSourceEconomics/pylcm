@@ -40,16 +40,29 @@ def test_regression_test():
     )
     got_solve: dict[int, dict[str, FloatND]] = model.solve(params)
 
-    got_simulate = model.solve_and_simulate(
+    result = model.solve_and_simulate(
         params=params,
         initial_states={"wealth": jnp.array([5.0, 20, 40, 70])},
         initial_regimes=["working"] * 4,
     )
-    # Compare
+    got_simulate_df = result.to_dataframe()
+
+    # Compare solution
     # ==================================================================================
     for period in range(n_periods - 1):
         for regime in got_solve[period]:
             aaae(expected_solve[period][regime], got_solve[period][regime], decimal=5)
 
+    # Compare simulation (convert flat DataFrame to dict by regime for comparison)
+    # ==================================================================================
     for regime in expected_simulate:
-        assert_frame_equal(expected_simulate[regime], got_simulate[regime])
+        expected_cols = expected_simulate[regime].columns.tolist()
+        got_regime_df = (
+            got_simulate_df.query(f'regime == "{regime}"')
+            .drop(columns="regime")[expected_cols]  # Only select expected columns
+            .sort_values(["period", "subject_id"])
+            .reset_index(drop=True)
+        )
+        assert_frame_equal(
+            expected_simulate[regime], got_regime_df, check_like=True, check_dtype=False
+        )
