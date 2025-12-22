@@ -49,3 +49,31 @@ def test_create_function_params():
     )
     got = _create_function_params(regime)  # type: ignore[arg-type]
     assert got == {"utility": {"c": jnp.nan}}
+
+
+def test_n_periods_and_last_period_are_special_variables(binary_category_class):
+    """n_periods and last_period should be excluded from params like period is."""
+    regime = RegimeMock(
+        actions={
+            "a": DiscreteGrid(binary_category_class),
+        },
+        states={
+            "b": DiscreteGrid(binary_category_class),
+        },
+        # n_periods and last_period in signature should be treated as special variables
+        utility=lambda a, b, n_periods, last_period: None,  # noqa: ARG005
+        transitions={
+            "next_b": lambda b: b,
+        },
+    )
+    got = create_params_template(
+        regime,  # type: ignore[arg-type]
+        grids={regime.name: get_grids(regime)},  # type: ignore[arg-type]
+        n_periods=3,
+    )
+    # n_periods and last_period should NOT appear in params template
+    assert got == {
+        "beta": jnp.nan,
+        "utility": {},  # Empty because n_periods and last_period are special vars
+        "next_b": {},
+    }
