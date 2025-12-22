@@ -156,13 +156,13 @@ def get_model(n_periods: int) -> Model:
 
 def get_params(
     n_periods: int,
-    beta: float = 0.95,
+    discount_factor: float = 0.95,
     disutility_of_work: float = 0.5,
     interest_rate: float = 0.05,
 ) -> dict[str, Any]:
     return {
         "working": {
-            "beta": beta,
+            "discount_factor": discount_factor,
             "utility": {"disutility_of_work": disutility_of_work},
             "next_wealth": {"interest_rate": interest_rate},
             "next_regime": {"n_periods": n_periods},

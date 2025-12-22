@@ -14,7 +14,7 @@ def create_params_template(
     regime: Regime,
     grids: GridsDict,  # noqa: ARG001
     n_periods: int,  # noqa: ARG001
-    default_params: dict[str, float] = {"beta": jnp.nan},  # noqa: B006
+    default_params: dict[str, float] = {"discount_factor": jnp.nan},  # noqa: B006
 ) -> ParamsDict:
     """Create parameter template from a regime specification.
 
@@ -23,9 +23,9 @@ def create_params_template(
         grids: Dictionary containing the state grids for each regime.
         n_periods: Number of periods of the model.
         default_params: A dictionary of default parameters. Default is None. If None,
-            the default {"beta": np.nan} is used. For other lifetime reward objectives,
-            additional parameters may be required, for example {"beta": np.nan, "delta":
-            np.nan} for beta-delta discounting.
+            the default {"discount_factor": np.nan} is used. For other lifetime reward
+            objectives, additional parameters may be required, for example
+            {"discount_factor": np.nan, "delta": np.nan} for beta-delta discounting.
 
     Returns:
         The regime parameter template.

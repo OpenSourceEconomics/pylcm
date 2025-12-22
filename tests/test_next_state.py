@@ -35,7 +35,7 @@ def test_get_next_state_function_with_solve_target():
     )
 
     params = {
-        "beta": 1.0,
+        "discount_factor": 1.0,
         "utility": {"disutility_of_work": 1.0},
         "next_wealth": {
             "interest_rate": 0.05,
