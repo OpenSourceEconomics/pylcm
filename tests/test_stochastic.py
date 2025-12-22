@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 def test_model_solve_and_simulate_with_stochastic_model():
     model = get_model(n_periods=4)
-    params = get_params(n_periods=4)
+    params = get_params()
 
     res: pd.DataFrame = model.solve_and_simulate(
         params=params,
@@ -77,7 +77,7 @@ def test_model_solve_and_simulate_with_stochastic_model():
 
 def test_model_solve_with_stochastic_model():
     model = get_model(n_periods=4)
-    model.solve(params=get_params(n_periods=4))
+    model.solve(params=get_params())
 
 
 # ======================================================================================
@@ -148,7 +148,7 @@ def models_and_params() -> tuple[Model, Model, dict[str, Any]]:
         regime_id_cls=RegimeId,
     )
 
-    return model_deterministic, model_stochastic, get_params(n_periods=n_periods)
+    return model_deterministic, model_stochastic, get_params()
 
 
 def test_compare_deterministic_and_stochastic_results_value_function(

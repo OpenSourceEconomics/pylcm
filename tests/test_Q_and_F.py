@@ -43,13 +43,14 @@ def test_get_Q_and_F_function():
         enable_jit=True,
     )
 
-    params = get_params(n_periods=4)
+    params = get_params()
 
     # Test terminal period Q_and_F where Q = U (no continuation value)
     Q_and_F = get_Q_and_F_terminal(
         regime=working,
         internal_functions=internal_regimes[working.name].internal_functions,
         period=3,
+        n_periods=4,
     )
 
     consumption = jnp.array([10, 20, 30])

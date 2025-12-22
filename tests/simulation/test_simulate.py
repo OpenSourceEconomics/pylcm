@@ -60,7 +60,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
             "next_wealth": {
                 "interest_rate": 0.05,
             },
-            "next_regime": {"n_periods": 2},
+            "next_regime": {},  # last_period is now a temporal context variable
             "borrowing_constraint": {},
             "labor_income": {},
         },
@@ -109,7 +109,7 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
         )
         updated_dead = dead.replace(active=[n_periods - 1])
 
-        params = get_params(n_periods=n_periods)
+        params = get_params()
         # Since wage function is removed, wage becomes a parameter for labor_income
         params["working"]["labor_income"] = {"wage": 1.5}
         model = Model(
@@ -167,7 +167,7 @@ def test_simulate_with_only_discrete_actions():
     )
 
     model = get_model(n_periods=3)
-    params = get_params(n_periods=3, wage=1.5, beta=1, interest_rate=0)
+    params = get_params(wage=1.5, beta=1, interest_rate=0)
 
     res: pd.DataFrame = model.solve_and_simulate(
         params,
@@ -196,14 +196,12 @@ def test_effect_of_beta_on_last_period():
 
     # low beta
     params_low = get_params(
-        n_periods=n_periods,
         beta=0.9,
         disutility_of_work=1.0,
     )
 
     # high beta
     params_high = get_params(
-        n_periods=n_periods,
         beta=0.99,
         disutility_of_work=1.0,
     )
@@ -250,14 +248,12 @@ def test_effect_of_disutility_of_work():
 
     # low disutility_of_work
     params_low = get_params(
-        n_periods=n_periods,
         beta=1.0,
         disutility_of_work=0.2,
     )
 
     # high disutility_of_work
     params_high = get_params(
-        n_periods=n_periods,
         beta=1.0,
         disutility_of_work=1.5,
     )

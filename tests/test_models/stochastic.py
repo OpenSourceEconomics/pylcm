@@ -113,9 +113,9 @@ def next_wealth(
 def next_regime_from_working(
     labor_supply: DiscreteAction,
     period: Period,
-    n_periods: int,
+    last_period: int,
 ) -> ScalarInt:
-    certain_death_transition = period == n_periods - 2  # dead in last period
+    certain_death_transition = period == last_period - 1  # dead in last period
     return jnp.where(
         certain_death_transition,
         RegimeId.dead,
@@ -127,8 +127,8 @@ def next_regime_from_working(
     )
 
 
-def next_regime_from_retired(period: Period, n_periods: int) -> ScalarInt:
-    certain_death_transition = period == n_periods - 2  # dead in last period
+def next_regime_from_retired(period: Period, last_period: int) -> ScalarInt:
+    certain_death_transition = period == last_period - 1  # dead in last period
     return jnp.where(
         certain_death_transition,
         RegimeId.dead,
@@ -266,7 +266,6 @@ def get_model(n_periods: int) -> Model:
 
 
 def get_params(
-    n_periods,
     beta=0.95,
     disutility_of_work=0.5,
     interest_rate=0.05,
@@ -321,7 +320,7 @@ def get_params(
             "next_wealth": {"interest_rate": interest_rate},
             "next_health": {},
             "next_partner": {"partner_transition": partner_transition},
-            "next_regime": {"n_periods": n_periods},
+            "next_regime": {},  # last_period is now a temporal context variable
             "borrowing_constraint": {},
             "labor_income": {"wage": wage},
         },
@@ -334,7 +333,7 @@ def get_params(
                 "labor_supply": LaborSupply.retire,
                 "partner_transition": partner_transition,
             },
-            "next_regime": {"n_periods": n_periods},
+            "next_regime": {},  # last_period is now a temporal context variable
             "borrowing_constraint": {},
         },
         "dead": {},

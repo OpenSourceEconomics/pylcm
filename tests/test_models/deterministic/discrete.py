@@ -92,8 +92,8 @@ def next_wealth_discrete(
     )
 
 
-def next_regime(period: Period, n_periods: int) -> ScalarInt:
-    certain_death_transition = period == n_periods - 2  # dead in last period
+def next_regime(period: Period, last_period: int) -> ScalarInt:
+    certain_death_transition = period == last_period - 1  # dead in last period
     return jnp.where(
         certain_death_transition,
         RegimeId.dead,
@@ -154,7 +154,6 @@ def get_model(n_periods: int) -> Model:
 
 
 def get_params(
-    n_periods: int,
     beta: float = 0.95,
     disutility_of_work: float = 0.5,
     interest_rate: float = 0.05,
@@ -165,7 +164,7 @@ def get_params(
             "beta": beta,
             "utility": {"disutility_of_work": disutility_of_work},
             "next_wealth": {"interest_rate": interest_rate},
-            "next_regime": {"n_periods": n_periods},
+            "next_regime": {},  # last_period is now a temporal context variable
             "borrowing_constraint": {},
             "labor_income": {"wage": wage},
         },
