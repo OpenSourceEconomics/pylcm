@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
     from lcm.typing import (
         ArgmaxQOverAFunction,
+        Bool1D,
         ContinuousAction,
         ContinuousState,
         DiscreteAction,
@@ -193,13 +194,24 @@ class InternalRegime:
 
 
 @dataclasses.dataclass(frozen=True)
-class SimulationResults:
-    """The results of a simulation for one period and one regime."""
+class PeriodRegimeData:
+    """Raw simulation data for one period in one regime.
+
+    Attributes:
+        V_arr: Value function array of a regime for all subjects at this period.
+        actions: Dict mapping action names to optimal action arrays for all subjects.
+        states: Dict mapping state names to state value arrays for all subjects.
+        in_regime: Boolean mask indicating which subjects are in this regime at this
+            period. True means the subject is in this regime; False means they are in
+            a different regime (and the corresponding values in V_arr, actions, and
+            states should be ignored for that subject).
+
+    """
 
     V_arr: Array
     actions: dict[str, Array]
     states: dict[str, Array]
-    in_regime: Array
+    in_regime: Bool1D
 
 
 class Target(Enum):

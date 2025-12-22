@@ -11,12 +11,12 @@ from jax import Array
 from lcm.dispatchers import vmap_1d
 
 if TYPE_CHECKING:
-    from lcm.interfaces import InternalRegime, SimulationResults
+    from lcm.interfaces import InternalRegime, PeriodRegimeData
     from lcm.typing import InternalUserFunction, ParamsDict, RegimeName
 
 
 def process_simulated_data(
-    results: dict[int, SimulationResults],
+    results: dict[int, PeriodRegimeData],
     internal_regime: InternalRegime,
     params: ParamsDict,
     n_initial_subjects: int,
