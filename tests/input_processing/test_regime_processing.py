@@ -237,12 +237,12 @@ def test_process_regimes():
     )
     assert internal_working_regime.gridspecs["consumption"] == consumption_grid
 
-    assert isinstance(internal_working_regime.gridspecs["labor_choice"], DiscreteGrid)
-    assert internal_working_regime.gridspecs["labor_choice"].categories == (
+    assert isinstance(internal_working_regime.gridspecs["labor_supply"], DiscreteGrid)
+    assert internal_working_regime.gridspecs["labor_supply"].categories == (
         "work",
         "retire",
     )
-    assert internal_working_regime.gridspecs["labor_choice"].codes == (0, 1)
+    assert internal_working_regime.gridspecs["labor_supply"].codes == (0, 1)
 
     # Grids
     expected = grid_helpers.linspace(**working.actions["consumption"].__dict__)
@@ -251,7 +251,7 @@ def test_process_regimes():
     expected = grid_helpers.linspace(**working.states["wealth"].__dict__)
     assert_array_equal(internal_working_regime.grids["wealth"], expected)
 
-    assert (internal_working_regime.grids["labor_choice"] == jnp.array([0, 1])).all()
+    assert (internal_working_regime.grids["labor_supply"] == jnp.array([0, 1])).all()
 
     # Functions
     assert internal_working_regime.transitions is not None

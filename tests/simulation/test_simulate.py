@@ -77,7 +77,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
         **simulate_inputs,
     )["working"]
 
-    assert_array_equal(got.loc[:]["labor_choice"], 1)
+    assert_array_equal(got.loc[:]["labor_supply"], 1)
     assert_array_almost_equal(got.loc[:]["consumption"], jnp.array([1.0, 50.400803]))
 
 
@@ -135,7 +135,7 @@ def test_simulate_using_model_methods(
     assert {
         "period",
         "value",
-        "labor_choice",
+        "labor_supply",
         "consumption",
         "wealth",
         "utility",
@@ -145,7 +145,7 @@ def test_simulate_using_model_methods(
 
     # assert that everyone retires in the last period
     last_period_index = n_periods - 1
-    assert_array_equal(res.loc[last_period_index, :]["labor_choice"], 1)
+    assert_array_equal(res.loc[last_period_index, :]["labor_supply"], 1)
 
     for period in range(n_periods):
         # assert that higher wealth leads to higher consumption in each period
@@ -170,7 +170,7 @@ def test_simulate_with_only_discrete_actions():
         initial_regimes=["working"] * 2,
     )["working"]
 
-    assert_array_equal(res["labor_choice"], jnp.array([0, 1, 1, 1]))
+    assert_array_equal(res["labor_supply"], jnp.array([0, 1, 1, 1]))
     assert_array_equal(res["consumption"], jnp.array([0, 1, 1, 1]))
     assert_array_equal(res["wealth"], jnp.array([0, 4, 2, 2]))
 
@@ -290,7 +290,7 @@ def test_effect_of_disutility_of_work():
 
         # We expect that individuals with lower disutility of work retire (weakly) later
         assert (
-            res_low.loc[period]["labor_choice"] <= res_high.loc[period]["labor_choice"]
+            res_low.loc[period]["labor_supply"] <= res_high.loc[period]["labor_supply"]
         ).all()
 
 

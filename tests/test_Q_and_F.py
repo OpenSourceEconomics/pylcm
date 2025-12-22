@@ -15,7 +15,7 @@ from lcm.Q_and_F import (
     get_Q_and_F_terminal,
 )
 from tests.test_models.deterministic_regression import (
-    LaborStatus,
+    LaborSupply,
     RegimeId,
     dead,
     get_params,
@@ -53,12 +53,12 @@ def test_get_Q_and_F_function():
     )
 
     consumption = jnp.array([10, 20, 30])
-    labor_choice = jnp.array([0, 1, 0])
+    labor_supply = jnp.array([0, 1, 0])
     wealth = jnp.array([20, 20, 20])
 
     Q_arr, F_arr = Q_and_F(
         consumption=consumption,
-        labor_choice=labor_choice,
+        labor_supply=labor_supply,
         wealth=wealth,
         params=params,
         next_V_arr=jnp.empty(0),  # Terminal period doesn't use continuation value
@@ -68,7 +68,7 @@ def test_get_Q_and_F_function():
         Q_arr,
         utility(
             consumption=consumption,
-            is_working=labor_choice == LaborStatus.work,
+            is_working=labor_supply == LaborSupply.work,
             disutility_of_work=0.5,  # matches get_params default
         ),
     )

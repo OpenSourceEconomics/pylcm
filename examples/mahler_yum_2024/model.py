@@ -317,14 +317,14 @@ def next_productivity_shock(
 # Regime Transitions
 # --------------------------------------------------------------------------------------
 @lcm.mark.stochastic
-def next_regime_from_alive(
+def next_regime(
     period: Period,
     education: DiscreteState,
     health: DiscreteState,
-    regime_transition_from_alive: FloatND,
+    regime_transition: FloatND,
 ) -> FloatND:
     """Return probability array [P(alive), P(dead)] indexed by RegimeId."""
-    survival_prob = regime_transition_from_alive[period, education, health]
+    survival_prob = regime_transition[period, education, health]
     return jnp.array([survival_prob, 1 - survival_prob])
 
 
@@ -395,7 +395,7 @@ ALIVE_REGIME = Regime(
         "next_health_type": next_health_type,
         "next_education": next_education,
         "next_productivity": next_productivity,
-        "next_regime": next_regime_from_alive,
+        "next_regime": next_regime,
     },
     active=range(n - 1),
 )
@@ -685,7 +685,7 @@ def create_inputs(
     xi_grid = create_xigrid(xi)
     phi_grid = create_phigrid(nu)
 
-    regime_transition_from_alive = create_regime_transition_grid()
+    regime_transition = create_regime_transition_grid()
 
     # Create parameters
     params = {
@@ -701,7 +701,7 @@ def create_inputs(
         "next_health": {"health_transition": tr2yp_grid},
         "next_adjustment_cost": {"adjustment_cost_transition": jnp.full((5, 5), 1 / 5)},
         "next_dead": {},
-        "next_regime": {"regime_transition_from_alive": regime_transition_from_alive},
+        "next_regime": {"regime_transition": regime_transition},
     }
 
     # Create initial states for the simulation
@@ -760,7 +760,6 @@ def create_inputs(
         "education": initial_education,
         "productivity": initial_productivity,
         "discount_factor": initial_discount,
-        "dead": jnp.full(n_simulation_subjects, 0),  # for dead regime
     }
     initial_regimes = ["alive"] * n_simulation_subjects
     return params, initial_states, initial_regimes

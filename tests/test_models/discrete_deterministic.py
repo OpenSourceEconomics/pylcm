@@ -17,7 +17,7 @@ import jax.numpy as jnp
 
 from lcm import DiscreteGrid, Model, Regime
 from tests.test_models.deterministic_regression import (
-    LaborStatus,
+    LaborSupply,
     is_working,
     labor_income,
     next_wealth,
@@ -111,7 +111,7 @@ def borrowing_constraint(consumption: DiscreteAction, wealth: DiscreteState) -> 
 working = Regime(
     name="working",
     actions={
-        "labor_choice": DiscreteGrid(LaborStatus),
+        "labor_supply": DiscreteGrid(LaborSupply),
         "consumption": DiscreteGrid(ConsumptionChoice),
     },
     states={

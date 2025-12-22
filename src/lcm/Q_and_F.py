@@ -36,10 +36,10 @@ if TYPE_CHECKING:
 def get_Q_and_F(
     regime: Regime,
     regimes_to_active_periods: dict[RegimeName, list[int]],
-    internal_functions: InternalFunctions,
+    period: int,
     next_state_space_infos: dict[RegimeName, StateSpaceInfo],
     grids: dict[RegimeName, Any],
-    period: int,
+    internal_functions: InternalFunctions,
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 

@@ -42,7 +42,7 @@ def test_get_next_state_function_with_solve_target():
         },
     }
 
-    action = {"labor_choice": 1, "consumption": 10}
+    action = {"labor_supply": 1, "consumption": 10}
     state = {"wealth": 20}
 
     got = got_func(**action, **state, period=1, params=params)
