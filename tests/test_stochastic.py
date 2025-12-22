@@ -196,7 +196,9 @@ def test_compare_deterministic_and_stochastic_results_value_function(
         initial_states=initial_states,
         initial_regimes=initial_regimes,
     )
-    df_deterministic = simulation_deterministic.to_dataframe().query('regime == "working"')
+    df_deterministic = simulation_deterministic.to_dataframe().query(
+        'regime == "working"'
+    )
     df_stochastic = simulation_stochastic.to_dataframe().query('regime == "working"')
     pd.testing.assert_frame_equal(
         df_deterministic.reset_index(drop=True),
