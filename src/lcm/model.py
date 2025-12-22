@@ -2,21 +2,20 @@
 
 from __future__ import annotations
 
-import warnings
+from itertools import chain
 from typing import TYPE_CHECKING
 
 from lcm.exceptions import ModelInitializationError, format_messages
 from lcm.grids import _get_field_names_and_values, validate_category_class
-from lcm.input_processing.regime_processing import (
-    create_default_regime_id_cls,
-    process_regimes,
-)
+from lcm.input_processing.regime_processing import process_regimes
 from lcm.logging import get_logger
 from lcm.regime import Regime
 from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     import pandas as pd
     from jax import Array
 
@@ -38,7 +37,7 @@ class Model:
         description: Description of the model.
         n_periods: Number of periods in the model.
         enable_jit: Whether to jit the functions of the internal regime.
-        regime_id_cls: The RegimeID class mapping regime names to indices.
+        regime_id_cls: The RegimeId class mapping regime names to indices.
         regimes: The user provided regimes that contain the information
             about the model's regimes.
         internal_regimes: The internal regime instances created by LCM, which allow
@@ -57,10 +56,10 @@ class Model:
 
     def __init__(
         self,
-        regimes: Regime | list[Regime],
+        regimes: Iterable[Regime],
         *,
         n_periods: int,
-        regime_id_cls: type | None = None,
+        regime_id_cls: type,
         description: str | None = None,
         enable_jit: bool = True,
     ) -> None:
@@ -70,16 +69,14 @@ class Model:
             regimes: User provided regimes.
             n_periods: Number of periods of the model.
             regime_id_cls: A dataclass mapping regime names to integer indices.
-                Required for multi-regime models. Must not be provided for single-regime
-                models (will be auto-generated).
             description: Description of the model.
             enable_jit: Whether to jit the functions of the internal regime.
 
         """
-        if not isinstance(regimes, list):
-            regimes = [regimes]
+        regimes_list = list(regimes)
 
         self.n_periods = n_periods
+        self.regime_id_cls = regime_id_cls
         self.description = description
         self.enable_jit = enable_jit
         self.regimes = {}
@@ -87,28 +84,12 @@ class Model:
 
         _validate_model_inputs(
             n_periods=n_periods,
-            regimes=regimes,
+            regimes=regimes_list,
             regime_id_cls=regime_id_cls,
         )
 
-        # Auto-generate regime_id_cls for single-regime models
-        if len(regimes) == 1:
-            if regime_id_cls is not None:
-                warnings.warn(
-                    f"Single-regime model '{regimes[0].name}' has a user-provided "
-                    "'regime_id_cls', but this will be ignored. For single-regime "
-                    "models, the regime_id_cls is auto-generated internally.",
-                    UserWarning,
-                    stacklevel=2,
-                )
-            self.regime_id_cls = create_default_regime_id_cls(regimes[0].name)
-        else:
-            # Multi-regime: regime_id_cls is required and validated
-            self.regime_id_cls = regime_id_cls  # type: ignore[assignment]
-
-        self.regimes = {regime.name: regime for regime in regimes}
         self.internal_regimes = process_regimes(
-            regimes=regimes,
+            regimes=regimes_list,
             n_periods=n_periods,
             regime_id_cls=self.regime_id_cls,
             enable_jit=enable_jit,
@@ -225,6 +206,12 @@ def _validate_model_inputs(
     regimes: list[Regime],
     regime_id_cls: type | None,
 ) -> None:
+    # Early exit if regimes are not lcm.Regime instances
+    if not all(isinstance(regime, Regime) for regime in regimes):
+        raise ModelInitializationError(
+            "All items in regimes must be instances of lcm.Regime."
+        )
+
     error_messages: list[str] = []
 
     if not isinstance(n_periods, int):
@@ -232,54 +219,51 @@ def _validate_model_inputs(
     elif n_periods <= 1:
         error_messages.append("n_periods must be at least 2.")
 
-    error_messages.extend(
-        [
-            "regimes must be instances of lcm.Regime."
-            for regime in regimes
-            if not isinstance(regime, Regime)
-        ]
-    )
-
-    # Single-regime: regime_id_cls warning is handled in Model.__init__
-
-    # Multi-regime model validation
-    if len(regimes) > 1:
-        # Check next_regime is defined in each non-absorbing regime
-        # (absorbing regimes get next_regime auto-generated during processing)
-        error_messages.extend(
-            f"Multi-regime models require 'next_regime' in transitions for "
-            f"each non-absorbing regime. Missing in regime '{regime.name}'."
-            for regime in regimes
-            if "next_regime" not in regime.transitions and not regime.absorbing
+    if not regimes:
+        error_messages.append(
+            "At least one non-terminal and one terminal regime must be provided."
         )
 
-        # Check regime_id_cls is provided
-        if regime_id_cls is None:
+    # Assume all items in regimes are lcm.Regime instances beyond this point
+    terminal_regimes = [r for r in regimes if r.terminal]
+    if len(terminal_regimes) < 1:
+        error_messages.append("lcm.Model must have at least one terminal regime.")
+
+    non_terminal_regimes = [r for r in regimes if not r.terminal]
+    if len(non_terminal_regimes) < 1:
+        error_messages.append("lcm.Model must have at least one non-terminal regime.")
+    else:
+        non_terminal_regimes_without_next_regime = [
+            r.name for r in non_terminal_regimes if "next_regime" not in r.transitions
+        ]
+        if non_terminal_regimes_without_next_regime:
             error_messages.append(
-                "regime_id_cls must be provided for multi-regime models."
+                "The following regimes are missing 'next_regime' in their transitions: "
+                f"{non_terminal_regimes_without_next_regime}."
             )
-        else:
-            # Validate regime_id_cls structure and names
-            regime_names = [regime.name for regime in regimes]
-            error_messages.extend(validate_regime_id_cls(regime_id_cls, regime_names))
+
+    regime_names = [r.name for r in regimes]
+    if regime_id_cls is not None:
+        error_messages.extend(_validate_regime_id_cls(regime_id_cls, regime_names))
+    error_messages.extend(_validate_transition_completeness(regimes))
 
     if error_messages:
         msg = format_messages(error_messages)
         raise ModelInitializationError(msg)
 
 
-def validate_regime_id_cls(
+def _validate_regime_id_cls(
     regime_id_cls: type,
     regime_names: list[str],
 ) -> list[str]:
-    """Validate RegimeID class against regime names.
+    """Validate RegimeId class against regime names.
 
     This validates that:
     - The class passes standard category class validation (dataclass, consecutive ints)
     - Attribute names exactly match the regime names
 
     Args:
-        regime_id_cls: The user-provided RegimeID dataclass.
+        regime_id_cls: The user-provided RegimeId dataclass.
         regime_names: List of regime names from the model.
 
     Returns:
@@ -313,3 +297,39 @@ def validate_regime_id_cls(
             )
 
     return error_messages
+
+
+def _validate_transition_completeness(regimes: list[Regime]) -> list[str]:
+    """Validate that non-terminal regimes have complete transitions.
+
+    Non-terminal regimes must have transition functions for ALL states across ALL
+    regimes, since they can potentially transition to any other regime.
+
+    Args:
+        regimes: List of regimes to validate.
+
+    Returns:
+        A list of error messages. Empty list if validation passes.
+
+    """
+    all_states = set(chain.from_iterable(r.states.keys() for r in regimes))
+
+    missing_transitions: dict[str, set[str]] = {}
+
+    for regime in [r for r in regimes if not r.terminal]:
+        states_from_transitions = {
+            fn_key.removeprefix("next_") for fn_key in regime.transitions
+        }
+
+        missing = all_states - states_from_transitions
+        if missing:
+            missing_transitions[regime.name] = missing
+
+    if missing_transitions:
+        error = "Non-terminal regimes have missing transitions: "
+        for regime_name, missing in sorted(missing_transitions.items()):
+            missing_list = ", ".join(f"next_{s}" for s in sorted(missing))
+            error += f"'{regime_name}': {missing_list}, "
+        return [error]
+
+    return []

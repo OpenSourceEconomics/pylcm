@@ -8,7 +8,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
 from lcm._config import TEST_DATA
-from tests.test_models.utils import get_model, get_params
+from tests.test_models.deterministic.regression import get_model, get_params
 
 if TYPE_CHECKING:
     from lcm.typing import FloatND
@@ -28,10 +28,12 @@ def test_regression_test():
 
     # Generate current lcm ouput
     # ==================================================================================
-    model = get_model("iskhakov_et_al_2017_stripped_down", n_periods=3)
+    n_periods = 4
+
+    model = get_model(n_periods=n_periods)
 
     params = get_params(
-        regime_name="iskhakov_et_al_2017_stripped_down",
+        n_periods=n_periods,
         beta=0.95,
         disutility_of_work=1.0,
         interest_rate=0.05,
@@ -41,13 +43,12 @@ def test_regression_test():
     got_simulate = model.solve_and_simulate(
         params=params,
         initial_states={"wealth": jnp.array([5.0, 20, 40, 70])},
-        initial_regimes=["iskhakov_et_al_2017_stripped_down"] * 4,
+        initial_regimes=["working"] * 4,
     )
     # Compare
     # ==================================================================================
-
-    for period in expected_solve:
-        for regime in expected_solve[period]:
+    for period in range(n_periods - 1):
+        for regime in got_solve[period]:
             aaae(expected_solve[period][regime], got_solve[period][regime], decimal=5)
 
     for regime in expected_simulate:

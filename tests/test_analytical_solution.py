@@ -16,7 +16,7 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm._config import TEST_DATA
-from tests.test_models.utils import get_model, get_params
+from tests.test_models.deterministic.base import get_model, get_params
 
 if TYPE_CHECKING:
     from lcm.typing import FloatND
@@ -28,9 +28,9 @@ if TYPE_CHECKING:
 
 TEST_CASES = {
     "iskhakov_2017_five_periods": {
-        "model": get_model("iskhakov_et_al_2017", n_periods=5),
+        "model": get_model(n_periods=6),
         "params": get_params(
-            regime_name="iskhakov_et_al_2017",
+            n_periods=6,
             beta=0.98,
             disutility_of_work=1.0,
             interest_rate=0.0,
@@ -38,9 +38,9 @@ TEST_CASES = {
         ),
     },
     "iskhakov_2017_low_delta": {
-        "model": get_model("iskhakov_et_al_2017", n_periods=3),
+        "model": get_model(n_periods=4),
         "params": get_params(
-            regime_name="iskhakov_et_al_2017",
+            n_periods=4,
             beta=0.98,
             disutility_of_work=0.1,
             interest_rate=0.0,
@@ -72,16 +72,21 @@ def test_analytical_solution(model_name, model_and_params):
     model = model_and_params["model"]
     params = model_and_params["params"]
 
-    V_arr_dict: dict[int, FloatND] = model.solve(params=params)
-    V_arr_list = [
-        period_res["iskhakov_et_al_2017"]
-        for period_res in dict(sorted(V_arr_dict.items(), key=lambda x: x[0])).values()
-    ]
+    V_arr_dict: dict[int, dict[str, FloatND]] = model.solve(params=params)
 
-    _numerical = np.stack(V_arr_list)
+    V_arr_dict_list = [V_arr_dict[period] for period in sorted(V_arr_dict.keys())]
+
+    v_arr_worker = np.stack(
+        [v_arr_dict["working"] for v_arr_dict in V_arr_dict_list[:-1]]
+    )
+
+    v_arr_retired = np.stack(
+        [v_arr_dict["retired"] for v_arr_dict in V_arr_dict_list[:-1]]
+    )
+
     numerical = {
-        "worker": _numerical[:, 0, :],
-        "retired": _numerical[:, 1, :],
+        "worker": v_arr_worker,
+        "retired": v_arr_retired,
     }
 
     # Load analytical solution

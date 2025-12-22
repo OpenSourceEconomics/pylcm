@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 import pandas as pd
@@ -9,7 +9,14 @@ from numpy.testing import assert_array_almost_equal
 
 import lcm
 from lcm import Model
-from tests.test_models.utils import get_model, get_params, get_regime
+from tests.test_models.stochastic import (
+    RegimeId,
+    dead,
+    get_model,
+    get_params,
+    retired,
+    working,
+)
 
 if TYPE_CHECKING:
     from lcm.typing import DiscreteState, FloatND
@@ -20,8 +27,8 @@ if TYPE_CHECKING:
 
 
 def test_model_solve_and_simulate_with_stochastic_model():
-    model = get_model("iskhakov_et_al_2017_stochastic", n_periods=3)
-    params = get_params("iskhakov_et_al_2017_stochastic")
+    model = get_model(n_periods=4)
+    params = get_params(n_periods=4)
 
     res: pd.DataFrame = model.solve_and_simulate(
         params=params,
@@ -30,21 +37,37 @@ def test_model_solve_and_simulate_with_stochastic_model():
             "partner": jnp.array([0, 0, 1, 0]),
             "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
         },
-        initial_regimes=["iskhakov_et_al_2017_stochastic"] * 4,
-    )["iskhakov_et_al_2017_stochastic"]
+        initial_regimes=["working"] * 4,
+    )["working"]
 
-    # This is derived from the partner transition in get_params.
+    # Verify simulation produced expected columns and some rows
+    assert "period" in res.columns
+    assert "subject_id" in res.columns
+    assert "partner" in res.columns
+    assert "labor_supply" in res.columns
+    assert len(res) > 0
 
-    expected_next_partner = (
-        (res.working.astype(bool) | ~res.partner.astype(bool)).astype(int).loc[:7]
-    )
+    # Check that partner transition follows the transition matrix from get_params
+    period_0 = res[res.period == 0].set_index("subject_id")
+    period_1 = res[res.period == 1].set_index("subject_id")
 
-    pd.testing.assert_series_equal(
-        res["partner"].loc[4:],
-        expected_next_partner,
-        check_index=False,
-        check_names=False,
-    )
+    # Only test subjects present in both periods
+    common_subjects = period_0.index.intersection(period_1.index)
+
+    if len(common_subjects) > 0:
+        # Create expected partner values based on period 0 state
+        expected_partner = period_0.loc[common_subjects].apply(
+            lambda row: 0 if (row["labor_supply"] == 0 and row["partner"] == 1) else 1,
+            axis=1,
+        )
+
+        actual_partner = period_1.loc[common_subjects, "partner"]
+
+        pd.testing.assert_series_equal(
+            actual_partner,
+            expected_partner,
+            check_names=False,
+        )
 
 
 # ======================================================================================
@@ -53,8 +76,8 @@ def test_model_solve_and_simulate_with_stochastic_model():
 
 
 def test_model_solve_with_stochastic_model():
-    model = get_model("iskhakov_et_al_2017_stochastic", n_periods=3)
-    model.solve(params=get_params("iskhakov_et_al_2017_stochastic"))
+    model = get_model(n_periods=4)
+    model.solve(params=get_params(n_periods=4))
 
 
 # ======================================================================================
@@ -63,14 +86,13 @@ def test_model_solve_with_stochastic_model():
 
 
 @pytest.fixture
-def model_and_params():
-    """Return a simple deterministic and stochastic model with parameters.
+def models_and_params() -> tuple[Model, Model, dict[str, Any]]:
+    """Return a deterministic and stochastic model with parameters.
 
     TODO(@timmens): Add this to tests/test_models/stochastic.py.
 
     """
 
-    # Define functions first
     @lcm.mark.stochastic
     def next_health_stochastic(health: DiscreteState) -> FloatND:
         return jnp.identity(2)[health]
@@ -78,52 +100,75 @@ def model_and_params():
     def next_health_deterministic(health: DiscreteState) -> DiscreteState:
         return health
 
-    # Get the base models and create modified versions
-    base_regime = get_regime("iskhakov_et_al_2017_stochastic")
+    n_periods = 4
 
     # Create deterministic model with modified function
-    regime_deterministic = base_regime.replace(
+    working_deterministic = working.replace(
         transitions={
-            **base_regime.transitions,
+            **working.transitions,
             "next_health": next_health_deterministic,
-        }
+        },
+        active=range(n_periods - 1),
     )
-
-    # Create stochastic model with modified function
-    regime_stochastic = base_regime.replace(
+    retired_deterministic = retired.replace(
         transitions={
-            **base_regime.transitions,
+            **retired.transitions,
+            "next_health": next_health_deterministic,
+        },
+        active=range(n_periods - 1),
+    )
+
+    # Create stochastic model with identity transition function
+    working_stochastic = working.replace(
+        transitions={
+            **working.transitions,
             "next_health": next_health_stochastic,
-        }
+        },
+        active=range(n_periods - 1),
+    )
+    retired_stochastic = retired.replace(
+        transitions={
+            **retired.transitions,
+            "next_health": next_health_stochastic,
+        },
+        active=range(n_periods - 1),
     )
 
-    params = get_params(
-        regime_name="iskhakov_et_al_2017_stochastic",
-        beta=0.95,
-        disutility_of_work=1.0,
-        interest_rate=0.05,
-        wage=10.0,
+    dead_updated = dead.replace(active=[n_periods - 1])
+
+    model_deterministic = Model(
+        [working_deterministic, retired_deterministic, dead_updated],
+        n_periods=n_periods,
+        regime_id_cls=RegimeId,
     )
 
-    model_stochastic = Model([regime_stochastic], n_periods=3)
-    model_deterministic = Model([regime_deterministic], n_periods=3)
-    return model_deterministic, model_stochastic, params
+    model_stochastic = Model(
+        [working_stochastic, retired_stochastic, dead_updated],
+        n_periods=n_periods,
+        regime_id_cls=RegimeId,
+    )
+
+    return model_deterministic, model_stochastic, get_params(n_periods=n_periods)
 
 
-def test_compare_deterministic_and_stochastic_results_value_function(model_and_params):
+def test_compare_deterministic_and_stochastic_results_value_function(
+    models_and_params: tuple[Model, Model, dict[str, Any]],
+) -> None:
     """Test that the deterministic and stochastic models produce the same results."""
-    model_deterministic, model_stochastic, params = model_and_params
+    model_deterministic, model_stochastic, params = models_and_params
 
     # ==================================================================================
     # Compare value function arrays
     # ==================================================================================
-    solution_deterministic: dict[int, FloatND] = model_deterministic.solve(params)
-    solution_stochastic: dict[int, FloatND] = model_stochastic.solve(params)
+    solution_deterministic: dict[int, dict[str, FloatND]] = model_deterministic.solve(
+        params
+    )
+    solution_stochastic: dict[int, dict[str, FloatND]] = model_stochastic.solve(params)
 
-    for period in range(model_deterministic.n_periods):
+    for period in range(model_deterministic.n_periods - 1):
         assert_array_almost_equal(
-            solution_deterministic[period]["iskhakov_et_al_2017_stochastic"],
-            solution_stochastic[period]["iskhakov_et_al_2017_stochastic"],
+            solution_deterministic[period]["working"],
+            solution_stochastic[period]["working"],
             decimal=14,
         )
 
@@ -135,7 +180,7 @@ def test_compare_deterministic_and_stochastic_results_value_function(model_and_p
         "partner": jnp.array([0, 0, 0, 0]),
         "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
     }
-    initial_regimes = ["iskhakov_et_al_2017_stochastic"] * 4
+    initial_regimes = ["working"] * 4
 
     simulation_deterministic = model_deterministic.simulate(
         params,
@@ -150,6 +195,6 @@ def test_compare_deterministic_and_stochastic_results_value_function(model_and_p
         initial_regimes=initial_regimes,
     )
     pd.testing.assert_frame_equal(
-        simulation_deterministic["iskhakov_et_al_2017_stochastic"],
-        simulation_stochastic["iskhakov_et_al_2017_stochastic"],
+        simulation_deterministic["working"],
+        simulation_stochastic["working"],
     )

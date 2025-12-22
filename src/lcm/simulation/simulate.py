@@ -105,16 +105,20 @@ def simulate(
     for period in range(n_periods):
         logger.info("Period: %s", period)
 
-        is_last_period = period == n_periods - 1
         new_subject_regime_ids = jnp.empty(n_initial_subjects)
 
-        for regime_name, internal_regime in internal_regimes.items():
+        active_regimes = {
+            regime_name: regime
+            for regime_name, regime in internal_regimes.items()
+            if period in regime.active_periods
+        }
+
+        for regime_name, internal_regime in active_regimes.items():
             result, new_states, new_subject_regime_ids, key = (
                 _simulate_regime_in_period(
                     regime_name=regime_name,
                     internal_regime=internal_regime,
                     period=period,
-                    n_periods=n_periods,
                     states=states,
                     subject_regime_ids=subject_regime_ids,
                     new_subject_regime_ids=new_subject_regime_ids,
@@ -122,7 +126,6 @@ def simulate(
                     params=params,
                     regime_name_to_id=regime_name_to_id,
                     key=key,
-                    is_last_period=is_last_period,
                 )
             )
             states = new_states
@@ -137,6 +140,7 @@ def simulate(
             internal_regime=internal_regimes[regime_name],
             params=params,
             additional_targets=additional_targets,
+            n_initial_subjects=n_initial_subjects,
         )
 
     return processed
@@ -146,7 +150,6 @@ def _simulate_regime_in_period(
     regime_name: RegimeName,
     internal_regime: InternalRegime,
     period: int,
-    n_periods: int,
     states: dict[str, Array],
     subject_regime_ids: Int1D,
     new_subject_regime_ids: Int1D,
@@ -154,8 +157,6 @@ def _simulate_regime_in_period(
     params: dict[RegimeName, ParamsDict],
     regime_name_to_id: dict[RegimeName, int],
     key: Array,
-    *,
-    is_last_period: bool,
 ) -> tuple[SimulationResults, dict[str, Array], Int1D, Array]:
     """Simulate one regime for one period.
 
@@ -166,7 +167,6 @@ def _simulate_regime_in_period(
         regime_name: Name of the current regime.
         internal_regime: Internal representation of the regime.
         period: Current period (0-indexed).
-        n_periods: Total number of periods in the model.
         states: Current states for all subjects (namespaced by regime).
         subject_regime_ids: Current regime membership for all subjects.
         new_subject_regime_ids: Array to populate with next period's regime memberships.
@@ -174,7 +174,6 @@ def _simulate_regime_in_period(
         params: Model parameters for all regimes.
         regime_name_to_id: Mapping from regime names to integer IDs.
         key: JAX random key for stochastic operations.
-        is_last_period: Whether this is the final period (no state updates needed).
 
     Returns:
         Tuple containing:
@@ -193,7 +192,6 @@ def _simulate_regime_in_period(
     state_action_space = create_regime_state_action_space(
         internal_regime=internal_regime,
         states=states,
-        is_last_period=is_last_period,
     )
     # Compute optimal actions
     # ---------------------------------------------------------------------------------
@@ -205,14 +203,12 @@ def _simulate_regime_in_period(
     # The Q-function values contain the information of how much value each
     # action combination is worth. To find the optimal discrete action, we
     # therefore only need to maximize the Q-function values over all actions.
-    argmax_and_max_Q_over_a = internal_regime.argmax_and_max_Q_over_a_functions(
-        period, n_periods=n_periods
-    )
+    argmax_and_max_Q_over_a = internal_regime.argmax_and_max_Q_over_a_functions[period]
+
     indices_optimal_actions, V_arr = argmax_and_max_Q_over_a(
         **state_action_space.states,
         **state_action_space.discrete_actions,
         **state_action_space.continuous_actions,
-        period=period,
         next_V_arr=next_V_arr,
         params=params,
     )
@@ -240,7 +236,7 @@ def _simulate_regime_in_period(
 
     # Update states and regime membership for next period
     # ---------------------------------------------------------------------------------
-    if not is_last_period:
+    if not internal_regime.terminal:
         next_states_key, next_regime_key, key = jax.random.split(key, 3)
 
         next_states = calculate_next_states(

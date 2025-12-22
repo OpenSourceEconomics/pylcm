@@ -9,6 +9,10 @@ class InvalidValueFunctionError(PyLCMError):
     """Raised when the value function array is invalid."""
 
 
+class InvalidInitialStatesError(PyLCMError):
+    """Raised when the initial states are invalid."""
+
+
 class RegimeInitializationError(PyLCMError):
     """Raised when there is an error in the regime initialization."""
 

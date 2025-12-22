@@ -77,6 +77,7 @@ def test_process_simulated_data():
 
     got = process_simulated_data(
         simulated,
+        n_initial_subjects=2,
         # Rest is none, since we are not computing any additional targets
         internal_regime=None,  # type: ignore[arg-type]
         params=None,  # type: ignore[arg-type]
