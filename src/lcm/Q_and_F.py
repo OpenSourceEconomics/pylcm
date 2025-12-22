@@ -45,7 +45,7 @@ def get_Q_and_F(
 
     Args:
         regime: Regime instance.
-        active_periods: Dictionary mapping regime names to their active periods.
+        regimes_to_active_periods: Mapping regime names to their active periods.
         internal_functions: Internal functions instance.
         next_state_space_infos: The state space information of the next period.
         grids: Dict containing the state frids for all regimes.

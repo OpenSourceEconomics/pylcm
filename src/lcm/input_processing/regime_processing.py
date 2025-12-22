@@ -421,6 +421,7 @@ def _ensure_fn_only_depends_on_params(
 def _convert_flat_to_nested_transitions(
     flat_transitions: dict[str, UserFunction],
     states_per_regime: dict[str, set[str]],
+    *,
     terminal: bool = False,
 ) -> dict[str, dict[str, UserFunction] | UserFunction]:
     """Convert flat transitions dictionary to nested format.

@@ -14,7 +14,7 @@ def _reverse_dict(d: dict[str, Any]) -> dict[str, Any]:
 
 
 @pytest.mark.skip(
-    reason="We should use a proper example model here where with 2 states and 2 actions."
+    reason="We should use a proper example here where with 2 states and 2 actions."
 )
 def test_order_of_states_and_actions_does_not_matter():
     pass

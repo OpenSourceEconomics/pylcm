@@ -25,7 +25,11 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def simulate_inputs():
-    from tests.test_models.deterministic_regression import RegimeId, dead, working
+    from tests.test_models.deterministic_regression import (  # noqa: PLC0415
+        RegimeId,
+        dead,
+        working,
+    )
 
     updated_working = working.replace(
         actions={
@@ -84,7 +88,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
 
 @pytest.fixture
 def iskhakov_et_al_2017_stripped_down_model_solution():
-    from tests.test_models.deterministic_regression import (
+    from tests.test_models.deterministic_regression import (  # noqa: PLC0415
         RegimeId,
         dead,
         get_params,
@@ -152,7 +156,10 @@ def test_simulate_using_model_methods(
 
 
 def test_simulate_with_only_discrete_actions():
-    from tests.test_models.discrete_deterministic import get_model, get_params
+    from tests.test_models.discrete_deterministic import (  # noqa: PLC0415
+        get_model,
+        get_params,
+    )
 
     model = get_model(n_periods=3)
     params = get_params(n_periods=3, wage=1.5, beta=1, interest_rate=0)
@@ -174,7 +181,10 @@ def test_simulate_with_only_discrete_actions():
 
 
 def test_effect_of_beta_on_last_period():
-    from tests.test_models.deterministic_regression import get_model, get_params
+    from tests.test_models.deterministic_regression import (  # noqa: PLC0415
+        get_model,
+        get_params,
+    )
 
     n_periods = 6
     model = get_model(n_periods=n_periods)
@@ -225,7 +235,10 @@ def test_effect_of_beta_on_last_period():
 
 
 def test_effect_of_disutility_of_work():
-    from tests.test_models.deterministic_regression import get_model, get_params
+    from tests.test_models.deterministic_regression import (  # noqa: PLC0415
+        get_model,
+        get_params,
+    )
 
     n_periods = 6
     model = get_model(n_periods=n_periods)

@@ -120,7 +120,6 @@ def simulate(
                     regime_name=regime_name,
                     internal_regime=internal_regime,
                     period=period,
-                    n_periods=n_periods,
                     states=states,
                     subject_regime_ids=subject_regime_ids,
                     new_subject_regime_ids=new_subject_regime_ids,
@@ -153,7 +152,6 @@ def _simulate_regime_in_period(
     regime_name: RegimeName,
     internal_regime: InternalRegime,
     period: int,
-    n_periods: int,
     states: dict[str, Array],
     subject_regime_ids: Int1D,
     new_subject_regime_ids: Int1D,
@@ -173,7 +171,6 @@ def _simulate_regime_in_period(
         regime_name: Name of the current regime.
         internal_regime: Internal representation of the regime.
         period: Current period (0-indexed).
-        n_periods: Total number of periods in the model.
         states: Current states for all subjects (namespaced by regime).
         subject_regime_ids: Current regime membership for all subjects.
         new_subject_regime_ids: Array to populate with next period's regime memberships.

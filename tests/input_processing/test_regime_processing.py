@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from copy import deepcopy
+
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -16,6 +18,7 @@ from lcm.input_processing.regime_processing import (
     process_regimes,
 )
 from tests.regime_mock import RegimeMock
+from tests.test_models.deterministic_regimes import RegimeId, dead, working
 
 
 def test_convert_flat_to_nested_transitions():
@@ -199,8 +202,6 @@ def test_get_grids(regime_mock):
 
 
 def test_process_regimes():
-    from tests.test_models.deterministic_regimes import RegimeId, dead, working
-
     internal_regimes = process_regimes(
         [working, dead],
         n_periods=4,
@@ -259,12 +260,11 @@ def test_process_regimes():
 
 
 def test_variable_info_with_continuous_constraint_has_unique_index():
-    from tests.test_models.deterministic_regimes import working as working_regime
-
     def wealth_constraint(wealth):
         return wealth > 200
 
-    working_regime.constraints["wealth_constraint"] = wealth_constraint
+    working_copy = deepcopy(working)
+    working_copy.constraints["wealth_constraint"] = wealth_constraint
 
-    got = get_variable_info(working_regime)
+    got = get_variable_info(working_copy)
     assert got.index.is_unique
