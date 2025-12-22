@@ -360,8 +360,8 @@ def _extract_period_data(
 ) -> dict[str, Array]:
     """Extract data from a single period's simulation results."""
     data: dict[str, Array] = {
-        "period": jnp.full_like(result.in_regime, period, dtype=jnp.int32),
         "subject_id": jnp.arange(len(result.in_regime)),
+        "period": jnp.full_like(result.in_regime, period, dtype=jnp.int32),
         "_in_regime": result.in_regime,
         "value": result.V_arr,
     }
@@ -418,7 +418,7 @@ def _empty_dataframe(
     action_names: list[str],
 ) -> pd.DataFrame:
     """Create empty DataFrame with correct columns."""
-    columns = ["period", "subject_id", "regime", "value"]
+    columns = ["subject_id", "period", "regime", "value"]
     columns.extend(state_names)
     columns.extend(action_names)
     return pd.DataFrame(columns=columns)
@@ -444,8 +444,8 @@ def _reorder_columns(
     state_names: list[str],
     action_names: list[str],
 ) -> pd.DataFrame:
-    """Reorder columns: period, subject_id, regime, value, states, actions, rest."""
-    base = ["period", "subject_id", "regime", "value"]
+    """Reorder columns: subject_id, period, regime, value, states, actions, rest."""
+    base = ["subject_id", "period", "regime", "value"]
     known = set(base) | set(state_names) | set(action_names)
     rest = [c for c in df.columns if c not in known]
     return df[base + state_names + action_names + rest]
