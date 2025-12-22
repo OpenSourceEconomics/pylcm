@@ -262,7 +262,7 @@ def _resolve_targets(
             f"Targets {invalid} not found in any regime. "
             f"Available targets: {available_targets}"
         )
-    
+
     return additional_targets
 
 
