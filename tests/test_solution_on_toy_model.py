@@ -23,6 +23,7 @@ if TYPE_CHECKING:
         DiscreteAction,
         DiscreteState,
         FloatND,
+        ScalarInt,
     )
 
 
@@ -47,6 +48,12 @@ class HealthStatus:
     good: int = 1
 
 
+@dataclass
+class RegimeId:
+    alive: int = 0
+    dead: int = 1
+
+
 def utility(
     consumption: DiscreteAction,
     working: DiscreteAction,
@@ -62,14 +69,19 @@ def next_wealth(
     return wealth - consumption + working
 
 
+def next_regime(period: int, n_periods: int) -> ScalarInt:
+    death_condition = period >= n_periods - 2  # is dead in last period
+    return jnp.where(death_condition, RegimeId.dead, RegimeId.alive)
+
+
 def borrowing_constraint(
     consumption: DiscreteAction, wealth: ContinuousState
 ) -> BoolND:
     return consumption <= wealth
 
 
-DETERMINISTIC_REGIME = Regime(
-    name="test",
+alive_deterministic = Regime(
+    name="alive",
     actions={
         "consumption": DiscreteGrid(ConsumptionChoice),
         "working": DiscreteGrid(WorkingStatus),
@@ -87,7 +99,17 @@ DETERMINISTIC_REGIME = Regime(
     },
     transitions={
         "next_wealth": next_wealth,
+        "next_regime": next_regime,
     },
+    active=range(1),  # n_periods=2, so active in period 0
+)
+
+dead = Regime(
+    name="dead",
+    terminal=True,
+    states={"wealth": LinspaceGrid(start=0, stop=1, n_points=2)},
+    utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
+    active=[1],  # n_periods=2, so active in period 1
 )
 
 
@@ -96,12 +118,14 @@ def next_health(health: DiscreteState, health_transition: FloatND) -> FloatND:
     return health_transition[health]
 
 
-STOCHASTIC_REGIME = deepcopy(DETERMINISTIC_REGIME)
-STOCHASTIC_REGIME.transitions["next_health"] = next_health
-STOCHASTIC_REGIME.states["health"] = DiscreteGrid(HealthStatus)
+alive_stochastic = deepcopy(alive_deterministic)
+alive_stochastic.transitions["next_health"] = next_health
+alive_stochastic.states["health"] = DiscreteGrid(HealthStatus)
 
-DETERMINISTIC_MODEL = Model([DETERMINISTIC_REGIME], n_periods=2)
-STOCHASTIC_MODEL = Model([STOCHASTIC_REGIME], n_periods=2)
+model_deterministic = Model(
+    [alive_deterministic, dead], regime_id_cls=RegimeId, n_periods=2
+)
+model_stochastic = Model([alive_stochastic, dead], regime_id_cls=RegimeId, n_periods=2)
 
 
 # ======================================================================================
@@ -352,14 +376,26 @@ def analytical_simulate_stochastic(initial_wealth, initial_health, health_1, par
 def test_deterministic_solve(beta, n_wealth_points):
     # Update model
     # ==================================================================================
-    new_states = DETERMINISTIC_REGIME.states
+    n_periods = 3
+    new_states = alive_deterministic.states
     new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # type: ignore[attr-defined]
-    model = Model([DETERMINISTIC_REGIME.replace(states=new_states)], n_periods=2)
+    model = Model(
+        [
+            alive_deterministic.replace(states=new_states, active=range(n_periods - 1)),
+            dead.replace(active=[n_periods - 1]),
+        ],
+        regime_id_cls=RegimeId,
+        n_periods=n_periods,
+    )
 
     # Solve model using LCM
     # ==================================================================================
-    params = {"beta": beta, "utility": {"health": 1}}
-    got = model.solve(params={"test": params})
+    params_alive = {
+        "beta": beta,
+        "utility": {"health": 1},
+        "next_regime": {"n_periods": model.n_periods},
+    }
+    got = model.solve(params={"alive": params_alive, "dead": {}})
 
     # Compute analytical solution
     # ==================================================================================
@@ -369,13 +405,13 @@ def test_deterministic_solve(beta, n_wealth_points):
         stop=wealth_grid_class.stop,
         num=wealth_grid_class.n_points,
     )
-    expected = analytical_solve_deterministic(wealth_grid, params=params)
+    expected = analytical_solve_deterministic(wealth_grid, params=params_alive)
 
     # Do not assert that in the first period, the arrays have the same values on the
     # first and last index: TODO (@timmens): THIS IS A BUG AND NEEDS TO BE INVESTIGATED.
     # ==================================================================================
-    aaae(got[0]["test"][slice(1, -1)], expected[0][slice(1, -1)], decimal=12)
-    aaae(got[1]["test"], expected[1], decimal=12)
+    aaae(got[0]["alive"][slice(1, -1)], expected[0][slice(1, -1)], decimal=12)
+    aaae(got[1]["alive"], expected[1], decimal=12)
 
 
 @pytest.mark.parametrize("beta", [0, 0.5, 0.9, 1.0])
@@ -383,27 +419,39 @@ def test_deterministic_solve(beta, n_wealth_points):
 def test_deterministic_simulate(beta, n_wealth_points):
     # Update model
     # ==================================================================================
-    new_states = DETERMINISTIC_REGIME.states
+    n_periods = 3
+    new_states = alive_deterministic.states
     new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # type: ignore[attr-defined]
-    model = Model([DETERMINISTIC_REGIME.replace(states=new_states)], n_periods=2)
+    model = Model(
+        [
+            alive_deterministic.replace(states=new_states, active=range(n_periods - 1)),
+            dead.replace(active=[n_periods - 1]),
+        ],
+        n_periods=n_periods,
+        regime_id_cls=RegimeId,
+    )
 
     # Simulate model using LCM
     # ==================================================================================
-    params = {"beta": beta, "utility": {"health": 1}}
+    params_alive = {
+        "beta": beta,
+        "utility": {"health": 1},
+        "next_regime": {"n_periods": model.n_periods},
+    }
     got: dict[str, pd.DataFrame] = model.solve_and_simulate(
-        params={"test": params},
+        params={"alive": params_alive, "dead": {}},
         initial_states={"wealth": jnp.array([0.25, 0.75, 1.25, 1.75])},
-        initial_regimes=["test"] * 4,
+        initial_regimes=["alive"] * 4,
     )
 
     # Compute analytical simulation
     # ==================================================================================
     expected = analytical_simulate_deterministic(
         initial_wealth=np.array([0.25, 0.75, 1.25, 1.75]),
-        params=params,
+        params=params_alive,
     )
 
-    assert_frame_equal(got["test"], expected, check_like=True, check_dtype=False)
+    assert_frame_equal(got["alive"], expected, check_like=True, check_dtype=False)
 
 
 HEALTH_TRANSITION = [
@@ -419,17 +467,26 @@ HEALTH_TRANSITION = [
 def test_stochastic_solve(beta, n_wealth_points, health_transition):
     # Update model
     # ==================================================================================
-    new_states = STOCHASTIC_REGIME.states
+    n_periods = 3
+    new_states = alive_stochastic.states
     new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # type: ignore[attr-defined]
-    model = Model([STOCHASTIC_REGIME.replace(states=new_states)], n_periods=2)
+    model = Model(
+        [
+            alive_stochastic.replace(states=new_states, active=range(n_periods - 1)),
+            dead.replace(active=[n_periods - 1]),
+        ],
+        regime_id_cls=RegimeId,
+        n_periods=n_periods,
+    )
 
     # Solve model using LCM
     # ==================================================================================
     params = {
         "beta": beta,
         "next_health": {"health_transition": health_transition},
+        "next_regime": {"n_periods": model.n_periods},
     }
-    got = model.solve(params={"test": params})
+    got = model.solve(params={"alive": params, "dead": {}})
 
     # Compute analytical solution
     # ==================================================================================
@@ -457,8 +514,8 @@ def test_stochastic_solve(beta, n_wealth_points, health_transition):
     # Do not assert that in the first period, the arrays have the same values on the
     # first and last index: TODO (@timmens): THIS IS A BUG AND NEEDS TO BE INVESTIGATED.
     # ==================================================================================
-    aaae(got[0]["test"][:, slice(1, -1)], expected[0][:, slice(1, -1)], decimal=12)
-    aaae(got[1]["test"], expected[1], decimal=12)
+    aaae(got[0]["alive"][:, slice(1, -1)], expected[0][:, slice(1, -1)], decimal=12)
+    aaae(got[1]["alive"], expected[1], decimal=12)
 
 
 @pytest.mark.parametrize("beta", [0, 0.5, 0.9, 1.0])
@@ -467,25 +524,34 @@ def test_stochastic_solve(beta, n_wealth_points, health_transition):
 def test_stochastic_simulate(beta, n_wealth_points, health_transition):
     # Update model
     # ==================================================================================
-    new_states = STOCHASTIC_REGIME.states
+    n_periods = 3
+    new_states = alive_stochastic.states
     new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # type: ignore[attr-defined]
-    model = Model([STOCHASTIC_REGIME.replace(states=new_states)], n_periods=2)
+    model = Model(
+        [
+            alive_stochastic.replace(states=new_states, active=range(n_periods - 1)),
+            dead.replace(active=[n_periods - 1]),
+        ],
+        n_periods=n_periods,
+        regime_id_cls=RegimeId,
+    )
 
     # Simulate model using LCM
     # ==================================================================================
-    params = {
+    params_alive = {
         "beta": beta,
         "next_health": {"health_transition": health_transition},
+        "next_regime": {"n_periods": model.n_periods},
     }
     initial_states = {
         "wealth": jnp.array([0.25, 0.75, 1.25, 1.75, 2.0]),
         "health": jnp.array([0, 1, 0, 1, 1]),
     }
     _got: pd.DataFrame = model.solve_and_simulate(
-        params={"test": params},
+        params={"alive": params_alive, "dead": {}},
         initial_states=initial_states,
-        initial_regimes=["test"] * 5,
-    )["test"]
+        initial_regimes=["alive"] * 5,
+    )["alive"]
 
     # Compute analytical simulation
     # ==================================================================================
@@ -497,7 +563,7 @@ def test_stochastic_simulate(beta, n_wealth_points, health_transition):
         initial_wealth=initial_states["wealth"],
         initial_health=initial_states["health"],
         health_1=health_1,
-        params=params,
+        params=params_alive,
     )
 
     # Drop all rows that contain wealth levels at the boundary.

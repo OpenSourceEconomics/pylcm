@@ -11,26 +11,27 @@ continuous version.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 
-from lcm import DiscreteGrid, Regime
-from tests.test_models.deterministic import (
-    RetirementStatus,
-    borrowing_constraint,
+from lcm import DiscreteGrid, Model, Regime
+from tests.test_models.deterministic.regression import (
+    LaborSupply,
+    is_working,
     labor_income,
     next_wealth,
     utility,
-    working,
 )
 
 if TYPE_CHECKING:
     from lcm.typing import (
+        BoolND,
         DiscreteAction,
         DiscreteState,
         FloatND,
-        IntND,
+        Period,
+        ScalarInt,
     )
 
 # ======================================================================================
@@ -54,22 +55,28 @@ class WealthStatus:
     high: int = 2
 
 
+@dataclass
+class RegimeId:
+    working: int = 0
+    dead: int = 1
+
+
 # --------------------------------------------------------------------------------------
 # Utility functions
 # --------------------------------------------------------------------------------------
 def utility_discrete(
     consumption: DiscreteAction,
-    working: IntND,
+    is_working: BoolND,
     disutility_of_work: float,
 ) -> FloatND:
     # In the discrete model, consumption is defined as "low" or "high". This can be
     # translated to the levels 1 and 2.
     consumption_level = 1 + (consumption == ConsumptionChoice.high)
-    return utility(consumption_level, working, disutility_of_work)
+    return utility(consumption_level, is_working, disutility_of_work)
 
 
 # --------------------------------------------------------------------------------------
-# State transitions
+# State and regime transitions
 # --------------------------------------------------------------------------------------
 def next_wealth_discrete(
     wealth: DiscreteState,
@@ -85,17 +92,26 @@ def next_wealth_discrete(
     )
 
 
+def next_regime(period: Period, n_periods: int) -> ScalarInt:
+    certain_death_transition = period == n_periods - 2  # dead in last period
+    return jnp.where(
+        certain_death_transition,
+        RegimeId.dead,
+        RegimeId.working,
+    )
+
+
+def borrowing_constraint(consumption: DiscreteAction, wealth: DiscreteState) -> BoolND:
+    return consumption <= wealth
+
+
 # ======================================================================================
 # Regime specifications
 # ======================================================================================
-ISKHAKOV_ET_AL_2017_DISCRETE = Regime(
-    name="iskhakov_et_al_2017_discrete",
-    description=(
-        "Starts from Iskhakov et al. (2017), removes absorbing retirement constraint "
-        "and the lagged_retirement state, and makes the consumption decision discrete."
-    ),
+working = Regime(
+    name="working",
     actions={
-        "retirement": DiscreteGrid(RetirementStatus),
+        "labor_supply": DiscreteGrid(LaborSupply),
         "consumption": DiscreteGrid(ConsumptionChoice),
     },
     states={
@@ -107,9 +123,51 @@ ISKHAKOV_ET_AL_2017_DISCRETE = Regime(
     },
     transitions={
         "next_wealth": next_wealth_discrete,
+        "next_regime": next_regime,
     },
     functions={
         "labor_income": labor_income,
-        "working": working,
+        "is_working": is_working,
     },
+    active=[0],  # Needs to be specified to avoid initialization errors
 )
+
+
+dead = Regime(
+    name="dead",
+    terminal=True,
+    utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
+    states={"wealth": DiscreteGrid(WealthStatus)},
+    active=[0],  # Needs to be specified to avoid initialization errors
+)
+
+
+def get_model(n_periods: int) -> Model:
+    return Model(
+        [
+            working.replace(active=range(n_periods - 1)),
+            dead.replace(active=[n_periods - 1]),
+        ],
+        n_periods=n_periods,
+        regime_id_cls=RegimeId,
+    )
+
+
+def get_params(
+    n_periods: int,
+    beta: float = 0.95,
+    disutility_of_work: float = 0.5,
+    interest_rate: float = 0.05,
+    wage: float = 10.0,
+) -> dict[str, Any]:
+    return {
+        "working": {
+            "beta": beta,
+            "utility": {"disutility_of_work": disutility_of_work},
+            "next_wealth": {"interest_rate": interest_rate},
+            "next_regime": {"n_periods": n_periods},
+            "borrowing_constraint": {},
+            "labor_income": {"wage": wage},
+        },
+        "dead": {},
+    }

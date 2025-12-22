@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm.interfaces import PeriodVariantContainer, StateActionSpace
+from lcm.interfaces import StateActionSpace
 from lcm.logging import get_logger
 from lcm.max_Q_over_a import get_max_Q_over_a
 from lcm.ndimage import map_coordinates
@@ -22,12 +22,14 @@ class InternalRegimeMock:
     """Mock InternalRegime with only the attributes required by solve().
 
     The solve() function only accesses:
-    - state_action_spaces: PeriodVariantContainer of StateActionSpace objects
-    - max_Q_over_a_functions: PeriodVariantContainer of max_Q_over_a functions
+    - state_action_spaces: StateActionSpace object
+    - max_Q_over_a_functions: dict mapping period to max_Q_over_a function
+    - active: list of periods the regime is active
     """
 
-    state_action_spaces: PeriodVariantContainer[StateActionSpace]
-    max_Q_over_a_functions: PeriodVariantContainer[MaxQOverAFunction]
+    state_action_spaces: StateActionSpace
+    max_Q_over_a_functions: dict[int, MaxQOverAFunction]
+    active_periods: list[int]
 
 
 def test_solve_brute():
@@ -62,14 +64,11 @@ def test_solve_brute():
         },
         states_and_discrete_actions_names=("lazy", "working", "wealth"),
     )
-    state_action_spaces = PeriodVariantContainer(
-        terminal=state_action_space, non_terminal=state_action_space
-    )
     # ==================================================================================
     # create the Q_and_F functions
     # ==================================================================================
 
-    def _Q_and_F(consumption, lazy, wealth, working, next_V_arr, params, period):  # noqa: ARG001
+    def _Q_and_F(consumption, lazy, wealth, working, next_V_arr, params):
         next_wealth = wealth + working - consumption
         next_lazy = lazy
 
@@ -97,17 +96,14 @@ def test_solve_brute():
         states_names=("lazy", "wealth"),
     )
 
-    max_Q_over_a_functions = PeriodVariantContainer(
-        terminal=max_Q_over_a, non_terminal=max_Q_over_a
-    )
-
     # ==================================================================================
     # call solve function
     # ==================================================================================
 
     internal_regime = InternalRegimeMock(
-        state_action_spaces=state_action_spaces,
-        max_Q_over_a_functions=max_Q_over_a_functions,
+        state_action_spaces=state_action_space,
+        max_Q_over_a_functions={0: max_Q_over_a, 1: max_Q_over_a},
+        active_periods=[0, 1],
     )
 
     solution = solve(
@@ -138,11 +134,8 @@ def test_solve_brute_single_period_Qc_arr():
         states={},
         states_and_discrete_actions_names=("a", "b", "c"),
     )
-    state_action_spaces = PeriodVariantContainer(
-        terminal=state_action_space, non_terminal=state_action_space
-    )
 
-    def _Q_and_F(a, c, b, d, next_V_arr, params, period):  # noqa: ARG001
+    def _Q_and_F(a, c, b, d, next_V_arr, params):  # noqa: ARG001
         # next_V_arr is now a dict but not used in this test
         util = d
         feasib = d <= a + b + c
@@ -160,10 +153,9 @@ def test_solve_brute_single_period_Qc_arr():
     # is correctly applied to the state_action_space
 
     internal_regime = InternalRegimeMock(
-        state_action_spaces=state_action_spaces,
-        max_Q_over_a_functions=PeriodVariantContainer(
-            terminal=max_Q_over_a, non_terminal=max_Q_over_a
-        ),
+        state_action_spaces=state_action_space,
+        max_Q_over_a_functions={0: max_Q_over_a, 1: max_Q_over_a},
+        active_periods=[0, 1],
     )
 
     got = solve(

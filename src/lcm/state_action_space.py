@@ -18,7 +18,6 @@ def create_state_action_space(
     grids: dict[str, Array],
     *,
     states: dict[str, Array] | None = None,
-    is_last_period: bool = False,
 ) -> StateActionSpace:
     """Create a state-action-space.
 
@@ -30,8 +29,6 @@ def create_state_action_space(
         grids: A dictionary of grids as returned by get_grids.
         states: A dictionary of states. If None, the grids as specified in the regime
             are used.
-        is_last_period: Whether the state-action-space is created for the last period,
-            in which case auxiliary variables are not included.
 
     Returns:
         A state-action-space. Contains the grids of the discrete and continuous actions,
@@ -40,9 +37,6 @@ def create_state_action_space(
 
     """
     vi = variable_info.copy()
-
-    if is_last_period:
-        vi = vi.query("enters_concurrent_valuation")
 
     if states is None:
         _states = {sn: grids[sn] for sn in vi.query("is_state").index}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
@@ -16,11 +17,22 @@ if TYPE_CHECKING:
         ContinuousState,
         FloatND,
         ParamsDict,
+        ScalarInt,
     )
 
 
 @pytest.fixture
-def valid_regime() -> Regime:
+def n_periods() -> int:
+    return 2
+
+
+@pytest.fixture
+def regimes_and_id_cls(n_periods: int) -> tuple[dict[str, Regime], type]:
+    @dataclass
+    class RegimeId:
+        non_terminal: int = 0
+        terminal: int = 1
+
     def utility(
         consumption: ContinuousAction,
         wealth: ContinuousState,  # noqa: ARG001
@@ -37,13 +49,19 @@ def valid_regime() -> Regime:
     def next_health(health: ContinuousState) -> ContinuousState:
         return health
 
+    def next_regime(period: int, n_periods: int) -> ScalarInt:
+        transition_into_terminal = period == (n_periods - 2)
+        return jnp.where(
+            transition_into_terminal, RegimeId.terminal, RegimeId.non_terminal
+        )
+
     def borrowing_constraint(
         consumption: ContinuousAction, wealth: ContinuousState
     ) -> BoolND:
         return consumption <= wealth
 
-    return Regime(
-        name="test",
+    non_terminal = Regime(
+        name="non_terminal",
         actions={
             "consumption": LinspaceGrid(
                 start=1,
@@ -70,17 +88,30 @@ def valid_regime() -> Regime:
         transitions={
             "next_wealth": next_wealth,
             "next_health": next_health,
+            "next_regime": next_regime,
         },
+        active=range(n_periods - 1),
     )
 
+    terminal = Regime(
+        name="terminal",
+        terminal=True,
+        states={
+            "wealth": LinspaceGrid(start=1, stop=2, n_points=3),
+        },
+        utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
+        active=[n_periods - 1],
+    )
+
+    return {"non_terminal": non_terminal, "terminal": terminal}, RegimeId
+
 
 @pytest.fixture
-def valid_model(valid_regime: Regime) -> Model:
-    return Model(regimes=[valid_regime], n_periods=2)
+def nan_value_model(
+    regimes_and_id_cls: tuple[dict[str, Regime], type], n_periods: int
+) -> Model:
+    regimes, regime_id_cls = regimes_and_id_cls
 
-
-@pytest.fixture
-def nan_value_model(valid_regime: Regime) -> Model:
     def invalid_utility(
         consumption: ContinuousAction,
         wealth: ContinuousState,
@@ -93,12 +124,20 @@ def nan_value_model(valid_regime: Regime) -> Model:
         )
         return jnp.log(consumption) + nan_term
 
-    invalid_regime = valid_regime.replace(utility=invalid_utility)
-    return Model(regimes=[invalid_regime], n_periods=2)
+    invalid_regime = regimes["non_terminal"].replace(utility=invalid_utility)
+    return Model(
+        regimes=[invalid_regime, regimes["terminal"]],
+        n_periods=n_periods,
+        regime_id_cls=regime_id_cls,
+    )
 
 
 @pytest.fixture
-def inf_value_model(valid_regime: Regime) -> Model:
+def inf_value_model(
+    regimes_and_id_cls: tuple[dict[str, Regime], type], n_periods: int
+) -> Model:
+    regimes, regime_id_cls = regimes_and_id_cls
+
     def invalid_utility(
         consumption: ContinuousAction,
         wealth: ContinuousState,
@@ -111,13 +150,20 @@ def inf_value_model(valid_regime: Regime) -> Model:
         )
         return jnp.log(consumption) + inf_term
 
-    inf_model = valid_regime.replace(utility=invalid_utility)
-    return Model(regimes=[inf_model], n_periods=2)
+    inf_model = regimes["non_terminal"].replace(utility=invalid_utility)
+    return Model(
+        regimes=[inf_model, regimes["terminal"]],
+        n_periods=n_periods,
+        regime_id_cls=regime_id_cls,
+    )
 
 
 @pytest.fixture
-def params() -> ParamsDict:
-    return {"test": {"beta": 0.95}}
+def params(n_periods: int) -> ParamsDict:
+    return {
+        "non_terminal": {"beta": 0.95, "next_regime": {"n_periods": n_periods}},
+        "terminal": {},
+    }
 
 
 def test_solve_model_with_nan_value_function_array_raises_error(
@@ -144,7 +190,7 @@ def test_simulate_model_with_nan_value_function_array_raises_error(
 
     with pytest.raises(InvalidValueFunctionError):
         nan_value_model.solve_and_simulate(
-            params, initial_states=initial_states, initial_regimes=["test"] * 2
+            params, initial_states=initial_states, initial_regimes=["non_terminal"] * 2
         )
 
 
@@ -158,5 +204,5 @@ def test_simulate_model_with_inf_value_function_array_does_not_raise_error(
 
     # This should not raise an error
     inf_value_model.solve_and_simulate(
-        params, initial_states=initial_states, initial_regimes=["test"] * 2
+        params, initial_states=initial_states, initial_regimes=["non_terminal"] * 2
     )
