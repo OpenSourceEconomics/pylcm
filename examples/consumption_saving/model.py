@@ -102,8 +102,8 @@ def next_health(
     return health * (1 + exercise - working / 2)
 
 
-def next_regime(period: int, n_periods: int) -> ScalarInt:
-    certain_retirement = period >= n_periods - 2
+def next_regime(period: int, last_period: int) -> ScalarInt:
+    certain_retirement = period >= last_period - 1
     return jnp.where(certain_retirement, RegimeId.retirement, RegimeId.working)
 
 
@@ -196,7 +196,7 @@ params = {
         "beta": 0.95,
         "utility": {"disutility_of_work": 0.05},
         "next_wealth": {"interest_rate": 0.05},
-        "next_regime": {"n_periods": model.n_periods},
+        "next_regime": {},  # last_period is now a temporal context variable
     },
     "retirement": {},
 }
