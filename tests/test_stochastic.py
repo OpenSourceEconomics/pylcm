@@ -39,36 +39,29 @@ def test_model_solve_and_simulate_with_stochastic_model():
         },
         initial_regimes=["working"] * 4,
     )
-    res: pd.DataFrame = result.to_dataframe().query('regime == "working"')
+    res = result.to_dataframe().query('regime == "working"')
 
-    # Verify simulation produced expected columns and some rows
-    assert "period" in res.columns
-    assert "subject_id" in res.columns
-    assert "partner" in res.columns
-    assert "labor_supply" in res.columns
+    # Verify expected columns
+    required_cols = {"period", "subject_id", "partner", "labor_supply"}
+    assert required_cols <= set(res.columns)
     assert len(res) > 0
 
-    # Check that partner transition follows the transition matrix from get_params
-    period_0 = res[res.period == 0].set_index("subject_id")
-    period_1 = res[res.period == 1].set_index("subject_id")
+    # Check partner transition follows expected pattern:
+    # Partner becomes single if working and partnered, otherwise stays partnered
+    period_0 = res.query("period == 0").set_index("subject_id")
+    period_1 = res.query("period == 1").set_index("subject_id")
+    common = period_0.index.intersection(period_1.index)
 
-    # Only test subjects present in both periods
-    common_subjects = period_0.index.intersection(period_1.index)
-
-    if len(common_subjects) > 0:
-        # Create expected partner values based on period 0 state (using category labels)
-        expected_partner = period_0.loc[common_subjects].apply(
-            lambda row: "single"
-            if (row["labor_supply"] == "work" and row["partner"] == "partnered")
-            else "partnered",
-            axis=1,
+    if len(common) > 0:
+        p0, p1 = period_0.loc[common], period_1.loc[common]
+        should_be_single = (p0["labor_supply"] == "work") & (
+            p0["partner"] == "partnered"
         )
-
-        actual_partner = period_1.loc[common_subjects, "partner"]
+        expected = should_be_single.map({True: "single", False: "partnered"})
 
         pd.testing.assert_series_equal(
-            actual_partner,
-            expected_partner,
+            p1["partner"],
+            expected,
             check_names=False,
             check_dtype=False,
             check_categorical=False,

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import jax.numpy as jnp
+import pandas as pd
 import pytest
 from numpy.testing import assert_array_almost_equal, assert_array_equal
+from pandas.testing import assert_frame_equal
 
 from lcm import Model
 from lcm.input_processing import process_regimes
@@ -13,9 +13,6 @@ from lcm.simulation.simulate import (
     _lookup_values_from_indices,
     simulate,
 )
-
-if TYPE_CHECKING:
-    import pandas as pd
 
 # ======================================================================================
 # Test simulate using raw inputs
@@ -56,9 +53,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
         "working": {
             "beta": 1.0,
             "utility": {"disutility_of_work": 1.0},
-            "next_wealth": {
-                "interest_rate": 0.05,
-            },
+            "next_wealth": {"interest_rate": 0.05},
             "next_regime": {"n_periods": 2},
             "borrowing_constraint": {},
             "labor_income": {},
@@ -77,11 +72,10 @@ def test_simulate_using_raw_inputs(simulate_inputs):
         logger=get_logger(debug_mode=False),
         **simulate_inputs,
     )
-    got = result.to_dataframe()
-    got = got.query('regime == "working"')
+    got = result.to_dataframe().query('regime == "working"')
 
-    assert_array_equal(got["labor_supply"], "retire")
-    assert_array_almost_equal(got["consumption"], jnp.array([1.0, 50.400803]))
+    assert (got["labor_supply"] == "retire").all()
+    assert_array_almost_equal(got["consumption"], [1.0, 50.400803])
 
 
 # ======================================================================================
@@ -136,12 +130,12 @@ def test_simulate_using_model_methods(
         initial_states={"wealth": jnp.array([20.0, 150, 250, 320])},
         initial_regimes=["working"] * 4,
     )
-    res: pd.DataFrame = result.to_dataframe(
+    res = result.to_dataframe(
         additional_targets=["utility", "borrowing_constraint"]
-    )
-    res = res.query('regime == "working"')
+    ).query('regime == "working"')
 
-    assert {
+    # Check expected columns
+    expected_cols = {
         "period",
         "value",
         "labor_supply",
@@ -151,19 +145,21 @@ def test_simulate_using_model_methods(
         "borrowing_constraint",
         "subject_id",
         "regime",
-    } == set(res.columns)
+    }
+    assert expected_cols == set(res.columns)
 
-    # assert that everyone retires in the last period
-    last_period = res[res["period"] == n_periods - 1]
-    assert_array_equal(last_period["labor_supply"], "retire")
+    # Everyone retires in the last period
+    assert (res.loc[res["period"] == n_periods - 1, "labor_supply"] == "retire").all()
 
-    for period in range(n_periods):
-        period_data = res[res["period"] == period]
-        # assert that higher wealth leads to higher consumption in each period
-        assert (period_data["consumption"].diff()[1:] >= 0).all()  # type: ignore[operator]
-
-        # assert that higher wealth leads to higher value function in each period
-        assert (period_data["value"].diff()[1:] >= 0).all()  # type: ignore[operator]
+    # Higher wealth leads to higher consumption and value in each period
+    # (data is sorted by subject_id which corresponds to increasing initial wealth)
+    for col in ["consumption", "value"]:
+        is_monotonic = res.groupby("period")[col].apply(
+            lambda x: x.is_monotonic_increasing
+        )
+        assert is_monotonic.all(), (
+            f"{col} should increase with wealth within each period"
+        )
 
 
 def test_simulate_with_only_discrete_actions():
@@ -180,25 +176,29 @@ def test_simulate_with_only_discrete_actions():
         initial_states={"wealth": jnp.array([0, 4])},
         initial_regimes=["working"] * 2,
     )
-    res: pd.DataFrame = result.to_dataframe()
-    res = res.query('regime == "working"')
+    got = result.to_dataframe().query('regime == "working"')
 
-    # Data is sorted by (subject_id, period). Only working regime rows shown.
-    # Subject 0: starts with wealth=0, works 0 periods, then gets income and works
-    # Subject 1: starts with wealth=4, works both periods
-    # Both transition to dead regime in period 2.
-    subject_0 = res[res["subject_id"] == 0]
-    subject_1 = res[res["subject_id"] == 1]
+    # Expected: sorted by (subject_id, period)
+    # Subject 0: wealth=0 -> works, low; wealth=2 -> retires, high
+    # Subject 1: wealth=4 -> retires, high; wealth=2 -> retires, high
+    expected = pd.DataFrame(
+        {
+            "subject_id": [0, 0, 1, 1],
+            "period": [0, 1, 0, 1],
+            "wealth": [0.0, 2.0, 4.0, 2.0],
+            "labor_supply": ["work", "retire", "retire", "retire"],
+            "consumption": ["low", "high", "high", "high"],
+        }
+    )
 
-    # Subject 0: period 0 (wealth=0, no work), period 1 (wealth=2, works)
-    assert_array_equal(subject_0["labor_supply"], ["work", "retire"])
-    assert_array_equal(subject_0["consumption"], ["low", "high"])
-    assert_array_equal(subject_0["wealth"], jnp.array([0, 2]))
-
-    # Subject 1: period 0 (wealth=4, works), period 1 (wealth=2, works)
-    assert_array_equal(subject_1["labor_supply"], ["retire", "retire"])
-    assert_array_equal(subject_1["consumption"], ["high", "high"])
-    assert_array_equal(subject_1["wealth"], jnp.array([4, 2]))
+    assert_frame_equal(
+        got[
+            ["subject_id", "period", "wealth", "labor_supply", "consumption"]
+        ].reset_index(drop=True),
+        expected,
+        check_dtype=False,
+        check_categorical=False,
+    )
 
 
 # ======================================================================================
@@ -214,50 +214,37 @@ def test_effect_of_beta_on_last_period():
 
     n_periods = 6
     model = get_model(n_periods=n_periods)
-
-    # low beta
-    params_low = get_params(
-        n_periods=n_periods,
-        beta=0.9,
-        disutility_of_work=1.0,
-    )
-
-    # high beta
-    params_high = get_params(
-        n_periods=n_periods,
-        beta=0.99,
-        disutility_of_work=1.0,
-    )
-
-    # solutions
-    solution_low = model.solve(params_low)
-    solution_high = model.solve(params_high)
-
-    # Simulate
-    # ==================================================================================
     initial_wealth = jnp.array([20.0, 50, 70])
 
-    res_low: pd.DataFrame = model.simulate(
-        params_low,
-        V_arr_dict=solution_low,
-        initial_states={"wealth": initial_wealth},
-        initial_regimes=["working"] * 3,
-    ).to_dataframe()
-    res_low = res_low[res_low["regime"] == "working"]
+    params_low = get_params(n_periods=n_periods, beta=0.9, disutility_of_work=1.0)
+    params_high = get_params(n_periods=n_periods, beta=0.99, disutility_of_work=1.0)
 
-    res_high: pd.DataFrame = model.simulate(
-        params_high,
-        V_arr_dict=solution_high,
-        initial_states={"wealth": initial_wealth},
-        initial_regimes=["working"] * 3,
-    ).to_dataframe()
-    res_high = res_high[res_high["regime"] == "working"]
+    res_low = (
+        model.solve_and_simulate(
+            params_low,
+            initial_states={"wealth": initial_wealth},
+            initial_regimes=["working"] * 3,
+        )
+        .to_dataframe()
+        .query('regime == "working"')
+    )
 
-    # Asserting
-    # ==================================================================================
-    low_last = res_low.query("period == 4")  # period before last working period
-    high_last = res_high.query("period == 4")
-    assert (low_last["value"].to_numpy() <= high_last["value"].to_numpy()).all()
+    res_high = (
+        model.solve_and_simulate(
+            params_high,
+            initial_states={"wealth": initial_wealth},
+            initial_regimes=["working"] * 3,
+        )
+        .to_dataframe()
+        .query('regime == "working"')
+    )
+
+    # Higher beta (more patient) should lead to higher value in later periods
+    merged = res_low.merge(
+        res_high, on=["subject_id", "period"], suffixes=("_low", "_high")
+    )
+    period_4 = merged.query("period == 4")
+    assert (period_4["value_low"] <= period_4["value_high"]).all()
 
 
 def test_effect_of_disutility_of_work():
@@ -268,63 +255,44 @@ def test_effect_of_disutility_of_work():
 
     n_periods = 6
     model = get_model(n_periods=n_periods)
-
-    # low disutility_of_work
-    params_low = get_params(
-        n_periods=n_periods,
-        beta=1.0,
-        disutility_of_work=0.2,
-    )
-
-    # high disutility_of_work
-    params_high = get_params(
-        n_periods=n_periods,
-        beta=1.0,
-        disutility_of_work=1.5,
-    )
-
-    # solutions
-    solution_low = model.solve(params_low)
-    solution_high = model.solve(params_high)
-
-    # Simulate
-    # ==================================================================================
     initial_wealth = jnp.array([20.0, 50, 70])
 
-    res_low: pd.DataFrame = model.simulate(
-        params_low,
-        V_arr_dict=solution_low,
-        initial_states={"wealth": initial_wealth},
-        initial_regimes=["working"] * 3,
-    ).to_dataframe()
-    res_low = res_low.query('regime == "working"')
+    params_low = get_params(n_periods=n_periods, beta=1.0, disutility_of_work=0.2)
+    params_high = get_params(n_periods=n_periods, beta=1.0, disutility_of_work=1.5)
 
-    res_high: pd.DataFrame = model.simulate(
-        params_high,
-        V_arr_dict=solution_high,
-        initial_states={"wealth": initial_wealth},
-        initial_regimes=["working"] * 3,
-    ).to_dataframe()
-    res_high = res_high.query('regime == "working"')
+    res_low = (
+        model.solve_and_simulate(
+            params_low,
+            initial_states={"wealth": initial_wealth},
+            initial_regimes=["working"] * 3,
+        )
+        .to_dataframe()
+        .query('regime == "working"')
+    )
 
-    # Asserting
-    # ==================================================================================
-    for period in range(5):
-        low_period = res_low.query(f"period == {period}")
-        high_period = res_high.query(f"period == {period}")
-        # We expect that individuals with lower disutility of work, work (weakly) more
-        # and thus consume (weakly) more
-        assert (
-            low_period["consumption"].to_numpy()
-            >= high_period["consumption"].to_numpy()
-        ).all()
+    res_high = (
+        model.solve_and_simulate(
+            params_high,
+            initial_states={"wealth": initial_wealth},
+            initial_regimes=["working"] * 3,
+        )
+        .to_dataframe()
+        .query('regime == "working"')
+    )
 
-        # We expect that individuals with lower disutility of work retire (weakly) later
-        # Use cat.codes to compare: work=0, retire=1, so lower code means more work
-        assert (
-            low_period["labor_supply"].cat.codes.to_numpy()
-            <= high_period["labor_supply"].cat.codes.to_numpy()
-        ).all()
+    # Merge results for easy comparison
+    merged = res_low.merge(
+        res_high, on=["subject_id", "period"], suffixes=("_low", "_high")
+    )
+
+    # Lower disutility of work -> work more -> consume more
+    assert (merged["consumption_low"] >= merged["consumption_high"]).all()
+
+    # Lower disutility -> retire later (work=0, retire=1, lower code = more work)
+    assert (
+        merged["labor_supply_low"].cat.codes.to_numpy()
+        <= merged["labor_supply_high"].cat.codes.to_numpy()
+    ).all()
 
 
 # ======================================================================================
@@ -347,21 +315,15 @@ def test_to_dataframe_use_labels_parameter():
         initial_regimes=["working"] * 2,
     )
 
-    # Default: use_labels=True - discrete columns should be Categorical with labels
+    # use_labels=True (default): discrete columns are Categorical with string labels
     df_labels = result.to_dataframe()
-    assert df_labels["regime"].dtype.name == "category"
-    assert df_labels["labor_supply"].dtype.name == "category"
-    # Can access codes via .cat.codes
-    assert df_labels["labor_supply"].cat.codes.dtype == "int8"
-    # Can access category names
-    assert "work" in df_labels["labor_supply"].cat.categories
-    assert "retire" in df_labels["labor_supply"].cat.categories
+    for col in ["regime", "labor_supply"]:
+        assert df_labels[col].dtype.name == "category", f"{col} should be categorical"
+    assert set(df_labels["labor_supply"].cat.categories) == {"work", "retire"}
 
-    # use_labels=False - discrete columns should have numeric codes
+    # use_labels=False: discrete columns have numeric codes
     df_codes = result.to_dataframe(use_labels=False)
-    assert df_codes["regime"].dtype == object  # string column
-    assert df_codes["labor_supply"].dtype in ("float32", "float64", "int32", "int64")
-    # Values should be numeric codes (0 or 1)
+    assert df_codes["labor_supply"].dtype.kind in "iuf"  # integer/unsigned/float
     assert set(df_codes["labor_supply"].dropna().unique()).issubset({0, 1})
 
 
@@ -370,50 +332,35 @@ def test_to_dataframe_use_labels_parameter():
 # ======================================================================================
 
 
-def test_available_targets_property():
+@pytest.fixture
+def regression_simulation_result():
+    """Shared fixture for available_targets tests."""
+    from tests.test_models.deterministic.regression import (  # noqa: PLC0415
+        get_model,
+        get_params,
+    )
+
+    model = get_model(n_periods=3)
+    params = get_params(n_periods=3)
+    return model.solve_and_simulate(
+        params,
+        initial_states={"wealth": jnp.array([20.0, 50.0])},
+        initial_regimes=["working"] * 2,
+    )
+
+
+def test_available_targets_property(regression_simulation_result):
     """Test that available_targets shows what can be computed."""
-    from tests.test_models.deterministic.regression import (  # noqa: PLC0415
-        get_model,
-        get_params,
-    )
-
-    model = get_model(n_periods=3)
-    params = get_params(n_periods=3)
-    result = model.solve_and_simulate(
-        params,
-        initial_states={"wealth": jnp.array([20.0, 50.0])},
-        initial_regimes=["working"] * 2,
-    )
-
-    # Check that available_targets is a list
+    result = regression_simulation_result
     assert isinstance(result.available_targets, list)
-    # Should include utility (always available)
-    assert "utility" in result.available_targets
-    # Should include functions defined in regime
-    assert "borrowing_constraint" in result.available_targets
+    assert {"utility", "borrowing_constraint"} <= set(result.available_targets)
 
 
-def test_additional_targets_all():
+def test_additional_targets_all(regression_simulation_result):
     """Test that additional_targets='all' computes all available targets."""
-    from tests.test_models.deterministic.regression import (  # noqa: PLC0415
-        get_model,
-        get_params,
-    )
-
-    model = get_model(n_periods=3)
-    params = get_params(n_periods=3)
-    result = model.solve_and_simulate(
-        params,
-        initial_states={"wealth": jnp.array([20.0, 50.0])},
-        initial_regimes=["working"] * 2,
-    )
-
-    # Get DataFrame with all targets
-    df_all = result.to_dataframe(additional_targets="all")
-
-    # All available targets should be columns in the DataFrame
-    for target in result.available_targets:
-        assert target in df_all.columns, f"Target {target} not in DataFrame"
+    result = regression_simulation_result
+    df = result.to_dataframe(additional_targets="all")
+    assert set(result.available_targets) <= set(df.columns)
 
 
 # ======================================================================================

@@ -432,10 +432,10 @@ def _add_missing_columns(
     """Add NaN columns for states/actions not present in DataFrame."""
     for name in state_names:
         if name not in df.columns:
-            df[name] = jnp.nan
+            df[name] = float("nan")
     for name in action_names:
         if name not in df.columns:
-            df[name] = jnp.nan
+            df[name] = float("nan")
     return df
 
 
