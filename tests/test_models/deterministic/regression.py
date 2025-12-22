@@ -137,8 +137,7 @@ working = Regime(
 dead = Regime(
     name="dead",
     terminal=True,
-    utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
-    states={"wealth": LinspaceGrid(start=1, stop=100, n_points=2)},
+    utility=lambda: 0.0,
     active=[99],  # placeholder, will be replaced by get_model()
 )
 

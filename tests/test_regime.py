@@ -1,8 +1,11 @@
 """Test Regime class validation."""
 
+from dataclasses import dataclass
+
+import jax.numpy as jnp
 import pytest
 
-from lcm import LinspaceGrid, Regime
+from lcm import LinspaceGrid, Model, Regime
 from lcm.exceptions import RegimeInitializationError
 from lcm.utils import REGIME_SEPARATOR
 
@@ -101,7 +104,6 @@ def test_terminal_regime_cannot_have_transitions():
         )
 
 
-@pytest.mark.xfail(reason="Stateless regimes are not yet supported.")
 def test_terminal_regime_can_be_created_without_states():
     """Terminal regime can be created without states (e.g., absorbing death state)."""
     regime = Regime(
@@ -169,3 +171,160 @@ def test_active_validation_rejects_invalid_values():
             terminal=True,
             active=[-1, 0, 1],
         )
+
+
+# ======================================================================================
+# State-less Terminal Regime Integration Tests
+# ======================================================================================
+
+
+def test_stateless_terminal_regime_solve_and_simulate():
+    """Test that state-less terminal regimes can be solved and simulated."""
+
+    @dataclass
+    class RegimeId:
+        working: int = 0
+        dead: int = 1
+
+    def utility_working(consumption):
+        return jnp.log(consumption)
+
+    def next_wealth(wealth, consumption, interest_rate):
+        return (1 + interest_rate) * (wealth - consumption)
+
+    def next_regime_from_working(period, n_periods):
+        return jnp.where(period == n_periods - 2, RegimeId.dead, RegimeId.working)
+
+    def borrowing_constraint(consumption, wealth):
+        return consumption <= wealth
+
+    working = Regime(
+        name="working",
+        actions={"consumption": LinspaceGrid(start=1, stop=100, n_points=50)},
+        states={"wealth": LinspaceGrid(start=1, stop=100, n_points=20)},
+        utility=utility_working,
+        constraints={"borrowing_constraint": borrowing_constraint},
+        transitions={
+            "next_wealth": next_wealth,
+            "next_regime": next_regime_from_working,
+        },
+        active=[0, 1],
+    )
+
+    # State-less terminal regime with constant utility
+    dead = Regime(
+        name="dead",
+        terminal=True,
+        utility=lambda: 0.0,
+        active=[2],
+    )
+
+    model = Model(
+        [working, dead],
+        n_periods=3,
+        regime_id_cls=RegimeId,
+    )
+
+    params = {
+        "working": {
+            "beta": 0.95,
+            "utility": {},
+            "next_wealth": {"interest_rate": 0.05},
+            "next_regime": {"n_periods": 3},
+            "borrowing_constraint": {},
+        },
+        "dead": {},
+    }
+
+    # Test solve
+    V_arr_dict = model.solve(params, debug_mode=False)
+    assert 2 in V_arr_dict
+    assert "dead" in V_arr_dict[2]
+    # V_arr for state-less regime should be a scalar
+    assert V_arr_dict[2]["dead"].ndim == 0
+    assert float(V_arr_dict[2]["dead"]) == 0.0
+
+    # Test simulate
+    initial_states = {"wealth": jnp.array([50.0, 80.0])}
+    initial_regimes = ["working", "working"]
+
+    result = model.simulate(
+        params=params,
+        initial_states=initial_states,
+        initial_regimes=initial_regimes,
+        V_arr_dict=V_arr_dict,
+        debug_mode=False,
+    )
+
+    # Check that dead regime results are correct
+    assert "dead" in result
+    dead_df = result["dead"]
+    assert len(dead_df) == 2  # Both subjects end up in dead regime
+    assert all(dead_df["value"] == 0.0)
+    # State-less regime should have no state columns except period, subject_id, value
+    assert set(dead_df.columns) == {"period", "subject_id", "value"}
+
+
+def test_terminal_regime_with_states_and_scalar_utility():
+    """Test that terminal regimes with states can return scalar utility."""
+
+    @dataclass
+    class RegimeId:
+        working: int = 0
+        dead: int = 1
+
+    def utility_working(consumption):
+        return jnp.log(consumption)
+
+    def next_wealth(wealth, consumption, interest_rate):
+        return (1 + interest_rate) * (wealth - consumption)
+
+    def next_regime_from_working(period, n_periods):
+        return jnp.where(period == n_periods - 2, RegimeId.dead, RegimeId.working)
+
+    def borrowing_constraint(consumption, wealth):
+        return consumption <= wealth
+
+    working = Regime(
+        name="working",
+        actions={"consumption": LinspaceGrid(start=1, stop=100, n_points=50)},
+        states={"wealth": LinspaceGrid(start=1, stop=100, n_points=20)},
+        utility=utility_working,
+        constraints={"borrowing_constraint": borrowing_constraint},
+        transitions={
+            "next_wealth": next_wealth,
+            "next_regime": next_regime_from_working,
+        },
+        active=[0, 1],
+    )
+
+    # Terminal regime WITH states but utility returns scalar (broadcast)
+    dead = Regime(
+        name="dead",
+        terminal=True,
+        utility=lambda wealth: 0.0,  # noqa: ARG005
+        states={"wealth": LinspaceGrid(start=1, stop=100, n_points=20)},
+        active=[2],
+    )
+
+    model = Model(
+        [working, dead],
+        n_periods=3,
+        regime_id_cls=RegimeId,
+    )
+
+    params = {
+        "working": {
+            "beta": 0.95,
+            "utility": {},
+            "next_wealth": {"interest_rate": 0.05},
+            "next_regime": {"n_periods": 3},
+            "borrowing_constraint": {},
+        },
+        "dead": {},
+    }
+
+    # Test solve - V_arr should have shape matching state grid
+    V_arr_dict = model.solve(params, debug_mode=False)
+    assert V_arr_dict[2]["dead"].shape == (20,)
+    assert all(V_arr_dict[2]["dead"] == 0.0)
