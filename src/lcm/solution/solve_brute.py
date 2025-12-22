@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 def solve(
     params: ParamsDict,
     n_periods: int,
-    internal_regimes: dict[str, InternalRegime],
+    internal_regimes: dict[RegimeName, InternalRegime],
     logger: logging.Logger,
 ) -> dict[int, dict[RegimeName, FloatND]]:
     """Solve a model using grid search.

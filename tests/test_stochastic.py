@@ -102,7 +102,6 @@ def models_and_params() -> tuple[Model, Model, dict[str, Any]]:
 
     """
 
-    # Define functions first
     @lcm.mark.stochastic
     def next_health_stochastic(health: DiscreteState) -> FloatND:
         return jnp.identity(2)[health]
@@ -110,18 +109,22 @@ def models_and_params() -> tuple[Model, Model, dict[str, Any]]:
     def next_health_deterministic(health: DiscreteState) -> DiscreteState:
         return health
 
+    n_periods = 4
+
     # Create deterministic model with modified function
     working_deterministic = working.replace(
         transitions={
             **working.transitions,
             "next_health": next_health_deterministic,
-        }
+        },
+        active=range(n_periods - 1),
     )
     retired_deterministic = retired.replace(
         transitions={
             **retired.transitions,
             "next_health": next_health_deterministic,
-        }
+        },
+        active=range(n_periods - 1),
     )
 
     # Create stochastic model with identity transition function
@@ -129,28 +132,32 @@ def models_and_params() -> tuple[Model, Model, dict[str, Any]]:
         transitions={
             **working.transitions,
             "next_health": next_health_stochastic,
-        }
+        },
+        active=range(n_periods - 1),
     )
     retired_stochastic = retired.replace(
         transitions={
             **retired.transitions,
             "next_health": next_health_stochastic,
-        }
+        },
+        active=range(n_periods - 1),
     )
 
+    dead_updated = dead.replace(active=[n_periods - 1])
+
     model_deterministic = Model(
-        [working_deterministic, retired_deterministic, dead],
-        n_periods=4,
+        [working_deterministic, retired_deterministic, dead_updated],
+        n_periods=n_periods,
         regime_id_cls=RegimeId,
     )
 
     model_stochastic = Model(
-        [working_stochastic, retired_stochastic, dead],
-        n_periods=4,
+        [working_stochastic, retired_stochastic, dead_updated],
+        n_periods=n_periods,
         regime_id_cls=RegimeId,
     )
 
-    return model_deterministic, model_stochastic, get_params(n_periods=4)
+    return model_deterministic, model_stochastic, get_params(n_periods=n_periods)
 
 
 def test_compare_deterministic_and_stochastic_results_value_function(

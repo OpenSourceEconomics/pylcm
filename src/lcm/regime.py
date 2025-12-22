@@ -22,6 +22,7 @@ class Regime:
 
     Attributes:
         name: Name of the regime.
+        active: Periods when regime is active.
         utility: Utility function for this regime.
         constraints: Dictionary of constraint functions.
         transitions: Dictionary of transition functions (keys must start with 'next_').
@@ -30,13 +31,13 @@ class Regime:
         states: Dictionary of state grids.
         absorbing: Whether this is an absorbing regime.
         terminal: Whether this is a terminal regime.
-        active: Periods when regime is active. None means all periods.
         description: Description of the regime.
 
     """
 
     name: str
     _: KW_ONLY
+    active: Iterable[int]
     utility: UserFunction
     constraints: dict[str, UserFunction] = field(default_factory=dict)
     transitions: dict[str, UserFunction] = field(default_factory=dict)
@@ -45,7 +46,6 @@ class Regime:
     states: dict[str, Grid] = field(default_factory=dict)
     absorbing: bool = False
     terminal: bool = False
-    active: Iterable[int] | None = None
     description: str | None = None
 
     def __post_init__(self) -> None:
@@ -203,12 +203,12 @@ def _validate_terminal_or_transitions(regime: Regime) -> list[str]:
                 "Terminal regimes cannot have transitions. Remove the transitions "
                 "or set terminal=False.",
             )
-        # if not regime.states:
-        #     errors.append(
-        #         "Terminal regimes must have at least one state. The terminal utility "
-        #         "function should depend on the states that agents bring into the "
-        #         "terminal regime.",
-        #     )
+        if not regime.states:
+            errors.append(
+                "Terminal regimes must have at least one state. The terminal utility "
+                "function should depend on the states that agents bring into the "
+                "terminal regime.",
+            )
     else:
         # Validate transition function names start with 'next_'
         transitions_with_invalid_name = [
@@ -236,17 +236,17 @@ def _validate_terminal_or_transitions(regime: Regime) -> list[str]:
     return errors
 
 
-def _validate_active(active: Iterable[int] | None) -> list[str]:
+def _validate_active(active: Iterable[int]) -> list[str]:
     """Validate the active attribute."""
     if active is None:
-        return []
+        return ["active cannot be None. Use an iterable of ints for active periods."]
     try:
         periods = list(active)
     except TypeError:
         return ["active must be iterable of ints or None."]
     errors: list[str] = []
     if not periods:
-        errors.append("active cannot be empty. Use None for all periods.")
+        errors.append("active cannot be empty.")
     elif not all(isinstance(p, int) for p in periods):
         errors.append("active must contain only integers.")
     elif any(p < 0 for p in periods):

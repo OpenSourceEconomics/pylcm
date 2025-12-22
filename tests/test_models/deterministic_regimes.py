@@ -140,6 +140,7 @@ working = Regime(
         "labor_income": labor_income,
         "is_working": is_working,
     },
+    active=[0],  # Needs to be specified to avoid initialization errors
 )
 
 retired = Regime(
@@ -160,6 +161,7 @@ retired = Regime(
         "next_wealth": next_wealth,
         "next_regime": next_regime_from_retired,
     },
+    active=[0],  # Needs to be specified to avoid initialization errors
 )
 
 
@@ -168,12 +170,17 @@ dead = Regime(
     terminal=True,
     utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
     states={"wealth": LinspaceGrid(start=1, stop=100, n_points=2)},
+    active=[0],  # Needs to be specified to avoid initialization errors
 )
 
 
 def get_model(n_periods: int) -> Model:
     return Model(
-        [working, retired, dead],
+        [
+            working.replace(active=range(n_periods - 1)),
+            retired.replace(active=range(n_periods - 1)),
+            dead.replace(active=[n_periods - 1]),
+        ],
         n_periods=n_periods,
         regime_id_cls=RegimeId,
     )

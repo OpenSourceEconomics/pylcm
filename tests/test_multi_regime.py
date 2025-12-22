@@ -124,7 +124,7 @@ def retired_working() -> IntND:
 # --------------------------------------------------------------------------------------
 
 
-def create_base_regimes() -> tuple[Regime, Regime, Regime]:
+def create_base_regimes(n_periods: int = 3) -> tuple[Regime, Regime, Regime]:
     """Create work, retirement, and dead regimes for the base model."""
     work_regime = Regime(
         name="work",
@@ -143,6 +143,7 @@ def create_base_regimes() -> tuple[Regime, Regime, Regime]:
             "next_health": next_health,
             "next_regime": next_regime_from_work,
         },
+        active=range(n_periods - 1),
     )
 
     retirement_regime = Regime(
@@ -164,6 +165,7 @@ def create_base_regimes() -> tuple[Regime, Regime, Regime]:
             "next_health": next_health,
             "next_regime": next_regime_from_retirement,
         },
+        active=range(n_periods - 1),
     )
 
     dead_regime = Regime(
@@ -173,6 +175,7 @@ def create_base_regimes() -> tuple[Regime, Regime, Regime]:
             "wealth": LinspaceGrid(start=1, stop=100, n_points=10),
         },
         utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
+        active=[n_periods - 1],
     )
 
     return work_regime, retirement_regime, dead_regime
@@ -301,6 +304,8 @@ class TestDifferentStateSpaces:
             """Transition to funerary wealth state when entering dead regime."""
             return wealth / 2
 
+        n_periods = 3
+
         work_regime = Regime(
             name="work",
             states={
@@ -320,6 +325,7 @@ class TestDifferentStateSpaces:
                 "next_funerary_wealth": next_funerary_wealth_from_alive,
                 "next_regime": next_regime_work_with_death,
             },
+            active=range(n_periods - 1),
         )
 
         retirement_regime = Regime(
@@ -341,6 +347,7 @@ class TestDifferentStateSpaces:
                 "next_funerary_wealth": next_funerary_wealth_from_alive,
                 "next_regime": next_regime_retirement_with_death,
             },
+            active=range(n_periods - 1),
         )
 
         dead_regime = Regime(
@@ -348,11 +355,12 @@ class TestDifferentStateSpaces:
             terminal=True,
             states={"funerary_wealth": LinspaceGrid(start=0, stop=50, n_points=5)},
             utility=lambda funerary_wealth: jnp.array([0.0]),  # noqa: ARG005
+            active=[n_periods - 1],
         )
 
         model = Model(
             regimes=[work_regime, retirement_regime, dead_regime],
-            n_periods=3,
+            n_periods=n_periods,
             regime_id_cls=ExtendedRegimeId,
         )
 
@@ -469,6 +477,8 @@ class TestOverlappingStateSpaces:
                 jnp.array([0.0, 1.0, 0.0]),
             )
 
+        n_periods = 3
+
         work_regime = Regime(
             name="work",
             states={
@@ -486,6 +496,7 @@ class TestOverlappingStateSpaces:
                 "next_pension": next_pension_from_work,  # For transition to retirement
                 "next_regime": next_regime_to_retirement,
             },
+            active=range(n_periods - 1),
         )
 
         def retirement_budget(
@@ -518,6 +529,7 @@ class TestOverlappingStateSpaces:
                 "next_health": dummy_next_health_from_retirement,
                 "next_regime": next_regime_from_retirement,
             },
+            active=range(n_periods - 1),
         )
 
         dead_regime = Regime(
@@ -525,11 +537,12 @@ class TestOverlappingStateSpaces:
             terminal=True,
             states={"wealth": LinspaceGrid(start=1, stop=100, n_points=10)},
             utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
+            active=[n_periods - 1],
         )
 
         model = Model(
             regimes=[work_regime, retirement_regime, dead_regime],
-            n_periods=3,
+            n_periods=n_periods,
             regime_id_cls=OverlapRegimeId,
         )
 
@@ -593,6 +606,8 @@ class TestValidation:
                 jnp.array([1.0, 0.0]),
             )
 
+        n_periods = 3
+
         # Work regime can transition to dead which has funerary_wealth,
         # but work doesn't have next_funerary_wealth transition
         work_regime = Regime(
@@ -612,6 +627,7 @@ class TestValidation:
                 "next_health": next_health,
                 "next_regime": next_regime_work_to_dead,
             },
+            active=range(n_periods - 1),
         )
 
         dead_regime = Regime(
@@ -619,12 +635,13 @@ class TestValidation:
             terminal=True,
             states={"funerary_wealth": LinspaceGrid(start=0, stop=50, n_points=5)},
             utility=lambda funerary_wealth: jnp.array([0.0]),  # noqa: ARG005
+            active=[n_periods - 1],
         )
 
         with pytest.raises(Exception, match="missing"):
             Model(
                 regimes=[work_regime, dead_regime],
-                n_periods=3,
+                n_periods=n_periods,
                 regime_id_cls=WorkDeadRegimeId,
             )
 
@@ -648,6 +665,8 @@ class TestValidation:
         def utility_fn(consumption: ContinuousAction) -> FloatND:
             return jnp.log(consumption)
 
+        n_periods = 3
+
         @lcm.mark.stochastic
         def next_regime_stochastic() -> FloatND:
             return jnp.array([0.5, 0.5, 0.0])
@@ -662,6 +681,7 @@ class TestValidation:
                 "next_state_y": lambda: 0,
                 "next_regime": next_regime_stochastic,
             },
+            active=range(n_periods - 1),
         )
 
         # Regime B is missing 'next_state_x' transition
@@ -674,6 +694,7 @@ class TestValidation:
                 "next_state_y": lambda state_y: state_y,
                 "next_regime": next_regime_stochastic,
             },
+            active=range(n_periods - 1),
         )
 
         dead_regime = Regime(
@@ -681,11 +702,12 @@ class TestValidation:
             terminal=True,
             states={"state_x": DiscreteGrid(StateX)},
             utility=utility_fn,
+            active=[n_periods - 1],
         )
 
         with pytest.raises(Exception, match="next_state_x"):
             Model(
                 regimes=[regime_a, regime_b, dead_regime],
-                n_periods=3,
+                n_periods=n_periods,
                 regime_id_cls=ABCRegimeId,
             )

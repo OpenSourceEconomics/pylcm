@@ -43,6 +43,8 @@ def model() -> Model:
             RegimeId.active,
         )
 
+    n_periods = 2
+
     alive = Regime(
         name="active",
         utility=utility,
@@ -55,6 +57,7 @@ def model() -> Model:
             "next_health": lambda health: health,
             "next_regime": next_regime,
         },
+        active=range(n_periods - 1),
     )
 
     dead = Regime(
@@ -65,11 +68,12 @@ def model() -> Model:
             "wealth": LinspaceGrid(start=1, stop=100, n_points=2),
             "health": DiscreteGrid(HealthStatus),
         },
+        active=[n_periods - 1],
     )
 
     return Model(
         [alive, dead],
-        n_periods=2,
+        n_periods=n_periods,
         regime_id_cls=RegimeId,
     )
 

@@ -27,7 +27,7 @@ def n_periods() -> int:
 
 
 @pytest.fixture
-def regimes_and_id_cls() -> tuple[dict[str, Regime], type]:
+def regimes_and_id_cls(n_periods: int) -> tuple[dict[str, Regime], type]:
     @dataclass
     class RegimeId:
         non_terminal: int = 0
@@ -90,6 +90,7 @@ def regimes_and_id_cls() -> tuple[dict[str, Regime], type]:
             "next_health": next_health,
             "next_regime": next_regime,
         },
+        active=range(n_periods - 1),
     )
 
     terminal = Regime(
@@ -99,6 +100,7 @@ def regimes_and_id_cls() -> tuple[dict[str, Regime], type]:
             "wealth": LinspaceGrid(start=1, stop=2, n_points=3),
         },
         utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
+        active=[n_periods - 1],
     )
 
     return {"non_terminal": non_terminal, "terminal": terminal}, RegimeId

@@ -48,7 +48,7 @@ def test_regression_test():
     # Compare
     # ==================================================================================
     for period in range(n_periods - 1):
-        for regime in expected_solve[period]:
+        for regime in got_solve[period]:
             aaae(expected_solve[period][regime], got_solve[period][regime], decimal=5)
 
     for regime in expected_simulate:

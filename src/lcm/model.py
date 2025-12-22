@@ -230,15 +230,11 @@ def _validate_model_inputs(  # noqa: C901
     # Assume all items in regimes are lcm.Regime instances beyond this point
     terminal_regimes = [r for r in regimes if r.terminal]
     if len(terminal_regimes) < 1:
-        error_messages.append(
-            "lcm.Model must have at least one terminal regime, but none found."
-        )
+        error_messages.append("lcm.Model must have at least one terminal regime.")
 
     non_terminal_regimes = [r for r in regimes if not r.terminal]
     if len(non_terminal_regimes) < 1:
-        error_messages.append(
-            "lcm.Model must have at least one non-terminal regime, but none found."
-        )
+        error_messages.append("lcm.Model must have at least one non-terminal regime.")
     else:
         non_terminal_regimes_without_next_regime = [
             r.name for r in non_terminal_regimes if "next_regime" not in r.transitions

@@ -129,6 +129,7 @@ working = Regime(
         "labor_income": labor_income,
         "is_working": is_working,
     },
+    active=[0],  # Needs to be specified to avoid initialization errors
 )
 
 
@@ -137,12 +138,16 @@ dead = Regime(
     terminal=True,
     utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
     states={"wealth": DiscreteGrid(WealthStatus)},
+    active=[0],  # Needs to be specified to avoid initialization errors
 )
 
 
 def get_model(n_periods: int) -> Model:
     return Model(
-        [working, dead],
+        [
+            working.replace(active=range(n_periods - 1)),
+            dead.replace(active=[n_periods - 1]),
+        ],
         n_periods=n_periods,
         regime_id_cls=RegimeId,
     )

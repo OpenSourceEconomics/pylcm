@@ -101,6 +101,7 @@ alive_deterministic = Regime(
         "next_wealth": next_wealth,
         "next_regime": next_regime,
     },
+    active=range(1),  # n_periods=2, so active in period 0
 )
 
 dead = Regime(
@@ -108,6 +109,7 @@ dead = Regime(
     terminal=True,
     states={"wealth": LinspaceGrid(start=0, stop=1, n_points=2)},
     utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
+    active=[1],  # n_periods=2, so active in period 1
 )
 
 
@@ -379,7 +381,7 @@ def test_deterministic_solve(beta, n_wealth_points):
     new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # type: ignore[attr-defined]
     model = Model(
         [
-            alive_deterministic.replace(states=new_states),
+            alive_deterministic.replace(states=new_states, active=range(n_periods - 1)),
             dead.replace(active=[n_periods - 1]),
         ],
         regime_id_cls=RegimeId,
@@ -422,7 +424,7 @@ def test_deterministic_simulate(beta, n_wealth_points):
     new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # type: ignore[attr-defined]
     model = Model(
         [
-            alive_deterministic.replace(states=new_states),
+            alive_deterministic.replace(states=new_states, active=range(n_periods - 1)),
             dead.replace(active=[n_periods - 1]),
         ],
         n_periods=n_periods,
@@ -470,7 +472,7 @@ def test_stochastic_solve(beta, n_wealth_points, health_transition):
     new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # type: ignore[attr-defined]
     model = Model(
         [
-            alive_stochastic.replace(states=new_states),
+            alive_stochastic.replace(states=new_states, active=range(n_periods - 1)),
             dead.replace(active=[n_periods - 1]),
         ],
         regime_id_cls=RegimeId,
@@ -527,7 +529,7 @@ def test_stochastic_simulate(beta, n_wealth_points, health_transition):
     new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # type: ignore[attr-defined]
     model = Model(
         [
-            alive_stochastic.replace(states=new_states),
+            alive_stochastic.replace(states=new_states, active=range(n_periods - 1)),
             dead.replace(active=[n_periods - 1]),
         ],
         n_periods=n_periods,

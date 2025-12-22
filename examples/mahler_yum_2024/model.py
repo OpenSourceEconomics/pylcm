@@ -397,6 +397,7 @@ ALIVE_REGIME = Regime(
         "next_productivity": next_productivity,
         "next_regime": next_regime_from_alive,
     },
+    active=range(n - 1),
 )
 
 DEAD_REGIME = Regime(
@@ -406,6 +407,7 @@ DEAD_REGIME = Regime(
     # PyLCM requires at least one state variable per regime, which is why we add
     # "wealth" here.
     states={"wealth": LinspaceGrid(start=0, stop=49, n_points=2)},
+    active=[n - 1],
 )
 
 MAHLER_YUM_MODEL = Model(

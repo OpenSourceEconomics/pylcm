@@ -98,6 +98,7 @@ def borrowing_constraint(
 # Regime specifications
 # ======================================================================================
 
+# Note: active is set to a placeholder value here and will be replaced by get_model()
 working = Regime(
     name="working",
     actions={
@@ -129,6 +130,7 @@ working = Regime(
         "age": age,
         "wage": wage,
     },
+    active=range(100),  # placeholder, will be replaced by get_model()
 )
 
 
@@ -137,12 +139,16 @@ dead = Regime(
     terminal=True,
     utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
     states={"wealth": LinspaceGrid(start=1, stop=100, n_points=2)},
+    active=[99],  # placeholder, will be replaced by get_model()
 )
 
 
 def get_model(n_periods: int) -> Model:
     return Model(
-        [working, dead],
+        [
+            working.replace(active=range(n_periods - 1)),
+            dead.replace(active=[n_periods - 1]),
+        ],
         n_periods=n_periods,
         regime_id_cls=RegimeId,
     )

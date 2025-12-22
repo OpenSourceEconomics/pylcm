@@ -118,6 +118,8 @@ def borrowing_constraint(
 RETIREMENT_AGE = 24
 
 
+N_PERIODS = (RETIREMENT_AGE - 18) + 1
+
 working = Regime(
     name="working",
     utility=utility,
@@ -157,6 +159,7 @@ working = Regime(
         "next_health": next_health,
         "next_regime": next_regime,
     },
+    active=range(N_PERIODS - 1),
 )
 
 
@@ -176,12 +179,11 @@ retired = Regime(
             n_points=100,
         ),
     },
+    active=[N_PERIODS - 1],
 )
 
 
-model = Model(
-    [working, retired], n_periods=(RETIREMENT_AGE - 18) + 1, regime_id_cls=RegimeId
-)
+model = Model([working, retired], n_periods=N_PERIODS, regime_id_cls=RegimeId)
 
 params = {
     "working": {
