@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import jax.numpy as jnp
 import pandas as pd
@@ -41,6 +41,9 @@ class SimulationResult:
         self._params = params
         self._V_arr_dict = V_arr_dict
         self._metadata = _compute_metadata(internal_regimes, raw_results)
+        self._available_targets = sorted(
+            _collect_all_available_targets(internal_regimes)
+        )
 
     # ----------------------------------------------------------------------------------
     # Public properties for advanced users
@@ -90,23 +93,36 @@ class SimulationResult:
         """Number of subjects simulated."""
         return self._metadata.n_subjects
 
+    @property
+    def available_targets(self) -> list[str]:
+        """Names of all available additional targets.
+
+        These can be passed to `to_dataframe(additional_targets=...)`. Includes utility
+        functions, auxiliary functions, and constraints from all regimes.
+
+        """
+        return self._available_targets
+
     # ----------------------------------------------------------------------------------
     # Main methods
     # ----------------------------------------------------------------------------------
 
     def to_dataframe(
         self,
-        additional_targets: list[str] | None = None,
+        additional_targets: list[str] | Literal["all"] | None = None,
         *,
         use_labels: bool = True,
     ) -> pd.DataFrame:
         """Convert simulation results to a flat pandas DataFrame.
 
         Args:
-            additional_targets: Optional list of target names to compute. Targets
-                can be any function defined in a regime. Each target is computed for the
-                regimes where it exists; rows from regimes without that target will have
-                NaN.
+            additional_targets: Targets to compute. Can be:
+                - None (default): No additional targets
+                - list[str]: Specific target names to compute
+                - "all": Compute all available targets (see `available_targets`)
+                Targets can be any function defined in a regime. Each target is
+                computed for the regimes where it exists; rows from regimes without
+                that target will have NaN.
             use_labels: If True (default), discrete variables (states, actions, and
                 regime) are returned as pandas Categorical dtype with string labels.
                 If False, discrete variables are returned as integer codes.
@@ -115,19 +131,18 @@ class SimulationResult:
             DataFrame with simulation results.
 
         """
-        if additional_targets is not None:
-            _validate_targets(additional_targets, self._internal_regimes)
+        resolved_targets = _resolve_targets(additional_targets, self.available_targets)
 
         df = _create_flat_dataframe(
             raw_results=self._raw_results,
             internal_regimes=self._internal_regimes,
             params=self._params,
             metadata=self._metadata,
-            additional_targets=additional_targets,
+            additional_targets=resolved_targets,
         )
 
         if use_labels:
-            df = _convert_to_categorical(df, self._metadata)
+            return _convert_to_categorical(df, self._metadata)
 
         return df
 
@@ -214,22 +229,41 @@ def _get_n_subjects(raw_results: dict[RegimeName, dict[int, PeriodRegimeData]]) 
 
 
 # ======================================================================================
-# Target validation
+# Target resolution and validation
 # ======================================================================================
 
 
-def _validate_targets(
-    targets: list[str],
-    internal_regimes: dict[RegimeName, InternalRegime],
-) -> None:
-    """Validate that each target exists in at least one regime."""
-    all_available = _collect_all_available_targets(internal_regimes)
-    invalid = set(targets) - all_available
+def _resolve_targets(
+    additional_targets: list[str] | Literal["all"] | None,
+    available_targets: list[str],
+) -> list[str] | None:
+    """Resolve and validate additional targets.
+
+    Args:
+        additional_targets: User-provided targets specification.
+        available_targets: List of all available target names.
+
+    Returns:
+        Resolved list of target names, or None if no targets requested.
+
+    Raises:
+        InvalidAdditionalTargetsError: If any target is not available.
+
+    """
+    if additional_targets is None:
+        return None
+    if additional_targets == "all":
+        return available_targets
+
+    # Validate user-provided targets
+    invalid = set(additional_targets) - set(available_targets)
     if invalid:
         raise InvalidAdditionalTargetsError(
             f"Targets {invalid} not found in any regime. "
-            f"Available targets: {sorted(all_available)}"
+            f"Available targets: {available_targets}"
         )
+    
+    return additional_targets
 
 
 def _collect_all_available_targets(

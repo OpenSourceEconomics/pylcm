@@ -366,6 +366,57 @@ def test_to_dataframe_use_labels_parameter():
 
 
 # ======================================================================================
+# Test available_targets and additional_targets="all"
+# ======================================================================================
+
+
+def test_available_targets_property():
+    """Test that available_targets shows what can be computed."""
+    from tests.test_models.deterministic.regression import (  # noqa: PLC0415
+        get_model,
+        get_params,
+    )
+
+    model = get_model(n_periods=3)
+    params = get_params(n_periods=3)
+    result = model.solve_and_simulate(
+        params,
+        initial_states={"wealth": jnp.array([20.0, 50.0])},
+        initial_regimes=["working"] * 2,
+    )
+
+    # Check that available_targets is a list
+    assert isinstance(result.available_targets, list)
+    # Should include utility (always available)
+    assert "utility" in result.available_targets
+    # Should include functions defined in regime
+    assert "borrowing_constraint" in result.available_targets
+
+
+def test_additional_targets_all():
+    """Test that additional_targets='all' computes all available targets."""
+    from tests.test_models.deterministic.regression import (  # noqa: PLC0415
+        get_model,
+        get_params,
+    )
+
+    model = get_model(n_periods=3)
+    params = get_params(n_periods=3)
+    result = model.solve_and_simulate(
+        params,
+        initial_states={"wealth": jnp.array([20.0, 50.0])},
+        initial_regimes=["working"] * 2,
+    )
+
+    # Get DataFrame with all targets
+    df_all = result.to_dataframe(additional_targets="all")
+
+    # All available targets should be columns in the DataFrame
+    for target in result.available_targets:
+        assert target in df_all.columns, f"Target {target} not in DataFrame"
+
+
+# ======================================================================================
 # Helper functions
 # ======================================================================================
 
