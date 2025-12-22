@@ -66,17 +66,17 @@ class SimulationResult:
     # ----------------------------------------------------------------------------------
 
     @property
-    def regime_names(self) -> tuple[str, ...]:
+    def regime_names(self) -> list[str]:
         """Names of all regimes."""
         return self._metadata.regime_names
 
     @property
-    def state_names(self) -> tuple[str, ...]:
+    def state_names(self) -> list[str]:
         """Names of all state variables (union across regimes)."""
         return self._metadata.state_names
 
     @property
-    def action_names(self) -> tuple[str, ...]:
+    def action_names(self) -> list[str]:
         """Names of all action variables (union across regimes)."""
         return self._metadata.action_names
 
@@ -152,9 +152,9 @@ class SimulationResult:
 class SimulationMetadata:
     """Pre-computed metadata about the simulation."""
 
-    regime_names: tuple[str, ...]
-    state_names: tuple[str, ...]
-    action_names: tuple[str, ...]
+    regime_names: list[str]
+    state_names: list[str]
+    action_names: list[str]
     n_periods: int
     n_subjects: int
     regime_to_states: dict[str, tuple[str, ...]]
@@ -167,7 +167,7 @@ def _compute_metadata(
     raw_results: dict[RegimeName, dict[int, PeriodRegimeData]],
 ) -> SimulationMetadata:
     """Compute metadata from internal regimes and raw results."""
-    regime_names = tuple(internal_regimes.keys())
+    regime_names = list(internal_regimes.keys())
 
     all_states: set[str] = set()
     all_actions: set[str] = set()
@@ -194,8 +194,8 @@ def _compute_metadata(
 
     return SimulationMetadata(
         regime_names=regime_names,
-        state_names=tuple(sorted(all_states)),
-        action_names=tuple(sorted(all_actions)),
+        state_names=sorted(all_states),
+        action_names=sorted(all_actions),
         n_periods=n_periods,
         n_subjects=n_subjects,
         regime_to_states=regime_to_states,
@@ -366,8 +366,8 @@ def _filter_targets_for_regime(
 
 def _assemble_dataframe(
     regime_dfs: list[pd.DataFrame],
-    state_names: tuple[str, ...],
-    action_names: tuple[str, ...],
+    state_names: list[str],
+    action_names: list[str],
 ) -> pd.DataFrame:
     """Combine regime DataFrames, add missing columns, reorder, and sort."""
     if not regime_dfs:
@@ -380,8 +380,8 @@ def _assemble_dataframe(
 
 
 def _empty_dataframe(
-    state_names: tuple[str, ...],
-    action_names: tuple[str, ...],
+    state_names: list[str],
+    action_names: list[str],
 ) -> pd.DataFrame:
     """Create empty DataFrame with correct columns."""
     columns = ["period", "subject_id", "regime", "value"]
@@ -392,8 +392,8 @@ def _empty_dataframe(
 
 def _add_missing_columns(
     df: pd.DataFrame,
-    state_names: tuple[str, ...],
-    action_names: tuple[str, ...],
+    state_names: list[str],
+    action_names: list[str],
 ) -> pd.DataFrame:
     """Add NaN columns for states/actions not present in DataFrame."""
     for name in state_names:
@@ -407,14 +407,14 @@ def _add_missing_columns(
 
 def _reorder_columns(
     df: pd.DataFrame,
-    state_names: tuple[str, ...],
-    action_names: tuple[str, ...],
+    state_names: list[str],
+    action_names: list[str],
 ) -> pd.DataFrame:
     """Reorder columns: period, subject_id, regime, value, states, actions, rest."""
     base = ["period", "subject_id", "regime", "value"]
     known = set(base) | set(state_names) | set(action_names)
     rest = [c for c in df.columns if c not in known]
-    return df[base + list(state_names) + list(action_names) + rest]
+    return df[base + state_names + action_names + rest]
 
 
 # ======================================================================================
