@@ -16,10 +16,10 @@ from lcm.solution.solve_brute import solve
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    import pandas as pd
     from jax import Array
 
     from lcm.input_processing.regime_processing import InternalRegime
+    from lcm.simulation.result import SimulationResult
     from lcm.typing import (
         FloatND,
         ParamsDict,
@@ -128,38 +128,35 @@ class Model:
         initial_regimes: list[RegimeName],
         V_arr_dict: dict[int, dict[RegimeName, FloatND]],
         *,
-        additional_targets: dict[RegimeName, list[str]] | None = None,
         seed: int | None = None,
         debug_mode: bool = True,
-    ) -> dict[RegimeName, pd.DataFrame]:
-        """Simulate the model forward using pre-computed functions.
+    ) -> SimulationResult:
+        """Simulate the model forward using pre-computed value functions.
 
         Args:
-            params: Model parameters matching the template from self.params_template
+            params: Model parameters matching the template from self.params_template.
             initial_states: Dict mapping state names to arrays. All arrays must have the
                 same length (number of subjects). Each state name should correspond to a
                 state variable defined in at least one regime.
             initial_regimes: List containing the names of the regimes the subjects
                 start in.
-            V_arr_dict: Value function arrays from solve()
-            additional_targets: Additional targets to compute
-            seed: Random seed
-            debug_mode: Whether to enable debug logging
+            V_arr_dict: Value function arrays from solve().
+            seed: Random seed.
+            debug_mode: Whether to enable debug logging.
 
         Returns:
-            Simulation results as dict mapping regime name to DataFrame
-        """
-        logger = get_logger(debug_mode=debug_mode)
+            SimulationResult object. Call .to_dataframe() to get a pandas DataFrame,
+            optionally with additional_targets.
 
+        """
         return simulate(
             params=params,
             initial_states=initial_states,
             initial_regimes=initial_regimes,
             internal_regimes=self.internal_regimes,
             regime_id_cls=self.regime_id_cls,
-            logger=logger,
+            logger=get_logger(debug_mode=debug_mode),
             V_arr_dict=V_arr_dict,
-            additional_targets=additional_targets,
             seed=seed,
         )
 
@@ -169,25 +166,25 @@ class Model:
         initial_states: dict[str, Array],
         initial_regimes: list[RegimeName],
         *,
-        additional_targets: dict[RegimeName, list[str]] | None = None,
         seed: int | None = None,
         debug_mode: bool = True,
-    ) -> dict[RegimeName, pd.DataFrame]:
+    ) -> SimulationResult:
         """Solve and then simulate the model in one call.
 
         Args:
-            params: Model parameters matching the template from self.params_template
+            params: Model parameters matching the template from self.params_template.
             initial_states: Dict mapping state names to arrays. All arrays must have the
                 same length (number of subjects). Each state name should correspond to a
                 state variable defined in at least one regime.
             initial_regimes: List containing the names of the regimes the subjects
                 start in.
-            additional_targets: Additional targets to compute
-            seed: Random seed
-            debug_mode: Whether to enable debug logging
+            seed: Random seed.
+            debug_mode: Whether to enable debug logging.
 
         Returns:
-            Simulation results as dict mapping regime name to DataFrame
+            SimulationResult object. Call .to_dataframe() to get a pandas DataFrame,
+            optionally with additional_targets.
+
         """
         V_arr_dict = self.solve(params, debug_mode=debug_mode)
         return self.simulate(
@@ -195,7 +192,6 @@ class Model:
             initial_states=initial_states,
             initial_regimes=initial_regimes,
             V_arr_dict=V_arr_dict,
-            additional_targets=additional_targets,
             seed=seed,
             debug_mode=debug_mode,
         )

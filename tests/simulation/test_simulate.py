@@ -17,7 +17,6 @@ from lcm.simulation.simulate import (
 if TYPE_CHECKING:
     import pandas as pd
 
-
 # ======================================================================================
 # Test simulate using raw inputs
 # ======================================================================================
@@ -67,7 +66,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
         "dead": {},
     }
 
-    got = simulate(
+    result = simulate(
         params=params,
         V_arr_dict={
             0: {"working": jnp.zeros(100), "dead": jnp.zeros(2)},
@@ -77,10 +76,12 @@ def test_simulate_using_raw_inputs(simulate_inputs):
         initial_regimes=["working"] * 2,
         logger=get_logger(debug_mode=False),
         **simulate_inputs,
-    )["working"]
+    )
+    got = result.to_dataframe()
+    got = got.query('regime == "working"')
 
-    assert_array_equal(got.loc[:]["labor_supply"], 1)
-    assert_array_almost_equal(got.loc[:]["consumption"], jnp.array([1.0, 50.400803]))
+    assert_array_equal(got["labor_supply"], 1)
+    assert_array_almost_equal(got["consumption"], jnp.array([1.0, 50.400803]))
 
 
 # ======================================================================================
@@ -129,13 +130,16 @@ def test_simulate_using_model_methods(
         n_periods=n_periods,
     )
 
-    res: pd.DataFrame = model.simulate(
+    result = model.simulate(
         params,
         V_arr_dict=V_arr_dict,
         initial_states={"wealth": jnp.array([20.0, 150, 250, 320])},
         initial_regimes=["working"] * 4,
-        additional_targets={"working": ["utility", "borrowing_constraint"]},
-    )["working"]
+    )
+    res: pd.DataFrame = result.to_dataframe(
+        additional_targets=["utility", "borrowing_constraint"]
+    )
+    res = res.query('regime == "working"')
 
     assert {
         "period",
@@ -146,18 +150,20 @@ def test_simulate_using_model_methods(
         "utility",
         "borrowing_constraint",
         "subject_id",
+        "regime",
     } == set(res.columns)
 
     # assert that everyone retires in the last period
-    last_period_index = n_periods - 1
-    assert_array_equal(res.loc[last_period_index, :]["labor_supply"], 1)
+    last_period = res[res["period"] == n_periods - 1]
+    assert_array_equal(last_period["labor_supply"], 1)
 
     for period in range(n_periods):
+        period_data = res[res["period"] == period]
         # assert that higher wealth leads to higher consumption in each period
-        assert (res.loc[res["period"] == period]["consumption"].diff()[1:] >= 0).all()  # type: ignore[operator]
+        assert (period_data["consumption"].diff()[1:] >= 0).all()  # type: ignore[operator]
 
         # assert that higher wealth leads to higher value function in each period
-        assert (res.loc[res["period"] == period]["value"].diff()[1:] >= 0).all()  # type: ignore[operator]
+        assert (period_data["value"].diff()[1:] >= 0).all()  # type: ignore[operator]
 
 
 def test_simulate_with_only_discrete_actions():
@@ -169,15 +175,30 @@ def test_simulate_with_only_discrete_actions():
     model = get_model(n_periods=3)
     params = get_params(n_periods=3, wage=1.5, beta=1, interest_rate=0)
 
-    res: pd.DataFrame = model.solve_and_simulate(
+    result = model.solve_and_simulate(
         params,
         initial_states={"wealth": jnp.array([0, 4])},
         initial_regimes=["working"] * 2,
-    )["working"]
+    )
+    res: pd.DataFrame = result.to_dataframe()
+    res = res.query('regime == "working"')
 
-    assert_array_equal(res["labor_supply"], jnp.array([0, 1, 1, 1]))
-    assert_array_equal(res["consumption"], jnp.array([0, 1, 1, 1]))
-    assert_array_equal(res["wealth"], jnp.array([0, 4, 2, 2]))
+    # Data is sorted by (subject_id, period). Only working regime rows shown.
+    # Subject 0: starts with wealth=0, works 0 periods, then gets income and works
+    # Subject 1: starts with wealth=4, works both periods
+    # Both transition to dead regime in period 2.
+    subject_0 = res[res["subject_id"] == 0]
+    subject_1 = res[res["subject_id"] == 1]
+
+    # Subject 0: period 0 (wealth=0, no work), period 1 (wealth=2, works)
+    assert_array_equal(subject_0["labor_supply"], jnp.array([0, 1]))
+    assert_array_equal(subject_0["consumption"], jnp.array([0, 1]))
+    assert_array_equal(subject_0["wealth"], jnp.array([0, 2]))
+
+    # Subject 1: period 0 (wealth=4, works), period 1 (wealth=2, works)
+    assert_array_equal(subject_1["labor_supply"], jnp.array([1, 1]))
+    assert_array_equal(subject_1["consumption"], jnp.array([1, 1]))
+    assert_array_equal(subject_1["wealth"], jnp.array([4, 2]))
 
 
 # ======================================================================================
@@ -221,22 +242,22 @@ def test_effect_of_beta_on_last_period():
         V_arr_dict=solution_low,
         initial_states={"wealth": initial_wealth},
         initial_regimes=["working"] * 3,
-    )["working"]
+    ).to_dataframe()
+    res_low = res_low[res_low["regime"] == "working"]
 
     res_high: pd.DataFrame = model.simulate(
         params_high,
         V_arr_dict=solution_high,
         initial_states={"wealth": initial_wealth},
         initial_regimes=["working"] * 3,
-    )["working"]
+    ).to_dataframe()
+    res_high = res_high[res_high["regime"] == "working"]
 
     # Asserting
     # ==================================================================================
-    last_period_index = 4
-    assert (
-        res_low.loc[last_period_index, :]["value"]
-        <= res_high.loc[last_period_index, :]["value"]
-    ).all()
+    low_last = res_low.query("period == 4")  # period before last working period
+    high_last = res_high.query("period == 4")
+    assert (low_last["value"].to_numpy() <= high_last["value"].to_numpy()).all()
 
 
 def test_effect_of_disutility_of_work():
@@ -275,27 +296,33 @@ def test_effect_of_disutility_of_work():
         V_arr_dict=solution_low,
         initial_states={"wealth": initial_wealth},
         initial_regimes=["working"] * 3,
-    )["working"]
+    ).to_dataframe()
+    res_low = res_low.query('regime == "working"')
 
     res_high: pd.DataFrame = model.simulate(
         params_high,
         V_arr_dict=solution_high,
         initial_states={"wealth": initial_wealth},
         initial_regimes=["working"] * 3,
-    )["working"]
+    ).to_dataframe()
+    res_high = res_high.query('regime == "working"')
 
     # Asserting
     # ==================================================================================
     for period in range(5):
+        low_period = res_low.query(f"period == {period}")
+        high_period = res_high.query(f"period == {period}")
         # We expect that individuals with lower disutility of work, work (weakly) more
         # and thus consume (weakly) more
         assert (
-            res_low.loc[period]["consumption"] >= res_high.loc[period]["consumption"]
+            low_period["consumption"].to_numpy()
+            >= high_period["consumption"].to_numpy()
         ).all()
 
         # We expect that individuals with lower disutility of work retire (weakly) later
         assert (
-            res_low.loc[period]["labor_supply"] <= res_high.loc[period]["labor_supply"]
+            low_period["labor_supply"].to_numpy()
+            <= high_period["labor_supply"].to_numpy()
         ).all()
 
 

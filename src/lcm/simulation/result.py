@@ -415,7 +415,9 @@ def _compute_targets(
     variables = _get_function_variables(target_func)
     vectorized_func = vmap_1d(target_func, variables=variables)
     kwargs = {k: jnp.asarray(v) for k, v in data.items() if k in variables}
-    return vectorized_func(params=params, **kwargs)
+    result = vectorized_func(params=params, **kwargs)
+    # Squeeze any (n, 1) shaped arrays to (n,)
+    return {k: jnp.squeeze(v) for k, v in result.items()}
 
 
 def _build_functions_pool(internal_regime: InternalRegime) -> dict[str, Any]:
