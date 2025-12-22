@@ -80,7 +80,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
     got = result.to_dataframe()
     got = got.query('regime == "working"')
 
-    assert_array_equal(got["labor_supply"], 1)
+    assert_array_equal(got["labor_supply"], "retire")
     assert_array_almost_equal(got["consumption"], jnp.array([1.0, 50.400803]))
 
 
@@ -155,7 +155,7 @@ def test_simulate_using_model_methods(
 
     # assert that everyone retires in the last period
     last_period = res[res["period"] == n_periods - 1]
-    assert_array_equal(last_period["labor_supply"], 1)
+    assert_array_equal(last_period["labor_supply"], "retire")
 
     for period in range(n_periods):
         period_data = res[res["period"] == period]
@@ -191,13 +191,13 @@ def test_simulate_with_only_discrete_actions():
     subject_1 = res[res["subject_id"] == 1]
 
     # Subject 0: period 0 (wealth=0, no work), period 1 (wealth=2, works)
-    assert_array_equal(subject_0["labor_supply"], jnp.array([0, 1]))
-    assert_array_equal(subject_0["consumption"], jnp.array([0, 1]))
+    assert_array_equal(subject_0["labor_supply"], ["work", "retire"])
+    assert_array_equal(subject_0["consumption"], ["low", "high"])
     assert_array_equal(subject_0["wealth"], jnp.array([0, 2]))
 
     # Subject 1: period 0 (wealth=4, works), period 1 (wealth=2, works)
-    assert_array_equal(subject_1["labor_supply"], jnp.array([1, 1]))
-    assert_array_equal(subject_1["consumption"], jnp.array([1, 1]))
+    assert_array_equal(subject_1["labor_supply"], ["retire", "retire"])
+    assert_array_equal(subject_1["consumption"], ["high", "high"])
     assert_array_equal(subject_1["wealth"], jnp.array([4, 2]))
 
 
@@ -320,10 +320,49 @@ def test_effect_of_disutility_of_work():
         ).all()
 
         # We expect that individuals with lower disutility of work retire (weakly) later
+        # Use cat.codes to compare: work=0, retire=1, so lower code means more work
         assert (
-            low_period["labor_supply"].to_numpy()
-            <= high_period["labor_supply"].to_numpy()
+            low_period["labor_supply"].cat.codes.to_numpy()
+            <= high_period["labor_supply"].cat.codes.to_numpy()
         ).all()
+
+
+# ======================================================================================
+# Test use_labels parameter
+# ======================================================================================
+
+
+def test_to_dataframe_use_labels_parameter():
+    """Test that use_labels=True/False controls discrete column dtypes."""
+    from tests.test_models.deterministic.regression import (  # noqa: PLC0415
+        get_model,
+        get_params,
+    )
+
+    model = get_model(n_periods=3)
+    params = get_params(n_periods=3)
+    result = model.solve_and_simulate(
+        params,
+        initial_states={"wealth": jnp.array([20.0, 50.0])},
+        initial_regimes=["working"] * 2,
+    )
+
+    # Default: use_labels=True - discrete columns should be Categorical with labels
+    df_labels = result.to_dataframe()
+    assert df_labels["regime"].dtype.name == "category"
+    assert df_labels["labor_supply"].dtype.name == "category"
+    # Can access codes via .cat.codes
+    assert df_labels["labor_supply"].cat.codes.dtype == "int8"
+    # Can access category names
+    assert "work" in df_labels["labor_supply"].cat.categories
+    assert "retire" in df_labels["labor_supply"].cat.categories
+
+    # use_labels=False - discrete columns should have numeric codes
+    df_codes = result.to_dataframe(use_labels=False)
+    assert df_codes["regime"].dtype == object  # string column
+    assert df_codes["labor_supply"].dtype in ("float32", "float64", "int32", "int64")
+    # Values should be numeric codes (0 or 1)
+    assert set(df_codes["labor_supply"].dropna().unique()).issubset({0, 1})
 
 
 # ======================================================================================

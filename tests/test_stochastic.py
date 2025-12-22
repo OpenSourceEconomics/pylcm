@@ -56,9 +56,11 @@ def test_model_solve_and_simulate_with_stochastic_model():
     common_subjects = period_0.index.intersection(period_1.index)
 
     if len(common_subjects) > 0:
-        # Create expected partner values based on period 0 state
+        # Create expected partner values based on period 0 state (using category labels)
         expected_partner = period_0.loc[common_subjects].apply(
-            lambda row: 0 if (row["labor_supply"] == 0 and row["partner"] == 1) else 1,
+            lambda row: "single"
+            if (row["labor_supply"] == "work" and row["partner"] == "partnered")
+            else "partnered",
             axis=1,
         )
 
@@ -69,6 +71,7 @@ def test_model_solve_and_simulate_with_stochastic_model():
             expected_partner,
             check_names=False,
             check_dtype=False,
+            check_categorical=False,
         )
 
 

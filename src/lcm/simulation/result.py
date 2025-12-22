@@ -12,6 +12,7 @@ from dags import concatenate_functions
 
 from lcm.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
+from lcm.grids import DiscreteGrid
 
 if TYPE_CHECKING:
     from jax import Array
@@ -96,6 +97,8 @@ class SimulationResult:
     def to_dataframe(
         self,
         additional_targets: list[str] | None = None,
+        *,
+        use_labels: bool = True,
     ) -> pd.DataFrame:
         """Convert simulation results to a flat pandas DataFrame.
 
@@ -104,6 +107,9 @@ class SimulationResult:
                 can be any function defined in a regime. Each target is computed for the
                 regimes where it exists; rows from regimes without that target will have
                 NaN.
+            use_labels: If True (default), discrete variables (states, actions, and
+                regime) are returned as pandas Categorical dtype with string labels.
+                If False, discrete variables are returned as integer codes.
 
         Returns:
             DataFrame with simulation results.
@@ -112,13 +118,18 @@ class SimulationResult:
         if additional_targets is not None:
             _validate_targets(additional_targets, self._internal_regimes)
 
-        return _create_flat_dataframe(
+        df = _create_flat_dataframe(
             raw_results=self._raw_results,
             internal_regimes=self._internal_regimes,
             params=self._params,
             metadata=self._metadata,
             additional_targets=additional_targets,
         )
+
+        if use_labels:
+            df = _convert_to_categorical(df, self._metadata)
+
+        return df
 
     def __repr__(self) -> str:
         return (
@@ -148,6 +159,7 @@ class SimulationMetadata:
     n_subjects: int
     regime_to_states: dict[str, tuple[str, ...]]
     regime_to_actions: dict[str, tuple[str, ...]]
+    discrete_categories: dict[str, tuple[str, ...]]
 
 
 def _compute_metadata(
@@ -161,6 +173,7 @@ def _compute_metadata(
     all_actions: set[str] = set()
     regime_to_states: dict[str, tuple[str, ...]] = {}
     regime_to_actions: dict[str, tuple[str, ...]] = {}
+    discrete_categories: dict[str, tuple[str, ...]] = {}
 
     for regime_name, regime in internal_regimes.items():
         vi = regime.variable_info
@@ -170,6 +183,11 @@ def _compute_metadata(
         regime_to_actions[regime_name] = actions
         all_states.update(states)
         all_actions.update(actions)
+
+        # Extract categories from discrete grids
+        for var_name, grid in regime.gridspecs.items():
+            if isinstance(grid, DiscreteGrid) and var_name not in discrete_categories:
+                discrete_categories[var_name] = grid.categories
 
     n_periods = len(raw_results[regime_names[0]])
     n_subjects = _get_n_subjects(raw_results)
@@ -182,6 +200,7 @@ def _compute_metadata(
         n_subjects=n_subjects,
         regime_to_states=regime_to_states,
         regime_to_actions=regime_to_actions,
+        discrete_categories=discrete_categories,
     )
 
 
@@ -396,6 +415,74 @@ def _reorder_columns(
     known = set(base) | set(state_names) | set(action_names)
     rest = [c for c in df.columns if c not in known]
     return df[base + list(state_names) + list(action_names) + rest]
+
+
+# ======================================================================================
+# Categorical conversion
+# ======================================================================================
+
+
+def _convert_to_categorical(
+    df: pd.DataFrame,
+    metadata: SimulationMetadata,
+) -> pd.DataFrame:
+    """Convert discrete columns to pandas Categorical dtype with string labels.
+
+    Converts:
+    - regime column: uses regime_names as categories
+    - discrete state/action columns: uses categories from DiscreteGrid
+
+    """
+    df = df.copy()
+
+    # Convert regime column
+    df["regime"] = pd.Categorical(df["regime"], categories=metadata.regime_names)
+
+    # Convert discrete state and action columns
+    for var_name, categories in metadata.discrete_categories.items():
+        if var_name in df.columns:
+            df[var_name] = _codes_to_categorical(df[var_name], categories)
+
+    return df
+
+
+def _codes_to_categorical(
+    codes: pd.Series,
+    categories: tuple[str, ...],
+) -> pd.Categorical | pd.Series:
+    """Convert integer codes to Categorical, handling NaN and out-of-range values.
+
+    If values are outside the valid category range, returns the original series
+    unchanged to avoid data loss.
+
+    """
+    codes_array = codes.to_numpy()
+    has_nan = pd.isna(codes_array)
+    n_categories = len(categories)
+
+    # Check for out-of-range values (excluding NaN)
+    valid_values = codes_array[~has_nan]
+    if len(valid_values) > 0:
+        int_values = valid_values.astype(int)
+        if int_values.min() < 0 or int_values.max() >= n_categories:
+            # Values outside valid range - return original series unchanged
+            return codes
+
+    if has_nan.any():
+        # Use -1 for NaN positions (will become NaN in Categorical)
+        int_codes = pd.array(
+            [-1 if pd.isna(c) else int(c) for c in codes_array],
+            dtype="Int64",
+        )
+        return pd.Categorical.from_codes(
+            int_codes,  # type: ignore[arg-type]
+            categories=list(categories),  # type: ignore[arg-type]
+        )
+
+    return pd.Categorical.from_codes(
+        codes_array.astype(int),  # type: ignore[arg-type]
+        categories=list(categories),  # type: ignore[arg-type]
+    )
 
 
 # ======================================================================================

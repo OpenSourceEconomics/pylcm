@@ -188,6 +188,7 @@ def analytical_simulate_deterministic(initial_wealth, params):
 
     Returns DataFrame with columns: period, subject_id, regime, value, wealth,
     consumption, working. Sorted by (subject_id, period).
+    Uses categorical dtypes for discrete variables to match to_dataframe() output.
     """
     n_subjects = len(initial_wealth)
 
@@ -202,25 +203,35 @@ def analytical_simulate_deterministic(initial_wealth, params):
 
     # Build DataFrame in the same format as to_dataframe()
     # Sorted by (subject_id, period)
-    return (
-        pd.DataFrame(
-            {
-                "period": np.concatenate(
-                    [np.zeros(n_subjects), np.ones(n_subjects)]
-                ).astype(int),
-                "subject_id": np.tile(np.arange(n_subjects), 2),
-                "regime": ["alive"] * (2 * n_subjects),
-                "value": np.concatenate([V_arr_0, V_arr_1]),
-                "wealth": np.concatenate([initial_wealth, wealth_1]),
-                "consumption": np.concatenate(
-                    [policy_0["consumption"], policy_1["consumption"]]
-                ),
-                "working": np.concatenate([policy_0["working"], policy_1["working"]]),
-            }
-        )
-        .sort_values(["subject_id", "period"])
-        .reset_index(drop=True)
+    consumption_codes = np.concatenate(
+        [policy_0["consumption"], policy_1["consumption"]]
+    ).astype(int)
+    working_codes = np.concatenate([policy_0["working"], policy_1["working"]]).astype(
+        int
     )
+
+    df = pd.DataFrame(
+        {
+            "period": np.concatenate(
+                [np.zeros(n_subjects), np.ones(n_subjects)]
+            ).astype(int),
+            "subject_id": np.tile(np.arange(n_subjects), 2),
+            "regime": pd.Categorical(
+                ["alive"] * (2 * n_subjects), categories=["alive", "dead"]
+            ),
+            "value": np.concatenate([V_arr_0, V_arr_1]),
+            "wealth": np.concatenate([initial_wealth, wealth_1]),
+            "consumption": pd.Categorical.from_codes(
+                consumption_codes,
+                categories=["low", "high"],  # type: ignore[arg-type]
+            ),
+            "working": pd.Categorical.from_codes(
+                working_codes,
+                categories=["retired", "working"],  # type: ignore[arg-type]
+            ),
+        }
+    )
+    return df.sort_values(["subject_id", "period"]).reset_index(drop=True)
 
 
 def matrix_to_dict_of_vectors(arr, col_names):
@@ -323,6 +334,7 @@ def analytical_simulate_stochastic(initial_wealth, initial_health, health_1, par
 
     Returns DataFrame with columns: period, subject_id, regime, value, health, wealth,
     consumption, working. Sorted by (subject_id, period).
+    Uses categorical dtypes for discrete variables to match to_dataframe() output.
     """
     n_subjects = len(initial_wealth)
 
@@ -341,26 +353,40 @@ def analytical_simulate_stochastic(initial_wealth, initial_health, health_1, par
 
     # Build DataFrame in the same format as to_dataframe()
     # Sorted by (subject_id, period)
-    return (
-        pd.DataFrame(
-            {
-                "period": np.concatenate(
-                    [np.zeros(n_subjects), np.ones(n_subjects)]
-                ).astype(int),
-                "subject_id": np.tile(np.arange(n_subjects), 2),
-                "regime": ["alive"] * (2 * n_subjects),
-                "value": np.concatenate([V_arr_0, V_arr_1]),
-                "health": np.concatenate([initial_health, health_1]),
-                "wealth": np.concatenate([initial_wealth, wealth_1]),
-                "consumption": np.concatenate(
-                    [policy_0["consumption"], policy_1["consumption"]]
-                ),
-                "working": np.concatenate([policy_0["working"], policy_1["working"]]),
-            }
-        )
-        .sort_values(["subject_id", "period"])
-        .reset_index(drop=True)
+    health_codes = np.concatenate([initial_health, health_1]).astype(int)
+    consumption_codes = np.concatenate(
+        [policy_0["consumption"], policy_1["consumption"]]
+    ).astype(int)
+    working_codes = np.concatenate([policy_0["working"], policy_1["working"]]).astype(
+        int
     )
+
+    df = pd.DataFrame(
+        {
+            "period": np.concatenate(
+                [np.zeros(n_subjects), np.ones(n_subjects)]
+            ).astype(int),
+            "subject_id": np.tile(np.arange(n_subjects), 2),
+            "regime": pd.Categorical(
+                ["alive"] * (2 * n_subjects), categories=["alive", "dead"]
+            ),
+            "value": np.concatenate([V_arr_0, V_arr_1]),
+            "health": pd.Categorical.from_codes(
+                health_codes,
+                categories=["bad", "good"],  # type: ignore[arg-type]
+            ),
+            "wealth": np.concatenate([initial_wealth, wealth_1]),
+            "consumption": pd.Categorical.from_codes(
+                consumption_codes,
+                categories=["low", "high"],  # type: ignore[arg-type]
+            ),
+            "working": pd.Categorical.from_codes(
+                working_codes,
+                categories=["retired", "working"],  # type: ignore[arg-type]
+            ),
+        }
+    )
+    return df.sort_values(["subject_id", "period"]).reset_index(drop=True)
 
 
 # ======================================================================================
@@ -448,7 +474,9 @@ def test_deterministic_simulate(beta, n_wealth_points):
         params=params_alive,
     )
 
-    assert_frame_equal(got, expected, check_like=True, check_dtype=False)
+    assert_frame_equal(
+        got, expected, check_like=True, check_dtype=False, check_categorical=False
+    )
 
 
 HEALTH_TRANSITION = [
@@ -554,7 +582,8 @@ def test_stochastic_simulate(beta, n_wealth_points, health_transition):
 
     # Need to use health of second period from LCM output, to assure that the same
     # stochastic draws are used in the analytical simulation.
-    health_1 = got.query("period == 1")["health"].to_numpy()
+    # Convert categorical health to codes for analytical function
+    health_1 = got.query("period == 1")["health"].cat.codes.to_numpy()
 
     expected = analytical_simulate_stochastic(
         initial_wealth=initial_states["wealth"],
@@ -567,4 +596,6 @@ def test_stochastic_simulate(beta, n_wealth_points, health_transition):
     got = got.query("wealth != 2").reset_index(drop=True)
     expected = expected.query("wealth != 2").reset_index(drop=True)
 
-    assert_frame_equal(got, expected, check_like=True, check_dtype=False)
+    assert_frame_equal(
+        got, expected, check_like=True, check_dtype=False, check_categorical=False
+    )
