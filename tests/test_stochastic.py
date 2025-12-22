@@ -30,7 +30,7 @@ def test_model_solve_and_simulate_with_stochastic_model():
     model = get_model(n_periods=4)
     params = get_params(n_periods=4)
 
-    res: pd.DataFrame = model.solve_and_simulate(
+    result = model.solve_and_simulate(
         params=params,
         initial_states={
             "health": jnp.array([1, 1, 0, 0]),
@@ -38,7 +38,8 @@ def test_model_solve_and_simulate_with_stochastic_model():
             "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
         },
         initial_regimes=["working"] * 4,
-    )["working"]
+    )
+    res: pd.DataFrame = result.to_dataframe().query('regime == "working"')
 
     # Verify simulation produced expected columns and some rows
     assert "period" in res.columns
@@ -67,6 +68,7 @@ def test_model_solve_and_simulate_with_stochastic_model():
             actual_partner,
             expected_partner,
             check_names=False,
+            check_dtype=False,
         )
 
 
@@ -194,7 +196,9 @@ def test_compare_deterministic_and_stochastic_results_value_function(
         initial_states=initial_states,
         initial_regimes=initial_regimes,
     )
+    df_deterministic = simulation_deterministic.to_dataframe().query('regime == "working"')
+    df_stochastic = simulation_stochastic.to_dataframe().query('regime == "working"')
     pd.testing.assert_frame_equal(
-        simulation_deterministic["working"],
-        simulation_stochastic["working"],
+        df_deterministic.reset_index(drop=True),
+        df_stochastic.reset_index(drop=True),
     )
