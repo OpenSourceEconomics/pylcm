@@ -60,7 +60,6 @@ def build_state_action_space(
     return create_state_action_space(
         variable_info=variable_info,
         grids=grids,
-        is_last_period=False,
     )
 
 

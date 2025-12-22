@@ -29,8 +29,6 @@ def get_regime_name_to_id_mapping(regime_id_cls: type) -> dict[RegimeName, int]:
 def create_regime_state_action_space(
     internal_regime: InternalRegime,
     states: dict[str, Array],
-    *,
-    is_last_period: bool,
 ) -> StateActionSpace:
     """Create the state-action space containing only the relevant subjects in a regime.
 
@@ -38,16 +36,12 @@ def create_regime_state_action_space(
         internal_regime: The internal regime instance.
         states: The current states of all subjects.
         subject_ids_in_regime: Indices of subjects in the current regime.
-        is_last_period: Whether we are in the last period of the model.
 
     Returns:
         The state-action space for the subjects in the regime.
 
     """
-    if is_last_period:
-        query = "is_state and enters_concurrent_valuation"
-    else:
-        query = "is_state and (enters_concurrent_valuation | enters_transition)"
+    query = "is_state and (enters_concurrent_valuation | enters_transition)"
 
     relevant_states_names = internal_regime.variable_info.query(query).index
 
@@ -59,7 +53,6 @@ def create_regime_state_action_space(
         variable_info=internal_regime.variable_info,
         grids=internal_regime.grids,
         states=states_for_state_action_space,
-        is_last_period=is_last_period,
     )
 
 

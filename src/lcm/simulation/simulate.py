@@ -105,7 +105,6 @@ def simulate(
     for period in range(n_periods):
         logger.info("Period: %s", period)
 
-        is_last_period = period == n_periods - 1
         new_subject_regime_ids = jnp.empty(n_initial_subjects)
 
         active_regimes = {
@@ -127,7 +126,6 @@ def simulate(
                     params=params,
                     regime_name_to_id=regime_name_to_id,
                     key=key,
-                    is_last_period=is_last_period,
                 )
             )
             states = new_states
@@ -159,8 +157,6 @@ def _simulate_regime_in_period(
     params: dict[RegimeName, ParamsDict],
     regime_name_to_id: dict[RegimeName, int],
     key: Array,
-    *,
-    is_last_period: bool,
 ) -> tuple[SimulationResults, dict[str, Array], Int1D, Array]:
     """Simulate one regime for one period.
 
@@ -178,7 +174,6 @@ def _simulate_regime_in_period(
         params: Model parameters for all regimes.
         regime_name_to_id: Mapping from regime names to integer IDs.
         key: JAX random key for stochastic operations.
-        is_last_period: Whether this is the final period (no state updates needed).
 
     Returns:
         Tuple containing:
@@ -197,7 +192,6 @@ def _simulate_regime_in_period(
     state_action_space = create_regime_state_action_space(
         internal_regime=internal_regime,
         states=states,
-        is_last_period=is_last_period,
     )
     # Compute optimal actions
     # ---------------------------------------------------------------------------------

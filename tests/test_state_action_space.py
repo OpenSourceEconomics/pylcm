@@ -49,7 +49,6 @@ def test_create_state_action_space_solution_discrete_action_continuous_state():
     space = create_state_action_space(
         variable_info=variable_info,
         grids=grids,
-        is_last_period=False,
     )
 
     assert isinstance(space, StateActionSpace)
@@ -74,7 +73,6 @@ def test_create_state_action_space_solution_continuous_action():
     space = create_state_action_space(
         variable_info=variable_info,
         grids=grids,
-        is_last_period=False,
     )
 
     assert isinstance(space, StateActionSpace)
