@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 import jax.numpy as jnp
 
 from lcm import DiscreteGrid, Model, Regime
-from tests.test_models.deterministic_regression import (
+from tests.test_models.deterministic.regression import (
     LaborSupply,
     is_working,
     labor_income,

@@ -18,7 +18,7 @@ from lcm.input_processing.regime_processing import (
     process_regimes,
 )
 from tests.regime_mock import RegimeMock
-from tests.test_models.deterministic_regimes import RegimeId, dead, working
+from tests.test_models.deterministic.base import RegimeId, dead, working
 
 
 def test_convert_flat_to_nested_transitions():

@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def simulate_inputs():
-    from tests.test_models.deterministic_regression import (  # noqa: PLC0415
+    from tests.test_models.deterministic.regression import (  # noqa: PLC0415
         RegimeId,
         dead,
         working,
@@ -35,10 +35,12 @@ def simulate_inputs():
         actions={
             **working.actions,
             "consumption": working.actions["consumption"].replace(stop=100),  # type: ignore[attr-defined]
-        }
+        },
+        active=[0],
     )
+    updated_dead = dead.replace(active=[1])
     internal_regimes = process_regimes(
-        [updated_working, dead],
+        [updated_working, updated_dead],
         n_periods=2,
         regime_id_cls=RegimeId,
         enable_jit=True,
@@ -88,7 +90,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
 
 @pytest.fixture
 def iskhakov_et_al_2017_stripped_down_model_solution():
-    from tests.test_models.deterministic_regression import (  # noqa: PLC0415
+    from tests.test_models.deterministic.regression import (  # noqa: PLC0415
         RegimeId,
         dead,
         get_params,
@@ -102,13 +104,16 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
             for name, func in working.functions.items()
             if name not in ["age", "wage"]
         }
-        updated_working = working.replace(functions=updated_functions)
+        updated_working = working.replace(
+            functions=updated_functions, active=range(n_periods - 1)
+        )
+        updated_dead = dead.replace(active=[n_periods - 1])
 
         params = get_params(n_periods=n_periods)
         # Since wage function is removed, wage becomes a parameter for labor_income
         params["working"]["labor_income"] = {"wage": 1.5}
         model = Model(
-            [updated_working, dead], n_periods=n_periods, regime_id_cls=RegimeId
+            [updated_working, updated_dead], n_periods=n_periods, regime_id_cls=RegimeId
         )
         V_arr_dict = model.solve(params=params)
         return V_arr_dict, params, model
@@ -156,7 +161,7 @@ def test_simulate_using_model_methods(
 
 
 def test_simulate_with_only_discrete_actions():
-    from tests.test_models.discrete_deterministic import (  # noqa: PLC0415
+    from tests.test_models.deterministic.discrete import (  # noqa: PLC0415
         get_model,
         get_params,
     )
@@ -181,7 +186,7 @@ def test_simulate_with_only_discrete_actions():
 
 
 def test_effect_of_beta_on_last_period():
-    from tests.test_models.deterministic_regression import (  # noqa: PLC0415
+    from tests.test_models.deterministic.regression import (  # noqa: PLC0415
         get_model,
         get_params,
     )
@@ -235,7 +240,7 @@ def test_effect_of_beta_on_last_period():
 
 
 def test_effect_of_disutility_of_work():
-    from tests.test_models.deterministic_regression import (  # noqa: PLC0415
+    from tests.test_models.deterministic.regression import (  # noqa: PLC0415
         get_model,
         get_params,
     )

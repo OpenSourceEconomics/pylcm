@@ -14,7 +14,7 @@ from lcm.Q_and_F import (
     _get_joint_weights_function,
     get_Q_and_F_terminal,
 )
-from tests.test_models.deterministic_regression import (
+from tests.test_models.deterministic.regression import (
     LaborSupply,
     RegimeId,
     dead,

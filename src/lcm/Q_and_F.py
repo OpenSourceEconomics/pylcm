@@ -59,11 +59,8 @@ def get_Q_and_F(
     # ----------------------------------------------------------------------------------
     # Generate dynamic functions
     # ----------------------------------------------------------------------------------
-
-    # Function required to calculate instantaneous utility and feasibility
     U_and_F = _get_U_and_F(internal_functions)
-    assert internal_functions.regime_transition_probs is not None
-    regime_transition_prob_func = internal_functions.regime_transition_probs.solve
+    regime_transition_prob_func = internal_functions.regime_transition_probs.solve  # type: ignore[union-attr]
     state_transitions = {}
     next_stochastic_states_weights = {}
     joint_weights_from_marginals = {}

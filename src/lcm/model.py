@@ -201,11 +201,17 @@ class Model:
         )
 
 
-def _validate_model_inputs(  # noqa: C901
+def _validate_model_inputs(
     n_periods: int,
     regimes: list[Regime],
     regime_id_cls: type | None,
 ) -> None:
+    # Early exit if regimes are not lcm.Regime instances
+    if not all(isinstance(regime, Regime) for regime in regimes):
+        raise ModelInitializationError(
+            "All items in regimes must be instances of lcm.Regime."
+        )
+
     error_messages: list[str] = []
 
     if not isinstance(n_periods, int):
@@ -217,15 +223,6 @@ def _validate_model_inputs(  # noqa: C901
         error_messages.append(
             "At least one non-terminal and one terminal regime must be provided."
         )
-
-    if not all(isinstance(regime, Regime) for regime in regimes):
-        error_messages.append("All items in regimes must be instances of lcm.Regime.")
-
-        # Early exit if regimes are invalid, as further checks require lcm.Regime
-        # instances
-        if error_messages:
-            msg = format_messages(error_messages)
-            raise ModelInitializationError(msg)
 
     # Assume all items in regimes are lcm.Regime instances beyond this point
     terminal_regimes = [r for r in regimes if r.terminal]

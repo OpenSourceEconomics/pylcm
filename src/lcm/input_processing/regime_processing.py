@@ -102,7 +102,7 @@ def process_regimes(
         variable_info[regime.name] = get_variable_info(regime)
         state_space_infos[regime.name] = build_state_space_info(regime)
         state_action_spaces[regime.name] = build_state_action_space(regime)
-        regimes_to_active_periods[regime.name] = get_active_periods(regime, n_periods)
+        regimes_to_active_periods[regime.name] = list(regime.active)
 
     # ----------------------------------------------------------------------------------
     # Stage 2: Initialize regime components that depend on other regimes
@@ -171,25 +171,6 @@ def process_regimes(
         )
 
     return internal_regimes
-
-
-def get_active_periods(regime: Regime, n_periods: int) -> list[int]:
-    if regime.active is None:
-        return _get_default_active_periods(regime, n_periods)
-
-    if regime.terminal and n_periods - 1 not in regime.active:
-        return [n_periods - 1, *list(regime.active)]
-
-    if not regime.terminal and n_periods - 1 in regime.active:
-        return [p for p in regime.active if p == n_periods - 1]
-
-    return list(regime.active)
-
-
-def _get_default_active_periods(regime: Regime, n_periods: int) -> list[int]:
-    if regime.terminal:
-        return list(range(n_periods))
-    return list(range(n_periods - 1))
 
 
 def _get_internal_functions(

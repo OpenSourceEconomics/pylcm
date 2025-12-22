@@ -47,36 +47,27 @@ def test_model_solve_and_simulate_with_stochastic_model():
     assert "labor_supply" in res.columns
     assert len(res) > 0
 
-    # Check that partner transition follows the transition matrix from get_params:
-    # Working (labor=0) + single (partner=0) -> partnered (1)
-    # Working (labor=0) + partnered (partner=1) -> single (0)
-    # Not working (labor=1) + single (partner=0) -> partnered (1)
-    # Not working (labor=1) + partnered (partner=1) -> partnered (1)
+    # Check that partner transition follows the transition matrix from get_params
     period_0 = res[res.period == 0].set_index("subject_id")
     period_1 = res[res.period == 1].set_index("subject_id")
 
     # Only test subjects present in both periods
     common_subjects = period_0.index.intersection(period_1.index)
+
     if len(common_subjects) > 0:
-        for subj in common_subjects:
-            is_working_p0 = period_0.loc[subj, "labor_supply"] == 0
-            is_partnered_p0 = period_0.loc[subj, "partner"] == 1
+        # Create expected partner values based on period 0 state
+        expected_partner = period_0.loc[common_subjects].apply(
+            lambda row: 0 if (row["labor_supply"] == 0 and row["partner"] == 1) else 1,
+            axis=1,
+        )
 
-            if is_working_p0 and is_partnered_p0:
-                expected_partner_p1 = 0  # Working + partnered -> single
-            elif is_working_p0 and not is_partnered_p0:
-                expected_partner_p1 = 1  # Working + single -> partnered
-            elif not is_working_p0 and is_partnered_p0:
-                expected_partner_p1 = 1  # Not working + partnered -> partnered
-            else:  # not working and single
-                expected_partner_p1 = 1  # Not working + single -> partnered
+        actual_partner = period_1.loc[common_subjects, "partner"]
 
-            # Partner status at period 1 should match expected
-            assert period_1.loc[subj, "partner"] == expected_partner_p1, (
-                f"Subject {subj}: expected partner={expected_partner_p1} at period 1, "
-                f"got {period_1.loc[subj, 'partner']} "
-                f"(was working={is_working_p0}, partnered={is_partnered_p0})"
-            )
+        pd.testing.assert_series_equal(
+            actual_partner,
+            expected_partner,
+            check_names=False,
+        )
 
 
 # ======================================================================================

@@ -8,7 +8,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
 from lcm._config import TEST_DATA
-from tests.test_models.deterministic_regression import get_model, get_params
+from tests.test_models.deterministic.regression import get_model, get_params
 
 if TYPE_CHECKING:
     from lcm.typing import FloatND
