@@ -28,7 +28,11 @@ from lcm.state_action_space import (
     create_state_action_space,
     create_state_space_info,
 )
+from lcm.typing import TEMPORAL_CONTEXT_KEYS
 from lcm.utils import flatten_regime_namespace
+
+# Variables to exclude from vmapping: temporal context + params (which is passed separately)
+_VMAP_EXCLUDE = TEMPORAL_CONTEXT_KEYS | {"params"}
 
 if TYPE_CHECKING:
     from lcm.regime import Regime
@@ -78,15 +82,17 @@ def build_Q_and_F_functions(
                 regime=regime,
                 internal_functions=internal_functions,
                 period=period,
+                n_periods=n_periods,
             )
         else:
             Q_and_F = get_Q_and_F(
                 regime=regime,
                 regimes_to_active_periods=regimes_to_active_periods,
-                internal_functions=internal_functions,
+                period=period,
+                n_periods=n_periods,
                 next_state_space_infos=state_space_infos,
                 grids=grids,
-                period=period,
+                internal_functions=internal_functions,
             )
         Q_and_F_functions[period] = Q_and_F
 
@@ -183,9 +189,7 @@ def build_next_state_simulation_functions(
     next_state_vmapped = vmap_1d(
         func=next_state,
         variables=tuple(
-            parameter
-            for parameter in parameters
-            if parameter not in ("period", "params")
+            parameter for parameter in parameters if parameter not in _VMAP_EXCLUDE
         ),
     )
 
@@ -245,9 +249,7 @@ def build_regime_transition_probs_functions(
     next_regime_vmapped = vmap_1d(
         func=next_regime_accepting_all,
         variables=tuple(
-            parameter
-            for parameter in parameters
-            if parameter not in ("period", "params")
+            parameter for parameter in parameters if parameter not in _VMAP_EXCLUDE
         ),
     )
 

@@ -14,6 +14,7 @@ from lcm.functools import get_union_of_arguments
 from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import InternalFunctions, Target
 from lcm.next_state import get_next_state_function, get_next_stochastic_weights_function
+from lcm.typing import TEMPORAL_CONTEXT_KEYS, TemporalContext
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -37,6 +38,7 @@ def get_Q_and_F(
     regime: Regime,
     regimes_to_active_periods: dict[RegimeName, list[int]],
     period: int,
+    n_periods: int,
     next_state_space_infos: dict[RegimeName, StateSpaceInfo],
     grids: dict[RegimeName, Any],
     internal_functions: InternalFunctions,
@@ -46,16 +48,24 @@ def get_Q_and_F(
     Args:
         regime: Regime instance.
         regimes_to_active_periods: Mapping regime names to their active periods.
-        internal_functions: Internal functions instance.
+        period: The current period.
+        n_periods: Total number of periods in the model.
         next_state_space_infos: The state space information of the next period.
         grids: Dict containing the state frids for all regimes.
-        period: The current period.
+        internal_functions: Internal functions instance.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
         for a non-terminal period.
 
     """
+    # Temporal context dict to pass to all user functions
+    temporal_context: TemporalContext = {
+        "period": period,
+        "n_periods": n_periods,
+        "last_period": n_periods - 1,
+    }
+
     # ----------------------------------------------------------------------------------
     # Generate dynamic functions
     # ----------------------------------------------------------------------------------
@@ -117,7 +127,7 @@ def get_Q_and_F(
             *list(next_stochastic_states_weights.values()),
         ],
         include={"params", "next_V_arr"},
-        exclude={"period"},
+        exclude=TEMPORAL_CONTEXT_KEYS,
     )
 
     @with_signature(
@@ -140,11 +150,13 @@ def get_Q_and_F(
 
         """
         regime_transition_prob = regime_transition_prob_func(
-            **states_and_actions, period=period, params=params[regime.name]
+            **states_and_actions,
+            **temporal_context,
+            params=params[regime.name],
         )
         U_arr, F_arr = U_and_F(
             **states_and_actions,
-            period=period,
+            **temporal_context,
             params=params[regime.name],
         )
         Q_arr = U_arr
@@ -158,7 +170,7 @@ def get_Q_and_F(
         for regime_name in active_target_regimes:
             next_states = state_transitions[regime_name](
                 **states_and_actions,
-                period=period,
+                **temporal_context,
                 params=params[regime.name],
             )
 
@@ -166,7 +178,7 @@ def get_Q_and_F(
                 regime_name
             ](
                 **states_and_actions,
-                period=period,
+                **temporal_context,
                 params=params[regime.name],
             )
 
@@ -205,6 +217,7 @@ def get_Q_and_F_terminal(
     regime: Regime,
     internal_functions: InternalFunctions,
     period: int,
+    n_periods: int,
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for the terminal period.
 
@@ -212,12 +225,20 @@ def get_Q_and_F_terminal(
         regime: The current regime.
         internal_functions: Internal functions instance.
         period: The current period.
+        n_periods: Total number of periods in the model.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
         for the terminal period.
 
     """
+    # Temporal context dict to pass to all user functions
+    temporal_context: TemporalContext = {
+        "period": period,
+        "n_periods": n_periods,
+        "last_period": n_periods - 1,
+    }
+
     U_and_F = _get_U_and_F(internal_functions)
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
@@ -253,7 +274,7 @@ def get_Q_and_F_terminal(
         """
         U_arr, F_arr = U_and_F(
             **states_and_actions,
-            period=period,
+            **temporal_context,
             params=params[regime.name],
         )
 
