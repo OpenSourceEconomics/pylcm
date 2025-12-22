@@ -9,7 +9,7 @@ from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.random import generate_simulation_keys
 from lcm.state_action_space import create_state_action_space
-from lcm.typing import Bool1D, Int1D, ParamsDict, RegimeName
+from lcm.typing import Bool1D, Int1D, ParamsDict, RegimeName, TemporalContext
 from lcm.utils import flatten_regime_namespace
 
 
@@ -59,7 +59,7 @@ def create_regime_state_action_space(
 def calculate_next_states(
     internal_regime: InternalRegime,
     optimal_actions: dict[str, Array],
-    period: int,
+    temporal_context: TemporalContext,
     params: dict[RegimeName, ParamsDict],
     states: dict[str, Array],
     state_action_space: StateActionSpace,
@@ -72,7 +72,7 @@ def calculate_next_states(
         internal_regime: The internal regime instance.
         subjects_in_regime: Boolean array indicating if subject is in regime.
         optimal_actions: Optimal actions computed for these subjects.
-        period: Current period.
+        temporal_context: Temporal context dict containing period, n_periods, last_period.
         params: Model parameters for the regime.
         states: Current states for all subjects (all regimes).
         state_action_space: State-action space for subjects in this regime.
@@ -108,7 +108,7 @@ def calculate_next_states(
         **state_action_space.states,
         **optimal_actions,
         **stochastic_variables_keys,
-        period=period,
+        **temporal_context,
         params=params,
     )
 
@@ -127,7 +127,7 @@ def calculate_next_regime_membership(
     internal_regime: InternalRegime,
     state_action_space: StateActionSpace,
     optimal_actions: dict[str, Array],
-    period: int,
+    temporal_context: TemporalContext,
     params: dict[RegimeName, ParamsDict],
     regime_name_to_id: dict[RegimeName, int],
     new_subject_regime_ids: Int1D,
@@ -144,7 +144,7 @@ def calculate_next_regime_membership(
         subjects_in_regime: Indices of subjects currently in this regime.
         state_action_space: State-action space for subjects in this regime.
         optimal_actions: Optimal actions computed for these subjects.
-        period: Current period.
+        temporal_context: Temporal context dict containing period, n_periods, last_period.
         params: Model parameters for the regime.
         regime_name_to_id: Mapping from regime names to integer IDs.
         new_subject_regime_ids: Array to update with next regime assignments.
@@ -163,7 +163,7 @@ def calculate_next_regime_membership(
         internal_regime.internal_functions.regime_transition_probs.simulate(
             **state_action_space.states,
             **optimal_actions,
-            period=period,
+            **temporal_context,
             params=params,
         )
     )

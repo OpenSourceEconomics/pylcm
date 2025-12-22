@@ -21,6 +21,7 @@ from lcm.simulation.util import (
     get_regime_name_to_id_mapping,
     validate_flat_initial_states,
 )
+from lcm.typing import TemporalContext
 from lcm.utils import flatten_regime_namespace
 
 if TYPE_CHECKING:
@@ -105,6 +106,12 @@ def simulate(
     for period in range(n_periods):
         logger.info("Period: %s", period)
 
+        temporal_context: TemporalContext = {
+            "period": period,
+            "n_periods": n_periods,
+            "last_period": n_periods - 1,
+        }
+
         new_subject_regime_ids = jnp.empty(n_initial_subjects)
 
         active_regimes = {
@@ -118,7 +125,7 @@ def simulate(
                 _simulate_regime_in_period(
                     regime_name=regime_name,
                     internal_regime=internal_regime,
-                    period=period,
+                    temporal_context=temporal_context,
                     states=states,
                     subject_regime_ids=subject_regime_ids,
                     new_subject_regime_ids=new_subject_regime_ids,
@@ -149,7 +156,7 @@ def simulate(
 def _simulate_regime_in_period(
     regime_name: RegimeName,
     internal_regime: InternalRegime,
-    period: int,
+    temporal_context: TemporalContext,
     states: dict[str, Array],
     subject_regime_ids: Int1D,
     new_subject_regime_ids: Int1D,
@@ -166,7 +173,7 @@ def _simulate_regime_in_period(
     Args:
         regime_name: Name of the current regime.
         internal_regime: Internal representation of the regime.
-        period: Current period (0-indexed).
+        temporal_context: Temporal context dict containing period, n_periods, last_period.
         states: Current states for all subjects (namespaced by regime).
         subject_regime_ids: Current regime membership for all subjects.
         new_subject_regime_ids: Array to populate with next period's regime memberships.
@@ -183,6 +190,7 @@ def _simulate_regime_in_period(
         - Updated JAX random key
 
     """
+    period = temporal_context["period"]
     # Select subjects in the current regime
     # ---------------------------------------------------------------------------------
     subject_ids_in_regime = jnp.asarray(
@@ -243,7 +251,7 @@ def _simulate_regime_in_period(
             internal_regime=internal_regime,
             subjects_in_regime=subject_ids_in_regime,
             optimal_actions=optimal_actions,
-            period=period,
+            temporal_context=temporal_context,
             params=params[regime_name],
             states=states,
             state_action_space=state_action_space,
@@ -254,7 +262,7 @@ def _simulate_regime_in_period(
             internal_regime=internal_regime,
             subjects_in_regime=subject_ids_in_regime,
             optimal_actions=optimal_actions,
-            period=period,
+            temporal_context=temporal_context,
             params=params[regime_name],
             state_action_space=state_action_space,
             new_subject_regime_ids=new_subject_regime_ids,
