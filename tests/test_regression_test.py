@@ -16,53 +16,33 @@ if TYPE_CHECKING:
 
 def test_regression_test():
     """Test that the output of lcm does not change."""
-    # Load generated output
-    # ==================================================================================
+    # Load expected output
     expected_simulate = pd.read_pickle(
-        TEST_DATA.joinpath("regression_tests", "simulation.pkl"),
+        TEST_DATA / "regression_tests" / "simulation.pkl"
     )
+    expected_solve = pd.read_pickle(TEST_DATA / "regression_tests" / "solution.pkl")
 
-    expected_solve = pd.read_pickle(
-        TEST_DATA.joinpath("regression_tests", "solution.pkl"),
-    )
-
-    # Generate current lcm ouput
-    # ==================================================================================
+    # Generate current lcm output
     n_periods = 4
-
     model = get_model(n_periods=n_periods)
-
     params = get_params(
         n_periods=n_periods,
         beta=0.95,
         disutility_of_work=1.0,
         interest_rate=0.05,
     )
-    got_solve: dict[int, dict[str, FloatND]] = model.solve(params)
 
-    result = model.solve_and_simulate(
+    got_solve: dict[int, dict[str, FloatND]] = model.solve(params)
+    got_simulate = model.solve_and_simulate(
         params=params,
         initial_states={"wealth": jnp.array([5.0, 20, 40, 70])},
         initial_regimes=["working"] * 4,
-    )
-    got_simulate_df = result.to_dataframe()
+    ).to_dataframe()
 
     # Compare solution
-    # ==================================================================================
     for period in range(n_periods - 1):
         for regime in got_solve[period]:
             aaae(expected_solve[period][regime], got_solve[period][regime], decimal=5)
 
-    # Compare simulation (convert flat DataFrame to dict by regime for comparison)
-    # ==================================================================================
-    for regime in expected_simulate:
-        expected_cols = expected_simulate[regime].columns.tolist()
-        got_regime_df = (
-            got_simulate_df.query(f'regime == "{regime}"')
-            .drop(columns="regime")[expected_cols]  # Only select expected columns
-            .sort_values(["period", "subject_id"])
-            .reset_index(drop=True)
-        )
-        assert_frame_equal(
-            expected_simulate[regime], got_regime_df, check_like=True, check_dtype=False
-        )
+    # Compare simulation (use tolerance to match solution comparison precision)
+    assert_frame_equal(got_simulate, expected_simulate, check_dtype=False, atol=1e-5)

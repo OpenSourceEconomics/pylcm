@@ -184,43 +184,43 @@ def analytical_solve_deterministic(wealth_grid, params):
 
 
 def analytical_simulate_deterministic(initial_wealth, params):
-    # Simulate
-    # ==================================================================================
+    """Compute analytical simulation results in the same format as to_dataframe().
+
+    Returns DataFrame with columns: period, subject_id, regime, value, wealth,
+    consumption, working. Sorted by (subject_id, period).
+    """
+    n_subjects = len(initial_wealth)
+
+    # Period 0
     V_arr_0 = value_first_period_deterministic(initial_wealth, params=params)
     policy_0 = policy_first_period_deterministic(initial_wealth, params=params)
 
+    # Period 1
     wealth_1 = next_wealth(initial_wealth, **policy_0)
-
     V_arr_1 = value_second_period_deterministic(wealth_1)
     policy_1 = policy_second_period_deterministic(wealth_1)
 
-    policy_0_renamed = {f"{k}_0": v for k, v in policy_0.items()}
-    policy_1_renamed = {f"{k}_1": v for k, v in policy_1.items()}
-
-    # Transform data into format as expected by LCM
-    # ==================================================================================
-    data = (
-        {
-            "subject_id": jnp.arange(len(initial_wealth)),
-            "wealth_0": initial_wealth,
-            "wealth_1": wealth_1,
-            "value_0": V_arr_0,
-            "value_1": V_arr_1,
-        }
-        | policy_0_renamed
-        | policy_1_renamed
+    # Build DataFrame in the same format as to_dataframe()
+    # Sorted by (subject_id, period)
+    return (
+        pd.DataFrame(
+            {
+                "period": np.concatenate(
+                    [np.zeros(n_subjects), np.ones(n_subjects)]
+                ).astype(int),
+                "subject_id": np.tile(np.arange(n_subjects), 2),
+                "regime": ["alive"] * (2 * n_subjects),
+                "value": np.concatenate([V_arr_0, V_arr_1]),
+                "wealth": np.concatenate([initial_wealth, wealth_1]),
+                "consumption": np.concatenate(
+                    [policy_0["consumption"], policy_1["consumption"]]
+                ),
+                "working": np.concatenate([policy_0["working"], policy_1["working"]]),
+            }
+        )
+        .sort_values(["subject_id", "period"])
+        .reset_index(drop=True)
     )
-
-    raw = pd.DataFrame(data)
-    raw_long = pd.wide_to_long(
-        raw,
-        stubnames=["value", "wealth", "consumption", "working"],
-        i="subject_id",
-        j="period",
-        sep="_",
-    )
-
-    return raw_long.swaplevel().sort_index().reset_index()
 
 
 def matrix_to_dict_of_vectors(arr, col_names):
@@ -319,51 +319,48 @@ def analytical_solve_stochastic(wealth_grid, health_grid, params):
 
 
 def analytical_simulate_stochastic(initial_wealth, initial_health, health_1, params):
-    # Simulate
-    # ==================================================================================
+    """Compute analytical simulation results in the same format as to_dataframe().
+
+    Returns DataFrame with columns: period, subject_id, regime, value, health, wealth,
+    consumption, working. Sorted by (subject_id, period).
+    """
+    n_subjects = len(initial_wealth)
+
+    # Period 0
     V_arr_0 = value_first_period_stochastic(
-        initial_wealth,
-        initial_health,
-        params=params,
+        initial_wealth, initial_health, params=params
     )
     policy_0 = policy_first_period_stochastic(
-        initial_wealth,
-        initial_health,
-        params=params,
+        initial_wealth, initial_health, params=params
     )
 
+    # Period 1
     wealth_1 = next_wealth(initial_wealth, **policy_0)
-
     V_arr_1 = value_second_period_stochastic(wealth_1, health_1)
     policy_1 = policy_second_period_stochastic(wealth_1, health_1)
 
-    policy_0_renamed = {f"{k}_0": v for k, v in policy_0.items()}
-    policy_1_renamed = {f"{k}_1": v for k, v in policy_1.items()}
-
-    # Transform data into format as expected by LCM
-    # ==================================================================================
-    data = {
-        "subject_id": jnp.arange(len(initial_wealth)),
-        "wealth_0": initial_wealth,
-        "wealth_1": wealth_1,
-        "health_0": initial_health,
-        "health_1": health_1,
-        "value_0": V_arr_0,
-        "value_1": V_arr_1,
-        **policy_0_renamed,
-        **policy_1_renamed,
-    }
-
-    raw = pd.DataFrame(data)
-    raw_long = pd.wide_to_long(
-        raw,
-        stubnames=["value", "consumption", "working", "wealth", "health"],
-        i="subject_id",
-        j="period",
-        sep="_",
+    # Build DataFrame in the same format as to_dataframe()
+    # Sorted by (subject_id, period)
+    return (
+        pd.DataFrame(
+            {
+                "period": np.concatenate(
+                    [np.zeros(n_subjects), np.ones(n_subjects)]
+                ).astype(int),
+                "subject_id": np.tile(np.arange(n_subjects), 2),
+                "regime": ["alive"] * (2 * n_subjects),
+                "value": np.concatenate([V_arr_0, V_arr_1]),
+                "health": np.concatenate([initial_health, health_1]),
+                "wealth": np.concatenate([initial_wealth, wealth_1]),
+                "consumption": np.concatenate(
+                    [policy_0["consumption"], policy_1["consumption"]]
+                ),
+                "working": np.concatenate([policy_0["working"], policy_1["working"]]),
+            }
+        )
+        .sort_values(["subject_id", "period"])
+        .reset_index(drop=True)
     )
-
-    return raw_long.swaplevel().sort_index().reset_index()
 
 
 # ======================================================================================
@@ -443,21 +440,13 @@ def test_deterministic_simulate(beta, n_wealth_points):
         initial_states={"wealth": jnp.array([0.25, 0.75, 1.25, 1.75])},
         initial_regimes=["alive"] * 4,
     )
-    got = (
-        result.to_dataframe()
-        .query('regime == "alive"')
-        .drop(columns="regime")
-        .reset_index(drop=True)
-    )
+    # Filter to alive regime only (dead regime has trivial values)
+    got = result.to_dataframe().query('regime == "alive"').reset_index(drop=True)
 
-    # Compute analytical simulation
-    # ==================================================================================
     expected = analytical_simulate_deterministic(
         initial_wealth=np.array([0.25, 0.75, 1.25, 1.75]),
         params=params_alive,
     )
-    # Sort both DataFrames the same way for comparison
-    expected = expected.sort_values(["subject_id", "period"]).reset_index(drop=True)
 
     assert_frame_equal(got, expected, check_like=True, check_dtype=False)
 
@@ -560,36 +549,22 @@ def test_stochastic_simulate(beta, n_wealth_points, health_transition):
         initial_states=initial_states,
         initial_regimes=["alive"] * 5,
     )
-    _got = (
-        result.to_dataframe()
-        .query('regime == "alive"')
-        .drop(columns="regime")
-        .reset_index(drop=True)
-    )
+    # Filter to alive regime only (dead regime has trivial values)
+    got = result.to_dataframe().query('regime == "alive"').reset_index(drop=True)
 
-    # Compute analytical simulation
-    # ==================================================================================
     # Need to use health of second period from LCM output, to assure that the same
     # stochastic draws are used in the analytical simulation.
-    health_1 = _got.query("period == 1")["health"].to_numpy()
+    health_1 = got.query("period == 1")["health"].to_numpy()
 
-    _expected = analytical_simulate_stochastic(
+    expected = analytical_simulate_stochastic(
         initial_wealth=initial_states["wealth"],
         initial_health=initial_states["health"],
         health_1=health_1,
         params=params_alive,
     )
 
-    # Drop all rows that contain wealth levels at the boundary.
-    # Sort both DataFrames the same way for comparison
-    got = (
-        _got.query("wealth != 2")
-        .sort_values(["subject_id", "period"])
-        .reset_index(drop=True)
-    )
-    expected = (
-        _expected.query("wealth != 2")
-        .sort_values(["subject_id", "period"])
-        .reset_index(drop=True)
-    )
+    # Drop rows with wealth at boundary (analytical solution has edge effects)
+    got = got.query("wealth != 2").reset_index(drop=True)
+    expected = expected.query("wealth != 2").reset_index(drop=True)
+
     assert_frame_equal(got, expected, check_like=True, check_dtype=False)
