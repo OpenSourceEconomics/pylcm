@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import pandas as pd
 from pybaum import tree_equal
 
-from lcm.interfaces import SimulationResults
+from lcm.interfaces import PeriodRegimeData
 from lcm.simulation.processing import (
     _compute_targets,
     process_simulated_data,
@@ -44,13 +44,13 @@ def test_compute_targets():
 
 def test_process_simulated_data():
     simulated = {
-        0: SimulationResults(
+        0: PeriodRegimeData(
             V_arr=jnp.array([0.1, 0.2]),
             states={"a": jnp.array([1, 2]), "b": jnp.array([-1, -2])},
             actions={"c": jnp.array([5, 6]), "d": jnp.array([-5, -6])},
             in_regime=jnp.asarray([1, 1]),
         ),
-        1: SimulationResults(
+        1: PeriodRegimeData(
             V_arr=jnp.array([0.3, 0.4]),
             states={
                 "b": jnp.array([-3, -4]),
