@@ -125,7 +125,7 @@ jax = {version = ">=0.7", extras = ["cuda12"]}
 pytest = "*"
 pytest-cov = "*"
 pytest-xdist = "*"
-mypy = "==1.17.1"
+ty = "*"
 pandas-stubs = "*"
 matplotlib = "*"  # required because of pandas
 scipy-stubs = "*"
@@ -133,7 +133,7 @@ scipy-stubs = "*"
 [tool.pixi.feature.testing.tasks]
 tests = "pytest tests"
 tests-with-cov = "pytest tests --cov-report=xml --cov=./"
-mypy = "mypy"
+ty = "ty check"
 explanation-notebooks = "jupyter execute explanations/*.ipynb"
 
 # Environments
@@ -230,34 +230,30 @@ sequence_style = "block_style"
 none_representation = "null"
 
 # ======================================================================================
-# mypy configuration
+# ty configuration
 # ======================================================================================
 
-[tool.mypy]
-files = ["src", "tests", "examples"]
-check_untyped_defs = true
-disallow_any_generics = true
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-no_implicit_optional = true
-warn_redundant_casts = true
-warn_unused_ignores = true
+[tool.ty.environment]
+root = ["."]
 
-[[tool.mypy.overrides]]
-module = "tests.*"
-disallow_untyped_defs = false
+[tool.ty.src]
+include = ["src/", "tests/", "examples/"]
 
-[[tool.mypy.overrides]]
-module = [
-    "tests/test_dispatchers",
-    "tests/regime_mock",
-]
-ignore_errors = true
-
-[[tool.mypy.overrides]]
-module = "tests.test_entry_point"
-disable_error_code = ["arg-type"]
-
-[[tool.mypy.overrides]]
-module = ["pybaum", "pdbp", "yaml"]
-ignore_missing_imports = true
+[tool.ty.rules]
+invalid-return-type = "error"
+ambiguous-protocol-member = "error"
+deprecated = "error"
+division-by-zero = "error"
+ignore-comment-unknown-rule = "error"
+invalid-argument-type = "error"
+invalid-ignore-comment = "error"
+possibly-missing-attribute = "error"
+possibly-missing-implicit-call = "error"
+possibly-missing-import = "error"
+possibly-unresolved-reference = "error"
+redundant-cast = "error"
+undefined-reveal = "error"
+unresolved-global = "error"
+unsupported-base = "error"
+unused-ignore-comment = "error"
+useless-overload-body = "error"

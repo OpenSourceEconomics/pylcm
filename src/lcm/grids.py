@@ -105,7 +105,7 @@ class ContinuousGrid(Grid, ABC):
 
         """
         try:
-            return dataclasses.replace(self, **kwargs)  # type: ignore[arg-type]
+            return dataclasses.replace(self, **kwargs)
         except TypeError as e:
             raise GridInitializationError(
                 f"Failed to replace attributes of the grid. The error was: {e}"

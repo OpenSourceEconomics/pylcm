@@ -23,7 +23,7 @@ def get_regime_name_to_id_mapping(regime_id_cls: type) -> dict[RegimeName, int]:
         Dict mapping regime names to their integer IDs.
 
     """
-    return {field.name: int(field.default) for field in fields(regime_id_cls)}  # type: ignore[arg-type]
+    return {field.name: int(field.default) for field in fields(regime_id_cls)}  # ty: ignore[invalid-argument-type]
 
 
 def create_regime_state_action_space(
