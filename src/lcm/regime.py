@@ -203,12 +203,6 @@ def _validate_terminal_or_transitions(regime: Regime) -> list[str]:
                 "Terminal regimes cannot have transitions. Remove the transitions "
                 "or set terminal=False.",
             )
-        if not regime.states:
-            errors.append(
-                "Terminal regimes must have at least one state. The terminal utility "
-                "function should depend on the states that agents bring into the "
-                "terminal regime.",
-            )
     else:
         # Validate transition function names start with 'next_'
         transitions_with_invalid_name = [

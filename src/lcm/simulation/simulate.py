@@ -210,6 +210,11 @@ def _simulate_regime_in_period(
     )
     # Store results for this regime-period
     # ---------------------------------------------------------------------------------
+    # For state-less regimes (e.g., terminal regimes with no states), V_arr may be a
+    # scalar. We need to broadcast it to match the number of subjects.
+    n_subjects = subject_ids_in_regime.shape[0]
+    if V_arr.ndim == 0:
+        V_arr = jnp.broadcast_to(V_arr, (n_subjects,))
 
     res = {
         state_name.removeprefix(f"{regime_name}__"): state
@@ -269,6 +274,10 @@ def _lookup_values_from_indices(
         Dictionary of values.
 
     """
+    # Handle empty grids case (no actions)
+    if not grids:
+        return {}
+
     grids_shapes = tuple(len(grid) for grid in grids.values())
 
     nd_indices = vmapped_unravel_index(flat_indices, grids_shapes)

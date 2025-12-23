@@ -30,7 +30,7 @@ def simulate_inputs():
     updated_working = working.replace(
         actions={
             **working.actions,
-            "consumption": working.actions["consumption"].replace(stop=100),  # type: ignore[attr-defined]
+            "consumption": working.actions["consumption"].replace(stop=100),  # ty: ignore[unresolved-attribute]
         },
         active=[0],
     )
@@ -51,7 +51,7 @@ def simulate_inputs():
 def test_simulate_using_raw_inputs(simulate_inputs):
     params = {
         "working": {
-            "beta": 1.0,
+            "discount_factor": 1.0,
             "utility": {"disutility_of_work": 1.0},
             "next_wealth": {"interest_rate": 0.05},
             "next_regime": {"n_periods": 2},
@@ -169,7 +169,7 @@ def test_simulate_with_only_discrete_actions():
     )
 
     model = get_model(n_periods=3)
-    params = get_params(n_periods=3, wage=1.5, beta=1, interest_rate=0)
+    params = get_params(n_periods=3, wage=1.5, discount_factor=1, interest_rate=0)
 
     result = model.solve_and_simulate(
         params,
@@ -206,7 +206,7 @@ def test_simulate_with_only_discrete_actions():
 # ======================================================================================
 
 
-def test_effect_of_beta_on_last_period():
+def test_effect_of_discount_factor_on_last_period():
     from tests.test_models.deterministic.regression import (  # noqa: PLC0415
         get_model,
         get_params,
@@ -214,10 +214,31 @@ def test_effect_of_beta_on_last_period():
 
     n_periods = 6
     model = get_model(n_periods=n_periods)
+
+    # low discount_factor
+    params_low = get_params(
+        n_periods=n_periods,
+        discount_factor=0.9,
+        disutility_of_work=1.0,
+    )
+
+    # high discount_factor
+    params_high = get_params(
+        n_periods=n_periods,
+        discount_factor=0.99,
+        disutility_of_work=1.0,
+    )
+
+    # Simulate
+    # ==================================================================================
     initial_wealth = jnp.array([20.0, 50, 70])
 
-    params_low = get_params(n_periods=n_periods, beta=0.9, disutility_of_work=1.0)
-    params_high = get_params(n_periods=n_periods, beta=0.99, disutility_of_work=1.0)
+    params_low = get_params(
+        n_periods=n_periods, discount_factor=0.9, disutility_of_work=1.0
+    )
+    params_high = get_params(
+        n_periods=n_periods, discount_factor=0.99, disutility_of_work=1.0
+    )
 
     df_low = (
         model.solve_and_simulate(
@@ -255,10 +276,31 @@ def test_effect_of_disutility_of_work():
 
     n_periods = 6
     model = get_model(n_periods=n_periods)
+
+    # low disutility_of_work
+    params_low = get_params(
+        n_periods=n_periods,
+        discount_factor=1.0,
+        disutility_of_work=0.2,
+    )
+
+    # high disutility_of_work
+    params_high = get_params(
+        n_periods=n_periods,
+        discount_factor=1.0,
+        disutility_of_work=1.5,
+    )
+
+    # Simulate
+    # ==================================================================================
     initial_wealth = jnp.array([20.0, 50, 70])
 
-    params_low = get_params(n_periods=n_periods, beta=1.0, disutility_of_work=0.2)
-    params_high = get_params(n_periods=n_periods, beta=1.0, disutility_of_work=1.5)
+    params_low = get_params(
+        n_periods=n_periods, discount_factor=1.0, disutility_of_work=0.2
+    )
+    params_high = get_params(
+        n_periods=n_periods, discount_factor=1.0, disutility_of_work=1.5
+    )
 
     df_low = (
         model.solve_and_simulate(

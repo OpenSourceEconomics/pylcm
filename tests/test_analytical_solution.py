@@ -31,7 +31,7 @@ TEST_CASES = {
         "model": get_model(n_periods=6),
         "params": get_params(
             n_periods=6,
-            beta=0.98,
+            discount_factor=0.98,
             disutility_of_work=1.0,
             interest_rate=0.0,
             wage=20.0,
@@ -41,7 +41,7 @@ TEST_CASES = {
         "model": get_model(n_periods=4),
         "params": get_params(
             n_periods=4,
-            beta=0.98,
+            discount_factor=0.98,
             disutility_of_work=0.1,
             interest_rate=0.0,
             wage=20.0,

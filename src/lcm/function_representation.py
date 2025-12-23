@@ -214,7 +214,7 @@ def _get_coordinate_finder(
     @with_signature(args=dict.fromkeys([in_name], "Array"), return_annotation="Array")
     def find_coordinate(*args: Array, **kwargs: Array) -> Array:
         kwargs = all_as_kwargs(args, kwargs, arg_names=[in_name])
-        return grid.get_coordinate(kwargs[in_name])  # type: ignore[return-value]
+        return grid.get_coordinate(kwargs[in_name])  # ty: ignore[invalid-return-type]
 
     return find_coordinate
 

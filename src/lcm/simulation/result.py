@@ -506,18 +506,15 @@ def _codes_to_categorical(
 
     if has_nan.any():
         # Use -1 for NaN positions (will become NaN in Categorical)
-        int_codes = pd.array(
-            [-1 if pd.isna(c) else int(c) for c in codes_array],
-            dtype="Int64",
-        )
+        int_codes = [-1 if pd.isna(c) else int(c) for c in codes_array]
         return pd.Categorical.from_codes(
-            int_codes,  # type: ignore[arg-type]
-            categories=list(categories),  # type: ignore[arg-type]
+            int_codes,
+            categories=pd.Index(categories),
         )
 
     return pd.Categorical.from_codes(
-        codes_array.astype(int),  # type: ignore[arg-type]
-        categories=list(categories),  # type: ignore[arg-type]
+        codes_array.astype(int),
+        categories=pd.Index(categories),
     )
 
 

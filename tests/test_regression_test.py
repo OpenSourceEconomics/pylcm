@@ -27,7 +27,7 @@ def test_regression_test():
     model = get_model(n_periods=n_periods)
     params = get_params(
         n_periods=n_periods,
-        beta=0.95,
+        discount_factor=0.95,
         disutility_of_work=1.0,
         interest_rate=0.05,
     )
