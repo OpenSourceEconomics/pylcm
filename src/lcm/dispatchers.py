@@ -114,15 +114,19 @@ def vmap_1d(
 
     positions = [parameters.index(var) for var in variables]
 
-    # Create in_axes to apply vmap over variables. This has one entry for each argument
-    # of func, indicating whether the argument should be mapped over or not. None means
-    # that the argument should not be mapped over, 0 means that it should be mapped over
-    # the leading axis of the input.
-    in_axes_for_vmap = [None] * len(parameters)  # type: list[int | None]
-    for p in positions:
-        in_axes_for_vmap[p] = 0
+    # Handle empty variables case - nothing to vmap over
+    if not positions:
+        vmapped = func
+    else:
+        # Create in_axes to apply vmap over variables. This has one entry for each
+        # argument of func, indicating whether the argument should be mapped over or
+        # not. None means that the argument should not be mapped over, 0 means that it
+        # should be mapped over the leading axis of the input.
+        in_axes_for_vmap = [None] * len(parameters)  # type: list[int | None]
+        for p in positions:
+            in_axes_for_vmap[p] = 0
 
-    vmapped = vmap(func, in_axes=in_axes_for_vmap)
+        vmapped = vmap(func, in_axes=in_axes_for_vmap)
 
     # This raises a mypy error but is perfectly fine to do. See
     # https://github.com/python/mypy/issues/12472

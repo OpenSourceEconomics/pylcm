@@ -64,7 +64,7 @@ def utility_retired(
     wealth: ContinuousState,
     health: ContinuousState,
 ) -> FloatND:
-    return jnp.array([jnp.log(wealth) * health])
+    return jnp.log(wealth) * health
 
 
 # --------------------------------------------------------------------------------------
