@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Protocol, TypedDict
+from typing import Any, Protocol
 
 from jax import Array
 from jaxtyping import Bool, Float, Int, Scalar
@@ -27,20 +27,6 @@ class Time:
         """Index of the last period (n_periods - 1)."""
         return self.n_periods - 1
 
-
-class TemporalContext(TypedDict):
-    """Temporal context variables automatically provided to user functions.
-
-    These time-related model variables are passed to all user functions.
-
-    """
-
-    period: int
-    n_periods: int
-    last_period: int
-
-
-TEMPORAL_CONTEXT_KEYS = frozenset(TemporalContext.__annotations__.keys())
 
 type ContinuousState = Float[Array, "..."]
 type ContinuousAction = Float[Array, "..."]
