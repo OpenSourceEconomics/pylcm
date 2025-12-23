@@ -51,8 +51,8 @@ def test_create_function_params():
     assert got == {"utility": {"c": jnp.nan}}
 
 
-def test_n_periods_and_last_period_are_special_variables(binary_category_class):
-    """n_periods and last_period should be excluded from params like period is."""
+def test_time_is_special_variable(binary_category_class):
+    """Time should be excluded from params template."""
     regime = RegimeMock(
         actions={
             "a": DiscreteGrid(binary_category_class),
@@ -60,8 +60,8 @@ def test_n_periods_and_last_period_are_special_variables(binary_category_class):
         states={
             "b": DiscreteGrid(binary_category_class),
         },
-        # n_periods and last_period in signature should be treated as special variables
-        utility=lambda a, b, n_periods, last_period: None,  # noqa: ARG005
+        # time in signature should be treated as special variable
+        utility=lambda a, b, time: None,  # noqa: ARG005
         transitions={
             "next_b": lambda b: b,
         },
@@ -71,9 +71,9 @@ def test_n_periods_and_last_period_are_special_variables(binary_category_class):
         grids={regime.name: get_grids(regime)},  # ty: ignore[invalid-argument-type]
         n_periods=3,
     )
-    # n_periods and last_period should NOT appear in params template
+    # time should NOT appear in params template
     assert got == {
         "discount_factor": jnp.nan,
-        "utility": {},  # Empty because n_periods and last_period are special vars
+        "utility": {},  # Empty because time is a special variable
         "next_b": {},
     }

@@ -14,7 +14,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
 import lcm
-from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
+from lcm import DiscreteGrid, LinspaceGrid, Model, Regime, Time
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -23,7 +23,6 @@ if TYPE_CHECKING:
         DiscreteAction,
         DiscreteState,
         FloatND,
-        ScalarInt,
     )
 
 
@@ -69,8 +68,8 @@ def next_wealth(
     return wealth - consumption + working
 
 
-def next_regime(period: int, n_periods: int) -> ScalarInt:
-    death_condition = period >= n_periods - 2  # is dead in last period
+def next_regime(time: Time) -> int:
+    death_condition = time.period >= time.n_periods - 2  # is dead in last period
     return jnp.where(death_condition, RegimeId.dead, RegimeId.alive)
 
 

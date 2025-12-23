@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, cast
 import jax.numpy as jnp
 from pybaum import tree_equal
 
+from lcm import Time
 from lcm.input_processing import process_regimes
 from lcm.interfaces import InternalFunctions, PhaseVariantContainer, Target
 from lcm.next_state import _create_stochastic_next_func, get_next_state_function
@@ -45,7 +46,7 @@ def test_get_next_state_function_with_solve_target():
     action = {"labor_supply": 1, "consumption": 10}
     state = {"wealth": 20}
 
-    got = got_func(**action, **state, period=1, params=params)
+    got = got_func(**action, **state, time=Time(period=1, n_periods=4), params=params)
     assert got == {"next_wealth": 1.05 * (20 - 10)}
 
 

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+import jax
 from jax import Array
 from jaxtyping import Bool, Float, Int, Scalar
 
@@ -26,6 +27,14 @@ class Time:
     def last_period(self) -> int:
         """Index of the last period (n_periods - 1)."""
         return self.n_periods - 1
+
+
+# Register Time as a JAX pytree so it can be passed through JIT-compiled functions
+jax.tree_util.register_dataclass(
+    Time,
+    data_fields=["period", "n_periods"],
+    meta_fields=[],
+)
 
 
 type ContinuousState = Float[Array, "..."]

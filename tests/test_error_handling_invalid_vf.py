@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 import pytest
 
-from lcm import Model, Regime
+from lcm import Model, Regime, Time
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.grids import LinspaceGrid
 
@@ -17,7 +17,6 @@ if TYPE_CHECKING:
         ContinuousState,
         FloatND,
         ParamsDict,
-        ScalarInt,
     )
 
 
@@ -49,8 +48,8 @@ def regimes_and_id_cls(n_periods: int) -> tuple[dict[str, Regime], type]:
     def next_health(health: ContinuousState) -> ContinuousState:
         return health
 
-    def next_regime(period: int, n_periods: int) -> ScalarInt:
-        transition_into_terminal = period == (n_periods - 2)
+    def next_regime(time: Time) -> int:
+        transition_into_terminal = time.period == (time.n_periods - 2)
         return jnp.where(
             transition_into_terminal, RegimeId.terminal, RegimeId.non_terminal
         )
