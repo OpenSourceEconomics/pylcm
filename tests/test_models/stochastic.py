@@ -319,7 +319,7 @@ def get_params(
             "next_wealth": {"interest_rate": interest_rate},
             "next_health": {},
             "next_partner": {"partner_transition": partner_transition},
-            "next_regime": {},  # last_period is now a temporal context variable
+            "next_regime": {},
             "borrowing_constraint": {},
             "labor_income": {"wage": wage},
         },
@@ -332,7 +332,7 @@ def get_params(
                 "labor_supply": LaborSupply.retire,
                 "partner_transition": partner_transition,
             },
-            "next_regime": {},  # last_period is now a temporal context variable
+            "next_regime": {},
             "borrowing_constraint": {},
         },
         "dead": {},

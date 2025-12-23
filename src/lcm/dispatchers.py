@@ -121,7 +121,7 @@ def vmap_1d(
         # argument of func, indicating whether the argument should be mapped over or
         # not. None means that the argument should not be mapped over, 0 means that it
         # should be mapped over the leading axis of the input.
-        in_axes_for_vmap = [None] * len(parameters)  # type: list[int | None]
+        in_axes_for_vmap: list[int | None] = [None] * len(parameters)
         for p in positions:
             in_axes_for_vmap[p] = 0
 

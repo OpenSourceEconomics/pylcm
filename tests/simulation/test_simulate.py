@@ -60,7 +60,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
             "next_wealth": {
                 "interest_rate": 0.05,
             },
-            "next_regime": {},  # last_period is now a temporal context variable
+            "next_regime": {},
             "borrowing_constraint": {},
             "labor_income": {},
         },

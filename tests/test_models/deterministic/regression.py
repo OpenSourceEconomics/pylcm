@@ -163,7 +163,7 @@ def get_params(
             "discount_factor": discount_factor,
             "utility": {"disutility_of_work": disutility_of_work},
             "next_wealth": {"interest_rate": interest_rate},
-            "next_regime": {},  # last_period is now a temporal context variable
+            "next_regime": {},
             "borrowing_constraint": {},
             "labor_income": {},
         },

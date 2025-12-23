@@ -67,8 +67,8 @@ def test_n_periods_and_last_period_are_special_variables(binary_category_class):
         },
     )
     got = create_params_template(
-        regime,  # type: ignore[arg-type]
-        grids={regime.name: get_grids(regime)},  # type: ignore[arg-type]
+        regime,  # ty: ignore[invalid-argument-type]
+        grids={regime.name: get_grids(regime)},  # ty: ignore[invalid-argument-type]
         n_periods=3,
     )
     # n_periods and last_period should NOT appear in params template
