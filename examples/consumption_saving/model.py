@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
-from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
+from lcm import DiscreteGrid, LinspaceGrid, Model, Regime, Time
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -24,7 +24,6 @@ if TYPE_CHECKING:
         FloatND,
         IntND,
         Period,
-        ScalarInt,
     )
 
 # ======================================================================================
@@ -102,8 +101,8 @@ def next_health(
     return health * (1 + exercise - working / 2)
 
 
-def next_regime(period: int, last_period: int) -> ScalarInt:
-    forced_retirement = period == last_period - 1
+def next_regime(time: Time) -> int:
+    forced_retirement = time.period == time.last_period - 1
     return jnp.where(forced_retirement, RegimeId.retirement, RegimeId.working)
 
 

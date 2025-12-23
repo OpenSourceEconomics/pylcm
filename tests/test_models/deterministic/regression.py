@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 
-from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
+from lcm import DiscreteGrid, LinspaceGrid, Model, Regime, Time
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -15,8 +15,6 @@ if TYPE_CHECKING:
         DiscreteAction,
         FloatND,
         IntND,
-        Period,
-        ScalarInt,
     )
 
 
@@ -60,8 +58,8 @@ def wage(age: int | IntND) -> float | FloatND:
     return 1 + 0.1 * age
 
 
-def age(period: Period) -> int | IntND:
-    return period + 18
+def age(time: Time) -> int | IntND:
+    return time.period + 18
 
 
 # --------------------------------------------------------------------------------------
@@ -76,8 +74,10 @@ def next_wealth(
     return (1 + interest_rate) * (wealth - consumption) + labor_income
 
 
-def next_regime(period: Period, last_period: int) -> ScalarInt:
-    certain_death_transition = period == last_period - 1  # dead in last period
+def next_regime(time: Time) -> int:
+    certain_death_transition = (
+        time.period == time.last_period - 1
+    )  # dead in last period
     return jnp.where(
         certain_death_transition,
         RegimeId.dead,

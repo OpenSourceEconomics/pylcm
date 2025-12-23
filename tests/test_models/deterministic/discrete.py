@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 
-from lcm import DiscreteGrid, Model, Regime
+from lcm import DiscreteGrid, Model, Regime, Time
 from tests.test_models.deterministic.regression import (
     LaborSupply,
     is_working,
@@ -30,8 +30,6 @@ if TYPE_CHECKING:
         DiscreteAction,
         DiscreteState,
         FloatND,
-        Period,
-        ScalarInt,
     )
 
 # ======================================================================================
@@ -92,8 +90,10 @@ def next_wealth_discrete(
     )
 
 
-def next_regime(period: Period, last_period: int) -> ScalarInt:
-    certain_death_transition = period == last_period - 1  # dead in last period
+def next_regime(time: Time) -> int:
+    certain_death_transition = (
+        time.period == time.last_period - 1
+    )  # dead in last period
     return jnp.where(
         certain_death_transition,
         RegimeId.dead,

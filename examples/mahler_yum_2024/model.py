@@ -16,7 +16,7 @@ from jax import random
 from scipy.interpolate import interp1d
 
 import lcm
-from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
+from lcm import DiscreteGrid, LinspaceGrid, Model, Regime, Time
 from lcm.dispatchers import _base_productmap
 
 if TYPE_CHECKING:
@@ -138,7 +138,7 @@ class RegimeId:
 # Utility function
 # --------------------------------------------------------------------------------------
 def utility(
-    period: Period,
+    time: Time,
     wealth: ContinuousState,  # noqa: ARG001
     health_type: DiscreteState,  # noqa: ARG001
     education: DiscreteState,  # noqa: ARG001
@@ -152,21 +152,21 @@ def utility(
 ) -> FloatND:
     beta = beta_mean + jnp.where(discount_factor, beta_std, -beta_std)
     f = cons_util - disutil - fcost - adj_cost
-    return f * (beta**period)
+    return f * (beta**time.period)
 
 
 def disutil(
     working: DiscreteAction,
     health: DiscreteState,
     education: DiscreteState,
-    period: Period,
+    time: Time,
     phigrid: FloatND,
 ) -> FloatND:
-    return phigrid[period, education, health] * ((working / 2) ** (2)) / 2
+    return phigrid[time.period, education, health] * ((working / 2) ** (2)) / 2
 
 
 def adj_cost(
-    period: Period,
+    time: Time,
     adjustment_cost: DiscreteState,
     effort: DiscreteAction,
     effort_t_1: DiscreteState,
@@ -174,7 +174,7 @@ def adj_cost(
 ) -> FloatND:
     return jnp.where(
         jnp.logical_not(effort == effort_t_1),
-        adjustment_cost * (chimaxgrid[period] / 4),
+        adjustment_cost * (chimaxgrid[time.period] / 4),
         0,
     )
 
@@ -195,7 +195,7 @@ def cons_util(
 
 
 def fcost(
-    period: Period,
+    time: Time,
     education: DiscreteState,
     health: DiscreteState,
     effort: DiscreteAction,
@@ -203,7 +203,7 @@ def fcost(
     xigrid: FloatND,
 ) -> FloatND:
     return (
-        xigrid[period, education, health]
+        xigrid[time.period, education, health]
         * (eff_grid[effort] ** (1 + (1 / psi)))
         / (1 + (1 / psi))
     )
@@ -218,7 +218,7 @@ def net_income(benefits: FloatND, taxed_income: FloatND, pension: FloatND) -> Fl
 
 def income(
     working: DiscreteAction,
-    period: Period,
+    time: Time,
     health: DiscreteState,
     education: DiscreteState,
     productivity: DiscreteState,
@@ -227,7 +227,7 @@ def income(
     income_grid: FloatND,
 ) -> FloatND:
     return (
-        income_grid[period, health, education]
+        income_grid[time.period, health, education]
         * (working / 2)
         * theta_val[productivity]
         * jnp.exp(xvalues[productivity_shock])
@@ -238,22 +238,22 @@ def taxed_income(income: FloatND) -> FloatND:
     return lamda * (income ** (1.0 - taul)) * (avrgearn**taul)
 
 
-def benefits(period: Period, health: DiscreteState, working: DiscreteAction) -> FloatND:
+def benefits(time: Time, health: DiscreteState, working: DiscreteAction) -> FloatND:
     eligible = jnp.logical_and(health == 0, working == 0)
     return jnp.where(
-        jnp.logical_and(eligible, period <= retirement_age), tt0 * avrgearn, 0
+        jnp.logical_and(eligible, time.period <= retirement_age), tt0 * avrgearn, 0
     )
 
 
 def pension(
-    period: Period,
+    time: Time,
     education: DiscreteState,
     productivity: DiscreteState,
     income_grid: FloatND,
     penre: float,
 ) -> FloatND:
     return jnp.where(
-        period > retirement_age,
+        time.period > retirement_age,
         income_grid[19, 1, education] * theta_val[productivity] * penre,
         0,
     )
@@ -272,7 +272,7 @@ def next_discount_factor(discount_factor: DiscreteState) -> DiscreteState:
 
 @lcm.mark.stochastic
 def next_health(
-    period: Period,
+    time: Time,
     health: DiscreteState,
     effort: DiscreteAction,
     effort_t_1: DiscreteState,
@@ -280,7 +280,9 @@ def next_health(
     health_type: DiscreteState,
     health_transition: FloatND,
 ) -> FloatND:
-    return health_transition[period, health, effort, effort_t_1, education, health_type]
+    return health_transition[
+        time.period, health, effort, effort_t_1, education, health_type
+    ]
 
 
 def next_productivity(productivity: DiscreteState) -> DiscreteState:
@@ -318,21 +320,21 @@ def next_productivity_shock(
 # --------------------------------------------------------------------------------------
 @lcm.mark.stochastic
 def next_regime(
-    period: Period,
+    time: Time,
     education: DiscreteState,
     health: DiscreteState,
     regime_transition: FloatND,
 ) -> FloatND:
     """Return probability array [P(alive), P(dead)] indexed by RegimeId."""
-    survival_prob = regime_transition[period, education, health]
+    survival_prob = regime_transition[time.period, education, health]
     return jnp.array([survival_prob, 1 - survival_prob])
 
 
 # --------------------------------------------------------------------------------------
 # Constraints
 # --------------------------------------------------------------------------------------
-def retirement_constraint(period: Period, working: DiscreteAction) -> BoolND:
-    return jnp.logical_not(jnp.logical_and(period > retirement_age, working > 0))
+def retirement_constraint(time: Time, working: DiscreteAction) -> BoolND:
+    return jnp.logical_not(jnp.logical_and(time.period > retirement_age, working > 0))
 
 
 def savings_constraint(
