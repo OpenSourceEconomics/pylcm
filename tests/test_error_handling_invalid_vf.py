@@ -158,7 +158,10 @@ def inf_value_model(
 @pytest.fixture
 def params(n_periods: int) -> ParamsDict:
     return {
-        "non_terminal": {"beta": 0.95, "next_regime": {"n_periods": n_periods}},
+        "non_terminal": {
+            "discount_factor": 0.95,
+            "next_regime": {"n_periods": n_periods},
+        },
         "terminal": {},
     }
 

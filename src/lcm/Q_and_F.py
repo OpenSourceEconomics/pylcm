@@ -189,7 +189,7 @@ def get_Q_and_F(
             )
             Q_arr = (
                 Q_arr
-                + params[regime.name]["beta"]
+                + params[regime.name]["discount_factor"]
                 * regime_transition_prob[regime_name]
                 * next_V_expected_arr
             )
