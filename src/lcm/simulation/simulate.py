@@ -21,7 +21,6 @@ from lcm.simulation.util import (
     get_regime_name_to_id_mapping,
     validate_flat_initial_states,
 )
-from lcm.typing import TemporalContext
 from lcm.utils import flatten_regime_namespace
 
 if TYPE_CHECKING:
@@ -35,6 +34,7 @@ if TYPE_CHECKING:
         IntND,
         ParamsDict,
         RegimeName,
+        TemporalContext,
     )
 
 
@@ -173,7 +173,8 @@ def _simulate_regime_in_period(
     Args:
         regime_name: Name of the current regime.
         internal_regime: Internal representation of the regime.
-        temporal_context: Temporal context dict containing period, n_periods, last_period.
+        temporal_context: Temporal context dict containing period, n_periods, and
+            last_period.
         states: Current states for all subjects (namespaced by regime).
         subject_regime_ids: Current regime membership for all subjects.
         new_subject_regime_ids: Array to populate with next period's regime memberships.
@@ -228,6 +229,11 @@ def _simulate_regime_in_period(
     )
     # Store results for this regime-period
     # ---------------------------------------------------------------------------------
+    # For state-less regimes (e.g., terminal regimes with no states), V_arr may be a
+    # scalar. We need to broadcast it to match the number of subjects.
+    n_subjects = subject_ids_in_regime.shape[0]
+    if V_arr.ndim == 0:
+        V_arr = jnp.broadcast_to(V_arr, (n_subjects,))
 
     res = {
         state_name.removeprefix(f"{regime_name}__"): state
@@ -287,6 +293,10 @@ def _lookup_values_from_indices(
         Dictionary of values.
 
     """
+    # Handle empty grids case (no actions)
+    if not grids:
+        return {}
+
     grids_shapes = tuple(len(grid) for grid in grids.values())
 
     nd_indices = vmapped_unravel_index(flat_indices, grids_shapes)

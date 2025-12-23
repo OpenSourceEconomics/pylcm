@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import jax.numpy as jnp
 from dags import concatenate_functions
@@ -18,6 +18,7 @@ from lcm.typing import TEMPORAL_CONTEXT_KEYS, TemporalContext
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from collections.abc import Set as AbstractSet
 
     from jax import Array
 
@@ -70,7 +71,7 @@ def get_Q_and_F(
     # Generate dynamic functions
     # ----------------------------------------------------------------------------------
     U_and_F = _get_U_and_F(internal_functions)
-    regime_transition_prob_func = internal_functions.regime_transition_probs.solve  # type: ignore[union-attr]
+    regime_transition_prob_func = internal_functions.regime_transition_probs.solve  # ty: ignore[possibly-missing-attribute]
     state_transitions = {}
     next_stochastic_states_weights = {}
     joint_weights_from_marginals = {}
@@ -201,7 +202,7 @@ def get_Q_and_F(
             )
             Q_arr = (
                 Q_arr
-                + params[regime.name]["beta"]
+                + params[regime.name]["discount_factor"]
                 * regime_transition_prob[regime_name]
                 * next_V_expected_arr
             )
@@ -290,8 +291,8 @@ def get_Q_and_F_terminal(
 
 def _get_arg_names_of_Q_and_F(
     deps: list[Callable[..., Any]],
-    include: set[str] = set(),  # noqa: B006
-    exclude: set[str] = set(),  # noqa: B006
+    include: AbstractSet[str] = frozenset(),
+    exclude: AbstractSet[str] = frozenset(),
 ) -> list[str]:
     """Get the argument names of the dependencies.
 
@@ -401,4 +402,4 @@ def _get_feasibility(internal_functions: InternalFunctions) -> InternalUserFunct
             """Dummy feasibility function that always returns True."""
             return True
 
-    return combined_constraint
+    return cast("InternalUserFunction", combined_constraint)

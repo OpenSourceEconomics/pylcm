@@ -6,7 +6,7 @@ repos:
       - id: check-useless-excludes
         # - id: identity  # Prints all files passed to pre-commits. Debugging.
   - repo: https://github.com/lyz-code/yamlfix
-    rev: 1.18.0
+    rev: 1.19.1
     hooks:
       - id: yamlfix
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -46,7 +46,7 @@ repos:
     hooks:
       - id: yamllint
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.13.3
+    rev: v0.14.10
     hooks:
       # Run the linter.
       - id: ruff
@@ -63,7 +63,7 @@ repos:
           - pyi
           - jupyter
   - repo: https://github.com/executablebooks/mdformat
-    rev: 0.7.22
+    rev: 1.0.0
     hooks:
       - id: mdformat
         additional_dependencies:
@@ -75,29 +75,21 @@ repos:
           - '88'
         files: (README\.md)
   - repo: https://github.com/kynan/nbstripout
-    rev: 0.8.1
+    rev: 0.8.2
     hooks:
       - id: nbstripout
         args:
           - --drop-empty-cells
           - --keep-output
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.17.1
-    hooks:
-      - id: mypy
-        files: src|tests
-        additional_dependencies:
-          - dags>=0.4.1
-          - jax>=0.7
-          - jaxtyping>=0.3.2
-          - numpy
-          - packaging
-          - pandas-stubs
-          - pytest
-          - scipy-stubs
-        args:
-          - --config=pyproject.toml
+  # - repo: local
+  #   hooks:
+  #     - id: ty
+  #       name: ty
+  #       entry: ty
+  #       language: system
+  #       types: [python]
+  #       args: [--config-file=pyproject.toml]
 ci:
   autoupdate_schedule: monthly
-  skip:
-    - mypy  # installing jax is not possible on pre-commit.ci due to size limits.
+  # skip:
+  #   - ty  # installing jax is not possible on pre-commit.ci due to size limits.

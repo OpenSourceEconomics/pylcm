@@ -247,8 +247,7 @@ retired = Regime(
 dead = Regime(
     name="dead",
     terminal=True,
-    utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
-    states={"wealth": LinspaceGrid(start=1, stop=100, n_points=2)},
+    utility=lambda: 0.0,
     active=[0],  # Needs to be specified to avoid initialization errors
 )
 
@@ -266,7 +265,7 @@ def get_model(n_periods: int) -> Model:
 
 
 def get_params(
-    beta=0.95,
+    discount_factor=0.95,
     disutility_of_work=0.5,
     interest_rate=0.05,
     wage=10.0,
@@ -315,7 +314,7 @@ def get_params(
 
     return {
         "working": {
-            "beta": beta,
+            "discount_factor": discount_factor,
             "utility": {"disutility_of_work": disutility_of_work},
             "next_wealth": {"interest_rate": interest_rate},
             "next_health": {},
@@ -325,7 +324,7 @@ def get_params(
             "labor_income": {"wage": wage},
         },
         "retired": {
-            "beta": beta,
+            "discount_factor": discount_factor,
             "utility": {},
             "next_wealth": {"interest_rate": interest_rate, "labor_income": 0.0},
             "next_health": {},

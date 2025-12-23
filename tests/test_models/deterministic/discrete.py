@@ -136,8 +136,7 @@ working = Regime(
 dead = Regime(
     name="dead",
     terminal=True,
-    utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
-    states={"wealth": DiscreteGrid(WealthStatus)},
+    utility=lambda: 0.0,
     active=[0],  # Needs to be specified to avoid initialization errors
 )
 
@@ -154,14 +153,14 @@ def get_model(n_periods: int) -> Model:
 
 
 def get_params(
-    beta: float = 0.95,
+    discount_factor: float = 0.95,
     disutility_of_work: float = 0.5,
     interest_rate: float = 0.05,
     wage: float = 10.0,
 ) -> dict[str, Any]:
     return {
         "working": {
-            "beta": beta,
+            "discount_factor": discount_factor,
             "utility": {"disutility_of_work": disutility_of_work},
             "next_wealth": {"interest_rate": interest_rate},
             "next_regime": {},  # last_period is now a temporal context variable

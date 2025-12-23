@@ -23,7 +23,7 @@ def get_regime_name_to_id_mapping(regime_id_cls: type) -> dict[RegimeName, int]:
         Dict mapping regime names to their integer IDs.
 
     """
-    return {field.name: int(field.default) for field in fields(regime_id_cls)}  # type: ignore[arg-type]
+    return {field.name: int(field.default) for field in fields(regime_id_cls)}  # ty: ignore[invalid-argument-type]
 
 
 def create_regime_state_action_space(
@@ -72,7 +72,8 @@ def calculate_next_states(
         internal_regime: The internal regime instance.
         subjects_in_regime: Boolean array indicating if subject is in regime.
         optimal_actions: Optimal actions computed for these subjects.
-        temporal_context: Temporal context dict containing period, n_periods, last_period.
+        temporal_context: Temporal context dict containing period, n_periods, and
+            last_period.
         params: Model parameters for the regime.
         states: Current states for all subjects (all regimes).
         state_action_space: State-action space for subjects in this regime.
@@ -144,7 +145,8 @@ def calculate_next_regime_membership(
         subjects_in_regime: Indices of subjects currently in this regime.
         state_action_space: State-action space for subjects in this regime.
         optimal_actions: Optimal actions computed for these subjects.
-        temporal_context: Temporal context dict containing period, n_periods, last_period.
+        temporal_context: Temporal context dict containing period, n_periods, and
+            last_period.
         params: Model parameters for the regime.
         regime_name_to_id: Mapping from regime names to integer IDs.
         new_subject_regime_ids: Array to update with next regime assignments.

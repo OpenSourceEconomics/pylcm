@@ -137,8 +137,7 @@ working = Regime(
 dead = Regime(
     name="dead",
     terminal=True,
-    utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
-    states={"wealth": LinspaceGrid(start=1, stop=100, n_points=2)},
+    utility=lambda: 0.0,
     active=[99],  # placeholder, will be replaced by get_model()
 )
 
@@ -155,13 +154,13 @@ def get_model(n_periods: int) -> Model:
 
 
 def get_params(
-    beta: float = 0.95,
+    discount_factor: float = 0.95,
     disutility_of_work: float = 0.5,
     interest_rate: float = 0.05,
 ) -> dict[str, Any]:
     return {
         "working": {
-            "beta": beta,
+            "discount_factor": discount_factor,
             "utility": {"disutility_of_work": disutility_of_work},
             "next_wealth": {"interest_rate": interest_rate},
             "next_regime": {},  # last_period is now a temporal context variable

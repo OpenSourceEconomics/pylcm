@@ -26,12 +26,12 @@ def test_create_params_without_shocks(binary_category_class):
         },
     )
     got = create_params_template(
-        regime,  # type: ignore[arg-type]
-        grids={regime.name: get_grids(regime)},  # type: ignore[arg-type]
+        regime,  # ty: ignore[invalid-argument-type]
+        grids={regime.name: get_grids(regime)},  # ty: ignore[invalid-argument-type]
         n_periods=3,
     )
     assert got == {
-        "beta": jnp.nan,
+        "discount_factor": jnp.nan,
         "utility": {"c": jnp.nan},
         "next_b": {},
     }
@@ -47,7 +47,7 @@ def test_create_function_params():
         },
         utility=lambda a, b, c: None,  # noqa: ARG005
     )
-    got = _create_function_params(regime)  # type: ignore[arg-type]
+    got = _create_function_params(regime)  # ty: ignore[invalid-argument-type]
     assert got == {"utility": {"c": jnp.nan}}
 
 
@@ -73,7 +73,7 @@ def test_n_periods_and_last_period_are_special_variables(binary_category_class):
     )
     # n_periods and last_period should NOT appear in params template
     assert got == {
-        "beta": jnp.nan,
+        "discount_factor": jnp.nan,
         "utility": {},  # Empty because n_periods and last_period are special vars
         "next_b": {},
     }

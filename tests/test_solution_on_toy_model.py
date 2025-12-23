@@ -107,8 +107,7 @@ alive_deterministic = Regime(
 dead = Regime(
     name="dead",
     terminal=True,
-    states={"wealth": LinspaceGrid(start=0, stop=1, n_points=2)},
-    utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
+    utility=lambda: 0.0,
     active=[1],  # n_periods=2, so active in period 1
 )
 
@@ -154,9 +153,9 @@ def value_first_period_deterministic(wealth, params):
     index = np.floor(wealth).astype(int)  # map wealth to index 0, 1 and 2
     values = np.array(
         [
-            np.maximum(0, params["beta"] * np.log(2) - 0.5),
-            np.maximum(0, params["beta"] * np.log(2) - 0.5) + np.log(2),
-            (1 + params["beta"]) * np.log(2),
+            np.maximum(0, params["discount_factor"] * np.log(2) - 0.5),
+            np.maximum(0, params["discount_factor"] * np.log(2) - 0.5) + np.log(2),
+            (1 + params["discount_factor"]) * np.log(2),
         ],
     )
     return values[index]
@@ -167,8 +166,8 @@ def policy_first_period_deterministic(wealth, params):
     index = np.floor(wealth).astype(int)  # map wealth to indices 0, 1 and 2
     policies = np.array(
         [
-            [0, np.argmax((0, params["beta"] * np.log(2) - 0.5))],
-            [1, np.argmax((0, params["beta"] * np.log(2) - 0.5))],
+            [0, np.argmax((0, params["discount_factor"] * np.log(2) - 0.5))],
+            [1, np.argmax((0, params["discount_factor"] * np.log(2) - 0.5))],
             [1, 0],
         ],
         dtype=int,
@@ -264,14 +263,20 @@ def value_first_period_stochastic(wealth, health, params):
 
     _values = np.array(
         [
-            params["beta"] * health_transition[0, 1] * np.log(2),
-            np.maximum(0, params["beta"] * health_transition[0, 1] * np.log(2) - 0.5),
+            params["discount_factor"] * health_transition[0, 1] * np.log(2),
+            np.maximum(
+                0, params["discount_factor"] * health_transition[0, 1] * np.log(2) - 0.5
+            ),
         ],
     )
     value_health_0 = _values[index]
 
-    new_beta = params["beta"] * params["next_health"]["health_transition"][1, 1]
-    value_health_1 = value_first_period_deterministic(wealth, params={"beta": new_beta})
+    new_discount_factor = (
+        params["discount_factor"] * params["next_health"]["health_transition"][1, 1]
+    )
+    value_health_1 = value_first_period_deterministic(
+        wealth, params={"discount_factor": new_discount_factor}
+    )
 
     # Combined
     return np.where(health, value_health_1, value_health_0)
@@ -288,17 +293,23 @@ def policy_first_period_stochastic(wealth, health, params):
             [
                 0,
                 np.argmax(
-                    (0, params["beta"] * health_transition[0, 1] * np.log(2) - 0.5),
+                    (
+                        0,
+                        params["discount_factor"] * health_transition[0, 1] * np.log(2)
+                        - 0.5,
+                    ),
                 ),
             ],
         ],
     )
     policy_health_0 = _policies[index]
 
-    new_beta = params["beta"] * params["next_health"]["health_transition"][1, 1]
+    new_discount_factor = (
+        params["discount_factor"] * params["next_health"]["health_transition"][1, 1]
+    )
     _policy_health_1 = policy_first_period_deterministic(
         wealth,
-        params={"beta": new_beta},
+        params={"discount_factor": new_discount_factor},
     )
 
     policy_health_1 = dict_of_vectors_to_matrix(_policy_health_1)
@@ -371,14 +382,14 @@ def analytical_simulate_stochastic(initial_wealth, initial_health, health_1, par
 # ======================================================================================
 
 
-@pytest.mark.parametrize("beta", [0, 0.5, 0.9, 1.0])
+@pytest.mark.parametrize("discount_factor", [0, 0.5, 0.9, 1.0])
 @pytest.mark.parametrize("n_wealth_points", [100, 1_000])
-def test_deterministic_solve(beta, n_wealth_points):
+def test_deterministic_solve(discount_factor, n_wealth_points):
     # Update model
     # ==================================================================================
     n_periods = 3
     new_states = alive_deterministic.states
-    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # type: ignore[attr-defined]
+    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # ty: ignore[unresolved-attribute]
     model = Model(
         [
             alive_deterministic.replace(states=new_states, active=range(n_periods - 1)),
@@ -391,7 +402,7 @@ def test_deterministic_solve(beta, n_wealth_points):
     # Solve model using LCM
     # ==================================================================================
     params_alive = {
-        "beta": beta,
+        "discount_factor": discount_factor,
         "utility": {"health": 1},
         "next_regime": {"n_periods": model.n_periods},
     }
@@ -399,7 +410,7 @@ def test_deterministic_solve(beta, n_wealth_points):
 
     # Compute analytical solution
     # ==================================================================================
-    wealth_grid_class: LinspaceGrid = new_states["wealth"]  # type: ignore[assignment]
+    wealth_grid_class: LinspaceGrid = new_states["wealth"]
     wealth_grid = np.linspace(
         start=wealth_grid_class.start,
         stop=wealth_grid_class.stop,
@@ -414,14 +425,14 @@ def test_deterministic_solve(beta, n_wealth_points):
     aaae(got[1]["alive"], expected[1], decimal=12)
 
 
-@pytest.mark.parametrize("beta", [0, 0.5, 0.9, 1.0])
+@pytest.mark.parametrize("discount_factor", [0, 0.5, 0.9, 1.0])
 @pytest.mark.parametrize("n_wealth_points", [100, 1_000])
-def test_deterministic_simulate(beta, n_wealth_points):
+def test_deterministic_simulate(discount_factor, n_wealth_points):
     # Update model
     # ==================================================================================
     n_periods = 3
     new_states = alive_deterministic.states
-    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # type: ignore[attr-defined]
+    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # ty: ignore[unresolved-attribute]
     model = Model(
         [
             alive_deterministic.replace(states=new_states, active=range(n_periods - 1)),
@@ -434,7 +445,7 @@ def test_deterministic_simulate(beta, n_wealth_points):
     # Simulate model using LCM
     # ==================================================================================
     params_alive = {
-        "beta": beta,
+        "discount_factor": discount_factor,
         "utility": {"health": 1},
         "next_regime": {"n_periods": model.n_periods},
     }
@@ -461,15 +472,15 @@ HEALTH_TRANSITION = [
 ]
 
 
-@pytest.mark.parametrize("beta", [0, 0.5, 0.9, 1.0])
+@pytest.mark.parametrize("discount_factor", [0, 0.5, 0.9, 1.0])
 @pytest.mark.parametrize("n_wealth_points", [100, 1_000])
 @pytest.mark.parametrize("health_transition", HEALTH_TRANSITION)
-def test_stochastic_solve(beta, n_wealth_points, health_transition):
+def test_stochastic_solve(discount_factor, n_wealth_points, health_transition):
     # Update model
     # ==================================================================================
     n_periods = 3
     new_states = alive_stochastic.states
-    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # type: ignore[attr-defined]
+    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # ty: ignore[unresolved-attribute]
     model = Model(
         [
             alive_stochastic.replace(states=new_states, active=range(n_periods - 1)),
@@ -482,7 +493,7 @@ def test_stochastic_solve(beta, n_wealth_points, health_transition):
     # Solve model using LCM
     # ==================================================================================
     params = {
-        "beta": beta,
+        "discount_factor": discount_factor,
         "next_health": {"health_transition": health_transition},
         "next_regime": {"n_periods": model.n_periods},
     }
@@ -490,7 +501,7 @@ def test_stochastic_solve(beta, n_wealth_points, health_transition):
 
     # Compute analytical solution
     # ==================================================================================
-    wealth_grid_class: LinspaceGrid = new_states["wealth"]  # type: ignore[assignment]
+    wealth_grid_class: LinspaceGrid = new_states["wealth"]
     _wealth_grid = np.linspace(
         start=wealth_grid_class.start,
         stop=wealth_grid_class.stop,
@@ -518,15 +529,15 @@ def test_stochastic_solve(beta, n_wealth_points, health_transition):
     aaae(got[1]["alive"], expected[1], decimal=12)
 
 
-@pytest.mark.parametrize("beta", [0, 0.5, 0.9, 1.0])
+@pytest.mark.parametrize("discount_factor", [0, 0.5, 0.9, 1.0])
 @pytest.mark.parametrize("n_wealth_points", [100, 1_000])
 @pytest.mark.parametrize("health_transition", HEALTH_TRANSITION)
-def test_stochastic_simulate(beta, n_wealth_points, health_transition):
+def test_stochastic_simulate(discount_factor, n_wealth_points, health_transition):
     # Update model
     # ==================================================================================
     n_periods = 3
     new_states = alive_stochastic.states
-    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # type: ignore[attr-defined]
+    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # ty: ignore[unresolved-attribute]
     model = Model(
         [
             alive_stochastic.replace(states=new_states, active=range(n_periods - 1)),
@@ -539,7 +550,7 @@ def test_stochastic_simulate(beta, n_wealth_points, health_transition):
     # Simulate model using LCM
     # ==================================================================================
     params_alive = {
-        "beta": beta,
+        "discount_factor": discount_factor,
         "next_health": {"health_transition": health_transition},
         "next_regime": {"n_periods": model.n_periods},
     }

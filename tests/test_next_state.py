@@ -35,7 +35,7 @@ def test_get_next_state_function_with_solve_target():
     )
 
     params = {
-        "beta": 1.0,
+        "discount_factor": 1.0,
         "utility": {"disutility_of_work": 1.0},
         "next_wealth": {
             "interest_rate": 0.05,
@@ -54,7 +54,7 @@ def test_get_next_state_function_with_simulate_target():
         return state[0]
 
     def f_b(state: ContinuousState, params: ParamsDict) -> ContinuousState:  # noqa: ARG001
-        return None  # type: ignore[return-value]
+        return None  # ty: ignore[invalid-return-type]
 
     def f_weight_b(state: ContinuousState, params: ParamsDict) -> FloatND:  # noqa: ARG001
         return jnp.array([0.0, 1.0])
@@ -65,10 +65,10 @@ def test_get_next_state_function_with_simulate_target():
         "mock": jnp.array([1.0])
     }
     internal_functions = InternalFunctions(
-        utility=lambda: 0,  # type: ignore[arg-type]
+        utility=lambda: 0,  # ty: ignore[invalid-argument-type]
         constraints={},
-        transitions={"next_a": f_a, "next_b": f_b},  # type: ignore[dict-item]
-        functions={"f_weight_b": f_weight_b},  # type: ignore[dict-item]
+        transitions={"next_a": f_a, "next_b": f_b},  # ty: ignore[invalid-argument-type]
+        functions={"f_weight_b": f_weight_b},  # ty: ignore[invalid-argument-type]
         regime_transition_probs=PhaseVariantContainer(
             solve=mock_transition_solve, simulate=mock_transition_simulate
         ),

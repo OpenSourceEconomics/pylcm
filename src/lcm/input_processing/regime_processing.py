@@ -305,7 +305,7 @@ def _get_internal_functions(
     is_stochastic_regime_transition = (
         next_regime_fn is not None
         and is_stochastic_transition(
-            next_regime_fn  # type: ignore[arg-type]
+            next_regime_fn  # ty: ignore[invalid-argument-type]
         )
     )
 
