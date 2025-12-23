@@ -136,8 +136,7 @@ working = Regime(
 dead = Regime(
     name="dead",
     terminal=True,
-    utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
-    states={"wealth": DiscreteGrid(WealthStatus)},
+    utility=lambda: 0.0,
     active=[0],  # Needs to be specified to avoid initialization errors
 )
 

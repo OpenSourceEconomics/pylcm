@@ -96,10 +96,7 @@ def regimes_and_id_cls(n_periods: int) -> tuple[dict[str, Regime], type]:
     terminal = Regime(
         name="terminal",
         terminal=True,
-        states={
-            "wealth": LinspaceGrid(start=1, stop=2, n_points=3),
-        },
-        utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
+        utility=lambda: 0.0,
         active=[n_periods - 1],
     )
 
