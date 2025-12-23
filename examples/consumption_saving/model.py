@@ -193,7 +193,7 @@ model = Model([working, retired], n_periods=N_PERIODS, regime_id_cls=RegimeId)
 
 params = {
     "working": {
-        "beta": 0.95,
+        "discount_factor": 0.95,
         "utility": {"disutility_of_work": 0.05},
         "next_wealth": {"interest_rate": 0.05},
         "next_regime": {"n_periods": model.n_periods},

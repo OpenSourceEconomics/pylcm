@@ -686,7 +686,7 @@ def create_inputs(
 
     # Create parameters
     params = {
-        "beta": 1,
+        "discount_factor": 1,
         "disutil": {"phigrid": phi_grid},
         "fcost": {"psi": psi, "xigrid": xi_grid},
         "cons_util": {"sigma": sigma, "bb": bb, "kappa": conp},
