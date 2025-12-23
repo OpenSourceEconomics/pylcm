@@ -101,7 +101,6 @@ def test_terminal_regime_cannot_have_transitions():
         )
 
 
-@pytest.mark.xfail(reason="Stateless regimes are not yet supported.")
 def test_terminal_regime_can_be_created_without_states():
     """Terminal regime can be created without states (e.g., absorbing death state)."""
     regime = Regime(

@@ -107,8 +107,7 @@ alive_deterministic = Regime(
 dead = Regime(
     name="dead",
     terminal=True,
-    states={"wealth": LinspaceGrid(start=0, stop=1, n_points=2)},
-    utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
+    utility=lambda: 0.0,
     active=[1],  # n_periods=2, so active in period 1
 )
 
