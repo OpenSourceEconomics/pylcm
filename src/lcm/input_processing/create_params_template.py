@@ -25,7 +25,7 @@ def create_params_template(
         default_params: A dictionary of default parameters. Default is None. If None,
             the default {"discount_factor": np.nan} is used. For other lifetime reward
             objectives, additional parameters may be required, for example
-            {"discount_factor": np.nan, "delta": np.nan} for beta-delta discounting.
+            {"discount_factor": np.nan, "short_run_discount_factor": np.nan} for beta-delta discounting.
 
     Returns:
         The regime parameter template.
