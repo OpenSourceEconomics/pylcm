@@ -1,7 +1,31 @@
+from dataclasses import dataclass
 from typing import Any, Protocol, TypedDict
 
 from jax import Array
 from jaxtyping import Bool, Float, Int, Scalar
+
+
+@dataclass(frozen=True)
+class Time:
+    """Temporal context automatically provided to user functions.
+
+    This object provides time-related model variables to all user functions.
+    Users can access the current period, total number of periods, and derived
+    properties like last_period.
+
+    Attributes:
+        period: Current period (0-indexed).
+        n_periods: Total number of periods in the model.
+
+    """
+
+    period: int
+    n_periods: int
+
+    @property
+    def last_period(self) -> int:
+        """Index of the last period (n_periods - 1)."""
+        return self.n_periods - 1
 
 
 class TemporalContext(TypedDict):
