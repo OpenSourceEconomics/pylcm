@@ -46,6 +46,14 @@ def argmax_and_max(
     elif isinstance(axis, int):
         axis = (axis,)
 
+    # Handle scalar or empty axis case (no actions to maximize over)
+    # ==================================================================================
+    if a.ndim == 0 or len(axis) == 0:
+        # When there are no dimensions to reduce over, return:
+        # - index 0 (trivial argmax since there's only one element)
+        # - the array itself (already the maximum)
+        return jnp.array(0), a
+
     # Move axis over which to compute the argmax to the back and flatten last dims
     # ==================================================================================
     if a.ndim != 0:

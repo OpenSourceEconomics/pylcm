@@ -403,10 +403,7 @@ ALIVE_REGIME = Regime(
 DEAD_REGIME = Regime(
     name="dead",
     terminal=True,
-    utility=lambda wealth: jnp.array([0.0]),  # noqa: ARG005
-    # PyLCM requires at least one state variable per regime, which is why we add
-    # "wealth" here.
-    states={"wealth": LinspaceGrid(start=0, stop=49, n_points=2)},
+    utility=lambda: 0.0,
     active=[n - 1],
 )
 
@@ -689,7 +686,7 @@ def create_inputs(
 
     # Create parameters
     params = {
-        "beta": 1,
+        "discount_factor": 1,
         "disutil": {"phigrid": phi_grid},
         "fcost": {"psi": psi, "xigrid": xi_grid},
         "cons_util": {"sigma": sigma, "bb": bb, "kappa": conp},

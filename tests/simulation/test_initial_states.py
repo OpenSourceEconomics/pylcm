@@ -63,11 +63,7 @@ def model() -> Model:
     dead = Regime(
         name="terminal",
         terminal=True,
-        utility=lambda wealth, health: jnp.array([0.0]),  # noqa: ARG005
-        states={
-            "wealth": LinspaceGrid(start=1, stop=100, n_points=2),
-            "health": DiscreteGrid(HealthStatus),
-        },
+        utility=lambda: 0.0,
         active=[n_periods - 1],
     )
 

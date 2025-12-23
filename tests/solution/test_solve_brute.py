@@ -43,7 +43,7 @@ def test_solve_brute():
     # ==================================================================================
     # create the params
     # ==================================================================================
-    params = {"beta": 0.9}
+    params = {"discount_factor": 0.9}
 
     # ==================================================================================
     # create the list of state_action_spaces
@@ -86,7 +86,7 @@ def test_solve_brute():
         U_arr = consumption - 0.2 * lazy * working
         F_arr = next_wealth >= 0
 
-        Q_arr = U_arr + params["beta"] * expected_V
+        Q_arr = U_arr + params["discount_factor"] * expected_V
 
         return Q_arr, F_arr
 

@@ -31,7 +31,7 @@ def test_create_params_without_shocks(binary_category_class):
         n_periods=3,
     )
     assert got == {
-        "beta": jnp.nan,
+        "discount_factor": jnp.nan,
         "utility": {"c": jnp.nan},
         "next_b": {},
     }
