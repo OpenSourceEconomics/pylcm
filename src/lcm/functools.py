@@ -77,7 +77,7 @@ def allow_only_kwargs(
 
         return func(*positional, **kw_only_kwargs)
 
-    # Callables do not have a __signature__ attribute, but no easy way around this.
+    # Callables do not necessarily have a __signature__ attribute.
     func_with_only_kwargs.__signature__ = new_signature  # ty: ignore[unresolved-attribute]
 
     # We cast to F here to signal ty that the return type is the same as the input
@@ -152,7 +152,7 @@ def allow_args(func: Callable[..., ReturnType]) -> Callable[..., ReturnType]:
 
         return func(*positional_only, **kwargs)
 
-    # Callables do not have a __signature__ attribute, but no easy way around this.
+    # Callables do not necessarily have a __signature__ attribute.
     allow_args_wrapper.__signature__ = new_signature  # ty: ignore[unresolved-attribute]
 
     # We cast to F here to signal ty that the return type is the same as the input

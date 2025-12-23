@@ -65,7 +65,7 @@ def simulation_spacemap(
     vmapped = _base_productmap(mappable_func, actions_names)
     vmapped = vmap_1d(vmapped, variables=states_names, callable_with="only_args")
 
-    # Callables do not have a __signature__ attribute, but no easy way around this.
+    # Callables do not necessarily have a __signature__ attribute.
     vmapped.__signature__ = inspect.signature(mappable_func)  # ty: ignore[unresolved-attribute]
 
     return cast("FunctionWithArrayReturn", allow_only_kwargs(vmapped))
@@ -172,7 +172,7 @@ def productmap(
 
     vmapped = _base_productmap(func_callable_with_args, variables)
 
-    # Callables do not have a __signature__ attribute, but no easy way around this.
+    # Callables do not necessarily have a __signature__ attribute.
     vmapped.__signature__ = inspect.signature(func_callable_with_args)  # ty: ignore[unresolved-attribute]
 
     return cast("FunctionWithArrayReturn", allow_only_kwargs(vmapped))
