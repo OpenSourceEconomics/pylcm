@@ -14,7 +14,7 @@ from lcm.functools import get_union_of_arguments
 from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import InternalFunctions, Target
 from lcm.next_state import get_next_state_function, get_next_stochastic_weights_function
-from lcm.typing import TEMPORAL_CONTEXT_KEYS, TemporalContext
+from lcm.typing import TEMPORAL_CONTEXT_KEYS, Time
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -60,12 +60,8 @@ def get_Q_and_F(
         for a non-terminal period.
 
     """
-    # Temporal context dict to pass to all user functions
-    temporal_context: TemporalContext = {
-        "period": period,
-        "n_periods": n_periods,
-        "last_period": n_periods - 1,
-    }
+    # Temporal context to pass to all user functions
+    time = Time(period=period, n_periods=n_periods)
 
     # ----------------------------------------------------------------------------------
     # Generate dynamic functions
@@ -152,12 +148,12 @@ def get_Q_and_F(
         """
         regime_transition_prob = regime_transition_prob_func(
             **states_and_actions,
-            **temporal_context,
+            time=time,
             params=params[regime.name],
         )
         U_arr, F_arr = U_and_F(
             **states_and_actions,
-            **temporal_context,
+            time=time,
             params=params[regime.name],
         )
         Q_arr = U_arr
@@ -171,7 +167,7 @@ def get_Q_and_F(
         for regime_name in active_target_regimes:
             next_states = state_transitions[regime_name](
                 **states_and_actions,
-                **temporal_context,
+                time=time,
                 params=params[regime.name],
             )
 
@@ -179,7 +175,7 @@ def get_Q_and_F(
                 regime_name
             ](
                 **states_and_actions,
-                **temporal_context,
+                time=time,
                 params=params[regime.name],
             )
 
@@ -233,12 +229,8 @@ def get_Q_and_F_terminal(
         for the terminal period.
 
     """
-    # Temporal context dict to pass to all user functions
-    temporal_context: TemporalContext = {
-        "period": period,
-        "n_periods": n_periods,
-        "last_period": n_periods - 1,
-    }
+    # Temporal context to pass to all user functions
+    time = Time(period=period, n_periods=n_periods)
 
     U_and_F = _get_U_and_F(internal_functions)
 
@@ -275,7 +267,7 @@ def get_Q_and_F_terminal(
         """
         U_arr, F_arr = U_and_F(
             **states_and_actions,
-            **temporal_context,
+            time=time,
             params=params[regime.name],
         )
 
