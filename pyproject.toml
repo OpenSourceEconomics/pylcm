@@ -257,23 +257,3 @@ unresolved-global = "error"
 unsupported-base = "error"
 unused-ignore-comment = "error"
 useless-overload-body = "error"
-
-
-# [[tool.mypy.overrides]]
-# module = "tests.*"
-# disallow_untyped_defs = false
-#
-# [[tool.mypy.overrides]]
-# module = [
-#     "tests/test_dispatchers",
-#     "tests/regime_mock",
-# ]
-# ignore_errors = true
-#
-# [[tool.mypy.overrides]]
-# module = "tests.test_entry_point"
-# disable_error_code = ["arg-type"]
-#
-# [[tool.mypy.overrides]]
-# module = ["pybaum", "pdbp", "yaml"]
-# ignore_missing_imports = true
