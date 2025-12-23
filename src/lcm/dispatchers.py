@@ -67,7 +67,7 @@ def simulation_spacemap(
 
     # This raises a mypy error but is perfectly fine to do. See
     # https://github.com/python/mypy/issues/12472
-    vmapped.__signature__ = inspect.signature(mappable_func)  # type: ignore[attr-defined]
+    vmapped.__signature__ = inspect.signature(mappable_func)  # ty: ignore[unresolved-attribute]
 
     return cast("FunctionWithArrayReturn", allow_only_kwargs(vmapped))
 
@@ -126,7 +126,7 @@ def vmap_1d(
 
     # This raises a mypy error but is perfectly fine to do. See
     # https://github.com/python/mypy/issues/12472
-    vmapped.__signature__ = signature  # type: ignore[attr-defined]
+    vmapped.__signature__ = signature
 
     if callable_with == "only_kwargs":
         out = allow_only_kwargs(vmapped, enforce=False)
@@ -178,7 +178,7 @@ def productmap(
 
     # This raises a mypy error but is perfectly fine to do. See
     # https://github.com/python/mypy/issues/12472
-    vmapped.__signature__ = inspect.signature(func_callable_with_args)  # type: ignore[attr-defined]
+    vmapped.__signature__ = inspect.signature(func_callable_with_args)  # ty: ignore[unresolved-attribute]
 
     return cast("FunctionWithArrayReturn", allow_only_kwargs(vmapped))
 

@@ -45,11 +45,14 @@ jobs:
       - name: Upload coverage report
         if: runner.os == 'Linux' && matrix.python-version == '3.12'
         uses: codecov/codecov-action@v5
-  run-mypy:
-    name: Run mypy on Python 3.12
+  run-ty:
+    name: Run ty on Python 3.12
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      matrix:
+        python-version:
+          - '3.12'
     steps:
       - uses: actions/checkout@v5
       - uses: prefix-dev/setup-pixi@v0.9.2
@@ -59,9 +62,9 @@ jobs:
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: test-cpu
           frozen: true
-      - name: Run mypy
+      - name: Run ty
         shell: bash {0}
-        run: pixi run -e test-cpu mypy
+        run: pixi run -e test-cpu ty
   # run-explanation-notebooks:
   #   name: Run explanation notebooks on Python 3.12
   #   runs-on: ubuntu-latest

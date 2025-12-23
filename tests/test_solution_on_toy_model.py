@@ -378,7 +378,7 @@ def test_deterministic_solve(beta, n_wealth_points):
     # ==================================================================================
     n_periods = 3
     new_states = alive_deterministic.states
-    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # type: ignore[attr-defined]
+    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # ty: ignore[unresolved-attribute]
     model = Model(
         [
             alive_deterministic.replace(states=new_states, active=range(n_periods - 1)),
@@ -399,7 +399,7 @@ def test_deterministic_solve(beta, n_wealth_points):
 
     # Compute analytical solution
     # ==================================================================================
-    wealth_grid_class: LinspaceGrid = new_states["wealth"]  # type: ignore[assignment]
+    wealth_grid_class: LinspaceGrid = new_states["wealth"]
     wealth_grid = np.linspace(
         start=wealth_grid_class.start,
         stop=wealth_grid_class.stop,
@@ -421,7 +421,7 @@ def test_deterministic_simulate(beta, n_wealth_points):
     # ==================================================================================
     n_periods = 3
     new_states = alive_deterministic.states
-    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # type: ignore[attr-defined]
+    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # ty: ignore[unresolved-attribute]
     model = Model(
         [
             alive_deterministic.replace(states=new_states, active=range(n_periods - 1)),
@@ -469,7 +469,7 @@ def test_stochastic_solve(beta, n_wealth_points, health_transition):
     # ==================================================================================
     n_periods = 3
     new_states = alive_stochastic.states
-    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # type: ignore[attr-defined]
+    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # ty: ignore[unresolved-attribute]
     model = Model(
         [
             alive_stochastic.replace(states=new_states, active=range(n_periods - 1)),
@@ -490,7 +490,7 @@ def test_stochastic_solve(beta, n_wealth_points, health_transition):
 
     # Compute analytical solution
     # ==================================================================================
-    wealth_grid_class: LinspaceGrid = new_states["wealth"]  # type: ignore[assignment]
+    wealth_grid_class: LinspaceGrid = new_states["wealth"]
     _wealth_grid = np.linspace(
         start=wealth_grid_class.start,
         stop=wealth_grid_class.stop,
@@ -526,7 +526,7 @@ def test_stochastic_simulate(beta, n_wealth_points, health_transition):
     # ==================================================================================
     n_periods = 3
     new_states = alive_stochastic.states
-    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # type: ignore[attr-defined]
+    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # ty: ignore[unresolved-attribute]
     model = Model(
         [
             alive_stochastic.replace(states=new_states, active=range(n_periods - 1)),

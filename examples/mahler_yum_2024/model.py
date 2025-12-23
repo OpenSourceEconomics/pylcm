@@ -540,7 +540,7 @@ def create_chimaxgrid(chi: list[float]) -> Float1D:
 
 
 def create_income_grid(income_process: dict[str, dict[str, float]]) -> FloatND:
-    sdztemp = ((income_process["sigx"] ** 2.0) / (1.0 - rho**2.0)) ** 0.5  # type: ignore[operator]
+    sdztemp = ((income_process["sigx"] ** 2.0) / (1.0 - rho**2.0)) ** 0.5  # ty: ignore[unsupported-operator]
     j = jnp.arange(20)
     health = jnp.arange(2)
     education = jnp.arange(2)
@@ -681,7 +681,7 @@ def create_inputs(
     # Create variable grids from supplied parameters
     income_grid = create_income_grid(income_process)
     chimax_grid = create_chimaxgrid(chi)
-    xvalues, xtrans = rouwenhorst(rho, jnp.sqrt(income_process["sigx"]), 5)  # type: ignore[arg-type]
+    xvalues, xtrans = rouwenhorst(rho, jnp.sqrt(income_process["sigx"]), 5)  # ty: ignore[invalid-argument-type]
     xi_grid = create_xigrid(xi)
     phi_grid = create_phigrid(nu)
 
@@ -773,7 +773,7 @@ if __name__ == "__main__":
     params, initial_states, initial_regimes = create_inputs(
         seed=7235,
         n_simulation_subjects=1_000,
-        **START_PARAMS,  # type: ignore[arg-type]
+        **START_PARAMS,  # ty: ignore[invalid-argument-type]
     )
 
     simulation_result = MAHLER_YUM_MODEL.solve_and_simulate(

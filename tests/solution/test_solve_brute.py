@@ -109,7 +109,7 @@ def test_solve_brute():
     solution = solve(
         params=params,
         n_periods=2,
-        internal_regimes={"default": internal_regime},  # type: ignore[dict-item]
+        internal_regimes={"default": internal_regime},  # ty: ignore[invalid-argument-type]
         logger=get_logger(debug_mode=False),
     )
 
@@ -161,7 +161,7 @@ def test_solve_brute_single_period_Qc_arr():
     got = solve(
         params={},
         n_periods=2,
-        internal_regimes={"default": internal_regime},  # type: ignore[dict-item]
+        internal_regimes={"default": internal_regime},  # ty: ignore[invalid-argument-type]
         logger=get_logger(debug_mode=False),
     )
 

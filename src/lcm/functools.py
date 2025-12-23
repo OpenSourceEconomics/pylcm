@@ -79,7 +79,7 @@ def allow_only_kwargs(
 
     # This raises a mypy error but is perfectly fine to do. See
     # https://github.com/python/mypy/issues/12472
-    func_with_only_kwargs.__signature__ = new_signature  # type: ignore[attr-defined]
+    func_with_only_kwargs.__signature__ = new_signature  # ty: ignore[unresolved-attribute]
 
     # We cast to F here to signal mypy that the return type is the same as the input
     # type. This ignores the change of parameters from positional to keyword-only
@@ -155,7 +155,7 @@ def allow_args(func: Callable[..., ReturnType]) -> Callable[..., ReturnType]:
 
     # This raises a mypy error but is perfectly fine to do. See
     # https://github.com/python/mypy/issues/12472
-    allow_args_wrapper.__signature__ = new_signature  # type: ignore[attr-defined]
+    allow_args_wrapper.__signature__ = new_signature  # ty: ignore[unresolved-attribute]
 
     # We cast to F here to signal mypy that the return type is the same as the input
     # type. This ignores the change of parameters from positional to keyword-only

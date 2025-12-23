@@ -41,7 +41,7 @@ def stochastic(
         def wrapper_mark_stochastic(*args: P.args, **kwargs: P.kwargs) -> R:
             return func(*args, **kwargs)
 
-        wrapper_mark_stochastic._stochastic_info = stochastic_info  # type: ignore[attr-defined]
+        wrapper_mark_stochastic._stochastic_info = stochastic_info  # ty: ignore[unresolved-attribute]
         return wrapper_mark_stochastic
 
     return decorator_stochastic(func) if callable(func) else decorator_stochastic
