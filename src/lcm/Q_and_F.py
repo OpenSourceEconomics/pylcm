@@ -14,7 +14,7 @@ from lcm.functools import get_union_of_arguments
 from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import InternalFunctions, Target
 from lcm.next_state import get_next_state_function, get_next_stochastic_weights_function
-from lcm.typing import TEMPORAL_CONTEXT_KEYS, Time
+from lcm.typing import Time
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -124,7 +124,7 @@ def get_Q_and_F(
             *list(next_stochastic_states_weights.values()),
         ],
         include={"params", "next_V_arr"},
-        exclude=TEMPORAL_CONTEXT_KEYS,
+        exclude={"time"},
     )
 
     @with_signature(

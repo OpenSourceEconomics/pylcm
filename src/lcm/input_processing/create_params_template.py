@@ -5,8 +5,6 @@ from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
-from lcm.typing import TEMPORAL_CONTEXT_KEYS
-
 if TYPE_CHECKING:
     from lcm.regime import Regime
     from lcm.typing import GridsDict, ParamsDict
@@ -57,13 +55,13 @@ def _create_function_params(
         regime functions, initialized with jnp.nan.
 
     """
-    # Collect all regime variables: actions, states, auxiliary functions, and temporal
-    # context variables. Temporal context is automatically provided by the framework.
+    # Collect all regime variables: actions, states, auxiliary functions, and the time
+    # argument. The Time object is automatically provided by the framework.
     variables = {
         *regime.functions,
         *regime.actions,
         *regime.states,
-        *TEMPORAL_CONTEXT_KEYS,
+        "time",
     }
 
     function_params = {}

@@ -28,11 +28,10 @@ from lcm.state_action_space import (
     create_state_action_space,
     create_state_space_info,
 )
-from lcm.typing import TEMPORAL_CONTEXT_KEYS
 from lcm.utils import flatten_regime_namespace
 
 # Variables to exclude from vmapping, as they do not represent grid variables
-_VMAP_EXCLUDE = TEMPORAL_CONTEXT_KEYS | {"params"}
+_VMAP_EXCLUDE = {"time", "params"}
 
 if TYPE_CHECKING:
     from lcm.regime import Regime
