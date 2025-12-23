@@ -103,8 +103,8 @@ def next_health(
 
 
 def next_regime(period: int, last_period: int) -> ScalarInt:
-    certain_retirement = period >= last_period - 1
-    return jnp.where(certain_retirement, RegimeId.retirement, RegimeId.working)
+    forced_retirement = period == last_period - 1
+    return jnp.where(forced_retirement, RegimeId.retirement, RegimeId.working)
 
 
 # --------------------------------------------------------------------------------------
@@ -196,7 +196,7 @@ params = {
         "discount_factor": 0.95,
         "utility": {"disutility_of_work": 0.05},
         "next_wealth": {"interest_rate": 0.05},
-        "next_regime": {},  # last_period is now a temporal context variable
+        "next_regime": {},
     },
     "retirement": {},
 }
