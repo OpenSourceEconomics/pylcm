@@ -194,7 +194,7 @@ class InternalRegime:
 
 
 @dataclasses.dataclass(frozen=True)
-class PeriodRegimeData:
+class PeriodRegimeSimulationData:
     """Raw simulation data for one period in one regime.
 
     Attributes:

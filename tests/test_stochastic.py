@@ -39,17 +39,17 @@ def test_model_solve_and_simulate_with_stochastic_model():
         },
         initial_regimes=["working"] * 4,
     )
-    res = result.to_dataframe().query('regime == "working"')
+    df = result.to_dataframe().query('regime == "working"')
 
     # Verify expected columns
     required_cols = {"period", "subject_id", "partner", "labor_supply"}
-    assert required_cols <= set(res.columns)
-    assert len(res) > 0
+    assert required_cols <= set(df.columns)
+    assert len(df) > 0
 
     # Check partner transition follows expected pattern:
     # Partner becomes single if working and partnered, otherwise stays partnered
-    period_0 = res.query("period == 0").set_index("subject_id")
-    period_1 = res.query("period == 1").set_index("subject_id")
+    period_0 = df.query("period == 0").set_index("subject_id")
+    period_1 = df.query("period == 1").set_index("subject_id")
     common = period_0.index.intersection(period_1.index)
 
     if len(common) > 0:

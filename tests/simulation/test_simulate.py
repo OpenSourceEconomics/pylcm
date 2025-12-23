@@ -130,7 +130,7 @@ def test_simulate_using_model_methods(
         initial_states={"wealth": jnp.array([20.0, 150, 250, 320])},
         initial_regimes=["working"] * 4,
     )
-    res = result.to_dataframe(
+    df = result.to_dataframe(
         additional_targets=["utility", "borrowing_constraint"]
     ).query('regime == "working"')
 
@@ -146,15 +146,15 @@ def test_simulate_using_model_methods(
         "subject_id",
         "regime",
     }
-    assert expected_cols == set(res.columns)
+    assert expected_cols == set(df.columns)
 
     # Everyone retires in the last period
-    assert (res.loc[res["period"] == n_periods - 1, "labor_supply"] == "retire").all()
+    assert (df.loc[df["period"] == n_periods - 1, "labor_supply"] == "retire").all()
 
     # Higher wealth leads to higher consumption and value in each period
     # (data is sorted by subject_id which corresponds to increasing initial wealth)
     for col in ["consumption", "value"]:
-        is_monotonic = res.groupby("period")[col].apply(
+        is_monotonic = df.groupby("period")[col].apply(
             lambda x: x.is_monotonic_increasing
         )
         assert is_monotonic.all(), (
@@ -219,7 +219,7 @@ def test_effect_of_beta_on_last_period():
     params_low = get_params(n_periods=n_periods, beta=0.9, disutility_of_work=1.0)
     params_high = get_params(n_periods=n_periods, beta=0.99, disutility_of_work=1.0)
 
-    res_low = (
+    df_low = (
         model.solve_and_simulate(
             params_low,
             initial_states={"wealth": initial_wealth},
@@ -229,7 +229,7 @@ def test_effect_of_beta_on_last_period():
         .query('regime == "working"')
     )
 
-    res_high = (
+    df_high = (
         model.solve_and_simulate(
             params_high,
             initial_states={"wealth": initial_wealth},
@@ -240,8 +240,8 @@ def test_effect_of_beta_on_last_period():
     )
 
     # Higher beta (more patient) should lead to higher value in later periods
-    merged = res_low.merge(
-        res_high, on=["subject_id", "period"], suffixes=("_low", "_high")
+    merged = df_low.merge(
+        df_high, on=["subject_id", "period"], suffixes=("_low", "_high")
     )
     period_4 = merged.query("period == 4")
     assert (period_4["value_low"] <= period_4["value_high"]).all()
@@ -260,7 +260,7 @@ def test_effect_of_disutility_of_work():
     params_low = get_params(n_periods=n_periods, beta=1.0, disutility_of_work=0.2)
     params_high = get_params(n_periods=n_periods, beta=1.0, disutility_of_work=1.5)
 
-    res_low = (
+    df_low = (
         model.solve_and_simulate(
             params_low,
             initial_states={"wealth": initial_wealth},
@@ -270,7 +270,7 @@ def test_effect_of_disutility_of_work():
         .query('regime == "working"')
     )
 
-    res_high = (
+    df_high = (
         model.solve_and_simulate(
             params_high,
             initial_states={"wealth": initial_wealth},
@@ -281,8 +281,8 @@ def test_effect_of_disutility_of_work():
     )
 
     # Merge results for easy comparison
-    merged = res_low.merge(
-        res_high, on=["subject_id", "period"], suffixes=("_low", "_high")
+    merged = df_low.merge(
+        df_high, on=["subject_id", "period"], suffixes=("_low", "_high")
     )
 
     # Lower disutility of work -> work more -> consume more

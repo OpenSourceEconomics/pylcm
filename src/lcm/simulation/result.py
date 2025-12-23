@@ -17,7 +17,7 @@ from lcm.grids import DiscreteGrid
 if TYPE_CHECKING:
     from jax import Array
 
-    from lcm.interfaces import InternalRegime, PeriodRegimeData
+    from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
     from lcm.typing import FloatND, ParamsDict, RegimeName
 
 
@@ -31,7 +31,7 @@ class SimulationResult:
 
     def __init__(
         self,
-        raw_results: dict[str, dict[int, PeriodRegimeData]],
+        raw_results: dict[str, dict[int, PeriodRegimeSimulationData]],
         internal_regimes: dict[RegimeName, InternalRegime],
         params: ParamsDict,
         V_arr_dict: dict[int, dict[RegimeName, FloatND]],
@@ -50,7 +50,7 @@ class SimulationResult:
     # ----------------------------------------------------------------------------------
 
     @property
-    def raw_results(self) -> dict[str, dict[int, PeriodRegimeData]]:
+    def raw_results(self) -> dict[str, dict[int, PeriodRegimeSimulationData]]:
         """Raw simulation results by regime and period."""
         return self._raw_results
 
@@ -179,7 +179,7 @@ class SimulationMetadata:
 
 def _compute_metadata(
     internal_regimes: dict[RegimeName, InternalRegime],
-    raw_results: dict[RegimeName, dict[int, PeriodRegimeData]],
+    raw_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]],
 ) -> SimulationMetadata:
     """Compute metadata from internal regimes and raw results."""
     regime_names = list(internal_regimes.keys())
@@ -219,7 +219,9 @@ def _compute_metadata(
     )
 
 
-def _get_n_subjects(raw_results: dict[RegimeName, dict[int, PeriodRegimeData]]) -> int:
+def _get_n_subjects(
+    raw_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]],
+) -> int:
     """Extract number of subjects from raw results."""
     for regime_results in raw_results.values():
         if regime_results:
@@ -290,7 +292,7 @@ def _get_available_targets_for_regime(regime: InternalRegime) -> set[str]:
 
 
 def _create_flat_dataframe(
-    raw_results: dict[str, dict[int, PeriodRegimeData]],
+    raw_results: dict[str, dict[int, PeriodRegimeSimulationData]],
     internal_regimes: dict[RegimeName, InternalRegime],
     params: ParamsDict,
     metadata: SimulationMetadata,
@@ -319,7 +321,7 @@ def _create_flat_dataframe(
 
 def _process_regime(
     internal_regime: InternalRegime,
-    regime_results: dict[int, PeriodRegimeData],
+    regime_results: dict[int, PeriodRegimeSimulationData],
     regime_states: tuple[str, ...],
     regime_actions: tuple[str, ...],
     params: ParamsDict,
@@ -353,7 +355,7 @@ def _process_regime(
 
 
 def _extract_period_data(
-    result: PeriodRegimeData,
+    result: PeriodRegimeSimulationData,
     period: int,
     regime_states: tuple[str, ...],
     regime_actions: tuple[str, ...],

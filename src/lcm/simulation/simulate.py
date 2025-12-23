@@ -9,7 +9,7 @@ from jax import Array, vmap
 from lcm.error_handling import validate_value_function_array
 from lcm.interfaces import (
     InternalRegime,
-    PeriodRegimeData,
+    PeriodRegimeSimulationData,
 )
 from lcm.random import draw_random_seed
 from lcm.simulation.result import SimulationResult
@@ -94,7 +94,7 @@ def simulate(
 
     # Forward simulation
     # ----------------------------------------------------------------------------------
-    simulation_results: dict[RegimeName, dict[int, PeriodRegimeData]] = {
+    simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
         regime_name: {} for regime_name in internal_regimes
     }
     for period in range(n_periods):
@@ -147,7 +147,7 @@ def _simulate_regime_in_period(
     params: dict[RegimeName, ParamsDict],
     regime_name_to_id: dict[RegimeName, int],
     key: Array,
-) -> tuple[PeriodRegimeData, dict[str, Array], Int1D, Array]:
+) -> tuple[PeriodRegimeSimulationData, dict[str, Array], Int1D, Array]:
     """Simulate one regime for one period.
 
     This function processes all subjects in a given regime for a single period,
@@ -217,7 +217,7 @@ def _simulate_regime_in_period(
         if state_name.startswith(f"{regime_name}__")
     }
 
-    simulation_result = PeriodRegimeData(
+    simulation_result = PeriodRegimeSimulationData(
         V_arr=V_arr,
         actions=optimal_actions,
         states=res,
