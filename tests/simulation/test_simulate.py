@@ -34,7 +34,7 @@ def simulate_inputs():
     updated_working = working.replace(
         actions={
             **working.actions,
-            "consumption": working.actions["consumption"].replace(stop=100),  # type: ignore[attr-defined]
+            "consumption": working.actions["consumption"].replace(stop=100),  # ty: ignore[unresolved-attribute]
         },
         active=[0],
     )
@@ -154,10 +154,10 @@ def test_simulate_using_model_methods(
 
     for period in range(n_periods):
         # assert that higher wealth leads to higher consumption in each period
-        assert (res.loc[res["period"] == period]["consumption"].diff()[1:] >= 0).all()  # type: ignore[operator]
+        assert (res.loc[res["period"] == period]["consumption"].diff()[1:] >= 0).all()
 
         # assert that higher wealth leads to higher value function in each period
-        assert (res.loc[res["period"] == period]["value"].diff()[1:] >= 0).all()  # type: ignore[operator]
+        assert (res.loc[res["period"] == period]["value"].diff()[1:] >= 0).all()
 
 
 def test_simulate_with_only_discrete_actions():

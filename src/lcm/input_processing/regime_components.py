@@ -278,7 +278,7 @@ def _wrap_regime_transition_probs(
     # Get regime names in index order from regime_id_cls
     regime_names_by_id: list[tuple[int, str]] = sorted(
         [
-            (int(field.default), field.name)  # type: ignore[arg-type]
+            (int(field.default), field.name)  # ty: ignore[invalid-argument-type]
             for field in fields(regime_id_cls)
         ],
         key=lambda x: x[0],
@@ -299,7 +299,7 @@ def _wrap_regime_transition_probs(
         # Convert array to dict using regime_id_cls ordering
         return {name: result[idx] for idx, name in enumerate(regime_names)}
 
-    return wrapped  # type: ignore[return-value]
+    return wrapped
 
 
 def _wrap_deterministic_regime_transition(

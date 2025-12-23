@@ -43,10 +43,10 @@ $ pixi run tests
 ```
 
 This will install the development environment and run the tests. You can run
-[mypy](https://mypy-lang.org/) using
+[ty](https://docs.astral.sh/ty) using
 
 ```console
-$ pixi run mypy
+$ pixi run ty
 ```
 
 Before committing, install the pre-commit hooks using

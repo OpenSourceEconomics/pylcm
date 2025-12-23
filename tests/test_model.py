@@ -17,7 +17,7 @@ def test_regime_invalid_states():
     with pytest.raises(RegimeInitializationError, match="states must be a dictionary"):
         Regime(
             name="test",
-            states="health",  # type: ignore[arg-type]
+            states="health",  # ty: ignore[invalid-argument-type]
             actions={},
             utility=lambda: 0,
             transitions={"next_health": lambda: 0},
@@ -31,7 +31,7 @@ def test_regime_invalid_actions():
         Regime(
             name="test",
             states={},
-            actions="exercise",  # type: ignore[arg-type]
+            actions="exercise",  # ty: ignore[invalid-argument-type]
             utility=lambda: 0,
             transitions={"next_health": lambda: 0},
             active=range(5),
@@ -49,7 +49,7 @@ def test_regime_invalid_functions():
             actions={},
             transitions={"next_health": lambda: 0},
             utility=lambda: 0,
-            functions="utility",  # type: ignore[arg-type]
+            functions="utility",  # ty: ignore[invalid-argument-type]
             active=range(5),
         )
 
@@ -66,7 +66,7 @@ def test_regime_invalid_functions_values():
             actions={},
             utility=lambda: 0,
             transitions={"next_health": lambda: 0},
-            functions={"function": 0},  # type: ignore[dict-item]
+            functions={"function": 0},  # ty: ignore[invalid-argument-type]
             active=range(5),
         )
 
@@ -82,7 +82,7 @@ def test_regime_invalid_functions_keys():
             actions={},
             utility=lambda: 0,
             transitions={"next_health": lambda: 0},
-            functions={0: lambda: 0},  # type: ignore[dict-item]
+            functions={0: lambda: 0},  # ty: ignore[invalid-argument-type]
             active=range(5),
         )
 
@@ -95,7 +95,7 @@ def test_regime_invalid_actions_values():
         Regime(
             name="test",
             states={},
-            actions={"exercise": 0},  # type: ignore[dict-item]
+            actions={"exercise": 0},  # ty: ignore[invalid-argument-type]
             utility=lambda: 0,
             transitions={"next_health": lambda: 0},
             active=range(5),
@@ -109,7 +109,7 @@ def test_regime_invalid_states_values():
     ):
         Regime(
             name="test",
-            states={"health": 0},  # type: ignore[dict-item]
+            states={"health": 0},  # ty: ignore[invalid-argument-type]
             actions={},
             utility=lambda: 0,
             transitions={"next_health": lambda: 0},
@@ -147,7 +147,7 @@ def test_regime_invalid_utility():
             states={},
             actions={},
             functions={},
-            utility=0,  # type: ignore[arg-type]
+            utility=0,  # ty: ignore[invalid-argument-type]
             transitions={"next_health": lambda: 0},
             active=range(5),
         )
@@ -264,7 +264,7 @@ def test_model_requires_regime_id_cls():
     """Model requires regime_id_cls as a keyword argument."""
     # regime_id_cls is a required keyword argument, so omitting it raises TypeError
     with pytest.raises(TypeError, match="regime_id_cls"):
-        Model(regimes=[], n_periods=2)  # type: ignore[call-arg]
+        Model(regimes=[], n_periods=2)  # ty: ignore[missing-argument]
 
 
 def test_multi_regime_with_invalid_regime_id_cls_raises(binary_category_class):

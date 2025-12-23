@@ -49,4 +49,4 @@ def flatten_regime_namespace(d: dict[RegimeName, Any]) -> dict[str, Any]:
 
 
 def unflatten_regime_namespace(d: dict[str, Any]) -> dict[RegimeName, Any]:
-    return unflatten_from_qnames(d)  # type: ignore[return-value]
+    return unflatten_from_qnames(d)  # ty: ignore[invalid-return-type]

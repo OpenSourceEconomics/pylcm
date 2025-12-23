@@ -225,7 +225,7 @@ def test_process_regimes():
     wealth_grid = LinspaceGrid(
         start=1,
         stop=400,
-        n_points=working.states["wealth"].n_points,  # type: ignore[attr-defined]
+        n_points=working.states["wealth"].n_points,  # ty: ignore[unresolved-attribute]
     )
 
     assert internal_working_regime.gridspecs["wealth"] == wealth_grid
@@ -233,7 +233,7 @@ def test_process_regimes():
     consumption_grid = LinspaceGrid(
         start=1,
         stop=400,
-        n_points=working.actions["consumption"].n_points,  # type: ignore[attr-defined]
+        n_points=working.actions["consumption"].n_points,  # ty: ignore[unresolved-attribute]
     )
     assert internal_working_regime.gridspecs["consumption"] == consumption_grid
 

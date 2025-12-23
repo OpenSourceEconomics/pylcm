@@ -10,9 +10,13 @@ environments.
 import tomllib
 from pathlib import Path
 
+import pytest
 import yaml
 
 
+@pytest.mark.skip(
+    reason="ty is used instead of mypy. There is no pre-commit hook for ty yet."
+)
 def test_mypy_version_consistency():
     mypy_version_pyproject = _get_pixi_mypy_version()
     mypy_version_pre_commit = _get_precommit_mypy_version()

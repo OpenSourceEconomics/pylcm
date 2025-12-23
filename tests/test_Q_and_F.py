@@ -121,10 +121,10 @@ def internal_functions_illustrative():
         "mock": jnp.array([1.0])
     }
     return InternalFunctions(
-        utility=lambda: 0,  # type: ignore[arg-type]
+        utility=lambda: 0,  # ty: ignore[invalid-argument-type]
         transitions={},
-        constraints=constraints,  # type: ignore[arg-type]
-        functions=functions,  # type: ignore[arg-type]
+        constraints=constraints,  # ty: ignore[invalid-argument-type]
+        functions=functions,  # ty: ignore[invalid-argument-type]
         regime_transition_probs=PhaseVariantContainer(
             solve=mock_transition_solve, simulate=mock_transition_simulate
         ),
@@ -199,10 +199,10 @@ def test_get_combined_constraint():
         "mock": jnp.array([1.0])
     }
     internal_functions = InternalFunctions(
-        utility=lambda: 0,  # type: ignore[arg-type]
-        constraints={"f": f, "g": g},  # type: ignore[dict-item]
+        utility=lambda: 0,  # ty: ignore[invalid-argument-type]
+        constraints={"f": f, "g": g},  # ty: ignore[invalid-argument-type]
         transitions={},
-        functions={"h": h},  # type: ignore[dict-item]
+        functions={"h": h},  # ty: ignore[invalid-argument-type]
         regime_transition_probs=PhaseVariantContainer(
             solve=mock_transition_solve, simulate=mock_transition_simulate
         ),

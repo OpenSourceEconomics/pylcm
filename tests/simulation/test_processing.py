@@ -32,7 +32,7 @@ def test_compute_targets():
     got = _compute_targets(
         processed_results=processed_results,
         targets=["fa", "fb"],
-        functions=functions,  # type: ignore[arg-type]
+        functions=functions,  # ty: ignore[invalid-argument-type]
         params={"disutility_of_work": -1.0},
     )
     expected = {
@@ -79,8 +79,8 @@ def test_process_simulated_data():
         simulated,
         n_initial_subjects=2,
         # Rest is none, since we are not computing any additional targets
-        internal_regime=None,  # type: ignore[arg-type]
-        params=None,  # type: ignore[arg-type]
+        internal_regime=None,  # ty: ignore[invalid-argument-type]
+        params=None,  # ty: ignore[invalid-argument-type]
         additional_targets=None,
     )
     pd.testing.assert_frame_equal(expected, got)
