@@ -4,6 +4,7 @@ from collections import Counter
 from itertools import chain
 from typing import TYPE_CHECKING, Any, TypeVar
 
+import jax.numpy as jnp
 from dags.tree import QNAME_DELIMITER, flatten_to_qnames, unflatten_from_qnames
 
 # Re-export for use in other modules. This is the separator used by dags to
@@ -50,3 +51,13 @@ def flatten_regime_namespace(d: dict[RegimeName, Any]) -> dict[str, Any]:
 
 def unflatten_regime_namespace(d: dict[str, Any]) -> dict[RegimeName, Any]:
     return unflatten_from_qnames(d)  # ty: ignore[invalid-return-type]
+
+
+def normalize_regime_transition_probs(
+    probs: dict[str, float],
+    active_regimes: list[str],
+) -> dict[str, float]:
+    """Normalize regime transition probabilities over active regimes only."""
+    active_probs = jnp.array([probs[r] for r in active_regimes])
+    total = jnp.sum(active_probs, axis=0)
+    return {r: probs[r] / total for r in active_regimes}
