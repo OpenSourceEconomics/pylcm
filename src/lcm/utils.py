@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from itertools import chain
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, overload
 
 import jax.numpy as jnp
 from dags.tree import QNAME_DELIMITER, flatten_to_qnames, unflatten_from_qnames
@@ -15,7 +15,7 @@ REGIME_SEPARATOR = QNAME_DELIMITER
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from lcm.typing import RegimeName
+    from lcm.typing import Float1D, RegimeName
 
 T = TypeVar("T")
 
@@ -53,10 +53,24 @@ def unflatten_regime_namespace(d: dict[str, Any]) -> dict[RegimeName, Any]:
     return unflatten_from_qnames(d)  # ty: ignore[invalid-return-type]
 
 
+@overload
 def normalize_regime_transition_probs(
     probs: dict[str, float],
     active_regimes: list[str],
-) -> dict[str, float]:
+) -> dict[str, float]: ...
+
+
+@overload
+def normalize_regime_transition_probs(
+    probs: dict[str, Float1D],
+    active_regimes: list[str],
+) -> dict[str, Float1D]: ...
+
+
+def normalize_regime_transition_probs(
+    probs: dict[str, float] | dict[str, Float1D],
+    active_regimes: list[str],
+) -> dict[str, float] | dict[str, Float1D]:
     """Normalize regime transition probabilities over active regimes only."""
     active_probs = jnp.array([probs[r] for r in active_regimes])
     total = jnp.sum(active_probs, axis=0)
