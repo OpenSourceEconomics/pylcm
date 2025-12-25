@@ -9,10 +9,10 @@ from jax import Array, vmap
 from lcm.error_handling import validate_value_function_array
 from lcm.interfaces import (
     InternalRegime,
-    SimulationResults,
+    PeriodRegimeSimulationData,
 )
 from lcm.random import draw_random_seed
-from lcm.simulation.processing import process_simulated_data
+from lcm.simulation.result import SimulationResult
 from lcm.simulation.util import (
     calculate_next_regime_membership,
     calculate_next_states,
@@ -25,8 +25,6 @@ from lcm.utils import flatten_regime_namespace
 
 if TYPE_CHECKING:
     import logging
-
-    import pandas as pd
 
     from lcm.typing import (
         FloatND,
@@ -46,9 +44,8 @@ def simulate(
     logger: logging.Logger,
     V_arr_dict: dict[int, dict[RegimeName, FloatND]],
     *,
-    additional_targets: dict[RegimeName, list[str]] | None = None,
     seed: int | None = None,
-) -> dict[RegimeName, pd.DataFrame]:
+) -> SimulationResult:
     """Simulate the model forward in time given pre-computed value function arrays.
 
     Args:
@@ -62,13 +59,11 @@ def simulate(
         initial_regimes: List containing the names of the regimes the subjects start in.
         logger: Logger that logs to stdout.
         V_arr_dict: Dict of value function arrays of length n_periods.
-        additional_targets: List of targets to compute. If provided, the targets
-            are computed and added to the simulation results.
         seed: Random number seed; will be passed to `jax.random.key`. If not provided,
             a random seed will be generated.
 
     Returns:
-        DataFrame with the simulation results.
+        SimulationResult object. Call .to_dataframe() to get a pandas DataFrame.
 
     """
     if seed is None:
@@ -99,7 +94,7 @@ def simulate(
 
     # Forward simulation
     # ----------------------------------------------------------------------------------
-    simulation_results: dict[str, dict[int, SimulationResults]] = {
+    simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
         regime_name: {} for regime_name in internal_regimes
     }
     for period in range(n_periods):
@@ -133,17 +128,12 @@ def simulate(
 
         subject_regime_ids = new_subject_regime_ids
 
-    processed = {}
-    for regime_name, regime_simulation_results in simulation_results.items():
-        processed[regime_name] = process_simulated_data(
-            regime_simulation_results,
-            internal_regime=internal_regimes[regime_name],
-            params=params,
-            additional_targets=additional_targets,
-            n_initial_subjects=n_initial_subjects,
-        )
-
-    return processed
+    return SimulationResult(
+        raw_results=simulation_results,
+        internal_regimes=internal_regimes,
+        params=params,
+        V_arr_dict=V_arr_dict,
+    )
 
 
 def _simulate_regime_in_period(
@@ -157,7 +147,7 @@ def _simulate_regime_in_period(
     params: dict[RegimeName, ParamsDict],
     regime_name_to_id: dict[RegimeName, int],
     key: Array,
-) -> tuple[SimulationResults, dict[str, Array], Int1D, Array]:
+) -> tuple[PeriodRegimeSimulationData, dict[str, Array], Int1D, Array]:
     """Simulate one regime for one period.
 
     This function processes all subjects in a given regime for a single period,
@@ -177,7 +167,7 @@ def _simulate_regime_in_period(
 
     Returns:
         Tuple containing:
-        - SimulationResults for this regime-period
+        - PeriodRegimeData for this regime-period
         - Updated states dictionary
         - Updated new_subject_regime_ids array
         - Updated JAX random key
@@ -232,7 +222,7 @@ def _simulate_regime_in_period(
         if state_name.startswith(f"{regime_name}__")
     }
 
-    simulation_result = SimulationResults(
+    simulation_result = PeriodRegimeSimulationData(
         V_arr=V_arr,
         actions=optimal_actions,
         states=res,

@@ -13,6 +13,10 @@ class InvalidInitialStatesError(PyLCMError):
     """Raised when the initial states are invalid."""
 
 
+class InvalidAdditionalTargetsError(PyLCMError):
+    """Raised when the additional targets are invalid."""
+
+
 class RegimeInitializationError(PyLCMError):
     """Raised when there is an error in the regime initialization."""
 
