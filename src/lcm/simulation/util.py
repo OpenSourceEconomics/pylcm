@@ -4,12 +4,15 @@ import jax
 from jax import Array, vmap
 from jax import numpy as jnp
 
-from lcm.exceptions import InvalidInitialStatesError
+from lcm.exceptions import (
+    InvalidInitialStatesError,
+    InvalidRegimeTransitionProbabilitiesError,
+)
 from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.random import generate_simulation_keys
 from lcm.state_action_space import create_state_action_space
-from lcm.typing import Bool1D, Int1D, ParamsDict, RegimeName
+from lcm.typing import Bool1D, Float1D, Int1D, ParamsDict, RegimeName
 from lcm.utils import flatten_regime_namespace, normalize_regime_transition_probs
 
 
@@ -171,6 +174,12 @@ def calculate_next_regime_membership(
     )
     normalized_regime_transition_probs = normalize_regime_transition_probs(
         regime_transition_probs, active_regimes_next_period
+    )
+
+    _validate_normalized_regime_transition_probs(
+        normalized_regime_transition_probs,
+        regime_name=internal_regime.name,
+        period=period,
     )
 
     # Generate random keys and draw next regimes
@@ -343,3 +352,26 @@ def convert_flat_to_nested_initial_states(
         }
 
     return nested
+
+
+def _validate_normalized_regime_transition_probs(
+    normalized_probs: dict[str, Float1D],
+    regime_name: str,
+    period: int,
+) -> None:
+    probs = jnp.array(list(normalized_probs.values()))
+    sum_probs = jnp.sum(probs, axis=0)
+    if not jnp.allclose(sum_probs, 1.0):
+        raise InvalidRegimeTransitionProbabilitiesError(
+            f"Regime transition probabilities from '{regime_name}' in period {period} "
+            "do not sum to 1 after normalization. This indicates an error in the "
+            "'next_regime' function of the regime."
+        )
+    if jnp.any(~jnp.isfinite(probs)):
+        raise InvalidRegimeTransitionProbabilitiesError(
+            f"Non-finite values in regime transition probabilities from "
+            f"'{regime_name}' in period {period} after normalization. This usually "
+            "means no active regime can be reached. Check that the 'next_regime' "
+            f"function of the '{regime_name}' regime assigns positive probability to "
+            "regimes that are active in the next period."
+        )
