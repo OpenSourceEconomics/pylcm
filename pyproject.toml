@@ -101,6 +101,7 @@ pre-commit = ">=4.1"
 pybaum = "*"
 scipy = ">=1.13"
 snakeviz = "*"
+cloudpickle = ">=3.1.2,<4"
 
 
 [tool.pixi.pypi-dependencies]

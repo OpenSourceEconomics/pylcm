@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import inspect
+import pickle
+from contextlib import suppress
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import jax.numpy as jnp
@@ -19,6 +22,12 @@ if TYPE_CHECKING:
 
     from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
     from lcm.typing import FloatND, ParamsDict, RegimeName
+
+
+CLOUDPICKLE_IMPORT_ERROR_MSG = (
+    "Pickling SimulationResult objects requires the optional dependency 'cloudpickle'. "
+    "Install it with: `pixi/uv add cloudpickle` (or add it to your project deps)."
+)
 
 
 # ======================================================================================
@@ -145,6 +154,56 @@ class SimulationResult:
             return _convert_to_categorical(df, self._metadata)
 
         return df
+
+    def to_pickle(
+        self,
+        path: str | Path,
+        *,
+        protocol: int = pickle.HIGHEST_PROTOCOL,
+    ) -> Path:
+        """Serialize the SimulationResult to a file.
+
+        Note: This requires the optional dependency 'cloudpickle'.
+
+        Args:
+            path: File path to save the pickle.
+            protocol: Int which indicates which protocol should be used by the pickler,
+                default HIGHEST_PROTOCOL. The possible values are 0, 1, 2, 3, 4, 5. See
+                https://docs.python.org/3/library/pickle.html.
+
+        Returns:
+            The path where the object was saved.
+
+        """
+        return _atomic_dump(self, path, protocol=protocol)
+
+    @classmethod
+    def from_pickle(cls, path: str | Path) -> SimulationResult:
+        """Deserialize a SimulationResult from a pickle file.
+
+        Note: This requires the optional dependency 'cloudpickle'.
+
+        Args:
+            path: File path to read the pickle from.
+
+        Returns:
+            The unpickled SimulationResult object.
+
+        """
+        try:
+            import cloudpickle  # noqa: PLC0415
+        except ModuleNotFoundError as e:
+            raise ModuleNotFoundError(CLOUDPICKLE_IMPORT_ERROR_MSG) from e
+
+        p = Path(path)
+        with p.open("rb") as f:
+            obj = cloudpickle.load(f)
+
+        if not isinstance(obj, cls):
+            raise TypeError(
+                f"Pickle at {p} is {type(obj).__name__}, expected {cls.__name__}"
+            )
+        return obj
 
     def __repr__(self) -> str:
         return (
@@ -570,3 +629,48 @@ def _create_target_function(
 def _get_function_variables(func: Any) -> tuple[str, ...]:  # noqa: ANN401
     """Get variable names from function signature, excluding 'params'."""
     return tuple(p for p in inspect.signature(func).parameters if p != "params")
+
+
+# ======================================================================================
+# IO operations
+# ======================================================================================
+
+
+def _atomic_dump(obj: Any, path: str | Path, *, protocol: int) -> Path:  # noqa: ANN401
+    """Serialize `obj` to `path` in an atomic (all-or-nothing) way.
+
+    Args:
+        obj: Object to serialize.
+        path: File path to save the pickle.
+        protocol: Int which indicates which protocol should be used by the pickler.
+            The possible values are 0, 1, 2, 3, 4, 5. See
+            https://docs.python.org/3/library/pickle.html.
+
+    Returns:
+        The path where the object was saved.
+
+    """
+    try:
+        import cloudpickle  # noqa: PLC0415
+    except ModuleNotFoundError as e:
+        raise ModuleNotFoundError(CLOUDPICKLE_IMPORT_ERROR_MSG) from e
+
+    # Verify parent directory exists
+    p = Path(path)
+    parent = p.parent
+    if parent and not parent.is_dir():
+        raise FileNotFoundError(f"Parent directory does not exist: {parent}")
+
+    # Write to a temporary file first, then replace the target. This avoids leaving a
+    # corrupted file at `path` behind if writing fails mid-way.
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    try:
+        with tmp.open("wb") as f:
+            cloudpickle.dump(obj, f, protocol=protocol)
+        tmp.replace(p)
+    except Exception:
+        with suppress(OSError):
+            tmp.unlink(missing_ok=True)
+        raise
+
+    return p
