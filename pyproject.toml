@@ -92,16 +92,16 @@ platforms = ["linux-64", "osx-arm64", "win-64"]
 # --------------------------------------------------------------------------------------
 
 [tool.pixi.dependencies]
-python = "~=3.13.0"
+cloudpickle = ">=3.1.2,<4"
 jupyterlab = "*"
 memory_profiler = "*"
 numpy = ">=2.2"
 plotly = ">=6.2"
 pre-commit = ">=4.1"
 pybaum = "*"
+python = "~=3.13.0"
 scipy = ">=1.13"
 snakeviz = "*"
-cloudpickle = ">=3.1.2,<4"
 
 
 [tool.pixi.pypi-dependencies]
@@ -123,19 +123,19 @@ cuda-nvcc = "~=12"
 jax = {version = ">=0.7", extras = ["cuda12"]}
 
 [tool.pixi.feature.testing.dependencies]
+matplotlib = "*"  # required because of pandas
+pandas-stubs = "*"
 pytest = "*"
 pytest-cov = "*"
 pytest-xdist = "*"
-ty = "*"
-pandas-stubs = "*"
-matplotlib = "*"  # required because of pandas
 scipy-stubs = "*"
+ty = "*"
 
 [tool.pixi.feature.testing.tasks]
+explanation-notebooks = "jupyter execute explanations/*.ipynb"
 tests = "pytest tests"
 tests-with-cov = "pytest tests --cov-report=xml --cov=./"
 ty = "ty check"
-explanation-notebooks = "jupyter execute explanations/*.ipynb"
 
 # Environments
 # --------------------------------------------------------------------------------------
@@ -194,15 +194,15 @@ extend-ignore = [
 "examples/*" = ["D101", "INP001"]
 "explanations/*" = ["B018", "E402", "INP001", "PD008", "T201"]
 "src/lcm/functools.py" = ["ANN401"]
-"src/lcm/Q_and_F.py" = ["N999"]
-"src/lcm/max_Q_over_c.py" = ["N999"]
 "src/lcm/max_Q_over_a.py" = ["N999"]
+"src/lcm/max_Q_over_c.py" = ["N999"]
 "src/lcm/max_Qc_over_d.py" = ["N999"]
 "src/lcm/ndimage.py" = ["A002"]
+"src/lcm/Q_and_F.py" = ["N999"]
 "tests/*" = ["D101", "PLR2004"]
-"tests/test_Q_and_F.py" = ["N999"]
-"tests/test_max_Qc_over_d.py" = ["N999"]
 "tests/test_max_Q_over_a.py" = ["N999"]
+"tests/test_max_Qc_over_d.py" = ["N999"]
+"tests/test_Q_and_F.py" = ["N999"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -212,13 +212,13 @@ convention = "google"
 # ======================================================================================
 
 [tool.pytest.ini_options]
+addopts = ["--pdbcls=pdbp:Pdb"]
 markers = [
     "wip: Tests that are work-in-progress.",
     "slow: Tests that take a long time to run and are skipped in continuous integration.",
     "illustrative: Tests are designed for illustrative purposes",
 ]
 norecursedirs = ["docs", ".envs"]
-addopts = ["--pdbcls=pdbp:Pdb"]
 
 
 # ======================================================================================
@@ -227,8 +227,8 @@ addopts = ["--pdbcls=pdbp:Pdb"]
 
 [tool.yamlfix]
 line_length = 88
-sequence_style = "block_style"
 none_representation = "null"
+sequence_style = "block_style"
 
 # ======================================================================================
 # ty configuration
@@ -241,13 +241,13 @@ root = ["."]
 include = ["src/", "tests/", "examples/"]
 
 [tool.ty.rules]
-invalid-return-type = "error"
 ambiguous-protocol-member = "error"
 deprecated = "error"
 division-by-zero = "error"
 ignore-comment-unknown-rule = "error"
 invalid-argument-type = "error"
 invalid-ignore-comment = "error"
+invalid-return-type = "error"
 possibly-missing-attribute = "error"
 possibly-missing-implicit-call = "error"
 possibly-missing-import = "error"
