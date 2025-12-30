@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import inspect
 import pickle
-from contextlib import suppress
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -655,22 +656,26 @@ def _atomic_dump(obj: Any, path: str | Path, *, protocol: int) -> Path:  # noqa:
     except ModuleNotFoundError as e:
         raise ModuleNotFoundError(CLOUDPICKLE_IMPORT_ERROR_MSG) from e
 
-    # Verify parent directory exists
     p = Path(path)
-    parent = p.parent
-    if parent and not parent.is_dir():
-        raise FileNotFoundError(f"Parent directory does not exist: {parent}")
+    if not p.parent.is_dir():
+        raise FileNotFoundError(f"Parent directory does not exist: {p.parent}")
 
-    # Write to a temporary file first, then replace the target. This avoids leaving a
-    # corrupted file at `path` behind if writing fails mid-way.
-    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp: Path | None = None
     try:
-        with tmp.open("wb") as f:
+        # Write to a uniquely-named temp file in the *same directory* as the target.
+        with tempfile.NamedTemporaryFile(mode="wb", dir=p.parent, delete=False) as f:
+            tmp = Path(f.name)
             cloudpickle.dump(obj, f, protocol=protocol)
-        tmp.replace(p)
-    except Exception:
-        with suppress(OSError):
-            tmp.unlink(missing_ok=True)
-        raise
 
-    return p
+        # Atomic replace: after this line, readers either see the old file or the new
+        # one, never a partially-written file. (Temp file is closed already, which
+        # matters on Windows.)
+        tmp.replace(p)
+        return p
+    finally:
+        # If anything failed before the replace succeeded, delete the temp file. We used
+        # delete=False so we can close the file before replacing (needed on Windows), so
+        # the context manager will not auto-delete it for us.
+        if tmp is not None:
+            with contextlib.suppress(OSError):
+                tmp.unlink()
