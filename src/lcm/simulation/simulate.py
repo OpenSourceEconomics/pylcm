@@ -108,6 +108,12 @@ def simulate(
             if period in regime.active_periods
         }
 
+        active_regimes_next_period = [
+            regime_name
+            for regime_name, regime in internal_regimes.items()
+            if period + 1 in regime.active_periods
+        ]
+
         for regime_name, internal_regime in active_regimes.items():
             result, new_states, new_subject_regime_ids, key = (
                 _simulate_regime_in_period(
@@ -120,6 +126,7 @@ def simulate(
                     V_arr_dict=V_arr_dict,
                     params=params,
                     regime_name_to_id=regime_name_to_id,
+                    active_regimes_next_period=active_regimes_next_period,
                     key=key,
                 )
             )
@@ -146,6 +153,7 @@ def _simulate_regime_in_period(
     V_arr_dict: dict[int, dict[RegimeName, FloatND]],
     params: dict[RegimeName, ParamsDict],
     regime_name_to_id: dict[RegimeName, int],
+    active_regimes_next_period: list[RegimeName],
     key: Array,
 ) -> tuple[PeriodRegimeSimulationData, dict[str, Array], Int1D, Array]:
     """Simulate one regime for one period.
@@ -163,6 +171,7 @@ def _simulate_regime_in_period(
         V_arr_dict: Value function arrays for all periods and regimes.
         params: Model parameters for all regimes.
         regime_name_to_id: Mapping from regime names to integer IDs.
+        active_regimes_next_period: List of active regimes in the next period.
         key: JAX random key for stochastic operations.
 
     Returns:
@@ -254,6 +263,7 @@ def _simulate_regime_in_period(
             state_action_space=state_action_space,
             new_subject_regime_ids=new_subject_regime_ids,
             regime_name_to_id=regime_name_to_id,
+            active_regimes_next_period=active_regimes_next_period,
             key=next_regime_key,
         )
 
