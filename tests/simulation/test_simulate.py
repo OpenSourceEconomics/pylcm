@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import jax.numpy as jnp
 import pandas as pd
 import pytest
@@ -9,10 +11,14 @@ from pandas.testing import assert_frame_equal
 from lcm import Model
 from lcm.input_processing import process_regimes
 from lcm.logging import get_logger
+from lcm.simulation.result import SimulationResult
 from lcm.simulation.simulate import (
     _lookup_values_from_indices,
     simulate,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # ======================================================================================
 # Test simulate using raw inputs
@@ -417,3 +423,41 @@ def test_retrieve_actions():
     )
     assert_array_equal(got["a"], jnp.array([0, 0, 0.25]))
     assert_array_equal(got["b"], jnp.array([10, 16, 12]))
+
+
+# ======================================================================================
+# Test pickling
+# ======================================================================================
+
+
+def test_simulation_result_pickle_roundtrip(tmp_path: Path):
+    """Test that SimulationResult can be pickled and unpickled."""
+    from tests.test_models.deterministic.regression import (  # noqa: PLC0415
+        get_model,
+        get_params,
+    )
+
+    # Create a SimulationResult
+    model = get_model(n_periods=3)
+    params = get_params(n_periods=3)
+    result = model.solve_and_simulate(
+        params,
+        initial_states={"wealth": jnp.array([20.0, 50.0])},
+        initial_regimes=["working"] * 2,
+    )
+
+    # Pickle and unpickle
+    pickle_path = tmp_path / "result.pkl"
+    result.to_pickle(pickle_path)
+    loaded = SimulationResult.from_pickle(pickle_path)
+
+    # Compare metadata attributes
+    assert loaded.n_periods == result.n_periods
+    assert loaded.n_subjects == result.n_subjects
+    assert loaded.regime_names == result.regime_names
+    assert loaded.state_names == result.state_names
+    assert loaded.action_names == result.action_names
+    assert loaded.available_targets == result.available_targets
+
+    # Compare DataFrames
+    assert_frame_equal(loaded.to_dataframe(), result.to_dataframe())
