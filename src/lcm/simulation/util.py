@@ -4,13 +4,16 @@ import jax
 from jax import Array, vmap
 from jax import numpy as jnp
 
-from lcm.exceptions import InvalidInitialStatesError
+from lcm.exceptions import (
+    InvalidInitialStatesError,
+    InvalidRegimeTransitionProbabilitiesError,
+)
 from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.random import generate_simulation_keys
 from lcm.state_action_space import create_state_action_space
-from lcm.typing import Bool1D, Int1D, ParamsDict, RegimeName
-from lcm.utils import flatten_regime_namespace
+from lcm.typing import Bool1D, Float1D, Int1D, ParamsDict, RegimeName
+from lcm.utils import flatten_regime_namespace, normalize_regime_transition_probs
 
 
 def get_regime_name_to_id_mapping(regime_id_cls: type) -> dict[RegimeName, int]:
@@ -131,6 +134,7 @@ def calculate_next_regime_membership(
     params: dict[RegimeName, ParamsDict],
     regime_name_to_id: dict[RegimeName, int],
     new_subject_regime_ids: Int1D,
+    active_regimes_next_period: list[RegimeName],
     key: Array,
     subjects_in_regime: Bool1D,
 ) -> Int1D:
@@ -141,14 +145,16 @@ def calculate_next_regime_membership(
 
     Args:
         internal_regime: The internal regime instance.
-        subjects_in_regime: Indices of subjects currently in this regime.
         state_action_space: State-action space for subjects in this regime.
         optimal_actions: Optimal actions computed for these subjects.
         period: Current period.
         params: Model parameters for the regime.
         regime_name_to_id: Mapping from regime names to integer IDs.
         new_subject_regime_ids: Array to update with next regime assignments.
+        active_regimes_next_period: List of active regimes in the next period.
         key: JAX random key.
+        subjects_in_regime: Boolean array indicating if subject is in regime.
+
 
     Returns:
         Updated array of regime IDs with next period assignments for subjects in this
@@ -158,14 +164,22 @@ def calculate_next_regime_membership(
     """
     # Compute regime transition probabilities
     # ---------------------------------------------------------------------------------
-    assert internal_regime.internal_functions.regime_transition_probs is not None
     regime_transition_probs = (
-        internal_regime.internal_functions.regime_transition_probs.simulate(
+        internal_regime.internal_functions.regime_transition_probs.simulate(  # ty: ignore[possibly-missing-attribute]
             **state_action_space.states,
             **optimal_actions,
             period=period,
             params=params,
         )
+    )
+    normalized_regime_transition_probs = normalize_regime_transition_probs(
+        regime_transition_probs, active_regimes_next_period
+    )
+
+    _validate_normalized_regime_transition_probs(
+        normalized_regime_transition_probs,
+        regime_name=internal_regime.name,
+        period=period,
     )
 
     # Generate random keys and draw next regimes
@@ -177,7 +191,7 @@ def calculate_next_regime_membership(
     )
 
     next_regime_ids = draw_key_from_dict(
-        d=regime_transition_probs,
+        d=normalized_regime_transition_probs,
         keys=regime_transition_key["key_regime_transition"],
         regime_name_to_id=regime_name_to_id,
     )
@@ -338,3 +352,26 @@ def convert_flat_to_nested_initial_states(
         }
 
     return nested
+
+
+def _validate_normalized_regime_transition_probs(
+    normalized_probs: dict[str, Float1D],
+    regime_name: str,
+    period: int,
+) -> None:
+    probs = jnp.array(list(normalized_probs.values()))
+    sum_probs = jnp.sum(probs, axis=0)
+    if not jnp.allclose(sum_probs, 1.0):
+        raise InvalidRegimeTransitionProbabilitiesError(
+            f"Regime transition probabilities from '{regime_name}' in period {period} "
+            "do not sum to 1 after normalization. This indicates an error in the "
+            "'next_regime' function of the regime."
+        )
+    if jnp.any(~jnp.isfinite(probs)):
+        raise InvalidRegimeTransitionProbabilitiesError(
+            f"Non-finite values in regime transition probabilities from "
+            f"'{regime_name}' in period {period} after normalization. This usually "
+            "means no active regime can be reached. Check that the 'next_regime' "
+            f"function of the '{regime_name}' regime assigns positive probability to "
+            "regimes that are active in the next period."
+        )

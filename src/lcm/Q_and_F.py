@@ -14,6 +14,7 @@ from lcm.functools import get_union_of_arguments
 from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import InternalFunctions, Target
 from lcm.next_state import get_next_state_function, get_next_stochastic_weights_function
+from lcm.utils import normalize_regime_transition_probs
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -154,6 +155,9 @@ def get_Q_and_F(
             for regime_name in target_regimes
             if period + 1 in regimes_to_active_periods[regime_name]
         ]
+        normalized_regime_transition_prob = normalize_regime_transition_probs(
+            regime_transition_prob, active_target_regimes
+        )
 
         for regime_name in active_target_regimes:
             next_states = state_transitions[regime_name](
@@ -190,7 +194,7 @@ def get_Q_and_F(
             Q_arr = (
                 Q_arr
                 + params[regime.name]["discount_factor"]
-                * regime_transition_prob[regime_name]
+                * normalized_regime_transition_prob[regime_name]
                 * next_V_expected_arr
             )
 
