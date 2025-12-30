@@ -26,7 +26,7 @@ def validate_value_function_array(
         raise InvalidValueFunctionError(
             f"The value function array in period {period} contains NaN values. This "
             "may be due to various reasons:\n"
-            "- The user defined functions returned invalid values.\n"
-            "- It is impossible to reach an active regime, resulting in NaN regime "
-            "transition probabilities in the normalized transition probabilities."
+            "- The user-defined functions returned invalid values.\n"
+            "- It is impossible to reach an active regime, resulting in NaN regime\n"
+            "  transition probabilities in the normalized transition probabilities."
         )
