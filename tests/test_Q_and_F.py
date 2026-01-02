@@ -7,6 +7,7 @@ import pytest
 from numpy.testing import assert_array_equal
 
 import lcm
+from lcm.ages import AgeGrid
 from lcm.input_processing import process_regimes
 from lcm.interfaces import InternalFunctions, PhaseVariantContainer
 from lcm.Q_and_F import (
@@ -36,9 +37,10 @@ if TYPE_CHECKING:
 
 @pytest.mark.illustrative
 def test_get_Q_and_F_function():
+    ages = AgeGrid(start=0, stop=4, step="Y")
     internal_regimes = process_regimes(
         [working, dead],
-        n_periods=4,
+        ages=ages,
         regime_id_cls=RegimeId,
         enable_jit=True,
     )
@@ -50,6 +52,7 @@ def test_get_Q_and_F_function():
         regime=working,
         internal_functions=internal_regimes[working.name].internal_functions,
         period=3,
+        age=ages.period_to_age(3),
     )
 
     consumption = jnp.array([10, 20, 30])

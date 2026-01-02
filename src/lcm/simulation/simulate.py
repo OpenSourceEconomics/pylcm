@@ -26,6 +26,7 @@ from lcm.utils import flatten_regime_namespace
 if TYPE_CHECKING:
     import logging
 
+    from lcm.ages import AgeGrid
     from lcm.typing import (
         FloatND,
         Int1D,
@@ -43,6 +44,7 @@ def simulate(
     regime_id_cls: type,
     logger: logging.Logger,
     V_arr_dict: dict[int, dict[RegimeName, FloatND]],
+    ages: AgeGrid,
     *,
     seed: int | None = None,
 ) -> SimulationResult:
@@ -59,6 +61,7 @@ def simulate(
         initial_regimes: List containing the names of the regimes the subjects start in.
         logger: Logger that logs to stdout.
         V_arr_dict: Dict of value function arrays of length n_periods.
+        ages: AgeGrid for the model, used to convert periods to ages.
         seed: Random number seed; will be passed to `jax.random.key`. If not provided,
             a random seed will be generated.
 
@@ -98,7 +101,8 @@ def simulate(
         regime_name: {} for regime_name in internal_regimes
     }
     for period in range(n_periods):
-        logger.info("Period: %s", period)
+        age = ages.period_to_age(period)
+        logger.info("Period: %s (age: %s)", period, age)
 
         new_subject_regime_ids = jnp.empty(n_initial_subjects)
 
@@ -120,6 +124,7 @@ def simulate(
                     regime_name=regime_name,
                     internal_regime=internal_regime,
                     period=period,
+                    age=age,
                     states=states,
                     subject_regime_ids=subject_regime_ids,
                     new_subject_regime_ids=new_subject_regime_ids,
@@ -147,6 +152,7 @@ def _simulate_regime_in_period(
     regime_name: RegimeName,
     internal_regime: InternalRegime,
     period: int,
+    age: float,
     states: dict[str, Array],
     subject_regime_ids: Int1D,
     new_subject_regime_ids: Int1D,
@@ -165,6 +171,7 @@ def _simulate_regime_in_period(
         regime_name: Name of the current regime.
         internal_regime: Internal representation of the regime.
         period: Current period (0-indexed).
+        age: Age corresponding to current period.
         states: Current states for all subjects (namespaced by regime).
         subject_regime_ids: Current regime membership for all subjects.
         new_subject_regime_ids: Array to populate with next period's regime memberships.
@@ -248,6 +255,7 @@ def _simulate_regime_in_period(
             subjects_in_regime=subject_ids_in_regime,
             optimal_actions=optimal_actions,
             period=period,
+            age=age,
             params=params[regime_name],
             states=states,
             state_action_space=state_action_space,
@@ -259,6 +267,7 @@ def _simulate_regime_in_period(
             subjects_in_regime=subject_ids_in_regime,
             optimal_actions=optimal_actions,
             period=period,
+            age=age,
             params=params[regime_name],
             state_action_space=state_action_space,
             new_subject_regime_ids=new_subject_regime_ids,

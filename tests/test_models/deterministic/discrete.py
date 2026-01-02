@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 import jax.numpy as jnp
 
 from lcm import DiscreteGrid, Model, Regime
+from lcm.ages import AgeGrid
 from tests.test_models.deterministic.regression import (
     LaborSupply,
     is_working,
@@ -129,7 +130,7 @@ working = Regime(
         "labor_income": labor_income,
         "is_working": is_working,
     },
-    active=[0],  # Needs to be specified to avoid initialization errors
+    active=lambda _age: True,  # Placeholder, will be replaced by get_model()
 )
 
 
@@ -137,17 +138,18 @@ dead = Regime(
     name="dead",
     terminal=True,
     utility=lambda: 0.0,
-    active=[0],  # Needs to be specified to avoid initialization errors
+    active=lambda _age: True,  # Placeholder, will be replaced by get_model()
 )
 
 
 def get_model(n_periods: int) -> Model:
+    ages = AgeGrid(start=0, stop=n_periods, step="Y")
     return Model(
         [
-            working.replace(active=range(n_periods - 1)),
-            dead.replace(active=[n_periods - 1]),
+            working.replace(active=lambda age, n=n_periods: age < n - 1),
+            dead.replace(active=lambda age, n=n_periods: age >= n - 1),
         ],
-        n_periods=n_periods,
+        ages=ages,
         regime_id_cls=RegimeId,
     )
 

@@ -33,6 +33,7 @@ from lcm.utils import (
 if TYPE_CHECKING:
     from jax import Array
 
+    from lcm.ages import AgeGrid
     from lcm.regime import Regime
     from lcm.typing import (
         Int1D,
@@ -45,7 +46,7 @@ if TYPE_CHECKING:
 
 def process_regimes(
     regimes: list[Regime],
-    n_periods: int,
+    ages: AgeGrid,
     regime_id_cls: type,
     *,
     enable_jit: bool,
@@ -60,7 +61,7 @@ def process_regimes(
 
     Args:
         regimes: The regimes as provided by the user.
-        n_periods: Number of periods of the model.
+        ages: The AgeGrid for the model.
         regime_id_cls: A dataclass mapping regime names to integer indices.
         enable_jit: Whether to jit the functions of the internal regime.
 
@@ -102,7 +103,7 @@ def process_regimes(
         variable_info[regime.name] = get_variable_info(regime)
         state_space_infos[regime.name] = build_state_space_info(regime)
         state_action_spaces[regime.name] = build_state_action_space(regime)
-        regimes_to_active_periods[regime.name] = list(regime.active)
+        regimes_to_active_periods[regime.name] = ages.get_periods_where(regime.active)
 
     # ----------------------------------------------------------------------------------
     # Stage 2: Initialize regime components that depend on other regimes
@@ -112,7 +113,6 @@ def process_regimes(
         params_template = create_params_template(
             regime,
             grids=grids,
-            n_periods=n_periods,
         )
 
         internal_functions = _get_internal_functions(
@@ -130,7 +130,7 @@ def process_regimes(
             internal_functions=internal_functions,
             state_space_infos=state_space_infos,
             grids=grids,
-            n_periods=n_periods,
+            ages=ages,
         )
         max_Q_over_a_functions = build_max_Q_over_a_functions(
             regime=regime, Q_and_F_functions=Q_and_F_functions, enable_jit=enable_jit

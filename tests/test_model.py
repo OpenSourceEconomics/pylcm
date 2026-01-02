@@ -7,6 +7,7 @@ import pytest
 
 import lcm
 from lcm import Model, Regime
+from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.grids import DiscreteGrid
 from lcm.model import _validate_regime_id_cls
@@ -21,7 +22,7 @@ def test_regime_invalid_states():
             actions={},
             utility=lambda: 0,
             transitions={"next_health": lambda: 0},
-            active=range(5),
+            active=lambda age: age < 5,
         )
 
 
@@ -34,7 +35,7 @@ def test_regime_invalid_actions():
             actions="exercise",  # ty: ignore[invalid-argument-type]
             utility=lambda: 0,
             transitions={"next_health": lambda: 0},
-            active=range(5),
+            active=lambda age: age < 5,
         )
 
 
@@ -50,7 +51,7 @@ def test_regime_invalid_functions():
             transitions={"next_health": lambda: 0},
             utility=lambda: 0,
             functions="utility",  # ty: ignore[invalid-argument-type]
-            active=range(5),
+            active=lambda age: age < 5,
         )
 
 
@@ -67,7 +68,7 @@ def test_regime_invalid_functions_values():
             utility=lambda: 0,
             transitions={"next_health": lambda: 0},
             functions={"function": 0},  # ty: ignore[invalid-argument-type]
-            active=range(5),
+            active=lambda age: age < 5,
         )
 
 
@@ -83,7 +84,7 @@ def test_regime_invalid_functions_keys():
             utility=lambda: 0,
             transitions={"next_health": lambda: 0},
             functions={0: lambda: 0},  # ty: ignore[invalid-argument-type]
-            active=range(5),
+            active=lambda age: age < 5,
         )
 
 
@@ -98,7 +99,7 @@ def test_regime_invalid_actions_values():
             actions={"exercise": 0},  # ty: ignore[invalid-argument-type]
             utility=lambda: 0,
             transitions={"next_health": lambda: 0},
-            active=range(5),
+            active=lambda age: age < 5,
         )
 
 
@@ -113,7 +114,7 @@ def test_regime_invalid_states_values():
             actions={},
             utility=lambda: 0,
             transitions={"next_health": lambda: 0},
-            active=range(5),
+            active=lambda age: age < 5,
         )
 
 
@@ -132,7 +133,7 @@ def test_regime_missing_next_func(binary_category_class):
             actions={"exercise": DiscreteGrid(binary_category_class)},
             utility=lambda: 0,
             transitions={"next_health": lambda: 0},
-            active=range(5),
+            active=lambda age: age < 5,
         )
 
 
@@ -149,7 +150,7 @@ def test_regime_invalid_utility():
             functions={},
             utility=0,  # ty: ignore[invalid-argument-type]
             transitions={"next_health": lambda: 0},
-            active=range(5),
+            active=lambda age: age < 5,
         )
 
 
@@ -166,7 +167,7 @@ def test_regime_invalid_transition_names():
             functions={},
             utility=lambda: 0,
             transitions={"invalid_name": lambda: 0},
-            active=range(5),
+            active=lambda age: age < 5,
         )
 
 
@@ -182,7 +183,7 @@ def test_regime_overlapping_states_actions(binary_category_class):
             actions={"health": DiscreteGrid(binary_category_class)},
             utility=lambda: 0,
             transitions={"next_health": lambda: 0},
-            active=range(5),
+            active=lambda age: age < 5,
         )
 
 
@@ -202,10 +203,14 @@ def test_model_requires_terminal_regime(binary_category_class):
             "next_health": lambda health: health,
             "next_regime": lcm.mark.stochastic(lambda: jnp.array([1.0])),
         },
-        active=range(1),
+        active=lambda age: age < 1,
     )
     with pytest.raises(ModelInitializationError, match="at least one terminal regime"):
-        Model(regimes=[regime], n_periods=2, regime_id_cls=RegimeId)
+        Model(
+            regimes=[regime],
+            ages=AgeGrid(start=0, stop=2, step="Y"),
+            regime_id_cls=RegimeId,
+        )
 
 
 def test_model_requires_non_terminal_regime(binary_category_class):
@@ -220,10 +225,14 @@ def test_model_requires_non_terminal_regime(binary_category_class):
         states={"health": DiscreteGrid(binary_category_class)},
         utility=lambda health: health * 0,
         terminal=True,
-        active=[1],
+        active=lambda age: age >= 1,
     )
     with pytest.raises(ModelInitializationError, match="at least one non-terminal"):
-        Model(regimes=[dead], n_periods=2, regime_id_cls=RegimeId)
+        Model(
+            regimes=[dead],
+            ages=AgeGrid(start=0, stop=2, step="Y"),
+            regime_id_cls=RegimeId,
+        )
 
 
 def test_multi_regime_without_next_regime_raises(binary_category_class):
@@ -243,7 +252,7 @@ def test_multi_regime_without_next_regime_raises(binary_category_class):
             "next_health": lambda health: health,
             # Missing next_regime
         },
-        active=range(1),
+        active=lambda age: age < 1,
     )
     regime2 = Regime(
         name="regime2",
@@ -254,17 +263,21 @@ def test_multi_regime_without_next_regime_raises(binary_category_class):
             "next_health": lambda health: health,
             "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
         },
-        active=range(1),
+        active=lambda age: age < 1,
     )
     with pytest.raises(ModelInitializationError, match="next_regime"):
-        Model(regimes=[regime1, regime2], n_periods=2, regime_id_cls=RegimeId)
+        Model(
+            regimes=[regime1, regime2],
+            ages=AgeGrid(start=0, stop=2, step="Y"),
+            regime_id_cls=RegimeId,
+        )
 
 
 def test_model_requires_regime_id_cls():
     """Model requires regime_id_cls as a keyword argument."""
     # regime_id_cls is a required keyword argument, so omitting it raises TypeError
     with pytest.raises(TypeError, match="regime_id_cls"):
-        Model(regimes=[], n_periods=2)  # ty: ignore[missing-argument]
+        Model(regimes=[], ages=AgeGrid(start=0, stop=2, step="Y"))  # ty: ignore[missing-argument]
 
 
 def test_multi_regime_with_invalid_regime_id_cls_raises(binary_category_class):
@@ -284,7 +297,7 @@ def test_multi_regime_with_invalid_regime_id_cls_raises(binary_category_class):
             "next_health": lambda health: health,
             "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
         },
-        active=range(1),
+        active=lambda age: age < 1,
     )
     regime2 = Regime(
         name="regime2",
@@ -295,10 +308,14 @@ def test_multi_regime_with_invalid_regime_id_cls_raises(binary_category_class):
             "next_health": lambda health: health,
             "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
         },
-        active=range(1),
+        active=lambda age: age < 1,
     )
     with pytest.raises(ModelInitializationError, match="regime_id_cls"):
-        Model(regimes=[regime1, regime2], n_periods=2, regime_id_cls=RegimeId)
+        Model(
+            regimes=[regime1, regime2],
+            ages=AgeGrid(start=0, stop=2, step="Y"),
+            regime_id_cls=RegimeId,
+        )
 
 
 def test_validate_regime_id_cls_valid():
@@ -383,22 +400,26 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
             "next_health": lambda health: health,
             "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.8, 0.1, 0.1])),
         },
-        active=range(1),
+        active=lambda age: age < 1,
     )
     dead1 = Regime(
         name="dead1",
         states={"health": DiscreteGrid(binary_category_class)},
         utility=lambda health: health * 0,
         terminal=True,
-        active=[1],
+        active=lambda age: age >= 1,
     )
     dead2 = Regime(
         name="dead2",
         states={"health": DiscreteGrid(binary_category_class)},
         utility=lambda health: health * 0,
         terminal=True,
-        active=[1],
+        active=lambda age: age >= 1,
     )
     # Should not raise - multiple terminal regimes are allowed
-    model = Model(regimes=[alive, dead1, dead2], n_periods=2, regime_id_cls=RegimeId)
+    model = Model(
+        regimes=[alive, dead1, dead2],
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_cls=RegimeId,
+    )
     assert model.internal_regimes is not None

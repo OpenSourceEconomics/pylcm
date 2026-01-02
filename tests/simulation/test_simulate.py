@@ -9,6 +9,7 @@ from numpy.testing import assert_array_almost_equal, assert_array_equal
 from pandas.testing import assert_frame_equal
 
 from lcm import Model
+from lcm.ages import AgeGrid
 from lcm.input_processing import process_regimes
 from lcm.logging import get_logger
 from lcm.simulation.result import SimulationResult
@@ -33,17 +34,19 @@ def simulate_inputs():
         working,
     )
 
+    n_periods = 2
+    ages = AgeGrid(start=0, stop=n_periods, step="Y")
     updated_working = working.replace(
         actions={
             **working.actions,
             "consumption": working.actions["consumption"].replace(stop=100),  # ty: ignore[unresolved-attribute]
         },
-        active=[0],
+        active=lambda age: age < n_periods - 1,
     )
-    updated_dead = dead.replace(active=[1])
+    updated_dead = dead.replace(active=lambda age: age >= n_periods - 1)
     internal_regimes = process_regimes(
         [updated_working, updated_dead],
-        n_periods=2,
+        ages=ages,
         regime_id_cls=RegimeId,
         enable_jit=True,
     )
@@ -51,6 +54,7 @@ def simulate_inputs():
     return {
         "internal_regimes": internal_regimes,
         "regime_id_cls": RegimeId,
+        "ages": ages,
     }
 
 
@@ -100,21 +104,22 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
 
     def _model_solution(n_periods):
         updated_functions = {
-            # remove dependency on age, so that wage becomes a parameter
+            # remove dependency on agent_age, so that wage becomes a parameter
             name: func
             for name, func in working.functions.items()
-            if name not in ["age", "wage"]
+            if name not in ["agent_age", "wage"]
         }
+        ages = AgeGrid(start=0, stop=n_periods, step="Y")
         updated_working = working.replace(
-            functions=updated_functions, active=range(n_periods - 1)
+            functions=updated_functions, active=lambda age, n=n_periods: age < n - 1
         )
-        updated_dead = dead.replace(active=[n_periods - 1])
+        updated_dead = dead.replace(active=lambda age, n=n_periods: age >= n - 1)
 
         params = get_params(n_periods=n_periods)
         # Since wage function is removed, wage becomes a parameter for labor_income
         params["working"]["labor_income"] = {"wage": 1.5}
         model = Model(
-            [updated_working, updated_dead], n_periods=n_periods, regime_id_cls=RegimeId
+            [updated_working, updated_dead], ages=ages, regime_id_cls=RegimeId
         )
         V_arr_dict = model.solve(params=params)
         return V_arr_dict, params, model

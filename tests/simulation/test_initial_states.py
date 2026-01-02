@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import pytest
 
 from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
+from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidInitialStatesError
 from lcm.simulation.util import (
     convert_flat_to_nested_initial_states,
@@ -44,6 +45,7 @@ def model() -> Model:
         )
 
     n_periods = 2
+    ages = AgeGrid(start=0, stop=n_periods, step="Y")
 
     alive = Regime(
         name="active",
@@ -57,19 +59,19 @@ def model() -> Model:
             "next_health": lambda health: health,
             "next_regime": next_regime,
         },
-        active=range(n_periods - 1),
+        active=lambda age: age < n_periods - 1,
     )
 
     dead = Regime(
         name="terminal",
         terminal=True,
         utility=lambda: 0.0,
-        active=[n_periods - 1],
+        active=lambda age: age >= n_periods - 1,
     )
 
     return Model(
         [alive, dead],
-        n_periods=n_periods,
+        ages=ages,
         regime_id_cls=RegimeId,
     )
 

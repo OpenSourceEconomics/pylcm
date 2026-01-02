@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 import jax.numpy as jnp
 
 from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
+from lcm.ages import AgeGrid
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -56,11 +57,11 @@ def is_working(labor_supply: DiscreteAction) -> BoolND:
     return labor_supply == LaborSupply.work
 
 
-def wage(age: int | IntND) -> float | FloatND:
-    return 1 + 0.1 * age
+def wage(agent_age: int | IntND) -> float | FloatND:
+    return 1 + 0.1 * agent_age
 
 
-def age(period: Period) -> int | IntND:
+def agent_age(period: Period) -> int | IntND:
     return period + 18
 
 
@@ -127,10 +128,10 @@ working = Regime(
     functions={
         "labor_income": labor_income,
         "is_working": is_working,
-        "age": age,
+        "agent_age": agent_age,
         "wage": wage,
     },
-    active=range(100),  # placeholder, will be replaced by get_model()
+    active=lambda _age: True,  # placeholder, will be replaced by get_model()
 )
 
 
@@ -138,17 +139,18 @@ dead = Regime(
     name="dead",
     terminal=True,
     utility=lambda: 0.0,
-    active=[99],  # placeholder, will be replaced by get_model()
+    active=lambda _age: True,  # placeholder, will be replaced by get_model()
 )
 
 
 def get_model(n_periods: int) -> Model:
+    ages = AgeGrid(start=0, stop=n_periods, step="Y")
     return Model(
         [
-            working.replace(active=range(n_periods - 1)),
-            dead.replace(active=[n_periods - 1]),
+            working.replace(active=lambda age, n=n_periods: age < n - 1),
+            dead.replace(active=lambda age, n=n_periods: age >= n - 1),
         ],
-        n_periods=n_periods,
+        ages=ages,
         regime_id_cls=RegimeId,
     )
 

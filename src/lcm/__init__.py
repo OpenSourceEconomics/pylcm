@@ -6,12 +6,14 @@ except ImportError:
     pass
 
 from lcm import mark
+from lcm.ages import AgeGrid
 from lcm.grids import DiscreteGrid, LinspaceGrid, LogspaceGrid
 from lcm.model import Model
 from lcm.regime import Regime
 from lcm.simulation.result import SimulationResult
 
 __all__ = [
+    "AgeGrid",
     "DiscreteGrid",
     "LinspaceGrid",
     "LogspaceGrid",

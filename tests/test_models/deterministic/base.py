@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 
 from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
+from lcm.ages import AgeGrid
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -140,7 +141,7 @@ working = Regime(
         "labor_income": labor_income,
         "is_working": is_working,
     },
-    active=[0],  # Needs to be specified to avoid initialization errors
+    active=lambda _age: True,  # Placeholder, overridden at model creation
 )
 
 retired = Regime(
@@ -161,7 +162,7 @@ retired = Regime(
         "next_wealth": next_wealth,
         "next_regime": next_regime_from_retired,
     },
-    active=[0],  # Needs to be specified to avoid initialization errors
+    active=lambda _age: True,  # Placeholder, overridden at model creation
 )
 
 
@@ -169,18 +170,19 @@ dead = Regime(
     name="dead",
     terminal=True,
     utility=lambda: 0.0,
-    active=[0],  # Needs to be specified to avoid initialization errors
+    active=lambda _age: True,  # Placeholder, overridden at model creation
 )
 
 
 def get_model(n_periods: int) -> Model:
+    ages = AgeGrid(start=0, stop=n_periods, step="Y")
     return Model(
         [
-            working.replace(active=range(n_periods - 1)),
-            retired.replace(active=range(n_periods - 1)),
-            dead.replace(active=[n_periods - 1]),
+            working.replace(active=lambda age, n=n_periods: age < n - 1),
+            retired.replace(active=lambda age, n=n_periods: age < n - 1),
+            dead.replace(active=lambda age, n=n_periods: age >= n - 1),
         ],
-        n_periods=n_periods,
+        ages=ages,
         regime_id_cls=RegimeId,
     )
 

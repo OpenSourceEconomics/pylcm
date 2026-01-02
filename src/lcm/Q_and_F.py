@@ -38,6 +38,7 @@ def get_Q_and_F(
     regime: Regime,
     regimes_to_active_periods: dict[RegimeName, list[int]],
     period: int,
+    age: float,
     next_state_space_infos: dict[RegimeName, StateSpaceInfo],
     grids: dict[RegimeName, Any],
     internal_functions: InternalFunctions,
@@ -47,10 +48,11 @@ def get_Q_and_F(
     Args:
         regime: Regime instance.
         regimes_to_active_periods: Mapping regime names to their active periods.
-        internal_functions: Internal functions instance.
+        period: The current period.
+        age: The age corresponding to the current period.
         next_state_space_infos: The state space information of the next period.
         grids: Dict containing the state frids for all regimes.
-        period: The current period.
+        internal_functions: Internal functions instance.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -118,7 +120,7 @@ def get_Q_and_F(
             *list(next_stochastic_states_weights.values()),
         ],
         include={"params", "next_V_arr"},
-        exclude={"period"},
+        exclude={"period", "age"},
     )
 
     @with_signature(
@@ -141,11 +143,12 @@ def get_Q_and_F(
 
         """
         regime_transition_prob = regime_transition_prob_func(
-            **states_and_actions, period=period, params=params[regime.name]
+            **states_and_actions, period=period, age=age, params=params[regime.name]
         )
         U_arr, F_arr = U_and_F(
             **states_and_actions,
             period=period,
+            age=age,
             params=params[regime.name],
         )
         Q_arr = U_arr
@@ -163,6 +166,7 @@ def get_Q_and_F(
             next_states = state_transitions[regime_name](
                 **states_and_actions,
                 period=period,
+                age=age,
                 params=params[regime.name],
             )
 
@@ -171,6 +175,7 @@ def get_Q_and_F(
             ](
                 **states_and_actions,
                 period=period,
+                age=age,
                 params=params[regime.name],
             )
 
@@ -209,6 +214,7 @@ def get_Q_and_F_terminal(
     regime: Regime,
     internal_functions: InternalFunctions,
     period: int,
+    age: float,
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for the terminal period.
 
@@ -216,6 +222,7 @@ def get_Q_and_F_terminal(
         regime: The current regime.
         internal_functions: Internal functions instance.
         period: The current period.
+        age: The age corresponding to the current period.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -230,6 +237,7 @@ def get_Q_and_F_terminal(
         # include it in the signature, such that we can treat all periods uniformly
         # during the solution and simulation.
         include={"params", "next_V_arr"},
+        exclude={"period", "age"},
     )
 
     args = dict.fromkeys(arg_names_of_Q_and_F, "Array")
@@ -258,6 +266,7 @@ def get_Q_and_F_terminal(
         U_arr, F_arr = U_and_F(
             **states_and_actions,
             period=period,
+            age=age,
             params=params[regime.name],
         )
 

@@ -123,7 +123,7 @@ def test_create_state_space_info():
             "next_health": lambda health: health,
         },
         terminal=False,
-        active=range(5),
+        active=lambda age: age < 5,
     )
 
     state_space_info = create_state_space_info(

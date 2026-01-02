@@ -27,7 +27,7 @@ def test_regime_name_does_not_contain_separator():
             states={"wealth": WEALTH_GRID},
             actions={"consumption": CONSUMPTION_GRID},
             transitions={"next_wealth": next_wealth},
-            active=range(5),
+            active=lambda age: age < 5,
         )
 
 
@@ -40,7 +40,7 @@ def test_function_name_does_not_contain_separator():
             actions={f"consumption{REGIME_SEPARATOR}action": CONSUMPTION_GRID},
             transitions={"next_wealth": next_wealth},
             functions={f"helper{REGIME_SEPARATOR}func": lambda: 1},
-            active=range(5),
+            active=lambda age: age < 5,
         )
 
 
@@ -52,7 +52,7 @@ def test_state_name_does_not_contain_separator():
             states={f"my{REGIME_SEPARATOR}wealth": WEALTH_GRID},
             actions={"consumption": CONSUMPTION_GRID},
             transitions={f"next_my{REGIME_SEPARATOR}wealth": next_wealth},
-            active=range(5),
+            active=lambda age: age < 5,
         )
 
 
@@ -68,7 +68,7 @@ def test_terminal_regime_creation():
         utility=lambda wealth: wealth * 0.5,
         states={"wealth": WEALTH_GRID},
         terminal=True,
-        active=[5],
+        active=lambda age: age >= 5,
     )
     assert regime.terminal is True
     assert regime.transitions == {}
@@ -82,7 +82,7 @@ def test_terminal_regime_with_actions():
         states={"wealth": WEALTH_GRID},
         actions={"bequest_share": LinspaceGrid(start=0, stop=1, n_points=11)},
         terminal=True,
-        active=[5],
+        active=lambda age: age >= 5,
     )
     assert regime.terminal is True
     assert "bequest_share" in regime.actions
@@ -97,7 +97,7 @@ def test_terminal_regime_cannot_have_transitions():
             states={"wealth": WEALTH_GRID},
             transitions={"next_wealth": lambda wealth: wealth},
             terminal=True,
-            active=[5],
+            active=lambda age: age >= 5,
         )
 
 
@@ -108,7 +108,7 @@ def test_terminal_regime_can_be_created_without_states():
         utility=lambda: 0,
         states={},
         terminal=True,
-        active=[5],
+        active=lambda age: age >= 5,
     )
     assert regime.terminal is True
     assert regime.states == {}
@@ -119,52 +119,29 @@ def test_terminal_regime_can_be_created_without_states():
 # ======================================================================================
 
 
-def test_regime_with_active_periods():
-    """Regime can specify active periods with various iterable types."""
-    # Tuple
+def test_regime_with_active_callable():
+    """Regime can specify active periods with a callable."""
     regime = Regime(
         name="work",
         utility=utility,
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
         transitions={"next_wealth": next_wealth},
-        active=(0, 1, 2),
+        active=lambda age: age < 5,
     )
-    assert regime.active is not None
-    assert list(regime.active) == [0, 1, 2]
-
-    # Range
-    regime2 = Regime(
-        name="work",
-        utility=utility,
-        states={"wealth": WEALTH_GRID},
-        actions={"consumption": CONSUMPTION_GRID},
-        transitions={"next_wealth": next_wealth},
-        active=range(5),
-    )
-    assert regime2.active is not None
-    assert list(regime2.active) == [0, 1, 2, 3, 4]
+    assert callable(regime.active)
+    assert regime.active(3) is True
+    assert regime.active(5) is False
 
 
-def test_active_validation_rejects_invalid_values():
-    """Active attribute must be iterable of non-negative unique integers."""
-    # Empty list
-    with pytest.raises(RegimeInitializationError, match="cannot be empty"):
+def test_active_validation_rejects_non_callable():
+    """Active attribute must be a callable."""
+    with pytest.raises(RegimeInitializationError, match="must be a callable"):
         Regime(
             name="work",
             utility=utility,
             states={"wealth": WEALTH_GRID},
             actions={"consumption": CONSUMPTION_GRID},
             transitions={"next_wealth": next_wealth},
-            active=[],
-        )
-
-    # Negative periods
-    with pytest.raises(RegimeInitializationError, match="cannot be negative"):
-        Regime(
-            name="dead",
-            utility=lambda wealth: wealth,
-            states={"wealth": WEALTH_GRID},
-            terminal=True,
-            active=[-1, 0, 1],
+            active=[0, 1, 2],  # Not a callable
         )

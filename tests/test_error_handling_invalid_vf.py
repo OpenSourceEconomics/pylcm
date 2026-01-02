@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import pytest
 
 from lcm import Model, Regime
+from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.grids import LinspaceGrid
 
@@ -90,24 +91,26 @@ def regimes_and_id_cls(n_periods: int) -> tuple[dict[str, Regime], type]:
             "next_health": next_health,
             "next_regime": next_regime,
         },
-        active=range(n_periods - 1),
+        active=lambda age, n=n_periods: age < n - 1,
     )
 
     terminal = Regime(
         name="terminal",
         terminal=True,
         utility=lambda: 0.0,
-        active=[n_periods - 1],
+        active=lambda age, n=n_periods: age >= n - 1,
     )
 
-    return {"non_terminal": non_terminal, "terminal": terminal}, RegimeId
+    ages = AgeGrid(start=0, stop=n_periods, step="Y")
+
+    return {"non_terminal": non_terminal, "terminal": terminal}, RegimeId, ages
 
 
 @pytest.fixture
 def nan_value_model(
-    regimes_and_id_cls: tuple[dict[str, Regime], type], n_periods: int
+    regimes_and_id_cls: tuple[dict[str, Regime], type, AgeGrid],
 ) -> Model:
-    regimes, regime_id_cls = regimes_and_id_cls
+    regimes, regime_id_cls, ages = regimes_and_id_cls
 
     def invalid_utility(
         consumption: ContinuousAction,
@@ -124,16 +127,16 @@ def nan_value_model(
     invalid_regime = regimes["non_terminal"].replace(utility=invalid_utility)
     return Model(
         regimes=[invalid_regime, regimes["terminal"]],
-        n_periods=n_periods,
+        ages=ages,
         regime_id_cls=regime_id_cls,
     )
 
 
 @pytest.fixture
 def inf_value_model(
-    regimes_and_id_cls: tuple[dict[str, Regime], type], n_periods: int
+    regimes_and_id_cls: tuple[dict[str, Regime], type, AgeGrid],
 ) -> Model:
-    regimes, regime_id_cls = regimes_and_id_cls
+    regimes, regime_id_cls, ages = regimes_and_id_cls
 
     def invalid_utility(
         consumption: ContinuousAction,
@@ -150,7 +153,7 @@ def inf_value_model(
     inf_model = regimes["non_terminal"].replace(utility=invalid_utility)
     return Model(
         regimes=[inf_model, regimes["terminal"]],
-        n_periods=n_periods,
+        ages=ages,
         regime_id_cls=regime_id_cls,
     )
 

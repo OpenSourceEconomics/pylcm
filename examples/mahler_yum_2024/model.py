@@ -16,7 +16,7 @@ from jax import random
 from scipy.interpolate import interp1d
 
 import lcm
-from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
+from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime
 from lcm.dispatchers import _base_productmap
 
 if TYPE_CHECKING:
@@ -397,18 +397,20 @@ ALIVE_REGIME = Regime(
         "next_productivity": next_productivity,
         "next_regime": next_regime,
     },
-    active=range(n - 1),
+    active=lambda age: age < n - 1,
 )
 
 DEAD_REGIME = Regime(
     name="dead",
     terminal=True,
     utility=lambda: 0.0,
-    active=[n - 1],
+    active=lambda age: age >= n - 1,
 )
 
 MAHLER_YUM_MODEL = Model(
-    [ALIVE_REGIME, DEAD_REGIME], n_periods=n, regime_id_cls=RegimeId
+    [ALIVE_REGIME, DEAD_REGIME],
+    ages=AgeGrid(start=0, stop=n, step="Y"),
+    regime_id_cls=RegimeId,
 )
 
 

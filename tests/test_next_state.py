@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, cast
 import jax.numpy as jnp
 from pybaum import tree_equal
 
+from lcm.ages import AgeGrid
 from lcm.input_processing import process_regimes
 from lcm.interfaces import InternalFunctions, PhaseVariantContainer, Target
 from lcm.next_state import _create_stochastic_next_func, get_next_state_function
@@ -15,9 +16,10 @@ if TYPE_CHECKING:
 
 
 def test_get_next_state_function_with_solve_target():
+    ages = AgeGrid(start=0, stop=4, step="Y")
     internal_regimes = process_regimes(
         regimes=[working, dead],
-        n_periods=4,
+        ages=ages,
         regime_id_cls=RegimeId,
         enable_jit=True,
     )

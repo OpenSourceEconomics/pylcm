@@ -13,7 +13,6 @@ if TYPE_CHECKING:
 def create_params_template(
     regime: Regime,
     grids: GridsDict,  # noqa: ARG001
-    n_periods: int,  # noqa: ARG001
     default_params: dict[str, float] = {"discount_factor": jnp.nan},  # noqa: B006
 ) -> ParamsDict:
     """Create parameter template from a regime specification.
@@ -21,7 +20,6 @@ def create_params_template(
     Args:
         regime: The regime as provided by the user.
         grids: Dictionary containing the state grids for each regime.
-        n_periods: Number of periods of the model.
         default_params: A dictionary of default parameters. Default is None. If None,
             the default {"discount_factor": np.nan} is used. For other lifetime reward
             objectives, additional parameters may be required, for example
@@ -55,13 +53,14 @@ def _create_function_params(
         regime functions, initialized with jnp.nan.
 
     """
-    # Collect all regime variables, that includes actions, states, the period, and
-    # auxiliary variables (regime function names).
+    # Collect all regime variables, that includes actions, states, special variables
+    # (period, age), and auxiliary variables (regime function names).
     variables = {
         *regime.functions,
         *regime.actions,
         *regime.states,
         "period",
+        "age",
     }
 
     function_params = {}

@@ -28,7 +28,6 @@ def test_create_params_without_shocks(binary_category_class):
     got = create_params_template(
         regime,  # ty: ignore[invalid-argument-type]
         grids={regime.name: get_grids(regime)},  # ty: ignore[invalid-argument-type]
-        n_periods=3,
     )
     assert got == {
         "discount_factor": jnp.nan,
