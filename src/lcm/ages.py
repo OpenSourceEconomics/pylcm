@@ -48,7 +48,7 @@ def parse_step(step: str) -> float:
 
 
 class AgeGrid:
-    """Age grid for lifecycle models."""
+    """Age grid for life-cycle models."""
 
     def __init__(
         self,
