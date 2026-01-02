@@ -143,5 +143,5 @@ def test_active_validation_rejects_non_callable():
             states={"wealth": WEALTH_GRID},
             actions={"consumption": CONSUMPTION_GRID},
             transitions={"next_wealth": next_wealth},
-            active=[0, 1, 2],  # Not a callable
+            active=[0, 1, 2],  # type: ignore[arg-type]  # Not a callable
         )

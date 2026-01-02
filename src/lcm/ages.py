@@ -69,7 +69,7 @@ class AgeGrid:
             self._step_size: float | None = None
         else:
             self._step_size = parse_step(step)  # type: ignore[arg-type]
-            self._ages = jnp.arange(start, stop, self._step_size)  # type: ignore[arg-type]
+            self._ages = jnp.arange(start, stop, self._step_size)
 
     @property
     def ages(self) -> Float1D:
@@ -141,6 +141,7 @@ def _validate_age_grid(
     if has_values and has_range:
         error_messages.append("Cannot specify both 'values' and 'start/stop/step'.")
     elif has_values:
+        assert values is not None  # has_values check guarantees this
         error_messages.extend(_validate_values(values))
     elif has_range:
         if start is None or stop is None or step is None:

@@ -10,7 +10,7 @@ from lcm.utils import REGIME_SEPARATOR, flatten_regime_namespace
 
 if TYPE_CHECKING:
     from lcm.typing import (
-        ActivePredicate,
+        ActiveFunction,
         UserFunction,
     )
 
@@ -36,7 +36,7 @@ class Regime:
 
     name: str
     _: KW_ONLY
-    active: ActivePredicate
+    active: ActiveFunction
     utility: UserFunction
     constraints: dict[str, UserFunction] = field(default_factory=dict)
     transitions: dict[str, UserFunction] = field(default_factory=dict)
@@ -229,7 +229,7 @@ def _validate_terminal_or_transitions(regime: Regime) -> list[str]:
     return errors
 
 
-def _validate_active(active: ActivePredicate) -> list[str]:
+def _validate_active(active: ActiveFunction) -> list[str]:
     """Validate the active attribute is a callable."""
     if not callable(active):
         return ["active must be a callable that takes age (float) and returns bool."]

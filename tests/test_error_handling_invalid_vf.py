@@ -28,7 +28,7 @@ def n_periods() -> int:
 
 
 @pytest.fixture
-def regimes_and_id_cls(n_periods: int) -> tuple[dict[str, Regime], type]:
+def regimes_and_id_cls(n_periods: int) -> tuple[dict[str, Regime], type, AgeGrid]:
     @dataclass
     class RegimeId:
         non_terminal: int = 0
