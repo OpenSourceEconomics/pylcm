@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from lcm import Model
 from lcm.ages import AgeGrid, parse_step
 from lcm.exceptions import GridInitializationError
+from tests.test_models.deterministic.base import (
+    RegimeId,
+    dead,
+    retired,
+    working,
+)
 
 # ======================================================================================
 # parse_step tests
@@ -80,3 +88,61 @@ def test_age_grid_start_greater_than_stop_raises():
 def test_age_grid_non_increasing_values_raises():
     with pytest.raises(GridInitializationError, match="strictly increasing"):
         AgeGrid(values=(18, 20, 19))
+
+
+# ======================================================================================
+# Integration test with non-yearly steps
+# ======================================================================================
+
+
+def test_model_with_quarterly_steps():
+    """Test that solve/simulate works with quarterly (Q) step size."""
+    # Quarterly steps: 18.0, 18.25, 18.5, 18.75 (4 periods)
+    ages = AgeGrid(start=18, stop=19, step="Q")
+    assert ages.n_periods == 4
+    assert ages.step_size == 0.25
+
+    model = Model(
+        [
+            working.replace(active=lambda age: age < 18.75),
+            retired.replace(active=lambda age: age < 18.75),
+            dead.replace(active=lambda age: age >= 18.75),
+        ],
+        ages=ages,
+        regime_id_cls=RegimeId,
+    )
+
+    params = {
+        "working": {
+            "discount_factor": 0.99,
+            "utility": {"disutility_of_work": 0.5},
+            "next_wealth": {"interest_rate": 0.01},
+            "next_regime": {"final_age": 18.5},  # Transition to dead at age 18.5
+            "borrowing_constraint": {},
+            "labor_income": {"wage": 5.0},
+        },
+        "retired": {
+            "discount_factor": 0.99,
+            "utility": {},
+            "next_wealth": {"interest_rate": 0.01, "labor_income": 0.0},
+            "next_regime": {"final_age": 18.5},
+            "borrowing_constraint": {},
+        },
+        "dead": {},
+    }
+
+    # Solve and simulate
+    result = model.solve_and_simulate(
+        params=params,
+        initial_states={"wealth": jnp.array([50.0, 100.0, 150.0])},
+        initial_regimes=["working"] * 3,
+    )
+
+    df = result.to_dataframe()
+
+    # Check that age column has quarterly values
+    assert set(df["age"].unique()) == {18.0, 18.25, 18.5, 18.75}
+
+    # Check working/retired regimes only have ages < 18.75
+    non_dead_df = df.query('regime != "dead"')
+    assert all(non_dead_df["age"] < 18.75)
