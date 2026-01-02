@@ -91,7 +91,7 @@ class ContinuousGrid(Grid, ABC):
         """Convert the grid to a Jax array."""
 
     @abstractmethod
-    def get_coordinate(self, value: ScalarFloat, params: ParamsDict) -> ScalarFloat:
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
         """Get the generalized coordinate of a value in the grid."""
 
     def replace(self, **kwargs: float) -> ContinuousGrid:
@@ -105,7 +105,7 @@ class ContinuousGrid(Grid, ABC):
 
         """
         try:
-            return dataclasses.replace(self, **kwargs)  # type: ignore[arg-type]
+            return dataclasses.replace(self, **kwargs)
         except TypeError as e:
             raise GridInitializationError(
                 f"Failed to replace attributes of the grid. The error was: {e}"
@@ -130,7 +130,7 @@ class LinspaceGrid(ContinuousGrid):
         """Convert the grid to a Jax array."""
         return grid_helpers.linspace(self.start, self.stop, self.n_points)
 
-    def get_coordinate(self, value: ScalarFloat, params: ParamsDict) -> ScalarFloat:  # noqa: ARG002
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
         """Get the generalized coordinate of a value in the grid."""
         return grid_helpers.get_linspace_coordinate(
             value, self.start, self.stop, self.n_points
@@ -155,7 +155,7 @@ class LogspaceGrid(ContinuousGrid):
         """Convert the grid to a Jax array."""
         return grid_helpers.logspace(self.start, self.stop, self.n_points)
 
-    def get_coordinate(self, value: ScalarFloat, params: ParamsDict) -> ScalarFloat:  # noqa: ARG002
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
         """Get the generalized coordinate of a value in the grid."""
         return grid_helpers.get_logspace_coordinate(
             value, self.start, self.stop, self.n_points

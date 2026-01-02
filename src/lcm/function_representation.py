@@ -8,6 +8,7 @@ from dags.signature import with_signature
 from jax import Array
 
 from lcm.functools import all_as_kwargs
+from lcm.grids import ShockGrid
 from lcm.ndimage import map_coordinates
 
 if TYPE_CHECKING:
@@ -216,7 +217,9 @@ def _get_coordinate_finder(
     )
     def find_coordinate(*args: Array, params: ParamsDict, **kwargs: Array) -> Array:
         kwargs = all_as_kwargs(args, kwargs, arg_names=[in_name])
-        return grid.get_coordinate(kwargs[in_name], params[in_name])  # type: ignore[return-value]
+        if isinstance(grid, ShockGrid):
+            return grid.get_coordinate(kwargs[in_name], params[in_name])  # type: ignore[return-value]
+        return grid.get_coordinate(kwargs[in_name])  # type: ignore[return-value]
 
     return find_coordinate
 

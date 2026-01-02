@@ -16,7 +16,6 @@ from lcm.dispatchers import simulation_spacemap, vmap_1d
 from lcm.input_processing.util import get_grids, get_variable_info
 from lcm.interfaces import (
     InternalFunctions,
-    PeriodVariantContainer,
     PhaseVariantContainer,
     StateActionSpace,
     StateSpaceInfo,
@@ -24,7 +23,7 @@ from lcm.interfaces import (
 )
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a, get_max_Q_over_a
 from lcm.next_state import get_next_state_function
-from lcm.Q_and_F import get_Q_and_F
+from lcm.Q_and_F import get_Q_and_F, get_Q_and_F_terminal
 from lcm.state_action_space import (
     create_state_action_space,
     create_state_space_info,
@@ -46,102 +45,69 @@ if TYPE_CHECKING:
     )
 
 
-def build_state_space_infos(regime: Regime) -> PeriodVariantContainer[StateSpaceInfo]:
-    terminal_ssi = create_state_space_info(
-        regime=regime,
-        is_last_period=True,
-    )
-
-    non_terminal_ssi = create_state_space_info(
+def build_state_space_info(regime: Regime) -> StateSpaceInfo:
+    return create_state_space_info(
         regime=regime,
         is_last_period=False,
     )
 
-    return PeriodVariantContainer(terminal=terminal_ssi, non_terminal=non_terminal_ssi)
 
-
-def build_state_action_spaces(
+def build_state_action_space(
     regime: Regime,
-) -> PeriodVariantContainer[StateActionSpace]:
+) -> StateActionSpace:
     variable_info = get_variable_info(regime)
     grids = get_grids(regime)
-
-    terminal_sas = create_state_action_space(
+    return create_state_action_space(
         variable_info=variable_info,
         grids=grids,
-        is_last_period=True,
     )
-
-    non_terminal_sas = create_state_action_space(
-        variable_info=variable_info,
-        grids=grids,
-        is_last_period=False,
-    )
-
-    return PeriodVariantContainer(terminal=terminal_sas, non_terminal=non_terminal_sas)
 
 
 def build_Q_and_F_functions(
     regime: Regime,
+    regimes_to_active_periods: dict[RegimeName, list[int]],
     internal_functions: InternalFunctions,
-    state_space_infos: dict[RegimeName, PeriodVariantContainer[StateSpaceInfo]],
+    state_space_infos: dict[RegimeName, StateSpaceInfo],
     grids: GridsDict,
-) -> PeriodVariantContainer[QAndFFunction]:
-    next_state_space_infos_terminal = {
-        regime_name: ssi.terminal for regime_name, ssi in state_space_infos.items()
-    }
+    n_periods: int,
+) -> dict[int, QAndFFunction]:
+    Q_and_F_functions = {}
+    for period in range(n_periods):
+        if regime.terminal:
+            Q_and_F = get_Q_and_F_terminal(
+                regime=regime,
+                internal_functions=internal_functions,
+                period=period,
+            )
+        else:
+            Q_and_F = get_Q_and_F(
+                regime=regime,
+                regimes_to_active_periods=regimes_to_active_periods,
+                internal_functions=internal_functions,
+                next_state_space_infos=state_space_infos,
+                grids=grids,
+                period=period,
+            )
+        Q_and_F_functions[period] = Q_and_F
 
-    next_state_space_infos_non_terminal = {
-        regime_name: ssi.non_terminal for regime_name, ssi in state_space_infos.items()
-    }
-
-    Q_and_F_terminal = get_Q_and_F(
-        regime=regime,
-        internal_functions=internal_functions,
-        next_state_space_infos=next_state_space_infos_terminal,
-        grids=grids,
-        is_last_period=True,
-    )
-    Q_and_F_before_terminal = get_Q_and_F(
-        regime=regime,
-        internal_functions=internal_functions,
-        next_state_space_infos=next_state_space_infos_terminal,
-        grids=grids,
-        is_last_period=False,
-    )
-    Q_and_F_non_terminal = get_Q_and_F(
-        regime=regime,
-        internal_functions=internal_functions,
-        next_state_space_infos=next_state_space_infos_non_terminal,
-        grids=grids,
-        is_last_period=False,
-    )
-    return PeriodVariantContainer(
-        terminal=Q_and_F_terminal,
-        non_terminal=Q_and_F_non_terminal,
-        before_terminal=Q_and_F_before_terminal,
-    )
+    return Q_and_F_functions
 
 
 def build_max_Q_over_a_functions(
     regime: Regime,
-    Q_and_F_functions: PeriodVariantContainer[QAndFFunction],
+    Q_and_F_functions: dict[int, QAndFFunction],
     *,
     enable_jit: bool,
-) -> PeriodVariantContainer[MaxQOverAFunction]:
-    state_action_spaces = build_state_action_spaces(regime)
-
+) -> dict[int, MaxQOverAFunction]:
+    state_action_space = build_state_action_space(regime)
     max_Q_over_a_functions = {}
-
-    for attr in ("terminal", "non_terminal", "before_terminal"):
-        fn = _build_max_Q_over_a_function(
-            state_action_space=getattr(state_action_spaces, attr),
-            Q_and_F=getattr(Q_and_F_functions, attr),
+    for period, Q_and_F in Q_and_F_functions.items():
+        max_Q_over_a_functions[period] = _build_max_Q_over_a_function(
+            state_action_space=state_action_space,
+            Q_and_F=Q_and_F,
             enable_jit=enable_jit,
         )
-        max_Q_over_a_functions[attr] = fn
-
-    return PeriodVariantContainer(**max_Q_over_a_functions)
+    return max_Q_over_a_functions
 
 
 def _build_max_Q_over_a_function(
@@ -163,30 +129,24 @@ def _build_max_Q_over_a_function(
 
 def build_argmax_and_max_Q_over_a_functions(
     regime: Regime,
-    Q_and_F_functions: PeriodVariantContainer[QAndFFunction],
+    Q_and_F_functions: dict[int, QAndFFunction],
     *,
     enable_jit: bool,
-) -> PeriodVariantContainer[ArgmaxQOverAFunction]:
-    state_action_spaces = build_state_action_spaces(regime)
-
+) -> dict[int, ArgmaxQOverAFunction]:
+    state_action_space = build_state_action_space(regime)
     argmax_and_max_Q_over_a_functions = {}
-
-    for attr in ("terminal", "non_terminal", "before_terminal"):
-        state_action_space = getattr(state_action_spaces, attr)
-
+    for period, Q_and_F in Q_and_F_functions.items():
         fn = _build_argmax_and_max_Q_over_a_function(
             state_action_space=state_action_space,
-            Q_and_F=getattr(Q_and_F_functions, attr),
+            Q_and_F=Q_and_F,
             enable_jit=enable_jit,
         )
-        fn_spacemapped = simulation_spacemap(
+        argmax_and_max_Q_over_a_functions[period] = simulation_spacemap(
             fn,
             actions_names=(),
             states_names=tuple(state_action_space.states),
         )
-        argmax_and_max_Q_over_a_functions[attr] = fn_spacemapped
-
-    return PeriodVariantContainer(**argmax_and_max_Q_over_a_functions)
+    return argmax_and_max_Q_over_a_functions
 
 
 def _build_argmax_and_max_Q_over_a_function(
@@ -318,7 +278,7 @@ def _wrap_regime_transition_probs(
     # Get regime names in index order from regime_id_cls
     regime_names_by_id: list[tuple[int, str]] = sorted(
         [
-            (int(field.default), field.name)  # type: ignore[arg-type]
+            (int(field.default), field.name)  # ty: ignore[invalid-argument-type]
             for field in fields(regime_id_cls)
         ],
         key=lambda x: x[0],
@@ -339,7 +299,7 @@ def _wrap_regime_transition_probs(
         # Convert array to dict using regime_id_cls ordering
         return {name: result[idx] for idx, name in enumerate(regime_names)}
 
-    return wrapped  # type: ignore[return-value]
+    return wrapped
 
 
 def _wrap_deterministic_regime_transition(

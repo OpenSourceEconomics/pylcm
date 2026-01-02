@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
     from lcm.typing import (
         ArgmaxQOverAFunction,
+        Bool1D,
         ContinuousAction,
         ContinuousState,
         DiscreteAction,
@@ -143,38 +144,6 @@ class ShockType(Enum):
     NONE = None
 
 
-class PeriodVariantContainer[T]:
-    """Container for objects that vary by period relative to the terminal period.
-
-    Attributes:
-        terminal: Object for the terminal period.
-        non_terminal: Object for all non-terminal periods, except the one before the
-            terminal period if provided.
-        before_terminal: Object for the period just before the terminal period. If None,
-            defaults to the non-terminal object.
-
-    """
-
-    __slots__ = ("before_terminal", "non_terminal", "terminal")
-
-    def __init__(
-        self, terminal: T, non_terminal: T, before_terminal: T | None = None
-    ) -> None:
-        self.terminal = terminal
-        self.non_terminal = non_terminal
-        self.before_terminal = (
-            non_terminal if before_terminal is None else before_terminal
-        )
-
-    def __call__(self, period: int, *, n_periods: int) -> T:
-        """Return object given period relative to the terminal period."""
-        if period == n_periods - 1:
-            return self.terminal
-        if period == n_periods - 2:
-            return self.before_terminal
-        return self.non_terminal
-
-
 class PhaseVariantContainer[S, T]:
     """Container for objects that vary whether we are in the solve or simulate phase.
 
@@ -200,6 +169,7 @@ class InternalRegime:
     """
 
     name: str
+    terminal: bool
     grids: dict[str, Array]
     gridspecs: dict[str, Grid]
     variable_info: pd.DataFrame
@@ -208,28 +178,41 @@ class InternalRegime:
     constraints: dict[str, InternalUserFunction]
     transitions: TransitionFunctionsDict
     functions: dict[str, InternalUserFunction]
-    regime_transition_probs: PhaseVariantContainer[
-        RegimeTransitionFunction, VmappedRegimeTransitionFunction
-    ]
+    active_periods: list[int]
+    regime_transition_probs: (
+        PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]
+        | None
+    )
     internal_functions: InternalFunctions
     params_template: ParamsDict
-    state_action_spaces: PeriodVariantContainer[StateActionSpace]
-    state_space_infos: PeriodVariantContainer[StateSpaceInfo]
-    max_Q_over_a_functions: PeriodVariantContainer[MaxQOverAFunction]
-    argmax_and_max_Q_over_a_functions: PeriodVariantContainer[ArgmaxQOverAFunction]
+    state_action_spaces: StateActionSpace
+    state_space_infos: StateSpaceInfo
+    max_Q_over_a_functions: dict[int, MaxQOverAFunction]
+    argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction]
     next_state_simulation_function: NextStateSimulationFunction
     # Not properly processed yet
     random_utility_shocks: ShockType
 
 
 @dataclasses.dataclass(frozen=True)
-class SimulationResults:
-    """The results of a simulation for one period and one regime."""
+class PeriodRegimeSimulationData:
+    """Raw simulation data for one period in one regime.
+
+    Attributes:
+        V_arr: Value function array of a regime for all subjects at this period.
+        actions: Dict mapping action names to optimal action arrays for all subjects.
+        states: Dict mapping state names to state value arrays for all subjects.
+        in_regime: Boolean mask indicating which subjects are in this regime at this
+            period. True means the subject is in this regime; False means they are in
+            a different regime (and the corresponding values in V_arr, actions, and
+            states should be ignored for that subject).
+
+    """
 
     V_arr: Array
     actions: dict[str, Array]
     states: dict[str, Array]
-    in_regime: Array
+    in_regime: Bool1D
 
 
 class Target(Enum):
@@ -247,9 +230,10 @@ class InternalFunctions:
     utility: InternalUserFunction
     constraints: dict[str, InternalUserFunction]
     transitions: TransitionFunctionsDict
-    regime_transition_probs: PhaseVariantContainer[
-        RegimeTransitionFunction, VmappedRegimeTransitionFunction
-    ]
+    regime_transition_probs: (
+        PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]
+        | None
+    )
 
     def get_all_functions(self) -> dict[str, InternalUserFunction]:
         """Get all regime functions including utility, constraints, and transitions.
@@ -260,9 +244,14 @@ class InternalFunctions:
         """
         functions_pool = self.functions | {
             "utility": self.utility,
-            "regime_transition_probs_solve": self.regime_transition_probs.solve,
-            "regime_transition_probs_simulate": self.regime_transition_probs.simulate,
             **self.constraints,
             **self.transitions,
         }
+        if self.regime_transition_probs is not None:
+            functions_pool["regime_transition_probs_solve"] = (
+                self.regime_transition_probs.solve
+            )
+            functions_pool["regime_transition_probs_simulate"] = (
+                self.regime_transition_probs.simulate
+            )
         return flatten_regime_namespace(functions_pool)

@@ -91,7 +91,6 @@ class QAndFFunction(Protocol):
         self,
         next_V_arr: FloatND,
         params: ParamsDict,
-        period: Period,
         **states_and_actions: Array,
     ) -> tuple[FloatND, BoolND]: ...
 
@@ -148,7 +147,6 @@ class MaxQOverAFunction(Protocol):
         self,
         next_V_arr: dict[RegimeName, Array],
         params: ParamsDict,
-        period: Period,
         **states_and_actions: Array,
     ) -> Array: ...
 
@@ -167,7 +165,6 @@ class ArgmaxQOverAFunction(Protocol):
         self,
         next_V_arr: dict[RegimeName, Array],
         params: ParamsDict,
-        period: Period,
         **states_and_actions: Array,
     ) -> tuple[Array, Array]: ...
 

@@ -9,11 +9,11 @@ from jax import Array, vmap
 from lcm.error_handling import validate_value_function_array
 from lcm.interfaces import (
     InternalRegime,
-    SimulationResults,
+    PeriodRegimeSimulationData,
 )
 from lcm.random import draw_random_seed
 from lcm.shocks import fill_shock_grids, pre_compute_shock_probabilities
-from lcm.simulation.processing import process_simulated_data
+from lcm.simulation.result import SimulationResult
 from lcm.simulation.util import (
     calculate_next_regime_membership,
     calculate_next_states,
@@ -26,8 +26,6 @@ from lcm.utils import flatten_regime_namespace
 
 if TYPE_CHECKING:
     import logging
-
-    import pandas as pd
 
     from lcm.typing import (
         FloatND,
@@ -47,9 +45,8 @@ def simulate(
     logger: logging.Logger,
     V_arr_dict: dict[int, dict[RegimeName, FloatND]],
     *,
-    additional_targets: dict[RegimeName, list[str]] | None = None,
     seed: int | None = None,
-) -> dict[RegimeName, pd.DataFrame]:
+) -> SimulationResult:
     """Simulate the model forward in time given pre-computed value function arrays.
 
     Args:
@@ -63,13 +60,11 @@ def simulate(
         initial_regimes: List containing the names of the regimes the subjects start in.
         logger: Logger that logs to stdout.
         V_arr_dict: Dict of value function arrays of length n_periods.
-        additional_targets: List of targets to compute. If provided, the targets
-            are computed and added to the simulation results.
         seed: Random number seed; will be passed to `jax.random.key`. If not provided,
             a random seed will be generated.
 
     Returns:
-        DataFrame with the simulation results.
+        SimulationResult object. Call .to_dataframe() to get a pandas DataFrame.
 
     """
     if seed is None:
@@ -101,30 +96,40 @@ def simulate(
 
     # Forward simulation
     # ----------------------------------------------------------------------------------
-    simulation_results: dict[str, dict[int, SimulationResults]] = {
+    simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
         regime_name: {} for regime_name in internal_regimes
     }
     for period in range(n_periods):
         logger.info("Period: %s", period)
 
-        is_last_period = period == n_periods - 1
         new_subject_regime_ids = jnp.empty(n_initial_subjects)
 
-        for regime_name, internal_regime in internal_regimes.items():
+        active_regimes = {
+            regime_name: regime
+            for regime_name, regime in internal_regimes.items()
+            if period in regime.active_periods
+        }
+
+        active_regimes_next_period = [
+            regime_name
+            for regime_name, regime in internal_regimes.items()
+            if period + 1 in regime.active_periods
+        ]
+
+        for regime_name, internal_regime in active_regimes.items():
             result, new_states, new_subject_regime_ids, key = (
                 _simulate_regime_in_period(
                     regime_name=regime_name,
                     internal_regime=internal_regime,
                     period=period,
-                    n_periods=n_periods,
                     states=states,
                     subject_regime_ids=subject_regime_ids,
                     new_subject_regime_ids=new_subject_regime_ids,
                     V_arr_dict=V_arr_dict,
                     params=params,
                     regime_name_to_id=regime_name_to_id,
+                    active_regimes_next_period=active_regimes_next_period,
                     key=key,
-                    is_last_period=is_last_period,
                 )
             )
             states = new_states
@@ -132,33 +137,27 @@ def simulate(
 
         subject_regime_ids = new_subject_regime_ids
 
-    processed = {}
-    for regime_name, regime_simulation_results in simulation_results.items():
-        processed[regime_name] = process_simulated_data(
-            regime_simulation_results,
-            internal_regime=internal_regimes[regime_name],
-            params=params,
-            additional_targets=additional_targets,
-        )
-
-    return processed
+    return SimulationResult(
+        raw_results=simulation_results,
+        internal_regimes=internal_regimes,
+        params=params,
+        V_arr_dict=V_arr_dict,
+    )
 
 
 def _simulate_regime_in_period(
     regime_name: RegimeName,
     internal_regime: InternalRegime,
     period: int,
-    n_periods: int,
     states: dict[str, Array],
     subject_regime_ids: Int1D,
     new_subject_regime_ids: Int1D,
     V_arr_dict: dict[int, dict[RegimeName, FloatND]],
     params: dict[RegimeName, ParamsDict],
     regime_name_to_id: dict[RegimeName, int],
+    active_regimes_next_period: list[RegimeName],
     key: Array,
-    *,
-    is_last_period: bool,
-) -> tuple[SimulationResults, dict[str, Array], Int1D, Array]:
+) -> tuple[PeriodRegimeSimulationData, dict[str, Array], Int1D, Array]:
     """Simulate one regime for one period.
 
     This function processes all subjects in a given regime for a single period,
@@ -168,19 +167,18 @@ def _simulate_regime_in_period(
         regime_name: Name of the current regime.
         internal_regime: Internal representation of the regime.
         period: Current period (0-indexed).
-        n_periods: Total number of periods in the model.
         states: Current states for all subjects (namespaced by regime).
         subject_regime_ids: Current regime membership for all subjects.
         new_subject_regime_ids: Array to populate with next period's regime memberships.
         V_arr_dict: Value function arrays for all periods and regimes.
         params: Model parameters for all regimes.
         regime_name_to_id: Mapping from regime names to integer IDs.
+        active_regimes_next_period: List of active regimes in the next period.
         key: JAX random key for stochastic operations.
-        is_last_period: Whether this is the final period (no state updates needed).
 
     Returns:
         Tuple containing:
-        - SimulationResults for this regime-period
+        - PeriodRegimeData for this regime-period
         - Updated states dictionary
         - Updated new_subject_regime_ids array
         - Updated JAX random key
@@ -195,7 +193,6 @@ def _simulate_regime_in_period(
     state_action_space = create_regime_state_action_space(
         internal_regime=internal_regime,
         states=states,
-        is_last_period=is_last_period,
     )
     # Compute optimal actions
     # ---------------------------------------------------------------------------------
@@ -207,14 +204,12 @@ def _simulate_regime_in_period(
     # The Q-function values contain the information of how much value each
     # action combination is worth. To find the optimal discrete action, we
     # therefore only need to maximize the Q-function values over all actions.
-    argmax_and_max_Q_over_a = internal_regime.argmax_and_max_Q_over_a_functions(
-        period, n_periods=n_periods
-    )
+    argmax_and_max_Q_over_a = internal_regime.argmax_and_max_Q_over_a_functions[period]
+
     indices_optimal_actions, V_arr = argmax_and_max_Q_over_a(
         **state_action_space.states,
         **state_action_space.discrete_actions,
         **state_action_space.continuous_actions,
-        period=period,
         next_V_arr=next_V_arr,
         params=params,
     )
@@ -226,6 +221,11 @@ def _simulate_regime_in_period(
     )
     # Store results for this regime-period
     # ---------------------------------------------------------------------------------
+    # For state-less regimes (e.g., terminal regimes with no states), V_arr may be a
+    # scalar. We need to broadcast it to match the number of subjects.
+    n_subjects = subject_ids_in_regime.shape[0]
+    if V_arr.ndim == 0:
+        V_arr = jnp.broadcast_to(V_arr, (n_subjects,))
 
     res = {
         state_name.removeprefix(f"{regime_name}__"): state
@@ -233,7 +233,7 @@ def _simulate_regime_in_period(
         if state_name.startswith(f"{regime_name}__")
     }
 
-    simulation_result = SimulationResults(
+    simulation_result = PeriodRegimeSimulationData(
         V_arr=V_arr,
         actions=optimal_actions,
         states=res,
@@ -242,7 +242,7 @@ def _simulate_regime_in_period(
 
     # Update states and regime membership for next period
     # ---------------------------------------------------------------------------------
-    if not is_last_period:
+    if not internal_regime.terminal:
         next_states_key, next_regime_key, key = jax.random.split(key, 3)
 
         next_states = calculate_next_states(
@@ -265,6 +265,7 @@ def _simulate_regime_in_period(
             state_action_space=state_action_space,
             new_subject_regime_ids=new_subject_regime_ids,
             regime_name_to_id=regime_name_to_id,
+            active_regimes_next_period=active_regimes_next_period,
             key=next_regime_key,
         )
 
@@ -285,6 +286,10 @@ def _lookup_values_from_indices(
         Dictionary of values.
 
     """
+    # Handle empty grids case (no actions)
+    if not grids:
+        return {}
+
     grids_shapes = tuple(len(grid) for grid in grids.values())
 
     nd_indices = vmapped_unravel_index(flat_indices, grids_shapes)

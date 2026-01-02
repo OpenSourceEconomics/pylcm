@@ -8,16 +8,20 @@ from numpy.testing import assert_array_equal
 
 import lcm
 from lcm.input_processing import process_regimes
-from lcm.input_processing.regime_processing import create_default_regime_id_cls
 from lcm.interfaces import InternalFunctions, PhaseVariantContainer
 from lcm.Q_and_F import (
     _get_feasibility,
     _get_joint_weights_function,
-    get_Q_and_F,
+    get_Q_and_F_terminal,
 )
-from lcm.state_action_space import create_state_space_info
-from tests.test_models.deterministic import utility
-from tests.test_models.utils import get_regime
+from tests.test_models.deterministic.regression import (
+    LaborSupply,
+    RegimeId,
+    dead,
+    get_params,
+    utility,
+    working,
+)
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -32,57 +36,40 @@ if TYPE_CHECKING:
 
 @pytest.mark.illustrative
 def test_get_Q_and_F_function():
-    regime = get_regime("iskhakov_et_al_2017_stripped_down")
-    internal_regime = process_regimes(
-        [regime],
-        n_periods=3,
-        regime_id_cls=create_default_regime_id_cls(regime.name),
+    internal_regimes = process_regimes(
+        [working, dead],
+        n_periods=4,
+        regime_id_cls=RegimeId,
         enable_jit=True,
-    )[regime.name]
-
-    params = {
-        "iskhakov_et_al_2017_stripped_down": {
-            "beta": 1.0,
-            "utility": {"disutility_of_work": 1.0},
-            "next_wealth": {
-                "interest_rate": 0.05,
-                "wage": 1.0,
-            },
-        }
-    }
-
-    state_space_info = create_state_space_info(
-        regime=regime,
-        is_last_period=False,
     )
 
-    Q_and_F = get_Q_and_F(
-        regime=regime,
-        internal_functions=internal_regime.internal_functions,
-        next_state_space_infos={regime.name: state_space_info},
-        grids={regime.name: internal_regime.grids},
-        is_last_period=True,
+    params = get_params(n_periods=4)
+
+    # Test terminal period Q_and_F where Q = U (no continuation value)
+    Q_and_F = get_Q_and_F_terminal(
+        regime=working,
+        internal_functions=internal_regimes[working.name].internal_functions,
+        period=3,
     )
 
     consumption = jnp.array([10, 20, 30])
-    retirement = jnp.array([0, 1, 0])
+    labor_supply = jnp.array([0, 1, 0])
     wealth = jnp.array([20, 20, 20])
 
     Q_arr, F_arr = Q_and_F(
         consumption=consumption,
-        retirement=retirement,
+        labor_supply=labor_supply,
         wealth=wealth,
         params=params,
-        period=0,
-        next_V_arr=jnp.arange(1),
+        next_V_arr=jnp.empty(0),  # Terminal period doesn't use continuation value
     )
 
     assert_array_equal(
         Q_arr,
         utility(
             consumption=consumption,
-            working=1 - retirement,
-            disutility_of_work=1.0,
+            is_working=labor_supply == LaborSupply.work,
+            disutility_of_work=0.5,  # matches get_params default
         ),
     )
     assert_array_equal(F_arr, jnp.array([True, True, False]))
@@ -134,10 +121,10 @@ def internal_functions_illustrative():
         "mock": jnp.array([1.0])
     }
     return InternalFunctions(
-        utility=lambda: 0,  # type: ignore[arg-type]
+        utility=lambda: 0,  # ty: ignore[invalid-argument-type]
         transitions={},
-        constraints=constraints,  # type: ignore[arg-type]
-        functions=functions,  # type: ignore[arg-type]
+        constraints=constraints,  # ty: ignore[invalid-argument-type]
+        functions=functions,  # ty: ignore[invalid-argument-type]
         regime_transition_probs=PhaseVariantContainer(
             solve=mock_transition_solve, simulate=mock_transition_simulate
         ),
@@ -212,10 +199,10 @@ def test_get_combined_constraint():
         "mock": jnp.array([1.0])
     }
     internal_functions = InternalFunctions(
-        utility=lambda: 0,  # type: ignore[arg-type]
-        constraints={"f": f, "g": g},  # type: ignore[dict-item]
+        utility=lambda: 0,  # ty: ignore[invalid-argument-type]
+        constraints={"f": f, "g": g},  # ty: ignore[invalid-argument-type]
         transitions={},
-        functions={"h": h},  # type: ignore[dict-item]
+        functions={"h": h},  # ty: ignore[invalid-argument-type]
         regime_transition_probs=PhaseVariantContainer(
             solve=mock_transition_solve, simulate=mock_transition_simulate
         ),
