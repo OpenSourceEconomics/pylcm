@@ -102,7 +102,7 @@ def simulate(
     }
     for period in range(n_periods):
         age = ages.period_to_age(period)
-        logger.info("Period: %s (age: %s)", period, age)
+        logger.info("Age: %s", age)
 
         new_subject_regime_ids = jnp.empty(n_initial_subjects)
 

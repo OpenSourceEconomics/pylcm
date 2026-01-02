@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 from numpy.testing import assert_array_almost_equal as aaae
 
+from lcm.ages import AgeGrid
 from lcm.interfaces import StateActionSpace
 from lcm.logging import get_logger
 from lcm.max_Q_over_a import get_max_Q_over_a
@@ -108,7 +109,7 @@ def test_solve_brute():
 
     solution = solve(
         params=params,
-        n_periods=2,
+        ages=AgeGrid(start=0, stop=2, step="Y"),
         internal_regimes={"default": internal_regime},  # ty: ignore[invalid-argument-type]
         logger=get_logger(debug_mode=False),
     )
@@ -160,7 +161,7 @@ def test_solve_brute_single_period_Qc_arr():
 
     got = solve(
         params={},
-        n_periods=2,
+        ages=AgeGrid(start=0, stop=2, step="Y"),
         internal_regimes={"default": internal_regime},  # ty: ignore[invalid-argument-type]
         logger=get_logger(debug_mode=False),
     )

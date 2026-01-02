@@ -9,6 +9,7 @@ from lcm.error_handling import validate_value_function_array
 if TYPE_CHECKING:
     import logging
 
+    from lcm.ages import AgeGrid
     from lcm.interfaces import (
         InternalRegime,
     )
@@ -17,7 +18,7 @@ if TYPE_CHECKING:
 
 def solve(
     params: ParamsDict,
-    n_periods: int,
+    ages: AgeGrid,
     internal_regimes: dict[RegimeName, InternalRegime],
     logger: logging.Logger,
 ) -> dict[int, dict[RegimeName, FloatND]]:
@@ -25,7 +26,7 @@ def solve(
 
     Args:
         params: Dict of model parameters.
-        n_periods: The number of periods in the model.
+        ages: Age grid for the model.
         internal_regimes: The internal regimes, that contain all necessary functions
             to solve the model.
         logger: Logger that logs to stdout.
@@ -42,7 +43,7 @@ def solve(
     logger.info("Starting solution")
 
     # backwards induction loop
-    for period in reversed(range(n_periods)):
+    for period in reversed(range(ages.n_periods)):
         period_solution: dict[RegimeName, FloatND] = {}
 
         active_regimes = {
@@ -71,6 +72,6 @@ def solve(
 
         next_V_arr = period_solution
         solution[period] = period_solution
-        logger.info("Period: %s", period)
+        logger.info("Age: %s", ages.ages[period])
 
     return solution

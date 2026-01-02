@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable
 from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -11,11 +10,9 @@ from lcm.utils import REGIME_SEPARATOR, flatten_regime_namespace
 
 if TYPE_CHECKING:
     from lcm.typing import (
+        ActivePredicate,
         UserFunction,
     )
-
-# Type alias for active predicate
-ActivePredicate = Callable[[float], bool]
 
 
 @dataclass(frozen=True)

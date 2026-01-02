@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
@@ -33,7 +32,7 @@ def parse_step(step: str) -> float:
     """Parse a step string like 'Y', '2Y', 'M', '3M', 'Q' into years."""
     match = _STEP_PATTERN.match(step)
     if not match:
-        raise ValueError(
+        raise GridInitializationError(
             f"Invalid step format: '{step}'. "
             "Expected format like 'Y', '2Y', 'M', '3M', 'Q'."
         )
@@ -48,30 +47,29 @@ def parse_step(step: str) -> float:
 # ======================================================================================
 
 
-@dataclass(frozen=True)
 class AgeGrid:
     """Age grid for lifecycle models."""
 
-    start: float | None = None
-    stop: float | None = None
-    step: str | None = None
-    values: tuple[float, ...] | None = None
+    def __init__(
+        self,
+        start: float | None = None,
+        stop: float | None = None,
+        step: str | None = None,
+        values: tuple[float, ...] | None = None,
+    ) -> None:
+        _validate_age_grid(start, stop, step, values)
 
-    _ages: Float1D = field(init=False, repr=False, compare=False)
-    _step_size: float | None = field(init=False, repr=False, compare=False)
+        self.start = start
+        self.stop = stop
+        self.step = step
+        self.values = values
 
-    def __post_init__(self) -> None:
-        _validate_age_grid(self.start, self.stop, self.step, self.values)
-
-        if self.values is not None:
-            ages = jnp.array(self.values)
-            step_size = None
+        if values is not None:
+            self._ages = jnp.array(values)
+            self._step_size: float | None = None
         else:
-            step_size = parse_step(self.step)  # type: ignore[arg-type]
-            ages = jnp.arange(self.start, self.stop, step_size)  # type: ignore[arg-type]
-
-        object.__setattr__(self, "_ages", ages)
-        object.__setattr__(self, "_step_size", step_size)
+            self._step_size = parse_step(step)  # type: ignore[arg-type]
+            self._ages = jnp.arange(start, stop, self._step_size)  # type: ignore[arg-type]
 
     @property
     def ages(self) -> Float1D:

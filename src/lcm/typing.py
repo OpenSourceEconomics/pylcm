@@ -218,3 +218,13 @@ class NextStateSimulationFunction(Protocol):
         self,
         **kwargs: Array | Period | ParamsDict,
     ) -> dict[str, DiscreteState | ContinuousState]: ...
+
+
+class ActivePredicate(Protocol):
+    """Predicate that determines if a regime is active at a given age.
+
+    Only used for type checking.
+
+    """
+
+    def __call__(self, age: float, /) -> bool: ...  # noqa: D102

@@ -30,7 +30,7 @@ def test_parse_step_valid_formats():
 
 
 def test_parse_step_invalid():
-    with pytest.raises(ValueError, match="Invalid step format"):
+    with pytest.raises(GridInitializationError, match="Invalid step format"):
         parse_step("X")
 
 

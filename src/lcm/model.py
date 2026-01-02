@@ -119,7 +119,7 @@ class Model:
         """
         return solve(
             params=params,
-            n_periods=self.n_periods,
+            ages=self.ages,
             internal_regimes=self.internal_regimes,
             logger=get_logger(debug_mode=debug_mode),
         )

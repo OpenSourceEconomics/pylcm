@@ -14,7 +14,6 @@ import jax.numpy as jnp
 import pandas as pd
 from dags import concatenate_functions
 
-from lcm.ages import AgeGrid  # noqa: TC001 - Used at runtime
 from lcm.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.grids import DiscreteGrid
@@ -22,6 +21,7 @@ from lcm.grids import DiscreteGrid
 if TYPE_CHECKING:
     from jax import Array
 
+    from lcm.ages import AgeGrid
     from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
     from lcm.typing import FloatND, ParamsDict, RegimeName
 
@@ -405,7 +405,7 @@ def _process_regime(
     data = _concatenate_and_filter(period_dicts)
 
     # Add age column (computed from period using ages grid)
-    data["age"] = jnp.array([ages.period_to_age(int(p)) for p in data["period"]])
+    data["age"] = ages.ages[data["period"]]
 
     # Add regime name
     data["regime"] = [internal_regime.name] * len(data["period"])
