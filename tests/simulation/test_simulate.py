@@ -34,16 +34,15 @@ def simulate_inputs():
         working,
     )
 
-    n_periods = 2
-    ages = AgeGrid(start=0, stop=n_periods, step="Y")
+    ages = AgeGrid(start=0, stop=2, step="Y")
     updated_working = working.replace(
         actions={
             **working.actions,
             "consumption": working.actions["consumption"].replace(stop=100),  # ty: ignore[unresolved-attribute]
         },
-        active=lambda age: age < n_periods - 1,
+        active=lambda age: age < 1,
     )
-    updated_dead = dead.replace(active=lambda age: age >= n_periods - 1)
+    updated_dead = dead.replace(active=lambda age: age >= 1)
     internal_regimes = process_regimes(
         [updated_working, updated_dead],
         ages=ages,
@@ -96,6 +95,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
 @pytest.fixture
 def iskhakov_et_al_2017_stripped_down_model_solution():
     from tests.test_models.deterministic.regression import (  # noqa: PLC0415
+        START_AGE,
         RegimeId,
         dead,
         get_params,
@@ -103,23 +103,21 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
     )
 
     def _model_solution(n_periods):
+        # remove wage function so that wage becomes a parameter
         updated_functions = {
-            # remove dependency on agent_age, so that wage becomes a parameter
-            name: func
-            for name, func in working.functions.items()
-            if name not in ["agent_age", "wage"]
+            name: func for name, func in working.functions.items() if name != "wage"
         }
-        ages = AgeGrid(start=0, stop=n_periods, step="Y")
+        stop_age = START_AGE + n_periods
+        ages = AgeGrid(start=START_AGE, stop=stop_age, step="Y")
         updated_working = working.replace(
-            functions=updated_functions, active=lambda age, n=n_periods: age < n - 1
+            functions=updated_functions,
+            active=lambda age, stop=stop_age: age < stop - 1,
         )
-        updated_dead = dead.replace(active=lambda age, n=n_periods: age >= n - 1)
+        updated_dead = dead.replace(active=lambda age, stop=stop_age: age >= stop - 1)
 
         params = get_params(n_periods=n_periods)
         # Since wage function is removed, wage becomes a parameter for labor_income
         params["working"]["labor_income"] = {"wage": 1.5}
-        # Override final_age since we use AgeGrid starting at 0, not START_AGE
-        params["working"]["next_regime"] = {"final_age": n_periods - 2}
         model = Model(
             [updated_working, updated_dead], ages=ages, regime_id_cls=RegimeId
         )

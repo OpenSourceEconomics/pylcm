@@ -141,13 +141,12 @@ START_AGE = 18
 
 def get_model(n_periods: int) -> Model:
     stop_age = START_AGE + n_periods
-    ages = AgeGrid(start=START_AGE, stop=stop_age, step="Y")
     return Model(
         [
             working.replace(active=lambda age, stop=stop_age: age < stop - 1),
             dead.replace(active=lambda age, stop=stop_age: age >= stop - 1),
         ],
-        ages=ages,
+        ages=AgeGrid(start=START_AGE, stop=stop_age, step="Y"),
         regime_id_cls=RegimeId,
     )
 
