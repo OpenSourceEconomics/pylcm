@@ -18,7 +18,7 @@ from lcm.function_representation import (
     _get_lookup_function,
     get_value_function_representation,
 )
-from lcm.grids import DiscreteGrid
+from lcm.grids import ContinuousGrid, DiscreteGrid
 from lcm.interfaces import (
     StateSpaceInfo,
 )
@@ -112,7 +112,7 @@ def test_function_evaluator(binary_discrete_grid):
     }
 
     # create info on continuous grids
-    continuous_vars = {
+    continuous_vars: dict[str, ContinuousGrid] = {
         "wealth": LinspaceGrid(start=100, stop=1100, n_points=6),
         "human_capital": LinspaceGrid(start=-3, stop=3, n_points=7),
     }

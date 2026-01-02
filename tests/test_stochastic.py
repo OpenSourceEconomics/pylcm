@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 import pandas as pd
@@ -8,10 +8,18 @@ import pytest
 from numpy.testing import assert_array_almost_equal
 
 import lcm
-from tests.test_models import get_model, get_params
+from lcm import Model
+from tests.test_models.stochastic import (
+    RegimeId,
+    dead,
+    get_model,
+    get_params,
+    retired,
+    working,
+)
 
 if TYPE_CHECKING:
-    from lcm.typing import FloatND
+    from lcm.typing import DiscreteState, FloatND
 
 # ======================================================================================
 # Simulate
@@ -19,28 +27,45 @@ if TYPE_CHECKING:
 
 
 def test_model_solve_and_simulate_with_stochastic_model():
-    model = get_model("iskhakov_et_al_2017_stochastic", n_periods=3)
+    model = get_model(n_periods=4)
+    params = get_params(n_periods=4)
 
-    res: pd.DataFrame = model.solve_and_simulate(
-        params=get_params(),
+    result = model.solve_and_simulate(
+        params=params,
         initial_states={
             "health": jnp.array([1, 1, 0, 0]),
             "partner": jnp.array([0, 0, 1, 0]),
             "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
         },
+        initial_regimes=["working"] * 4,
     )
+    df = result.to_dataframe().query('regime == "working"')
 
-    # This is derived from the partner transition in get_params.
-    expected_next_partner = (
-        (res.working.astype(bool) | ~res.partner.astype(bool)).astype(int).loc[:1]
-    )
+    # Verify expected columns
+    required_cols = {"period", "subject_id", "partner", "labor_supply"}
+    assert required_cols <= set(df.columns)
+    assert len(df) > 0
 
-    pd.testing.assert_series_equal(
-        res["partner"].loc[1:],
-        expected_next_partner,
-        check_index=False,
-        check_names=False,
-    )
+    # Check partner transition follows expected pattern:
+    # Partner becomes single if working and partnered, otherwise stays partnered
+    period_0 = df.query("period == 0").set_index("subject_id")
+    period_1 = df.query("period == 1").set_index("subject_id")
+    common = period_0.index.intersection(period_1.index)
+
+    if len(common) > 0:
+        p0, p1 = period_0.loc[common], period_1.loc[common]
+        should_be_single = (p0["labor_supply"] == "work") & (
+            p0["partner"] == "partnered"
+        )
+        expected = should_be_single.map({True: "single", False: "partnered"})
+
+        pd.testing.assert_series_equal(
+            p1["partner"],
+            expected,
+            check_names=False,
+            check_dtype=False,
+            check_categorical=False,
+        )
 
 
 # ======================================================================================
@@ -49,8 +74,8 @@ def test_model_solve_and_simulate_with_stochastic_model():
 
 
 def test_model_solve_with_stochastic_model():
-    model = get_model("iskhakov_et_al_2017_stochastic", n_periods=3)
-    model.solve(params=get_params())
+    model = get_model(n_periods=4)
+    model.solve(params=get_params(n_periods=4))
 
 
 # ======================================================================================
@@ -59,59 +84,89 @@ def test_model_solve_with_stochastic_model():
 
 
 @pytest.fixture
-def model_and_params():
-    """Return a simple deterministic and stochastic model with parameters.
+def models_and_params() -> tuple[Model, Model, dict[str, Any]]:
+    """Return a deterministic and stochastic model with parameters.
 
     TODO(@timmens): Add this to tests/test_models/stochastic.py.
 
     """
 
-    # Define functions first
     @lcm.mark.stochastic
-    def next_health_stochastic(health):
-        pass
+    def next_health_stochastic(health: DiscreteState) -> FloatND:
+        return jnp.identity(2)[health]
 
-    def next_health_deterministic(health):
+    def next_health_deterministic(health: DiscreteState) -> DiscreteState:
         return health
 
-    # Get the base models and create modified versions
-    base_model = get_model("iskhakov_et_al_2017_stochastic", n_periods=3)
+    n_periods = 4
 
     # Create deterministic model with modified function
-    model_deterministic = base_model.replace(
-        functions={**base_model.functions, "next_health": next_health_deterministic}
+    working_deterministic = working.replace(
+        transitions={
+            **working.transitions,
+            "next_health": next_health_deterministic,
+        },
+        active=range(n_periods - 1),
+    )
+    retired_deterministic = retired.replace(
+        transitions={
+            **retired.transitions,
+            "next_health": next_health_deterministic,
+        },
+        active=range(n_periods - 1),
     )
 
-    # Create stochastic model with modified function
-    model_stochastic = base_model.replace(
-        functions={**base_model.functions, "next_health": next_health_stochastic}
+    # Create stochastic model with identity transition function
+    working_stochastic = working.replace(
+        transitions={
+            **working.transitions,
+            "next_health": next_health_stochastic,
+        },
+        active=range(n_periods - 1),
+    )
+    retired_stochastic = retired.replace(
+        transitions={
+            **retired.transitions,
+            "next_health": next_health_stochastic,
+        },
+        active=range(n_periods - 1),
     )
 
-    params = get_params(
-        beta=0.95,
-        disutility_of_work=1.0,
-        interest_rate=0.05,
-        wage=10.0,
-        health_transition=jnp.identity(2),
+    dead_updated = dead.replace(active=[n_periods - 1])
+
+    model_deterministic = Model(
+        [working_deterministic, retired_deterministic, dead_updated],
+        n_periods=n_periods,
+        regime_id_cls=RegimeId,
     )
 
-    return model_deterministic, model_stochastic, params
+    model_stochastic = Model(
+        [working_stochastic, retired_stochastic, dead_updated],
+        n_periods=n_periods,
+        regime_id_cls=RegimeId,
+    )
+
+    return model_deterministic, model_stochastic, get_params(n_periods=n_periods)
 
 
-def test_compare_deterministic_and_stochastic_results_value_function(model_and_params):
+def test_compare_deterministic_and_stochastic_results_value_function(
+    models_and_params: tuple[Model, Model, dict[str, Any]],
+) -> None:
     """Test that the deterministic and stochastic models produce the same results."""
-    model_deterministic, model_stochastic, params = model_and_params
+    model_deterministic, model_stochastic, params = models_and_params
 
     # ==================================================================================
     # Compare value function arrays
     # ==================================================================================
-    solution_deterministic: dict[int, FloatND] = model_deterministic.solve(params)
-    solution_stochastic: dict[int, FloatND] = model_stochastic.solve(params)
+    solution_deterministic: dict[int, dict[str, FloatND]] = model_deterministic.solve(
+        params
+    )
+    solution_stochastic: dict[int, dict[str, FloatND]] = model_stochastic.solve(params)
 
-    for period in range(model_deterministic.n_periods):
+    for period in range(model_deterministic.n_periods - 1):
         assert_array_almost_equal(
-            solution_deterministic[period],
-            solution_stochastic[period],
+            solution_deterministic[period]["working"],
+            solution_stochastic[period]["working"],
             decimal=14,
         )
 
@@ -123,15 +178,25 @@ def test_compare_deterministic_and_stochastic_results_value_function(model_and_p
         "partner": jnp.array([0, 0, 0, 0]),
         "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
     }
+    initial_regimes = ["working"] * 4
 
     simulation_deterministic = model_deterministic.simulate(
         params,
         V_arr_dict=solution_deterministic,
         initial_states=initial_states,
+        initial_regimes=initial_regimes,
     )
     simulation_stochastic = model_stochastic.simulate(
         params,
         V_arr_dict=solution_stochastic,
         initial_states=initial_states,
+        initial_regimes=initial_regimes,
     )
-    pd.testing.assert_frame_equal(simulation_deterministic, simulation_stochastic)
+    df_deterministic = simulation_deterministic.to_dataframe().query(
+        'regime == "working"'
+    )
+    df_stochastic = simulation_stochastic.to_dataframe().query('regime == "working"')
+    pd.testing.assert_frame_equal(
+        df_deterministic.reset_index(drop=True),
+        df_stochastic.reset_index(drop=True),
+    )

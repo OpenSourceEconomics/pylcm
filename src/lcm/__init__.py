@@ -7,6 +7,16 @@ except ImportError:
 
 from lcm import mark
 from lcm.grids import DiscreteGrid, LinspaceGrid, LogspaceGrid
-from lcm.user_model import Model
+from lcm.model import Model
+from lcm.regime import Regime
+from lcm.simulation.result import SimulationResult
 
-__all__ = ["DiscreteGrid", "LinspaceGrid", "LogspaceGrid", "Model", "mark"]
+__all__ = [
+    "DiscreteGrid",
+    "LinspaceGrid",
+    "LogspaceGrid",
+    "Model",
+    "Regime",
+    "SimulationResult",
+    "mark",
+]

@@ -11,11 +11,14 @@ if TYPE_CHECKING:
 ReturnType = TypeVar("ReturnType")
 
 
-def allow_only_kwargs(func: Callable[..., ReturnType]) -> Callable[..., ReturnType]:
+def allow_only_kwargs(
+    func: Callable[..., ReturnType], *, enforce: bool = True
+) -> Callable[..., ReturnType]:
     """Restrict a function to be called with only keyword arguments.
 
     Args:
         func: The function to be wrapped.
+        enforce: Whether to enforce the signature.
 
     Returns:
         A Callable with the same arguments as func (but with the additional restriction
@@ -46,34 +49,38 @@ def allow_only_kwargs(func: Callable[..., ReturnType]) -> Callable[..., ReturnTy
                 ),
             )
 
-        extra = set(kwargs).difference(parameters)
-        if extra:
-            raise ValueError(
-                f"Expected arguments: {list(parameters)}, got extra: {extra}",
-            )
+        if enforce:
+            extra = set(kwargs).difference(parameters)
+            if extra:
+                raise ValueError(
+                    f"Expected arguments: {list(parameters)}, got extra: {extra}",
+                )
 
-        missing = set(parameters).difference(kwargs)
-        if missing:
-            raise ValueError(
-                f"Expected arguments: {list(parameters)}, missing: {missing}",
-            )
+            missing = set(parameters).difference(kwargs)
+            if missing:
+                raise ValueError(
+                    f"Expected arguments: {list(parameters)}, missing: {missing}",
+                )
 
         # Retrieve keyword-only arguments
         kw_only_kwargs = {k: kwargs[k] for k in kw_only_parameters}
 
         # Get kwargs that must be converted to positional arguments
-        pos_kwargs = {k: v for k, v in kwargs.items() if k not in kw_only_parameters}
+        pos_kwargs = {
+            k: v
+            for k, v in kwargs.items()
+            if (k not in kw_only_parameters) and (k in parameters)
+        }
 
         # Collect all positional arguments in correct order
         positional = convert_kwargs_to_args(pos_kwargs, list(parameters))
 
         return func(*positional, **kw_only_kwargs)
 
-    # This raises a mypy error but is perfectly fine to do. See
-    # https://github.com/python/mypy/issues/12472
-    func_with_only_kwargs.__signature__ = new_signature  # type: ignore[attr-defined]
+    # Callables do not necessarily have a __signature__ attribute.
+    func_with_only_kwargs.__signature__ = new_signature  # ty: ignore[unresolved-attribute]
 
-    # We cast to F here to signal mypy that the return type is the same as the input
+    # We cast to F here to signal ty that the return type is the same as the input
     # type. This ignores the change of parameters from positional to keyword-only
     # arguments.
     # TODO(@timmens): Remove this cast once we find an explicit way to specify the
@@ -145,11 +152,10 @@ def allow_args(func: Callable[..., ReturnType]) -> Callable[..., ReturnType]:
 
         return func(*positional_only, **kwargs)
 
-    # This raises a mypy error but is perfectly fine to do. See
-    # https://github.com/python/mypy/issues/12472
-    allow_args_wrapper.__signature__ = new_signature  # type: ignore[attr-defined]
+    # Callables do not necessarily have a __signature__ attribute.
+    allow_args_wrapper.__signature__ = new_signature  # ty: ignore[unresolved-attribute]
 
-    # We cast to F here to signal mypy that the return type is the same as the input
+    # We cast to F here to signal ty that the return type is the same as the input
     # type. This ignores the change of parameters from positional to keyword-only
     # arguments.
     # TODO(@timmens): Remove this cast once we find an explicit way to specify the

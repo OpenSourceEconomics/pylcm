@@ -1,27 +1,31 @@
 from __future__ import annotations
 
 import dataclasses
+from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from lcm.utils import first_non_none
+from lcm.utils import first_non_none, flatten_regime_namespace
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     import pandas as pd
     from jax import Array
 
     from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
     from lcm.typing import (
+        ArgmaxQOverAFunction,
+        Bool1D,
         ContinuousAction,
         ContinuousState,
         DiscreteAction,
         DiscreteState,
-        Float1D,
-        Int1D,
         InternalUserFunction,
+        MaxQOverAFunction,
+        NextStateSimulationFunction,
         ParamsDict,
+        RegimeTransitionFunction,
+        TransitionFunctionsDict,
+        VmappedRegimeTransitionFunction,
     )
 
 
@@ -63,6 +67,26 @@ class StateActionSpace:
     discrete_actions: dict[str, DiscreteAction]
     continuous_actions: dict[str, ContinuousAction]
     states_and_discrete_actions_names: tuple[str, ...]
+
+    @property
+    def states_names(self) -> tuple[str, ...]:
+        """Tuple with names of all state variables."""
+        return tuple(self.states)
+
+    @property
+    def actions_names(self) -> tuple[str, ...]:
+        """Tuple with names of all action variables."""
+        return tuple(self.discrete_actions) + tuple(self.continuous_actions)
+
+    @property
+    def actions(self) -> dict[str, DiscreteAction | ContinuousAction]:
+        """Dictionary with all action variables."""
+        return self.discrete_actions | self.continuous_actions
+
+    @property
+    def actions_grid_shapes(self) -> tuple[int, ...]:
+        """Dictionary with all action variables."""
+        return tuple(len(grid) for grid in self.actions.values())
 
     def replace(
         self,
@@ -109,8 +133,8 @@ class StateSpaceInfo:
     """
 
     states_names: tuple[str, ...]
-    discrete_states: Mapping[str, DiscreteGrid]
-    continuous_states: Mapping[str, ContinuousGrid]
+    discrete_states: dict[str, DiscreteGrid]
+    continuous_states: dict[str, ContinuousGrid]
 
 
 class ShockType(Enum):
@@ -120,54 +144,74 @@ class ShockType(Enum):
     NONE = None
 
 
-@dataclasses.dataclass(frozen=True)
-class InternalModel:
-    """Internal representation of a user model.
+class PhaseVariantContainer[S, T]:
+    """Container for objects that vary whether we are in the solve or simulate phase.
 
     Attributes:
-        grids: Dictionary that maps names of model variables to grids of feasible values
-            for that variable.
-        gridspecs: Dictionary that maps names of model variables to specifications from
-            which grids of feasible values can be built.
-        variable_info: A table with information about all variables in the model. The
-            index contains the name of a model variable. The columns are booleans that
-            are True if the variable has the corresponding property. The columns are:
-            is_state, is_action, is_continuous, is_discrete.
-        functions: Dictionary that maps names of functions to functions. The functions
-            differ from the user functions in that they take `params` as a keyword
-            argument. Two cases:
-            - If the original function depended on model parameters, those are
-              automatically extracted from `params` and passed to the original
-              function.
-            - Otherwise, the `params` argument is simply ignored.
-        function_info: A table with information about all functions in the model. The
-            index contains the name of a function. The columns are booleans that are
-            True if the function has the corresponding property. The columns are:
-            is_constraint, is_next.
-        params: Dict of model parameters.
-        n_periods: Number of periods.
-        random_utility_shocks: Type of random utility shocks.
+        solve: Object for the solve phase.
+        simulate: Object for the simulate phase.
 
     """
 
-    grids: dict[str, Float1D | Int1D]
+    __slots__ = ("simulate", "solve")
+
+    def __init__(self, solve: S, simulate: T) -> None:
+        self.solve = solve
+        self.simulate = simulate
+
+
+@dataclasses.dataclass(frozen=True)
+class InternalRegime:
+    """Internal representation of a user regime.
+
+    MUST BE UPDATED.
+
+    """
+
+    name: str
+    terminal: bool
+    grids: dict[str, Array]
     gridspecs: dict[str, Grid]
     variable_info: pd.DataFrame
+    utility: InternalUserFunction
+    constraints: dict[str, InternalUserFunction]
+    transitions: TransitionFunctionsDict
     functions: dict[str, InternalUserFunction]
-    function_info: pd.DataFrame
-    params: ParamsDict
-    n_periods: int
+    active_periods: list[int]
+    regime_transition_probs: (
+        PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]
+        | None
+    )
+    internal_functions: InternalFunctions
+    params_template: ParamsDict
+    state_action_spaces: StateActionSpace
+    state_space_infos: StateSpaceInfo
+    max_Q_over_a_functions: dict[int, MaxQOverAFunction]
+    argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction]
+    next_state_simulation_function: NextStateSimulationFunction
     # Not properly processed yet
     random_utility_shocks: ShockType
 
 
 @dataclasses.dataclass(frozen=True)
-class InternalSimulationPeriodResults:
-    """The results of a simulation for one period."""
+class PeriodRegimeSimulationData:
+    """Raw simulation data for one period in one regime.
 
-    value: Array
+    Attributes:
+        V_arr: Value function array of a regime for all subjects at this period.
+        actions: Dict mapping action names to optimal action arrays for all subjects.
+        states: Dict mapping state names to state value arrays for all subjects.
+        in_regime: Boolean mask indicating which subjects are in this regime at this
+            period. True means the subject is in this regime; False means they are in
+            a different regime (and the corresponding values in V_arr, actions, and
+            states should be ignored for that subject).
+
+    """
+
+    V_arr: Array
     actions: dict[str, Array]
     states: dict[str, Array]
+    in_regime: Bool1D
 
 
 class Target(Enum):
@@ -175,3 +219,38 @@ class Target(Enum):
 
     SOLVE = "solve"
     SIMULATE = "simulate"
+
+
+@dataclass(frozen=True)
+class InternalFunctions:
+    """All functions that are used in the regime."""
+
+    functions: dict[str, InternalUserFunction]
+    utility: InternalUserFunction
+    constraints: dict[str, InternalUserFunction]
+    transitions: TransitionFunctionsDict
+    regime_transition_probs: (
+        PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]
+        | None
+    )
+
+    def get_all_functions(self) -> dict[str, InternalUserFunction]:
+        """Get all regime functions including utility, constraints, and transitions.
+
+        Returns:
+            Dictionary that maps names of all regime functions to the functions.
+
+        """
+        functions_pool = self.functions | {
+            "utility": self.utility,
+            **self.constraints,
+            **self.transitions,
+        }
+        if self.regime_transition_probs is not None:
+            functions_pool["regime_transition_probs_solve"] = (
+                self.regime_transition_probs.solve
+            )
+            functions_pool["regime_transition_probs_simulate"] = (
+                self.regime_transition_probs.simulate
+            )
+        return flatten_regime_namespace(functions_pool)

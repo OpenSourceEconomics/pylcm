@@ -1,5 +1,3 @@
-"""Collection of classes that are used by the user to define the model and grids."""
-
 from __future__ import annotations
 
 import dataclasses
@@ -107,7 +105,7 @@ class ContinuousGrid(Grid, ABC):
 
         """
         try:
-            return dataclasses.replace(self, **kwargs)  # type: ignore[arg-type]
+            return dataclasses.replace(self, **kwargs)
         except TypeError as e:
             raise GridInitializationError(
                 f"Failed to replace attributes of the grid. The error was: {e}"
@@ -181,20 +179,43 @@ def _validate_discrete_grid(category_class: type) -> None:
             int or float fields.
 
     """
+    error_messages = validate_category_class(category_class)
+    if error_messages:
+        msg = format_messages(error_messages)
+        raise GridInitializationError(msg)
+
+
+def validate_category_class(category_class: type) -> list[str]:
+    """Validate a category class has proper structure for discrete grids.
+
+    This validates that:
+    - The class is a dataclass
+    - It has at least one field
+    - All field values are scalar int or float
+    - All field values are unique
+    - Field values are consecutive integers starting from 0
+
+    Args:
+        category_class: The category class to validate. Must be a dataclass with fields
+            that have unique scalar int or float values.
+
+    Returns:
+        A list of error messages. Empty list if validation passes.
+
+    """
+    error_messages: list[str] = []
+
     if not is_dataclass(category_class):
-        raise GridInitializationError(
+        error_messages.append(
             "category_class must be a dataclass with scalar int or float fields, "
             f"but is {category_class}."
         )
+        return error_messages
 
     names_and_values = _get_field_names_and_values(category_class)
 
-    error_messages = []
-
     if not names_and_values:
-        error_messages.append(
-            "category_class passed to DiscreteGrid must have at least one field"
-        )
+        error_messages.append("category_class must have at least one field.")
 
     names_with_non_numerical_values = [
         name
@@ -203,8 +224,8 @@ def _validate_discrete_grid(category_class: type) -> None:
     ]
     if names_with_non_numerical_values:
         error_messages.append(
-            "Field values of the category_class passed to DiscreteGrid can only be "
-            "scalar int or float values. The values to the following fields are not: "
+            "Field values of the category_class can only be scalar int or float "
+            f"values. The values to the following fields are not: "
             f"{names_with_non_numerical_values}"
         )
 
@@ -213,20 +234,17 @@ def _validate_discrete_grid(category_class: type) -> None:
     duplicated_values = find_duplicates(values)
     if duplicated_values:
         error_messages.append(
-            "Field values of the category_class passed to DiscreteGrid must be unique. "
-            "The following values are duplicated: "
-            f"{duplicated_values}"
+            "Field values of the category_class must be unique. "
+            f"The following values are duplicated: {duplicated_values}"
         )
 
     if values != list(range(len(values))):
         error_messages.append(
-            "Field values of the category_class passed to DiscreteGrid must be "
-            "consecutive integers starting from 0 (e.g., 0, 1, 2, ...)."
+            "Field values of the category_class must be consecutive integers "
+            "starting from 0 (e.g., 0, 1, 2, ...)."
         )
 
-    if error_messages:
-        msg = format_messages(error_messages)
-        raise GridInitializationError(msg)
+    return error_messages
 
 
 def _get_field_names_and_values(dc: type) -> dict[str, Any]:

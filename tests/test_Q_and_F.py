@@ -3,82 +3,86 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
-import pandas as pd
 import pytest
 from numpy.testing import assert_array_equal
 
-from lcm.input_processing import process_model
-from lcm.interfaces import InternalModel, ShockType
+import lcm
+from lcm.input_processing import process_regimes
+from lcm.interfaces import InternalFunctions, PhaseVariantContainer
 from lcm.Q_and_F import (
     _get_feasibility,
     _get_joint_weights_function,
-    get_Q_and_F,
+    get_Q_and_F_terminal,
 )
-from lcm.state_action_space import create_state_space_info
-from tests.test_models import get_model
-from tests.test_models.deterministic import utility
+from tests.test_models.deterministic.regression import (
+    LaborSupply,
+    RegimeId,
+    dead,
+    get_params,
+    utility,
+    working,
+)
 
 if TYPE_CHECKING:
-    from lcm.typing import BoolND, DiscreteAction, DiscreteState, ParamsDict
+    from lcm.typing import (
+        BoolND,
+        DiscreteAction,
+        DiscreteState,
+        Int1D,
+        ParamsDict,
+        Period,
+    )
 
 
 @pytest.mark.illustrative
 def test_get_Q_and_F_function():
-    model = process_model(
-        get_model("iskhakov_et_al_2017_stripped_down", n_periods=3),
+    internal_regimes = process_regimes(
+        [working, dead],
+        n_periods=4,
+        regime_id_cls=RegimeId,
+        enable_jit=True,
     )
 
-    params = {
-        "beta": 1.0,
-        "utility": {"disutility_of_work": 1.0},
-        "next_wealth": {
-            "interest_rate": 0.05,
-            "wage": 1.0,
-        },
-    }
+    params = get_params(n_periods=4)
 
-    state_space_info = create_state_space_info(
-        internal_model=model,
-        is_last_period=False,
-    )
-
-    Q_and_F = get_Q_and_F(
-        internal_model=model,
-        next_state_space_info=state_space_info,
-        period=model.n_periods - 1,
+    # Test terminal period Q_and_F where Q = U (no continuation value)
+    Q_and_F = get_Q_and_F_terminal(
+        regime=working,
+        internal_functions=internal_regimes[working.name].internal_functions,
+        period=3,
     )
 
     consumption = jnp.array([10, 20, 30])
-    retirement = jnp.array([0, 1, 0])
+    labor_supply = jnp.array([0, 1, 0])
     wealth = jnp.array([20, 20, 20])
 
     Q_arr, F_arr = Q_and_F(
         consumption=consumption,
-        retirement=retirement,
+        labor_supply=labor_supply,
         wealth=wealth,
         params=params,
-        next_V_arr=None,
+        next_V_arr=jnp.empty(0),  # Terminal period doesn't use continuation value
     )
 
     assert_array_equal(
         Q_arr,
         utility(
             consumption=consumption,
-            working=1 - retirement,
-            disutility_of_work=1.0,
+            is_working=labor_supply == LaborSupply.work,
+            disutility_of_work=0.5,  # matches get_params default
         ),
     )
     assert_array_equal(F_arr, jnp.array([True, True, False]))
 
 
 @pytest.fixture
-def internal_model_illustrative():
-    def age(period: int) -> int:
+def internal_functions_illustrative():
+    def age(period: Period) -> int | Int1D:
         return period + 18
 
     def mandatory_retirement_constraint(
         retirement: DiscreteAction,
-        age: int,
+        age: int | Int1D,
         params: ParamsDict,  # noqa: ARG001
     ) -> BoolND:
         # Individuals must be retired from age 65 onwards
@@ -86,7 +90,7 @@ def internal_model_illustrative():
 
     def mandatory_lagged_retirement_constraint(
         lagged_retirement: DiscreteState,
-        age: int,
+        age: int | Int1D,
         params: ParamsDict,  # noqa: ARG001
     ) -> BoolND:
         # Individuals must have been retired last year from age 66 onwards
@@ -100,42 +104,36 @@ def internal_model_illustrative():
         # If an individual was retired last year, it must be retired this year
         return jnp.logical_or(retirement == 1, lagged_retirement == 0)
 
-    grids = {
-        "lagged_retirement": jnp.array([0, 1]),
-        "retirement": jnp.array([0, 1]),
-    }
-
-    functions = {
+    constraints = {
         "mandatory_retirement_constraint": mandatory_retirement_constraint,
         "mandatory_lagged_retirement_constraint": (
             mandatory_lagged_retirement_constraint
         ),
         "absorbing_retirement_constraint": absorbing_retirement_constraint,
-        "age": age,
     }
 
-    function_info = pd.DataFrame(
-        {"is_constraint": [True, True, True, False]},
-        index=list(functions),
-    )
+    functions = {"age": age}
 
-    # create a model instance where some attributes are set to None because they
-    # are not needed to create the feasibilty mask
-    return InternalModel(
-        grids=grids,
-        gridspecs={},
-        variable_info=pd.DataFrame(),
-        functions=functions,  # type: ignore[arg-type]
-        function_info=function_info,
-        params={},
-        random_utility_shocks=ShockType.NONE,
-        n_periods=0,
+    # create an internal regime instance where some attributes are set to None
+    # because they are not needed to create the feasibilty mask
+    mock_transition_solve = lambda *args, params, **kwargs: {"mock": 1.0}  # noqa: E731, ARG005
+    mock_transition_simulate = lambda *args, params, **kwargs: {  # noqa: E731, ARG005
+        "mock": jnp.array([1.0])
+    }
+    return InternalFunctions(
+        utility=lambda: 0,  # ty: ignore[invalid-argument-type]
+        transitions={},
+        constraints=constraints,  # ty: ignore[invalid-argument-type]
+        functions=functions,  # ty: ignore[invalid-argument-type]
+        regime_transition_probs=PhaseVariantContainer(
+            solve=mock_transition_solve, simulate=mock_transition_simulate
+        ),
     )
 
 
 @pytest.mark.illustrative
-def test_get_combined_constraint_illustrative(internal_model_illustrative):
-    combined_constraint = _get_feasibility(internal_model_illustrative)
+def test_get_combined_constraint_illustrative(internal_functions_illustrative):
+    combined_constraint = _get_feasibility(internal_functions_illustrative)
 
     age, retirement, lagged_retirement = jnp.array(
         [
@@ -164,14 +162,24 @@ def test_get_combined_constraint_illustrative(internal_model_illustrative):
 
 
 def test_get_multiply_weights():
+    @lcm.mark.stochastic
+    def next_a():
+        return jnp.array([0.1, 0.9])
+
+    @lcm.mark.stochastic
+    def next_b():
+        return jnp.array([0.2, 0.8])
+
+    transitions = {"next_a": next_a, "next_b": next_b}
     multiply_weights = _get_joint_weights_function(
-        stochastic_variables=("a", "b"),
+        regime_name="test",
+        transitions=transitions,
     )
 
     a = jnp.array([1, 2])
     b = jnp.array([3, 4])
 
-    got = multiply_weights(weight_next_a=a, weight_next_b=b)
+    got = multiply_weights(weight_test__next_a=a, weight_test__next_b=b)
     expected = jnp.array([[3, 4], [6, 8]])
     assert_array_equal(got, expected)
 
@@ -186,20 +194,19 @@ def test_get_combined_constraint():
     def h(params):  # noqa: ARG001
         return None
 
-    function_info = pd.DataFrame(
-        {"is_constraint": [True, True, False]},
-        index=["f", "g", "h"],
+    mock_transition_solve = lambda *args, params, **kwargs: {"mock": 1.0}  # noqa: E731, ARG005
+    mock_transition_simulate = lambda *args, params, **kwargs: {  # noqa: E731, ARG005
+        "mock": jnp.array([1.0])
+    }
+    internal_functions = InternalFunctions(
+        utility=lambda: 0,  # ty: ignore[invalid-argument-type]
+        constraints={"f": f, "g": g},  # ty: ignore[invalid-argument-type]
+        transitions={},
+        functions={"h": h},  # ty: ignore[invalid-argument-type]
+        regime_transition_probs=PhaseVariantContainer(
+            solve=mock_transition_solve, simulate=mock_transition_simulate
+        ),
     )
-    model = InternalModel(
-        grids={},
-        gridspecs={},
-        variable_info=pd.DataFrame(),
-        functions={"f": f, "g": g, "h": h},  # type: ignore[dict-item]
-        function_info=function_info,
-        params={},
-        random_utility_shocks=ShockType.NONE,
-        n_periods=0,
-    )
-    combined_constraint = _get_feasibility(model)
+    combined_constraint = _get_feasibility(internal_functions)
     feasibility: BoolND = combined_constraint(params={})
     assert feasibility.item() is False

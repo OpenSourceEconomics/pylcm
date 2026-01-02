@@ -1,31 +1,30 @@
 # Example model specifications
 
-## Choosing an example
+## Example Model Stats
 
-| Example name                        | Description                                       | Runtime       |
-| ----------------------------------- | ------------------------------------------------- | ------------- |
-| [`long_running`](./long_running.py) | Consumption-savings model with health and leisure | a few minutes |
+| Example name                                    | Description                                                                                                                                                    | Runtime                 |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
+| [`consumption_saving`](./consumption_saving.py) | Simple illustrative consumption-savings model with health and leisure                                                                                          | CPU: ~20s, GPU: \<5s    |
+| [`mahler_yum_2024`](./mahler_yum_2024.py)       | Replication of the lifecycle model from the paper "Lifestyle Behaviors and Wealth-Health Gaps in Germany" by Lukas Mahler and Minchul Yum (Econometrica, 2024) | CPU: ~20min, GPU: \<40s |
 
-## Running an example
+> [!NOTE]
+> Runtime refers to a single simulation call for 1,000 individuals. CPU times come from
+> a MacBook Pro with M4 Pro chip with 24GB RAM. GPU times were recorded on a Nvidia
+> Geforce RTX 3050.
 
-Say you want to solve the `long_running` example locally. First, clone this repository,
-[install pixi if required](https://pixi.sh/latest/#installation), move into the examples
-folder, and open the interactive Python shell. In a console, type:
+## Running an example model
+
+If you want to solve and simulate an example locally,
+[install pixi](https://pixi.sh/latest/#installation) and follow these steps:
 
 ```console
 $ git clone https://github.com/opensourceeconomics/pylcm.git
-$ cd lcm/examples
-$ pixi run ipython
+$ cd pylcm/examples/#example name#
+$ pixi run python model.py
 ```
 
-In that shell, run the following code:
+If you want to run a model on the GPU you need to use the pixi 'cuda' environment, run
 
-```python
-from lcm.entry_point import get_lcm_function
-
-from long_running import MODEL_CONFIG, PARAMS
-
-
-solve_model, _ = get_lcm_function(model=MODEL_CONFIG, targets="solve")
-V_arr_list = solve_model(PARAMS)
+```console
+$ pixi run -e cuda python model.py
 ```

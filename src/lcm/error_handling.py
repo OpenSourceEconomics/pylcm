@@ -2,11 +2,12 @@ import jax.numpy as jnp
 from jax import Array
 
 from lcm.exceptions import InvalidValueFunctionError
+from lcm.typing import Period
 
 
 def validate_value_function_array(
     V_arr: Array,
-    period: int,
+    period: Period,
 ) -> None:
     """Validate the value function array for NaN values.
 
@@ -23,5 +24,9 @@ def validate_value_function_array(
     """
     if jnp.any(jnp.isnan(V_arr)):
         raise InvalidValueFunctionError(
-            f"The value function array in period {period} contains NaN values."
+            f"The value function array in period {period} contains NaN values. This "
+            "may be due to various reasons:\n"
+            "- The user-defined functions returned invalid values.\n"
+            "- It is impossible to reach an active regime, resulting in NaN regime\n"
+            "  transition probabilities in the normalized transition probabilities."
         )

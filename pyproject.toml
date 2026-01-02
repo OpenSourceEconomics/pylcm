@@ -5,7 +5,7 @@
 [project]
 name = "pylcm"
 description = "Specification, solution, and simulation of finite-horizon dynamic choice models."
-requires-python = ">=3.12"
+requires-python = "== 3.13"
 dependencies = [
     "dags>=0.4.1",
     "jax>=0.7",
@@ -29,7 +29,7 @@ classifiers = [
     "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX",
     "Operating System :: Unix",
-    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering",
     "Typing :: Typed",
 ]
@@ -84,7 +84,7 @@ allow-direct-references = true
 # Pixi
 # ======================================================================================
 
-[tool.pixi.project]
+[tool.pixi.workspace]
 channels = ["conda-forge"]
 platforms = ["linux-64", "osx-arm64", "win-64"]
 
@@ -92,13 +92,14 @@ platforms = ["linux-64", "osx-arm64", "win-64"]
 # --------------------------------------------------------------------------------------
 
 [tool.pixi.dependencies]
-python = "~=3.12"
+cloudpickle = ">=3.1.2,<4"
 jupyterlab = "*"
 memory_profiler = "*"
 numpy = ">=2.2"
 plotly = ">=6.2"
 pre-commit = ">=4.1"
 pybaum = "*"
+python = "~=3.13.0"
 scipy = ">=1.13"
 snakeviz = "*"
 
@@ -121,37 +122,28 @@ cuda-nvcc = "~=12"
 [tool.pixi.feature.cuda.target.linux-64.pypi-dependencies]
 jax = {version = ">=0.7", extras = ["cuda12"]}
 
-[tool.pixi.feature.metal]
-platforms = ["osx-arm64"]
-
-[tool.pixi.feature.metal.target.osx-arm64.pypi-dependencies]
-jax = ">=0.7"
-jax-metal = ">=0.1.1"
-
 [tool.pixi.feature.testing.dependencies]
+matplotlib = "*"  # required because of pandas
+pandas-stubs = "*"
 pytest = "*"
 pytest-cov = "*"
 pytest-xdist = "*"
-mypy = "==1.17.1"
-pandas-stubs = "*"
-matplotlib = "*"  # required because of pandas
 scipy-stubs = "*"
+ty = "*"
 
 [tool.pixi.feature.testing.tasks]
+explanation-notebooks = "jupyter execute explanations/*.ipynb"
 tests = "pytest tests"
 tests-with-cov = "pytest tests --cov-report=xml --cov=./"
-mypy = "mypy"
-explanation-notebooks = "jupyter execute explanations/*.ipynb"
+ty = "ty check"
 
 # Environments
 # --------------------------------------------------------------------------------------
 
 [tool.pixi.environments]
 cuda = {features = ["cuda"], solve-group = "cuda"}
-metal = {features = ["metal"], solve-group = "metal"}
 test-cpu = {features = ["testing"], solve-group = "default"}
 test-cuda = {features = ["testing", "cuda"], solve-group = "cuda"}
-test-metal = {features = ["testing", "metal"], solve-group = "metal"}
 
 
 
@@ -160,7 +152,6 @@ test-metal = {features = ["testing", "metal"], solve-group = "metal"}
 # ======================================================================================
 
 [tool.ruff]
-target-version = "py312"
 fix = true
 exclude = ["src/lcm/sandbox"]
 
@@ -177,6 +168,7 @@ extend-ignore = [
     "D103",  # missing docstring in public function
     "D104",  # missing docstring in public package
     "D105",  # Missing docstring in magic method
+    "D107",  # missing docstring in __init__
     "EM101",  # exception must not use a string literal
     "EM102",  # exception must not use an f-string literal
     "FIX002",  # line contains a todo
@@ -202,15 +194,15 @@ extend-ignore = [
 "examples/*" = ["D101", "INP001"]
 "explanations/*" = ["B018", "E402", "INP001", "PD008", "T201"]
 "src/lcm/functools.py" = ["ANN401"]
-"src/lcm/Q_and_F.py" = ["N999"]
-"src/lcm/max_Q_over_c.py" = ["N999"]
 "src/lcm/max_Q_over_a.py" = ["N999"]
+"src/lcm/max_Q_over_c.py" = ["N999"]
 "src/lcm/max_Qc_over_d.py" = ["N999"]
 "src/lcm/ndimage.py" = ["A002"]
+"src/lcm/Q_and_F.py" = ["N999"]
 "tests/*" = ["D101", "PLR2004"]
-"tests/test_Q_and_F.py" = ["N999"]
-"tests/test_max_Qc_over_d.py" = ["N999"]
 "tests/test_max_Q_over_a.py" = ["N999"]
+"tests/test_max_Qc_over_d.py" = ["N999"]
+"tests/test_Q_and_F.py" = ["N999"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -220,13 +212,13 @@ convention = "google"
 # ======================================================================================
 
 [tool.pytest.ini_options]
+addopts = ["--pdbcls=pdbp:Pdb"]
 markers = [
     "wip: Tests that are work-in-progress.",
     "slow: Tests that take a long time to run and are skipped in continuous integration.",
     "illustrative: Tests are designed for illustrative purposes",
 ]
 norecursedirs = ["docs", ".envs"]
-addopts = ["--pdbcls=pdbp:Pdb"]
 
 
 # ======================================================================================
@@ -235,37 +227,34 @@ addopts = ["--pdbcls=pdbp:Pdb"]
 
 [tool.yamlfix]
 line_length = 88
-sequence_style = "block_style"
 none_representation = "null"
+sequence_style = "block_style"
 
 # ======================================================================================
-# mypy configuration
+# ty configuration
 # ======================================================================================
 
-[tool.mypy]
-files = ["src", "tests"]
-check_untyped_defs = true
-disallow_any_generics = true
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-no_implicit_optional = true
-warn_redundant_casts = true
-warn_unused_ignores = true
+[tool.ty.environment]
+root = ["."]
 
-[[tool.mypy.overrides]]
-module = "tests.*"
-disallow_untyped_defs = false
+[tool.ty.src]
+include = ["src/", "tests/", "examples/"]
 
-[[tool.mypy.overrides]]
-module = [
-    "tests/test_dispatchers",
-]
-ignore_errors = true
-
-[[tool.mypy.overrides]]
-module = "tests.test_entry_point"
-disable_error_code = ["arg-type"]
-
-[[tool.mypy.overrides]]
-module = ["pybaum", "pdbp", "yaml"]
-ignore_missing_imports = true
+[tool.ty.rules]
+ambiguous-protocol-member = "error"
+deprecated = "error"
+division-by-zero = "error"
+ignore-comment-unknown-rule = "error"
+invalid-argument-type = "error"
+invalid-ignore-comment = "error"
+invalid-return-type = "error"
+possibly-missing-attribute = "error"
+possibly-missing-implicit-call = "error"
+possibly-missing-import = "error"
+possibly-unresolved-reference = "error"
+redundant-cast = "error"
+undefined-reveal = "error"
+unresolved-global = "error"
+unsupported-base = "error"
+unused-ignore-comment = "error"
+useless-overload-body = "error"
