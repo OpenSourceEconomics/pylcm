@@ -15,8 +15,6 @@ if TYPE_CHECKING:
         ContinuousState,
         DiscreteAction,
         FloatND,
-        IntND,
-        Period,
         ScalarInt,
     )
 
@@ -57,12 +55,8 @@ def is_working(labor_supply: DiscreteAction) -> BoolND:
     return labor_supply == LaborSupply.work
 
 
-def wage(agent_age: int | IntND) -> float | FloatND:
-    return 1 + 0.1 * agent_age
-
-
-def agent_age(period: Period) -> int | IntND:
-    return period + 18
+def wage(age: float) -> float | FloatND:
+    return 1 + 0.1 * age
 
 
 # --------------------------------------------------------------------------------------
@@ -77,8 +71,8 @@ def next_wealth(
     return (1 + interest_rate) * (wealth - consumption) + labor_income
 
 
-def next_regime(period: Period, n_periods: int) -> ScalarInt:
-    certain_death_transition = period == n_periods - 2  # dead in last period
+def next_regime(age: float, final_age: float) -> ScalarInt:
+    certain_death_transition = age >= final_age  # dead in last period
     return jnp.where(
         certain_death_transition,
         RegimeId.dead,
@@ -128,7 +122,6 @@ working = Regime(
     functions={
         "labor_income": labor_income,
         "is_working": is_working,
-        "agent_age": agent_age,
         "wage": wage,
     },
     active=lambda _age: True,  # placeholder, will be replaced by get_model()
@@ -143,12 +136,16 @@ dead = Regime(
 )
 
 
+START_AGE = 18
+
+
 def get_model(n_periods: int) -> Model:
-    ages = AgeGrid(start=0, stop=n_periods, step="Y")
+    stop_age = START_AGE + n_periods
+    ages = AgeGrid(start=START_AGE, stop=stop_age, step="Y")
     return Model(
         [
-            working.replace(active=lambda age, n=n_periods: age < n - 1),
-            dead.replace(active=lambda age, n=n_periods: age >= n - 1),
+            working.replace(active=lambda age, stop=stop_age: age < stop - 1),
+            dead.replace(active=lambda age, stop=stop_age: age >= stop - 1),
         ],
         ages=ages,
         regime_id_cls=RegimeId,
@@ -161,12 +158,13 @@ def get_params(
     disutility_of_work: float = 0.5,
     interest_rate: float = 0.05,
 ) -> dict[str, Any]:
+    final_age = START_AGE + n_periods - 2  # Last age before death transition
     return {
         "working": {
             "discount_factor": discount_factor,
             "utility": {"disutility_of_work": disutility_of_work},
             "next_wealth": {"interest_rate": interest_rate},
-            "next_regime": {"n_periods": n_periods},
+            "next_regime": {"final_age": final_age},
             "borrowing_constraint": {},
             "labor_income": {},
         },

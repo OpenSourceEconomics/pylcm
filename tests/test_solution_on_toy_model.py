@@ -70,8 +70,8 @@ def next_wealth(
     return wealth - consumption + working
 
 
-def next_regime(period: int, n_periods: int) -> ScalarInt:
-    death_condition = period >= n_periods - 2  # is dead in last period
+def next_regime(age: float, final_age: float) -> ScalarInt:
+    death_condition = age >= final_age  # is dead in last period
     return jnp.where(death_condition, RegimeId.dead, RegimeId.alive)
 
 
@@ -437,7 +437,7 @@ def test_deterministic_solve(discount_factor, n_wealth_points):
     params_alive = {
         "discount_factor": discount_factor,
         "utility": {"health": 1},
-        "next_regime": {"n_periods": model.n_periods},
+        "next_regime": {"final_age": model.n_periods - 2},
     }
     got = model.solve(params={"alive": params_alive, "dead": {}})
 
@@ -483,7 +483,7 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
     params_alive = {
         "discount_factor": discount_factor,
         "utility": {"health": 1},
-        "next_regime": {"n_periods": model.n_periods},
+        "next_regime": {"final_age": model.n_periods - 2},
     }
     result = model.solve_and_simulate(
         params={"alive": params_alive, "dead": {}},
@@ -491,7 +491,12 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
         initial_regimes=["alive"] * 4,
     )
     # Filter to alive regime only (dead regime has trivial values)
-    got = result.to_dataframe().query('regime == "alive"').reset_index(drop=True)
+    got = (
+        result.to_dataframe()
+        .query('regime == "alive"')
+        .drop(columns=["age"])  # Analytical function doesn't include age
+        .reset_index(drop=True)
+    )
 
     expected = analytical_simulate_deterministic(
         initial_wealth=np.array([0.25, 0.75, 1.25, 1.75]),
@@ -536,7 +541,7 @@ def test_stochastic_solve(discount_factor, n_wealth_points, health_transition):
     params = {
         "discount_factor": discount_factor,
         "next_health": {"health_transition": health_transition},
-        "next_regime": {"n_periods": model.n_periods},
+        "next_regime": {"final_age": model.n_periods - 2},
     }
     got = model.solve(params={"alive": params, "dead": {}})
 
@@ -596,7 +601,7 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, health_transition
     params_alive = {
         "discount_factor": discount_factor,
         "next_health": {"health_transition": health_transition},
-        "next_regime": {"n_periods": model.n_periods},
+        "next_regime": {"final_age": model.n_periods - 2},
     }
     initial_states = {
         "wealth": jnp.array([0.25, 0.75, 1.25, 1.75, 2.0]),
@@ -623,7 +628,8 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, health_transition
     )
 
     # Drop rows with wealth at boundary (analytical solution has edge effects)
-    got = got.query("wealth != 2").reset_index(drop=True)
+    # Also drop age column (analytical function doesn't include it)
+    got = got.query("wealth != 2").drop(columns=["age"]).reset_index(drop=True)
     expected = expected.query("wealth != 2").reset_index(drop=True)
 
     assert_frame_equal(

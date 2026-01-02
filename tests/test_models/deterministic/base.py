@@ -15,7 +15,6 @@ if TYPE_CHECKING:
         ContinuousState,
         DiscreteAction,
         FloatND,
-        Period,
         ScalarInt,
     )
 
@@ -75,10 +74,10 @@ def next_wealth(
 
 def next_regime_from_working(
     labor_supply: DiscreteAction,
-    period: Period,
-    n_periods: int,
+    age: float,
+    final_age: float,
 ) -> ScalarInt:
-    certain_death_transition = period == n_periods - 2  # dead in last period
+    certain_death_transition = age >= final_age  # dead in last period
     return jnp.where(
         certain_death_transition,
         RegimeId.dead,
@@ -90,8 +89,8 @@ def next_regime_from_working(
     )
 
 
-def next_regime_from_retired(period: Period, n_periods: int) -> ScalarInt:
-    certain_death_transition = period == n_periods - 2  # dead in last period
+def next_regime_from_retired(age: float, final_age: float) -> ScalarInt:
+    certain_death_transition = age >= final_age  # dead in last period
     return jnp.where(
         certain_death_transition,
         RegimeId.dead,
@@ -194,12 +193,13 @@ def get_params(
     interest_rate=0.05,
     wage=10.0,
 ):
+    final_age = n_periods - 2  # Last age before death transition
     return {
         "working": {
             "discount_factor": discount_factor,
             "utility": {"disutility_of_work": disutility_of_work},
             "next_wealth": {"interest_rate": interest_rate},
-            "next_regime": {"n_periods": n_periods},
+            "next_regime": {"final_age": final_age},
             "borrowing_constraint": {},
             "labor_income": {"wage": wage},
         },
@@ -207,7 +207,7 @@ def get_params(
             "discount_factor": discount_factor,
             "utility": {},
             "next_wealth": {"interest_rate": interest_rate, "labor_income": 0.0},
-            "next_regime": {"n_periods": n_periods},
+            "next_regime": {"final_age": final_age},
             "borrowing_constraint": {},
         },
         "dead": {},

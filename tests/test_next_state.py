@@ -47,7 +47,7 @@ def test_get_next_state_function_with_solve_target():
     action = {"labor_supply": 1, "consumption": 10}
     state = {"wealth": 20}
 
-    got = got_func(**action, **state, period=1, params=params)
+    got = got_func(**action, **state, period=1, age=1.0, params=params)
     assert got == {"next_wealth": 1.05 * (20 - 10)}
 
 

@@ -64,7 +64,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
             "discount_factor": 1.0,
             "utility": {"disutility_of_work": 1.0},
             "next_wealth": {"interest_rate": 0.05},
-            "next_regime": {"n_periods": 2},
+            "next_regime": {"final_age": 0},  # n_periods=2, so final_age=0
             "borrowing_constraint": {},
             "labor_income": {},
         },
@@ -118,6 +118,8 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
         params = get_params(n_periods=n_periods)
         # Since wage function is removed, wage becomes a parameter for labor_income
         params["working"]["labor_income"] = {"wage": 1.5}
+        # Override final_age since we use AgeGrid starting at 0, not START_AGE
+        params["working"]["next_regime"] = {"final_age": n_periods - 2}
         model = Model(
             [updated_working, updated_dead], ages=ages, regime_id_cls=RegimeId
         )
@@ -148,6 +150,7 @@ def test_simulate_using_model_methods(
     # Check expected columns
     expected_cols = {
         "period",
+        "age",
         "value",
         "labor_supply",
         "consumption",

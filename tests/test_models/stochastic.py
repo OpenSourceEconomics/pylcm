@@ -113,10 +113,10 @@ def next_wealth(
 
 def next_regime_from_working(
     labor_supply: DiscreteAction,
-    period: Period,
-    n_periods: int,
+    age: float,
+    final_age: float,
 ) -> ScalarInt:
-    certain_death_transition = period == n_periods - 2  # dead in last period
+    certain_death_transition = age >= final_age  # dead in last period
     return jnp.where(
         certain_death_transition,
         RegimeId.dead,
@@ -128,8 +128,8 @@ def next_regime_from_working(
     )
 
 
-def next_regime_from_retired(period: Period, n_periods: int) -> ScalarInt:
-    certain_death_transition = period == n_periods - 2  # dead in last period
+def next_regime_from_retired(age: float, final_age: float) -> ScalarInt:
+    certain_death_transition = age >= final_age  # dead in last period
     return jnp.where(
         certain_death_transition,
         RegimeId.dead,
@@ -315,6 +315,7 @@ def get_params(
     if partner_transition is None:
         partner_transition = default_partner_transition
 
+    final_age = n_periods - 2  # Last age before death transition
     return {
         "working": {
             "discount_factor": discount_factor,
@@ -322,7 +323,7 @@ def get_params(
             "next_wealth": {"interest_rate": interest_rate},
             "next_health": {},
             "next_partner": {"partner_transition": partner_transition},
-            "next_regime": {"n_periods": n_periods},
+            "next_regime": {"final_age": final_age},
             "borrowing_constraint": {},
             "labor_income": {"wage": wage},
         },
@@ -335,7 +336,7 @@ def get_params(
                 "labor_supply": LaborSupply.retire,
                 "partner_transition": partner_transition,
             },
-            "next_regime": {"n_periods": n_periods},
+            "next_regime": {"final_age": final_age},
             "borrowing_constraint": {},
         },
         "dead": {},

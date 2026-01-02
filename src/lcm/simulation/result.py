@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import pandas as pd
 from dags import concatenate_functions
 
+from lcm.ages import AgeGrid  # noqa: TC001 - Used at runtime
 from lcm.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.grids import DiscreteGrid
@@ -45,11 +46,13 @@ class SimulationResult:
         internal_regimes: dict[RegimeName, InternalRegime],
         params: ParamsDict,
         V_arr_dict: dict[int, dict[RegimeName, FloatND]],
+        ages: AgeGrid,
     ) -> None:
         self._raw_results = raw_results
         self._internal_regimes = internal_regimes
         self._params = params
         self._V_arr_dict = V_arr_dict
+        self._ages = ages
         self._metadata = _compute_metadata(internal_regimes, raw_results)
         self._available_targets = sorted(
             _collect_all_available_targets(internal_regimes)
@@ -149,6 +152,7 @@ class SimulationResult:
             params=self._params,
             metadata=self._metadata,
             additional_targets=resolved_targets,
+            ages=self._ages,
         )
 
         if use_labels:
@@ -357,6 +361,7 @@ def _create_flat_dataframe(
     params: ParamsDict,
     metadata: SimulationMetadata,
     additional_targets: list[str] | None,
+    ages: AgeGrid,
 ) -> pd.DataFrame:
     """Create a single flat DataFrame from all regime results."""
     regime_dfs = [
@@ -367,6 +372,7 @@ def _create_flat_dataframe(
             regime_actions=metadata.regime_to_actions[name],
             params=params[name],
             additional_targets=additional_targets,
+            ages=ages,
         )
         for name in metadata.regime_names
         if raw_results[name]
@@ -386,6 +392,7 @@ def _process_regime(
     regime_actions: tuple[str, ...],
     params: ParamsDict,
     additional_targets: list[str] | None,
+    ages: AgeGrid,
 ) -> pd.DataFrame:
     """Process results for a single regime into a DataFrame."""
     # Build period data
@@ -396,6 +403,9 @@ def _process_regime(
 
     # Concatenate and filter to in-regime subjects
     data = _concatenate_and_filter(period_dicts)
+
+    # Add age column (computed from period using ages grid)
+    data["age"] = jnp.array([ages.period_to_age(int(p)) for p in data["period"]])
 
     # Add regime name
     data["regime"] = [internal_regime.name] * len(data["period"])

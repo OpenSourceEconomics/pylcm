@@ -145,6 +145,7 @@ def simulate(
         internal_regimes=internal_regimes,
         params=params,
         V_arr_dict=V_arr_dict,
+        ages=ages,
     )
 
 
