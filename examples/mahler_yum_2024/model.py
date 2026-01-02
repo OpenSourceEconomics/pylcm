@@ -348,6 +348,14 @@ def savings_constraint(
 # ======================================================================================
 
 
+def alive_is_active(age: float) -> bool:
+    return age < n - 1
+
+
+def dead_is_active(age: float) -> bool:
+    return age >= n - 1
+
+
 ALIVE_REGIME = Regime(
     name="alive",
     utility=utility,
@@ -397,18 +405,18 @@ ALIVE_REGIME = Regime(
         "next_productivity": next_productivity,
         "next_regime": next_regime,
     },
-    active=lambda age: age < n - 1,
+    active=alive_is_active,
 )
 
 DEAD_REGIME = Regime(
     name="dead",
     terminal=True,
     utility=lambda: 0.0,
-    active=lambda age: age >= n - 1,
+    active=dead_is_active,
 )
 
 MAHLER_YUM_MODEL = Model(
-    [ALIVE_REGIME, DEAD_REGIME],
+    regimes=[ALIVE_REGIME, DEAD_REGIME],
     ages=AgeGrid(start=0, stop=n, step="Y"),
     regime_id_cls=RegimeId,
 )

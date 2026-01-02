@@ -117,6 +117,15 @@ def borrowing_constraint(
 # ======================================================================================
 RETIREMENT_AGE = 24
 
+
+def working_is_active(age: float) -> bool:
+    return age < RETIREMENT_AGE
+
+
+def retired_is_active(age: float) -> bool:
+    return age >= RETIREMENT_AGE
+
+
 working = Regime(
     name="working",
     utility=utility,
@@ -155,7 +164,7 @@ working = Regime(
         "next_health": next_health,
         "next_regime": next_regime,
     },
-    active=lambda age: age < RETIREMENT_AGE,
+    active=working_is_active,
 )
 
 
@@ -175,7 +184,7 @@ retired = Regime(
             n_points=100,
         ),
     },
-    active=lambda age: age >= RETIREMENT_AGE,
+    active=retired_is_active,
 )
 
 
