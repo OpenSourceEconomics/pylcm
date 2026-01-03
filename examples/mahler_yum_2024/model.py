@@ -44,7 +44,8 @@ if TYPE_CHECKING:
 # --------------------------------------------------------------------------------------
 avrgearn_not_normalized: float = 57706.57
 theta_val: Float1D = jnp.array([jnp.exp(-0.2898), jnp.exp(0.2898)])
-n: int = 38
+ages = AgeGrid(start=25, stop=101, step="2Y")
+n: int = ages.n_periods
 retirement_age: int = 19
 taul: float = 0.128
 lamda: float = 1.0 - 0.321
@@ -406,19 +407,19 @@ ALIVE_REGIME = Regime(
         "next_productivity": next_productivity,
         "next_regime": next_regime,
     },
-    active=partial(alive_is_active, final_age_alive=n - 2),
+    active=partial(alive_is_active, final_age_alive=99),
 )
 
 DEAD_REGIME = Regime(
     name="dead",
     terminal=True,
     utility=lambda: 0.0,
-    active=partial(dead_is_active, final_age_alive=n - 2),
+    active=partial(dead_is_active, final_age_alive=99),
 )
 
 MAHLER_YUM_MODEL = Model(
     regimes=[ALIVE_REGIME, DEAD_REGIME],
-    ages=AgeGrid(start=0, stop=n - 1, step="Y"),
+    ages=ages,
     regime_id_cls=RegimeId,
 )
 
