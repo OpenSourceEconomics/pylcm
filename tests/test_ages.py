@@ -40,7 +40,7 @@ def test_parse_step_invalid():
 
 
 def test_age_grid_from_range():
-    ages = AgeGrid(start=18, stop=22, step="Y")
+    ages = AgeGrid(start=18, stop=21, step="Y")
     assert ages.n_periods == 4
     np.testing.assert_array_equal(ages.ages, [18, 19, 20, 21])
     assert ages.step_size == 1.0
@@ -60,7 +60,7 @@ def test_age_grid_period_to_age():
 
 
 def test_age_grid_get_periods_where():
-    ages = AgeGrid(start=18, stop=23, step="Y")  # [18, 19, 20, 21, 22]
+    ages = AgeGrid(start=18, stop=22, step="Y")
     periods = ages.get_periods_where(lambda age: age >= 21)
     assert periods == [3, 4]
 
@@ -90,6 +90,12 @@ def test_age_grid_non_increasing_values_raises():
         AgeGrid(values=(18, 20, 19))
 
 
+def test_age_grid_step_size_not_divisible_raises():
+    """Test that step size must divide evenly into the range."""
+    with pytest.raises(GridInitializationError, match="does not divide evenly"):
+        AgeGrid(start=18, stop=21, step="2Y")
+
+
 # ======================================================================================
 # Integration test with non-yearly steps
 # ======================================================================================
@@ -97,16 +103,16 @@ def test_age_grid_non_increasing_values_raises():
 
 def test_model_with_quarterly_steps():
     """Test that solve/simulate works with quarterly (Q) step size."""
-    # Quarterly steps: 18.0, 18.25, 18.5, 18.75 (4 periods)
+    # Quarterly steps: 18.0, 18.25, 18.5, 18.75, 19.0 (5 periods)
     ages = AgeGrid(start=18, stop=19, step="Q")
-    assert ages.n_periods == 4
+    assert ages.n_periods == 5
     assert ages.step_size == 0.25
 
     model = Model(
         [
-            working.replace(active=lambda age: age < 18.75),
-            retired.replace(active=lambda age: age < 18.75),
-            dead.replace(active=lambda age: age >= 18.75),
+            working.replace(active=lambda age: age < 19),
+            retired.replace(active=lambda age: age < 19),
+            dead.replace(active=lambda age: age >= 19),
         ],
         ages=ages,
         regime_id_cls=RegimeId,
@@ -117,7 +123,7 @@ def test_model_with_quarterly_steps():
             "discount_factor": 0.99,
             "utility": {"disutility_of_work": 0.5},
             "next_wealth": {"interest_rate": 0.01},
-            "next_regime": {"final_age": 18.5},  # Transition to dead at age 18.5
+            "next_regime": {"final_age_alive": 18.75},
             "borrowing_constraint": {},
             "labor_income": {"wage": 5.0},
         },
@@ -125,7 +131,7 @@ def test_model_with_quarterly_steps():
             "discount_factor": 0.99,
             "utility": {},
             "next_wealth": {"interest_rate": 0.01, "labor_income": 0.0},
-            "next_regime": {"final_age": 18.5},
+            "next_regime": {"final_age_alive": 18.75},
             "borrowing_constraint": {},
         },
         "dead": {},
@@ -141,8 +147,8 @@ def test_model_with_quarterly_steps():
     df = result.to_dataframe()
 
     # Check that age column has quarterly values
-    assert set(df["age"].unique()) == {18.0, 18.25, 18.5, 18.75}
+    assert set(df["age"].unique()) == {18.0, 18.25, 18.5, 18.75, 19.0}
 
-    # Check working/retired regimes only have ages < 18.75
+    # Check working/retired regimes only have ages < 19
     non_dead_df = df.query('regime != "dead"')
-    assert all(non_dead_df["age"] < 18.75)
+    assert all(non_dead_df["age"] < 19)

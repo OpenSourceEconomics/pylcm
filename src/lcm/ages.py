@@ -69,7 +69,10 @@ class AgeGrid:
             self._step_size: float | None = None
         else:
             self._step_size = parse_step(step)  # type: ignore[arg-type]
-            self._ages = jnp.arange(start, stop, self._step_size)
+            # Calculate number of points for linspace (stop is inclusive)
+            # Validation ensures (stop - start) / step_size is an integer
+            n_steps = round((stop - start) / self._step_size) + 1  # type: ignore[arg-type]
+            self._ages = jnp.linspace(start, stop, n_steps)  # type: ignore[arg-type]
 
     @property
     def ages(self) -> Float1D:
@@ -167,9 +170,19 @@ def _validate_range(start: float, stop: float, step: str) -> list[str]:
         errors.append(f"'start' must be non-negative, got {start}.")
 
     try:
-        parse_step(step)
+        step_size = parse_step(step)
     except ValueError as e:
         errors.append(str(e))
+        return errors
+
+    # Check that step_size divides evenly into the range of ages.
+    range_size = stop - start
+    n_steps = range_size / step_size
+    if abs(n_steps - round(n_steps)) > 1e-10:  # noqa: PLR2004
+        errors.append(
+            f"Step size ({step_size}) does not divide evenly into the range "
+            f"({range_size}). Number of steps would be {n_steps}."
+        )
 
     return errors
 

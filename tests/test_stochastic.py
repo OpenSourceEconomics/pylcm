@@ -100,7 +100,7 @@ def models_and_params() -> tuple[Model, Model, dict[str, Any]]:
         return health
 
     n_periods = 4
-    ages = AgeGrid(start=0, stop=n_periods, step="Y")
+    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
 
     # Create deterministic model with modified function
     working_deterministic = working.replace(

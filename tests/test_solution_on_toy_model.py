@@ -70,9 +70,8 @@ def next_wealth(
     return wealth - consumption + working
 
 
-def next_regime(age: float, final_age: float) -> ScalarInt:
-    death_condition = age >= final_age  # is dead in last period
-    return jnp.where(death_condition, RegimeId.dead, RegimeId.alive)
+def next_regime(age: float, final_age_alive: float) -> ScalarInt:
+    return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.alive)
 
 
 def borrowing_constraint(
@@ -418,7 +417,7 @@ def test_deterministic_solve(discount_factor, n_wealth_points):
     # Update model
     # ==================================================================================
     n_periods = 3
-    ages = AgeGrid(start=0, stop=n_periods, step="Y")
+    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     new_states = alive_deterministic.states
     new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # ty: ignore[unresolved-attribute]
     model = Model(
@@ -437,7 +436,7 @@ def test_deterministic_solve(discount_factor, n_wealth_points):
     params_alive = {
         "discount_factor": discount_factor,
         "utility": {"health": 1},
-        "next_regime": {"final_age": model.n_periods - 2},
+        "next_regime": {"final_age_alive": model.n_periods - 2},
     }
     got = model.solve(params={"alive": params_alive, "dead": {}})
 
@@ -464,7 +463,7 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
     # Update model
     # ==================================================================================
     n_periods = 3
-    ages = AgeGrid(start=0, stop=n_periods, step="Y")
+    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     new_states = alive_deterministic.states
     new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # ty: ignore[unresolved-attribute]
     model = Model(
@@ -483,7 +482,7 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
     params_alive = {
         "discount_factor": discount_factor,
         "utility": {"health": 1},
-        "next_regime": {"final_age": model.n_periods - 2},
+        "next_regime": {"final_age_alive": model.n_periods - 2},
     }
     result = model.solve_and_simulate(
         params={"alive": params_alive, "dead": {}},
@@ -522,7 +521,7 @@ def test_stochastic_solve(discount_factor, n_wealth_points, health_transition):
     # Update model
     # ==================================================================================
     n_periods = 3
-    ages = AgeGrid(start=0, stop=n_periods, step="Y")
+    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     new_states = alive_stochastic.states
     new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # ty: ignore[unresolved-attribute]
     model = Model(
@@ -541,7 +540,7 @@ def test_stochastic_solve(discount_factor, n_wealth_points, health_transition):
     params = {
         "discount_factor": discount_factor,
         "next_health": {"health_transition": health_transition},
-        "next_regime": {"final_age": model.n_periods - 2},
+        "next_regime": {"final_age_alive": model.n_periods - 2},
     }
     got = model.solve(params={"alive": params, "dead": {}})
 
@@ -582,7 +581,7 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, health_transition
     # Update model
     # ==================================================================================
     n_periods = 3
-    ages = AgeGrid(start=0, stop=n_periods, step="Y")
+    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     new_states = alive_stochastic.states
     new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # ty: ignore[unresolved-attribute]
     model = Model(
@@ -601,7 +600,7 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, health_transition
     params_alive = {
         "discount_factor": discount_factor,
         "next_health": {"health_transition": health_transition},
-        "next_regime": {"final_age": model.n_periods - 2},
+        "next_regime": {"final_age_alive": model.n_periods - 2},
     }
     initial_states = {
         "wealth": jnp.array([0.25, 0.75, 1.25, 1.75, 2.0]),

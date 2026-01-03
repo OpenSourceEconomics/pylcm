@@ -7,6 +7,7 @@ Wealth-Health Gaps in Germany" by Lukas Mahler and Minchul Yum (Econometrica, 20
 from __future__ import annotations
 
 from dataclasses import dataclass, make_dataclass
+from functools import partial
 from typing import TYPE_CHECKING
 
 import jax
@@ -348,12 +349,12 @@ def savings_constraint(
 # ======================================================================================
 
 
-def alive_is_active(age: float) -> bool:
-    return age < n - 1
+def alive_is_active(age: float, final_age_alive: float) -> bool:
+    return age <= final_age_alive
 
 
-def dead_is_active(age: float) -> bool:
-    return age >= n - 1
+def dead_is_active(age: float, final_age_alive: float) -> bool:
+    return age > final_age_alive
 
 
 ALIVE_REGIME = Regime(
@@ -405,19 +406,19 @@ ALIVE_REGIME = Regime(
         "next_productivity": next_productivity,
         "next_regime": next_regime,
     },
-    active=alive_is_active,
+    active=partial(alive_is_active, final_age_alive=n - 2),
 )
 
 DEAD_REGIME = Regime(
     name="dead",
     terminal=True,
     utility=lambda: 0.0,
-    active=dead_is_active,
+    active=partial(dead_is_active, final_age_alive=n - 2),
 )
 
 MAHLER_YUM_MODEL = Model(
     regimes=[ALIVE_REGIME, DEAD_REGIME],
-    ages=AgeGrid(start=0, stop=n, step="Y"),
+    ages=AgeGrid(start=0, stop=n - 1, step="Y"),
     regime_id_cls=RegimeId,
 )
 
