@@ -105,14 +105,15 @@ def test_model_with_quarterly_steps():
     """Test that solve/simulate works with quarterly (Q) step size."""
     # Quarterly steps: 18.0, 18.25, 18.5, 18.75, 19.0 (5 periods)
     ages = AgeGrid(start=18, stop=19, step="Q")
+    final_age_alive = 18.75
     assert ages.n_periods == 5
     assert ages.step_size == 0.25
 
     model = Model(
         [
-            working.replace(active=lambda age: age < 19),
-            retired.replace(active=lambda age: age < 19),
-            dead.replace(active=lambda age: age >= 19),
+            working.replace(active=lambda age: age <= final_age_alive),
+            retired.replace(active=lambda age: age <= final_age_alive),
+            dead.replace(active=lambda age: age > final_age_alive),
         ],
         ages=ages,
         regime_id_cls=RegimeId,
@@ -123,7 +124,7 @@ def test_model_with_quarterly_steps():
             "discount_factor": 0.99,
             "utility": {"disutility_of_work": 0.5},
             "next_wealth": {"interest_rate": 0.01},
-            "next_regime": {"final_age_alive": 18.75},
+            "next_regime": {"final_age_alive": final_age_alive},
             "borrowing_constraint": {},
             "labor_income": {"wage": 5.0},
         },
@@ -131,7 +132,7 @@ def test_model_with_quarterly_steps():
             "discount_factor": 0.99,
             "utility": {},
             "next_wealth": {"interest_rate": 0.01, "labor_income": 0.0},
-            "next_regime": {"final_age_alive": 18.75},
+            "next_regime": {"final_age_alive": final_age_alive},
             "borrowing_constraint": {},
         },
         "dead": {},

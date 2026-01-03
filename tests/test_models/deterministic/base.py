@@ -77,9 +77,8 @@ def next_regime_from_working(
     age: float,
     final_age_alive: float,
 ) -> ScalarInt:
-    certain_death_transition = age >= final_age_alive
     return jnp.where(
-        certain_death_transition,
+        age >= final_age_alive,
         RegimeId.dead,
         jnp.where(
             labor_supply == LaborSupply.retire,
@@ -90,9 +89,8 @@ def next_regime_from_working(
 
 
 def next_regime_from_retired(age: float, final_age_alive: float) -> ScalarInt:
-    certain_death_transition = age >= final_age_alive
     return jnp.where(
-        certain_death_transition,
+        age >= final_age_alive,
         RegimeId.dead,
         RegimeId.retired,
     )
