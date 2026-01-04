@@ -92,7 +92,6 @@ def simulate(
     )
 
     n_periods = len(V_arr_dict)
-    n_initial_subjects = subject_regime_ids.shape[0]
     key = jax.random.key(seed=seed)
 
     # Forward simulation
@@ -104,7 +103,7 @@ def simulate(
         age = ages.period_to_age(period)
         logger.info("Age: %s", age)
 
-        new_subject_regime_ids = jnp.empty(n_initial_subjects)
+        new_subject_regime_ids = subject_regime_ids
 
         active_regimes = {
             regime_name: regime
