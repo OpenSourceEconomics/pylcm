@@ -354,8 +354,8 @@ def alive_is_active(age: float, final_age_alive: float) -> bool:
     return age <= final_age_alive
 
 
-def dead_is_active(age: float, final_age_alive: float) -> bool:
-    return age > final_age_alive
+def dead_is_active(age: float, initial_age: float) -> bool:
+    return age > initial_age
 
 
 ALIVE_REGIME = Regime(
@@ -407,14 +407,14 @@ ALIVE_REGIME = Regime(
         "next_productivity": next_productivity,
         "next_regime": next_regime,
     },
-    active=partial(alive_is_active, final_age_alive=99),
+    active=partial(alive_is_active, final_age_alive=ages.ages[-2]),
 )
 
 DEAD_REGIME = Regime(
     name="dead",
     terminal=True,
     utility=lambda: 0.0,
-    active=partial(dead_is_active, final_age_alive=99),
+    active=partial(dead_is_active, initial_age=ages.ages[0]),
 )
 
 MAHLER_YUM_MODEL = Model(
