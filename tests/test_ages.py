@@ -50,7 +50,7 @@ def test_parse_step_invalid():
 def test_age_grid_from_range():
     ages = AgeGrid(start=18, stop=21, step="Y")
     assert ages.n_periods == 4
-    np.testing.assert_array_equal(ages.ages, [18, 19, 20, 21])
+    np.testing.assert_array_equal(ages.values, [18, 19, 20, 21])
     assert ages.step_size == 1.0
 
 
@@ -58,28 +58,28 @@ def test_age_grid_with_int_and_fraction_annual():
     """Test AgeGrid with int start and Fraction stop."""
     ages = AgeGrid(start=18, stop=Fraction(21, 1), step="Y")
     assert ages.n_periods == 4
-    np.testing.assert_array_equal(ages.ages, [18, 19, 20, 21])
+    np.testing.assert_array_equal(ages.values, [18, 19, 20, 21])
     assert ages.step_size == 1.0
     assert type(ages.precise_step_size) is int
-    assert isinstance(ages.precise_ages, tuple)
-    assert all(isinstance(age, int) for age in ages.precise_ages)
+    assert isinstance(ages.precise_values, tuple)
+    assert all(isinstance(age, int) for age in ages.precise_values)
 
 
 def test_age_grid_with_int_and_fraction_quarterly():
     """Test AgeGrid with int start and Fraction stop."""
     ages = AgeGrid(start=20, stop=21 + Fraction(1, 4), step="Q")
     assert ages.n_periods == 6
-    np.testing.assert_array_equal(ages.ages, [20.0, 20.25, 20.5, 20.75, 21.0, 21.25])
+    np.testing.assert_array_equal(ages.values, [20.0, 20.25, 20.5, 20.75, 21.0, 21.25])
     assert ages.step_size == 0.25
     assert type(ages.precise_step_size) is Fraction
-    assert isinstance(ages.precise_ages, tuple)
-    assert all(isinstance(age, Fraction) for age in ages.precise_ages)
+    assert isinstance(ages.precise_values, tuple)
+    assert all(isinstance(age, Fraction) for age in ages.precise_values)
 
 
 def test_age_grid_from_values():
     ages = AgeGrid(values=(18, 25, 35, 65))
     assert ages.n_periods == 4
-    np.testing.assert_array_equal(ages.ages, [18, 25, 35, 65])
+    np.testing.assert_array_equal(ages.values, [18, 25, 35, 65])
     assert ages.step_size is None
 
 

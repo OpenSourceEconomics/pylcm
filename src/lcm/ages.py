@@ -57,14 +57,14 @@ class AgeGrid:
         start: int | Fraction,
         stop: int | Fraction,
         step: str,
-        values: None = None,
+        precise_values: None = None,
     ) -> None: ...
 
     @overload
     def __init__(
         self,
         *,
-        values: tuple[int | Fraction, ...],
+        precise_values: tuple[int | Fraction, ...],
         start: None = None,
         stop: None = None,
         step: None = None,
@@ -77,7 +77,7 @@ class AgeGrid:
         start: int | Fraction | None = None,
         stop: int | Fraction | None = None,
         step: str | None = None,
-        values: tuple[int | Fraction, ...] | None = None,
+        precise_values: tuple[int | Fraction, ...] | None = None,
     ) -> None: ...
 
     def __init__(
@@ -90,33 +90,28 @@ class AgeGrid:
     ) -> None:
         _validate_age_grid(start, stop, step, values)
 
-        self.start = start
-        self.stop = stop
-        self.step = step
-        self.values = values
-
         if values is not None:
-            self._precise_ages = values
-            self._ages = jnp.array(values)
+            self._precise_values = values
+            self._values = jnp.array(values)
             self._step_size = None
             self._precise_step_size = None
         else:
             self._precise_step_size = parse_step(step)  # type: ignore[arg-type]
             self._step_size = float(self._precise_step_size)
             n_steps = int((stop - start) // self._precise_step_size) + 1  # ty: ignore[unsupported-operator]
-            self._precise_ages = tuple(
+            self._precise_values = tuple(
                 start + i * self._precise_step_size  # ty: ignore[unsupported-operator]
                 for i in range(n_steps)
             )
-            self._ages = jnp.array([float(age) for age in self._precise_ages])
+            self._values = jnp.array([float(age) for age in self._precise_values])
 
     @property
-    def ages(self) -> Float1D:
-        """Array of ages; indexed by period."""
-        return self._ages
+    def values(self) -> Float1D:
+        """Float ages; indexed by period."""
+        return self._values
 
     @property
-    def precise_ages(self) -> tuple[int | Fraction, ...]:
+    def precise_values(self) -> tuple[int | Fraction, ...]:
         """Precise ages; indexed by period.
 
         Could be:
@@ -124,12 +119,12 @@ class AgeGrid:
         - A Fraction if the ages are sub-annual.
 
         """
-        return self._precise_ages
+        return self._precise_values
 
     @property
     def n_periods(self) -> int:
         """Number of periods in the grid."""
-        return int(self._ages.shape[0])
+        return int(self._values.shape[0])
 
     @property
     def step_size(self) -> float | None:
@@ -165,7 +160,7 @@ class AgeGrid:
             raise IndexError(
                 f"Period {period} out of bounds for grid with {self.n_periods} periods."
             )
-        return float(self._ages[period])
+        return float(self._values[period])
 
     def get_periods_where(self, predicate: Callable[[float], bool]) -> list[int]:
         """Get period indices where predicate is True.
@@ -180,7 +175,7 @@ class AgeGrid:
         return [
             period
             for period in range(self.n_periods)
-            if predicate(float(self._ages[period]))
+            if predicate(float(self._values[period]))
         ]
 
 
