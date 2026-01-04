@@ -226,16 +226,18 @@ def _validate_range(
         errors.append(f"'start' must be non-negative, got {start}.")
 
     try:
-        step_result = parse_step(step)
+        precise_step_size = parse_step(step)
     except ValueError as e:
         errors.append(str(e))
         return errors
 
     step_fraction = (
-        Fraction(step_result) if isinstance(step_result, int) else step_result
+        Fraction(precise_step_size)
+        if isinstance(precise_step_size, int)
+        else precise_step_size
     )
     range_fraction = Fraction(stop) - Fraction(start)
-    n_steps = range_fraction / step_fraction
+    n_steps = range_fraction / step_fraction + 1
     if n_steps.denominator != 1:
         errors.append(
             f"Step size ({float(step_fraction)}) does not divide evenly into the range "
@@ -256,8 +258,8 @@ def _validate_values(values: Iterable[int | Fraction]) -> list[str]:
     if not vals:
         return ["'values' cannot be empty."]
 
-    if any(not isinstance(v, (int, float, Fraction)) for v in vals):
-        return ["All values must be numbers."]
+    if any(not isinstance(v, (int, Fraction)) for v in vals):
+        return ["All values must be integers or fractions."]
 
     if any(v < 0 for v in vals):
         errors.append("All values must be non-negative.")
