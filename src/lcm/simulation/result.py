@@ -405,7 +405,7 @@ def _process_regime(
     data = _concatenate_and_filter(period_dicts)
 
     # Add age column (computed from period using ages grid)
-    data["age"] = ages.ages[data["period"]]
+    data["age"] = ages.values[data["period"]]  # noqa: PD011
 
     # Add regime name
     data["regime"] = [internal_regime.name] * len(data["period"])

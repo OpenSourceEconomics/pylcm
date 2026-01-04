@@ -34,15 +34,16 @@ def simulate_inputs():
         working,
     )
 
-    ages = AgeGrid(start=0, stop=2, step="Y")
+    ages = AgeGrid(start=0, stop=1, step="Y")
+    final_age_alive = 0
     updated_working = working.replace(
         actions={
             **working.actions,
             "consumption": working.actions["consumption"].replace(stop=100),  # ty: ignore[unresolved-attribute]
         },
-        active=lambda age: age < 1,
+        active=lambda age: age <= final_age_alive,
     )
-    updated_dead = dead.replace(active=lambda age: age >= 1)
+    updated_dead = dead.replace(active=lambda age: age > final_age_alive)
     internal_regimes = process_regimes(
         [updated_working, updated_dead],
         ages=ages,
@@ -63,7 +64,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
             "discount_factor": 1.0,
             "utility": {"disutility_of_work": 1.0},
             "next_wealth": {"interest_rate": 0.05},
-            "next_regime": {"final_age": 0},  # n_periods=2, so final_age=0
+            "next_regime": {"final_age_alive": 0},
             "borrowing_constraint": {},
             "labor_income": {},
         },
@@ -107,13 +108,14 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
         updated_functions = {
             name: func for name, func in working.functions.items() if name != "wage"
         }
-        stop_age = START_AGE + n_periods
+        stop_age = START_AGE + n_periods - 1
+        final_age_alive = stop_age - 1
         ages = AgeGrid(start=START_AGE, stop=stop_age, step="Y")
         updated_working = working.replace(
             functions=updated_functions,
-            active=lambda age, stop=stop_age: age < stop - 1,
+            active=lambda age: age <= final_age_alive,
         )
-        updated_dead = dead.replace(active=lambda age, stop=stop_age: age >= stop - 1)
+        updated_dead = dead.replace(active=lambda age: age > final_age_alive)
 
         params = get_params(n_periods=n_periods)
         # Since wage function is removed, wage becomes a parameter for labor_income

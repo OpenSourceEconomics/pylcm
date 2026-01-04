@@ -190,7 +190,7 @@ retired = Regime(
 
 model = Model(
     regimes=[working, retired],
-    ages=AgeGrid(start=18, stop=RETIREMENT_AGE + 1, step="Y"),
+    ages=AgeGrid(start=18, stop=RETIREMENT_AGE, step="Y"),
     regime_id_cls=RegimeId,
 )
 

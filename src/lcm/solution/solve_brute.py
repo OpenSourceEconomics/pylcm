@@ -72,6 +72,6 @@ def solve(
 
         next_V_arr = period_solution
         solution[period] = period_solution
-        logger.info("Age: %s", ages.ages[period])
+        logger.info("Age: %s", ages.values[period])
 
     return solution

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from fractions import Fraction
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -21,12 +23,18 @@ from tests.test_models.deterministic.base import (
 # ======================================================================================
 
 
-def test_parse_step_valid_formats():
-    assert parse_step("Y") == 1.0
-    assert parse_step("2Y") == 2.0
-    assert parse_step("M") == pytest.approx(1 / 12)
-    assert parse_step("3M") == pytest.approx(0.25)
-    assert parse_step("Q") == 0.25
+@pytest.mark.parametrize(
+    ("step", "expected"),
+    [
+        ("Y", 1),
+        ("2Y", 2),
+        ("M", Fraction(1, 12)),
+        ("3M", Fraction(1, 4)),
+        ("Q", Fraction(1, 4)),
+    ],
+)
+def test_parse_step_valid_formats(step, expected):
+    assert parse_step(step) == expected
 
 
 def test_parse_step_invalid():
@@ -40,16 +48,38 @@ def test_parse_step_invalid():
 
 
 def test_age_grid_from_range():
-    ages = AgeGrid(start=18, stop=22, step="Y")
+    ages = AgeGrid(start=18, stop=21, step="Y")
     assert ages.n_periods == 4
-    np.testing.assert_array_equal(ages.ages, [18, 19, 20, 21])
+    np.testing.assert_array_equal(ages.values, [18, 19, 20, 21])
     assert ages.step_size == 1.0
 
 
-def test_age_grid_from_values():
-    ages = AgeGrid(values=(18, 25, 35, 65))
+def test_age_grid_with_int_and_fraction_annual():
+    """Test AgeGrid with int start and Fraction stop."""
+    ages = AgeGrid(start=18, stop=Fraction(21, 1), step="Y")
     assert ages.n_periods == 4
-    np.testing.assert_array_equal(ages.ages, [18, 25, 35, 65])
+    np.testing.assert_array_equal(ages.values, [18, 19, 20, 21])
+    assert ages.step_size == 1.0
+    assert type(ages.precise_step_size) is int
+    assert isinstance(ages.precise_values, tuple)
+    assert all(isinstance(age, int) for age in ages.precise_values)
+
+
+def test_age_grid_with_int_and_fraction_quarterly():
+    """Test AgeGrid with int start and Fraction stop."""
+    ages = AgeGrid(start=20, stop=21 + Fraction(1, 4), step="Q")
+    assert ages.n_periods == 6
+    np.testing.assert_array_equal(ages.values, [20.0, 20.25, 20.5, 20.75, 21.0, 21.25])
+    assert ages.step_size == 0.25
+    assert type(ages.precise_step_size) is Fraction
+    assert isinstance(ages.precise_values, tuple)
+    assert all(isinstance(age, Fraction) for age in ages.precise_values)
+
+
+def test_age_grid_from_values():
+    ages = AgeGrid(precise_values=(18, 25, 35, 65))
+    assert ages.n_periods == 4
+    np.testing.assert_array_equal(ages.values, [18, 25, 35, 65])
     assert ages.step_size is None
 
 
@@ -60,9 +90,9 @@ def test_age_grid_period_to_age():
 
 
 def test_age_grid_get_periods_where():
-    ages = AgeGrid(start=18, stop=23, step="Y")  # [18, 19, 20, 21, 22]
+    ages = AgeGrid(start=18, stop=22, step="Y")
     periods = ages.get_periods_where(lambda age: age >= 21)
-    assert periods == [3, 4]
+    assert periods == (3, 4)
 
 
 # ======================================================================================
@@ -77,7 +107,7 @@ def test_age_grid_no_params_raises():
 
 def test_age_grid_values_and_range_raises():
     with pytest.raises(GridInitializationError, match="Cannot specify both"):
-        AgeGrid(start=18, stop=22, step="Y", values=(18, 19))
+        AgeGrid(start=18, stop=22, step="Y", precise_values=(18, 19))  # ty: ignore[no-matching-overload]
 
 
 def test_age_grid_start_greater_than_stop_raises():
@@ -87,7 +117,13 @@ def test_age_grid_start_greater_than_stop_raises():
 
 def test_age_grid_non_increasing_values_raises():
     with pytest.raises(GridInitializationError, match="strictly increasing"):
-        AgeGrid(values=(18, 20, 19))
+        AgeGrid(precise_values=(18, 20, 19))
+
+
+def test_age_grid_step_size_not_divisible_raises():
+    """Test that step size must divide evenly into the range."""
+    with pytest.raises(GridInitializationError, match="does not divide evenly"):
+        AgeGrid(start=18, stop=21, step="2Y")
 
 
 # ======================================================================================
@@ -97,16 +133,17 @@ def test_age_grid_non_increasing_values_raises():
 
 def test_model_with_quarterly_steps():
     """Test that solve/simulate works with quarterly (Q) step size."""
-    # Quarterly steps: 18.0, 18.25, 18.5, 18.75 (4 periods)
+    # Quarterly steps: 18.0, 18.25, 18.5, 18.75, 19.0 (5 periods)
     ages = AgeGrid(start=18, stop=19, step="Q")
-    assert ages.n_periods == 4
+    final_age_alive = 18.75
+    assert ages.n_periods == 5
     assert ages.step_size == 0.25
 
     model = Model(
         [
-            working.replace(active=lambda age: age < 18.75),
-            retired.replace(active=lambda age: age < 18.75),
-            dead.replace(active=lambda age: age >= 18.75),
+            working.replace(active=lambda age: age <= final_age_alive),
+            retired.replace(active=lambda age: age <= final_age_alive),
+            dead.replace(active=lambda age: age > final_age_alive),
         ],
         ages=ages,
         regime_id_cls=RegimeId,
@@ -117,7 +154,7 @@ def test_model_with_quarterly_steps():
             "discount_factor": 0.99,
             "utility": {"disutility_of_work": 0.5},
             "next_wealth": {"interest_rate": 0.01},
-            "next_regime": {"final_age": 18.5},  # Transition to dead at age 18.5
+            "next_regime": {"final_age_alive": final_age_alive},
             "borrowing_constraint": {},
             "labor_income": {"wage": 5.0},
         },
@@ -125,7 +162,7 @@ def test_model_with_quarterly_steps():
             "discount_factor": 0.99,
             "utility": {},
             "next_wealth": {"interest_rate": 0.01, "labor_income": 0.0},
-            "next_regime": {"final_age": 18.5},
+            "next_regime": {"final_age_alive": final_age_alive},
             "borrowing_constraint": {},
         },
         "dead": {},
@@ -141,8 +178,8 @@ def test_model_with_quarterly_steps():
     df = result.to_dataframe()
 
     # Check that age column has quarterly values
-    assert set(df["age"].unique()) == {18.0, 18.25, 18.5, 18.75}
+    assert set(df["age"].unique()) == {18.0, 18.25, 18.5, 18.75, 19.0}
 
-    # Check working/retired regimes only have ages < 18.75
+    # Check working/retired regimes only have ages < 19
     non_dead_df = df.query('regime != "dead"')
-    assert all(non_dead_df["age"] < 18.75)
+    assert all(non_dead_df["age"] < 19)
