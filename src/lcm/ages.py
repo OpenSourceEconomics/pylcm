@@ -105,18 +105,19 @@ class AgeGrid:
             self._step_size = float(self._precise_step_size)
             n_steps = int((stop - start) // self._precise_step_size) + 1  # ty: ignore[unsupported-operator]
             self._precise_ages = tuple(
-                start + i * self._precise_step_size for i in range(n_steps)
-            )  # ty: ignore[unsupported-operator]
+                start + i * self._precise_step_size  # ty: ignore[unsupported-operator]
+                for i in range(n_steps)
+            )
             self._ages = jnp.array([float(age) for age in self._precise_ages])
 
     @property
     def ages(self) -> Float1D:
-        """Array of ages for each period."""
+        """Array of ages; indexed by period."""
         return self._ages
 
     @property
     def precise_ages(self) -> tuple[int | Fraction, ...]:
-        """Precise ages.
+        """Precise ages; indexed by period.
 
         Could be:
         - An int if all ages are multiples of one year.
