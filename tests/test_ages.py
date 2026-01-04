@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from fractions import Fraction
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -21,12 +23,18 @@ from tests.test_models.deterministic.base import (
 # ======================================================================================
 
 
-def test_parse_step_valid_formats():
-    assert parse_step("Y") == 1.0
-    assert parse_step("2Y") == 2.0
-    assert parse_step("M") == pytest.approx(1 / 12)
-    assert parse_step("3M") == pytest.approx(0.25)
-    assert parse_step("Q") == 0.25
+@pytest.mark.parametrize(
+    ("step", "expected"),
+    [
+        ("Y", 1),
+        ("2Y", 2),
+        ("M", Fraction(1, 12)),
+        ("3M", Fraction(1, 4)),
+        ("Q", Fraction(1, 4)),
+    ],
+)
+def test_parse_step_valid_formats(step, expected):
+    assert parse_step(step) == expected
 
 
 def test_parse_step_invalid():
@@ -44,6 +52,28 @@ def test_age_grid_from_range():
     assert ages.n_periods == 4
     np.testing.assert_array_equal(ages.ages, [18, 19, 20, 21])
     assert ages.step_size == 1.0
+
+
+def test_age_grid_with_int_and_fraction_annual():
+    """Test AgeGrid with int start and Fraction stop."""
+    ages = AgeGrid(start=18, stop=Fraction(21, 1), step="Y")
+    assert ages.n_periods == 4
+    np.testing.assert_array_equal(ages.ages, [18, 19, 20, 21])
+    assert ages.step_size == 1.0
+    assert type(ages.precise_step_size) is int
+    assert isinstance(ages.precise_ages, tuple)
+    assert all(isinstance(age, int) for age in ages.precise_ages)
+
+
+def test_age_grid_with_int_and_fraction_quarterly():
+    """Test AgeGrid with int start and Fraction stop."""
+    ages = AgeGrid(start=20, stop=21 + Fraction(1, 4), step="Q")
+    assert ages.n_periods == 6
+    np.testing.assert_array_equal(ages.ages, [20.0, 20.25, 20.5, 20.75, 21.0, 21.25])
+    assert ages.step_size == 0.25
+    assert type(ages.precise_step_size) is Fraction
+    assert isinstance(ages.precise_ages, tuple)
+    assert all(isinstance(age, Fraction) for age in ages.precise_ages)
 
 
 def test_age_grid_from_values():

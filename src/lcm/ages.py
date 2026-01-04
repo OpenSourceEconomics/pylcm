@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
+from fractions import Fraction
+from typing import TYPE_CHECKING, overload
 
 import jax.numpy as jnp
 
@@ -19,18 +20,16 @@ if TYPE_CHECKING:
 # Step parsing
 # ======================================================================================
 
-STEP_UNITS: dict[str, float] = {
-    "Y": 1.0,
-    "M": 1 / 12,
-    "Q": 0.25,
+STEP_UNITS: dict[str, Fraction] = {
+    "Y": Fraction(1, 1),
+    "M": Fraction(1, 12),
+    "Q": Fraction(1, 4),
 }
 
-_STEP_PATTERN = re.compile(r"^(\d+)?([YMQ])$", re.IGNORECASE)
 
-
-def parse_step(step: str) -> float:
-    """Parse a step string like 'Y', '2Y', 'M', '3M', 'Q' into years."""
-    match = _STEP_PATTERN.match(step)
+def parse_step(step: str) -> int | Fraction:
+    """Parse a step string like 'Y', '2Y', 'M', '3M', 'Q' into int or Fraction."""
+    match = re.match(r"^(\d+)?([YMQ])$", step, re.IGNORECASE)
     if not match:
         raise GridInitializationError(
             f"Invalid step format: '{step}'. "
@@ -39,7 +38,8 @@ def parse_step(step: str) -> float:
 
     multiplier_str, unit = match.groups()
     multiplier = int(multiplier_str) if multiplier_str else 1
-    return multiplier * STEP_UNITS[unit.upper()]
+    result = multiplier * STEP_UNITS[unit.upper()]
+    return int(result) if result.denominator == 1 else result
 
 
 # ======================================================================================
@@ -50,12 +50,43 @@ def parse_step(step: str) -> float:
 class AgeGrid:
     """Age grid for life-cycle models."""
 
+    @overload
     def __init__(
         self,
-        start: float | None = None,
-        stop: float | None = None,
+        *,
+        start: int | Fraction,
+        stop: int | Fraction,
+        step: str,
+        values: None = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        *,
+        values: tuple[int | Fraction, ...],
+        start: None = None,
+        stop: None = None,
+        step: None = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        *,
+        start: int | Fraction | None = None,
+        stop: int | Fraction | None = None,
         step: str | None = None,
-        values: tuple[float, ...] | None = None,
+        values: tuple[int | Fraction, ...] | None = None,
+    ) -> None: ...
+
+    def __init__(
+        self,
+        *,
+        start: int | Fraction | None = None,
+        stop: int | Fraction | None = None,
+        step: str | None = None,
+        values: tuple[int | Fraction, ...] | None = None,
     ) -> None:
         _validate_age_grid(start, stop, step, values)
 
@@ -65,19 +96,34 @@ class AgeGrid:
         self.values = values
 
         if values is not None:
+            self._precise_ages = values
             self._ages = jnp.array(values)
-            self._step_size: float | None = None
+            self._step_size = None
+            self._precise_step_size = None
         else:
-            self._step_size = parse_step(step)  # type: ignore[arg-type]
-            # Calculate number of points for linspace (stop is inclusive)
-            # Validation ensures (stop - start) / step_size is an integer
-            n_steps = round((stop - start) / self._step_size) + 1  # type: ignore[arg-type]
-            self._ages = jnp.linspace(start, stop, n_steps)  # type: ignore[arg-type]
+            self._precise_step_size = parse_step(step)  # type: ignore[arg-type]
+            self._step_size = float(self._precise_step_size)
+            n_steps = int((stop - start) // self._precise_step_size) + 1  # ty: ignore[unsupported-operator]
+            self._precise_ages = tuple(
+                start + i * self._precise_step_size for i in range(n_steps)
+            )  # ty: ignore[unsupported-operator]
+            self._ages = jnp.array([float(age) for age in self._precise_ages])
 
     @property
     def ages(self) -> Float1D:
         """Array of ages for each period."""
         return self._ages
+
+    @property
+    def precise_ages(self) -> tuple[int | Fraction, ...]:
+        """Precise ages.
+
+        Could be:
+        - An int if all ages are multiples of one year.
+        - A Fraction if the ages are sub-annual.
+
+        """
+        return self._precise_ages
 
     @property
     def n_periods(self) -> int:
@@ -88,6 +134,18 @@ class AgeGrid:
     def step_size(self) -> float | None:
         """Step size in years, or None if using custom values."""
         return self._step_size
+
+    @property
+    def precise_step_size(self) -> int | Fraction | None:
+        """Precise step size.
+
+        Could be:
+        - An int if the step size is a multiple of one year.
+        - A Fraction if the step size is sub-annual.
+        - None if using custom age values.
+
+        """
+        return self._precise_step_size
 
     def period_to_age(self, period: int) -> float:
         """Convert a period index to the corresponding age.
@@ -131,10 +189,10 @@ class AgeGrid:
 
 
 def _validate_age_grid(
-    start: float | None,
-    stop: float | None,
+    start: int | Fraction | None,
+    stop: int | Fraction | None,
     step: str | None,
-    values: Iterable[float] | None,
+    values: Iterable[int | Fraction] | None,
 ) -> None:
     error_messages: list[str] = []
 
@@ -160,7 +218,9 @@ def _validate_age_grid(
         raise GridInitializationError(format_messages(error_messages))
 
 
-def _validate_range(start: float, stop: float, step: str) -> list[str]:
+def _validate_range(
+    start: int | Fraction, stop: int | Fraction, step: str
+) -> list[str]:
     errors: list[str] = []
 
     if start >= stop:
@@ -170,24 +230,26 @@ def _validate_range(start: float, stop: float, step: str) -> list[str]:
         errors.append(f"'start' must be non-negative, got {start}.")
 
     try:
-        step_size = parse_step(step)
+        step_result = parse_step(step)
     except ValueError as e:
         errors.append(str(e))
         return errors
 
-    # Check that step_size divides evenly into the range of ages.
-    range_size = stop - start
-    n_steps = range_size / step_size
-    if abs(n_steps - round(n_steps)) > 1e-10:  # noqa: PLR2004
+    step_fraction = (
+        Fraction(step_result) if isinstance(step_result, int) else step_result
+    )
+    range_fraction = Fraction(stop) - Fraction(start)
+    n_steps = range_fraction / step_fraction
+    if n_steps.denominator != 1:
         errors.append(
-            f"Step size ({step_size}) does not divide evenly into the range "
-            f"({range_size}). Number of steps would be {n_steps}."
+            f"Step size ({float(step_fraction)}) does not divide evenly into the range "
+            f"({float(range_fraction)}). Number of steps would be {float(n_steps)}."
         )
 
     return errors
 
 
-def _validate_values(values: Iterable[float]) -> list[str]:
+def _validate_values(values: Iterable[int | Fraction]) -> list[str]:
     errors: list[str] = []
 
     try:
@@ -198,7 +260,7 @@ def _validate_values(values: Iterable[float]) -> list[str]:
     if not vals:
         return ["'values' cannot be empty."]
 
-    if any(not isinstance(v, int | float) for v in vals):
+    if any(not isinstance(v, (int, float, Fraction)) for v in vals):
         return ["All values must be numbers."]
 
     if any(v < 0 for v in vals):
