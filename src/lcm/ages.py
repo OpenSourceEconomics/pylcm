@@ -64,20 +64,10 @@ class AgeGrid:
     def __init__(
         self,
         *,
-        precise_values: tuple[int | Fraction, ...],
+        precise_values: Iterable[int | Fraction] | None = None,
         start: None = None,
         stop: None = None,
         step: None = None,
-    ) -> None: ...
-
-    @overload
-    def __init__(
-        self,
-        *,
-        start: int | Fraction | None = None,
-        stop: int | Fraction | None = None,
-        step: str | None = None,
-        precise_values: Iterable[int | Fraction] | None = None,
     ) -> None: ...
 
     def __init__(

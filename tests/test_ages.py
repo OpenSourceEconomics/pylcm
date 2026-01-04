@@ -107,7 +107,7 @@ def test_age_grid_no_params_raises():
 
 def test_age_grid_values_and_range_raises():
     with pytest.raises(GridInitializationError, match="Cannot specify both"):
-        AgeGrid(start=18, stop=22, step="Y", precise_values=(18, 19))
+        AgeGrid(start=18, stop=22, step="Y", precise_values=(18, 19))  # ty: ignore[no-matching-overload]
 
 
 def test_age_grid_start_greater_than_stop_raises():
