@@ -77,7 +77,7 @@ class AgeGrid:
         start: int | Fraction | None = None,
         stop: int | Fraction | None = None,
         step: str | None = None,
-        precise_values: tuple[int | Fraction, ...] | None = None,
+        precise_values: Iterable[int | Fraction] | None = None,
     ) -> None: ...
 
     def __init__(
@@ -86,12 +86,12 @@ class AgeGrid:
         start: int | Fraction | None = None,
         stop: int | Fraction | None = None,
         step: str | None = None,
-        precise_values: tuple[int | Fraction, ...] | None = None,
+        precise_values: Iterable[int | Fraction] | None = None,
     ) -> None:
         _validate_age_grid(start, stop, step, precise_values)
 
         if precise_values is not None:
-            self._precise_values = precise_values
+            self._precise_values = tuple(precise_values)
             self._values = jnp.array(precise_values)
             self._step_size = None
             self._precise_step_size = None
@@ -162,21 +162,21 @@ class AgeGrid:
             )
         return float(self._values[period])
 
-    def get_periods_where(self, predicate: Callable[[float], bool]) -> list[int]:
+    def get_periods_where(self, predicate: Callable[[float], bool]) -> tuple[int, ...]:
         """Get period indices where predicate is True.
 
         Args:
             predicate: A function that takes an age and returns True/False.
 
         Returns:
-            List of period indices where predicate(age) is True.
+            Tuple of period indices where predicate(age) is True.
 
         """
-        return [
+        return tuple(
             period
             for period in range(self.n_periods)
             if predicate(float(self._values[period]))
-        ]
+        )
 
 
 # ======================================================================================
@@ -188,18 +188,17 @@ def _validate_age_grid(
     start: int | Fraction | None,
     stop: int | Fraction | None,
     step: str | None,
-    values: Iterable[int | Fraction] | None,
+    precise_values: Iterable[int | Fraction] | None,
 ) -> None:
     error_messages: list[str] = []
 
     has_range = start is not None or stop is not None or step is not None
-    has_values = values is not None
+    has_values = precise_values is not None
 
     if has_values and has_range:
         error_messages.append("Cannot specify both 'values' and 'start/stop/step'.")
     elif has_values:
-        assert values is not None  # has_values check guarantees this
-        error_messages.extend(_validate_values(values))
+        error_messages.extend(_validate_values(precise_values))  # ty: ignore[invalid-argument-type]
     elif has_range:
         if start is None or stop is None or step is None:
             error_messages.append(
@@ -251,7 +250,7 @@ def _validate_values(values: Iterable[int | Fraction]) -> list[str]:
     errors: list[str] = []
 
     try:
-        vals = list(values)
+        vals = tuple(values)
     except TypeError:
         return ["'values' must be iterable."]
 

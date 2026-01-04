@@ -92,7 +92,7 @@ def test_age_grid_period_to_age():
 def test_age_grid_get_periods_where():
     ages = AgeGrid(start=18, stop=22, step="Y")
     periods = ages.get_periods_where(lambda age: age >= 21)
-    assert periods == [3, 4]
+    assert periods == (3, 4)
 
 
 # ======================================================================================
