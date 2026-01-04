@@ -86,13 +86,13 @@ class AgeGrid:
         start: int | Fraction | None = None,
         stop: int | Fraction | None = None,
         step: str | None = None,
-        values: tuple[int | Fraction, ...] | None = None,
+        precise_values: tuple[int | Fraction, ...] | None = None,
     ) -> None:
-        _validate_age_grid(start, stop, step, values)
+        _validate_age_grid(start, stop, step, precise_values)
 
-        if values is not None:
-            self._precise_values = values
-            self._values = jnp.array(values)
+        if precise_values is not None:
+            self._precise_values = precise_values
+            self._values = jnp.array(precise_values)
             self._step_size = None
             self._precise_step_size = None
         else:

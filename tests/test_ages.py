@@ -77,7 +77,7 @@ def test_age_grid_with_int_and_fraction_quarterly():
 
 
 def test_age_grid_from_values():
-    ages = AgeGrid(values=(18, 25, 35, 65))
+    ages = AgeGrid(precise_values=(18, 25, 35, 65))
     assert ages.n_periods == 4
     np.testing.assert_array_equal(ages.values, [18, 25, 35, 65])
     assert ages.step_size is None
@@ -107,7 +107,7 @@ def test_age_grid_no_params_raises():
 
 def test_age_grid_values_and_range_raises():
     with pytest.raises(GridInitializationError, match="Cannot specify both"):
-        AgeGrid(start=18, stop=22, step="Y", values=(18, 19))
+        AgeGrid(start=18, stop=22, step="Y", precise_values=(18, 19))
 
 
 def test_age_grid_start_greater_than_stop_raises():
@@ -117,7 +117,7 @@ def test_age_grid_start_greater_than_stop_raises():
 
 def test_age_grid_non_increasing_values_raises():
     with pytest.raises(GridInitializationError, match="strictly increasing"):
-        AgeGrid(values=(18, 20, 19))
+        AgeGrid(precise_values=(18, 20, 19))
 
 
 def test_age_grid_step_size_not_divisible_raises():
