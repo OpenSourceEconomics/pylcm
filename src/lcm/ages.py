@@ -216,7 +216,7 @@ def _validate_range(
 
     try:
         precise_step_size = parse_step(step)
-    except ValueError as e:
+    except GridInitializationError as e:
         errors.append(str(e))
         return errors
 
