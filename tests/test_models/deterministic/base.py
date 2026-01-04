@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 
 from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
+from lcm.ages import AgeGrid
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -14,7 +15,6 @@ if TYPE_CHECKING:
         ContinuousState,
         DiscreteAction,
         FloatND,
-        Period,
         ScalarInt,
     )
 
@@ -74,12 +74,11 @@ def next_wealth(
 
 def next_regime_from_working(
     labor_supply: DiscreteAction,
-    period: Period,
-    n_periods: int,
+    age: float,
+    final_age_alive: float,
 ) -> ScalarInt:
-    certain_death_transition = period == n_periods - 2  # dead in last period
     return jnp.where(
-        certain_death_transition,
+        age >= final_age_alive,
         RegimeId.dead,
         jnp.where(
             labor_supply == LaborSupply.retire,
@@ -89,10 +88,9 @@ def next_regime_from_working(
     )
 
 
-def next_regime_from_retired(period: Period, n_periods: int) -> ScalarInt:
-    certain_death_transition = period == n_periods - 2  # dead in last period
+def next_regime_from_retired(age: float, final_age_alive: float) -> ScalarInt:
     return jnp.where(
-        certain_death_transition,
+        age >= final_age_alive,
         RegimeId.dead,
         RegimeId.retired,
     )
@@ -140,7 +138,7 @@ working = Regime(
         "labor_income": labor_income,
         "is_working": is_working,
     },
-    active=[0],  # Needs to be specified to avoid initialization errors
+    active=lambda _age: True,  # Placeholder, overridden at model creation
 )
 
 retired = Regime(
@@ -161,7 +159,7 @@ retired = Regime(
         "next_wealth": next_wealth,
         "next_regime": next_regime_from_retired,
     },
-    active=[0],  # Needs to be specified to avoid initialization errors
+    active=lambda _age: True,  # Placeholder, overridden at model creation
 )
 
 
@@ -169,18 +167,19 @@ dead = Regime(
     name="dead",
     terminal=True,
     utility=lambda: 0.0,
-    active=[0],  # Needs to be specified to avoid initialization errors
+    active=lambda _age: True,  # Placeholder, overridden at model creation
 )
 
 
 def get_model(n_periods: int) -> Model:
+    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     return Model(
         [
-            working.replace(active=range(n_periods - 1)),
-            retired.replace(active=range(n_periods - 1)),
-            dead.replace(active=[n_periods - 1]),
+            working.replace(active=lambda age, n=n_periods: age < n - 1),
+            retired.replace(active=lambda age, n=n_periods: age < n - 1),
+            dead.replace(active=lambda age, n=n_periods: age >= n - 1),
         ],
-        n_periods=n_periods,
+        ages=ages,
         regime_id_cls=RegimeId,
     )
 
@@ -192,12 +191,13 @@ def get_params(
     interest_rate=0.05,
     wage=10.0,
 ):
+    final_age_alive = n_periods - 2  # Last age before death transition
     return {
         "working": {
             "discount_factor": discount_factor,
             "utility": {"disutility_of_work": disutility_of_work},
             "next_wealth": {"interest_rate": interest_rate},
-            "next_regime": {"n_periods": n_periods},
+            "next_regime": {"final_age_alive": final_age_alive},
             "borrowing_constraint": {},
             "labor_income": {"wage": wage},
         },
@@ -205,7 +205,7 @@ def get_params(
             "discount_factor": discount_factor,
             "utility": {},
             "next_wealth": {"interest_rate": interest_rate, "labor_income": 0.0},
-            "next_regime": {"n_periods": n_periods},
+            "next_regime": {"final_age_alive": final_age_alive},
             "borrowing_constraint": {},
         },
         "dead": {},

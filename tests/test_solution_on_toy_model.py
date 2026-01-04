@@ -15,6 +15,7 @@ from pandas.testing import assert_frame_equal
 
 import lcm
 from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
+from lcm.ages import AgeGrid
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -69,9 +70,8 @@ def next_wealth(
     return wealth - consumption + working
 
 
-def next_regime(period: int, n_periods: int) -> ScalarInt:
-    death_condition = period >= n_periods - 2  # is dead in last period
-    return jnp.where(death_condition, RegimeId.dead, RegimeId.alive)
+def next_regime(age: float, final_age_alive: float) -> ScalarInt:
+    return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.alive)
 
 
 def borrowing_constraint(
@@ -101,14 +101,14 @@ alive_deterministic = Regime(
         "next_wealth": next_wealth,
         "next_regime": next_regime,
     },
-    active=range(1),  # n_periods=2, so active in period 0
+    active=lambda age: age < 1,  # n_periods=2, so active in period 0
 )
 
 dead = Regime(
     name="dead",
     terminal=True,
     utility=lambda: 0.0,
-    active=[1],  # n_periods=2, so active in period 1
+    active=lambda age: age >= 1,  # n_periods=2, so active in period 1
 )
 
 
@@ -122,9 +122,15 @@ alive_stochastic.transitions["next_health"] = next_health
 alive_stochastic.states["health"] = DiscreteGrid(HealthStatus)
 
 model_deterministic = Model(
-    [alive_deterministic, dead], regime_id_cls=RegimeId, n_periods=2
+    [alive_deterministic, dead],
+    regime_id_cls=RegimeId,
+    ages=AgeGrid(start=0, stop=2, step="Y"),
 )
-model_stochastic = Model([alive_stochastic, dead], regime_id_cls=RegimeId, n_periods=2)
+model_stochastic = Model(
+    [alive_stochastic, dead],
+    regime_id_cls=RegimeId,
+    ages=AgeGrid(start=0, stop=2, step="Y"),
+)
 
 
 # ======================================================================================
@@ -411,15 +417,18 @@ def test_deterministic_solve(discount_factor, n_wealth_points):
     # Update model
     # ==================================================================================
     n_periods = 3
+    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     new_states = alive_deterministic.states
     new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # ty: ignore[unresolved-attribute]
     model = Model(
         [
-            alive_deterministic.replace(states=new_states, active=range(n_periods - 1)),
-            dead.replace(active=[n_periods - 1]),
+            alive_deterministic.replace(
+                states=new_states, active=lambda age: age < n_periods - 1
+            ),
+            dead.replace(active=lambda age: age >= n_periods - 1),
         ],
         regime_id_cls=RegimeId,
-        n_periods=n_periods,
+        ages=ages,
     )
 
     # Solve model using LCM
@@ -427,7 +436,7 @@ def test_deterministic_solve(discount_factor, n_wealth_points):
     params_alive = {
         "discount_factor": discount_factor,
         "utility": {"health": 1},
-        "next_regime": {"n_periods": model.n_periods},
+        "next_regime": {"final_age_alive": model.n_periods - 2},
     }
     got = model.solve(params={"alive": params_alive, "dead": {}})
 
@@ -454,14 +463,17 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
     # Update model
     # ==================================================================================
     n_periods = 3
+    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     new_states = alive_deterministic.states
     new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # ty: ignore[unresolved-attribute]
     model = Model(
         [
-            alive_deterministic.replace(states=new_states, active=range(n_periods - 1)),
-            dead.replace(active=[n_periods - 1]),
+            alive_deterministic.replace(
+                states=new_states, active=lambda age: age < n_periods - 1
+            ),
+            dead.replace(active=lambda age: age >= n_periods - 1),
         ],
-        n_periods=n_periods,
+        ages=ages,
         regime_id_cls=RegimeId,
     )
 
@@ -470,7 +482,7 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
     params_alive = {
         "discount_factor": discount_factor,
         "utility": {"health": 1},
-        "next_regime": {"n_periods": model.n_periods},
+        "next_regime": {"final_age_alive": model.n_periods - 2},
     }
     result = model.solve_and_simulate(
         params={"alive": params_alive, "dead": {}},
@@ -478,7 +490,12 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
         initial_regimes=["alive"] * 4,
     )
     # Filter to alive regime only (dead regime has trivial values)
-    got = result.to_dataframe().query('regime == "alive"').reset_index(drop=True)
+    got = (
+        result.to_dataframe()
+        .query('regime == "alive"')
+        .drop(columns=["age"])  # Analytical function doesn't include age
+        .reset_index(drop=True)
+    )
 
     expected = analytical_simulate_deterministic(
         initial_wealth=np.array([0.25, 0.75, 1.25, 1.75]),
@@ -504,15 +521,18 @@ def test_stochastic_solve(discount_factor, n_wealth_points, health_transition):
     # Update model
     # ==================================================================================
     n_periods = 3
+    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     new_states = alive_stochastic.states
     new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # ty: ignore[unresolved-attribute]
     model = Model(
         [
-            alive_stochastic.replace(states=new_states, active=range(n_periods - 1)),
-            dead.replace(active=[n_periods - 1]),
+            alive_stochastic.replace(
+                states=new_states, active=lambda age: age < n_periods - 1
+            ),
+            dead.replace(active=lambda age: age >= n_periods - 1),
         ],
         regime_id_cls=RegimeId,
-        n_periods=n_periods,
+        ages=ages,
     )
 
     # Solve model using LCM
@@ -520,7 +540,7 @@ def test_stochastic_solve(discount_factor, n_wealth_points, health_transition):
     params = {
         "discount_factor": discount_factor,
         "next_health": {"health_transition": health_transition},
-        "next_regime": {"n_periods": model.n_periods},
+        "next_regime": {"final_age_alive": model.n_periods - 2},
     }
     got = model.solve(params={"alive": params, "dead": {}})
 
@@ -561,14 +581,17 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, health_transition
     # Update model
     # ==================================================================================
     n_periods = 3
+    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     new_states = alive_stochastic.states
     new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # ty: ignore[unresolved-attribute]
     model = Model(
         [
-            alive_stochastic.replace(states=new_states, active=range(n_periods - 1)),
-            dead.replace(active=[n_periods - 1]),
+            alive_stochastic.replace(
+                states=new_states, active=lambda age: age < n_periods - 1
+            ),
+            dead.replace(active=lambda age: age >= n_periods - 1),
         ],
-        n_periods=n_periods,
+        ages=ages,
         regime_id_cls=RegimeId,
     )
 
@@ -577,7 +600,7 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, health_transition
     params_alive = {
         "discount_factor": discount_factor,
         "next_health": {"health_transition": health_transition},
-        "next_regime": {"n_periods": model.n_periods},
+        "next_regime": {"final_age_alive": model.n_periods - 2},
     }
     initial_states = {
         "wealth": jnp.array([0.25, 0.75, 1.25, 1.75, 2.0]),
@@ -604,7 +627,8 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, health_transition
     )
 
     # Drop rows with wealth at boundary (analytical solution has edge effects)
-    got = got.query("wealth != 2").reset_index(drop=True)
+    # Also drop age column (analytical function doesn't include it)
+    got = got.query("wealth != 2").drop(columns=["age"]).reset_index(drop=True)
     expected = expected.query("wealth != 2").reset_index(drop=True)
 
     assert_frame_equal(

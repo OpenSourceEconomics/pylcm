@@ -22,6 +22,7 @@ type ScalarInt = int | Int[Scalar, ""]  # noqa: F722
 type ScalarFloat = float | Float[Scalar, ""]  # noqa: F722
 
 type Period = int | Int1D
+type Age = float
 type RegimeName = str
 
 type _RegimeGridsDict = dict[str, Array]
@@ -49,7 +50,7 @@ class InternalUserFunction(Protocol):
     """
 
     def __call__(  # noqa: D102
-        self, *args: Array | int, params: ParamsDict, **kwargs: Array | int
+        self, *args: Array | float, params: ParamsDict, **kwargs: Array | float
     ) -> Array: ...
 
 
@@ -61,7 +62,7 @@ class RegimeTransitionFunction(Protocol):
     """
 
     def __call__(  # noqa: D102
-        self, *args: Array | int, params: ParamsDict, **kwargs: Array | int
+        self, *args: Array | float, params: ParamsDict, **kwargs: Array | float
     ) -> dict[RegimeName, float]: ...
 
 
@@ -73,7 +74,7 @@ class VmappedRegimeTransitionFunction(Protocol):
     """
 
     def __call__(  # noqa: D102
-        self, *args: Array | int, params: ParamsDict, **kwargs: Array | int
+        self, *args: Array | float, params: ParamsDict, **kwargs: Array | float
     ) -> dict[RegimeName, Float1D]: ...
 
 
@@ -216,5 +217,15 @@ class NextStateSimulationFunction(Protocol):
 
     def __call__(  # noqa: D102
         self,
-        **kwargs: Array | Period | ParamsDict,
+        **kwargs: Array | Period | Age | ParamsDict,
     ) -> dict[str, DiscreteState | ContinuousState]: ...
+
+
+class ActiveFunction(Protocol):
+    """Function that determines if a regime is active at a given age.
+
+    Only used for type checking.
+
+    """
+
+    def __call__(self, age: float, /) -> bool: ...  # noqa: D102

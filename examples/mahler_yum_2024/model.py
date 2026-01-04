@@ -7,6 +7,7 @@ Wealth-Health Gaps in Germany" by Lukas Mahler and Minchul Yum (Econometrica, 20
 from __future__ import annotations
 
 from dataclasses import dataclass, make_dataclass
+from functools import partial
 from typing import TYPE_CHECKING
 
 import jax
@@ -16,7 +17,7 @@ from jax import random
 from scipy.interpolate import interp1d
 
 import lcm
-from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
+from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime
 from lcm.dispatchers import _base_productmap
 
 if TYPE_CHECKING:
@@ -43,7 +44,8 @@ if TYPE_CHECKING:
 # --------------------------------------------------------------------------------------
 avrgearn_not_normalized: float = 57706.57
 theta_val: Float1D = jnp.array([jnp.exp(-0.2898), jnp.exp(0.2898)])
-n: int = 38
+ages = AgeGrid(start=25, stop=101, step="2Y")
+n: int = ages.n_periods
 retirement_age: int = 19
 taul: float = 0.128
 lamda: float = 1.0 - 0.321
@@ -348,6 +350,14 @@ def savings_constraint(
 # ======================================================================================
 
 
+def alive_is_active(age: float, final_age_alive: float) -> bool:
+    return age <= final_age_alive
+
+
+def dead_is_active(age: float, initial_age: float) -> bool:
+    return age > initial_age
+
+
 ALIVE_REGIME = Regime(
     name="alive",
     utility=utility,
@@ -397,18 +407,20 @@ ALIVE_REGIME = Regime(
         "next_productivity": next_productivity,
         "next_regime": next_regime,
     },
-    active=range(n - 1),
+    active=partial(alive_is_active, final_age_alive=ages.values[-2]),
 )
 
 DEAD_REGIME = Regime(
     name="dead",
     terminal=True,
     utility=lambda: 0.0,
-    active=[n - 1],
+    active=partial(dead_is_active, initial_age=ages.values[0]),
 )
 
 MAHLER_YUM_MODEL = Model(
-    [ALIVE_REGIME, DEAD_REGIME], n_periods=n, regime_id_cls=RegimeId
+    regimes=[ALIVE_REGIME, DEAD_REGIME],
+    ages=ages,
+    regime_id_cls=RegimeId,
 )
 
 

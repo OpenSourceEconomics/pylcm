@@ -10,6 +10,7 @@ from numpy.testing import assert_array_equal
 from pandas.testing import assert_frame_equal
 
 from lcm import DiscreteGrid, LinspaceGrid, grid_helpers
+from lcm.ages import AgeGrid
 from lcm.input_processing.regime_processing import (
     _convert_flat_to_nested_transitions,
     get_grids,
@@ -202,9 +203,10 @@ def test_get_grids(regime_mock):
 
 
 def test_process_regimes():
+    ages = AgeGrid(start=0, stop=4, step="Y")
     internal_regimes = process_regimes(
         [working, dead],
-        n_periods=4,
+        ages=ages,
         regime_id_cls=RegimeId,
         enable_jit=True,
     )

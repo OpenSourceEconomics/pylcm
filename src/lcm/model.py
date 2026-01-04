@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
     from jax import Array
 
+    from lcm.ages import AgeGrid
     from lcm.input_processing.regime_processing import InternalRegime
     from lcm.simulation.result import SimulationResult
     from lcm.typing import (
@@ -47,6 +48,7 @@ class Model:
     """
 
     description: str | None = None
+    ages: AgeGrid
     n_periods: int
     enable_jit: bool = True
     regime_id_cls: type
@@ -58,7 +60,7 @@ class Model:
         self,
         regimes: Iterable[Regime],
         *,
-        n_periods: int,
+        ages: AgeGrid,
         regime_id_cls: type,
         description: str | None = None,
         enable_jit: bool = True,
@@ -67,7 +69,7 @@ class Model:
 
         Args:
             regimes: User provided regimes.
-            n_periods: Number of periods of the model.
+            ages: Age grid for the model.
             regime_id_cls: A dataclass mapping regime names to integer indices.
             description: Description of the model.
             enable_jit: Whether to jit the functions of the internal regime.
@@ -75,7 +77,8 @@ class Model:
         """
         regimes_list = list(regimes)
 
-        self.n_periods = n_periods
+        self.ages = ages
+        self.n_periods = ages.n_periods
         self.regime_id_cls = regime_id_cls
         self.description = description
         self.enable_jit = enable_jit
@@ -83,14 +86,14 @@ class Model:
         self.internal_regimes = {}
 
         _validate_model_inputs(
-            n_periods=n_periods,
+            n_periods=self.n_periods,
             regimes=regimes_list,
             regime_id_cls=regime_id_cls,
         )
 
         self.internal_regimes = process_regimes(
             regimes=regimes_list,
-            n_periods=n_periods,
+            ages=self.ages,
             regime_id_cls=self.regime_id_cls,
             enable_jit=enable_jit,
         )
@@ -116,7 +119,7 @@ class Model:
         """
         return solve(
             params=params,
-            n_periods=self.n_periods,
+            ages=self.ages,
             internal_regimes=self.internal_regimes,
             logger=get_logger(debug_mode=debug_mode),
         )
@@ -157,6 +160,7 @@ class Model:
             regime_id_cls=self.regime_id_cls,
             logger=get_logger(debug_mode=debug_mode),
             V_arr_dict=V_arr_dict,
+            ages=self.ages,
             seed=seed,
         )
 

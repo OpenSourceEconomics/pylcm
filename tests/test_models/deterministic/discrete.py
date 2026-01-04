@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 import jax.numpy as jnp
 
 from lcm import DiscreteGrid, Model, Regime
+from lcm.ages import AgeGrid
 from tests.test_models.deterministic.regression import (
     LaborSupply,
     is_working,
@@ -30,7 +31,6 @@ if TYPE_CHECKING:
         DiscreteAction,
         DiscreteState,
         FloatND,
-        Period,
         ScalarInt,
     )
 
@@ -92,10 +92,9 @@ def next_wealth_discrete(
     )
 
 
-def next_regime(period: Period, n_periods: int) -> ScalarInt:
-    certain_death_transition = period == n_periods - 2  # dead in last period
+def next_regime(age: float, final_age_alive: float) -> ScalarInt:
     return jnp.where(
-        certain_death_transition,
+        age >= final_age_alive,
         RegimeId.dead,
         RegimeId.working,
     )
@@ -129,7 +128,7 @@ working = Regime(
         "labor_income": labor_income,
         "is_working": is_working,
     },
-    active=[0],  # Needs to be specified to avoid initialization errors
+    active=lambda _age: True,  # Placeholder, will be replaced by get_model()
 )
 
 
@@ -137,17 +136,19 @@ dead = Regime(
     name="dead",
     terminal=True,
     utility=lambda: 0.0,
-    active=[0],  # Needs to be specified to avoid initialization errors
+    active=lambda _age: True,  # Placeholder, will be replaced by get_model()
 )
 
 
 def get_model(n_periods: int) -> Model:
+    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
+    final_age_alive = n_periods - 2
     return Model(
         [
-            working.replace(active=range(n_periods - 1)),
-            dead.replace(active=[n_periods - 1]),
+            working.replace(active=lambda age: age <= final_age_alive),
+            dead.replace(active=lambda age: age > final_age_alive),
         ],
-        n_periods=n_periods,
+        ages=ages,
         regime_id_cls=RegimeId,
     )
 
@@ -159,12 +160,13 @@ def get_params(
     interest_rate: float = 0.05,
     wage: float = 10.0,
 ) -> dict[str, Any]:
+    final_age_alive = n_periods - 2
     return {
         "working": {
             "discount_factor": discount_factor,
             "utility": {"disutility_of_work": disutility_of_work},
             "next_wealth": {"interest_rate": interest_rate},
-            "next_regime": {"n_periods": n_periods},
+            "next_regime": {"final_age_alive": final_age_alive},
             "borrowing_constraint": {},
             "labor_income": {"wage": wage},
         },

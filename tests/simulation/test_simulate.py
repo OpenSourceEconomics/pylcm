@@ -9,6 +9,7 @@ from numpy.testing import assert_array_almost_equal, assert_array_equal
 from pandas.testing import assert_frame_equal
 
 from lcm import Model
+from lcm.ages import AgeGrid
 from lcm.input_processing import process_regimes
 from lcm.logging import get_logger
 from lcm.simulation.result import SimulationResult
@@ -33,17 +34,19 @@ def simulate_inputs():
         working,
     )
 
+    ages = AgeGrid(start=0, stop=1, step="Y")
+    final_age_alive = 0
     updated_working = working.replace(
         actions={
             **working.actions,
             "consumption": working.actions["consumption"].replace(stop=100),  # ty: ignore[unresolved-attribute]
         },
-        active=[0],
+        active=lambda age: age <= final_age_alive,
     )
-    updated_dead = dead.replace(active=[1])
+    updated_dead = dead.replace(active=lambda age: age > final_age_alive)
     internal_regimes = process_regimes(
         [updated_working, updated_dead],
-        n_periods=2,
+        ages=ages,
         regime_id_cls=RegimeId,
         enable_jit=True,
     )
@@ -51,6 +54,7 @@ def simulate_inputs():
     return {
         "internal_regimes": internal_regimes,
         "regime_id_cls": RegimeId,
+        "ages": ages,
     }
 
 
@@ -60,7 +64,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
             "discount_factor": 1.0,
             "utility": {"disutility_of_work": 1.0},
             "next_wealth": {"interest_rate": 0.05},
-            "next_regime": {"n_periods": 2},
+            "next_regime": {"final_age_alive": 0},
             "borrowing_constraint": {},
             "labor_income": {},
         },
@@ -92,6 +96,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
 @pytest.fixture
 def iskhakov_et_al_2017_stripped_down_model_solution():
     from tests.test_models.deterministic.regression import (  # noqa: PLC0415
+        START_AGE,
         RegimeId,
         dead,
         get_params,
@@ -99,22 +104,24 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
     )
 
     def _model_solution(n_periods):
+        # remove wage function so that wage becomes a parameter
         updated_functions = {
-            # remove dependency on age, so that wage becomes a parameter
-            name: func
-            for name, func in working.functions.items()
-            if name not in ["age", "wage"]
+            name: func for name, func in working.functions.items() if name != "wage"
         }
+        stop_age = START_AGE + n_periods - 1
+        final_age_alive = stop_age - 1
+        ages = AgeGrid(start=START_AGE, stop=stop_age, step="Y")
         updated_working = working.replace(
-            functions=updated_functions, active=range(n_periods - 1)
+            functions=updated_functions,
+            active=lambda age: age <= final_age_alive,
         )
-        updated_dead = dead.replace(active=[n_periods - 1])
+        updated_dead = dead.replace(active=lambda age: age > final_age_alive)
 
         params = get_params(n_periods=n_periods)
         # Since wage function is removed, wage becomes a parameter for labor_income
         params["working"]["labor_income"] = {"wage": 1.5}
         model = Model(
-            [updated_working, updated_dead], n_periods=n_periods, regime_id_cls=RegimeId
+            [updated_working, updated_dead], ages=ages, regime_id_cls=RegimeId
         )
         V_arr_dict = model.solve(params=params)
         return V_arr_dict, params, model
@@ -143,6 +150,7 @@ def test_simulate_using_model_methods(
     # Check expected columns
     expected_cols = {
         "period",
+        "age",
         "value",
         "labor_supply",
         "consumption",

@@ -9,6 +9,7 @@ from numpy.testing import assert_array_almost_equal
 
 import lcm
 from lcm import Model
+from lcm.ages import AgeGrid
 from tests.test_models.stochastic import (
     RegimeId,
     dead,
@@ -99,6 +100,7 @@ def models_and_params() -> tuple[Model, Model, dict[str, Any]]:
         return health
 
     n_periods = 4
+    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
 
     # Create deterministic model with modified function
     working_deterministic = working.replace(
@@ -106,14 +108,14 @@ def models_and_params() -> tuple[Model, Model, dict[str, Any]]:
             **working.transitions,
             "next_health": next_health_deterministic,
         },
-        active=range(n_periods - 1),
+        active=lambda age: age < n_periods - 1,
     )
     retired_deterministic = retired.replace(
         transitions={
             **retired.transitions,
             "next_health": next_health_deterministic,
         },
-        active=range(n_periods - 1),
+        active=lambda age: age < n_periods - 1,
     )
 
     # Create stochastic model with identity transition function
@@ -122,27 +124,27 @@ def models_and_params() -> tuple[Model, Model, dict[str, Any]]:
             **working.transitions,
             "next_health": next_health_stochastic,
         },
-        active=range(n_periods - 1),
+        active=lambda age: age < n_periods - 1,
     )
     retired_stochastic = retired.replace(
         transitions={
             **retired.transitions,
             "next_health": next_health_stochastic,
         },
-        active=range(n_periods - 1),
+        active=lambda age: age < n_periods - 1,
     )
 
-    dead_updated = dead.replace(active=[n_periods - 1])
+    dead_updated = dead.replace(active=lambda age: age >= n_periods - 1)
 
     model_deterministic = Model(
         [working_deterministic, retired_deterministic, dead_updated],
-        n_periods=n_periods,
+        ages=ages,
         regime_id_cls=RegimeId,
     )
 
     model_stochastic = Model(
         [working_stochastic, retired_stochastic, dead_updated],
-        n_periods=n_periods,
+        ages=ages,
         regime_id_cls=RegimeId,
     )
 

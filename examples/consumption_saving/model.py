@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
-from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
+from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -22,8 +22,6 @@ if TYPE_CHECKING:
         ContinuousState,
         DiscreteAction,
         FloatND,
-        IntND,
-        Period,
         ScalarInt,
     )
 
@@ -74,12 +72,8 @@ def labor_income(wage: float | FloatND, working: DiscreteAction) -> FloatND:
     return wage * working
 
 
-def wage(age: int | IntND) -> float | FloatND:
+def wage(age: float) -> float | FloatND:
     return 1 + 0.1 * age
-
-
-def age(period: Period) -> int | IntND:
-    return period + 18
 
 
 # --------------------------------------------------------------------------------------
@@ -124,7 +118,13 @@ def borrowing_constraint(
 RETIREMENT_AGE = 24
 
 
-N_PERIODS = (RETIREMENT_AGE - 18) + 1
+def working_is_active(age: float) -> bool:
+    return age < RETIREMENT_AGE
+
+
+def retired_is_active(age: float) -> bool:
+    return age >= RETIREMENT_AGE
+
 
 working = Regime(
     name="working",
@@ -132,7 +132,6 @@ working = Regime(
     functions={
         "labor_income": labor_income,
         "wage": wage,
-        "age": age,
     },
     constraints={"borrowing_constraint": borrowing_constraint},
     actions={
@@ -165,7 +164,7 @@ working = Regime(
         "next_health": next_health,
         "next_regime": next_regime,
     },
-    active=range(N_PERIODS - 1),
+    active=working_is_active,
 )
 
 
@@ -185,11 +184,15 @@ retired = Regime(
             n_points=100,
         ),
     },
-    active=[N_PERIODS - 1],
+    active=retired_is_active,
 )
 
 
-model = Model([working, retired], n_periods=N_PERIODS, regime_id_cls=RegimeId)
+model = Model(
+    regimes=[working, retired],
+    ages=AgeGrid(start=18, stop=RETIREMENT_AGE, step="Y"),
+    regime_id_cls=RegimeId,
+)
 
 params = {
     "working": {

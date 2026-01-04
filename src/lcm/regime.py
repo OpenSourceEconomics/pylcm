@@ -9,9 +9,8 @@ from lcm.grids import Grid
 from lcm.utils import REGIME_SEPARATOR, flatten_regime_namespace
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
-
     from lcm.typing import (
+        ActiveFunction,
         UserFunction,
     )
 
@@ -22,7 +21,7 @@ class Regime:
 
     Attributes:
         name: Name of the regime.
-        active: Periods when regime is active.
+        active: Callable that takes age (float) and returns True if regime is active.
         utility: Utility function for this regime.
         constraints: Dictionary of constraint functions.
         transitions: Dictionary of transition functions (keys must start with 'next_').
@@ -37,7 +36,7 @@ class Regime:
 
     name: str
     _: KW_ONLY
-    active: Iterable[int]
+    active: ActiveFunction
     utility: UserFunction
     constraints: dict[str, UserFunction] = field(default_factory=dict)
     transitions: dict[str, UserFunction] = field(default_factory=dict)
@@ -230,21 +229,8 @@ def _validate_terminal_or_transitions(regime: Regime) -> list[str]:
     return errors
 
 
-def _validate_active(active: Iterable[int]) -> list[str]:
-    """Validate the active attribute."""
-    if active is None:
-        return ["active cannot be None. Use an iterable of ints for active periods."]
-    try:
-        periods = list(active)
-    except TypeError:
-        return ["active must be iterable of ints or None."]
-    errors: list[str] = []
-    if not periods:
-        errors.append("active cannot be empty.")
-    elif not all(isinstance(p, int) for p in periods):
-        errors.append("active must contain only integers.")
-    elif any(p < 0 for p in periods):
-        errors.append("active periods cannot be negative.")
-    elif len(periods) != len(set(periods)):
-        errors.append("active periods must be unique.")
-    return errors
+def _validate_active(active: ActiveFunction) -> list[str]:
+    """Validate the active attribute is a callable."""
+    if not callable(active):
+        return ["active must be a callable that takes age (float) and returns bool."]
+    return []

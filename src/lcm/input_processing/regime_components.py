@@ -31,6 +31,7 @@ from lcm.state_action_space import (
 from lcm.utils import flatten_regime_namespace
 
 if TYPE_CHECKING:
+    from lcm.ages import AgeGrid
     from lcm.regime import Regime
     from lcm.typing import (
         ArgmaxQOverAFunction,
@@ -69,24 +70,27 @@ def build_Q_and_F_functions(
     internal_functions: InternalFunctions,
     state_space_infos: dict[RegimeName, StateSpaceInfo],
     grids: GridsDict,
-    n_periods: int,
+    ages: AgeGrid,
 ) -> dict[int, QAndFFunction]:
     Q_and_F_functions = {}
-    for period in range(n_periods):
+    for period in range(ages.n_periods):
+        age = ages.period_to_age(period)
         if regime.terminal:
             Q_and_F = get_Q_and_F_terminal(
                 regime=regime,
                 internal_functions=internal_functions,
                 period=period,
+                age=age,
             )
         else:
             Q_and_F = get_Q_and_F(
                 regime=regime,
                 regimes_to_active_periods=regimes_to_active_periods,
-                internal_functions=internal_functions,
+                period=period,
+                age=age,
                 next_state_space_infos=state_space_infos,
                 grids=grids,
-                period=period,
+                internal_functions=internal_functions,
             )
         Q_and_F_functions[period] = Q_and_F
 
@@ -185,7 +189,7 @@ def build_next_state_simulation_functions(
         variables=tuple(
             parameter
             for parameter in parameters
-            if parameter not in ("period", "params")
+            if parameter not in ("period", "age", "params")
         ),
     )
 
@@ -247,7 +251,7 @@ def build_regime_transition_probs_functions(
         variables=tuple(
             parameter
             for parameter in parameters
-            if parameter not in ("period", "params")
+            if parameter not in ("period", "age", "params")
         ),
     )
 
