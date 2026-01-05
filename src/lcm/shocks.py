@@ -263,7 +263,7 @@ def fill_shock_grids(
             new_values = SHOCK_DISCRETIZATION_FUNCTIONS[
                 transition_info.loc[trans_name, "type"]
             ](**(param_copy | {"n_points": n_points}))[0]
-            # This will be replaced once terminal regimes are implemented
+
             if (
                 trans_name.removeprefix("next_")
                 in regime.state_action_spaces.states

@@ -66,6 +66,20 @@ def get_variable_info(regime: Regime) -> pd.DataFrame:
 
     return info.loc[order]
 
+def get_transition_info(regime: Regime) -> pd.DataFrame:
+    info = pd.DataFrame(index=list(regime.transitions))
+    stochastic_transitions = [
+        name
+        for name, trans in regime.transitions.items()
+        if is_stochastic_transition(trans)
+    ]
+    transition_type = [
+        trans._stochastic_info.type if is_stochastic_transition(trans) else "none"
+        for name, trans in regime.transitions.items()
+    ]
+    info["is_stochastic"] = info.index.isin(stochastic_transitions)
+    info["type"] = transition_type
+    return info
 
 def _indicator_enters_concurrent_valuation(
     states_and_actions_names: list[str],

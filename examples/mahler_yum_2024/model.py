@@ -18,6 +18,7 @@ from scipy.interpolate import interp1d
 
 import lcm
 from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime
+from lcm.grids import ShockGrid
 from lcm.dispatchers import _base_productmap
 
 if TYPE_CHECKING:
@@ -84,9 +85,6 @@ class EducationStatus:
     high: int = 1
 
 
-AdjustmentCost = make_dataclass(
-    "AdjustmentCost", [("class" + str(i), int, int(i)) for i in range(5)]
-)
 Effort = make_dataclass(
     "HealthEffort", [("class" + str(i), int, int(i)) for i in range(40)]
 )
@@ -176,7 +174,7 @@ def adj_cost(
 ) -> FloatND:
     return jnp.where(
         jnp.logical_not(effort == effort_t_1),
-        adjustment_cost * (chimaxgrid[period] / 4),
+        adjustment_cost * chimaxgrid[period],
         0,
     )
 
@@ -301,11 +299,9 @@ def next_education(education: DiscreteState) -> DiscreteState:
     return education
 
 
-@lcm.mark.stochastic
-def next_adjustment_cost(
-    adjustment_cost: DiscreteState, adjustment_cost_transition: FloatND
-) -> FloatND:
-    return adjustment_cost_transition[adjustment_cost]
+@lcm.mark.stochastic(type='uniform')
+def next_adjustment_cost(adjustment_cost: ContinuousState) -> ContinuousState:
+    pass
 
 
 @lcm.mark.stochastic
@@ -385,7 +381,7 @@ ALIVE_REGIME = Regime(
         "health": DiscreteGrid(HealthStatus),
         "productivity_shock": DiscreteGrid(ProductivityShock),
         "effort_t_1": DiscreteGrid(Effort),
-        "adjustment_cost": DiscreteGrid(AdjustmentCost),
+        "adjustment_cost": ShockGrid(n_points=4, type='uniform'),
         "education": DiscreteGrid(EducationStatus),
         "discount_factor": DiscreteGrid(DiscountFactor),
         "productivity": DiscreteGrid(ProductivityType),
@@ -708,7 +704,7 @@ def create_inputs(
         "adj_cost": {"chimaxgrid": chimax_grid},
         "next_productivity_shock": {"productivity_shock_transition": xtrans.T},
         "next_health": {"health_transition": tr2yp_grid},
-        "next_adjustment_cost": {"adjustment_cost_transition": jnp.full((5, 5), 1 / 5)},
+        "next_adjustment_cost": {"start": 0, "stop": 1},
         "next_dead": {},
         "next_regime": {"regime_transition": regime_transition},
     }
@@ -791,3 +787,4 @@ if __name__ == "__main__":
         initial_regimes=initial_regimes,
         seed=8295,
     )
+    print(simulation_result.to_dataframe().to_string())

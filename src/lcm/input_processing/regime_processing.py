@@ -3,10 +3,10 @@ from __future__ import annotations
 import functools
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, cast
-
+import inspect
 from dags import get_annotations
 from dags.signature import with_signature
-
+from jax import numpy as jnp
 from lcm.input_processing.create_params_template import create_params_template
 from lcm.input_processing.regime_components import (
     build_argmax_and_max_Q_over_a_functions,
@@ -22,7 +22,9 @@ from lcm.input_processing.util import (
     get_gridspecs,
     get_variable_info,
     is_stochastic_transition,
+    get_transition_info
 )
+from lcm.grid_helpers import get_shock_coordinate
 from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
 from lcm.utils import (
     REGIME_SEPARATOR,
@@ -93,6 +95,7 @@ def process_regimes(
     grids = {}
     gridspecs = {}
     variable_info = {}
+    transition_info = {}
     state_space_infos = {}
     state_action_spaces = {}
     regimes_to_active_periods = {}
@@ -101,6 +104,7 @@ def process_regimes(
         grids[regime.name] = get_grids(regime)
         gridspecs[regime.name] = get_gridspecs(regime)
         variable_info[regime.name] = get_variable_info(regime)
+        transition_info[regime.name] = get_transition_info(regime)
         state_space_infos[regime.name] = build_state_space_info(regime)
         state_action_spaces[regime.name] = build_state_action_space(regime)
         regimes_to_active_periods[regime.name] = ages.get_periods_where(regime.active)
@@ -153,6 +157,7 @@ def process_regimes(
             grids=grids[regime.name],
             gridspecs=gridspecs[regime.name],
             variable_info=variable_info[regime.name],
+            transition_info=transition_info[regime.name],
             functions=internal_functions.functions,
             utility=internal_functions.utility,
             constraints=internal_functions.constraints,
@@ -198,7 +203,6 @@ def _get_internal_functions(
 
     """
     flat_grids = flatten_regime_namespace(grids)
-
     # Flatten nested transitions to get prefixed names like "regime__next_wealth"
     flat_nested_transitions = flatten_regime_namespace(nested_transitions)
 
@@ -273,7 +277,8 @@ def _get_internal_functions(
             else fn_name
         )
         if fn._stochastic_info.type != "custom":
-            fn_with_pre_computed_weights = _get_fn_with_precomputed_weights(fn )
+            
+            fn_with_pre_computed_weights = _get_fn_with_precomputed_weights(fn_name, fn, flat_grids )
             functions[f"weight_{fn_name}"] = _ensure_fn_only_depends_on_params(
                 fn=fn_with_pre_computed_weights,
                 fn_name=fn_name,
@@ -388,12 +393,14 @@ def _get_stochastic_next_function(fn: UserFunction, grid: Int1D) -> UserFunction
 
     return next_func
 
-def _get_fn_with_precomputed_weights(fn: UserFunction) -> UserFunction:
-    @with_signature(args={"pre_computed": "FloatND"}, return_annotation="FloatND")
+def _get_fn_with_precomputed_weights(fn_name: str, fn: UserFunction, flat_grids) -> UserFunction:
+    n_points = flat_grids[fn_name.replace("next_", "")].shape[0]
+    old_args = inspect.signature(fn).parameters
+    @with_signature(args={"pre_computed": "FloatND"} | {arg:"ContinousState" for arg in old_args}, return_annotation="FloatND", enforce=False)
     @functools.wraps(fn)
     def weights_func(*args: Any, pre_computed: Any, **kwargs: Any) -> Int1D:  # noqa: ARG001, ANN401
-        return pre_computed[*args]
-
+        coord = get_shock_coordinate(kwargs[list(old_args.keys())[0]],n_points=n_points, distribution_type=fn._stochastic_info.type, params=kwargs)
+        return pre_computed[jnp.astype(coord,jnp.int32)]
     return weights_func
 
 def _ensure_fn_only_depends_on_params(

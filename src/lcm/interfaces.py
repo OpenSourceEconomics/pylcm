@@ -160,7 +160,7 @@ class PhaseVariantContainer[S, T]:
         self.simulate = simulate
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=False)
 class InternalRegime:
     """Internal representation of a user regime.
 
@@ -173,6 +173,7 @@ class InternalRegime:
     grids: dict[str, Array]
     gridspecs: dict[str, Grid]
     variable_info: pd.DataFrame
+    transition_info: pd.DataFrame
     utility: InternalUserFunction
     constraints: dict[str, InternalUserFunction]
     transitions: TransitionFunctionsDict
