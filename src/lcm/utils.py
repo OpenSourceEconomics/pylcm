@@ -2,10 +2,20 @@ from __future__ import annotations
 
 from collections import Counter
 from itertools import chain
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, overload
+
+import jax.numpy as jnp
+from dags.tree import QNAME_DELIMITER, flatten_to_qnames, unflatten_from_qnames
+
+# Re-export for use in other modules. This is the separator used by dags to
+# concatenate nested dictionary keys into qualified names (e.g., "work__next_wealth").
+# User-defined regime names and function names must NOT contain this separator.
+REGIME_SEPARATOR = QNAME_DELIMITER
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+
+    from lcm.typing import Float1D, RegimeName
 
 T = TypeVar("T")
 
@@ -33,3 +43,35 @@ def first_non_none(*args: T | None) -> T:
         if arg is not None:
             return arg
     raise ValueError("All arguments are None")
+
+
+def flatten_regime_namespace(d: dict[RegimeName, Any]) -> dict[str, Any]:
+    return flatten_to_qnames(d)
+
+
+def unflatten_regime_namespace(d: dict[str, Any]) -> dict[RegimeName, Any]:
+    return unflatten_from_qnames(d)  # ty: ignore[invalid-return-type]
+
+
+@overload
+def normalize_regime_transition_probs(
+    probs: dict[str, float],
+    active_regimes: list[str],
+) -> dict[str, float]: ...
+
+
+@overload
+def normalize_regime_transition_probs(
+    probs: dict[str, Float1D],
+    active_regimes: list[str],
+) -> dict[str, Float1D]: ...
+
+
+def normalize_regime_transition_probs(
+    probs: dict[str, float] | dict[str, Float1D],
+    active_regimes: list[str],
+) -> dict[str, float] | dict[str, Float1D]:
+    """Normalize regime transition probabilities over active regimes only."""
+    active_probs = jnp.array([probs[r] for r in active_regimes])
+    total = jnp.sum(active_probs, axis=0)
+    return {r: probs[r] / total for r in active_regimes}

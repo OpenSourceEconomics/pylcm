@@ -21,8 +21,15 @@ type Bool1D = Bool[Array, "_"]  # noqa: F821
 type ScalarInt = int | Int[Scalar, ""]  # noqa: F722
 type ScalarFloat = float | Float[Scalar, ""]  # noqa: F722
 
+type Period = int | Int1D
+type Age = float
+type RegimeName = str
 
-ParamsDict = dict[str, Any]
+type _RegimeGridsDict = dict[str, Array]
+type GridsDict = dict[RegimeName, _RegimeGridsDict]
+
+type TransitionFunctionsDict = dict[RegimeName, dict[str, InternalUserFunction]]
+type ParamsDict = dict[RegimeName, Any]
 
 
 class UserFunction(Protocol):
@@ -43,8 +50,50 @@ class InternalUserFunction(Protocol):
     """
 
     def __call__(  # noqa: D102
-        self, *args: Array | int, params: ParamsDict, **kwargs: Array | int
+        self, *args: Array | float, params: ParamsDict, **kwargs: Array | float
     ) -> Array: ...
+
+
+class RegimeTransitionFunction(Protocol):
+    """The regime transition function provided by the user.
+
+    Only used for type checking.
+
+    """
+
+    def __call__(  # noqa: D102
+        self, *args: Array | float, params: ParamsDict, **kwargs: Array | float
+    ) -> dict[RegimeName, float]: ...
+
+
+class VmappedRegimeTransitionFunction(Protocol):
+    """The regime transition function provided by the user.
+
+    Only used for type checking.
+
+    """
+
+    def __call__(  # noqa: D102
+        self, *args: Array | float, params: ParamsDict, **kwargs: Array | float
+    ) -> dict[RegimeName, Float1D]: ...
+
+
+class QAndFFunction(Protocol):
+    """The function that computes Q and F.
+
+    Q is the state-action value function. F is a boolean array that indicates whether
+    the state-action pair is feasible.
+
+    Only used for type checking.
+
+    """
+
+    def __call__(  # noqa: D102
+        self,
+        next_V_arr: FloatND,
+        params: ParamsDict,
+        **states_and_actions: Array,
+    ) -> tuple[FloatND, BoolND]: ...
 
 
 class MaxQOverCFunction(Protocol):
@@ -58,7 +107,11 @@ class MaxQOverCFunction(Protocol):
     """
 
     def __call__(  # noqa: D102
-        self, next_V_arr: Array, params: ParamsDict, **kwargs: Array
+        self,
+        next_V_arr: dict[RegimeName, Array],
+        params: ParamsDict,
+        period: Period,
+        **kwargs: Array,
     ) -> Array: ...
 
 
@@ -73,7 +126,11 @@ class ArgmaxQOverCFunction(Protocol):
     """
 
     def __call__(  # noqa: D102
-        self, next_V_arr: Array, params: ParamsDict, **kwargs: Array
+        self,
+        next_V_arr: dict[RegimeName, Array],
+        params: ParamsDict,
+        period: Period,
+        **kwargs: Array,
     ) -> tuple[Array, Array]: ...
 
 
@@ -88,7 +145,10 @@ class MaxQOverAFunction(Protocol):
     """
 
     def __call__(  # noqa: D102
-        self, next_V_arr: Array, params: ParamsDict, **kwargs: Array
+        self,
+        next_V_arr: dict[RegimeName, Array],
+        params: ParamsDict,
+        **states_and_actions: Array,
     ) -> Array: ...
 
 
@@ -103,7 +163,10 @@ class ArgmaxQOverAFunction(Protocol):
     """
 
     def __call__(  # noqa: D102
-        self, next_V_arr: Array, params: ParamsDict, **kwargs: Array
+        self,
+        next_V_arr: dict[RegimeName, Array],
+        params: ParamsDict,
+        **states_and_actions: Array,
     ) -> tuple[Array, Array]: ...
 
 
@@ -143,3 +206,26 @@ class StochasticNextFunction(Protocol):
     """
 
     def __call__(self, **kwargs: Array) -> Array: ...  # noqa: D102
+
+
+class NextStateSimulationFunction(Protocol):
+    """The function that computes the next states during the simulation.
+
+    Only used for type checking.
+
+    """
+
+    def __call__(  # noqa: D102
+        self,
+        **kwargs: Array | Period | Age | ParamsDict,
+    ) -> dict[str, DiscreteState | ContinuousState]: ...
+
+
+class ActiveFunction(Protocol):
+    """Function that determines if a regime is active at a given age.
+
+    Only used for type checking.
+
+    """
+
+    def __call__(self, age: float, /) -> bool: ...  # noqa: D102

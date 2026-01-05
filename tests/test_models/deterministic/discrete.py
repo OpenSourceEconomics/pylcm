@@ -11,30 +11,31 @@ continuous version.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 
-from lcm import DiscreteGrid, Model
-from tests.test_models.deterministic import (
-    RetirementStatus,
-    borrowing_constraint,
+from lcm import DiscreteGrid, Model, Regime
+from lcm.ages import AgeGrid
+from tests.test_models.deterministic.regression import (
+    LaborSupply,
+    is_working,
     labor_income,
     next_wealth,
     utility,
-    working,
 )
 
 if TYPE_CHECKING:
     from lcm.typing import (
+        BoolND,
         DiscreteAction,
         DiscreteState,
         FloatND,
-        IntND,
+        ScalarInt,
     )
 
 # ======================================================================================
-# Model functions
+# Regime functions
 # ======================================================================================
 
 
@@ -54,22 +55,28 @@ class WealthStatus:
     high: int = 2
 
 
+@dataclass
+class RegimeId:
+    working: int = 0
+    dead: int = 1
+
+
 # --------------------------------------------------------------------------------------
 # Utility functions
 # --------------------------------------------------------------------------------------
 def utility_discrete(
     consumption: DiscreteAction,
-    working: IntND,
+    is_working: BoolND,
     disutility_of_work: float,
 ) -> FloatND:
     # In the discrete model, consumption is defined as "low" or "high". This can be
     # translated to the levels 1 and 2.
     consumption_level = 1 + (consumption == ConsumptionChoice.high)
-    return utility(consumption_level, working, disutility_of_work)
+    return utility(consumption_level, is_working, disutility_of_work)
 
 
 # --------------------------------------------------------------------------------------
-# State transitions
+# State and regime transitions
 # --------------------------------------------------------------------------------------
 def next_wealth_discrete(
     wealth: DiscreteState,
@@ -85,27 +92,83 @@ def next_wealth_discrete(
     )
 
 
+def next_regime(age: float, final_age_alive: float) -> ScalarInt:
+    return jnp.where(
+        age >= final_age_alive,
+        RegimeId.dead,
+        RegimeId.working,
+    )
+
+
+def borrowing_constraint(consumption: DiscreteAction, wealth: DiscreteState) -> BoolND:
+    return consumption <= wealth
+
+
 # ======================================================================================
-# Model specifications
+# Regime specifications
 # ======================================================================================
-ISKHAKOV_ET_AL_2017_DISCRETE = Model(
-    description=(
-        "Starts from Iskhakov et al. (2017), removes absorbing retirement constraint "
-        "and the lagged_retirement state, and makes the consumption decision discrete."
-    ),
-    n_periods=3,
-    functions={
-        "utility": utility_discrete,
-        "next_wealth": next_wealth_discrete,
-        "borrowing_constraint": borrowing_constraint,
-        "labor_income": labor_income,
-        "working": working,
-    },
+working = Regime(
+    name="working",
     actions={
-        "retirement": DiscreteGrid(RetirementStatus),
+        "labor_supply": DiscreteGrid(LaborSupply),
         "consumption": DiscreteGrid(ConsumptionChoice),
     },
     states={
         "wealth": DiscreteGrid(WealthStatus),
     },
+    utility=utility_discrete,
+    constraints={
+        "borrowing_constraint": borrowing_constraint,
+    },
+    transitions={
+        "next_wealth": next_wealth_discrete,
+        "next_regime": next_regime,
+    },
+    functions={
+        "labor_income": labor_income,
+        "is_working": is_working,
+    },
+    active=lambda _age: True,  # Placeholder, will be replaced by get_model()
 )
+
+
+dead = Regime(
+    name="dead",
+    terminal=True,
+    utility=lambda: 0.0,
+    active=lambda _age: True,  # Placeholder, will be replaced by get_model()
+)
+
+
+def get_model(n_periods: int) -> Model:
+    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
+    final_age_alive = n_periods - 2
+    return Model(
+        [
+            working.replace(active=lambda age: age <= final_age_alive),
+            dead.replace(active=lambda age: age > final_age_alive),
+        ],
+        ages=ages,
+        regime_id_cls=RegimeId,
+    )
+
+
+def get_params(
+    n_periods: int,
+    discount_factor: float = 0.95,
+    disutility_of_work: float = 0.5,
+    interest_rate: float = 0.05,
+    wage: float = 10.0,
+) -> dict[str, Any]:
+    final_age_alive = n_periods - 2
+    return {
+        "working": {
+            "discount_factor": discount_factor,
+            "utility": {"disutility_of_work": disutility_of_work},
+            "next_wealth": {"interest_rate": interest_rate},
+            "next_regime": {"final_age_alive": final_age_alive},
+            "borrowing_constraint": {},
+            "labor_income": {"wage": wage},
+        },
+        "dead": {},
+    }

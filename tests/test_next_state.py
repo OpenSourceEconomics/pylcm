@@ -1,42 +1,53 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
-import pandas as pd
 from pybaum import tree_equal
 
-from lcm.input_processing import process_model
-from lcm.interfaces import InternalModel, ShockType, Target
+from lcm.ages import AgeGrid
+from lcm.input_processing import process_regimes
+from lcm.interfaces import InternalFunctions, PhaseVariantContainer, Target
 from lcm.next_state import _create_stochastic_next_func, get_next_state_function
-from tests.test_models import get_model
+from tests.test_models.deterministic.regression import RegimeId, dead, working
 
 if TYPE_CHECKING:
-    from lcm.typing import ContinuousState, FloatND, ParamsDict
+    from lcm.typing import ContinuousState, FloatND, InternalUserFunction, ParamsDict
 
 
 def test_get_next_state_function_with_solve_target():
-    model = process_model(
-        get_model("iskhakov_et_al_2017_stripped_down", n_periods=3),
+    ages = AgeGrid(start=0, stop=4, step="Y")
+    internal_regimes = process_regimes(
+        regimes=[working, dead],
+        ages=ages,
+        regime_id_cls=RegimeId,
+        enable_jit=True,
     )
+
+    internal_working = internal_regimes[working.name]
+
     got_func = get_next_state_function(
-        internal_model=model,
-        next_states=("wealth",),
+        transitions=internal_working.transitions[working.name],
+        functions=internal_working.functions,
+        grids={
+            working.name: internal_working.grids,
+            dead.name: internal_regimes[dead.name].grids,
+        },
         target=Target.SOLVE,
     )
 
     params = {
-        "beta": 1.0,
+        "discount_factor": 1.0,
         "utility": {"disutility_of_work": 1.0},
         "next_wealth": {
             "interest_rate": 0.05,
         },
     }
 
-    action = {"retirement": 1, "consumption": 10}
+    action = {"labor_supply": 1, "consumption": 10}
     state = {"wealth": 20}
 
-    got = got_func(**action, **state, _period=1, params=params)
+    got = got_func(**action, **state, period=1, age=1.0, params=params)
     assert got == {"next_wealth": 1.05 * (20 - 10)}
 
 
@@ -45,40 +56,32 @@ def test_get_next_state_function_with_simulate_target():
         return state[0]
 
     def f_b(state: ContinuousState, params: ParamsDict) -> ContinuousState:  # noqa: ARG001
-        return None  # type: ignore[return-value]
+        return None  # ty: ignore[invalid-return-type]
 
     def f_weight_b(state: ContinuousState, params: ParamsDict) -> FloatND:  # noqa: ARG001
         return jnp.array([0.0, 1.0])
 
-    functions = {
-        "a": f_a,
-        "b": f_b,
-        "weight_b": f_weight_b,
+    grids = {"mock": {"b": jnp.arange(2)}}
+    mock_transition_solve = lambda *args, params, **kwargs: {"mock": 1.0}  # noqa: E731, ARG005
+    mock_transition_simulate = lambda *args, params, **kwargs: {  # noqa: E731, ARG005
+        "mock": jnp.array([1.0])
     }
-
-    grids = {"b": jnp.arange(2)}
-
-    function_info = pd.DataFrame(
-        {
-            "is_next": [True, True],
-            "is_stochastic_next": [False, True],
-        },
-        index=["a", "b"],
+    internal_functions = InternalFunctions(
+        utility=lambda: 0,  # ty: ignore[invalid-argument-type]
+        constraints={},
+        transitions={"next_a": f_a, "next_b": f_b},  # ty: ignore[invalid-argument-type]
+        functions={"f_weight_b": f_weight_b},  # ty: ignore[invalid-argument-type]
+        regime_transition_probs=PhaseVariantContainer(
+            solve=mock_transition_solve, simulate=mock_transition_simulate
+        ),
     )
-
-    model = InternalModel(
-        functions=functions,  # type: ignore[arg-type]
-        grids=grids,
-        function_info=function_info,
-        gridspecs={},
-        variable_info=pd.DataFrame(),
-        params={},
-        random_utility_shocks=ShockType.NONE,
-        n_periods=1,
-    )
-
     got_func = get_next_state_function(
-        internal_model=model, next_states=("a", "b"), target=Target.SIMULATE
+        transitions=cast(
+            "dict[str, InternalUserFunction]", internal_functions.transitions
+        ),
+        functions=internal_functions.functions,
+        grids=grids,
+        target=Target.SIMULATE,
     )
 
     key = jnp.arange(2, dtype="uint32")

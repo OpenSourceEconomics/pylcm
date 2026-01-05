@@ -65,9 +65,8 @@ def simulation_spacemap(
     vmapped = _base_productmap(mappable_func, actions_names)
     vmapped = vmap_1d(vmapped, variables=states_names, callable_with="only_args")
 
-    # This raises a mypy error but is perfectly fine to do. See
-    # https://github.com/python/mypy/issues/12472
-    vmapped.__signature__ = inspect.signature(mappable_func)  # type: ignore[attr-defined]
+    # Callables do not necessarily have a __signature__ attribute.
+    vmapped.__signature__ = inspect.signature(mappable_func)  # ty: ignore[unresolved-attribute]
 
     return cast("FunctionWithArrayReturn", allow_only_kwargs(vmapped))
 
@@ -114,22 +113,23 @@ def vmap_1d(
 
     positions = [parameters.index(var) for var in variables]
 
-    # Create in_axes to apply vmap over variables. This has one entry for each argument
-    # of func, indicating whether the argument should be mapped over or not. None means
-    # that the argument should not be mapped over, 0 means that it should be mapped over
-    # the leading axis of the input.
-    in_axes_for_vmap = [None] * len(parameters)  # type: list[int | None]
-    for p in positions:
-        in_axes_for_vmap[p] = 0
+    # Handle empty variables case - nothing to vmap over
+    if not positions:
+        vmapped = func
+    else:
+        # Create in_axes to apply vmap over variables. This has one entry for each
+        # argument of func, indicating whether the argument should be mapped over or
+        # not. None means that the argument should not be mapped over, 0 means that it
+        # should be mapped over the leading axis of the input.
+        in_axes_for_vmap = [None] * len(parameters)  # type: list[int | None]
+        for p in positions:
+            in_axes_for_vmap[p] = 0
 
-    vmapped = vmap(func, in_axes=in_axes_for_vmap)
-
-    # This raises a mypy error but is perfectly fine to do. See
-    # https://github.com/python/mypy/issues/12472
-    vmapped.__signature__ = signature  # type: ignore[attr-defined]
+        vmapped = vmap(func, in_axes=in_axes_for_vmap)
+    vmapped.__signature__ = signature
 
     if callable_with == "only_kwargs":
-        out = allow_only_kwargs(vmapped)
+        out = allow_only_kwargs(vmapped, enforce=False)
     elif callable_with == "only_args":
         out = vmapped
     else:
@@ -176,9 +176,8 @@ def productmap(
 
     vmapped = _base_productmap(func_callable_with_args, variables)
 
-    # This raises a mypy error but is perfectly fine to do. See
-    # https://github.com/python/mypy/issues/12472
-    vmapped.__signature__ = inspect.signature(func_callable_with_args)  # type: ignore[attr-defined]
+    # Callables do not necessarily have a __signature__ attribute.
+    vmapped.__signature__ = inspect.signature(func_callable_with_args)  # ty: ignore[unresolved-attribute]
 
     return cast("FunctionWithArrayReturn", allow_only_kwargs(vmapped))
 
@@ -202,7 +201,7 @@ def _base_productmap(
     signature = inspect.signature(func)
     parameters = list(signature.parameters)
 
-    positions = [parameters.index(ax) for ax in product_axes]
+    positions = [parameters.index(ax) for ax in product_axes if ax in parameters]
 
     vmap_specs = []
     # We iterate in reverse order such that the output dimensions are in the same order

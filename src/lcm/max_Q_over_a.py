@@ -4,6 +4,7 @@ import functools
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
+from dags.signature import with_signature
 from jax import Array
 
 from lcm.argmax import argmax_and_max
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
         IntND,
         MaxQOverAFunction,
         ParamsDict,
+        RegimeName,
     )
 
 
@@ -63,9 +65,14 @@ def get_max_Q_over_a(
         variables=actions_names,
     )
 
-    @functools.wraps(Q_and_F)
+    @with_signature(
+        args=["next_V_arr", "params", *actions_names, *states_names],
+        return_annotation="FloatND",
+    )
     def max_Q_over_a(
-        next_V_arr: FloatND, params: ParamsDict, **states_and_actions: Array
+        next_V_arr: dict[RegimeName, FloatND],
+        params: ParamsDict,
+        **states_and_actions: Array,
     ) -> FloatND:
         Q_arr, F_arr = Q_and_F(
             params=params, next_V_arr=next_V_arr, **states_and_actions
@@ -118,7 +125,9 @@ def get_argmax_and_max_Q_over_a(
 
     @functools.wraps(Q_and_F)
     def argmax_and_max_Q_over_a(
-        next_V_arr: FloatND, params: ParamsDict, **states_and_actions: Array
+        next_V_arr: dict[RegimeName, FloatND],
+        params: ParamsDict,
+        **states_and_actions: Array,
     ) -> tuple[IntND, FloatND]:
         Q_arr, F_arr = Q_and_F(
             params=params, next_V_arr=next_V_arr, **states_and_actions
