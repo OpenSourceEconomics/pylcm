@@ -9,13 +9,13 @@ from jax import Array
 
 from lcm.functools import all_as_kwargs
 from lcm.ndimage import map_coordinates
-
+from lcm.grids import ShockGrid
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from lcm.grids import ContinuousGrid
     from lcm.interfaces import StateSpaceInfo
-    from lcm.typing import FloatND, ScalarFloat, ScalarInt
+    from lcm.typing import FloatND, ScalarFloat, ScalarInt, ParamsDict
 
 
 def get_value_function_representation(
@@ -211,9 +211,13 @@ def _get_coordinate_finder(
 
     """
 
-    @with_signature(args=dict.fromkeys([in_name], "Array"), return_annotation="Array")
-    def find_coordinate(*args: Array, **kwargs: Array) -> Array:
+    @with_signature(
+        args=dict.fromkeys([in_name, "params"], "Array"), return_annotation="Array"
+    )
+    def find_coordinate(*args: Array, params: ParamsDict, **kwargs: Array) -> Array:
         kwargs = all_as_kwargs(args, kwargs, arg_names=[in_name])
+        if isinstance(grid, ShockGrid):
+            return grid.get_coordinate(kwargs[in_name], params[in_name])  # type: ignore[return-value]
         return grid.get_coordinate(kwargs[in_name])  # ty: ignore[invalid-return-type]
 
     return find_coordinate

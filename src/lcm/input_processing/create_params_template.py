@@ -4,7 +4,7 @@ import inspect
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
-
+from lcm.input_processing.util import is_stochastic_transition
 if TYPE_CHECKING:
     from lcm.regime import Regime
     from lcm.typing import GridsDict, ParamsDict
@@ -69,6 +69,8 @@ def _create_function_params(
     for name, func in regime.get_all_functions().items():
         arguments = set(inspect.signature(func).parameters)
         params = sorted(arguments.difference(variables))
+        if is_stochastic_transition(func) and func._stochastic_info.type != "custom":
+            params = ["pre_computed"]
         function_params[name] = dict.fromkeys(params, jnp.nan)
 
     return function_params

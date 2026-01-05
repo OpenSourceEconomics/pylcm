@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 
 from lcm.error_handling import validate_value_function_array
+from lcm.shocks import pre_compute_shock_probabilities, fill_shock_grids
 
 if TYPE_CHECKING:
     import logging
@@ -39,7 +40,8 @@ def solve(
     next_V_arr: dict[RegimeName, FloatND] = {
         name: jnp.empty(0) for name in internal_regimes
     }
-
+    params = pre_compute_shock_probabilities(internal_regimes, params)
+    internal_regimes = fill_shock_grids(internal_regimes, params)
     logger.info("Starting solution")
 
     # backwards induction loop

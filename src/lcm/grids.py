@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields, is_dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import jax.numpy as jnp
 
@@ -12,7 +12,7 @@ from lcm.exceptions import GridInitializationError, format_messages
 from lcm.utils import find_duplicates
 
 if TYPE_CHECKING:
-    from lcm.typing import Float1D, Int1D, ScalarFloat
+    from lcm.typing import Float1D, Int1D, ScalarFloat, ParamsDict
 
 
 class Grid(ABC):
@@ -161,6 +161,31 @@ class LogspaceGrid(ContinuousGrid):
             value, self.start, self.stop, self.n_points
         )
 
+@dataclass(frozen=True, kw_only=True)
+class ShockGrid(ContinuousGrid):
+    """An empty grid for discretized continuous shocks.
+    The actual values will be calculated once the prameters for the shock are
+    available during the solution or simulation.
+    Attributes:
+        start: This argument is not used.
+        stop: This argument is not used.
+        n_points: The number of points in the grid. Must be an int greater than 0.
+        type: The shock type.
+    """
+
+    start: int | float = 0
+    stop: int | float = 1
+    type: Literal["uniform", "normal", "tauchen", "rouwenhorst"]
+
+    def to_jax(self) -> Float1D:
+        """Convert the grid to a Jax array."""
+        return jnp.empty(shape=self.n_points)
+
+    def get_coordinate(self, value: ScalarFloat, params: ParamsDict) -> ScalarFloat:
+        """Get the generalized coordinate of a value in the grid."""
+        return grid_helpers.get_shock_coordinate(
+            value, n_points=self.n_points, params=params, distribution_type=self.type
+        )
 
 # ======================================================================================
 # Validate user input

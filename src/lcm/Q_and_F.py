@@ -187,7 +187,9 @@ def get_Q_and_F(
             # resulting next value function gets a new dimension for each stochastic
             # variable.
             next_V_at_stochastic_states_arr = next_V[regime_name](
-                **next_states, next_V_arr=next_V_arr[regime_name]
+                **next_states,
+                next_V_arr=next_V_arr[regime_name],
+                params=params[regime.name],
             )
 
             # We then take the weighted average of the next value function at the

@@ -12,6 +12,7 @@ from lcm.interfaces import (
     PeriodRegimeSimulationData,
 )
 from lcm.random import draw_random_seed
+from lcm.shocks import pre_compute_shock_probabilities, fill_shock_grids
 from lcm.simulation.result import SimulationResult
 from lcm.simulation.util import (
     calculate_next_regime_membership,
@@ -85,6 +86,10 @@ def simulate(
     # ----------------------------------------------------------------------------------
     regime_name_to_id = get_regime_name_to_id_mapping(regime_id_cls)
     key = jax.random.key(seed=seed)
+
+    # Get shock values
+    params = pre_compute_shock_probabilities(internal_regimes, params)
+    internal_regimes = fill_shock_grids(internal_regimes, params)
 
     # The following variables are updated during the forward simulation
     states = flatten_regime_namespace(nested_initial_states)

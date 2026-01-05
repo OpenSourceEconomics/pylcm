@@ -10,6 +10,7 @@ from dags.signature import with_signature
 
 from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import Target
+from lcm.shocks import SHOCK_CALCULATION_FUNCTIONS
 from lcm.utils import flatten_regime_namespace
 
 if TYPE_CHECKING:
@@ -117,8 +118,15 @@ def _extend_transitions_for_simulation(
 
     """
     flat_grids = flatten_regime_namespace(grids)
-    stochastic_targets = [
-        fn_name for fn_name, fn in transitions.items() if is_stochastic_transition(fn)
+    discrete_stochastic_targets = [
+        fn_name
+        for fn_name, fn in transitions.items()
+        if is_stochastic_transition(fn) and fn._stochastic_info.type == "custom"
+    ]
+    continuous_stochastic_targets = [
+        (fn_name, fn)
+        for fn_name, fn in transitions.items()
+        if is_stochastic_transition(fn) and fn._stochastic_info.type != "custom"
     ]
     # Handle stochastic next states functions
     # ----------------------------------------------------------------------------------
@@ -129,19 +137,23 @@ def _extend_transitions_for_simulation(
     # generates a function that computes the weights and simulates the next state in
     # one go.
     # ----------------------------------------------------------------------------------
-    stochastic_next = {
-        name: _create_stochastic_next_func(
+    discrete_stochastic_next = {
+        name: _create_discrete_stochastic_next_func(
             name, labels=flat_grids[name.replace("next_", "")]
         )
-        for name in stochastic_targets
+        for name in discrete_stochastic_targets
+    }
+    continuous_stochastic_next = {
+        name: _create_continuous_stochastic_next_func(name, fn)
+        for name, fn in continuous_stochastic_targets
     }
 
     # Overwrite regime transitions with generated stochastic next states functions
     # ----------------------------------------------------------------------------------
-    return transitions | stochastic_next
+    return transitions | discrete_stochastic_next | continuous_stochastic_next
 
 
-def _create_stochastic_next_func(
+def _create_discrete_stochastic_next_func(
     name: str, labels: DiscreteState
 ) -> StochasticNextFunction:
     """Get function that simulates the next state of a stochastic variable.
@@ -169,6 +181,48 @@ def _create_stochastic_next_func(
             key=kwargs[f"key_{name}"],
             a=labels,
             p=kwargs[f"weight_{name}"],
+        )
+
+    return next_stochastic_state
+
+
+def _create_continuous_stochastic_next_func(
+    name: str, fn: InternalUserFunction
+) -> StochasticNextFunction:
+    """Get function that simulates the next state of a stochastic variable.
+
+    Args:
+        name: Name of the stochastic variable.
+        fn: The stochastic transition function.
+
+    Returns:
+        A function that simulates the next state of the stochastic variable. The
+        function must be called with keyword arguments:
+        - weight_{name}: 2d array of weights. The first dimension corresponds to the
+          number of simulation units. The second dimension corresponds to the number of
+          grid points (labels).
+        - key_{name}: PRNG key for the stochastic next function, e.g. 'next_health'.
+
+    """
+    distribution_type = fn._stochastic_info.type
+    prev_state_name = name.split("next_")[1]
+    fn_name_in_params = name.split("__")[1]
+
+    args = {
+        "params": "ParamsDict",
+        f"key_{name}": "dict[str, Array]",
+        prev_state_name: "Array",
+    }
+
+    @with_signature(
+        args=args,
+        return_annotation="ContinuousState",
+    )
+    def next_stochastic_state(**kwargs: FloatND) -> DiscreteState:
+        return SHOCK_CALCULATION_FUNCTIONS[distribution_type](
+            params=kwargs["params"][fn_name_in_params],
+            key=kwargs[f"key_{name}"],
+            prev_value=kwargs[prev_state_name],
         )
 
     return next_stochastic_state
