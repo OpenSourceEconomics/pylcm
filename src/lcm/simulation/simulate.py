@@ -91,7 +91,6 @@ def simulate(
         [regime_name_to_id[initial_regime] for initial_regime in initial_regimes]
     )
 
-    n_periods = len(V_arr_dict)
     key = jax.random.key(seed=seed)
 
     # Forward simulation
@@ -99,8 +98,7 @@ def simulate(
     simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
         regime_name: {} for regime_name in internal_regimes
     }
-    for period in range(n_periods):
-        age = ages.period_to_age(period)
+    for period, age in enumerate(ages.values):
         logger.info("Age: %s", age)
 
         new_subject_regime_ids = subject_regime_ids

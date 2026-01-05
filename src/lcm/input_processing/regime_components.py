@@ -73,8 +73,7 @@ def build_Q_and_F_functions(
     ages: AgeGrid,
 ) -> dict[int, QAndFFunction]:
     Q_and_F_functions = {}
-    for period in range(ages.n_periods):
-        age = ages.period_to_age(period)
+    for period, age in enumerate(ages.values):
         if regime.terminal:
             Q_and_F = get_Q_and_F_terminal(
                 regime=regime,
