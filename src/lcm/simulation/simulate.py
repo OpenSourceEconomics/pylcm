@@ -84,14 +84,13 @@ def simulate(
     # Preparations
     # ----------------------------------------------------------------------------------
     regime_name_to_id = get_regime_name_to_id_mapping(regime_id_cls)
+    key = jax.random.key(seed=seed)
 
     # The following variables are updated during the forward simulation
     states = flatten_regime_namespace(nested_initial_states)
     subject_regime_ids = jnp.asarray(
         [regime_name_to_id[initial_regime] for initial_regime in initial_regimes]
     )
-
-    key = jax.random.key(seed=seed)
 
     # Forward simulation
     # ----------------------------------------------------------------------------------
