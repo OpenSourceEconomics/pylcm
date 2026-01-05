@@ -84,6 +84,7 @@ def simulate(
     # Preparations
     # ----------------------------------------------------------------------------------
     regime_name_to_id = get_regime_name_to_id_mapping(regime_id_cls)
+    key = jax.random.key(seed=seed)
 
     # The following variables are updated during the forward simulation
     states = flatten_regime_namespace(nested_initial_states)
@@ -91,20 +92,15 @@ def simulate(
         [regime_name_to_id[initial_regime] for initial_regime in initial_regimes]
     )
 
-    n_periods = len(V_arr_dict)
-    n_initial_subjects = subject_regime_ids.shape[0]
-    key = jax.random.key(seed=seed)
-
     # Forward simulation
     # ----------------------------------------------------------------------------------
     simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
         regime_name: {} for regime_name in internal_regimes
     }
-    for period in range(n_periods):
-        age = ages.period_to_age(period)
+    for period, age in enumerate(ages.values):
         logger.info("Age: %s", age)
 
-        new_subject_regime_ids = jnp.empty(n_initial_subjects)
+        new_subject_regime_ids = subject_regime_ids
 
         active_regimes = {
             regime_name: regime
