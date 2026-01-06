@@ -5,7 +5,7 @@
 [project]
 name = "pylcm"
 description = "Specification, solution, and simulation of finite-horizon dynamic choice models."
-requires-python = "== 3.13"
+requires-python = ">= 3.13"
 dependencies = [
     "dags>=0.4.1",
     "jax>=0.7",
@@ -99,13 +99,14 @@ numpy = ">=2.2"
 plotly = ">=6.2"
 pre-commit = ">=4.1"
 pybaum = "*"
-python = "~=3.13.0"
+python = "~=3.14.0"
 scipy = ">=1.13"
 snakeviz = "*"
 
 
 [tool.pixi.pypi-dependencies]
 pylcm = {path = ".", editable = true}
+dags = { git = "https://github.com/opensourceeconomics/dags.git", branch = "py-3.14" }
 pdbp = ">=1.7.1"
 
 
@@ -117,10 +118,20 @@ platforms = ["linux-64"]
 system-requirements = {cuda = "12"}
 
 [tool.pixi.feature.cuda.target.linux-64.dependencies]
-cuda-nvcc = "~=12"
+cuda-nvcc = "~=12.0"
+
+[tool.pixi.feature.cuda13]
+platforms = ["linux-64"]
+system-requirements = {cuda = "13"}
+
+[tool.pixi.feature.cuda13.target.linux-64.dependencies]
+cuda-nvcc = "~=13.0"
 
 [tool.pixi.feature.cuda.target.linux-64.pypi-dependencies]
 jax = {version = ">=0.7", extras = ["cuda12"]}
+
+[tool.pixi.feature.cuda13.target.linux-64.pypi-dependencies]
+jax = {version = ">=0.7", extras = ["cuda13"]}
 
 [tool.pixi.feature.testing.dependencies]
 matplotlib = "*"  # required because of pandas
@@ -144,7 +155,7 @@ ty = "ty check"
 cuda = {features = ["cuda"], solve-group = "cuda"}
 test-cpu = {features = ["testing"], solve-group = "default"}
 test-cuda = {features = ["testing", "cuda"], solve-group = "cuda"}
-
+test-cuda13 = {features = ["testing", "cuda13"], solve-group = "cuda13"}
 
 
 # ======================================================================================

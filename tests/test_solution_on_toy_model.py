@@ -227,12 +227,12 @@ def analytical_simulate_deterministic(initial_wealth, params):
             "value": np.concatenate([V_arr_0, V_arr_1]),
             "wealth": np.concatenate([initial_wealth, wealth_1]),
             "consumption": pd.Categorical.from_codes(
-                consumption_codes,
-                categories=["low", "high"],  # type: ignore[arg-type]
+                consumption_codes,  # ty: ignore[invalid-argument-type]
+                categories=["low", "high"],  # ty: ignore[invalid-argument-type]
             ),
             "working": pd.Categorical.from_codes(
-                working_codes,
-                categories=["retired", "working"],  # type: ignore[arg-type]
+                working_codes,  # ty: ignore[invalid-argument-type]
+                categories=["retired", "working"],  # ty: ignore[invalid-argument-type]
             ),
         }
     )
@@ -389,17 +389,17 @@ def analytical_simulate_stochastic(initial_wealth, initial_health, health_1, par
             ),
             "value": np.concatenate([V_arr_0, V_arr_1]),
             "health": pd.Categorical.from_codes(
-                health_codes,
-                categories=["bad", "good"],  # type: ignore[arg-type]
+                health_codes,  # ty: ignore[invalid-argument-type]
+                categories=["bad", "good"],  # ty: ignore[invalid-argument-type]
             ),
             "wealth": np.concatenate([initial_wealth, wealth_1]),
             "consumption": pd.Categorical.from_codes(
-                consumption_codes,
-                categories=["low", "high"],  # type: ignore[arg-type]
+                consumption_codes,  # ty: ignore[invalid-argument-type]
+                categories=["low", "high"],  # ty: ignore[invalid-argument-type]
             ),
             "working": pd.Categorical.from_codes(
-                working_codes,
-                categories=["retired", "working"],  # type: ignore[arg-type]
+                working_codes,  # ty: ignore[invalid-argument-type]
+                categories=["retired", "working"],  # ty: ignore[invalid-argument-type]
             ),
         }
     )
