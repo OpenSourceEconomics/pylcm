@@ -4,7 +4,9 @@ import inspect
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
+
 from lcm.input_processing.util import is_stochastic_transition
+
 if TYPE_CHECKING:
     from lcm.regime import Regime
     from lcm.typing import GridsDict, ParamsDict

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import functools
+import inspect
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, cast
-import inspect
+
 from dags import get_annotations
 from dags.signature import with_signature
 from jax import numpy as jnp
+
+from lcm.grid_helpers import get_shock_coordinate
 from lcm.input_processing.create_params_template import create_params_template
 from lcm.input_processing.regime_components import (
     build_argmax_and_max_Q_over_a_functions,
@@ -20,11 +23,10 @@ from lcm.input_processing.regime_components import (
 from lcm.input_processing.util import (
     get_grids,
     get_gridspecs,
+    get_transition_info,
     get_variable_info,
     is_stochastic_transition,
-    get_transition_info
 )
-from lcm.grid_helpers import get_shock_coordinate
 from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
 from lcm.utils import (
     REGIME_SEPARATOR,
@@ -277,8 +279,9 @@ def _get_internal_functions(
             else fn_name
         )
         if fn._stochastic_info.type != "custom":
-            
-            fn_with_pre_computed_weights = _get_fn_with_precomputed_weights(fn_name, fn, flat_grids )
+            fn_with_pre_computed_weights = _get_fn_with_precomputed_weights(
+                fn_name, fn, flat_grids
+            )
             functions[f"weight_{fn_name}"] = _ensure_fn_only_depends_on_params(
                 fn=fn_with_pre_computed_weights,
                 fn_name=fn_name,
@@ -393,15 +396,30 @@ def _get_stochastic_next_function(fn: UserFunction, grid: Int1D) -> UserFunction
 
     return next_func
 
-def _get_fn_with_precomputed_weights(fn_name: str, fn: UserFunction, flat_grids) -> UserFunction:
+
+def _get_fn_with_precomputed_weights(
+    fn_name: str, fn: UserFunction, flat_grids
+) -> UserFunction:
     n_points = flat_grids[fn_name.replace("next_", "")].shape[0]
     old_args = inspect.signature(fn).parameters
-    @with_signature(args={"pre_computed": "FloatND"} | {arg:"ContinousState" for arg in old_args}, return_annotation="FloatND", enforce=False)
+
+    @with_signature(
+        args={"pre_computed": "FloatND"} | dict.fromkeys(old_args, "ContinousState"),
+        return_annotation="FloatND",
+        enforce=False,
+    )
     @functools.wraps(fn)
     def weights_func(*args: Any, pre_computed: Any, **kwargs: Any) -> Int1D:  # noqa: ARG001, ANN401
-        coord = get_shock_coordinate(kwargs[list(old_args.keys())[0]],n_points=n_points, distribution_type=fn._stochastic_info.type, params=kwargs)
-        return pre_computed[jnp.astype(coord,jnp.int32)]
+        coord = get_shock_coordinate(
+            kwargs[list(old_args.keys())[0]],
+            n_points=n_points,
+            distribution_type=fn._stochastic_info.type,
+            params=kwargs,
+        )
+        return pre_computed[jnp.astype(coord, jnp.int32)]
+
     return weights_func
+
 
 def _ensure_fn_only_depends_on_params(
     fn: UserFunction,

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 
 from lcm.error_handling import validate_value_function_array
-from lcm.shocks import pre_compute_shock_probabilities, fill_shock_grids
+from lcm.shocks import fill_shock_grids, pre_compute_shock_probabilities
 
 if TYPE_CHECKING:
     import logging

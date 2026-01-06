@@ -12,7 +12,7 @@ from lcm.interfaces import (
     PeriodRegimeSimulationData,
 )
 from lcm.random import draw_random_seed
-from lcm.shocks import pre_compute_shock_probabilities, fill_shock_grids
+from lcm.shocks import fill_shock_grids, pre_compute_shock_probabilities
 from lcm.simulation.result import SimulationResult
 from lcm.simulation.util import (
     calculate_next_regime_membership,

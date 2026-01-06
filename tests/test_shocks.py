@@ -1,26 +1,40 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
 import pytest
 from jax import numpy as jnp
 
 import lcm
-from lcm.grids import LinspaceGrid, ShockGrid, DiscreteGrid
 from lcm.ages import AgeGrid
+from lcm.grids import DiscreteGrid, LinspaceGrid, ShockGrid
 from lcm.model import Model
 from lcm.regime import Regime
 
 if TYPE_CHECKING:
-    from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt, DiscreteState
+    from lcm.typing import (
+        ContinuousAction,
+        ContinuousState,
+        DiscreteState,
+        FloatND,
+        ScalarInt,
+    )
 
 
 @pytest.fixture
 def params_for_shocks():
     return {
-        "uniform": {"test": {"discount_factor": 1.0, "next_state": {"start": 0, "stop": 1}, "next_state2": {"state2_transition": jnp.full((2,2), fill_value=0.5)}}, "test_term": {
+        "uniform": {
+            "test": {
                 "discount_factor": 1.0,
-            }},
+                "next_state": {"start": 0, "stop": 1},
+                "next_state2": {"state2_transition": jnp.full((2, 2), fill_value=0.5)},
+            },
+            "test_term": {
+                "discount_factor": 1.0,
+            },
+        },
         "normal": {
             "test": {
                 "discount_factor": 1.0,
@@ -28,7 +42,7 @@ def params_for_shocks():
             },
             "test_term": {
                 "discount_factor": 1.0,
-            }
+            },
         },
         "tauchen": {
             "test": {
@@ -37,7 +51,7 @@ def params_for_shocks():
             },
             "test_term": {
                 "discount_factor": 1.0,
-            }
+            },
         },
         "rouwenhorst": {
             "test": {
@@ -46,46 +60,52 @@ def params_for_shocks():
             },
             "test_term": {
                 "discount_factor": 1.0,
-            }
+            },
         },
     }
 
 
-@pytest.mark.parametrize(
-    "distribution_type", ["uniform"]
-)
+@pytest.mark.parametrize("distribution_type", ["uniform"])
 def test_model_with_shock(distribution_type, params_for_shocks):
     @lcm.mark.stochastic(type=distribution_type)
     def next_state(state: ContinuousState) -> ContinuousState:
         pass
+
     @lcm.mark.stochastic
-    def next_state2(
-        state2: DiscreteState, state2_transition: FloatND
-    ) -> FloatND:
+    def next_state2(state2: DiscreteState, state2_transition: FloatND) -> FloatND:
         return state2_transition[state2]
+
     def next_regime(period: int) -> ScalarInt:
         terminal = period >= 5 - 2  # is test_term in last period
         return jnp.where(terminal, RegimeId.test_term, RegimeId.test)
-    def utility(state: ContinuousState,state2:DiscreteState, action: ContinuousAction) -> FloatND:  # noqa: ARG001
+
+    def utility(
+        state: ContinuousState, state2: DiscreteState, action: ContinuousAction
+    ) -> FloatND:
         return 0
+
     def test_active(age):
         return age < 4
+
     def test_term_active(age):
         return age == 4
+
     @dataclass
     class Discrete:
         test: int = 0
         test_term: int = 1
+
     @dataclass
     class RegimeId:
         test: int = 0
         test_term: int = 1
+
     test_regime = Regime(
         name="test",
         active=test_active,
         states={
             "state": ShockGrid(n_points=5, type=distribution_type),
-            "state2": DiscreteGrid(Discrete)
+            "state2": DiscreteGrid(Discrete),
         },
         actions={
             "action": LinspaceGrid(start=1, stop=5, n_points=2),
@@ -107,13 +127,13 @@ def test_model_with_shock(distribution_type, params_for_shocks):
     model = Model(
         regimes=[test_regime, test_regime_term],
         regime_id_cls=RegimeId,
-        ages=AgeGrid(start=0, stop=4, step="Y")
+        ages=AgeGrid(start=0, stop=4, step="Y"),
     )
     params = params_for_shocks[distribution_type]
 
     res = model.solve_and_simulate(
         params=params,
         initial_regimes=["test"],
-        initial_states={"state": jnp.asarray([0])},
+        initial_states={"state": jnp.asarray([0]), "state2": jnp.asarray([0])},
     )
     print(res.to_dataframe().to_string())

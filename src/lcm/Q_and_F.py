@@ -327,10 +327,10 @@ def _get_joint_weights_function(
         for key, value in transitions.items()
         if is_stochastic_transition(value)
     ]
+
     @with_signature(args=arg_names)
     def _outer(**kwargs: Float1D) -> FloatND:
         weights = jnp.array(list(kwargs.values()))
-        print(weights.shape)
         return jnp.prod(weights)
 
     return productmap(_outer, variables=tuple(arg_names))

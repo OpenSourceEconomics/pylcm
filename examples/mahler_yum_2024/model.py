@@ -18,8 +18,8 @@ from scipy.interpolate import interp1d
 
 import lcm
 from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime
-from lcm.grids import ShockGrid
 from lcm.dispatchers import _base_productmap
+from lcm.grids import ShockGrid
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -299,7 +299,7 @@ def next_education(education: DiscreteState) -> DiscreteState:
     return education
 
 
-@lcm.mark.stochastic(type='uniform')
+@lcm.mark.stochastic(type="uniform")
 def next_adjustment_cost(adjustment_cost: ContinuousState) -> ContinuousState:
     pass
 
@@ -381,7 +381,7 @@ ALIVE_REGIME = Regime(
         "health": DiscreteGrid(HealthStatus),
         "productivity_shock": DiscreteGrid(ProductivityShock),
         "effort_t_1": DiscreteGrid(Effort),
-        "adjustment_cost": ShockGrid(n_points=4, type='uniform'),
+        "adjustment_cost": ShockGrid(n_points=5, type="uniform"),
         "education": DiscreteGrid(EducationStatus),
         "discount_factor": DiscreteGrid(DiscountFactor),
         "productivity": DiscreteGrid(ProductivityType),
@@ -743,9 +743,7 @@ def create_inputs(
     initial_productivity = prod[types]
     initial_discount = discount[types]
     initial_effort = jnp.searchsorted(eff_grid, init_distr_2b2t2h[:, 2][types])
-    initial_adjustment_cost = random.choice(
-        new_keys[1], jnp.arange(5), (n_simulation_subjects,)
-    )
+    initial_adjustment_cost = random.uniform(new_keys[1], (n_simulation_subjects,))
     prod_dist = jax.lax.fori_loop(
         0,
         1000000,
@@ -777,7 +775,7 @@ def create_inputs(
 if __name__ == "__main__":
     params, initial_states, initial_regimes = create_inputs(
         seed=7235,
-        n_simulation_subjects=1_000,
+        n_simulation_subjects=10,
         **START_PARAMS,  # ty: ignore[invalid-argument-type]
     )
 

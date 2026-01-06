@@ -12,7 +12,7 @@ from lcm.exceptions import GridInitializationError, format_messages
 from lcm.utils import find_duplicates
 
 if TYPE_CHECKING:
-    from lcm.typing import Float1D, Int1D, ScalarFloat, ParamsDict
+    from lcm.typing import Float1D, Int1D, ParamsDict, ScalarFloat
 
 
 class Grid(ABC):
@@ -161,11 +161,13 @@ class LogspaceGrid(ContinuousGrid):
             value, self.start, self.stop, self.n_points
         )
 
+
 @dataclass(frozen=True, kw_only=True)
 class ShockGrid(ContinuousGrid):
     """An empty grid for discretized continuous shocks.
     The actual values will be calculated once the prameters for the shock are
     available during the solution or simulation.
+
     Attributes:
         start: This argument is not used.
         stop: This argument is not used.
@@ -186,6 +188,7 @@ class ShockGrid(ContinuousGrid):
         return grid_helpers.get_shock_coordinate(
             value, n_points=self.n_points, params=params, distribution_type=self.type
         )
+
 
 # ======================================================================================
 # Validate user input

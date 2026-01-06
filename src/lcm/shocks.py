@@ -264,16 +264,11 @@ def fill_shock_grids(
                 transition_info.loc[trans_name, "type"]
             ](**(param_copy | {"n_points": n_points}))[0]
 
-            if (
-                trans_name.removeprefix("next_")
-                in regime.state_action_spaces.states
-            ):
+            if trans_name.removeprefix("next_") in regime.state_action_spaces.states:
                 new_internal_regimes[
                     regime_name
-                ].state_action_spaces = (
-                    regime.state_action_spaces.replace(
-                        states=regime.state_action_spaces.states
-                        | {trans_name.removeprefix("next_"): new_values}
-                    )
+                ].state_action_spaces = regime.state_action_spaces.replace(
+                    states=regime.state_action_spaces.states
+                    | {trans_name.removeprefix("next_"): new_values}
                 )
     return new_internal_regimes

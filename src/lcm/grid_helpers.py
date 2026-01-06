@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 
 if TYPE_CHECKING:
-    from lcm.typing import Float1D, ScalarFloat, ParamsDict
+    from lcm.typing import Float1D, ParamsDict, ScalarFloat
 
 
 def linspace(start: ScalarFloat, stop: ScalarFloat, n_points: int) -> Float1D:

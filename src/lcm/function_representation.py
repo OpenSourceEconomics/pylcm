@@ -8,14 +8,15 @@ from dags.signature import with_signature
 from jax import Array
 
 from lcm.functools import all_as_kwargs
-from lcm.ndimage import map_coordinates
 from lcm.grids import ShockGrid
+from lcm.ndimage import map_coordinates
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from lcm.grids import ContinuousGrid
     from lcm.interfaces import StateSpaceInfo
-    from lcm.typing import FloatND, ScalarFloat, ScalarInt, ParamsDict
+    from lcm.typing import FloatND, ParamsDict, ScalarFloat, ScalarInt
 
 
 def get_value_function_representation(
