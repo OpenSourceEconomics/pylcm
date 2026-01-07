@@ -1,4 +1,5 @@
 from dataclasses import fields
+from typing import TYPE_CHECKING
 
 import jax
 from jax import Array, vmap
@@ -9,11 +10,13 @@ from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
 )
 from lcm.input_processing.util import is_stochastic_transition
-from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.random import generate_simulation_keys
 from lcm.state_action_space import create_state_action_space
-from lcm.typing import Bool1D, Float1D, Int1D, ParamsDict, RegimeName
 from lcm.utils import flatten_regime_namespace, normalize_regime_transition_probs
+
+if TYPE_CHECKING:
+    from lcm.interfaces import InternalRegime, StateActionSpace
+    from lcm.typing import Bool1D, Float1D, Int1D, ParamsDict, RegimeName
 
 
 def get_regime_name_to_id_mapping(regime_id_cls: type) -> dict[RegimeName, int]:
@@ -276,7 +279,7 @@ def _update_states_for_subjects(
 
 
 def validate_flat_initial_states(
-    flat_initial_states: "dict[str, Array]",
+    flat_initial_states: dict[str, Array],
     internal_regimes: dict[RegimeName, InternalRegime],
 ) -> None:
     """Validate flat initial_states dict.
@@ -330,9 +333,9 @@ def validate_flat_initial_states(
 
 
 def convert_flat_to_nested_initial_states(
-    flat_initial_states: "dict[str, Array]",
+    flat_initial_states: dict[str, Array],
     internal_regimes: dict[RegimeName, InternalRegime],
-) -> "dict[RegimeName, dict[str, Array]]":
+) -> dict[RegimeName, dict[str, Array]]:
     """Convert flat initial_states dict to nested format.
 
     Takes user-provided flat format and converts to the nested format
