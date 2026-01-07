@@ -60,7 +60,7 @@ Tracker = "https://github.com/opensourceeconomics/pylcm/issues"
 # ======================================================================================
 
 [build-system]
-requires = ["hatchling", "hatch_vcs"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.hooks.vcs]
