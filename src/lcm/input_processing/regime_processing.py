@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 import functools
-import inspect
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, cast
 
 from dags import get_annotations
 from dags.signature import with_signature
-from jax import numpy as jnp
 
-from lcm.grid_helpers import get_shock_coordinate
 from lcm.input_processing.create_params_template import create_params_template
 from lcm.input_processing.regime_components import (
     build_argmax_and_max_Q_over_a_functions,
@@ -279,14 +276,30 @@ def _get_internal_functions(
             else fn_name
         )
         if fn._stochastic_info.type != "custom":
+            state_name = fn_name.split("next_")[-1]
             fn_with_pre_computed_weights = _get_fn_with_precomputed_weights(
-                fn_name, fn, flat_grids
+                state_name, fn
+            )
+            fn_to_convert_coordinates_to_value = (
+                _get_fn_to_convert_coordinates_to_value(state_name)
+            )
+            functions[f"{fn_name.replace('next_', '')}"] = (
+                _ensure_fn_only_depends_on_params(
+                    fn=fn_to_convert_coordinates_to_value,
+                    fn_name=fn_name,
+                    param_key=param_key,
+                    params=params,
+                )
             )
             functions[f"weight_{fn_name}"] = _ensure_fn_only_depends_on_params(
                 fn=fn_with_pre_computed_weights,
                 fn_name=fn_name,
                 param_key=param_key,
                 params=params,
+            )
+            functions[fn_name] = _get_stochastic_next_function(
+                fn=fn,
+                grid=flat_grids[fn_name.replace("next_", "index_")],
             )
         else:
             functions[f"weight_{fn_name}"] = _ensure_fn_only_depends_on_params(
@@ -295,10 +308,10 @@ def _get_internal_functions(
                 param_key=param_key,
                 params=params,
             )
-        functions[fn_name] = _get_stochastic_next_function(
-            fn=fn,
-            grid=flat_grids[fn_name.replace("next_", "")],
-        )
+            functions[fn_name] = _get_stochastic_next_function(
+                fn=fn,
+                grid=flat_grids[fn_name.replace("next_", "")],
+            )
 
     internal_transition = {
         fn_name: functions[fn_name]
@@ -397,28 +410,35 @@ def _get_stochastic_next_function(fn: UserFunction, grid: Int1D) -> UserFunction
     return next_func
 
 
-def _get_fn_with_precomputed_weights(
-    fn_name: str, fn: UserFunction, flat_grids
-) -> UserFunction:
-    n_points = flat_grids[fn_name.replace("next_", "")].shape[0]
-    old_args = inspect.signature(fn).parameters
-
+def _get_fn_with_precomputed_weights(state_name: str, fn: UserFunction) -> UserFunction:
     @with_signature(
-        args={"pre_computed": "FloatND"} | dict.fromkeys(old_args, "ContinousState"),
+        args={"pre_computed": "FloatND", f"index_{state_name}": "ContinuousState"},
         return_annotation="FloatND",
         enforce=False,
     )
     @functools.wraps(fn)
     def weights_func(*args: Any, pre_computed: Any, **kwargs: Any) -> Int1D:  # noqa: ARG001, ANN401
-        coord = get_shock_coordinate(
-            kwargs[list(old_args.keys())[0]],
-            n_points=n_points,
-            distribution_type=fn._stochastic_info.type,
-            params=kwargs,
-        )
-        return pre_computed[jnp.astype(coord, jnp.int32)]
+        return pre_computed[kwargs[f"index_{state_name}"]]
 
     return weights_func
+
+
+def _get_fn_to_convert_coordinates_to_value(fn_name: str) -> UserFunction:
+    state_name = fn_name.replace("next_", "")
+
+    @with_signature(
+        args={
+            f"index_{state_name}": "ContinuousState",
+            f"gridvalues_{state_name}": "FloatND",
+        },
+        return_annotation="FloatND",
+        enforce=False,
+    )
+    def index_to_value_func(*args: Any, **kwargs: Any) -> Int1D:  # noqa: ARG001, ANN401
+        grid_values = kwargs[f"gridvalues_{state_name}"]
+        return grid_values[kwargs[f"index_{state_name}"]]
+
+    return index_to_value_func
 
 
 def _ensure_fn_only_depends_on_params(
