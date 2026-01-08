@@ -12,11 +12,12 @@ from lcm.exceptions import (
 from lcm.input_processing.util import is_stochastic_transition
 from lcm.random import generate_simulation_keys
 from lcm.state_action_space import create_state_action_space
+from lcm.typing import Bool1D, Float1D, Int1D  # noqa: TC001
 from lcm.utils import flatten_regime_namespace, normalize_regime_transition_probs
 
 if TYPE_CHECKING:
     from lcm.interfaces import InternalRegime, StateActionSpace
-    from lcm.typing import Bool1D, Float1D, Int1D, ParamsDict, RegimeName
+    from lcm.typing import ParamsDict, RegimeName
 
 
 def get_regime_name_to_id_mapping(regime_id_cls: type) -> dict[RegimeName, int]:
