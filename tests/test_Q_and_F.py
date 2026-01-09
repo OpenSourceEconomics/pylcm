@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import jax
 import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_equal
@@ -13,6 +14,7 @@ from lcm.interfaces import InternalFunctions, PhaseVariantContainer
 from lcm.Q_and_F import (
     _get_feasibility,
     _get_joint_weights_function,
+    _get_U_and_F,
     get_Q_and_F_terminal,
 )
 from tests.test_models.deterministic.regression import (
@@ -228,28 +230,27 @@ def test_get_U_and_F_with_annotated_constraints():
     feasibility function's "no_annotation_found" annotations conflict with the
     proper annotations from the utility and other functions.
     """
-    from lcm.Q_and_F import _get_U_and_F
 
     # Constraint with type annotations
     def budget_constraint(
         consumption: float,
         wealth: float,
         params: ParamsDict,  # noqa: ARG001
-    ) -> BoolND:
+    ) -> bool:
         return consumption <= wealth
 
     # Another constraint with type annotations
     def positive_consumption_constraint(
         consumption: float,
         params: ParamsDict,  # noqa: ARG001
-    ) -> BoolND:
+    ) -> bool:
         return consumption >= 0
 
     # Utility function with type annotations for the same arguments
     def utility_func(
         consumption: float,
         params: ParamsDict,  # noqa: ARG001
-    ) -> float:
+    ) -> jax.Array:
         return jnp.log(consumption + 1)
 
     mock_transition_solve = lambda *args, params, **kwargs: {"mock": 1.0}  # noqa: E731, ARG005
@@ -264,7 +265,7 @@ def test_get_U_and_F_with_annotated_constraints():
             "positive_consumption_constraint": positive_consumption_constraint,
         },  # ty: ignore[invalid-argument-type]
         transitions={},
-        functions={},  # ty: ignore[invalid-argument-type]
+        functions={},
         regime_transition_probs=PhaseVariantContainer(
             solve=mock_transition_solve, simulate=mock_transition_simulate
         ),
