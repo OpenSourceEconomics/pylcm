@@ -46,7 +46,7 @@ jobs:
         if: runner.os == 'Linux' && matrix.python-version == '3.14'
         uses: codecov/codecov-action@v5
   run-ty:
-    name: Run ty on Python 3.14
+    name: Run ty
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
