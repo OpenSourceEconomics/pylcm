@@ -11,7 +11,6 @@ See also the specifications in tests/test_models/deterministic.py.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
@@ -40,29 +39,29 @@ if TYPE_CHECKING:
 # --------------------------------------------------------------------------------------
 # Categorical variables
 # --------------------------------------------------------------------------------------
-@dataclass
+@lcm.space_1d
 class HealthStatus:
-    bad: int = 0
-    good: int = 1
+    bad: int
+    good: int
 
 
-@dataclass
+@lcm.space_1d
 class PartnerStatus:
-    single: int = 0
-    partnered: int = 1
+    single: int
+    partnered: int
 
 
-@dataclass
+@lcm.space_1d
 class LaborSupply:
-    work: int = 0
-    retire: int = 1
+    work: int
+    retire: int
 
 
-@dataclass
+@lcm.space_1d
 class RegimeId:
-    working: int = 0
-    retired: int = 1
-    dead: int = 2
+    working: int
+    retired: int
+    dead: int
 
 
 # --------------------------------------------------------------------------------------

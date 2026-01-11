@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 
+import lcm
 from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
 from lcm.ages import AgeGrid
 
@@ -22,16 +22,16 @@ if TYPE_CHECKING:
 # --------------------------------------------------------------------------------------
 # Categorical variables and constants
 # --------------------------------------------------------------------------------------
-@dataclass
+@lcm.space_1d
 class LaborSupply:
-    work: int = 0
-    retire: int = 1
+    work: int
+    retire: int
 
 
-@dataclass
+@lcm.space_1d
 class RegimeId:
-    working: int = 0
-    dead: int = 1
+    working: int
+    dead: int
 
 
 # --------------------------------------------------------------------------------------

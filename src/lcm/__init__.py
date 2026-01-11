@@ -11,6 +11,7 @@ from lcm.grids import DiscreteGrid, LinspaceGrid, LogspaceGrid
 from lcm.model import Model
 from lcm.regime import Regime
 from lcm.simulation.result import SimulationResult
+from lcm.space_1d import space_1d
 
 __all__ = [
     "AgeGrid",
@@ -21,4 +22,5 @@ __all__ = [
     "Regime",
     "SimulationResult",
     "mark",
+    "space_1d",
 ]

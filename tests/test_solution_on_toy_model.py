@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
@@ -31,28 +30,28 @@ if TYPE_CHECKING:
 # ======================================================================================
 # Model specification
 # ======================================================================================
-@dataclass
+@lcm.space_1d
 class ConsumptionChoice:
-    low: int = 0
-    high: int = 1
+    low: int
+    high: int
 
 
-@dataclass
+@lcm.space_1d
 class WorkingStatus:
-    retired: int = 0
-    working: int = 1
+    retired: int
+    working: int
 
 
-@dataclass
+@lcm.space_1d
 class HealthStatus:
-    bad: int = 0
-    good: int = 1
+    bad: int
+    good: int
 
 
-@dataclass
+@lcm.space_1d
 class RegimeId:
-    alive: int = 0
-    dead: int = 1
+    alive: int
+    dead: int
 
 
 def utility(

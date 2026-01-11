@@ -6,7 +6,7 @@ Wealth-Health Gaps in Germany" by Lukas Mahler and Minchul Yum (Econometrica, 20
 
 from __future__ import annotations
 
-from dataclasses import dataclass, make_dataclass
+from dataclasses import make_dataclass
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -71,17 +71,17 @@ def calc_savingsgrid(x: Float1D) -> Float1D:
 # ======================================================================================
 
 
-@dataclass
+@lcm.space_1d
 class WorkingStatus:
-    retired: int = 0
-    part: int = 1
-    full: int = 2
+    retired: int
+    part: int
+    full: int
 
 
-@dataclass
+@lcm.space_1d
 class EducationStatus:
-    low: int = 0
-    high: int = 1
+    low: int
+    high: int
 
 
 AdjustmentCost = make_dataclass(
@@ -92,43 +92,43 @@ Effort = make_dataclass(
 )
 
 
-@dataclass
+@lcm.space_1d
 class DiscountFactor:
-    low: int = 0
-    high: int = 1
+    low: int
+    high: int
 
 
-@dataclass
+@lcm.space_1d
 class HealthStatus:
-    bad: int = 0
-    good: int = 1
+    bad: int
+    good: int
 
 
-@dataclass
+@lcm.space_1d
 class ProductivityType:
-    low: int = 0
-    high: int = 1
+    low: int
+    high: int
 
 
-@dataclass
+@lcm.space_1d
 class HealthType:
-    low: int = 0
-    high: int = 1
+    low: int
+    high: int
 
 
-@dataclass
+@lcm.space_1d
 class ProductivityShock:
-    val0: int = 0
-    val1: int = 1
-    val2: int = 2
-    val3: int = 3
-    val4: int = 4
+    val0: int
+    val1: int
+    val2: int
+    val3: int
+    val4: int
 
 
-@dataclass
+@lcm.space_1d
 class RegimeId:
-    alive: int = 0
-    dead: int = 1
+    alive: int
+    dead: int
 
 
 # ======================================================================================
