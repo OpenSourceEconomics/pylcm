@@ -86,7 +86,7 @@ class AgeGrid:
             self._step_size = None
             self._precise_step_size = None
         else:
-            self._precise_step_size = parse_step(step)  # type: ignore[arg-type]
+            self._precise_step_size = parse_step(step)  # ty: ignore[invalid-argument-type]
             self._step_size = float(self._precise_step_size)
             n_steps = int((stop - start) // self._precise_step_size) + 1  # ty: ignore[unsupported-operator]
             self._precise_values = tuple(
