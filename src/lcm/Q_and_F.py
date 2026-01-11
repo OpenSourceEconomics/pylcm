@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import warnings
 from typing import TYPE_CHECKING, Any, cast
 
 import jax.numpy as jnp
 from dags import concatenate_functions
-from dags.dag import DagsWarning
 from dags.signature import with_signature
 
 from lcm.dispatchers import productmap
@@ -375,17 +373,13 @@ def _get_feasibility(internal_functions: InternalFunctions) -> InternalUserFunct
 
     """
     if internal_functions.constraints:
-        with warnings.catch_warnings():
-            # set annotations does not set the return type when concatenate_functions is
-            # called with an aggregator and raises a warning.
-            warnings.simplefilter("ignore", category=DagsWarning)
-            combined_constraint = concatenate_functions(
-                functions=internal_functions.constraints | internal_functions.functions,
-                targets=list(internal_functions.constraints),
-                aggregator=jnp.logical_and,
-                set_annotations=True,
-            )
-        combined_constraint.__annotations__["return"] = "Feasibility"
+        combined_constraint = concatenate_functions(
+            functions=internal_functions.constraints | internal_functions.functions,
+            targets=list(internal_functions.constraints),
+            aggregator=jnp.logical_and,
+            aggregator_return_type="Feasibility",
+            set_annotations=True,
+        )
 
     else:
 
