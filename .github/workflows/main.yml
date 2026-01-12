@@ -85,11 +85,11 @@ jobs:
           pixi-version: v0.62.2
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
-          environments: test-cuda
-          frozen: true
+          environments: test-cuda12
+          frozen: false
       - name: Run pytest on GPU
         shell: bash {0}
-        run: pixi run -e test-cuda tests
+        run: pixi run -e test-cuda12 tests
   # run-explanation-notebooks:
   #   name: Run explanation notebooks on Python 3.14
   #   runs-on: ubuntu-latest
