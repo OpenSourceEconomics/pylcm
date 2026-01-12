@@ -21,13 +21,12 @@ import operator
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
-from jax import Array, jit, lax
+from jax import Array, lax
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
-@jit
 def map_coordinates(
     input: Array,
     coordinates: Sequence[Array],

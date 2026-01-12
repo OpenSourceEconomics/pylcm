@@ -28,6 +28,7 @@ from lcm.input_processing.util import (
     is_stochastic_transition,
 )
 from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
+from lcm.ndimage import map_coordinates
 from lcm.utils import (
     REGIME_SEPARATOR,
     flatten_regime_namespace,
@@ -410,13 +411,16 @@ def _get_fn_with_precomputed_weights(
     )
     @functools.wraps(fn)
     def weights_func(*args: Any, pre_computed: Any, **kwargs: Any) -> Int1D:  # noqa: ARG001, ANN401
-        coord = get_shock_coordinate(
-            kwargs[list(old_args.keys())[0]],
+        coordinate = get_shock_coordinate(
+            kwargs[next(iter(old_args.keys()))],
             n_points=n_points,
             distribution_type=fn._stochastic_info.type,
             params=kwargs,
         )
-        return pre_computed[jnp.astype(coord, jnp.int32)]
+        interpolation_points = jnp.asarray[
+            jnp.full(n_points, fill_value=coordinate), jnp.arange(n_points)
+        ]
+        return map_coordinates(input=pre_computed, coordinates=interpolation_points)
 
     return weights_func
 

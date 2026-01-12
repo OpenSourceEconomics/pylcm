@@ -80,7 +80,9 @@ def test_model_with_shock(distribution_type, params_for_shocks):
         return jnp.where(terminal, RegimeId.test_term, RegimeId.test)
 
     def utility(
-        state: ContinuousState, state2: DiscreteState, action: ContinuousAction
+        state: ContinuousState,  # noqa: ARG001
+        state2: DiscreteState,  # noqa: ARG001
+        action: ContinuousAction,  # noqa: ARG001
     ) -> FloatND:
         return 0
 
@@ -131,9 +133,8 @@ def test_model_with_shock(distribution_type, params_for_shocks):
     )
     params = params_for_shocks[distribution_type]
 
-    res = model.solve_and_simulate(
+    model.solve_and_simulate(
         params=params,
         initial_regimes=["test"],
         initial_states={"state": jnp.asarray([0]), "state2": jnp.asarray([0])},
     )
-    print(res.to_dataframe().to_string())

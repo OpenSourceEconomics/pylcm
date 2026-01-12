@@ -165,6 +165,7 @@ class LogspaceGrid(ContinuousGrid):
 @dataclass(frozen=True, kw_only=True)
 class ShockGrid(ContinuousGrid):
     """An empty grid for discretized continuous shocks.
+
     The actual values will be calculated once the prameters for the shock are
     available during the solution or simulation.
 

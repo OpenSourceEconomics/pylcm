@@ -223,14 +223,13 @@ def income(
     education: DiscreteState,
     productivity: DiscreteState,
     productivity_shock: DiscreteState,
-    xvalues: Float1D,
     income_grid: FloatND,
 ) -> FloatND:
     return (
         income_grid[period, health, education]
         * (working / 2)
         * theta_val[productivity]
-        * jnp.exp(xvalues[productivity_shock])
+        * jnp.exp(productivity_shock)
     )
 
 
@@ -304,11 +303,9 @@ def next_adjustment_cost(adjustment_cost: ContinuousState) -> ContinuousState:
     pass
 
 
-@lcm.mark.stochastic
-def next_productivity_shock(
-    productivity_shock: DiscreteState, productivity_shock_transition: FloatND
-) -> FloatND:
-    return productivity_shock_transition[productivity_shock]
+@lcm.mark.stochastic(type="rouwenhorst")
+def next_productivity_shock(productivity_shock: ContinuousState) -> FloatND:
+    pass
 
 
 # --------------------------------------------------------------------------------------
@@ -379,7 +376,7 @@ ALIVE_REGIME = Regime(
     states={
         "wealth": LinspaceGrid(start=0, stop=49, n_points=50),
         "health": DiscreteGrid(HealthStatus),
-        "productivity_shock": DiscreteGrid(ProductivityShock),
+        "productivity_shock": ShockGrid(n_points=5, type="rouwenhorst"),
         "effort_t_1": DiscreteGrid(Effort),
         "adjustment_cost": ShockGrid(n_points=5, type="uniform"),
         "education": DiscreteGrid(EducationStatus),
@@ -699,10 +696,14 @@ def create_inputs(
         "fcost": {"psi": psi, "xigrid": xi_grid},
         "cons_util": {"sigma": sigma, "bb": bb, "kappa": conp},
         "utility": {"beta_mean": beta["mean"], "beta_std": beta["std"]},
-        "income": {"income_grid": income_grid, "xvalues": xvalues},
+        "income": {"income_grid": income_grid},
         "pension": {"income_grid": income_grid, "penre": penre},
         "adj_cost": {"chimaxgrid": chimax_grid},
-        "next_productivity_shock": {"productivity_shock_transition": xtrans.T},
+        "next_productivity_shock": {
+            "rho": rho,
+            "sigma_eps": jnp.sqrt(income_process["sigx"]),
+            "mu_eps": 0.0,
+        },
         "next_health": {"health_transition": tr2yp_grid},
         "next_adjustment_cost": {"start": 0, "stop": 1},
         "next_dead": {},
@@ -750,9 +751,9 @@ def create_inputs(
         lambda i, a: a @ xtrans.T,  # noqa: ARG005
         jnp.full(5, 1 / 5),
     )
-    initial_productivity_shock = random.choice(
-        new_keys[2], jnp.arange(5), (n_simulation_subjects,), p=prod_dist
-    )
+    initial_productivity_shock = xvalues[
+        random.choice(new_keys[2], jnp.arange(5), (n_simulation_subjects,), p=prod_dist)
+    ]
     initial_states = {
         "wealth": initial_wealth,
         "health": initial_health,
@@ -785,4 +786,3 @@ if __name__ == "__main__":
         initial_regimes=initial_regimes,
         seed=8295,
     )
-    print(simulation_result.to_dataframe().to_string())
