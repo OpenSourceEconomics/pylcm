@@ -16,6 +16,7 @@ from pandas.testing import assert_frame_equal
 import lcm
 from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
 from lcm.ages import AgeGrid
+from tests.conftest import DECIMAL_PRECISION
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -453,8 +454,12 @@ def test_deterministic_solve(discount_factor, n_wealth_points):
     # Do not assert that in the first period, the arrays have the same values on the
     # first and last index: TODO (@timmens): THIS IS A BUG AND NEEDS TO BE INVESTIGATED.
     # ==================================================================================
-    aaae(got[0]["alive"][slice(1, -1)], expected[0][slice(1, -1)], decimal=12)
-    aaae(got[1]["alive"], expected[1], decimal=12)
+    aaae(
+        got[0]["alive"][slice(1, -1)],
+        expected[0][slice(1, -1)],
+        decimal=DECIMAL_PRECISION,
+    )
+    aaae(got[1]["alive"], expected[1], decimal=DECIMAL_PRECISION)
 
 
 @pytest.mark.parametrize("discount_factor", [0, 0.5, 0.9, 1.0])
@@ -570,8 +575,12 @@ def test_stochastic_solve(discount_factor, n_wealth_points, health_transition):
     # Do not assert that in the first period, the arrays have the same values on the
     # first and last index: TODO (@timmens): THIS IS A BUG AND NEEDS TO BE INVESTIGATED.
     # ==================================================================================
-    aaae(got[0]["alive"][:, slice(1, -1)], expected[0][:, slice(1, -1)], decimal=12)
-    aaae(got[1]["alive"], expected[1], decimal=12)
+    aaae(
+        got[0]["alive"][:, slice(1, -1)],
+        expected[0][:, slice(1, -1)],
+        decimal=DECIMAL_PRECISION,
+    )
+    aaae(got[1]["alive"], expected[1], decimal=DECIMAL_PRECISION)
 
 
 @pytest.mark.parametrize("discount_factor", [0, 0.5, 0.9, 1.0])
