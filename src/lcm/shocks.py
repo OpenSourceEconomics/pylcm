@@ -223,7 +223,7 @@ def pre_compute_shock_probabilities(
         for trans_name in need_precompute:
             n_points = (
                 internal_regimes[regime_name]
-                .gridspecs[trans_name.replace("next_", "index_")]
+                .gridspecs[trans_name.removeprefix("next_")]
                 .n_points
             )
             new_params[regime_name][trans_name]["pre_computed"] = (

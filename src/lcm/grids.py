@@ -181,7 +181,7 @@ class ShockGrid(ContinuousGrid):
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
-        return jnp.arange(self.n_points)
+        return jnp.empty(shape=self.n_points)
 
     def get_coordinate(self, value: ScalarFloat, params: ParamsDict) -> ScalarFloat:
         """Get the generalized coordinate of a value in the grid."""

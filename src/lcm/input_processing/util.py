@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 from dags import get_ancestors
 
-from lcm.grids import ContinuousGrid, Grid, ShockGrid
+from lcm.grids import ContinuousGrid, Grid
 from lcm.utils import flatten_regime_namespace
 
 if TYPE_CHECKING:
@@ -34,11 +34,7 @@ def get_variable_info(regime: Regime) -> pd.DataFrame:
         is_continuous, is_discrete.
 
     """
-    states = {
-        (f"index_{name}" if isinstance(value, ShockGrid) else name): value
-        for name, value in regime.states.items()
-    }
-    variables = states | regime.actions
+    variables = regime.states | regime.actions
 
     info = pd.DataFrame(index=list(variables))
 
@@ -49,8 +45,6 @@ def get_variable_info(regime: Regime) -> pd.DataFrame:
         isinstance(spec, ContinuousGrid) for spec in variables.values()
     ]
     info["is_discrete"] = ~info["is_continuous"]
-
-    info["is_shock"] = [isinstance(spec, ShockGrid) for spec in variables.values()]
 
     info["enters_concurrent_valuation"] = _indicator_enters_concurrent_valuation(
         states_and_actions_names=list(variables),
@@ -161,11 +155,7 @@ def get_gridspecs(
     """
     variable_info = get_variable_info(regime)
 
-    raw_states = {
-        (f"index_{name}" if isinstance(value, ShockGrid) else name): value
-        for name, value in regime.states.items()
-    }
-    raw_variables = raw_states | regime.actions
+    raw_variables = regime.states | regime.actions
     order = variable_info.index.tolist()
     return {k: raw_variables[k] for k in order}
 
