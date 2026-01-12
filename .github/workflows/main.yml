@@ -82,7 +82,6 @@ jobs:
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: test-cuda
-          activate-environment: true
           frozen: true
       - name: Run pytest on GPU
         shell: bash {0}
