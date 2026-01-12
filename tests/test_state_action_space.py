@@ -24,7 +24,7 @@ def _create_variable_info(
     ordered_vars = (
         discrete_states + discrete_actions + continuous_states + continuous_actions
     )
-    info = pd.DataFrame(index=ordered_vars)
+    info = pd.DataFrame(index=pd.Index(ordered_vars))
     info["is_state"] = info.index.isin(discrete_states + continuous_states)
     info["is_action"] = ~info["is_state"]
     info["is_discrete"] = info.index.isin(discrete_states + discrete_actions)
