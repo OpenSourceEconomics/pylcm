@@ -179,7 +179,7 @@ def productmap(
     # Callables do not necessarily have a __signature__ attribute.
     vmapped.__signature__ = inspect.signature(func_callable_with_args)  # ty: ignore[unresolved-attribute]
 
-    return cast("FunctionWithArrayReturn", allow_only_kwargs(vmapped))
+    return cast("FunctionWithArrayReturn", allow_only_kwargs(vmapped, enforce=False))
 
 
 def _base_productmap(

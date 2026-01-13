@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm.ages import AgeGrid
@@ -31,6 +32,7 @@ class InternalRegimeMock:
     state_action_spaces: StateActionSpace
     max_Q_over_a_functions: dict[int, MaxQOverAFunction]
     active_periods: list[int]
+    transition_info: pd.DataFrame
 
 
 def test_solve_brute():
@@ -105,6 +107,7 @@ def test_solve_brute():
         state_action_spaces=state_action_space,
         max_Q_over_a_functions={0: max_Q_over_a, 1: max_Q_over_a},
         active_periods=[0, 1],
+        transition_info=pd.DataFrame({"type": []}),
     )
 
     solution = solve(
@@ -157,6 +160,7 @@ def test_solve_brute_single_period_Qc_arr():
         state_action_spaces=state_action_space,
         max_Q_over_a_functions={0: max_Q_over_a, 1: max_Q_over_a},
         active_periods=[0, 1],
+        transition_info=pd.DataFrame({"type": []}),
     )
 
     got = solve(

@@ -39,6 +39,7 @@ def params_for_shocks():
             "test": {
                 "discount_factor": 1.0,
                 "next_state": {"mu_eps": 0, "sigma_eps": 1, "n_std": 2},
+                "next_state2": {"state2_transition": jnp.full((2, 2), fill_value=0.5)},
             },
             "test_term": {
                 "discount_factor": 1.0,
@@ -48,6 +49,7 @@ def params_for_shocks():
             "test": {
                 "discount_factor": 1.0,
                 "next_state": {"rho": 0.8, "mu_eps": 0, "sigma_eps": 1, "n_std": 2},
+                "next_state2": {"state2_transition": jnp.full((2, 2), fill_value=0.5)},
             },
             "test_term": {
                 "discount_factor": 1.0,
@@ -57,6 +59,7 @@ def params_for_shocks():
             "test": {
                 "discount_factor": 1.0,
                 "next_state": {"rho": 0.8, "mu_eps": 0, "sigma_eps": 1},
+                "next_state2": {"state2_transition": jnp.full((2, 2), fill_value=0.5)},
             },
             "test_term": {
                 "discount_factor": 1.0,
@@ -65,7 +68,9 @@ def params_for_shocks():
     }
 
 
-@pytest.mark.parametrize("distribution_type", ["uniform"])
+@pytest.mark.parametrize(
+    "distribution_type", ["uniform", "normal", "tauchen", "rouwenhorst"]
+)
 def test_model_with_shock(distribution_type, params_for_shocks):
     @lcm.mark.stochastic(type=distribution_type)
     def next_state(state: ContinuousState) -> ContinuousState:
@@ -84,7 +89,7 @@ def test_model_with_shock(distribution_type, params_for_shocks):
         state2: DiscreteState,  # noqa: ARG001
         action: ContinuousAction,  # noqa: ARG001
     ) -> FloatND:
-        return 0
+        return 0.0
 
     def test_active(age):
         return age < 4
@@ -113,7 +118,6 @@ def test_model_with_shock(distribution_type, params_for_shocks):
             "action": LinspaceGrid(start=1, stop=5, n_points=2),
         },
         utility=utility,
-        constraints={},
         transitions={
             "next_state": next_state,
             "next_state2": next_state2,

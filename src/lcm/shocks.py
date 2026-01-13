@@ -214,21 +214,17 @@ def pre_compute_shock_probabilities(
 
     """
     new_params = deepcopy(params)
-    for regime_name, regime_params in params.items():
-        transition_info = internal_regimes[regime_name].transition_info
+    for regime_name, regime in internal_regimes.items():
+        transition_info = regime.transition_info
         need_precompute = transition_info.index[
             ~transition_info["type"].isin(["custom", "none"])
         ].tolist()
 
         for trans_name in need_precompute:
-            n_points = (
-                internal_regimes[regime_name]
-                .gridspecs[trans_name.removeprefix("next_")]
-                .n_points
-            )
+            n_points = regime.gridspecs[trans_name.removeprefix("next_")].n_points
             new_params[regime_name][trans_name]["pre_computed"] = (
                 SHOCK_DISCRETIZATION_FUNCTIONS[transition_info.loc[trans_name, "type"]](
-                    **(regime_params[trans_name] | {"n_points": n_points})
+                    **(params[regime_name][trans_name] | {"n_points": n_points})
                 )[1]
             )
     return new_params

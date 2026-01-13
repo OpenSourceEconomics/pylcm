@@ -8,7 +8,10 @@ from pybaum import tree_equal
 from lcm.ages import AgeGrid
 from lcm.input_processing import process_regimes
 from lcm.interfaces import InternalFunctions, PhaseVariantContainer, Target
-from lcm.next_state import _create_stochastic_next_func, get_next_state_function
+from lcm.next_state import (
+    _create_discrete_stochastic_next_func,
+    get_next_state_function,
+)
 from tests.test_models.deterministic.regression import RegimeId, dead, working
 
 if TYPE_CHECKING:
@@ -93,7 +96,7 @@ def test_get_next_state_function_with_simulate_target():
 
 def test_create_stochastic_next_func():
     labels = jnp.arange(2)
-    got_func = _create_stochastic_next_func(name="a", labels=labels)
+    got_func = _create_discrete_stochastic_next_func(name="a", labels=labels)
 
     key = jnp.arange(2, dtype="uint32")  # PRNG dtype
     weights = jnp.array([0.0, 1])
