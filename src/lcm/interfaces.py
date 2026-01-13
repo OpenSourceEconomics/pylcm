@@ -185,8 +185,8 @@ class InternalRegime:
     )
     internal_functions: InternalFunctions
     params_template: ParamsDict
-    state_action_spaces: StateActionSpace
-    state_space_infos: StateSpaceInfo
+    state_action_space: StateActionSpace
+    state_space_info: StateSpaceInfo
     max_Q_over_a_functions: dict[int, MaxQOverAFunction]
     argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction]
     next_state_simulation_function: NextStateSimulationFunction

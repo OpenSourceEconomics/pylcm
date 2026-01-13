@@ -72,7 +72,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
     }
 
     result = simulate(
-        params=params,
+        user_params=params,
         V_arr_dict={
             0: {"working": jnp.zeros(100), "dead": jnp.zeros(2)},
             1: {"working": jnp.zeros(100), "dead": jnp.zeros(2)},

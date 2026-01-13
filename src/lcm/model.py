@@ -118,7 +118,7 @@ class Model:
             Dictionary mapping period to a value function array for each regime.
         """
         return solve(
-            params=params,
+            user_params=params,
             ages=self.ages,
             internal_regimes=self.internal_regimes,
             logger=get_logger(debug_mode=debug_mode),
@@ -153,7 +153,7 @@ class Model:
 
         """
         return simulate(
-            params=params,
+            user_params=params,
             initial_states=initial_states,
             initial_regimes=initial_regimes,
             internal_regimes=self.internal_regimes,

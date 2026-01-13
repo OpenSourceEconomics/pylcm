@@ -230,7 +230,7 @@ def pre_compute_shock_probabilities(
     return new_params
 
 
-def fill_shock_grids(
+def update_sas_with_shocks(
     internal_regimes: dict[str, InternalRegime], params: ParamsDict
 ) -> dict[str, InternalRegime]:
     """Fill the shock grids.
@@ -255,16 +255,15 @@ def fill_shock_grids(
         for trans_name in need_precompute:
             n_points = regime.gridspecs[trans_name.removeprefix("next_")].n_points
             param_copy = params[regime_name][trans_name].copy()
-            param_copy.pop("pre_computed")
             new_values = SHOCK_DISCRETIZATION_FUNCTIONS[
                 transition_info.loc[trans_name, "type"]
             ](**(param_copy | {"n_points": n_points}))[0]
 
-            if trans_name.removeprefix("next_") in regime.state_action_spaces.states:
+            if trans_name.removeprefix("next_") in regime.state_action_space.states:
                 new_internal_regimes[
                     regime_name
-                ].state_action_spaces = regime.state_action_spaces.replace(
-                    states=regime.state_action_spaces.states
+                ].state_action_space = regime.state_action_space.replace(
+                    states=regime.state_action_space.states
                     | {trans_name.removeprefix("next_"): new_values}
                 )
     return new_internal_regimes
