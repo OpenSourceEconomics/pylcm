@@ -23,7 +23,7 @@ jobs:
           - macos-latest
           - windows-latest
         python-version:
-          - '3.12'
+          - '3.14'
     steps:
       - uses: actions/checkout@v6
       - uses: prefix-dev/setup-pixi@v0.9.3
@@ -37,27 +37,29 @@ jobs:
       - name: Run pytest
         shell: bash {0}
         run: pixi run -e test-cpu tests
-        if: runner.os != 'Linux' || matrix.python-version != '3.12'
+        if: runner.os != 'Linux' || matrix.python-version != '3.14'
       - name: Run pytest and collect coverage
         shell: bash {0}
         run: pixi run -e test-cpu tests-with-cov
-        if: runner.os == 'Linux' && matrix.python-version == '3.12'
+        if: runner.os == 'Linux' && matrix.python-version == '3.14'
       - name: Upload coverage report
-        if: runner.os == 'Linux' && matrix.python-version == '3.12'
+        if: runner.os == 'Linux' && matrix.python-version == '3.14'
         uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
   run-ty:
-    name: Run ty on Python 3.12
+    name: Run ty
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         python-version:
-          - '3.12'
+          - '3.14'
     steps:
       - uses: actions/checkout@v6
       - uses: prefix-dev/setup-pixi@v0.9.3
         with:
-          pixi-version: v0.52.0
+          pixi-version: v0.62.2
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: test-cpu
@@ -65,14 +67,37 @@ jobs:
       - name: Run ty
         shell: bash {0}
         run: pixi run -e test-cpu ty
+  run-tests-gpu:
+    name: Run tests on GPU
+    # Config:
+    # https://github.com/organizations/OpenSourceEconomics/settings/actions/runners
+    # Docs on GPU runners:
+    # https://docs.github.com/en/actions/using-github-hosted-runners/using-larger-runners
+    runs-on: ubuntu-latest-gpu
+    steps:
+      - name: Check CUDA version
+        run: |
+          nvidia-smi
+          nvcc --version || echo "nvcc not found"
+      - uses: actions/checkout@v6
+      - uses: prefix-dev/setup-pixi@v0.9.3
+        with:
+          pixi-version: v0.62.2
+          cache: true
+          cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
+          environments: test-cuda12
+          frozen: false
+      - name: Run pytest on GPU
+        shell: bash {0}
+        run: pixi run -e test-cuda12 tests
   # run-explanation-notebooks:
-  #   name: Run explanation notebooks on Python 3.12
+  #   name: Run explanation notebooks on Python 3.14
   #   runs-on: ubuntu-latest
   #   steps:
   #     - uses: actions/checkout@v6
   #     - uses: prefix-dev/setup-pixi@v0.9.3
   #       with:
-  #         pixi-version: v0.52.0
+  #         pixi-version: v0.62.2
   #         cache: true
   #         cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
   #         environments: test-cpu

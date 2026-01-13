@@ -5,10 +5,10 @@
 [project]
 name = "pylcm"
 description = "Specification, solution, and simulation of finite-horizon dynamic choice models."
-requires-python = "== 3.13"
+requires-python = ">= 3.14"
 dependencies = [
-    "dags>=0.4.1",
-    "jax>=0.7",
+    "dags>=0.4.3",
+    "jax>=0.8",
     "jaxtyping>=0.3.2",
     "pandas",
 ]
@@ -29,7 +29,7 @@ classifiers = [
     "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX",
     "Operating System :: Unix",
-    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering",
     "Typing :: Typed",
 ]
@@ -60,7 +60,7 @@ Tracker = "https://github.com/opensourceeconomics/pylcm/issues"
 # ======================================================================================
 
 [build-system]
-requires = ["hatchling", "hatch_vcs"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.hooks.vcs]
@@ -95,32 +95,42 @@ platforms = ["linux-64", "osx-arm64", "win-64"]
 cloudpickle = ">=3.1.2,<4"
 jupyterlab = "*"
 memory_profiler = "*"
-numpy = ">=2.2"
-plotly = ">=6.2"
+numpy = ">=2.4"
+plotly = ">=6.5"
 pre-commit = ">=4.1"
 pybaum = "*"
-python = "~=3.13.0"
-scipy = ">=1.13"
+scipy = ">=1.16"
 snakeviz = "*"
 
 
 [tool.pixi.pypi-dependencies]
+# dags = { git = "https://github.com/opensourceeconomics/dags.git", branch = "annotate-aggregated-return" }
 pylcm = {path = ".", editable = true}
-pdbp = ">=1.7.1"
+pdbp = "*"
 
 
 # Features and Tasks
 # --------------------------------------------------------------------------------------
 
-[tool.pixi.feature.cuda]
+[tool.pixi.feature.cuda12]
 platforms = ["linux-64"]
 system-requirements = {cuda = "12"}
 
-[tool.pixi.feature.cuda.target.linux-64.dependencies]
-cuda-nvcc = "~=12"
+[tool.pixi.feature.cuda12.target.linux-64.dependencies]
+cuda-nvcc = "~=12.0"
 
-[tool.pixi.feature.cuda.target.linux-64.pypi-dependencies]
-jax = {version = ">=0.7", extras = ["cuda12"]}
+[tool.pixi.feature.cuda12.target.linux-64.pypi-dependencies]
+jax = {version = ">=0.8", extras = ["cuda12"]}
+
+[tool.pixi.feature.cuda13]
+platforms = ["linux-64"]
+system-requirements = {cuda = "13"}
+
+[tool.pixi.feature.cuda13.target.linux-64.dependencies]
+cuda-nvcc = "~=13.0"
+
+[tool.pixi.feature.cuda13.target.linux-64.pypi-dependencies]
+jax = {version = ">=0.8", extras = ["cuda13"]}
 
 [tool.pixi.feature.testing.dependencies]
 matplotlib = "*"  # required because of pandas
@@ -141,10 +151,11 @@ ty = "ty check"
 # --------------------------------------------------------------------------------------
 
 [tool.pixi.environments]
-cuda = {features = ["cuda"], solve-group = "cuda"}
+cuda12 = {features = ["cuda12"], solve-group = "cuda12"}
+cuda13 = {features = ["cuda13"], solve-group = "cuda13"}
 test-cpu = {features = ["testing"], solve-group = "default"}
-test-cuda = {features = ["testing", "cuda"], solve-group = "cuda"}
-
+test-cuda12 = {features = ["testing", "cuda12"], solve-group = "cuda12"}
+test-cuda13 = {features = ["testing", "cuda13"], solve-group = "cuda13"}
 
 
 # ======================================================================================

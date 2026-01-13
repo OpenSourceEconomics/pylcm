@@ -6,7 +6,7 @@ Wealth-Health Gaps in Germany" by Lukas Mahler and Minchul Yum (Econometrica, 20
 
 from __future__ import annotations
 
-from dataclasses import dataclass, make_dataclass
+from dataclasses import make_dataclass
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -17,7 +17,7 @@ from jax import random
 from scipy.interpolate import interp1d
 
 import lcm
-from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime
+from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime, categorical
 from lcm.dispatchers import _base_productmap
 from lcm.grids import ShockGrid
 
@@ -72,17 +72,17 @@ def calc_savingsgrid(x: Float1D) -> Float1D:
 # ======================================================================================
 
 
-@dataclass
+@categorical
 class WorkingStatus:
-    retired: int = 0
-    part: int = 1
-    full: int = 2
+    retired: int
+    part: int
+    full: int
 
 
-@dataclass
+@categorical
 class EducationStatus:
-    low: int = 0
-    high: int = 1
+    low: int
+    high: int
 
 
 Effort = make_dataclass(
@@ -90,43 +90,43 @@ Effort = make_dataclass(
 )
 
 
-@dataclass
+@categorical
 class DiscountFactor:
-    low: int = 0
-    high: int = 1
+    low: int
+    high: int
 
 
-@dataclass
+@categorical
 class HealthStatus:
-    bad: int = 0
-    good: int = 1
+    bad: int
+    good: int
 
 
-@dataclass
+@categorical
 class ProductivityType:
-    low: int = 0
-    high: int = 1
+    low: int
+    high: int
 
 
-@dataclass
+@categorical
 class HealthType:
-    low: int = 0
-    high: int = 1
+    low: int
+    high: int
 
 
-@dataclass
+@categorical
 class ProductivityShock:
-    val0: int = 0
-    val1: int = 1
-    val2: int = 2
-    val3: int = 3
-    val4: int = 4
+    val0: int
+    val1: int
+    val2: int
+    val3: int
+    val4: int
 
 
-@dataclass
+@categorical
 class RegimeId:
-    alive: int = 0
-    dead: int = 1
+    alive: int
+    dead: int
 
 
 # ======================================================================================

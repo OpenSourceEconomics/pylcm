@@ -36,7 +36,7 @@ def get_variable_info(regime: Regime) -> pd.DataFrame:
     """
     variables = regime.states | regime.actions
 
-    info = pd.DataFrame(index=list(variables))
+    info = pd.DataFrame(index=pd.Index(list(variables)))
 
     info["is_state"] = info.index.isin(regime.states)
     info["is_action"] = ~info["is_state"]

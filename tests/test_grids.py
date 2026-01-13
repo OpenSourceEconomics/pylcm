@@ -27,7 +27,7 @@ def test_validate_discrete_grid_empty():
 def test_validate_discrete_grid_non_scalar_input():
     category_class = make_dataclass("Category", [("a", int, 1), ("b", str, "s")])
     error_msg = (
-        "Field values of the category_class can only be scalar int or float "
+        "Field values of the category_class can only be int "
         r"values. The values to the following fields are not: \['b'\]"
     )
     with pytest.raises(GridInitializationError, match=error_msg):
@@ -37,7 +37,7 @@ def test_validate_discrete_grid_non_scalar_input():
 def test_validate_discrete_grid_none_input():
     category_class = make_dataclass("Category", [("a", int), ("b", int, 1)])
     error_msg = (
-        "Field values of the category_class can only be scalar int or float "
+        "Field values of the category_class can only be int "
         r"values. The values to the following fields are not: \['a'\]"
     )
     with pytest.raises(GridInitializationError, match=error_msg):
@@ -149,7 +149,7 @@ def test_discrete_grid_invalid_category_class():
     )
     with pytest.raises(
         GridInitializationError,
-        match="Field values of the category_class can only be scalar int or float",
+        match="Field values of the category_class can only be int",
     ):
         DiscreteGrid(category_class)
 

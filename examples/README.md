@@ -23,8 +23,8 @@ $ cd pylcm/examples/#example name#
 $ pixi run python model.py
 ```
 
-If you want to run a model on the GPU you need to use the pixi 'cuda' environment, run
+If you want to run a model on the GPU you need to use the pixi 'cuda13' environment, run
 
 ```console
-$ pixi run -e cuda python model.py
+$ pixi run -e cuda13 python model.py
 ```
