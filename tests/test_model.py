@@ -6,10 +6,8 @@ import jax.numpy as jnp
 import pytest
 
 import lcm
-from lcm import Model, Regime
-from lcm.ages import AgeGrid
+from lcm import AgeGrid, DiscreteGrid, Model, Regime
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.grids import DiscreteGrid
 from lcm.model import _validate_regime_id_cls
 
 

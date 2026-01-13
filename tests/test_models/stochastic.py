@@ -11,14 +11,12 @@ See also the specifications in tests/test_models/deterministic.py.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
 import lcm
-from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
-from lcm.ages import AgeGrid
+from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime, categorical
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -40,29 +38,29 @@ if TYPE_CHECKING:
 # --------------------------------------------------------------------------------------
 # Categorical variables
 # --------------------------------------------------------------------------------------
-@dataclass
+@categorical
 class HealthStatus:
-    bad: int = 0
-    good: int = 1
+    bad: int
+    good: int
 
 
-@dataclass
+@categorical
 class PartnerStatus:
-    single: int = 0
-    partnered: int = 1
+    single: int
+    partnered: int
 
 
-@dataclass
+@categorical
 class LaborSupply:
-    work: int = 0
-    retire: int = 1
+    work: int
+    retire: int
 
 
-@dataclass
+@categorical
 class RegimeId:
-    working: int = 0
-    retired: int = 1
-    dead: int = 2
+    working: int
+    retired: int
+    dead: int
 
 
 # --------------------------------------------------------------------------------------

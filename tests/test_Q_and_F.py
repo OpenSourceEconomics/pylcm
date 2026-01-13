@@ -8,7 +8,7 @@ import pytest
 from numpy.testing import assert_array_equal
 
 import lcm
-from lcm.ages import AgeGrid
+from lcm import AgeGrid
 from lcm.input_processing import process_regimes
 from lcm.interfaces import InternalFunctions, PhaseVariantContainer
 from lcm.Q_and_F import (

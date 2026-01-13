@@ -8,12 +8,11 @@ look too closely inside the functions as opposed to their interfaces.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
-from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime
+from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime, categorical
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -33,16 +32,16 @@ if TYPE_CHECKING:
 # --------------------------------------------------------------------------------------
 # Categorical variables and regime ID
 # --------------------------------------------------------------------------------------
-@dataclass
+@categorical
 class WorkingStatus:
-    retired: int = 0
-    working: int = 1
+    retired: int
+    working: int
 
 
-@dataclass
+@categorical
 class RegimeId:
-    working: int = 0
-    retirement: int = 1
+    working: int
+    retirement: int
 
 
 # --------------------------------------------------------------------------------------

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
@@ -14,8 +13,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
 import lcm
-from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
-from lcm.ages import AgeGrid
+from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime, categorical
 from tests.conftest import DECIMAL_PRECISION
 
 if TYPE_CHECKING:
@@ -32,28 +30,28 @@ if TYPE_CHECKING:
 # ======================================================================================
 # Model specification
 # ======================================================================================
-@dataclass
+@categorical
 class ConsumptionChoice:
-    low: int = 0
-    high: int = 1
+    low: int
+    high: int
 
 
-@dataclass
+@categorical
 class WorkingStatus:
-    retired: int = 0
-    working: int = 1
+    retired: int
+    working: int
 
 
-@dataclass
+@categorical
 class HealthStatus:
-    bad: int = 0
-    good: int = 1
+    bad: int
+    good: int
 
 
-@dataclass
+@categorical
 class RegimeId:
-    alive: int = 0
-    dead: int = 1
+    alive: int
+    dead: int
 
 
 def utility(

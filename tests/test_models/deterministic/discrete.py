@@ -10,13 +10,11 @@ continuous version.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 
-from lcm import DiscreteGrid, Model, Regime
-from lcm.ages import AgeGrid
+from lcm import AgeGrid, DiscreteGrid, Model, Regime, categorical
 from tests.test_models.deterministic.regression import (
     LaborSupply,
     is_working,
@@ -42,23 +40,23 @@ if TYPE_CHECKING:
 # --------------------------------------------------------------------------------------
 # Categorical variables
 # --------------------------------------------------------------------------------------
-@dataclass
+@categorical
 class ConsumptionChoice:
-    low: int = 0
-    high: int = 1
+    low: int
+    high: int
 
 
-@dataclass
+@categorical
 class WealthStatus:
-    low: int = 0
-    medium: int = 1
-    high: int = 2
+    low: int
+    medium: int
+    high: int
 
 
-@dataclass
+@categorical
 class RegimeId:
-    working: int = 0
-    dead: int = 1
+    working: int
+    dead: int
 
 
 # --------------------------------------------------------------------------------------
