@@ -12,12 +12,13 @@ from lcm.grid_helpers import (
     logspace,
 )
 from lcm.ndimage import map_coordinates
+from tests.conftest import DECIMAL_PRECISION
 
 
 def test_linspace():
     calculated = linspace(start=1, stop=2, n_points=6)
     expected = np.array([1, 1.2, 1.4, 1.6, 1.8, 2])
-    aaae(calculated, expected)
+    aaae(calculated, expected, decimal=DECIMAL_PRECISION)
 
 
 def test_linspace_mapped_value():
@@ -56,9 +57,17 @@ def test_linspace_mapped_value():
 def test_logspace():
     calculated = logspace(start=1, stop=100, n_points=7)
     expected = np.array(
-        [1.0, 2.15443469, 4.64158883, 10.0, 21.5443469, 46.41588834, 100.0],
+        [
+            1.0,
+            2.154434690031884,
+            4.641588833612779,
+            10.000000000000002,
+            21.54434690031884,
+            46.41588833612779,
+            100.00000000000001,
+        ],
     )
-    aaae(calculated, expected)
+    aaae(calculated, expected, decimal=DECIMAL_PRECISION)
 
 
 def test_logspace_mapped_value():
@@ -142,4 +151,4 @@ def test_map_coordinates_linear_outside_grid():
 
     interpolated_value = map_coordinates(values, [coordinates])
 
-    aaae(interpolated_value, [-2, 0, 6])
+    aaae(interpolated_value, [-2, 0, 6], decimal=DECIMAL_PRECISION)

@@ -22,9 +22,13 @@ import jax.scipy.ndimage
 import numpy as np
 import pytest
 import scipy.ndimage
-from numpy.testing import assert_allclose, assert_array_almost_equal, assert_array_equal
+from numpy.testing import assert_allclose, assert_array_almost_equal
 
 import lcm.ndimage
+from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
+
+# Use 64-bit dtypes when x64 is enabled, 32-bit otherwise
+TEST_DTYPES = [np.int64, np.float64] if X64_ENABLED else [np.int32, np.float32]
 
 jax_map_coordinates = partial(jax.scipy.ndimage.map_coordinates, order=1, cval=0)
 scipy_map_coordinates = partial(scipy.ndimage.map_coordinates, order=1, cval=0)
@@ -55,7 +59,7 @@ def _make_test_data(shape, coordinates_shape, dtype):
 @pytest.mark.parametrize("map_coordinates", JAX_BASED_IMPLEMENTATIONS)
 @pytest.mark.parametrize("shape", TEST_SHAPES)
 @pytest.mark.parametrize("coordinates_shape", TEST_COORDINATES_SHAPES)
-@pytest.mark.parametrize("dtype", [np.int64, np.float64])
+@pytest.mark.parametrize("dtype", TEST_DTYPES)
 def test_map_coordinates_against_scipy(
     map_coordinates, shape, coordinates_shape, dtype
 ):
@@ -68,11 +72,11 @@ def test_map_coordinates_against_scipy(
     expected = scipy_map_coordinates(x, c)
     got = map_coordinates(x_jax, c_jax)
 
-    assert_array_almost_equal(got, expected, decimal=14)
+    assert_array_almost_equal(got, expected, decimal=DECIMAL_PRECISION)
 
 
 @pytest.mark.parametrize("map_coordinates", JAX_BASED_IMPLEMENTATIONS)
-@pytest.mark.parametrize("dtype", [np.int64, np.float64])
+@pytest.mark.parametrize("dtype", TEST_DTYPES)
 def test_map_coordinates_round_half_against_scipy(map_coordinates, dtype):
     """Test that JAX and LCM implementations round as scipy."""
     x = np.arange(-5, 5, dtype=dtype)
@@ -84,7 +88,7 @@ def test_map_coordinates_round_half_against_scipy(map_coordinates, dtype):
     expected = scipy_map_coordinates(x, c)
     got = map_coordinates(x_jax, c_jax)
 
-    assert_array_equal(got, expected)
+    assert_array_almost_equal(got, expected, decimal=DECIMAL_PRECISION)
 
 
 @pytest.mark.parametrize("map_coordinates", JAX_BASED_IMPLEMENTATIONS)

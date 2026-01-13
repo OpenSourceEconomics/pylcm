@@ -7,7 +7,7 @@ name = "pylcm"
 description = "Specification, solution, and simulation of finite-horizon dynamic choice models."
 requires-python = ">= 3.14"
 dependencies = [
-    "dags>=0.4.2",
+    "dags>=0.4.3",
     "jax>=0.8",
     "jaxtyping>=0.3.2",
     "pandas",
@@ -104,22 +104,32 @@ snakeviz = "*"
 
 
 [tool.pixi.pypi-dependencies]
+# dags = { git = "https://github.com/opensourceeconomics/dags.git", branch = "annotate-aggregated-return" }
 pylcm = {path = ".", editable = true}
-dags = { git = "https://github.com/opensourceeconomics/dags.git", branch = "annotate-aggregated-return" }
 pdbp = "*"
 
 
 # Features and Tasks
 # --------------------------------------------------------------------------------------
 
-[tool.pixi.feature.cuda]
+[tool.pixi.feature.cuda12]
+platforms = ["linux-64"]
+system-requirements = {cuda = "12"}
+
+[tool.pixi.feature.cuda12.target.linux-64.dependencies]
+cuda-nvcc = "~=12.0"
+
+[tool.pixi.feature.cuda12.target.linux-64.pypi-dependencies]
+jax = {version = ">=0.8", extras = ["cuda12"]}
+
+[tool.pixi.feature.cuda13]
 platforms = ["linux-64"]
 system-requirements = {cuda = "13"}
 
-[tool.pixi.feature.cuda.target.linux-64.dependencies]
+[tool.pixi.feature.cuda13.target.linux-64.dependencies]
 cuda-nvcc = "~=13.0"
 
-[tool.pixi.feature.cuda.target.linux-64.pypi-dependencies]
+[tool.pixi.feature.cuda13.target.linux-64.pypi-dependencies]
 jax = {version = ">=0.8", extras = ["cuda13"]}
 
 [tool.pixi.feature.testing.dependencies]
@@ -141,9 +151,11 @@ ty = "ty check"
 # --------------------------------------------------------------------------------------
 
 [tool.pixi.environments]
-cuda = {features = ["cuda"], solve-group = "cuda"}
+cuda12 = {features = ["cuda12"], solve-group = "cuda12"}
+cuda13 = {features = ["cuda13"], solve-group = "cuda13"}
 test-cpu = {features = ["testing"], solve-group = "default"}
-test-cuda = {features = ["testing", "cuda"], solve-group = "cuda"}
+test-cuda12 = {features = ["testing", "cuda12"], solve-group = "cuda12"}
+test-cuda13 = {features = ["testing", "cuda13"], solve-group = "cuda13"}
 
 
 # ======================================================================================

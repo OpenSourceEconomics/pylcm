@@ -67,15 +67,15 @@ class DiscreteGrid(Grid):
 
     Args:
         category_class (type): The category class representing the grid categories. Must
-            be a dataclass with fields that have unique scalar int or float values.
+            be a dataclass with fields that have unique int values.
 
     Attributes:
         categories: The list of category names.
         codes: The list of category codes.
 
     Raises:
-        GridInitializationError: If the `category_class` is not a dataclass with scalar
-            int or float fields.
+        GridInitializationError: If the `category_class` is not a dataclass with int
+            fields.
 
     """
 
@@ -84,8 +84,7 @@ class DiscreteGrid(Grid):
 
         Args:
             category_class (type): The category class representing the grid categories.
-                Must be a dataclass with fields that have unique scalar int or float
-                values.
+                Must be a dataclass with fields that have unique int values.
 
         """
         _validate_discrete_grid(category_class)
@@ -101,7 +100,7 @@ class DiscreteGrid(Grid):
         return self.__categories
 
     @property
-    def codes(self) -> tuple[int | float, ...]:
+    def codes(self) -> tuple[int, ...]:
         """Get the list of category codes."""
         return self.__codes
 
@@ -211,11 +210,11 @@ def _validate_discrete_grid(category_class: type) -> None:
 
     Args:
         category_class: The category class representing the grid categories. Must
-            be a dataclass with fields that have unique scalar int or float values.
+            be a dataclass with fields that have unique int values.
 
     Raises:
-        GridInitializationError: If the `category_class` is not a dataclass with scalar
-            int or float fields.
+        GridInitializationError: If the `category_class` is not a dataclass with int
+            fields.
 
     """
     error_messages = validate_category_class(category_class)
@@ -230,13 +229,13 @@ def validate_category_class(category_class: type) -> list[str]:
     This validates that:
     - The class is a dataclass
     - It has at least one field
-    - All field values are scalar int or float
+    - All field values are int
     - All field values are unique
     - Field values are consecutive integers starting from 0
 
     Args:
         category_class: The category class to validate. Must be a dataclass with fields
-            that have unique scalar int or float values.
+            that have unique int values.
 
     Returns:
         A list of error messages. Empty list if validation passes.
@@ -246,7 +245,7 @@ def validate_category_class(category_class: type) -> list[str]:
 
     if not is_dataclass(category_class):
         error_messages.append(
-            "category_class must be a dataclass with scalar int or float fields, "
+            "category_class must be a dataclass with int fields, "
             f"but is {category_class}."
         )
         return error_messages
@@ -256,16 +255,14 @@ def validate_category_class(category_class: type) -> list[str]:
     if not names_and_values:
         error_messages.append("category_class must have at least one field.")
 
-    names_with_non_numerical_values = [
-        name
-        for name, value in names_and_values.items()
-        if not isinstance(value, int | float)
+    names_with_non_int_values = [
+        name for name, value in names_and_values.items() if not isinstance(value, int)
     ]
-    if names_with_non_numerical_values:
+    if names_with_non_int_values:
         error_messages.append(
-            "Field values of the category_class can only be scalar int or float "
-            f"values. The values to the following fields are not: "
-            f"{names_with_non_numerical_values}"
+            "Field values of the category_class can only be int values. "
+            f"The values to the following fields are not: "
+            f"{names_with_non_int_values}"
         )
 
     values = list(names_and_values.values())
