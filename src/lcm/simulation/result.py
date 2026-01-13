@@ -493,7 +493,7 @@ def _empty_dataframe(
     columns = ["subject_id", "period", "regime", "value"]
     columns.extend(state_names)
     columns.extend(action_names)
-    return pd.DataFrame(columns=columns)
+    return pd.DataFrame(columns=pd.Index(columns))
 
 
 def _add_missing_columns(

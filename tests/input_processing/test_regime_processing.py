@@ -179,7 +179,7 @@ def test_get_variable_info(regime_mock):
             "enters_concurrent_valuation": [False, True],
             "enters_transition": [True, False],
         },
-        index=["a", "c"],
+        index=pd.Index(["a", "c"]),
     )
 
     assert_frame_equal(got.loc[exp.index], exp)  # we don't care about the id order here
