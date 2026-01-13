@@ -12,8 +12,7 @@ from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
-import lcm
-from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime
+from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime, categorical
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -33,13 +32,13 @@ if TYPE_CHECKING:
 # --------------------------------------------------------------------------------------
 # Categorical variables and regime ID
 # --------------------------------------------------------------------------------------
-@lcm.space_1d
+@categorical
 class WorkingStatus:
     retired: int
     working: int
 
 
-@lcm.space_1d
+@categorical
 class RegimeId:
     working: int
     retirement: int

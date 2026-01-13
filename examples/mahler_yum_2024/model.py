@@ -17,7 +17,7 @@ from jax import random
 from scipy.interpolate import interp1d
 
 import lcm
-from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime
+from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime, categorical
 from lcm.dispatchers import _base_productmap
 
 if TYPE_CHECKING:
@@ -71,14 +71,14 @@ def calc_savingsgrid(x: Float1D) -> Float1D:
 # ======================================================================================
 
 
-@lcm.space_1d
+@categorical
 class WorkingStatus:
     retired: int
     part: int
     full: int
 
 
-@lcm.space_1d
+@categorical
 class EducationStatus:
     low: int
     high: int
@@ -92,31 +92,31 @@ Effort = make_dataclass(
 )
 
 
-@lcm.space_1d
+@categorical
 class DiscountFactor:
     low: int
     high: int
 
 
-@lcm.space_1d
+@categorical
 class HealthStatus:
     bad: int
     good: int
 
 
-@lcm.space_1d
+@categorical
 class ProductivityType:
     low: int
     high: int
 
 
-@lcm.space_1d
+@categorical
 class HealthType:
     low: int
     high: int
 
 
-@lcm.space_1d
+@categorical
 class ProductivityShock:
     val0: int
     val1: int
@@ -125,7 +125,7 @@ class ProductivityShock:
     val4: int
 
 
-@lcm.space_1d
+@categorical
 class RegimeId:
     alive: int
     dead: int

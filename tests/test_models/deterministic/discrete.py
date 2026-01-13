@@ -14,9 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 
-import lcm
-from lcm import DiscreteGrid, Model, Regime
-from lcm.ages import AgeGrid
+from lcm import AgeGrid, DiscreteGrid, Model, Regime, categorical
 from tests.test_models.deterministic.regression import (
     LaborSupply,
     is_working,
@@ -42,20 +40,20 @@ if TYPE_CHECKING:
 # --------------------------------------------------------------------------------------
 # Categorical variables
 # --------------------------------------------------------------------------------------
-@lcm.space_1d
+@categorical
 class ConsumptionChoice:
     low: int
     high: int
 
 
-@lcm.space_1d
+@categorical
 class WealthStatus:
     low: int
     medium: int
     high: int
 
 
-@lcm.space_1d
+@categorical
 class RegimeId:
     working: int
     dead: int

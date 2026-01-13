@@ -8,8 +8,7 @@ import pytest
 from numpy.testing import assert_array_almost_equal
 
 import lcm
-from lcm import Model
-from lcm.ages import AgeGrid
+from lcm import AgeGrid, Model
 from tests.test_models.stochastic import (
     RegimeId,
     dead,

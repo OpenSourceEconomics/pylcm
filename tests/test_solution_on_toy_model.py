@@ -13,8 +13,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
 import lcm
-from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
-from lcm.ages import AgeGrid
+from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime, categorical
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -30,25 +29,25 @@ if TYPE_CHECKING:
 # ======================================================================================
 # Model specification
 # ======================================================================================
-@lcm.space_1d
+@categorical
 class ConsumptionChoice:
     low: int
     high: int
 
 
-@lcm.space_1d
+@categorical
 class WorkingStatus:
     retired: int
     working: int
 
 
-@lcm.space_1d
+@categorical
 class HealthStatus:
     bad: int
     good: int
 
 
-@lcm.space_1d
+@categorical
 class RegimeId:
     alive: int
     dead: int
