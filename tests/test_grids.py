@@ -8,8 +8,9 @@ import pytest
 from lcm.exceptions import GridInitializationError
 from lcm.grids import (
     DiscreteGrid,
-    LinspaceGrid,
-    LogspaceGrid,
+    IrregSpacedGrid,
+    LinSpacedGrid,
+    LogSpacedGrid,
     _get_field_names_and_values,
     _validate_continuous_grid,
     _validate_discrete_grid,
@@ -116,12 +117,12 @@ def test_validate_continuous_grid_start_greater_than_stop():
 
 
 def test_linspace_grid_creation():
-    grid = LinspaceGrid(start=1, stop=5, n_points=5)
+    grid = LinSpacedGrid(start=1, stop=5, n_points=5)
     assert np.allclose(grid.to_jax(), np.linspace(1, 5, 5))
 
 
 def test_logspace_grid_creation():
-    grid = LogspaceGrid(start=1, stop=10, n_points=3)
+    grid = LogSpacedGrid(start=1, stop=10, n_points=3)
     assert np.allclose(grid.to_jax(), np.logspace(np.log10(1), np.log10(10), 3))
 
 
@@ -135,12 +136,12 @@ def test_discrete_grid_creation():
 
 def test_linspace_grid_invalid_start():
     with pytest.raises(GridInitializationError, match="start must be less than stop"):
-        LinspaceGrid(start=1, stop=0, n_points=10)
+        LinSpacedGrid(start=1, stop=0, n_points=10)
 
 
 def test_logspace_grid_invalid_start():
     with pytest.raises(GridInitializationError, match="start must be less than stop"):
-        LogspaceGrid(start=1, stop=0, n_points=10)
+        LogSpacedGrid(start=1, stop=0, n_points=10)
 
 
 def test_discrete_grid_invalid_category_class():
@@ -155,7 +156,7 @@ def test_discrete_grid_invalid_category_class():
 
 
 def test_replace_mixin():
-    grid = LinspaceGrid(start=1, stop=5, n_points=5)
+    grid = LinSpacedGrid(start=1, stop=5, n_points=5)
     new_grid = grid.replace(start=0)
     assert new_grid.start == 0
     assert new_grid.stop == 5
@@ -200,3 +201,109 @@ def test_validate_category_class_not_starting_at_zero():
     errors = validate_category_class(category_class)
     assert len(errors) == 1
     assert "consecutive integers starting from 0" in errors[0]
+
+
+# ======================================================================================
+# Tests for IrregSpacedGrid
+# ======================================================================================
+
+
+def test_irreg_spaced_grid_creation():
+    grid = IrregSpacedGrid(points=(1.0, 2.0, 5.0, 10.0))
+    assert np.allclose(grid.to_jax(), np.array([1.0, 2.0, 5.0, 10.0]))
+    assert grid.n_points == 4
+
+
+def test_irreg_spaced_grid_invalid_not_tuple():
+    with pytest.raises(GridInitializationError, match="points must be a tuple"):
+        IrregSpacedGrid(points=[1.0, 2.0, 3.0])  # type: ignore[arg-type]
+
+
+def test_irreg_spaced_grid_invalid_too_few_points():
+    with pytest.raises(GridInitializationError, match="at least 2 elements"):
+        IrregSpacedGrid(points=(1.0,))
+
+
+def test_irreg_spaced_grid_invalid_non_numeric():
+    with pytest.raises(GridInitializationError, match="must be int or float"):
+        IrregSpacedGrid(points=(1.0, "a", 3.0))  # type: ignore[arg-type]
+
+
+def test_irreg_spaced_grid_invalid_not_ascending():
+    with pytest.raises(GridInitializationError, match="strictly ascending order"):
+        IrregSpacedGrid(points=(1.0, 3.0, 2.0))
+
+
+# ======================================================================================
+# Tests for coordinate equivalence between LinSpacedGrid and IrregSpacedGrid
+# ======================================================================================
+
+
+@pytest.fixture
+def equivalent_grids():
+    """Create a LinSpacedGrid and IrregSpacedGrid with identical points."""
+    lin_grid = LinSpacedGrid(start=0.0, stop=10.0, n_points=11)
+    irreg_grid = IrregSpacedGrid(points=tuple(float(x) for x in lin_grid.to_jax()))
+    return lin_grid, irreg_grid
+
+
+@pytest.mark.parametrize(
+    "value", [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
+)
+def test_linspaced_and_irregspaced_exact_grid_points(equivalent_grids, value: float):
+    """Coordinates match at exact grid points."""
+    lin_grid, irreg_grid = equivalent_grids
+    assert np.isclose(lin_grid.get_coordinate(value), irreg_grid.get_coordinate(value))
+
+
+@pytest.mark.parametrize("value", [0.5, 1.25, 3.7, 7.9, 9.99])
+def test_linspaced_and_irregspaced_interpolation(equivalent_grids, value: float):
+    """Coordinates match for interpolation (values between grid points)."""
+    lin_grid, irreg_grid = equivalent_grids
+    assert np.isclose(lin_grid.get_coordinate(value), irreg_grid.get_coordinate(value))
+
+
+@pytest.mark.parametrize("value", [-1.0, -0.5, 10.5, 12.0])
+def test_linspaced_and_irregspaced_extrapolation(equivalent_grids, value: float):
+    """Coordinates match for extrapolation (values outside grid range)."""
+    lin_grid, irreg_grid = equivalent_grids
+    assert np.isclose(lin_grid.get_coordinate(value), irreg_grid.get_coordinate(value))
+
+
+@pytest.mark.parametrize(
+    ("start", "stop", "n_points"),
+    [
+        (0.0, 1.0, 5),
+        (1.0, 100.0, 10),
+        (-10.0, 10.0, 21),
+        (0.5, 2.5, 3),
+    ],
+)
+def test_linspaced_and_irregspaced_coordinates_match_parametrized(
+    start: float, stop: float, n_points: int
+):
+    """Parametrized test for coordinate equivalence across different grid configs."""
+    lin_grid = LinSpacedGrid(start=start, stop=stop, n_points=n_points)
+    irreg_grid = IrregSpacedGrid(points=tuple(float(x) for x in lin_grid.to_jax()))
+
+    # Generate test values: grid points, interpolation, and extrapolation
+    grid_points = [float(x) for x in lin_grid.to_jax()]
+    step = (stop - start) / (n_points - 1)
+
+    # Interpolation: midpoints between consecutive grid points
+    interpolation_values = [
+        (grid_points[i] + grid_points[i + 1]) / 2 for i in range(n_points - 1)
+    ]
+
+    # Extrapolation: outside the grid range
+    extrapolation_values = [start - step, start - 0.1, stop + 0.1, stop + step]
+
+    all_test_values = grid_points + interpolation_values + extrapolation_values
+
+    for value in all_test_values:
+        lin_coord = float(lin_grid.get_coordinate(value))
+        irreg_coord = float(irreg_grid.get_coordinate(value))
+        assert np.isclose(lin_coord, irreg_coord, rtol=1e-6), (
+            f"Mismatch at value {value} for grid ({start}, {stop}, {n_points}): "
+            f"LinSpacedGrid={lin_coord}, IrregSpacedGrid={irreg_coord}"
+        )

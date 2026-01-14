@@ -56,8 +56,9 @@ This project uses [pixi](https://pixi.sh/) for dependency management and task au
 
 **Grid System (`src/lcm/grids.py`)**
 - `DiscreteGrid`: Categorical variables with string labels
-- `LinspaceGrid`: Linear grid (start, stop, n_points)
-- `LogspaceGrid`: Logarithmic grid (start, stop, n_points)
+- `LinSpacedGrid`: Linearly spaced grid (start, stop, n_points)
+- `LogSpacedGrid`: Logarithmically spaced grid (start, stop, n_points)
+- `IrregSpacedGrid`: Irregularly spaced grid (points tuple)
 - `AgeGrid`: Lifecycle age grid (start, stop, step or precise_values)
 - `@categorical`: Decorator for creating categorical classes with auto-assigned integer codes
 

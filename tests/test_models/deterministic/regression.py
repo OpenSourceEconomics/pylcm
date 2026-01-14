@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 
-from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime, categorical
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -95,14 +95,14 @@ working = Regime(
     name="working",
     actions={
         "labor_supply": DiscreteGrid(LaborSupply),
-        "consumption": LinspaceGrid(
+        "consumption": LinSpacedGrid(
             start=1,
             stop=400,
             n_points=500,
         ),
     },
     states={
-        "wealth": LinspaceGrid(
+        "wealth": LinSpacedGrid(
             start=1,
             stop=400,
             n_points=100,

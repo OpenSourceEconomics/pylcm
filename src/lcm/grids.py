@@ -150,8 +150,8 @@ class ContinuousGrid(Grid, ABC):
             ) from e
 
 
-class LinspaceGrid(ContinuousGrid):
-    """A linear grid of continuous values.
+class LinSpacedGrid(ContinuousGrid):
+    """A linearly spaced grid of continuous values.
 
     Example:
     --------
@@ -175,8 +175,8 @@ class LinspaceGrid(ContinuousGrid):
         )
 
 
-class LogspaceGrid(ContinuousGrid):
-    """A logarithmic grid of continuous values.
+class LogSpacedGrid(ContinuousGrid):
+    """A logarithmically spaced grid of continuous values.
 
     Example:
     --------
@@ -198,6 +198,42 @@ class LogspaceGrid(ContinuousGrid):
         return grid_helpers.get_logspace_coordinate(
             value, self.start, self.stop, self.n_points
         )
+
+
+@dataclass(frozen=True, kw_only=True)
+class IrregSpacedGrid(Grid):
+    """A grid of continuous values at irregular (user-specified) points.
+
+    This grid type is useful for representing non-uniformly spaced points such as
+    Gauss-Hermite quadrature nodes or grids with specific breakpoints.
+
+    Example:
+    --------
+    Gauss-Hermite quadrature nodes: `IrregSpacedGrid(points=[-1.73, -0.58, 0.58, 1.73])`
+
+    Attributes:
+        points: The grid points. Must be a sequence of floats in ascending order.
+            Can be any sequence that is convertible to a JAX array.
+
+    """
+
+    points: tuple[float, ...]
+
+    def __post_init__(self) -> None:
+        _validate_irreg_spaced_grid(self.points)
+
+    @property
+    def n_points(self) -> int:
+        """Get the number of points in the grid."""
+        return len(self.points)
+
+    def to_jax(self) -> Float1D:
+        """Convert the grid to a Jax array."""
+        return jnp.asarray(self.points)
+
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
+        """Get the generalized coordinate of a value in the grid."""
+        return grid_helpers.get_irreg_coordinate(value, self.points)
 
 
 # ======================================================================================
@@ -330,6 +366,52 @@ def _validate_continuous_grid(
 
     if valid_start_type and valid_stop_type and start >= stop:
         error_messages.append("start must be less than stop")
+
+    if error_messages:
+        msg = format_messages(error_messages)
+        raise GridInitializationError(msg)
+
+
+def _validate_irreg_spaced_grid(points: tuple[float, ...]) -> None:
+    """Validate the irregular spaced grid parameters.
+
+    Args:
+        points: The grid points.
+
+    Raises:
+        GridInitializationError: If the grid parameters are invalid.
+
+    """
+    error_messages = []
+
+    if not isinstance(points, tuple):
+        error_messages.append(
+            f"points must be a tuple of floats, but is {type(points).__name__}"
+        )
+    elif len(points) < 2:  # noqa: PLR2004
+        error_messages.append("points must have at least 2 elements")
+    else:
+        # Check that all elements are numeric
+        non_numeric = [
+            (i, type(p).__name__)
+            for i, p in enumerate(points)
+            if not isinstance(p, int | float)
+        ]
+        if non_numeric:
+            error_messages.append(
+                f"All elements of points must be int or float. "
+                f"Non-numeric elements found at indices: {non_numeric}"
+            )
+        else:
+            # Check that points are in ascending order
+            for i in range(len(points) - 1):
+                if points[i] >= points[i + 1]:
+                    error_messages.append(
+                        "Points must be in strictly ascending order. "
+                        f"Found points[{i}]={points[i]} >= "
+                        f"points[{i + 1}]={points[i + 1]}"
+                    )
+                    break
 
     if error_messages:
         msg = format_messages(error_messages)

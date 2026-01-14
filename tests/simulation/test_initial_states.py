@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 import pytest
 
-from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
+from lcm import DiscreteGrid, LinSpacedGrid, Model, Regime
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidInitialStatesError
 from lcm.simulation.util import (
@@ -51,7 +51,7 @@ def model() -> Model:
         name="active",
         utility=utility,
         states={
-            "wealth": LinspaceGrid(start=1, stop=100, n_points=10),
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
             "health": DiscreteGrid(HealthStatus),
         },
         transitions={
