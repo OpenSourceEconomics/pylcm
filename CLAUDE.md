@@ -59,6 +59,7 @@ This project uses [pixi](https://pixi.sh/) for dependency management and task au
 - `LinSpacedGrid`: Linearly spaced grid (start, stop, n_points)
 - `LogSpacedGrid`: Logarithmically spaced grid (start, stop, n_points)
 - `IrregSpacedGrid`: Irregularly spaced grid (points tuple)
+- `PiecewiseLinSpacedGrid`: Piecewise linearly spaced grid with breakpoints
 - `AgeGrid`: Lifecycle age grid (start, stop, step or precise_values)
 - `@categorical`: Decorator for creating categorical classes with auto-assigned integer codes
 

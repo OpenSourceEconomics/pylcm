@@ -6,6 +6,7 @@ from dataclasses import dataclass, fields, is_dataclass
 from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
+import portion as P
 
 from lcm import grid_helpers
 from lcm.exceptions import GridInitializationError, format_messages
@@ -236,6 +237,111 @@ class IrregSpacedGrid(Grid):
         return grid_helpers.get_irreg_coordinate(value, self.points)
 
 
+@dataclass(frozen=True, kw_only=True)
+class Piece:
+    """A piece of a piecewise linearly spaced grid.
+
+    Attributes:
+        interval: The interval for this piece. Can be a string like "[1, 4)" or
+            a portion.Interval object.
+        n_points: The number of grid points in this piece.
+
+    """
+
+    interval: str | P.Interval
+    n_points: int
+
+
+@dataclass(frozen=True, kw_only=True)
+class PiecewiseLinSpacedGrid(Grid):
+    """A piecewise linearly spaced grid with multiple segments.
+
+    This grid type is useful for representing grids that need specific breakpoints,
+    such as eligibility thresholds for programs. Each piece has its own linear spacing.
+
+    Example:
+    --------
+    A grid from 1 to 10 with a breakpoint at 4 (e.g., an eligibility threshold):
+
+        PiecewiseLinSpacedGrid(pieces=(
+            Piece("[1, 4)", 30),
+            Piece("[4, 10]", 60),
+        ))
+
+    Attributes:
+        pieces: A tuple of Piece objects defining each segment. Pieces must be
+            adjacent (no gaps or overlaps).
+
+    Notes:
+        - Open boundaries (e.g., `4)` in `[1, 4)`) exclude that exact point from
+          the grid. The last point will be slightly before the boundary.
+        - Pieces must be adjacent: the upper bound of each piece must equal the
+          lower bound of the next piece, with compatible open/closed boundaries.
+
+    """
+
+    pieces: tuple[Piece, ...]
+
+    def __post_init__(self) -> None:
+        _validate_piecewise_lin_spaced_grid(self.pieces)
+
+    @property
+    def n_points(self) -> int:
+        """Get the total number of points in the grid."""
+        return sum(p.n_points for p in self.pieces)
+
+    @property
+    def _parsed_pieces(self) -> tuple[P.Interval, ...]:
+        """Get parsed portion.Interval objects for all pieces."""
+        return tuple(_parse_interval(p.interval) for p in self.pieces)
+
+    def to_jax(self) -> Float1D:
+        """Convert the grid to a Jax array."""
+        all_points: list[float] = []
+        for piece, interval in zip(self.pieces, self._parsed_pieces, strict=True):
+            points = _generate_piece_points(interval, piece.n_points)
+            all_points.extend(points)
+        return jnp.array(all_points)
+
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
+        """Get the generalized coordinate of a value in the grid."""
+        return grid_helpers.get_irreg_coordinate(value, tuple(self.to_jax().tolist()))
+
+
+def _parse_interval(interval: str | P.Interval) -> P.Interval:
+    """Parse an interval from a string or return it if already a portion.Interval."""
+    if isinstance(interval, str):
+        return P.from_string(interval, conv=float)
+    return interval
+
+
+def _generate_piece_points(interval: P.Interval, n_points: int) -> list[float]:
+    """Generate grid points for a single piece.
+
+    For open boundaries, the endpoint is excluded by using a small epsilon offset.
+    The epsilon is chosen to be meaningful at float32 precision to avoid issues
+    when JAX uses 32-bit floats.
+    """
+    import numpy as np
+
+    lower = float(interval.lower)
+    upper = float(interval.upper)
+
+    # Use float32 epsilon scaled by the boundary value magnitude to ensure
+    # the offset is meaningful even with 32-bit precision
+    float32_eps = np.finfo(np.float32).eps  # ~1.2e-7
+
+    # Calculate epsilon relative to the boundary value
+    lower_eps = float32_eps * max(abs(lower), 1.0)
+    upper_eps = float32_eps * max(abs(upper), 1.0)
+
+    # Adjust bounds for open intervals
+    effective_lower = lower if interval.left == P.CLOSED else lower + lower_eps
+    effective_upper = upper if interval.right == P.CLOSED else upper - upper_eps
+
+    return list(np.linspace(effective_lower, effective_upper, n_points))
+
+
 # ======================================================================================
 # Validate user input
 # ======================================================================================
@@ -412,6 +518,95 @@ def _validate_irreg_spaced_grid(points: tuple[float, ...]) -> None:
                         f"points[{i + 1}]={points[i + 1]}"
                     )
                     break
+
+    if error_messages:
+        msg = format_messages(error_messages)
+        raise GridInitializationError(msg)
+
+
+def _validate_piecewise_lin_spaced_grid(pieces: tuple[Piece, ...]) -> None:
+    """Validate the piecewise linearly spaced grid parameters.
+
+    Args:
+        pieces: The pieces defining the grid segments.
+
+    Raises:
+        GridInitializationError: If the grid parameters are invalid.
+
+    """
+    error_messages = []
+
+    if not isinstance(pieces, tuple):
+        error_messages.append(
+            f"pieces must be a tuple of Piece objects, but is {type(pieces).__name__}"
+        )
+        msg = format_messages(error_messages)
+        raise GridInitializationError(msg)
+
+    if len(pieces) < 1:
+        error_messages.append("pieces must have at least 1 element")
+        msg = format_messages(error_messages)
+        raise GridInitializationError(msg)
+
+    # Validate each piece
+    parsed_intervals: list[P.Interval] = []
+    for i, piece in enumerate(pieces):
+        if not isinstance(piece, Piece):
+            error_messages.append(
+                f"pieces[{i}] must be a Piece object, but is {type(piece).__name__}"
+            )
+            continue
+
+        if not isinstance(piece.n_points, int) or piece.n_points < 2:  # noqa: PLR2004
+            error_messages.append(
+                f"pieces[{i}].n_points must be an int >= 2, but is {piece.n_points}"
+            )
+
+        # Try to parse the interval
+        try:
+            interval = _parse_interval(piece.interval)
+            parsed_intervals.append(interval)
+
+            # Check interval is valid (lower < upper)
+            if interval.lower >= interval.upper:
+                error_messages.append(
+                    f"pieces[{i}].interval must have lower < upper, but got {interval}"
+                )
+        except Exception as e:
+            error_messages.append(
+                f"pieces[{i}].interval is invalid: {piece.interval}. Error: {e}"
+            )
+
+    if error_messages:
+        msg = format_messages(error_messages)
+        raise GridInitializationError(msg)
+
+    # Check that pieces are adjacent (no gaps or overlaps)
+    for i in range(len(parsed_intervals) - 1):
+        current = parsed_intervals[i]
+        next_interval = parsed_intervals[i + 1]
+
+        if not current.adjacent(next_interval):
+            # Provide detailed error message about what's wrong
+            if current.upper < next_interval.lower:
+                error_messages.append(
+                    f"Gap between pieces[{i}] and pieces[{i + 1}]: "
+                    f"{current} and {next_interval} are not adjacent. "
+                    f"There is a gap between {current.upper} and {next_interval.lower}."
+                )
+            elif current.upper > next_interval.lower:
+                error_messages.append(
+                    f"Overlap between pieces[{i}] and pieces[{i + 1}]: "
+                    f"{current} and {next_interval} overlap."
+                )
+            else:
+                # Same boundary value but incompatible open/closed
+                error_messages.append(
+                    f"pieces[{i}] and pieces[{i + 1}] are not adjacent: "
+                    f"{current} and {next_interval}. "
+                    f"The boundary at {current.upper} must be closed on exactly one side "
+                    f"(e.g., '[a, x)' followed by '[x, b]' or '[a, x]' followed by '(x, b]')."
+                )
 
     if error_messages:
         msg = format_messages(error_messages)

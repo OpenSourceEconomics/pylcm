@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import make_dataclass
 
 import numpy as np
+import portion as P
 import pytest
 
 from lcm.exceptions import GridInitializationError
@@ -11,6 +12,8 @@ from lcm.grids import (
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
+    Piece,
+    PiecewiseLinSpacedGrid,
     _get_field_names_and_values,
     _validate_continuous_grid,
     _validate_discrete_grid,
@@ -307,3 +310,149 @@ def test_linspaced_and_irregspaced_coordinates_match_parametrized(
             f"Mismatch at value {value} for grid ({start}, {stop}, {n_points}): "
             f"LinSpacedGrid={lin_coord}, IrregSpacedGrid={irreg_coord}"
         )
+
+
+# ======================================================================================
+# Tests for PiecewiseLinSpacedGrid
+# ======================================================================================
+
+
+def test_piecewise_lin_spaced_grid_creation_with_strings():
+    """PiecewiseLinSpacedGrid can be created with string intervals."""
+    grid = PiecewiseLinSpacedGrid(
+        pieces=(
+            Piece(interval="[1, 4)", n_points=3),
+            Piece(interval="[4, 10]", n_points=7),
+        )
+    )
+    assert grid.n_points == 10
+
+
+def test_piecewise_lin_spaced_grid_creation_with_portion_objects():
+    """PiecewiseLinSpacedGrid can be created with portion.Interval objects."""
+    grid = PiecewiseLinSpacedGrid(
+        pieces=(
+            Piece(interval=P.closedopen(0, 5), n_points=5),
+            Piece(interval=P.closed(5, 10), n_points=6),
+        )
+    )
+    assert grid.n_points == 11
+
+
+def test_piecewise_lin_spaced_grid_closed_boundary_is_exact():
+    """Closed boundaries should produce exact endpoint values."""
+    grid = PiecewiseLinSpacedGrid(pieces=(Piece(interval="[0, 5]", n_points=6),))
+    points = grid.to_jax()
+    assert float(points[0]) == 0.0
+    assert float(points[-1]) == 5.0
+
+
+def test_piecewise_lin_spaced_grid_open_boundary_excludes_endpoint():
+    """Open boundaries should not include the exact endpoint value."""
+    grid = PiecewiseLinSpacedGrid(
+        pieces=(
+            Piece(interval="[0, 5)", n_points=5),
+            Piece(interval="[5, 10]", n_points=6),
+        )
+    )
+    points = grid.to_jax()
+    # First piece should end just before 5
+    assert float(points[4]) < 5.0
+    # Second piece should start exactly at 5
+    assert float(points[5]) == 5.0
+
+
+def test_piecewise_lin_spaced_grid_adjacent_closedopen_closedclosed():
+    """[a, x) followed by [x, b] should be valid (adjacent)."""
+    grid = PiecewiseLinSpacedGrid(
+        pieces=(
+            Piece(interval="[1, 4)", n_points=3),
+            Piece(interval="[4, 7]", n_points=4),
+        )
+    )
+    assert grid.n_points == 7
+
+
+def test_piecewise_lin_spaced_grid_adjacent_closed_openclosed():
+    """[a, x] followed by (x, b] should be valid (adjacent)."""
+    grid = PiecewiseLinSpacedGrid(
+        pieces=(
+            Piece(interval="[1, 4]", n_points=4),
+            Piece(interval="(4, 7]", n_points=3),
+        )
+    )
+    assert grid.n_points == 7
+
+
+def test_piecewise_lin_spaced_grid_invalid_gap():
+    """[a, x) followed by (x, b] should be invalid (gap at x)."""
+    with pytest.raises(GridInitializationError, match="not adjacent"):
+        PiecewiseLinSpacedGrid(
+            pieces=(
+                Piece(interval="[1, 4)", n_points=3),
+                Piece(interval="(4, 7]", n_points=3),
+            )
+        )
+
+
+def test_piecewise_lin_spaced_grid_invalid_overlap():
+    """[a, x] followed by [x, b] should be invalid (overlap at x)."""
+    with pytest.raises(GridInitializationError, match="not adjacent"):
+        PiecewiseLinSpacedGrid(
+            pieces=(
+                Piece(interval="[1, 4]", n_points=3),
+                Piece(interval="[4, 7]", n_points=3),
+            )
+        )
+
+
+def test_piecewise_lin_spaced_grid_invalid_numeric_gap():
+    """Pieces with numeric gap between them should be invalid."""
+    with pytest.raises(GridInitializationError, match="gap"):
+        PiecewiseLinSpacedGrid(
+            pieces=(
+                Piece(interval="[1, 3]", n_points=3),
+                Piece(interval="[5, 7]", n_points=3),
+            )
+        )
+
+
+def test_piecewise_lin_spaced_grid_invalid_not_tuple():
+    """Pieces must be a tuple."""
+    with pytest.raises(GridInitializationError, match="must be a tuple"):
+        PiecewiseLinSpacedGrid(pieces=[Piece(interval="[1, 4]", n_points=3)])  # type: ignore[arg-type]
+
+
+def test_piecewise_lin_spaced_grid_invalid_not_piece():
+    """Each element in pieces must be a Piece object."""
+    with pytest.raises(GridInitializationError, match="must be a Piece"):
+        PiecewiseLinSpacedGrid(
+            pieces=({"interval": "[1, 4]", "n_points": 3},)  # type: ignore[arg-type]
+        )
+
+
+def test_piecewise_lin_spaced_grid_invalid_n_points():
+    """n_points must be >= 2."""
+    with pytest.raises(GridInitializationError, match="n_points must be an int >= 2"):
+        PiecewiseLinSpacedGrid(pieces=(Piece(interval="[1, 4]", n_points=1),))
+
+
+def test_piecewise_lin_spaced_grid_invalid_interval_string():
+    """Invalid interval string should raise error."""
+    with pytest.raises(GridInitializationError, match="invalid"):
+        PiecewiseLinSpacedGrid(pieces=(Piece(interval="invalid", n_points=3),))
+
+
+def test_piecewise_lin_spaced_grid_three_pieces():
+    """Grid with three adjacent pieces should work."""
+    grid = PiecewiseLinSpacedGrid(
+        pieces=(
+            Piece(interval="[0, 3)", n_points=3),
+            Piece(interval="[3, 7)", n_points=4),
+            Piece(interval="[7, 10]", n_points=4),
+        )
+    )
+    assert grid.n_points == 11
+    points = grid.to_jax()
+    assert float(points[0]) == 0.0
+    assert float(points[-1]) == 10.0
