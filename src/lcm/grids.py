@@ -216,7 +216,7 @@ class ShockGrid(ContinuousGrid):
 
     start: int | float = 0
     stop: int | float = 1
-    type: Literal["uniform", "normal", "tauchen", "rouwenhorst"]
+    distribution_type: Literal["uniform", "normal", "tauchen", "rouwenhorst"]
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
@@ -225,7 +225,10 @@ class ShockGrid(ContinuousGrid):
     def get_coordinate(self, value: ScalarFloat, params: ParamsDict) -> ScalarFloat:  # ty: ignore[invalid-method-override]
         """Get the generalized coordinate of a value in the grid."""
         return grid_helpers.get_shock_coordinate(
-            value, n_points=self.n_points, params=params, distribution_type=self.type
+            value,
+            n_points=self.n_points,
+            params=params,
+            distribution_type=self.distribution_type,
         )
 
 

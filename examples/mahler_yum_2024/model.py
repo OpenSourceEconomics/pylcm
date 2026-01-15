@@ -377,9 +377,9 @@ ALIVE_REGIME = Regime(
     states={
         "wealth": LinspaceGrid(start=0, stop=49, n_points=50),
         "health": DiscreteGrid(HealthStatus),
-        "productivity_shock": ShockGrid(n_points=5, type="rouwenhorst"),
+        "productivity_shock": ShockGrid(n_points=5, distribution_type="rouwenhorst"),
         "effort_t_1": DiscreteGrid(Effort),
-        "adjustment_cost": ShockGrid(n_points=5, type="uniform"),
+        "adjustment_cost": ShockGrid(n_points=5, distribution_type="uniform"),
         "education": DiscreteGrid(EducationStatus),
         "discount_factor": DiscreteGrid(DiscountFactor),
         "productivity": DiscreteGrid(ProductivityType),

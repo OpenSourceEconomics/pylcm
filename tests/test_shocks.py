@@ -111,7 +111,7 @@ def test_model_with_shock(distribution_type, params_for_shocks):
         name="test",
         active=test_active,
         states={
-            "state": ShockGrid(n_points=5, type=distribution_type),
+            "state": ShockGrid(n_points=5, distribution_type=distribution_type),
             "state2": DiscreteGrid(Discrete),
         },
         actions={
