@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import make_dataclass
 
 import numpy as np
-import portion as P
+import portion
 import pytest
 
 from lcm.exceptions import GridInitializationError
@@ -335,8 +335,8 @@ def test_piecewise_lin_spaced_grid_creation_with_portion_objects():
     """PiecewiseLinSpacedGrid can be created with portion.Interval objects."""
     grid = PiecewiseLinSpacedGrid(
         pieces=(
-            Piece(interval=P.closedopen(0, 5), n_points=5),
-            Piece(interval=P.closed(5, 10), n_points=6),
+            Piece(interval=portion.closedopen(0, 5), n_points=5),
+            Piece(interval=portion.closed(5, 10), n_points=6),
         )
     )
     assert grid.n_points == 11

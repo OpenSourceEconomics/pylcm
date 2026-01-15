@@ -203,7 +203,7 @@ extend-ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "**/*.ipynb" = ["D101", "E402", "FBT003"]
-"examples/*" = ["D101", "INP001"]
+"examples/*" = ["D101", "E402", "FBT003", "INP001"]
 "explanations/*" = ["B018", "E402", "INP001", "PD008", "T201"]
 "src/lcm/functools.py" = ["ANN401"]
 "src/lcm/max_Q_over_a.py" = ["N999"]
@@ -211,7 +211,7 @@ extend-ignore = [
 "src/lcm/max_Qc_over_d.py" = ["N999"]
 "src/lcm/ndimage.py" = ["A002"]
 "src/lcm/Q_and_F.py" = ["N999"]
-"tests/*" = ["D101", "PLR2004"]
+"tests/*" = ["D101", "FBT001", "PLR2004"]
 "tests/test_max_Q_over_a.py" = ["N999"]
 "tests/test_max_Qc_over_d.py" = ["N999"]
 "tests/test_Q_and_F.py" = ["N999"]

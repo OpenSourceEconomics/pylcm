@@ -6,7 +6,7 @@ from dataclasses import dataclass, fields, is_dataclass
 from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
-import portion as P
+import portion
 
 from lcm import grid_helpers
 from lcm.exceptions import GridInitializationError, format_messages
@@ -248,7 +248,7 @@ class Piece:
 
     """
 
-    interval: str | P.Interval
+    interval: str | portion.Interval
     n_points: int
 
 
@@ -291,7 +291,7 @@ class PiecewiseLinSpacedGrid(Grid):
         return sum(p.n_points for p in self.pieces)
 
     @property
-    def _parsed_pieces(self) -> tuple[P.Interval, ...]:
+    def _parsed_pieces(self) -> tuple[portion.Interval, ...]:
         """Get parsed portion.Interval objects for all pieces."""
         return tuple(_parse_interval(p.interval) for p in self.pieces)
 
@@ -308,21 +308,21 @@ class PiecewiseLinSpacedGrid(Grid):
         return grid_helpers.get_irreg_coordinate(value, tuple(self.to_jax().tolist()))
 
 
-def _parse_interval(interval: str | P.Interval) -> P.Interval:
+def _parse_interval(interval: str | portion.Interval) -> portion.Interval:
     """Parse an interval from a string or return it if already a portion.Interval."""
     if isinstance(interval, str):
-        return P.from_string(interval, conv=float)
+        return portion.from_string(interval, conv=float)
     return interval
 
 
-def _generate_piece_points(interval: P.Interval, n_points: int) -> list[float]:
+def _generate_piece_points(interval: portion.Interval, n_points: int) -> list[float]:
     """Generate grid points for a single piece.
 
     For open boundaries, the endpoint is excluded by using a small epsilon offset.
     The epsilon is chosen to be meaningful at float32 precision to avoid issues
     when JAX uses 32-bit floats.
     """
-    import numpy as np
+    import numpy as np  # noqa: PLC0415
 
     lower = float(interval.lower)
     upper = float(interval.upper)
@@ -336,8 +336,8 @@ def _generate_piece_points(interval: P.Interval, n_points: int) -> list[float]:
     upper_eps = float32_eps * max(abs(upper), 1.0)
 
     # Adjust bounds for open intervals
-    effective_lower = lower if interval.left == P.CLOSED else lower + lower_eps
-    effective_upper = upper if interval.right == P.CLOSED else upper - upper_eps
+    effective_lower = lower if interval.left == portion.CLOSED else lower + lower_eps
+    effective_upper = upper if interval.right == portion.CLOSED else upper - upper_eps
 
     return list(np.linspace(effective_lower, effective_upper, n_points))
 
@@ -524,7 +524,9 @@ def _validate_irreg_spaced_grid(points: tuple[float, ...]) -> None:
         raise GridInitializationError(msg)
 
 
-def _validate_piecewise_lin_spaced_grid(pieces: tuple[Piece, ...]) -> None:
+def _validate_piecewise_lin_spaced_grid(  # noqa: C901, PLR0912
+    pieces: tuple[Piece, ...],
+) -> None:
     """Validate the piecewise linearly spaced grid parameters.
 
     Args:
@@ -549,7 +551,7 @@ def _validate_piecewise_lin_spaced_grid(pieces: tuple[Piece, ...]) -> None:
         raise GridInitializationError(msg)
 
     # Validate each piece
-    parsed_intervals: list[P.Interval] = []
+    parsed_intervals: list[portion.Interval] = []
     for i, piece in enumerate(pieces):
         if not isinstance(piece, Piece):
             error_messages.append(
@@ -572,7 +574,7 @@ def _validate_piecewise_lin_spaced_grid(pieces: tuple[Piece, ...]) -> None:
                 error_messages.append(
                     f"pieces[{i}].interval must have lower < upper, but got {interval}"
                 )
-        except Exception as e:
+        except (ValueError, TypeError) as e:
             error_messages.append(
                 f"pieces[{i}].interval is invalid: {piece.interval}. Error: {e}"
             )
@@ -604,8 +606,8 @@ def _validate_piecewise_lin_spaced_grid(pieces: tuple[Piece, ...]) -> None:
                 error_messages.append(
                     f"pieces[{i}] and pieces[{i + 1}] are not adjacent: "
                     f"{current} and {next_interval}. "
-                    f"The boundary at {current.upper} must be closed on exactly one side "
-                    f"(e.g., '[a, x)' followed by '[x, b]' or '[a, x]' followed by '(x, b]')."
+                    f"The boundary at {current.upper} must be closed on exactly "
+                    f"one side (e.g., '[a, x)' followed by '[x, b]')."
                 )
 
     if error_messages:

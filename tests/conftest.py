@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from typing import Literal
 
 
-# Module-level precision settings (updated in pytest_configure based on --precision flag)
+# Module-level precision settings (updated in pytest_configure based on --precision)
 X64_ENABLED: bool = True
 DECIMAL_PRECISION: int = 14
 DECIMAL_PRECISION_RELAXED: int = 5  # For tests that need relaxed precision regardless
@@ -34,7 +34,7 @@ def pytest_configure(config):
     X64_ENABLED = precision == "64"
     DECIMAL_PRECISION = 14 if X64_ENABLED else 5
 
-    from jax import config as jax_config
+    from jax import config as jax_config  # noqa: PLC0415
 
     jax_config.update("jax_enable_x64", val=X64_ENABLED)
 
