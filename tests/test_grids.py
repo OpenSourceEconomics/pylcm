@@ -283,7 +283,7 @@ def test_linspaced_and_irregspaced_extrapolation(equivalent_grids, value: float)
     ],
 )
 def test_linspaced_and_irregspaced_coordinates_match_parametrized(
-    start: float, stop: float, n_points: int
+    start: float, stop: float, n_points: int, x64_enabled: bool
 ):
     """Parametrized test for coordinate equivalence across different grid configs."""
     lin_grid = LinSpacedGrid(start=start, stop=stop, n_points=n_points)
@@ -303,10 +303,13 @@ def test_linspaced_and_irregspaced_coordinates_match_parametrized(
 
     all_test_values = grid_points + interpolation_values + extrapolation_values
 
+    # Use looser tolerance for 32-bit precision
+    rtol = 1e-6 if x64_enabled else 1e-4
+
     for value in all_test_values:
         lin_coord = float(lin_grid.get_coordinate(value))
         irreg_coord = float(irreg_grid.get_coordinate(value))
-        assert np.isclose(lin_coord, irreg_coord, rtol=1e-6), (
+        assert np.isclose(lin_coord, irreg_coord, rtol=rtol), (
             f"Mismatch at value {value} for grid ({start}, {stop}, {n_points}): "
             f"LinSpacedGrid={lin_coord}, IrregSpacedGrid={irreg_coord}"
         )
