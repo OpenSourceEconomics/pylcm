@@ -307,7 +307,7 @@ class PiecewiseLinSpacedGrid(Grid):
 
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
         """Get the generalized coordinate of a value in the grid."""
-        return grid_helpers.get_irreg_coordinate(value, tuple(self.to_jax().tolist()))
+        return grid_helpers.get_irreg_coordinate(value, self.to_jax())
 
 
 def _parse_interval(interval: str | portion.Interval) -> portion.Interval:

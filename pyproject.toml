@@ -145,6 +145,7 @@ ty = "*"
 [tool.pixi.feature.testing.tasks]
 explanation-notebooks = "jupyter execute explanations/*.ipynb"
 tests = "pytest tests"
+tests-32bit = "pytest tests --precision=32"
 tests-with-cov = "pytest tests --cov-report=xml --cov=./"
 ty = "ty check"
 

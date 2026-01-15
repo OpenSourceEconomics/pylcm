@@ -274,6 +274,25 @@ def test_linspaced_and_irregspaced_extrapolation(equivalent_grids, value: float)
     assert np.isclose(lin_grid.get_coordinate(value), irreg_grid.get_coordinate(value))
 
 
+def _create_equivalent_grid(
+    grid_type: str, lin_grid: LinSpacedGrid
+) -> IrregSpacedGrid | PiecewiseLinSpacedGrid:
+    """Create a grid equivalent to the given LinSpacedGrid."""
+    if grid_type == "IrregSpacedGrid":
+        return IrregSpacedGrid(points=tuple(float(x) for x in lin_grid.to_jax()))
+    if grid_type == "PiecewiseLinSpacedGrid":
+        return PiecewiseLinSpacedGrid(
+            pieces=(
+                Piece(
+                    interval=f"[{lin_grid.start}, {lin_grid.stop}]",
+                    n_points=lin_grid.n_points,
+                ),
+            )
+        )
+    msg = f"Unknown grid type: {grid_type}"
+    raise ValueError(msg)
+
+
 @pytest.mark.parametrize(
     ("start", "stop", "n_points"),
     [
@@ -283,12 +302,13 @@ def test_linspaced_and_irregspaced_extrapolation(equivalent_grids, value: float)
         (0.5, 2.5, 3),
     ],
 )
-def test_linspaced_and_irregspaced_coordinates_match_parametrized(
-    start: float, stop: float, n_points: int, x64_enabled: bool
+@pytest.mark.parametrize("grid_type", ["IrregSpacedGrid", "PiecewiseLinSpacedGrid"])
+def test_linspaced_coordinates_match_other_grid_types(
+    start: float, stop: float, n_points: int, grid_type: str, x64_enabled: bool
 ):
-    """Parametrized test for coordinate equivalence across different grid configs."""
+    """LinSpacedGrid coordinates should match equivalent grids of other types."""
     lin_grid = LinSpacedGrid(start=start, stop=stop, n_points=n_points)
-    irreg_grid = IrregSpacedGrid(points=tuple(float(x) for x in lin_grid.to_jax()))
+    other_grid = _create_equivalent_grid(grid_type, lin_grid)
 
     # Generate test values: grid points, interpolation, and extrapolation
     grid_points = [float(x) for x in lin_grid.to_jax()]
@@ -304,15 +324,18 @@ def test_linspaced_and_irregspaced_coordinates_match_parametrized(
 
     all_test_values = grid_points + interpolation_values + extrapolation_values
 
-    # Use looser tolerance for 32-bit precision
-    rtol = 1e-6 if x64_enabled else 1e-4
+    # Tolerance depends on precision and grid value magnitude
+    base_rtol = 1e-6 if x64_enabled else 1e-4
+    max_magnitude = max(abs(start), abs(stop), 1.0)
+    rtol = base_rtol * max_magnitude
 
     for value in all_test_values:
         lin_coord = float(lin_grid.get_coordinate(value))
-        irreg_coord = float(irreg_grid.get_coordinate(value))
-        assert np.isclose(lin_coord, irreg_coord, rtol=rtol), (
-            f"Mismatch at value {value} for grid ({start}, {stop}, {n_points}): "
-            f"LinSpacedGrid={lin_coord}, IrregSpacedGrid={irreg_coord}"
+        other_coord = float(other_grid.get_coordinate(value))
+        assert np.isclose(lin_coord, other_coord, rtol=rtol), (
+            f"Mismatch at value {value} for {grid_type} vs LinSpacedGrid "
+            f"({start}, {stop}, {n_points}): "
+            f"LinSpacedGrid={lin_coord}, {grid_type}={other_coord}"
         )
 
 

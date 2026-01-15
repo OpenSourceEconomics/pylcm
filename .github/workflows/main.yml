@@ -108,7 +108,7 @@ jobs:
           frozen: false
       - name: Run pytest on GPU with 32-bit precision
         shell: bash {0}
-        run: pixi run -e test-cuda12 pytest tests --precision=32
+        run: pixi run -e test-cuda12 tests-32bit
   # run-explanation-notebooks:
   #   name: Run explanation notebooks on Python 3.14
   #   runs-on: ubuntu-latest
