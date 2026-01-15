@@ -72,8 +72,8 @@ def params_for_shocks():
     "distribution_type", ["uniform", "normal", "tauchen", "rouwenhorst"]
 )
 def test_model_with_shock(distribution_type, params_for_shocks):
-    @lcm.mark.stochastic(type=distribution_type)
-    def next_state(state: ContinuousState) -> ContinuousState:
+    @lcm.mark.stochastic(distribution_type=distribution_type)
+    def next_state(state: ContinuousState) -> None:
         pass
 
     @lcm.mark.stochastic
@@ -88,7 +88,7 @@ def test_model_with_shock(distribution_type, params_for_shocks):
         state: ContinuousState,  # noqa: ARG001
         state2: DiscreteState,  # noqa: ARG001
         action: ContinuousAction,  # noqa: ARG001
-    ) -> FloatND:
+    ) -> float:
         return 0.0
 
     def test_active(age):

@@ -223,7 +223,7 @@ def pre_compute_shock_probabilities(
         ].tolist()
 
         for trans_name in need_precompute:
-            n_points = regime.gridspecs[trans_name.removeprefix("next_")].n_points
+            n_points = regime.gridspecs[trans_name.removeprefix("next_")].n_points  # ty: ignore[unresolved-attribute]
             new_params[regime_name][trans_name]["pre_computed"] = (
                 SHOCK_DISCRETIZATION_FUNCTIONS[transition_info.loc[trans_name, "type"]](
                     **(params[regime_name][trans_name] | {"n_points": n_points})
@@ -255,7 +255,7 @@ def update_sas_with_shocks(
             ~transition_info["type"].isin(["custom", "none"])
         ].tolist()
         for trans_name in need_precompute:
-            n_points = regime.gridspecs[trans_name.removeprefix("next_")].n_points
+            n_points = regime.gridspecs[trans_name.removeprefix("next_")].n_points  # ty: ignore[unresolved-attribute]
             param_copy = params[regime_name][trans_name].copy()
             new_values = SHOCK_DISCRETIZATION_FUNCTIONS[
                 transition_info.loc[trans_name, "type"]

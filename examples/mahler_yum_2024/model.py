@@ -298,13 +298,13 @@ def next_education(education: DiscreteState) -> DiscreteState:
     return education
 
 
-@lcm.mark.stochastic(type="uniform")
-def next_adjustment_cost(adjustment_cost: ContinuousState) -> ContinuousState:
+@lcm.mark.stochastic(distribution_type="uniform")
+def next_adjustment_cost(adjustment_cost: ContinuousState) -> None:
     pass
 
 
-@lcm.mark.stochastic(type="rouwenhorst")
-def next_productivity_shock(productivity_shock: ContinuousState) -> FloatND:
+@lcm.mark.stochastic(distribution_type="rouwenhorst")
+def next_productivity_shock(productivity_shock: ContinuousState) -> None:
     pass
 
 
@@ -671,7 +671,7 @@ def create_inputs(
     n_simulation_subjects: int,
     nu: dict[str, list[float]],
     xi: dict[str, dict[str, list[float]]],
-    income_process: dict[str, dict[str, float]],
+    income_process: dict[str, dict[str, float] | float],
     chi: list[float],
     psi: float,
     bb: float,
@@ -681,7 +681,7 @@ def create_inputs(
     sigma: int,
 ) -> tuple[dict[RegimeName, Any], dict[RegimeName, Any], list[RegimeName]]:
     # Create variable grids from supplied parameters
-    income_grid = create_income_grid(income_process)
+    income_grid = create_income_grid(income_process)  # ty: ignore[invalid-argument-type]
     chimax_grid = create_chimaxgrid(chi)
     xvalues, xtrans = rouwenhorst(rho, jnp.sqrt(income_process["sigx"]), 5)  # ty: ignore[invalid-argument-type]
     xi_grid = create_xigrid(xi)
@@ -701,7 +701,7 @@ def create_inputs(
         "adj_cost": {"chimaxgrid": chimax_grid},
         "next_productivity_shock": {
             "rho": rho,
-            "sigma_eps": jnp.sqrt(income_process["sigx"]),
+            "sigma_eps": jnp.sqrt(income_process["sigx"]),  # ty: ignore[invalid-argument-type]
             "mu_eps": 0.0,
         },
         "next_health": {"health_transition": tr2yp_grid},

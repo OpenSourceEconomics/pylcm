@@ -76,7 +76,9 @@ def get_transition_info(regime: Regime) -> pd.DataFrame:
         if is_stochastic_transition(trans)
     ]
     transition_type = [
-        trans._stochastic_info.type if is_stochastic_transition(trans) else "none"
+        trans._stochastic_info.distribution_type  # ty: ignore[unresolved-attribute]
+        if is_stochastic_transition(trans)
+        else "none"
         for name, trans in regime.transitions.items()
     ]
     info["is_stochastic"] = info.index.isin(stochastic_transitions)

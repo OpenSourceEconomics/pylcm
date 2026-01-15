@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     import pandas as pd
     from jax import Array
 
-    from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
+    from lcm.grids import ContinuousGrid, DiscreteGrid, Grid, ShockGrid
     from lcm.typing import (
         ArgmaxQOverAFunction,
         Bool1D,
@@ -133,7 +133,7 @@ class StateSpaceInfo:
     """
 
     states_names: tuple[str, ...]
-    discrete_states: dict[str, DiscreteGrid]
+    discrete_states: dict[str, DiscreteGrid | ShockGrid]
     continuous_states: dict[str, ContinuousGrid]
 
 

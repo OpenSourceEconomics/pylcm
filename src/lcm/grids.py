@@ -222,7 +222,7 @@ class ShockGrid(ContinuousGrid):
         """Convert the grid to a Jax array."""
         return jnp.arange(self.n_points)
 
-    def get_coordinate(self, value: ScalarFloat, params: ParamsDict) -> ScalarFloat:
+    def get_coordinate(self, value: ScalarFloat, params: ParamsDict) -> ScalarFloat:  # ty: ignore[invalid-method-override]
         """Get the generalized coordinate of a value in the grid."""
         return grid_helpers.get_shock_coordinate(
             value, n_points=self.n_points, params=params, distribution_type=self.type

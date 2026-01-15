@@ -280,7 +280,7 @@ def _get_internal_functions(
             if REGIME_SEPARATOR in fn_name
             else fn_name
         )
-        if fn._stochastic_info.type != "custom":
+        if fn._stochastic_info.distribution_type != "custom":
             fn_with_pre_computed_weights = _get_fn_with_precomputed_weights(
                 fn_name, fn, flat_grids
             )
@@ -415,7 +415,7 @@ def _get_fn_with_precomputed_weights(
         coordinate = get_shock_coordinate(
             kwargs[next(iter(old_args.keys()))],
             n_points=n_points,
-            distribution_type=fn._stochastic_info.type,
+            distribution_type=fn._stochastic_info.distribution_type,  # ty: ignore[unresolved-attribute]
             params=kwargs,
         )
         return map_coordinates(

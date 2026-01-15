@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import jax
 from dags import concatenate_functions
@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from jax import Array
 
     from lcm.typing import (
+        ContinuousState,
         DiscreteState,
         FloatND,
         GridsDict,
@@ -121,12 +122,14 @@ def _extend_transitions_for_simulation(
     discrete_stochastic_targets = [
         fn_name
         for fn_name, fn in transitions.items()
-        if is_stochastic_transition(fn) and fn._stochastic_info.type == "custom"
+        if is_stochastic_transition(fn)
+        and fn._stochastic_info.distribution_type == "custom"  # ty: ignore[unresolved-attribute]
     ]
     continuous_stochastic_targets = [
         (fn_name, fn)
         for fn_name, fn in transitions.items()
-        if is_stochastic_transition(fn) and fn._stochastic_info.type != "custom"
+        if is_stochastic_transition(fn)
+        and fn._stochastic_info.distribution_type != "custom"  # ty: ignore[unresolved-attribute]
     ]
     # Handle stochastic next states functions
     # ----------------------------------------------------------------------------------
@@ -204,7 +207,7 @@ def _create_continuous_stochastic_next_func(
         - key_{name}: PRNG key for the stochastic next function, e.g. 'next_health'.
 
     """
-    distribution_type = fn._stochastic_info.type
+    distribution_type = fn._stochastic_info.distribution_type  # ty: ignore[unresolved-attribute]
     prev_state_name = name.split("next_")[1]
     fn_name_in_params = name.split("__")[1]
 
@@ -218,7 +221,7 @@ def _create_continuous_stochastic_next_func(
         args=args,
         return_annotation="ContinuousState",
     )
-    def next_stochastic_state(**kwargs: FloatND) -> DiscreteState:
+    def next_stochastic_state(**kwargs: Any) -> ContinuousState:  # noqa: ANN401
         return SHOCK_CALCULATION_FUNCTIONS[distribution_type](
             params=kwargs["params"][fn_name_in_params],
             key=kwargs[f"key_{name}"],
