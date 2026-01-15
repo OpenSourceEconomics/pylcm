@@ -474,7 +474,7 @@ def _validate_continuous_grid(
         raise GridInitializationError(msg)
 
 
-def _validate_irreg_spaced_grid(points: tuple[float, ...]) -> None:
+def _validate_irreg_spaced_grid(points: Sequence[float] | Float1D) -> None:
     """Validate the irregular spaced grid parameters.
 
     Args:
@@ -486,11 +486,7 @@ def _validate_irreg_spaced_grid(points: tuple[float, ...]) -> None:
     """
     error_messages = []
 
-    if not isinstance(points, tuple):
-        error_messages.append(
-            f"points must be a tuple of floats, but is {type(points).__name__}"
-        )
-    elif len(points) < 2:  # noqa: PLR2004
+    if len(points) < 2:  # noqa: PLR2004
         error_messages.append("points must have at least 2 elements")
     else:
         # Check that all elements are numeric

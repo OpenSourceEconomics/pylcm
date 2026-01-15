@@ -218,11 +218,6 @@ def test_irreg_spaced_grid_creation():
     assert grid.n_points == 4
 
 
-def test_irreg_spaced_grid_invalid_not_tuple():
-    with pytest.raises(GridInitializationError, match="points must be a tuple"):
-        IrregSpacedGrid(points=[1.0, 2.0, 3.0])  # type: ignore[arg-type]
-
-
 def test_irreg_spaced_grid_invalid_too_few_points():
     with pytest.raises(GridInitializationError, match="at least 2 elements"):
         IrregSpacedGrid(points=(1.0,))
