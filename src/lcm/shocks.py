@@ -1,11 +1,13 @@
 from copy import deepcopy
+from typing import TYPE_CHECKING
 
 import jax
 from jax import numpy as jnp
 from jax.scipy.stats.norm import cdf
 
-from lcm.interfaces import InternalRegime
-from lcm.typing import Float1D, FloatND, ParamsDict
+if TYPE_CHECKING:
+    from lcm.interfaces import InternalRegime
+    from lcm.typing import Float1D, FloatND, ParamsDict
 
 
 def discretized_uniform_distribution(
@@ -160,7 +162,7 @@ def rouwenhorst(
 
     return jnp.linspace(
         mu_eps / (1.0 - rho) - nu, mu_eps / (1.0 - rho) + nu, n_points
-    ), P.T
+    ), P
 
 
 SHOCK_DISCRETIZATION_FUNCTIONS = {

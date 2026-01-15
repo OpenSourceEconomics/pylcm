@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from lcm.ages import AgeGrid
     from lcm.regime import Regime
     from lcm.typing import (
+        Float1D,
         Int1D,
         InternalUserFunction,
         ParamsDict,
@@ -410,17 +411,20 @@ def _get_fn_with_precomputed_weights(
         enforce=False,
     )
     @functools.wraps(fn)
-    def weights_func(*args: Any, pre_computed: Any, **kwargs: Any) -> Int1D:  # noqa: ARG001, ANN401
+    def weights_func(*args: Any, pre_computed: Any, **kwargs: Any) -> Float1D:  # noqa: ARG001, ANN401
         coordinate = get_shock_coordinate(
             kwargs[next(iter(old_args.keys()))],
             n_points=n_points,
             distribution_type=fn._stochastic_info.type,
             params=kwargs,
         )
-        interpolation_points = jnp.asarray(
-            [jnp.full(n_points, fill_value=coordinate), jnp.arange(n_points)]
+        return map_coordinates(
+            input=pre_computed,
+            coordinates=[
+                jnp.full(n_points, fill_value=coordinate),
+                jnp.arange(n_points),
+            ],
         )
-        return map_coordinates(input=pre_computed, coordinates=interpolation_points)
 
     return weights_func
 

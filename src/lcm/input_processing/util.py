@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 from dags import get_ancestors
 
-from lcm.grids import ContinuousGrid, Grid
+from lcm.grids import ContinuousGrid, Grid, ShockGrid
 from lcm.utils import flatten_regime_namespace
 
 if TYPE_CHECKING:
@@ -42,7 +42,8 @@ def get_variable_info(regime: Regime) -> pd.DataFrame:
     info["is_action"] = ~info["is_state"]
 
     info["is_continuous"] = [
-        isinstance(spec, ContinuousGrid) for spec in variables.values()
+        isinstance(spec, ContinuousGrid) and not isinstance(spec, ShockGrid)
+        for spec in variables.values()
     ]
     info["is_discrete"] = ~info["is_continuous"]
 

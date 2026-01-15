@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from lcm.grids import ContinuousGrid, DiscreteGrid
+from lcm.grids import ContinuousGrid, DiscreteGrid, ShockGrid
 from lcm.input_processing.util import get_gridspecs, get_variable_info
 from lcm.interfaces import StateActionSpace, StateSpaceInfo
 
@@ -91,13 +91,16 @@ def create_state_space_info(
     discrete_states = {
         name: grid_spec
         for name, grid_spec in gridspecs.items()
-        if name in state_names and isinstance(grid_spec, DiscreteGrid)
+        if (name in state_names and isinstance(grid_spec, DiscreteGrid))
+        or isinstance(grid_spec, ShockGrid)
     }
 
     continuous_states = {
         name: grid_spec
         for name, grid_spec in gridspecs.items()
-        if name in state_names and isinstance(grid_spec, ContinuousGrid)
+        if name in state_names
+        and isinstance(grid_spec, ContinuousGrid)
+        and not isinstance(grid_spec, ShockGrid)
     }
 
     return StateSpaceInfo(
