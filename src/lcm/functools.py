@@ -56,11 +56,11 @@ def allow_only_kwargs(
                     f"Expected arguments: {list(parameters)}, got extra: {extra}",
                 )
 
-            missing = set(parameters).difference(kwargs)
-            if missing:
-                raise ValueError(
-                    f"Expected arguments: {list(parameters)}, missing: {missing}",
-                )
+        missing = set(parameters).difference(kwargs)
+        if missing:
+            raise ValueError(
+                f"Expected arguments: {list(parameters)}, missing: {missing}",
+            )
 
         # Retrieve keyword-only arguments
         kw_only_kwargs = {k: kwargs[k] for k in kw_only_parameters}
