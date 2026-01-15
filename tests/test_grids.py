@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import make_dataclass
 
+import jax.numpy as jnp
 import numpy as np
 import portion
 import pytest
@@ -363,6 +364,25 @@ def test_piecewise_lin_spaced_grid_open_boundary_excludes_endpoint():
     assert float(points[4]) < 5.0
     # Second piece should start exactly at 5
     assert float(points[5]) == 5.0
+
+
+def test_piecewise_lin_spaced_grid_no_representable_value_between_pieces():
+    """No representable float between adjacent open/closed boundaries."""
+    grid = PiecewiseLinSpacedGrid(
+        pieces=(
+            Piece(interval="[0, 5)", n_points=5),
+            Piece(interval="[5, 10]", n_points=6),
+        )
+    )
+    points = grid.to_jax()
+
+    # The last point of the first piece (open boundary)
+    last_of_first = points[4]
+    # The first point of the second piece (closed boundary)
+    first_of_second = points[5]
+
+    # nextafter should give us exactly the first point of the second piece
+    assert jnp.nextafter(last_of_first, jnp.inf) == first_of_second
 
 
 def test_piecewise_lin_spaced_grid_adjacent_closedopen_closedclosed():

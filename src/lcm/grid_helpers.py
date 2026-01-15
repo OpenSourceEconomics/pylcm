@@ -31,8 +31,6 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from lcm.typing import Float1D, ScalarFloat
 
 
@@ -119,7 +117,7 @@ def get_logspace_coordinate(
 
 def get_irreg_coordinate(
     value: ScalarFloat,
-    points: Float1D | Sequence[float],
+    points: Float1D,
 ) -> ScalarFloat:
     """Get the generalized coordinate of a value in an irregularly spaced grid.
 
@@ -128,8 +126,7 @@ def get_irreg_coordinate(
 
     Args:
         value: The value to find the coordinate for.
-        points: The grid points in ascending order. Can be a JAX array or a sequence
-            of floats.
+        points: The grid points as a JAX array in ascending order.
 
     Returns:
         The generalized coordinate of the value in the grid. For a value equal to
@@ -137,19 +134,18 @@ def get_irreg_coordinate(
         coordinate based on linear interpolation.
 
     """
-    points_arr = jnp.asarray(points)
-    n_points = len(points_arr)
+    n_points = len(points)
 
     # Find the index of the first point greater than value
-    idx_upper = jnp.searchsorted(points_arr, value, side="right")
+    idx_upper = jnp.searchsorted(points, value, side="right")
 
     # Clamp to valid range for interpolation
     idx_upper = jnp.clip(idx_upper, 1, n_points - 1)
     idx_lower = idx_upper - 1
 
     # Get the lower and upper grid points
-    lower_point = points_arr[idx_lower]
-    upper_point = points_arr[idx_upper]
+    lower_point = points[idx_lower]
+    upper_point = points[idx_upper]
 
     # Linear interpolation between grid points
     step_size = upper_point - lower_point

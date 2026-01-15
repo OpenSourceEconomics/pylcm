@@ -13,6 +13,8 @@ from lcm.exceptions import GridInitializationError, format_messages
 from lcm.utils import find_duplicates
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from lcm.typing import Float1D, Int1D, ScalarFloat
 
 
@@ -206,7 +208,7 @@ class IrregSpacedGrid(Grid):
     """A grid of continuous values at irregular (user-specified) points.
 
     This grid type is useful for representing non-uniformly spaced points such as
-    Gauss-Hermite quadrature nodes or grids with specific breakpoints.
+    Gauss-Hermite quadrature nodes.
 
     Example:
     --------
@@ -218,7 +220,7 @@ class IrregSpacedGrid(Grid):
 
     """
 
-    points: tuple[float, ...]
+    points: Sequence[float] | Float1D
 
     def __post_init__(self) -> None:
         _validate_irreg_spaced_grid(self.points)
@@ -234,7 +236,7 @@ class IrregSpacedGrid(Grid):
 
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
         """Get the generalized coordinate of a value in the grid."""
-        return grid_helpers.get_irreg_coordinate(value, self.points)
+        return grid_helpers.get_irreg_coordinate(value, self.to_jax())
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -297,11 +299,11 @@ class PiecewiseLinSpacedGrid(Grid):
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
-        all_points: list[float] = []
-        for piece, interval in zip(self.pieces, self._parsed_pieces, strict=True):
-            points = _generate_piece_points(interval, piece.n_points)
-            all_points.extend(points)
-        return jnp.array(all_points)
+        piece_arrays = [
+            _generate_piece_points(interval, piece.n_points)
+            for piece, interval in zip(self.pieces, self._parsed_pieces, strict=True)
+        ]
+        return jnp.concatenate(piece_arrays)
 
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
         """Get the generalized coordinate of a value in the grid."""
@@ -315,31 +317,25 @@ def _parse_interval(interval: str | portion.Interval) -> portion.Interval:
     return interval
 
 
-def _generate_piece_points(interval: portion.Interval, n_points: int) -> list[float]:
+def _generate_piece_points(interval: portion.Interval, n_points: int) -> Float1D:
     """Generate grid points for a single piece.
 
-    For open boundaries, the endpoint is excluded by using a small epsilon offset.
-    The epsilon is chosen to be meaningful at float32 precision to avoid issues
-    when JAX uses 32-bit floats.
+    For open boundaries, the endpoint is excluded by using nextafter to get the
+    next representable floating-point value, ensuring no representable value
+    exists between adjacent pieces.
     """
-    import numpy as np  # noqa: PLC0415
-
     lower = float(interval.lower)
     upper = float(interval.upper)
 
-    # Use float32 epsilon scaled by the boundary value magnitude to ensure
-    # the offset is meaningful even with 32-bit precision
-    float32_eps = np.finfo(np.float32).eps  # ~1.2e-7
+    # For open boundaries, use nextafter to get the next representable value
+    effective_lower = (
+        lower if interval.left == portion.CLOSED else jnp.nextafter(lower, jnp.inf)
+    )
+    effective_upper = (
+        upper if interval.right == portion.CLOSED else jnp.nextafter(upper, -jnp.inf)
+    )
 
-    # Calculate epsilon relative to the boundary value
-    lower_eps = float32_eps * max(abs(lower), 1.0)
-    upper_eps = float32_eps * max(abs(upper), 1.0)
-
-    # Adjust bounds for open intervals
-    effective_lower = lower if interval.left == portion.CLOSED else lower + lower_eps
-    effective_upper = upper if interval.right == portion.CLOSED else upper - upper_eps
-
-    return list(np.linspace(effective_lower, effective_upper, n_points))
+    return jnp.linspace(effective_lower, effective_upper, n_points)
 
 
 # ======================================================================================
