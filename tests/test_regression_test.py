@@ -113,11 +113,15 @@ def _create_grid(
 def test_model_with_different_grid_types(grid_type: str):
     """Test that model solution and simulation work with all grid types."""
     n_periods = 4
-    # For log-spaced grids, use higher start to ensure next_wealth stays within grid
-    # range during interpolation (log-space interpolation fails for values <= 0)
-    start = 2 if "Log" in grid_type else 1
-    wealth_grid = _create_grid(grid_type, n_points=100, start=start, stop=400)
-    consumption_grid = LinSpacedGrid(start=1, stop=400, n_points=500)
+    # As the borrowing constraint uses weak inequality, we cannot use log-spaced grids
+    # for wealth. Consuming everything this period is allowed, but cannot be
+    # represented.
+    wealth_grid = _create_grid(
+        grid_type=grid_type.replace("Log", "Lin"), n_points=100, start=1, stop=400
+    )
+    consumption_grid = _create_grid(
+        grid_type=grid_type, start=1, stop=400, n_points=500
+    )
 
     model = get_model(
         n_periods=n_periods,
