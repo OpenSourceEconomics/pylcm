@@ -60,8 +60,11 @@ This project uses [pixi](https://pixi.sh/) for dependency management and task au
 - `LogSpacedGrid`: Logarithmically spaced grid (start, stop, n_points)
 - `IrregSpacedGrid`: Irregularly spaced grid (points tuple)
 - `PiecewiseLinSpacedGrid`: Piecewise linearly spaced grid with breakpoints
+- `PiecewiseLogSpacedGrid`: Piecewise logarithmically spaced grid with breakpoints
 - `AgeGrid`: Lifecycle age grid (start, stop, step or precise_values)
 - `@categorical`: Decorator for creating categorical classes with auto-assigned integer codes
+
+Grid class hierarchy: `Grid` is the base class. `ContinuousGrid(Grid)` is the base for continuous grids with `get_coordinate` method. `HomogContinuousGrid(ContinuousGrid)` is for grids with start/stop/n_points (LinSpacedGrid, LogSpacedGrid inherit from it). Other continuous grids (IrregSpacedGrid, PiecewiseLinSpacedGrid, PiecewiseLogSpacedGrid) inherit directly from ContinuousGrid.
 
 ### Processing Pipeline
 

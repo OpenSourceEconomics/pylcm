@@ -7,6 +7,7 @@ import jax.numpy as jnp
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 
 if TYPE_CHECKING:
+    from lcm.grids import ContinuousGrid
     from lcm.typing import (
         BoolND,
         ContinuousAction,
@@ -136,12 +137,32 @@ dead = Regime(
 START_AGE = 18
 
 
-def get_model(n_periods: int) -> Model:
+DEFAULT_WEALTH_GRID = LinSpacedGrid(start=1, stop=400, n_points=100)
+DEFAULT_CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
+
+
+def get_model(
+    n_periods: int,
+    wealth_grid: ContinuousGrid | None = None,
+    consumption_grid: ContinuousGrid | None = None,
+) -> Model:
+    if wealth_grid is None:
+        wealth_grid = DEFAULT_WEALTH_GRID
+    if consumption_grid is None:
+        consumption_grid = DEFAULT_CONSUMPTION_GRID
+
     stop_age = START_AGE + n_periods - 1
     final_age_alive = stop_age - 1
     return Model(
         [
-            working.replace(active=lambda age: age <= final_age_alive),
+            working.replace(
+                active=lambda age: age <= final_age_alive,
+                states={"wealth": wealth_grid},
+                actions={
+                    "labor_supply": DiscreteGrid(LaborSupply),
+                    "consumption": consumption_grid,
+                },
+            ),
             dead.replace(active=lambda age: age > final_age_alive),
         ],
         ages=AgeGrid(start=START_AGE, stop=stop_age, step="Y"),

@@ -65,6 +65,19 @@ class Grid(ABC):
         """Convert the grid to a Jax array."""
 
 
+class ContinuousGrid(Grid):
+    """Base class for grids representing continuous values with coordinate lookup.
+
+    All subclasses must implement `get_coordinate` for value-to-coordinate mapping
+    used in interpolation.
+
+    """
+
+    @abstractmethod
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
+        """Return the generalized coordinate of a value in the grid."""
+
+
 class DiscreteGrid(Grid):
     """A class representing a discrete grid.
 
@@ -113,8 +126,8 @@ class DiscreteGrid(Grid):
 
 
 @dataclass(frozen=True, kw_only=True)
-class ContinuousGrid(Grid, ABC):
-    """LCM Continuous Grid base class."""
+class HomogContinuousGrid(ContinuousGrid, ABC):
+    """Grid with start/stop/n_points for linearly or logarithmically spaced values."""
 
     start: int | float
     stop: int | float
@@ -135,7 +148,7 @@ class ContinuousGrid(Grid, ABC):
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
         """Return the generalized coordinate of a value in the grid."""
 
-    def replace(self, **kwargs: float) -> ContinuousGrid:
+    def replace(self, **kwargs: float) -> HomogContinuousGrid:
         """Replace the attributes of the grid.
 
         Args:
@@ -153,7 +166,7 @@ class ContinuousGrid(Grid, ABC):
             ) from e
 
 
-class LinSpacedGrid(ContinuousGrid):
+class LinSpacedGrid(HomogContinuousGrid):
     """A linearly spaced grid of continuous values.
 
     Example:
@@ -178,7 +191,7 @@ class LinSpacedGrid(ContinuousGrid):
         )
 
 
-class LogSpacedGrid(ContinuousGrid):
+class LogSpacedGrid(HomogContinuousGrid):
     """A logarithmically spaced grid of continuous values.
 
     Example:
@@ -204,7 +217,7 @@ class LogSpacedGrid(ContinuousGrid):
 
 
 @dataclass(frozen=True, kw_only=True)
-class IrregSpacedGrid(Grid):
+class IrregSpacedGrid(ContinuousGrid):
     """A grid of continuous values at irregular (user-specified) points.
 
     This grid type is useful for representing non-uniformly spaced points such as
@@ -255,7 +268,7 @@ class Piece:
 
 
 @dataclass(frozen=True, kw_only=True)
-class PiecewiseLinSpacedGrid(Grid):
+class PiecewiseLinSpacedGrid(ContinuousGrid):
     """A piecewise linearly spaced grid with multiple segments.
 
     This grid type is useful for representing grids that need specific breakpoints,
@@ -321,7 +334,7 @@ class PiecewiseLinSpacedGrid(Grid):
 
 
 @dataclass(frozen=True, kw_only=True)
-class PiecewiseLogSpacedGrid(Grid):
+class PiecewiseLogSpacedGrid(ContinuousGrid):
     """A piecewise logarithmically spaced grid with multiple segments.
 
     This grid type is useful for wealth grids where you want more granularity at
