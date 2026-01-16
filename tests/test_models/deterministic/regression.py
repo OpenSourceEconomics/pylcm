@@ -104,8 +104,8 @@ working = Regime(
     },
     states={
         "wealth": LinSpacedGrid(
-            start=1,
-            stop=400,
+            start=1.01,
+            stop=400.1,
             n_points=100,
         ),
     },

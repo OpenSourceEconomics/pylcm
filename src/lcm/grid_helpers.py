@@ -66,10 +66,14 @@ def logspace(start: ScalarFloat, stop: ScalarFloat, n_points: int) -> Float1D:
         In linear space, the sequence starts at base ** start (base to the power of
         start) and ends with base ** stop [...].
 
+    Note: Due to numerical precision in exp/log operations, we explicitly set the
+    first and last points to exactly start and stop.
+
     """
     start_linear = jnp.log(start)
     stop_linear = jnp.log(stop)
-    return jnp.logspace(start_linear, stop_linear, n_points, base=jnp.e)
+    grid = jnp.logspace(start_linear, stop_linear, n_points, base=jnp.e)
+    return grid.at[0].set(start).at[-1].set(stop)
 
 
 def get_logspace_coordinate(

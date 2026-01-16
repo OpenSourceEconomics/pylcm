@@ -67,37 +67,35 @@ def test_regression_test():
 def _create_wealth_grid(grid_type: str) -> ContinuousGrid:
     """Create a wealth grid of the specified type.
 
-    Note: LogSpacedGrid and PiecewiseLogSpacedGrid use start=0.1 instead of 1 because
-    log-spaced interpolation breaks when the state variable goes to 0 (log(0) = -inf).
-    The model allows wealth to reach 0, so we need a small positive start value.
+    Note: All grids use start=1.01 to ensure next_wealth stays positive even when
+    a retired agent consumes all wealth. With consumption grid starting at 1,
+    next_wealth = 1.05 * (1.01 - 1) = 0.0105 > 0.
 
     """
     if grid_type == "LinSpacedGrid":
-        return LinSpacedGrid(start=1, stop=400, n_points=100)
+        return LinSpacedGrid(start=1.01, stop=400.1, n_points=100)
     if grid_type == "LogSpacedGrid":
-        # Use start=0.1 to handle extrapolation when wealth approaches 0
-        return LogSpacedGrid(start=0.1, stop=400, n_points=100)
+        return LogSpacedGrid(start=1.01, stop=400.1, n_points=100)
     if grid_type == "PiecewiseLinSpacedGrid":
         # More points in lower part, cutoff at 100
         return PiecewiseLinSpacedGrid(
             pieces=(
-                Piece(interval="[1, 100)", n_points=60),
-                Piece(interval="[100, 400]", n_points=41),
+                Piece(interval="[1.01, 100)", n_points=60),
+                Piece(interval="[100, 400.1]", n_points=41),
             )
         )
     if grid_type == "PiecewiseLogSpacedGrid":
         # Different cutoff at 50, more points in upper part
-        # Use start=0.1 to handle extrapolation when wealth approaches 0
         return PiecewiseLogSpacedGrid(
             pieces=(
-                Piece(interval="[0.1, 50)", n_points=41),
-                Piece(interval="[50, 400]", n_points=60),
+                Piece(interval="[1.01, 50)", n_points=41),
+                Piece(interval="[50, 400.1]", n_points=60),
             )
         )
     if grid_type == "IrregSpacedGrid":
         # Points between lin/log spacing - use average of both
-        lin_points = np.linspace(1, 400, 100)
-        log_points = np.logspace(np.log10(1), np.log10(400), 100)
+        lin_points = np.linspace(1.01, 400.1, 100)
+        log_points = np.logspace(np.log10(1.01), np.log10(400.1), 100)
         irreg_points = tuple((lin_points + log_points) / 2)
         return IrregSpacedGrid(points=irreg_points)
     msg = f"Unknown grid type: {grid_type}"
@@ -118,11 +116,7 @@ def test_model_with_different_grid_types(grid_type: str):
     """Test that model solution and simulation work with all grid types."""
     n_periods = 4
     wealth_grid = _create_wealth_grid(grid_type)
-
-    # Use a consumption grid that starts at 0.1 to prevent wealth from going to 0.
-    # This is necessary because log-spaced interpolation fails when the state
-    # variable goes to 0 (log(0) is undefined).
-    consumption_grid = LinSpacedGrid(start=0.1, stop=400, n_points=500)
+    consumption_grid = LinSpacedGrid(start=1, stop=400, n_points=500)
 
     model = get_model(
         n_periods=n_periods,

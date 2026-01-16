@@ -410,20 +410,23 @@ def _parse_interval(interval: str | portion.Interval) -> portion.Interval:
 
 def _get_effective_bounds(
     interval: portion.Interval,
-) -> tuple[float, float]:
-    """Return effective bounds for an interval, adjusting for open boundaries."""
-    lower = float(interval.lower)
-    upper = float(interval.upper)
+) -> tuple[ScalarFloat, ScalarFloat]:
+    """Return effective bounds for an interval, adjusting for open boundaries.
+
+    Uses jnp.nextafter with the correct dtype based on JAX's x64 setting to compute
+    the next representable floating-point value for open boundaries.
+    """
+    # Use the dtype that matches JAX's current precision setting
+    dtype = jnp.result_type(1.0)
+
+    lower = jnp.array(interval.lower, dtype=dtype)
+    upper = jnp.array(interval.upper, dtype=dtype)
 
     effective_lower = (
-        lower
-        if interval.left == portion.CLOSED
-        else float(jnp.nextafter(lower, jnp.inf))
+        lower if interval.left == portion.CLOSED else jnp.nextafter(lower, jnp.inf)
     )
     effective_upper = (
-        upper
-        if interval.right == portion.CLOSED
-        else float(jnp.nextafter(upper, -jnp.inf))
+        upper if interval.right == portion.CLOSED else jnp.nextafter(upper, -jnp.inf)
     )
     return effective_lower, effective_upper
 
