@@ -21,6 +21,7 @@ from lcm.grids import (
     _validate_discrete_grid,
     validate_category_class,
 )
+from tests.conftest import X64_ENABLED
 
 # ======================================================================================
 # Tests for DiscreteGrid and category class helpers
@@ -313,7 +314,7 @@ def _create_equivalent_grid(
 )
 @pytest.mark.parametrize("grid_type", ["IrregSpacedGrid", "PiecewiseLinSpacedGrid"])
 def test_linspaced_coordinates_match_other_grid_types(
-    start: float, stop: float, n_points: int, grid_type: str, x64_enabled: bool
+    start: float, stop: float, n_points: int, grid_type: str
 ):
     """LinSpacedGrid coordinates should match equivalent grids of other types."""
     lin_grid = LinSpacedGrid(start=start, stop=stop, n_points=n_points)
@@ -334,7 +335,7 @@ def test_linspaced_coordinates_match_other_grid_types(
     all_test_values = grid_points + interpolation_values + extrapolation_values
 
     # Tolerance depends on precision and grid value magnitude
-    base_rtol = 1e-6 if x64_enabled else 1e-4
+    base_rtol = 1e-6 if X64_ENABLED else 1e-4
     max_magnitude = max(abs(start), abs(stop), 1.0)
     rtol = base_rtol * max_magnitude
 
