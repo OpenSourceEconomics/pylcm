@@ -87,10 +87,6 @@ def borrowing_constraint(
     return consumption <= wealth
 
 
-def consumption_floor_constraint(consumption: ContinuousAction) -> BoolND:
-    return consumption >= 1.0
-
-
 # ======================================================================================
 # Regime specifications
 # ======================================================================================
@@ -109,10 +105,7 @@ working = Regime(
         "wealth": DEFAULT_WEALTH_GRID,  # placeholder, will be replaced by get_model()
     },
     utility=utility,
-    constraints={
-        "borrowing_constraint": borrowing_constraint,
-        "consumption_floor_constraint": consumption_floor_constraint,
-    },
+    constraints={"borrowing_constraint": borrowing_constraint},
     transitions={
         "next_wealth": next_wealth,
         "next_regime": next_regime,
