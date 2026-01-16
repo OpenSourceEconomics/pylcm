@@ -91,7 +91,6 @@ def borrowing_constraint(
 # Regime specifications
 # ======================================================================================
 
-# Note: active is set to a placeholder value here and will be replaced by get_model()
 working = Regime(
     name="working",
     actions={
@@ -110,9 +109,7 @@ working = Regime(
         ),
     },
     utility=utility,
-    constraints={
-        "borrowing_constraint": borrowing_constraint,
-    },
+    constraints={"borrowing_constraint": borrowing_constraint},
     transitions={
         "next_wealth": next_wealth,
         "next_regime": next_regime,
@@ -143,16 +140,10 @@ DEFAULT_CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 
 def get_model(
     n_periods: int,
-    wealth_grid: ContinuousGrid | None = None,
-    consumption_grid: ContinuousGrid | None = None,
+    wealth_grid: ContinuousGrid = DEFAULT_WEALTH_GRID,
+    consumption_grid: ContinuousGrid = DEFAULT_CONSUMPTION_GRID,
 ) -> Model:
-    if wealth_grid is None:
-        wealth_grid = DEFAULT_WEALTH_GRID
-    if consumption_grid is None:
-        consumption_grid = DEFAULT_CONSUMPTION_GRID
-
-    stop_age = START_AGE + n_periods - 1
-    final_age_alive = stop_age - 1
+    final_age_alive = START_AGE + n_periods - 2
     return Model(
         [
             working.replace(
@@ -165,7 +156,7 @@ def get_model(
             ),
             dead.replace(active=lambda age: age > final_age_alive),
         ],
-        ages=AgeGrid(start=START_AGE, stop=stop_age, step="Y"),
+        ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
         regime_id_cls=RegimeId,
     )
 
