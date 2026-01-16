@@ -64,10 +64,7 @@ def solve(
                 params=params,
             )
 
-            validate_value_function_array(
-                V_arr=V_arr,
-                period=period,
-            )
+            validate_value_function_array(V_arr, age=ages.values[period])
             period_solution[name] = V_arr
 
         next_V_arr = period_solution
