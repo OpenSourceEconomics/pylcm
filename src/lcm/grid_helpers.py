@@ -48,7 +48,7 @@ def get_linspace_coordinate(
     value: ScalarFloat,
     start: ScalarFloat,
     stop: ScalarFloat,
-    n_points: int | ScalarFloat,
+    n_points: int,
 ) -> ScalarFloat:
     """Map a value into the input needed for jax.scipy.ndimage.map_coordinates."""
     step_length = (stop - start) / (n_points - 1)
@@ -80,7 +80,7 @@ def get_logspace_coordinate(
     value: ScalarFloat,
     start: ScalarFloat,
     stop: ScalarFloat,
-    n_points: int | ScalarFloat,
+    n_points: int,
 ) -> ScalarFloat:
     """Map a value into the input needed for jax.scipy.ndimage.map_coordinates."""
     # Transform start, stop, and value to linear scale
