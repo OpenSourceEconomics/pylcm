@@ -84,7 +84,7 @@ def next_regime(age: float, final_age_alive: float) -> ScalarInt:
 def borrowing_constraint(
     consumption: ContinuousAction, wealth: ContinuousState
 ) -> BoolND:
-    return consumption <= wealth
+    return consumption < wealth
 
 
 # ======================================================================================
@@ -104,8 +104,8 @@ working = Regime(
     },
     states={
         "wealth": LinSpacedGrid(
-            start=1.01,
-            stop=400.1,
+            start=1,
+            stop=400,
             n_points=100,
         ),
     },
