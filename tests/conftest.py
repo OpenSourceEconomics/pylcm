@@ -46,15 +46,14 @@ def precision(request) -> Literal["32", "64"]:
 
 
 @pytest.fixture(scope="session")
-def x64_enabled(request) -> bool:
+def x64_enabled(precision) -> bool:
     """Fixture indicating whether 64-bit precision is enabled."""
-    return request.config.getoption("--precision") == "64"
+    return precision == "64"
 
 
 @pytest.fixture(scope="session")
-def decimal_precision(request) -> int:
+def decimal_precision(precision) -> int:
     """Fixture providing the decimal precision for assertions based on JAX precision."""
-    precision = request.config.getoption("--precision")
     return 14 if precision == "64" else 5
 
 

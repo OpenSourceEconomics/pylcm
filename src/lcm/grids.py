@@ -99,12 +99,12 @@ class DiscreteGrid(Grid):
 
     @property
     def categories(self) -> tuple[str, ...]:
-        """Get the list of category names."""
+        """Return the list of category names."""
         return self.__categories
 
     @property
     def codes(self) -> tuple[int, ...]:
-        """Get the list of category codes."""
+        """Return the list of category codes."""
         return self.__codes
 
     def to_jax(self) -> Int1D:
@@ -133,7 +133,7 @@ class ContinuousGrid(Grid, ABC):
 
     @abstractmethod
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
-        """Get the generalized coordinate of a value in the grid."""
+        """Return the generalized coordinate of a value in the grid."""
 
     def replace(self, **kwargs: float) -> ContinuousGrid:
         """Replace the attributes of the grid.
@@ -172,7 +172,7 @@ class LinSpacedGrid(ContinuousGrid):
         return grid_helpers.linspace(self.start, self.stop, self.n_points)
 
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
-        """Get the generalized coordinate of a value in the grid."""
+        """Return the generalized coordinate of a value in the grid."""
         return grid_helpers.get_linspace_coordinate(
             value, self.start, self.stop, self.n_points
         )
@@ -197,7 +197,7 @@ class LogSpacedGrid(ContinuousGrid):
         return grid_helpers.logspace(self.start, self.stop, self.n_points)
 
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
-        """Get the generalized coordinate of a value in the grid."""
+        """Return the generalized coordinate of a value in the grid."""
         return grid_helpers.get_logspace_coordinate(
             value, self.start, self.stop, self.n_points
         )
@@ -227,7 +227,7 @@ class IrregSpacedGrid(Grid):
 
     @property
     def n_points(self) -> int:
-        """Get the number of points in the grid."""
+        """Return the number of points in the grid."""
         return len(self.points)
 
     def to_jax(self) -> Float1D:
@@ -235,7 +235,7 @@ class IrregSpacedGrid(Grid):
         return jnp.asarray(self.points)
 
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
-        """Get the generalized coordinate of a value in the grid."""
+        """Return the generalized coordinate of a value in the grid."""
         return grid_helpers.get_irreg_coordinate(value, self.to_jax())
 
 
@@ -284,30 +284,108 @@ class PiecewiseLinSpacedGrid(Grid):
 
     pieces: tuple[Piece, ...]
 
+    # Cached JAX arrays for efficient coordinate computation (set in __post_init__)
+    _breakpoints: Float1D = dataclasses.field(init=False, repr=False)
+    _piece_starts: Float1D = dataclasses.field(init=False, repr=False)
+    _piece_stops: Float1D = dataclasses.field(init=False, repr=False)
+    _piece_n_points: Int1D = dataclasses.field(init=False, repr=False)
+    _cumulative_offsets: Int1D = dataclasses.field(init=False, repr=False)
+
     def __post_init__(self) -> None:
         _validate_piecewise_lin_spaced_grid(self.pieces)
+        _init_piecewise_grid_cache(self)
 
     @property
     def n_points(self) -> int:
-        """Get the total number of points in the grid."""
+        """Return the total number of points in the grid."""
         return sum(p.n_points for p in self.pieces)
-
-    @property
-    def _parsed_pieces(self) -> tuple[portion.Interval, ...]:
-        """Get parsed portion.Interval objects for all pieces."""
-        return tuple(_parse_interval(p.interval) for p in self.pieces)
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
         piece_arrays = [
-            _generate_piece_points(interval, piece.n_points)
-            for piece, interval in zip(self.pieces, self._parsed_pieces, strict=True)
+            jnp.linspace(self._piece_starts[i], self._piece_stops[i], p.n_points)
+            for i, p in enumerate(self.pieces)
         ]
         return jnp.concatenate(piece_arrays)
 
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
-        """Get the generalized coordinate of a value in the grid."""
-        return grid_helpers.get_irreg_coordinate(value, self.to_jax())
+        """Return the generalized coordinate of a value in the grid."""
+        piece_idx = jnp.searchsorted(self._breakpoints, value, side="right")
+        local_coord = grid_helpers.get_linspace_coordinate(
+            value,
+            self._piece_starts[piece_idx],
+            self._piece_stops[piece_idx],
+            self._piece_n_points[piece_idx],
+        )
+        return self._cumulative_offsets[piece_idx] + local_coord
+
+
+@dataclass(frozen=True, kw_only=True)
+class PiecewiseLogSpacedGrid(Grid):
+    """A piecewise logarithmically spaced grid with multiple segments.
+
+    This grid type is useful for wealth grids where you want more granularity at
+    lower values. Each piece has its own logarithmic spacing.
+
+    Example:
+    --------
+    A wealth grid with denser points at lower values:
+
+        PiecewiseLogSpacedGrid(pieces=(
+            Piece("[0.1, 10)", 50),   # Dense at low wealth
+            Piece("[10, 1000]", 30),  # Sparser at high wealth
+        ))
+
+    Attributes:
+        pieces: A tuple of Piece objects defining each segment. Pieces must be
+            adjacent (no gaps or overlaps). All boundary values must be positive.
+
+    Notes:
+        - All boundary values must be positive (required for logarithmic spacing).
+        - Open boundaries exclude the exact endpoint using nextafter.
+        - Pieces must be adjacent: the upper bound of each piece must equal the
+          lower bound of the next piece, with compatible open/closed boundaries.
+
+    """
+
+    pieces: tuple[Piece, ...]
+
+    # Cached JAX arrays for efficient coordinate computation (set in __post_init__)
+    _breakpoints: Float1D = dataclasses.field(init=False, repr=False)
+    _piece_starts: Float1D = dataclasses.field(init=False, repr=False)
+    _piece_stops: Float1D = dataclasses.field(init=False, repr=False)
+    _piece_n_points: Int1D = dataclasses.field(init=False, repr=False)
+    _cumulative_offsets: Int1D = dataclasses.field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        _validate_piecewise_log_spaced_grid(self.pieces)
+        _init_piecewise_grid_cache(self)
+
+    @property
+    def n_points(self) -> int:
+        """Return the total number of points in the grid."""
+        return sum(p.n_points for p in self.pieces)
+
+    def to_jax(self) -> Float1D:
+        """Convert the grid to a Jax array."""
+        piece_arrays = [
+            grid_helpers.logspace(
+                self._piece_starts[i], self._piece_stops[i], p.n_points
+            )
+            for i, p in enumerate(self.pieces)
+        ]
+        return jnp.concatenate(piece_arrays)
+
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
+        """Return the generalized coordinate of a value in the grid."""
+        piece_idx = jnp.searchsorted(self._breakpoints, value, side="right")
+        local_coord = grid_helpers.get_logspace_coordinate(
+            value,
+            self._piece_starts[piece_idx],
+            self._piece_stops[piece_idx],
+            self._piece_n_points[piece_idx],
+        )
+        return self._cumulative_offsets[piece_idx] + local_coord
 
 
 def _parse_interval(interval: str | portion.Interval) -> portion.Interval:
@@ -317,25 +395,58 @@ def _parse_interval(interval: str | portion.Interval) -> portion.Interval:
     return interval
 
 
-def _generate_piece_points(interval: portion.Interval, n_points: int) -> Float1D:
-    """Generate grid points for a single piece.
-
-    For open boundaries, the endpoint is excluded by using nextafter to get the
-    next representable floating-point value, ensuring no representable value
-    exists between adjacent pieces.
-    """
+def _get_effective_bounds(
+    interval: portion.Interval,
+) -> tuple[float, float]:
+    """Return effective bounds for an interval, adjusting for open boundaries."""
     lower = float(interval.lower)
     upper = float(interval.upper)
 
-    # For open boundaries, use nextafter to get the next representable value
     effective_lower = (
-        lower if interval.left == portion.CLOSED else jnp.nextafter(lower, jnp.inf)
+        lower
+        if interval.left == portion.CLOSED
+        else float(jnp.nextafter(lower, jnp.inf))
     )
     effective_upper = (
-        upper if interval.right == portion.CLOSED else jnp.nextafter(upper, -jnp.inf)
+        upper
+        if interval.right == portion.CLOSED
+        else float(jnp.nextafter(upper, -jnp.inf))
     )
+    return effective_lower, effective_upper
 
-    return jnp.linspace(effective_lower, effective_upper, n_points)
+
+def _init_piecewise_grid_cache(
+    grid: PiecewiseLinSpacedGrid | PiecewiseLogSpacedGrid,
+) -> None:
+    """Initialize cached JAX arrays for efficient coordinate computation.
+
+    Precomputes and stores:
+    - _breakpoints: effective starts of pieces 1..k-1 for searchsorted
+    - _piece_starts: effective start for each piece
+    - _piece_stops: effective stop for each piece
+    - _piece_n_points: n_points for each piece
+    - _cumulative_offsets: cumulative sum of n_points
+
+    The breakpoints use effective starts (accounting for open/closed boundaries)
+    to ensure correct piece selection for both [a,x)+[x,b] and [a,x]+(x,b] cases.
+    """
+    parsed = [_parse_interval(p.interval) for p in grid.pieces]
+    bounds = [_get_effective_bounds(interval) for interval in parsed]
+
+    starts = jnp.array([b[0] for b in bounds])
+    stops = jnp.array([b[1] for b in bounds])
+
+    # Breakpoints are the effective starts of pieces 1..k-1
+    breakpoints = starts[1:] if len(starts) > 1 else jnp.array([])
+
+    n_points = jnp.array([p.n_points for p in grid.pieces])
+    cumulative = jnp.concatenate([jnp.array([0]), jnp.cumsum(n_points[:-1])])
+
+    object.__setattr__(grid, "_breakpoints", breakpoints)
+    object.__setattr__(grid, "_piece_starts", starts)
+    object.__setattr__(grid, "_piece_stops", stops)
+    object.__setattr__(grid, "_piece_n_points", n_points)
+    object.__setattr__(grid, "_cumulative_offsets", cumulative)
 
 
 # ======================================================================================
@@ -422,7 +533,7 @@ def validate_category_class(category_class: type) -> list[str]:
 
 
 def _get_field_names_and_values(dc: type) -> dict[str, Any]:
-    """Get the fields of a dataclass.
+    """Return the fields of a dataclass.
 
     Args:
         dc: The dataclass to get the fields of.
@@ -601,6 +712,33 @@ def _validate_piecewise_lin_spaced_grid(  # noqa: C901, PLR0912
                     f"The boundary at {current.upper} must be closed on exactly "
                     f"one side (e.g., '[a, x)' followed by '[x, b]')."
                 )
+
+    if error_messages:
+        msg = format_messages(error_messages)
+        raise GridInitializationError(msg)
+
+
+def _validate_piecewise_log_spaced_grid(pieces: tuple[Piece, ...]) -> None:
+    """Validate the piecewise logarithmically spaced grid parameters.
+
+    Runs the standard piecewise validation, then additionally checks that all
+    boundary values are positive (required for logarithmic spacing).
+    """
+    _validate_piecewise_lin_spaced_grid(pieces)
+
+    error_messages: list[str] = []
+    for i, piece in enumerate(pieces):
+        interval = _parse_interval(piece.interval)
+        if interval.lower <= 0:
+            error_messages.append(
+                f"pieces[{i}].interval lower bound must be positive for logspace, "
+                f"but got {interval.lower}"
+            )
+        if interval.upper <= 0:
+            error_messages.append(
+                f"pieces[{i}].interval upper bound must be positive for logspace, "
+                f"but got {interval.upper}"
+            )
 
     if error_messages:
         msg = format_messages(error_messages)

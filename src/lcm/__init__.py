@@ -14,6 +14,7 @@ from lcm.grids import (
     LogSpacedGrid,
     Piece,
     PiecewiseLinSpacedGrid,
+    PiecewiseLogSpacedGrid,
     categorical,
 )
 from lcm.model import Model
@@ -29,6 +30,7 @@ __all__ = [
     "Model",
     "Piece",
     "PiecewiseLinSpacedGrid",
+    "PiecewiseLogSpacedGrid",
     "Regime",
     "SimulationResult",
     "categorical",

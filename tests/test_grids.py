@@ -15,6 +15,7 @@ from lcm.grids import (
     LogSpacedGrid,
     Piece,
     PiecewiseLinSpacedGrid,
+    PiecewiseLogSpacedGrid,
     _get_field_names_and_values,
     _validate_continuous_grid,
     _validate_discrete_grid,
@@ -497,3 +498,203 @@ def test_piecewise_lin_spaced_grid_three_pieces():
     points = grid.to_jax()
     assert float(points[0]) == 0.0
     assert float(points[-1]) == 10.0
+
+
+# ======================================================================================
+# Tests for PiecewiseLogSpacedGrid
+# ======================================================================================
+
+
+def test_piecewise_log_spaced_grid_creation():
+    """PiecewiseLogSpacedGrid can be created with valid positive intervals."""
+    grid = PiecewiseLogSpacedGrid(
+        pieces=(
+            Piece(interval="[0.1, 10)", n_points=5),
+            Piece(interval="[10, 1000]", n_points=6),
+        )
+    )
+    assert grid.n_points == 11
+
+
+def test_piecewise_log_spaced_grid_points_are_log_spaced():
+    """Points within each piece should be logarithmically spaced."""
+    grid = PiecewiseLogSpacedGrid(pieces=(Piece(interval="[1, 100]", n_points=3),))
+    points = grid.to_jax()
+    assert np.allclose(points, [1.0, 10.0, 100.0])
+
+
+def test_piecewise_log_spaced_grid_closed_boundary_is_exact():
+    """Closed boundaries should produce exact endpoint values."""
+    grid = PiecewiseLogSpacedGrid(pieces=(Piece(interval="[1, 1000]", n_points=4),))
+    points = grid.to_jax()
+    assert float(points[0]) == pytest.approx(1.0)
+    assert float(points[-1]) == pytest.approx(1000.0)
+
+
+def test_piecewise_log_spaced_grid_open_boundary_excludes_endpoint():
+    """Open boundaries should not include the exact endpoint value."""
+    grid = PiecewiseLogSpacedGrid(
+        pieces=(
+            Piece(interval="[1, 10)", n_points=3),
+            Piece(interval="[10, 100]", n_points=3),
+        )
+    )
+    points = grid.to_jax()
+    assert float(points[2]) < 10.0
+    assert float(points[3]) == pytest.approx(10.0)
+
+
+def test_piecewise_log_spaced_grid_invalid_negative_lower():
+    """Lower bound must be positive for logspace."""
+    with pytest.raises(GridInitializationError, match="must be positive"):
+        PiecewiseLogSpacedGrid(pieces=(Piece(interval="[-1, 10]", n_points=3),))
+
+
+def test_piecewise_log_spaced_grid_invalid_zero_lower():
+    """Lower bound must be strictly positive for logspace."""
+    with pytest.raises(GridInitializationError, match="must be positive"):
+        PiecewiseLogSpacedGrid(pieces=(Piece(interval="[0, 10]", n_points=3),))
+
+
+def test_piecewise_log_spaced_grid_invalid_gap():
+    """Pieces with gap should be invalid."""
+    with pytest.raises(GridInitializationError, match="not adjacent"):
+        PiecewiseLogSpacedGrid(
+            pieces=(
+                Piece(interval="[1, 10)", n_points=3),
+                Piece(interval="(10, 100]", n_points=3),
+            )
+        )
+
+
+def test_piecewise_log_spaced_grid_three_pieces():
+    """Grid with three adjacent pieces should work."""
+    grid = PiecewiseLogSpacedGrid(
+        pieces=(
+            Piece(interval="[0.01, 1)", n_points=3),
+            Piece(interval="[1, 100)", n_points=3),
+            Piece(interval="[100, 10000]", n_points=3),
+        )
+    )
+    assert grid.n_points == 9
+    points = grid.to_jax()
+    assert float(points[0]) == pytest.approx(0.01)
+    assert float(points[-1]) == pytest.approx(10000.0)
+
+
+def test_piecewise_log_spaced_grid_coordinate_at_grid_points():
+    """Coordinates at exact grid points should match indices."""
+    grid = PiecewiseLogSpacedGrid(pieces=(Piece(interval="[1, 100]", n_points=3),))
+    points = grid.to_jax()
+    for i, p in enumerate(points):
+        coord = float(grid.get_coordinate(float(p)))
+        assert coord == pytest.approx(i)
+
+
+def test_piecewise_log_spaced_grid_coordinate_multi_piece():
+    """Coordinates should work across multiple pieces."""
+    grid = PiecewiseLogSpacedGrid(
+        pieces=(
+            Piece(interval="[1, 10)", n_points=2),
+            Piece(interval="[10, 100]", n_points=2),
+        )
+    )
+    assert float(grid.get_coordinate(10.0)) == pytest.approx(2.0)
+    assert float(grid.get_coordinate(100.0)) == pytest.approx(3.0)
+
+
+# ======================================================================================
+# Tests for piecewise grid boundary conditions (searchsorted correctness)
+# ======================================================================================
+
+
+def test_piecewise_lin_boundary_closedopen_closed():
+    """Test [a, x) + [x, b] boundary: value at x goes to piece 1."""
+    grid = PiecewiseLinSpacedGrid(
+        pieces=(
+            Piece(interval="[0, 5)", n_points=5),
+            Piece(interval="[5, 10]", n_points=6),
+        )
+    )
+    # Value just below boundary -> piece 0 (coordinate < 5)
+    coord_below = float(grid.get_coordinate(4.99))
+    assert coord_below < 5.0
+
+    # Value exactly at boundary -> piece 1 (coordinate >= 5)
+    coord_at = float(grid.get_coordinate(5.0))
+    assert coord_at == pytest.approx(5.0)
+
+    # Value just above boundary -> piece 1
+    coord_above = float(grid.get_coordinate(5.01))
+    assert coord_above > 5.0
+
+
+def test_piecewise_lin_boundary_closed_openclosed():
+    """Test [a, x] + (x, b] boundary: value at x goes to piece 0."""
+    grid = PiecewiseLinSpacedGrid(
+        pieces=(
+            Piece(interval="[0, 5]", n_points=6),
+            Piece(interval="(5, 10]", n_points=5),
+        )
+    )
+    # Value just below boundary -> piece 0
+    coord_below = float(grid.get_coordinate(4.99))
+    assert coord_below < 5.0
+
+    # Value exactly at boundary -> piece 0 (coordinate == 5.0, last point of piece 0)
+    coord_at = float(grid.get_coordinate(5.0))
+    assert coord_at == pytest.approx(5.0)
+
+    # Value just above boundary -> piece 1 (coordinate > 6)
+    coord_above = float(grid.get_coordinate(5.01))
+    assert coord_above > 6.0
+
+
+def test_piecewise_log_boundary_closedopen_closed():
+    """Test [a, x) + [x, b] boundary for log grid: value at x goes to piece 1."""
+    grid = PiecewiseLogSpacedGrid(
+        pieces=(
+            Piece(interval="[1, 10)", n_points=3),
+            Piece(interval="[10, 100]", n_points=3),
+        )
+    )
+    # Value just below boundary -> piece 0
+    coord_below = float(grid.get_coordinate(9.9))
+    assert coord_below < 3.0
+
+    # Value exactly at boundary -> piece 1
+    coord_at = float(grid.get_coordinate(10.0))
+    assert coord_at == pytest.approx(3.0)
+
+    # Value just above boundary -> piece 1
+    coord_above = float(grid.get_coordinate(10.1))
+    assert coord_above > 3.0
+
+
+def test_piecewise_log_boundary_closed_openclosed():
+    """Test [a, x] + (x, b] boundary for log grid: value at x goes to piece 0."""
+    grid = PiecewiseLogSpacedGrid(
+        pieces=(
+            Piece(interval="[1, 10]", n_points=3),
+            Piece(interval="(10, 100]", n_points=3),
+        )
+    )
+    # Value just below boundary -> piece 0
+    coord_below = float(grid.get_coordinate(9.9))
+    assert coord_below < 2.0
+
+    # Value exactly at boundary -> piece 0 (last point)
+    coord_at = float(grid.get_coordinate(10.0))
+    assert coord_at == pytest.approx(2.0)
+
+    # Value just above boundary -> piece 1
+    coord_above = float(grid.get_coordinate(10.1))
+    assert coord_above > 3.0
+
+
+def test_piecewise_single_piece():
+    """Test piecewise grid with single piece works correctly."""
+    grid = PiecewiseLinSpacedGrid(pieces=(Piece(interval="[0, 10]", n_points=11),))
+    assert float(grid.get_coordinate(0.0)) == pytest.approx(0.0)
+    assert float(grid.get_coordinate(5.0)) == pytest.approx(5.0)
+    assert float(grid.get_coordinate(10.0)) == pytest.approx(10.0)

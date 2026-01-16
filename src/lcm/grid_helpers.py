@@ -48,7 +48,7 @@ def get_linspace_coordinate(
     value: ScalarFloat,
     start: ScalarFloat,
     stop: ScalarFloat,
-    n_points: int,
+    n_points: int | ScalarFloat,
 ) -> ScalarFloat:
     """Map a value into the input needed for jax.scipy.ndimage.map_coordinates."""
     step_length = (stop - start) / (n_points - 1)
@@ -76,7 +76,7 @@ def get_logspace_coordinate(
     value: ScalarFloat,
     start: ScalarFloat,
     stop: ScalarFloat,
-    n_points: int,
+    n_points: int | ScalarFloat,
 ) -> ScalarFloat:
     """Map a value into the input needed for jax.scipy.ndimage.map_coordinates."""
     # Transform start, stop, and value to linear scale
@@ -119,10 +119,11 @@ def get_irreg_coordinate(
     value: ScalarFloat,
     points: Float1D,
 ) -> ScalarFloat:
-    """Get the generalized coordinate of a value in an irregularly spaced grid.
+    """Return the generalized coordinate of a value in an irregularly spaced grid.
 
     Uses binary search (jnp.searchsorted) to find the position of the value among
-    the grid points, then linearly interpolates to get a fractional coordinate.
+    the grid points, then linearly interpolates (or extrapolates) to get a
+    fractional coordinate.
 
     Args:
         value: The value to find the coordinate for.
@@ -131,7 +132,8 @@ def get_irreg_coordinate(
     Returns:
         The generalized coordinate of the value in the grid. For a value equal to
         points[i], returns i. For values between grid points, returns a fractional
-        coordinate based on linear interpolation.
+        coordinate based on linear interpolation. For values outside the grid
+        range, extrapolates using the slope of the nearest segment.
 
     """
     n_points = len(points)
