@@ -65,6 +65,8 @@ def test_simulate_using_raw_inputs(simulate_inputs):
             "utility": {"disutility_of_work": 1.0},
             "next_wealth": {"interest_rate": 0.05},
             "next_regime": {"final_age_alive": 0},
+            "borrowing_constraint": {},
+            "labor_income": {},
         },
         "dead": {},
     }
@@ -75,7 +77,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
             0: {"working": jnp.zeros(100), "dead": jnp.zeros(2)},
             1: {"working": jnp.zeros(100), "dead": jnp.zeros(2)},
         },
-        initial_states={"wealth": jnp.array([0.9, 50.400803])},
+        initial_states={"wealth": jnp.array([1.0, 50.400803])},
         initial_regimes=["working"] * 2,
         logger=get_logger(debug_mode=False),
         **simulate_inputs,
