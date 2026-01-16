@@ -84,32 +84,35 @@ def next_regime(age: float, final_age_alive: float) -> ScalarInt:
 def borrowing_constraint(
     consumption: ContinuousAction, wealth: ContinuousState
 ) -> BoolND:
-    return consumption < wealth
+    return consumption <= wealth
+
+
+def consumption_floor_constraint(consumption: ContinuousAction) -> BoolND:
+    return consumption >= 1.0
 
 
 # ======================================================================================
 # Regime specifications
 # ======================================================================================
 
+START_AGE = 18
+DEFAULT_WEALTH_GRID = LinSpacedGrid(start=1, stop=400, n_points=100)
+DEFAULT_CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
+
 working = Regime(
     name="working",
     actions={
         "labor_supply": DiscreteGrid(LaborSupply),
-        "consumption": LinSpacedGrid(
-            start=1,
-            stop=400,
-            n_points=500,
-        ),
+        "consumption": DEFAULT_CONSUMPTION_GRID,  # placeholder, will be replaced by get_model()  # noqa: E501
     },
     states={
-        "wealth": LinSpacedGrid(
-            start=1,
-            stop=400,
-            n_points=100,
-        ),
+        "wealth": DEFAULT_WEALTH_GRID,  # placeholder, will be replaced by get_model()
     },
     utility=utility,
-    constraints={"borrowing_constraint": borrowing_constraint},
+    constraints={
+        "borrowing_constraint": borrowing_constraint,
+        "consumption_floor_constraint": consumption_floor_constraint,
+    },
     transitions={
         "next_wealth": next_wealth,
         "next_regime": next_regime,
@@ -129,13 +132,6 @@ dead = Regime(
     utility=lambda: 0.0,
     active=lambda _age: True,  # placeholder, will be replaced by get_model()
 )
-
-
-START_AGE = 18
-
-
-DEFAULT_WEALTH_GRID = LinSpacedGrid(start=1, stop=400, n_points=100)
-DEFAULT_CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 
 
 def get_model(

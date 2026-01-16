@@ -64,32 +64,36 @@ def test_regression_test():
 # ======================================================================================
 
 
-def _create_wealth_grid(grid_type: str) -> ContinuousGrid:
-    """Create a wealth grid of the specified type."""
+def _create_grid(
+    grid_type: str, start: float, stop: float, n_points: int
+) -> ContinuousGrid:
+    """Create a grid of the specified type."""
     if grid_type == "LinSpacedGrid":
-        return LinSpacedGrid(start=1, stop=400, n_points=100)
+        return LinSpacedGrid(start=start, stop=stop, n_points=n_points)
     if grid_type == "LogSpacedGrid":
-        return LogSpacedGrid(start=1, stop=400, n_points=100)
+        return LogSpacedGrid(start=start, stop=stop, n_points=n_points)
     if grid_type == "PiecewiseLinSpacedGrid":
         # More points in lower part, cutoff at 100
+        n_lower = n_points // 3 * 2
         return PiecewiseLinSpacedGrid(
             pieces=(
-                Piece(interval="[1, 100)", n_points=60),
-                Piece(interval="[100, 400]", n_points=41),
+                Piece(interval=f"[{start}, 100)", n_points=n_lower),
+                Piece(interval=f"[100, {stop}]", n_points=n_points - n_lower + 1),
             )
         )
     if grid_type == "PiecewiseLogSpacedGrid":
         # Different cutoff at 50, more points in upper part
+        n_upper = n_points // 3 * 2
         return PiecewiseLogSpacedGrid(
             pieces=(
-                Piece(interval="[1, 50)", n_points=41),
-                Piece(interval="[50, 400]", n_points=60),
+                Piece(interval=f"[{start}, 50)", n_points=n_points - n_upper + 1),
+                Piece(interval=f"[50, {stop}]", n_points=n_upper),
             )
         )
     if grid_type == "IrregSpacedGrid":
         # Points between lin/log spacing - use average of both
-        lin_points = np.linspace(1, 400, 100)
-        log_points = np.logspace(np.log10(1), np.log10(400), 100)
+        lin_points = np.linspace(start, stop, n_points)
+        log_points = np.logspace(np.log10(start), np.log10(stop), n_points)
         irreg_points = tuple((lin_points + log_points) / 2)
         return IrregSpacedGrid(points=irreg_points)
     msg = f"Unknown grid type: {grid_type}"
@@ -109,7 +113,10 @@ def _create_wealth_grid(grid_type: str) -> ContinuousGrid:
 def test_model_with_different_grid_types(grid_type: str):
     """Test that model solution and simulation work with all grid types."""
     n_periods = 4
-    wealth_grid = _create_wealth_grid(grid_type)
+    # For log-spaced grids, use higher start to ensure next_wealth stays within grid
+    # range during interpolation (log-space interpolation fails for values <= 0)
+    start = 2 if "Log" in grid_type else 1
+    wealth_grid = _create_grid(grid_type, n_points=100, start=start, stop=400)
     consumption_grid = LinSpacedGrid(start=1, stop=400, n_points=500)
 
     model = get_model(
