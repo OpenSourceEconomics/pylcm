@@ -126,7 +126,7 @@ class DiscreteGrid(Grid):
 
 
 @dataclass(frozen=True, kw_only=True)
-class HomogContinuousGrid(ContinuousGrid, ABC):
+class UniformContinuousGrid(ContinuousGrid, ABC):
     """Grid with start/stop/n_points for linearly or logarithmically spaced values."""
 
     start: int | float
@@ -148,7 +148,7 @@ class HomogContinuousGrid(ContinuousGrid, ABC):
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
         """Return the generalized coordinate of a value in the grid."""
 
-    def replace(self, **kwargs: float) -> HomogContinuousGrid:
+    def replace(self, **kwargs: float) -> UniformContinuousGrid:
         """Replace the attributes of the grid.
 
         Args:
@@ -166,7 +166,7 @@ class HomogContinuousGrid(ContinuousGrid, ABC):
             ) from e
 
 
-class LinSpacedGrid(HomogContinuousGrid):
+class LinSpacedGrid(UniformContinuousGrid):
     """A linearly spaced grid of continuous values.
 
     Example:
@@ -191,7 +191,7 @@ class LinSpacedGrid(HomogContinuousGrid):
         )
 
 
-class LogSpacedGrid(HomogContinuousGrid):
+class LogSpacedGrid(UniformContinuousGrid):
     """A logarithmically spaced grid of continuous values.
 
     Example:
