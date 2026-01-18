@@ -24,8 +24,6 @@ it easy to call functions interchangeably.
 
 """
 
-from __future__ import annotations
-
 import jax.numpy as jnp
 
 from lcm.typing import Float1D, ScalarFloat

@@ -1,20 +1,16 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import jax.numpy as jnp
 
 from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime, categorical
-
-if TYPE_CHECKING:
-    from lcm.typing import (
-        BoolND,
-        ContinuousAction,
-        ContinuousState,
-        DiscreteAction,
-        FloatND,
-        ScalarInt,
-    )
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteAction,
+    FloatND,
+    ScalarInt,
+)
 
 
 # --------------------------------------------------------------------------------------

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import jax.numpy as jnp
 
 from lcm.random import generate_simulation_keys

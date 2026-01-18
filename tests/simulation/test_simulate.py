@@ -1,6 +1,4 @@
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import jax.numpy as jnp
 import pandas as pd
@@ -17,9 +15,6 @@ from lcm.simulation.simulate import (
     _lookup_values_from_indices,
     simulate,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 # ======================================================================================
 # Test simulate using raw inputs

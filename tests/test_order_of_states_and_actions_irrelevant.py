@@ -1,11 +1,6 @@
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
+from typing import Any
 
 import pytest
-
-if TYPE_CHECKING:
-    from typing import Any
 
 
 def _reverse_dict(d: dict[str, Any]) -> dict[str, Any]:

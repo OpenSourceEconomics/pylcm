@@ -1,6 +1,4 @@
-from __future__ import annotations
-
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import jax.numpy as jnp
 import pandas as pd
@@ -9,6 +7,7 @@ from numpy.testing import assert_array_almost_equal
 
 import lcm
 from lcm import AgeGrid, Model
+from lcm.typing import DiscreteState, FloatND
 from tests.test_models.stochastic import (
     RegimeId,
     dead,
@@ -17,9 +16,6 @@ from tests.test_models.stochastic import (
     retired,
     working,
 )
-
-if TYPE_CHECKING:
-    from lcm.typing import DiscreteState, FloatND
 
 # ======================================================================================
 # Simulate

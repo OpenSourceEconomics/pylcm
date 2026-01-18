@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import dataclasses
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields, is_dataclass

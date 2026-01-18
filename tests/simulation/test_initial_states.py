@@ -1,9 +1,6 @@
 """Tests for initial states conversion and validation utilities."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 import pytest
@@ -15,9 +12,7 @@ from lcm.simulation.util import (
     convert_flat_to_nested_initial_states,
     validate_flat_initial_states,
 )
-
-if TYPE_CHECKING:
-    from lcm.typing import ContinuousState, DiscreteState, FloatND, ScalarInt
+from lcm.typing import ContinuousState, DiscreteState, FloatND, ScalarInt
 
 
 @pytest.fixture

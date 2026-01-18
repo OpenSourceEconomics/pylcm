@@ -1,7 +1,4 @@
-from __future__ import annotations
-
 import dataclasses
-from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 import numpy as np
@@ -13,9 +10,7 @@ from lcm.logging import get_logger
 from lcm.max_Q_over_a import get_max_Q_over_a
 from lcm.ndimage import map_coordinates
 from lcm.solution.solve_brute import solve
-
-if TYPE_CHECKING:
-    from lcm.typing import MaxQOverAFunction
+from lcm.typing import MaxQOverAFunction
 
 
 @dataclasses.dataclass(frozen=True)

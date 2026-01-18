@@ -1,7 +1,5 @@
 """Simulation result object with deferred DataFrame computation."""
 
-from __future__ import annotations
-
 import contextlib
 import inspect
 import pickle

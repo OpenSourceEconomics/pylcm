@@ -1,6 +1,4 @@
-from __future__ import annotations
-
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import jax.numpy as jnp
 from pybaum import tree_equal
@@ -9,10 +7,8 @@ from lcm.ages import AgeGrid
 from lcm.input_processing import process_regimes
 from lcm.interfaces import InternalFunctions, PhaseVariantContainer, Target
 from lcm.next_state import _create_stochastic_next_func, get_next_state_function
+from lcm.typing import ContinuousState, FloatND, InternalUserFunction, ParamsDict
 from tests.test_models.deterministic.regression import RegimeId, dead, working
-
-if TYPE_CHECKING:
-    from lcm.typing import ContinuousState, FloatND, InternalUserFunction, ParamsDict
 
 
 def test_get_next_state_function_with_solve_target():

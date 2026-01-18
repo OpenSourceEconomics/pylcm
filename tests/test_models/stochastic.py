@@ -9,26 +9,20 @@ See also the specifications in tests/test_models/deterministic.py.
 
 """
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
 import jax.numpy as jnp
 
 import lcm
 from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime, categorical
-
-if TYPE_CHECKING:
-    from lcm.typing import (
-        BoolND,
-        ContinuousAction,
-        ContinuousState,
-        DiscreteAction,
-        DiscreteState,
-        FloatND,
-        Period,
-        ScalarInt,
-    )
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteAction,
+    DiscreteState,
+    FloatND,
+    Period,
+    ScalarInt,
+)
 
 # ======================================================================================
 # Model functions

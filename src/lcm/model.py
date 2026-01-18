@@ -1,7 +1,5 @@
 """Collection of classes that are used by the user to define the model and grids."""
 
-from __future__ import annotations
-
 from collections.abc import Iterable
 from itertools import chain
 

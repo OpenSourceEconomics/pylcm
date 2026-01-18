@@ -1,7 +1,4 @@
-from __future__ import annotations
-
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 import pytest
@@ -10,16 +7,14 @@ from lcm import Model, Regime
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.grids import LinspaceGrid
-
-if TYPE_CHECKING:
-    from lcm.typing import (
-        BoolND,
-        ContinuousAction,
-        ContinuousState,
-        FloatND,
-        ParamsDict,
-        ScalarInt,
-    )
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    FloatND,
+    ParamsDict,
+    ScalarInt,
+)
 
 
 @pytest.fixture

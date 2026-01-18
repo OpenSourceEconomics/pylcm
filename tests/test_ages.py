@@ -1,7 +1,5 @@
 """Tests for the ages module (AgeGrid and step parsing)."""
 
-from __future__ import annotations
-
 from fractions import Fraction
 
 import jax.numpy as jnp

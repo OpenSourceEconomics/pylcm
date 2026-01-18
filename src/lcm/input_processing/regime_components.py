@@ -1,7 +1,5 @@
 """Helper module for regime class initialization and utilities."""
 
-from __future__ import annotations
-
 import functools
 import inspect
 from dataclasses import fields

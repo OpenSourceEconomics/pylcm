@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import re
 from dataclasses import make_dataclass
 from functools import partial

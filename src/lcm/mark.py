@@ -1,7 +1,5 @@
 """Collection of LCM marking decorators."""
 
-from __future__ import annotations
-
 import functools
 from collections.abc import Callable
 from dataclasses import dataclass

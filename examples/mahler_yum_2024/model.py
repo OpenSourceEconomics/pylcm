@@ -4,11 +4,9 @@ This model replicates the lifecycle model from the paper "Lifestyle Behaviors an
 Wealth-Health Gaps in Germany" by Lukas Mahler and Minchul Yum (Econometrica, 2024)
 """
 
-from __future__ import annotations
-
 from dataclasses import make_dataclass
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -19,21 +17,18 @@ from scipy.interpolate import interp1d
 import lcm
 from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime, categorical
 from lcm.dispatchers import _base_productmap
-
-if TYPE_CHECKING:
-    from lcm.typing import (
-        Any,
-        BoolND,
-        ContinuousAction,
-        ContinuousState,
-        DiscreteAction,
-        DiscreteState,
-        Float1D,
-        FloatND,
-        Int1D,
-        Period,
-        RegimeName,
-    )
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteAction,
+    DiscreteState,
+    Float1D,
+    FloatND,
+    Int1D,
+    Period,
+    RegimeName,
+)
 
 # ======================================================================================
 # Parameters

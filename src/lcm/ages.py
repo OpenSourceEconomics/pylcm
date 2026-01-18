@@ -1,7 +1,5 @@
 """Age grid and step parsing utilities for lifecycle models."""
 
-from __future__ import annotations
-
 import re
 from collections.abc import Callable, Iterable
 from fractions import Fraction

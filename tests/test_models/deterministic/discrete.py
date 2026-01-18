@@ -8,13 +8,18 @@ continuous version.
 
 """
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import jax.numpy as jnp
 
 from lcm import AgeGrid, DiscreteGrid, Model, Regime, categorical
+from lcm.typing import (
+    BoolND,
+    DiscreteAction,
+    DiscreteState,
+    FloatND,
+    ScalarInt,
+)
 from tests.test_models.deterministic.regression import (
     LaborSupply,
     is_working,
@@ -22,15 +27,6 @@ from tests.test_models.deterministic.regression import (
     next_wealth,
     utility,
 )
-
-if TYPE_CHECKING:
-    from lcm.typing import (
-        BoolND,
-        DiscreteAction,
-        DiscreteState,
-        FloatND,
-        ScalarInt,
-    )
 
 # ======================================================================================
 # Regime functions

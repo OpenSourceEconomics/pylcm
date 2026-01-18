@@ -1,9 +1,5 @@
 """Test analytical solution and simulation with only discrete actions."""
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -13,17 +9,15 @@ from pandas.testing import assert_frame_equal
 
 import lcm
 from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime, categorical
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteAction,
+    DiscreteState,
+    FloatND,
+    ScalarInt,
+)
 from tests.conftest import DECIMAL_PRECISION
-
-if TYPE_CHECKING:
-    from lcm.typing import (
-        BoolND,
-        ContinuousState,
-        DiscreteAction,
-        DiscreteState,
-        FloatND,
-        ScalarInt,
-    )
 
 
 # ======================================================================================

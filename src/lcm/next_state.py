@@ -1,7 +1,5 @@
 """Generate function that compute the next states for solution and simulation."""
 
-from __future__ import annotations
-
 from collections.abc import Callable
 
 import jax

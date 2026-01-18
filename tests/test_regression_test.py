@@ -1,17 +1,11 @@
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
 import pandas as pd
 from jax import numpy as jnp
 from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
 from lcm._config import TEST_DATA
+from lcm.typing import FloatND
 from tests.test_models.deterministic.regression import get_model, get_params
-
-if TYPE_CHECKING:
-    from lcm.typing import FloatND
 
 
 def test_regression_test():

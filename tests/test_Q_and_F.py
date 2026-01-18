@@ -1,7 +1,3 @@
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
 import jax
 import jax.numpy as jnp
 import pytest
@@ -17,6 +13,14 @@ from lcm.Q_and_F import (
     _get_U_and_F,
     get_Q_and_F_terminal,
 )
+from lcm.typing import (
+    BoolND,
+    DiscreteAction,
+    DiscreteState,
+    Int1D,
+    ParamsDict,
+    Period,
+)
 from tests.test_models.deterministic.regression import (
     LaborSupply,
     RegimeId,
@@ -25,16 +29,6 @@ from tests.test_models.deterministic.regression import (
     utility,
     working,
 )
-
-if TYPE_CHECKING:
-    from lcm.typing import (
-        BoolND,
-        DiscreteAction,
-        DiscreteState,
-        Int1D,
-        ParamsDict,
-        Period,
-    )
 
 
 @pytest.mark.illustrative
