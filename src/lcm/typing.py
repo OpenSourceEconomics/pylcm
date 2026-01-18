@@ -1,3 +1,4 @@
+from types import MappingProxyType
 from typing import Any, Protocol
 
 from jax import Array
@@ -63,7 +64,7 @@ class RegimeTransitionFunction(Protocol):
 
     def __call__(  # noqa: D102
         self, *args: Array | float, params: ParamsDict, **kwargs: Array | float
-    ) -> dict[RegimeName, float]: ...
+    ) -> MappingProxyType[RegimeName, float]: ...
 
 
 class VmappedRegimeTransitionFunction(Protocol):
@@ -75,7 +76,7 @@ class VmappedRegimeTransitionFunction(Protocol):
 
     def __call__(  # noqa: D102
         self, *args: Array | float, params: ParamsDict, **kwargs: Array | float
-    ) -> dict[RegimeName, Float1D]: ...
+    ) -> MappingProxyType[RegimeName, Float1D]: ...
 
 
 class QAndFFunction(Protocol):

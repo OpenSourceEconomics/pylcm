@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import inspect
 from dataclasses import fields
+from types import MappingProxyType
 from typing import Any
 
 import jax
@@ -273,7 +274,7 @@ def _wrap_regime_transition_probs(
         regime_id_cls: Dataclass mapping regime names to integer indices.
 
     Returns:
-        A wrapped function that returns dict[str, float|Array].
+        A wrapped function that returns MappingProxyType[str, float|Array].
 
     """
     # Get regime names in index order from regime_id_cls
@@ -295,10 +296,12 @@ def _wrap_regime_transition_probs(
     @functools.wraps(fn)
     def wrapped(
         *args: Array | int, params: dict[str, Any], **kwargs: Array | int
-    ) -> dict[str, Any]:
+    ) -> MappingProxyType[str, Any]:
         result = fn(*args, params=params, **kwargs)
         # Convert array to dict using regime_id_cls ordering
-        return {name: result[idx] for idx, name in enumerate(regime_names)}
+        return MappingProxyType(
+            {name: result[idx] for idx, name in enumerate(regime_names)}
+        )
 
     return wrapped
 

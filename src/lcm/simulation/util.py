@@ -214,7 +214,7 @@ def calculate_next_regime_membership(
 
 
 def draw_key_from_dict(
-    d: dict[str, Array], regime_name_to_id: Mapping[str, int], keys: Array
+    d: Mapping[str, Array], regime_name_to_id: Mapping[str, int], keys: Array
 ) -> Int1D:
     """Draw a random key from a dictionary of arrays.
 
@@ -367,7 +367,7 @@ def convert_flat_to_nested_initial_states(
 
 
 def _validate_normalized_regime_transition_probs(
-    normalized_probs: dict[str, Float1D],
+    normalized_probs: Mapping[str, Float1D],
     regime_name: str,
     period: int,
 ) -> None:

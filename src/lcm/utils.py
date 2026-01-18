@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from itertools import chain
+from types import MappingProxyType
 from typing import Any, TypeVar, overload
 
 import jax.numpy as jnp
@@ -53,23 +54,23 @@ def unflatten_regime_namespace(d: dict[str, Any]) -> dict[RegimeName, Any]:
 
 @overload
 def normalize_regime_transition_probs(
-    probs: dict[str, float],
+    probs: Mapping[str, float],
     active_regimes: list[str],
-) -> dict[str, float]: ...
+) -> MappingProxyType[str, float]: ...
 
 
 @overload
 def normalize_regime_transition_probs(
-    probs: dict[str, Float1D],
+    probs: Mapping[str, Float1D],
     active_regimes: list[str],
-) -> dict[str, Float1D]: ...
+) -> MappingProxyType[str, Float1D]: ...
 
 
 def normalize_regime_transition_probs(
-    probs: dict[str, float] | dict[str, Float1D],
+    probs: Mapping[str, float] | Mapping[str, Float1D],
     active_regimes: list[str],
-) -> dict[str, float] | dict[str, Float1D]:
+) -> MappingProxyType[str, float] | MappingProxyType[str, Float1D]:
     """Normalize regime transition probabilities over active regimes only."""
     active_probs = jnp.array([probs[r] for r in active_regimes])
     total = jnp.sum(active_probs, axis=0)
-    return {r: probs[r] / total for r in active_regimes}
+    return MappingProxyType({r: probs[r] / total for r in active_regimes})
