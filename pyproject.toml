@@ -7,7 +7,7 @@ name = "pylcm"
 description = "Specification, solution, and simulation of finite-horizon dynamic choice models."
 requires-python = ">= 3.14"
 dependencies = [
-    "dags>=0.4.3",
+    # "dags>=0.4.3",
     "jax>=0.8",
     "jaxtyping>=0.3.2",
     "pandas",
@@ -104,7 +104,7 @@ snakeviz = "*"
 
 
 [tool.pixi.pypi-dependencies]
-dags = { git = "https://github.com/OpenSourceEconomics/dags.git", branch = "mapping-proxy-input"}
+dags = {git = "https://github.com/OpenSourceEconomics/dags.git", branch = "mapping-proxy-input"}
 pylcm = {path = ".", editable = true}
 pdbp = "*"
 
