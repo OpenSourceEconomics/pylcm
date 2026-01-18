@@ -220,7 +220,6 @@ def build_regime_transition_probs_functions(
     next_regime = concatenate_functions(
         functions=functions_pool,
         targets="regime_transition_probs",
-        return_type="tuple",
         enforce_signature=False,
         set_annotations=True,
     )

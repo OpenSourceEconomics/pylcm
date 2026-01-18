@@ -69,7 +69,7 @@ def get_Q_and_F(
         if period + 1 in regimes_to_active_periods[regime_name]
     ]
     # Pre-compute active regime IDs as JAX array for normalization
-    active_regime_ids = jnp.array(
+    active_regime_ids_next_period = jnp.array(
         [getattr(regime_id, r) for r in active_target_regimes]
     )
 
@@ -151,7 +151,7 @@ def get_Q_and_F(
         Q_arr = U_arr
         # Normalize probabilities over active regimes (array-based)
         normalized_regime_transition_prob = normalize_regime_transition_probs(
-            regime_transition_prob, active_regime_ids
+            regime_transition_prob, active_regime_ids_next_period
         )
 
         for regime_name in active_target_regimes:

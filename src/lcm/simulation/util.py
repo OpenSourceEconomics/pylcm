@@ -125,7 +125,7 @@ def calculate_next_regime_membership(
     age: float,
     params: dict[RegimeName, ParamsDict],
     new_subject_regime_ids: Int1D,
-    active_regime_ids: Array,
+    active_regime_ids_next_period: Array,
     key: Array,
     subjects_in_regime: Bool1D,
 ) -> Int1D:
@@ -142,7 +142,8 @@ def calculate_next_regime_membership(
         age: Age corresponding to current period.
         params: Model parameters for the regime.
         new_subject_regime_ids: Array to update with next regime assignments.
-        active_regime_ids: Array of regime IDs that are active in the next period.
+        active_regime_ids_next_period: Array of regime IDs that are active in the next
+          period.
         key: JAX random key.
         subjects_in_regime: Boolean array indicating if subject is in regime.
 
@@ -166,7 +167,7 @@ def calculate_next_regime_membership(
         )
     ).T
     normalized_regime_transition_probs = normalize_regime_transition_probs(
-        regime_transition_probs, active_regime_ids
+        regime_transition_probs, active_regime_ids_next_period
     )
 
     _validate_normalized_regime_transition_probs(
