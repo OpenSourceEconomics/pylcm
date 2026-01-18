@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import functools
-from typing import TYPE_CHECKING
+from collections.abc import Callable
 
 import jax.numpy as jnp
 from dags.signature import with_signature
@@ -9,19 +9,15 @@ from jax import Array
 
 from lcm.argmax import argmax_and_max
 from lcm.dispatchers import productmap
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from lcm.typing import (
-        ArgmaxQOverAFunction,
-        BoolND,
-        FloatND,
-        IntND,
-        MaxQOverAFunction,
-        ParamsDict,
-        RegimeName,
-    )
+from lcm.typing import (
+    ArgmaxQOverAFunction,
+    BoolND,
+    FloatND,
+    IntND,
+    MaxQOverAFunction,
+    ParamsDict,
+    RegimeName,
+)
 
 
 def get_max_Q_over_a(

@@ -1,35 +1,30 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from collections.abc import Callable
+from typing import Any, cast
 
 import jax.numpy as jnp
 from dags import concatenate_functions
 from dags.signature import with_signature
+from jax import Array
 
 from lcm.dispatchers import productmap
 from lcm.function_representation import get_value_function_representation
 from lcm.functools import get_union_of_arguments
 from lcm.input_processing.util import is_stochastic_transition
-from lcm.interfaces import InternalFunctions, Target
+from lcm.interfaces import InternalFunctions, StateSpaceInfo, Target
 from lcm.next_state import get_next_state_function, get_next_stochastic_weights_function
+from lcm.regime import Regime
+from lcm.typing import (
+    BoolND,
+    Float1D,
+    FloatND,
+    InternalUserFunction,
+    ParamsDict,
+    QAndFFunction,
+    RegimeName,
+)
 from lcm.utils import normalize_regime_transition_probs
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from jax import Array
-
-    from lcm.interfaces import StateSpaceInfo
-    from lcm.regime import Regime
-    from lcm.typing import (
-        BoolND,
-        Float1D,
-        FloatND,
-        InternalUserFunction,
-        ParamsDict,
-        QAndFFunction,
-        RegimeName,
-    )
 
 
 def get_Q_and_F(

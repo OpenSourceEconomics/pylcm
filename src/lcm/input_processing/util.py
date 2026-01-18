@@ -1,20 +1,15 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import Any
 
 import pandas as pd
 from dags import get_ancestors
+from jax import Array
 
 from lcm.grids import ContinuousGrid, Grid
+from lcm.regime import Regime
 from lcm.utils import flatten_regime_namespace
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from jax import Array
-
-    from lcm.regime import Regime
-    from lcm.typing import Any
 
 
 def is_stochastic_transition(fn: Callable[..., Any]) -> bool:

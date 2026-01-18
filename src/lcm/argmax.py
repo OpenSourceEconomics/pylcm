@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import jax.numpy as jnp
 from jax import Array
 
-if TYPE_CHECKING:
-    from lcm.typing import IntND
+from lcm.typing import IntND
 
 # ======================================================================================
 # argmax

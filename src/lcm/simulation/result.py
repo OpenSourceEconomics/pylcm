@@ -6,18 +6,23 @@ import contextlib
 import inspect
 import pickle
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import Any, Literal, cast
 
 import jax.numpy as jnp
 import pandas as pd
 from dags import concatenate_functions
+from jax import Array
 
+from lcm.ages import AgeGrid
 from lcm.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.grids import DiscreteGrid
+from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
+from lcm.typing import FloatND, ParamsDict, RegimeName
 
 
 def _ensure_mapping_proxy[K, V](value: Mapping[K, V]) -> MappingProxyType[K, V]:
@@ -25,16 +30,6 @@ def _ensure_mapping_proxy[K, V](value: Mapping[K, V]) -> MappingProxyType[K, V]:
     if isinstance(value, MappingProxyType):
         return cast("MappingProxyType[K, V]", value)
     return MappingProxyType(value)
-
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
-
-    from jax import Array
-
-    from lcm.ages import AgeGrid
-    from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
-    from lcm.typing import FloatND, ParamsDict, RegimeName
 
 
 CLOUDPICKLE_IMPORT_ERROR_MSG = (

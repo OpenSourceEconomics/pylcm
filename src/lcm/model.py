@@ -2,30 +2,25 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from itertools import chain
-from typing import TYPE_CHECKING
 
+from jax import Array
+
+from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, format_messages
 from lcm.grids import _get_field_names_and_values, validate_category_class
-from lcm.input_processing.regime_processing import process_regimes
+from lcm.input_processing.regime_processing import InternalRegime, process_regimes
 from lcm.logging import get_logger
 from lcm.regime import Regime
+from lcm.simulation.result import SimulationResult
 from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
-
-if TYPE_CHECKING:
-    from collections.abc import Iterable
-
-    from jax import Array
-
-    from lcm.ages import AgeGrid
-    from lcm.input_processing.regime_processing import InternalRegime
-    from lcm.simulation.result import SimulationResult
-    from lcm.typing import (
-        FloatND,
-        ParamsDict,
-        RegimeName,
-    )
+from lcm.typing import (
+    FloatND,
+    ParamsDict,
+    RegimeName,
+)
 
 
 class Model:

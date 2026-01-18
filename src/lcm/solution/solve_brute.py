@@ -1,19 +1,15 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import logging
 
 import jax.numpy as jnp
 
+from lcm.ages import AgeGrid
 from lcm.error_handling import validate_value_function_array
-
-if TYPE_CHECKING:
-    import logging
-
-    from lcm.ages import AgeGrid
-    from lcm.interfaces import (
-        InternalRegime,
-    )
-    from lcm.typing import FloatND, ParamsDict, RegimeName
+from lcm.interfaces import (
+    InternalRegime,
+)
+from lcm.typing import FloatND, ParamsDict, RegimeName
 
 
 def solve(

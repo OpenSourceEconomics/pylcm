@@ -4,17 +4,15 @@ import dataclasses
 from collections.abc import Mapping
 from dataclasses import KW_ONLY, dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from lcm.exceptions import RegimeInitializationError, format_messages
 from lcm.grids import Grid
+from lcm.typing import (
+    ActiveFunction,
+    UserFunction,
+)
 from lcm.utils import REGIME_SEPARATOR, flatten_regime_namespace
-
-if TYPE_CHECKING:
-    from lcm.typing import (
-        ActiveFunction,
-        UserFunction,
-    )
 
 
 def _ensure_mapping_proxy[K, V](value: Mapping[K, V]) -> MappingProxyType[K, V]:

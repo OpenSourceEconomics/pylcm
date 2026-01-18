@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import functools
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from dags import get_annotations
 from dags.signature import with_signature
+from jax import Array
 
+from lcm.ages import AgeGrid
 from lcm.input_processing.create_params_template import create_params_template
 from lcm.input_processing.regime_components import (
     build_argmax_and_max_Q_over_a_functions,
@@ -24,24 +26,19 @@ from lcm.input_processing.util import (
     is_stochastic_transition,
 )
 from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
+from lcm.regime import Regime
+from lcm.typing import (
+    Int1D,
+    InternalUserFunction,
+    ParamsDict,
+    RegimeName,
+    UserFunction,
+)
 from lcm.utils import (
     REGIME_SEPARATOR,
     flatten_regime_namespace,
     unflatten_regime_namespace,
 )
-
-if TYPE_CHECKING:
-    from jax import Array
-
-    from lcm.ages import AgeGrid
-    from lcm.regime import Regime
-    from lcm.typing import (
-        Int1D,
-        InternalUserFunction,
-        ParamsDict,
-        RegimeName,
-        UserFunction,
-    )
 
 
 def process_regimes(

@@ -5,13 +5,14 @@ from __future__ import annotations
 import functools
 import inspect
 from dataclasses import fields
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import jax
 from dags import concatenate_functions, get_annotations
 from dags.signature import with_signature
 from jax import Array
 
+from lcm.ages import AgeGrid
 from lcm.dispatchers import simulation_spacemap, vmap_1d
 from lcm.input_processing.util import get_grids, get_variable_info
 from lcm.interfaces import (
@@ -24,26 +25,23 @@ from lcm.interfaces import (
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a, get_max_Q_over_a
 from lcm.next_state import get_next_state_function
 from lcm.Q_and_F import get_Q_and_F, get_Q_and_F_terminal
+from lcm.regime import Regime
 from lcm.state_action_space import (
     create_state_action_space,
     create_state_space_info,
 )
+from lcm.typing import (
+    ArgmaxQOverAFunction,
+    GridsDict,
+    InternalUserFunction,
+    MaxQOverAFunction,
+    NextStateSimulationFunction,
+    QAndFFunction,
+    RegimeName,
+    RegimeTransitionFunction,
+    VmappedRegimeTransitionFunction,
+)
 from lcm.utils import flatten_regime_namespace
-
-if TYPE_CHECKING:
-    from lcm.ages import AgeGrid
-    from lcm.regime import Regime
-    from lcm.typing import (
-        ArgmaxQOverAFunction,
-        GridsDict,
-        InternalUserFunction,
-        MaxQOverAFunction,
-        NextStateSimulationFunction,
-        QAndFFunction,
-        RegimeName,
-        RegimeTransitionFunction,
-        VmappedRegimeTransitionFunction,
-    )
 
 
 def build_state_space_info(regime: Regime) -> StateSpaceInfo:

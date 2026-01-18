@@ -1,12 +1,8 @@
-from typing import TYPE_CHECKING
-
 import jax.numpy as jnp
 from jax import Array
 
 from lcm.exceptions import InvalidValueFunctionError
-
-if TYPE_CHECKING:
-    from lcm.typing import Period
+from lcm.typing import Period
 
 
 def validate_value_function_array(

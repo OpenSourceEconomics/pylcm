@@ -3,18 +3,14 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Iterable
 from fractions import Fraction
-from typing import TYPE_CHECKING, overload
+from typing import overload
 
 import jax.numpy as jnp
 
 from lcm.exceptions import GridInitializationError, format_messages
-
-if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
-
-    from lcm.typing import Float1D
-
+from lcm.typing import Float1D
 
 # ======================================================================================
 # Step parsing

@@ -2,30 +2,25 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Callable
 
 import jax
 from dags import concatenate_functions
 from dags.signature import with_signature
+from jax import Array
 
 from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import Target
+from lcm.typing import (
+    DiscreteState,
+    FloatND,
+    GridsDict,
+    InternalUserFunction,
+    NextStateSimulationFunction,
+    RegimeName,
+    StochasticNextFunction,
+)
 from lcm.utils import flatten_regime_namespace
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from jax import Array
-
-    from lcm.typing import (
-        DiscreteState,
-        FloatND,
-        GridsDict,
-        InternalUserFunction,
-        NextStateSimulationFunction,
-        RegimeName,
-        StochasticNextFunction,
-    )
 
 
 def get_next_state_function(

@@ -18,13 +18,10 @@ from __future__ import annotations
 import functools
 import itertools
 import operator
-from typing import TYPE_CHECKING
+from collections.abc import Sequence
 
 import jax.numpy as jnp
 from jax import Array, jit, lax
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 
 @jit

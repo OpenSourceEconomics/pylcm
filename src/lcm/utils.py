@@ -1,21 +1,19 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Iterable
 from itertools import chain
-from typing import TYPE_CHECKING, Any, TypeVar, overload
+from typing import Any, TypeVar, overload
 
 import jax.numpy as jnp
 from dags.tree import QNAME_DELIMITER, flatten_to_qnames, unflatten_from_qnames
+
+from lcm.typing import Float1D, RegimeName
 
 # Re-export for use in other modules. This is the separator used by dags to
 # concatenate nested dictionary keys into qualified names (e.g., "work__next_wealth").
 # User-defined regime names and function names must NOT contain this separator.
 REGIME_SEPARATOR = QNAME_DELIMITER
-
-if TYPE_CHECKING:
-    from collections.abc import Iterable
-
-    from lcm.typing import Float1D, RegimeName
 
 T = TypeVar("T")
 

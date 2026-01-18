@@ -3,16 +3,14 @@ from __future__ import annotations
 import dataclasses
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields, is_dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import jax.numpy as jnp
 
 from lcm import grid_helpers
 from lcm.exceptions import GridInitializationError, format_messages
+from lcm.typing import Float1D, Int1D, ScalarFloat
 from lcm.utils import find_duplicates
-
-if TYPE_CHECKING:
-    from lcm.typing import Float1D, Int1D, ScalarFloat
 
 
 def categorical[T](cls: type[T]) -> type[T]:

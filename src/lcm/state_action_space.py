@@ -1,16 +1,12 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import pandas as pd
+from jax import Array
 
 from lcm.grids import ContinuousGrid, DiscreteGrid
 from lcm.input_processing.util import get_gridspecs, get_variable_info
 from lcm.interfaces import StateActionSpace, StateSpaceInfo
-
-if TYPE_CHECKING:
-    import pandas as pd
-    from jax import Array
-
-    from lcm.regime import Regime
+from lcm.regime import Regime
 
 
 def create_state_action_space(

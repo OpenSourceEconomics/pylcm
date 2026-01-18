@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import logging
+from collections.abc import Mapping
 from types import MappingProxyType
-from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
 from jax import Array, vmap
 
+from lcm.ages import AgeGrid
 from lcm.error_handling import validate_value_function_array
 from lcm.interfaces import (
     InternalRegime,
@@ -22,20 +24,14 @@ from lcm.simulation.util import (
     get_regime_name_to_id_mapping,
     validate_flat_initial_states,
 )
+from lcm.typing import (
+    FloatND,
+    Int1D,
+    IntND,
+    ParamsDict,
+    RegimeName,
+)
 from lcm.utils import flatten_regime_namespace
-
-if TYPE_CHECKING:
-    import logging
-    from collections.abc import Mapping
-
-    from lcm.ages import AgeGrid
-    from lcm.typing import (
-        FloatND,
-        Int1D,
-        IntND,
-        ParamsDict,
-        RegimeName,
-    )
 
 
 def simulate(

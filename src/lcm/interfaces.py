@@ -1,12 +1,31 @@
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Mapping  # noqa: TC003 - Used in dataclass field annotations
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
+import pandas as pd
+from jax import Array
+
+from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
+from lcm.typing import (
+    ArgmaxQOverAFunction,
+    Bool1D,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteAction,
+    DiscreteState,
+    InternalUserFunction,
+    MaxQOverAFunction,
+    NextStateSimulationFunction,
+    ParamsDict,
+    RegimeTransitionFunction,
+    TransitionFunctionsDict,
+    VmappedRegimeTransitionFunction,
+)
 from lcm.utils import first_non_none, flatten_regime_namespace
 
 
@@ -15,28 +34,6 @@ def _ensure_mapping_proxy[K, V](value: Mapping[K, V]) -> MappingProxyType[K, V]:
     if isinstance(value, MappingProxyType):
         return cast("MappingProxyType[K, V]", value)
     return MappingProxyType(value)
-
-
-if TYPE_CHECKING:
-    import pandas as pd
-    from jax import Array
-
-    from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
-    from lcm.typing import (
-        ArgmaxQOverAFunction,
-        Bool1D,
-        ContinuousAction,
-        ContinuousState,
-        DiscreteAction,
-        DiscreteState,
-        InternalUserFunction,
-        MaxQOverAFunction,
-        NextStateSimulationFunction,
-        ParamsDict,
-        RegimeTransitionFunction,
-        TransitionFunctionsDict,
-        VmappedRegimeTransitionFunction,
-    )
 
 
 @dataclasses.dataclass(frozen=True)

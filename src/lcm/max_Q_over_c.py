@@ -1,26 +1,22 @@
 from __future__ import annotations
 
 import functools
-from typing import TYPE_CHECKING
+from collections.abc import Callable
 
 import jax.numpy as jnp
 from jax import Array
 
 from lcm.argmax import argmax_and_max
 from lcm.dispatchers import productmap
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from lcm.typing import (
-        ArgmaxQOverCFunction,
-        BoolND,
-        FloatND,
-        IntND,
-        MaxQOverCFunction,
-        ParamsDict,
-        Period,
-    )
+from lcm.typing import (
+    ArgmaxQOverCFunction,
+    BoolND,
+    FloatND,
+    IntND,
+    MaxQOverCFunction,
+    ParamsDict,
+    Period,
+)
 
 
 def get_max_Q_over_c(
