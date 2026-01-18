@@ -1,11 +1,21 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Mapping  # noqa: TC003 - Used in dataclass field annotations
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING
+from types import MappingProxyType
+from typing import TYPE_CHECKING, cast
 
 from lcm.utils import first_non_none, flatten_regime_namespace
+
+
+def _ensure_mapping_proxy[K, V](value: Mapping[K, V]) -> MappingProxyType[K, V]:
+    """Wrap a Mapping in MappingProxyType if not already wrapped."""
+    if isinstance(value, MappingProxyType):
+        return cast("MappingProxyType[K, V]", value)
+    return MappingProxyType(value)
+
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -68,6 +78,16 @@ class StateActionSpace:
     continuous_actions: dict[str, ContinuousAction]
     states_and_discrete_actions_names: tuple[str, ...]
 
+    def __post_init__(self) -> None:
+        # Wrap mutable dicts in MappingProxyType to prevent accidental mutation
+        object.__setattr__(self, "states", _ensure_mapping_proxy(self.states))
+        object.__setattr__(
+            self, "discrete_actions", _ensure_mapping_proxy(self.discrete_actions)
+        )
+        object.__setattr__(
+            self, "continuous_actions", _ensure_mapping_proxy(self.continuous_actions)
+        )
+
     @property
     def states_names(self) -> tuple[str, ...]:
         """Tuple with names of all state variables."""
@@ -79,9 +99,11 @@ class StateActionSpace:
         return tuple(self.discrete_actions) + tuple(self.continuous_actions)
 
     @property
-    def actions(self) -> dict[str, DiscreteAction | ContinuousAction]:
-        """Dictionary with all action variables."""
-        return self.discrete_actions | self.continuous_actions
+    def actions(self) -> MappingProxyType[str, DiscreteAction | ContinuousAction]:
+        """Read-only mapping with all action variables."""
+        return MappingProxyType(
+            dict(self.discrete_actions) | dict(self.continuous_actions)
+        )
 
     @property
     def actions_grid_shapes(self) -> tuple[int, ...]:
@@ -135,6 +157,15 @@ class StateSpaceInfo:
     states_names: tuple[str, ...]
     discrete_states: dict[str, DiscreteGrid]
     continuous_states: dict[str, ContinuousGrid]
+
+    def __post_init__(self) -> None:
+        # Wrap mutable dicts in MappingProxyType to prevent accidental mutation
+        object.__setattr__(
+            self, "discrete_states", _ensure_mapping_proxy(self.discrete_states)
+        )
+        object.__setattr__(
+            self, "continuous_states", _ensure_mapping_proxy(self.continuous_states)
+        )
 
 
 class ShockType(Enum):
@@ -192,6 +223,23 @@ class InternalRegime:
     # Not properly processed yet
     random_utility_shocks: ShockType
 
+    def __post_init__(self) -> None:
+        # Wrap mutable dicts in MappingProxyType to prevent accidental mutation.
+        # Note: constraints and functions are not wrapped because they are heavily
+        # used with external libraries (dags) that don't recognize MappingProxyType.
+        object.__setattr__(self, "grids", _ensure_mapping_proxy(self.grids))
+        object.__setattr__(self, "gridspecs", _ensure_mapping_proxy(self.gridspecs))
+        object.__setattr__(
+            self,
+            "max_Q_over_a_functions",
+            _ensure_mapping_proxy(self.max_Q_over_a_functions),
+        )
+        object.__setattr__(
+            self,
+            "argmax_and_max_Q_over_a_functions",
+            _ensure_mapping_proxy(self.argmax_and_max_Q_over_a_functions),
+        )
+
 
 @dataclasses.dataclass(frozen=True)
 class PeriodRegimeSimulationData:
@@ -209,9 +257,14 @@ class PeriodRegimeSimulationData:
     """
 
     V_arr: Array
-    actions: dict[str, Array]
-    states: dict[str, Array]
+    actions: Mapping[str, Array]
+    states: Mapping[str, Array]
     in_regime: Bool1D
+
+    def __post_init__(self) -> None:
+        # Wrap mutable dicts in MappingProxyType to prevent accidental mutation
+        object.__setattr__(self, "actions", _ensure_mapping_proxy(self.actions))
+        object.__setattr__(self, "states", _ensure_mapping_proxy(self.states))
 
 
 class Target(Enum):
@@ -234,14 +287,17 @@ class InternalFunctions:
         | None
     )
 
-    def get_all_functions(self) -> dict[str, InternalUserFunction]:
+    # Note: functions and constraints are not wrapped in MappingProxyType because
+    # they are heavily used with external libraries (dags) that don't recognize it.
+
+    def get_all_functions(self) -> MappingProxyType[str, InternalUserFunction]:
         """Get all regime functions including utility, constraints, and transitions.
 
         Returns:
-            Dictionary that maps names of all regime functions to the functions.
+            Read-only mapping of all regime functions to the functions.
 
         """
-        functions_pool = self.functions | {
+        functions_pool = dict(self.functions) | {
             "utility": self.utility,
             **self.constraints,
             **self.transitions,
@@ -253,4 +309,4 @@ class InternalFunctions:
             functions_pool["regime_transition_probs_simulate"] = (
                 self.regime_transition_probs.simulate
             )
-        return flatten_regime_namespace(functions_pool)
+        return MappingProxyType(flatten_regime_namespace(functions_pool))

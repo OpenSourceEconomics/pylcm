@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 import jax
@@ -25,6 +26,7 @@ from lcm.utils import flatten_regime_namespace
 
 if TYPE_CHECKING:
     import logging
+    from collections.abc import Mapping
 
     from lcm.ages import AgeGrid
     from lcm.typing import (
@@ -150,15 +152,15 @@ def _simulate_regime_in_period(
     internal_regime: InternalRegime,
     period: int,
     age: float,
-    states: dict[str, Array],
+    states: Mapping[str, Array],
     subject_regime_ids: Int1D,
     new_subject_regime_ids: Int1D,
     V_arr_dict: dict[int, dict[RegimeName, FloatND]],
     params: dict[RegimeName, ParamsDict],
-    regime_name_to_id: dict[RegimeName, int],
+    regime_name_to_id: Mapping[RegimeName, int],
     active_regimes_next_period: list[RegimeName],
     key: Array,
-) -> tuple[PeriodRegimeSimulationData, dict[str, Array], Int1D, Array]:
+) -> tuple[PeriodRegimeSimulationData, Mapping[str, Array], Int1D, Array]:
     """Simulate one regime for one period.
 
     This function processes all subjects in a given regime for a single period,
@@ -278,8 +280,8 @@ def _simulate_regime_in_period(
 
 def _lookup_values_from_indices(
     flat_indices: IntND,
-    grids: dict[str, Array],
-) -> dict[str, Array]:
+    grids: Mapping[str, Array],
+) -> MappingProxyType[str, Array]:
     """Retrieve values from indices.
 
     Args:
@@ -287,20 +289,22 @@ def _lookup_values_from_indices(
         grids: Dictionary of grid values.
 
     Returns:
-        Dictionary of values.
+        Read-only mapping of values.
 
     """
     # Handle empty grids case (no actions)
     if not grids:
-        return {}
+        return MappingProxyType({})
 
     grids_shapes = tuple(len(grid) for grid in grids.values())
 
     nd_indices = vmapped_unravel_index(flat_indices, grids_shapes)
-    return {
-        name: grid[index]
-        for (name, grid), index in zip(grids.items(), nd_indices, strict=True)
-    }
+    return MappingProxyType(
+        {
+            name: grid[index]
+            for (name, grid), index in zip(grids.items(), nd_indices, strict=True)
+        }
+    )
 
 
 # vmap jnp.unravel_index over the first axis of the `indices` argument, while holding

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
-
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -265,8 +263,9 @@ def test_variable_info_with_continuous_constraint_has_unique_index():
     def wealth_constraint(wealth):
         return wealth > 200
 
-    working_copy = deepcopy(working)
-    working_copy.constraints["wealth_constraint"] = wealth_constraint
+    working_copy = working.replace(
+        constraints=dict(working.constraints) | {"wealth_constraint": wealth_constraint}
+    )
 
     got = get_variable_info(working_copy)
     assert got.index.is_unique

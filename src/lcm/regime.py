@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Mapping
 from dataclasses import KW_ONLY, dataclass, field
-from typing import TYPE_CHECKING, Any
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, cast
 
 from lcm.exceptions import RegimeInitializationError, format_messages
 from lcm.grids import Grid
@@ -13,6 +15,13 @@ if TYPE_CHECKING:
         ActiveFunction,
         UserFunction,
     )
+
+
+def _ensure_mapping_proxy[K, V](value: Mapping[K, V]) -> MappingProxyType[K, V]:
+    """Wrap a Mapping in MappingProxyType if not already wrapped."""
+    if isinstance(value, MappingProxyType):
+        return cast("MappingProxyType[K, V]", value)
+    return MappingProxyType(value)
 
 
 @dataclass(frozen=True)
@@ -50,19 +59,25 @@ class Regime:
     def __post_init__(self) -> None:
         _validate_attribute_types(self)
         _validate_logical_consistency(self)
+        # Wrap mutable dicts in MappingProxyType to prevent accidental mutation
+        object.__setattr__(self, "states", _ensure_mapping_proxy(self.states))
+        object.__setattr__(self, "actions", _ensure_mapping_proxy(self.actions))
+        object.__setattr__(self, "constraints", _ensure_mapping_proxy(self.constraints))
+        object.__setattr__(self, "transitions", _ensure_mapping_proxy(self.transitions))
+        object.__setattr__(self, "functions", _ensure_mapping_proxy(self.functions))
 
-    def get_all_functions(self) -> dict[str, UserFunction]:
+    def get_all_functions(self) -> MappingProxyType[str, UserFunction]:
         """Get all regime functions including utility, constraints, and transitions.
 
         Returns:
-            Dictionary that maps names of all regime functions to the functions.
+            Read-only mapping of all regime functions to the functions.
 
         """
-        return (
-            self.functions
+        return MappingProxyType(
+            dict(self.functions)
             | {"utility": self.utility}
-            | self.constraints
-            | self.transitions
+            | dict(self.constraints)
+            | dict(self.transitions)
         )
 
     def replace(self, **kwargs: Any) -> Regime:  # noqa: ANN401
@@ -91,7 +106,7 @@ def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
     # ----------------------------------------------------------------------------------
     for attr_name in ("actions", "states"):
         attr = getattr(regime, attr_name)
-        if isinstance(attr, dict):
+        if isinstance(attr, Mapping):
             for k, v in attr.items():
                 if not isinstance(k, str):
                     error_messages.append(f"{attr_name} key {k} must be a string.")
@@ -108,7 +123,7 @@ def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
         regime.functions,
     ]
     for func_collection in function_collections:
-        if isinstance(func_collection, dict):
+        if isinstance(func_collection, Mapping):
             for k, v in func_collection.items():
                 if not isinstance(k, str):
                     error_messages.append(

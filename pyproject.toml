@@ -104,7 +104,7 @@ snakeviz = "*"
 
 
 [tool.pixi.pypi-dependencies]
-# dags = { git = "https://github.com/opensourceeconomics/dags.git", branch = "annotate-aggregated-return" }
+dags = {path = "../dags", editable = true}
 pylcm = {path = ".", editable = true}
 pdbp = "*"
 

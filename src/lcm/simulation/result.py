@@ -8,7 +8,8 @@ import pickle
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import jax.numpy as jnp
 import pandas as pd
@@ -18,7 +19,17 @@ from lcm.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.grids import DiscreteGrid
 
+
+def _ensure_mapping_proxy[K, V](value: Mapping[K, V]) -> MappingProxyType[K, V]:
+    """Wrap a Mapping in MappingProxyType if not already wrapped."""
+    if isinstance(value, MappingProxyType):
+        return cast("MappingProxyType[K, V]", value)
+    return MappingProxyType(value)
+
+
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from jax import Array
 
     from lcm.ages import AgeGrid
@@ -239,6 +250,18 @@ class SimulationMetadata:
     regime_to_states: dict[str, tuple[str, ...]]
     regime_to_actions: dict[str, tuple[str, ...]]
     discrete_categories: dict[str, tuple[str, ...]]
+
+    def __post_init__(self) -> None:
+        # Wrap mutable dicts in MappingProxyType to prevent accidental mutation
+        object.__setattr__(
+            self, "regime_to_states", _ensure_mapping_proxy(self.regime_to_states)
+        )
+        object.__setattr__(
+            self, "regime_to_actions", _ensure_mapping_proxy(self.regime_to_actions)
+        )
+        object.__setattr__(
+            self, "discrete_categories", _ensure_mapping_proxy(self.discrete_categories)
+        )
 
 
 def _compute_metadata(

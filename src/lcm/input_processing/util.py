@@ -84,7 +84,7 @@ def _indicator_enters_concurrent_valuation(
         "utility",
         *list(regime.constraints),
     ]
-    user_functions = regime.get_all_functions()
+    user_functions = dict(regime.get_all_functions())
     ancestors = get_ancestors(
         user_functions,
         targets=enters_Q_and_F_fn_names,
@@ -110,7 +110,7 @@ def _indicator_enters_transition(
 
     """
     next_fn_names = list(flatten_regime_namespace(regime.transitions))
-    user_functions = regime.get_all_functions()
+    user_functions = dict(regime.get_all_functions())
     ancestors = get_ancestors(
         user_functions,
         targets=next_fn_names,

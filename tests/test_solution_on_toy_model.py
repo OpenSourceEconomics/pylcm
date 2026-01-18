@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
@@ -116,9 +115,10 @@ def next_health(health: DiscreteState, health_transition: FloatND) -> FloatND:
     return health_transition[health]
 
 
-alive_stochastic = deepcopy(alive_deterministic)
-alive_stochastic.transitions["next_health"] = next_health
-alive_stochastic.states["health"] = DiscreteGrid(HealthStatus)
+alive_stochastic = alive_deterministic.replace(
+    transitions=dict(alive_deterministic.transitions) | {"next_health": next_health},
+    states=dict(alive_deterministic.states) | {"health": DiscreteGrid(HealthStatus)},
+)
 
 model_deterministic = Model(
     [alive_deterministic, dead],
@@ -417,8 +417,8 @@ def test_deterministic_solve(discount_factor, n_wealth_points):
     # ==================================================================================
     n_periods = 3
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
-    new_states = alive_deterministic.states
-    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # ty: ignore[unresolved-attribute]
+    new_states = dict(alive_deterministic.states)
+    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)
     model = Model(
         [
             alive_deterministic.replace(
@@ -467,8 +467,8 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
     # ==================================================================================
     n_periods = 3
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
-    new_states = alive_deterministic.states
-    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # ty: ignore[unresolved-attribute]
+    new_states = dict(alive_deterministic.states)
+    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)
     model = Model(
         [
             alive_deterministic.replace(
@@ -525,8 +525,8 @@ def test_stochastic_solve(discount_factor, n_wealth_points, health_transition):
     # ==================================================================================
     n_periods = 3
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
-    new_states = alive_stochastic.states
-    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # ty: ignore[unresolved-attribute]
+    new_states = dict(alive_stochastic.states)
+    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)
     model = Model(
         [
             alive_stochastic.replace(
@@ -589,8 +589,8 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, health_transition
     # ==================================================================================
     n_periods = 3
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
-    new_states = alive_stochastic.states
-    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # ty: ignore[unresolved-attribute]
+    new_states = dict(alive_stochastic.states)
+    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)
     model = Model(
         [
             alive_stochastic.replace(
