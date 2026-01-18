@@ -104,7 +104,7 @@ snakeviz = "*"
 
 
 [tool.pixi.pypi-dependencies]
-dags = {path = "../dags", editable = true}
+dags = { git = "https://github.com/OpenSourceEconomics/dags.git", branch = "mapping-proxy-input"}
 pylcm = {path = ".", editable = true}
 pdbp = "*"
 
