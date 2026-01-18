@@ -1,13 +1,13 @@
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from itertools import chain
-from types import MappingProxyType
-from typing import Any, TypeVar, overload
+from typing import Any, TypeVar
 
 import jax.numpy as jnp
 from dags.tree import QNAME_DELIMITER, flatten_to_qnames, unflatten_from_qnames
+from jax import Array
 
-from lcm.typing import Float1D, RegimeName
+from lcm.typing import RegimeName
 
 # Re-export for use in other modules. This is the separator used by dags to
 # concatenate nested dictionary keys into qualified names (e.g., "work__next_wealth").
@@ -50,25 +50,30 @@ def unflatten_regime_namespace(d: dict[str, Any]) -> dict[RegimeName, Any]:
     return unflatten_from_qnames(d)  # ty: ignore[invalid-return-type]
 
 
-@overload
 def normalize_regime_transition_probs(
-    probs: Mapping[str, float],
-    active_regimes: list[str],
-) -> MappingProxyType[str, float]: ...
+    probs: Array,
+    active_regime_ids: Array,
+) -> Array:
+    """Normalize regime transition probabilities over active regimes only.
 
+    Args:
+        probs: Array of transition probabilities indexed by regime ID.
+            Shape [n_regimes] (solve) or [n_regimes, n_subjects] (simulate).
+        active_regime_ids: 1D array of regime IDs that are active in the next period.
 
-@overload
-def normalize_regime_transition_probs(
-    probs: Mapping[str, Float1D],
-    active_regimes: list[str],
-) -> MappingProxyType[str, Float1D]: ...
+    Returns:
+        Normalized probabilities array with same shape as input. Inactive regimes
+        have probability 0, active regimes sum to 1.
 
+    """
+    # Create mask for active regimes
+    active_mask = jnp.isin(jnp.arange(probs.shape[0]), active_regime_ids)
 
-def normalize_regime_transition_probs(
-    probs: Mapping[str, float] | Mapping[str, Float1D],
-    active_regimes: list[str],
-) -> MappingProxyType[str, float] | MappingProxyType[str, Float1D]:
-    """Normalize regime transition probabilities over active regimes only."""
-    active_probs = jnp.array([probs[r] for r in active_regimes])
-    total = jnp.sum(active_probs, axis=0)
-    return MappingProxyType({r: probs[r] / total for r in active_regimes})
+    # Expand mask dimensions to match probs shape
+    if probs.ndim > 1:
+        active_mask = active_mask[:, None]
+
+    # Zero out inactive regimes and normalize
+    masked_probs = jnp.where(active_mask, probs, 0.0)
+    total = jnp.sum(masked_probs, axis=0, keepdims=True)
+    return masked_probs / total

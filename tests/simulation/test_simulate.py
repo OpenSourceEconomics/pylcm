@@ -42,13 +42,13 @@ def simulate_inputs():
     internal_regimes = process_regimes(
         [updated_working, updated_dead],
         ages=ages,
-        regime_id_cls=RegimeId,
+        regime_id=RegimeId(),
         enable_jit=True,
     )
 
     return {
         "internal_regimes": internal_regimes,
-        "regime_id_cls": RegimeId,
+        "regime_id": RegimeId(),
         "ages": ages,
     }
 

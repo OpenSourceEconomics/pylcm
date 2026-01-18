@@ -203,7 +203,7 @@ def test_process_regimes():
     internal_regimes = process_regimes(
         [working, dead],
         ages=ages,
-        regime_id_cls=RegimeId,
+        regime_id=RegimeId(),
         enable_jit=True,
     )
     internal_working_regime = internal_regimes[working.name]

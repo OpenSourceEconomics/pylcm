@@ -31,7 +31,7 @@ class Model:
         description: Description of the model.
         n_periods: Number of periods in the model.
         enable_jit: Whether to jit the functions of the internal regime.
-        regime_id_cls: The RegimeId class mapping regime names to indices.
+        regime_id: Instance mapping regime names to integer indices.
         regimes: The user provided regimes that contain the information
             about the model's regimes.
         internal_regimes: The internal regime instances created by LCM, which allow
@@ -44,7 +44,7 @@ class Model:
     ages: AgeGrid
     n_periods: int
     enable_jit: bool = True
-    regime_id_cls: type
+    regime_id: object
     regimes: dict[str, Regime]
     internal_regimes: dict[str, InternalRegime]
     params_template: ParamsDict
@@ -72,7 +72,7 @@ class Model:
 
         self.ages = ages
         self.n_periods = ages.n_periods
-        self.regime_id_cls = regime_id_cls
+        self.regime_id = regime_id_cls()  # Create instance with default values
         self.description = description
         self.enable_jit = enable_jit
         self.regimes = {}
@@ -87,7 +87,7 @@ class Model:
         self.internal_regimes = process_regimes(
             regimes=regimes_list,
             ages=self.ages,
-            regime_id_cls=self.regime_id_cls,
+            regime_id=self.regime_id,
             enable_jit=enable_jit,
         )
         self.params_template = {
@@ -150,7 +150,7 @@ class Model:
             initial_states=initial_states,
             initial_regimes=initial_regimes,
             internal_regimes=self.internal_regimes,
-            regime_id_cls=self.regime_id_cls,
+            regime_id=self.regime_id,
             logger=get_logger(debug_mode=debug_mode),
             V_arr_dict=V_arr_dict,
             ages=self.ages,

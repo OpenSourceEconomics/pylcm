@@ -16,7 +16,7 @@ def test_get_next_state_function_with_solve_target():
     internal_regimes = process_regimes(
         regimes=[working, dead],
         ages=ages,
-        regime_id_cls=RegimeId,
+        regime_id=RegimeId(),
         enable_jit=True,
     )
 

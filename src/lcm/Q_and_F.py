@@ -33,6 +33,7 @@ def get_Q_and_F(
     next_state_space_infos: dict[RegimeName, StateSpaceInfo],
     grids: dict[RegimeName, Any],
     internal_functions: InternalFunctions,
+    regime_id: object,
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
@@ -44,6 +45,7 @@ def get_Q_and_F(
         next_state_space_infos: The state space information of the next period.
         grids: Dict containing the state frids for all regimes.
         internal_functions: Internal functions instance.
+        regime_id: Instance mapping regime names to integer IDs.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -66,6 +68,10 @@ def get_Q_and_F(
         for regime_name in target_regimes
         if period + 1 in regimes_to_active_periods[regime_name]
     ]
+    # Pre-compute active regime IDs as JAX array for normalization
+    active_regime_ids = jnp.array(
+        [getattr(regime_id, r) for r in active_target_regimes]
+    )
 
     for target_regime in active_target_regimes:
         # Transitions from the current regime to the target regime
@@ -143,17 +149,13 @@ def get_Q_and_F(
             params=params[regime.name],
         )
         Q_arr = U_arr
-        target_regimes = list(internal_functions.transitions)
-        active_target_regimes = [
-            regime_name
-            for regime_name in target_regimes
-            if period + 1 in regimes_to_active_periods[regime_name]
-        ]
+        # Normalize probabilities over active regimes (array-based)
         normalized_regime_transition_prob = normalize_regime_transition_probs(
-            regime_transition_prob, active_target_regimes
+            regime_transition_prob, active_regime_ids
         )
 
         for regime_name in active_target_regimes:
+            target_regime_id = getattr(regime_id, regime_name)
             next_states = state_transitions[regime_name](
                 **states_and_actions,
                 period=period,
@@ -190,7 +192,7 @@ def get_Q_and_F(
             Q_arr = (
                 Q_arr
                 + params[regime.name]["discount_factor"]
-                * normalized_regime_transition_prob[regime_name]
+                * normalized_regime_transition_prob[target_regime_id]
                 * next_V_expected_arr
             )
 

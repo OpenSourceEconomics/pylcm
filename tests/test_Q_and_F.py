@@ -37,7 +37,7 @@ def test_get_Q_and_F_function():
     internal_regimes = process_regimes(
         [working, dead],
         ages=ages,
-        regime_id_cls=RegimeId,
+        regime_id=RegimeId(),
         enable_jit=True,
     )
 

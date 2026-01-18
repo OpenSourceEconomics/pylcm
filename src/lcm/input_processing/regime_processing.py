@@ -42,7 +42,7 @@ from lcm.utils import (
 def process_regimes(
     regimes: list[Regime],
     ages: AgeGrid,
-    regime_id_cls: type,
+    regime_id: object,
     *,
     enable_jit: bool,
 ) -> dict[str, InternalRegime]:
@@ -57,7 +57,7 @@ def process_regimes(
     Args:
         regimes: The regimes as provided by the user.
         ages: The AgeGrid for the model.
-        regime_id_cls: A dataclass mapping regime names to integer indices.
+        regime_id: Instance mapping regime names to integer indices.
         enable_jit: Whether to jit the functions of the internal regime.
 
     Returns:
@@ -115,7 +115,7 @@ def process_regimes(
             nested_transitions=nested_transitions[regime.name],
             grids=grids,
             params=params_template,
-            regime_id_cls=regime_id_cls,
+            regime_id=regime_id,
             enable_jit=enable_jit,
         )
 
@@ -126,6 +126,7 @@ def process_regimes(
             state_space_infos=state_space_infos,
             grids=grids,
             ages=ages,
+            regime_id=regime_id,
         )
         max_Q_over_a_functions = build_max_Q_over_a_functions(
             regime=regime, Q_and_F_functions=Q_and_F_functions, enable_jit=enable_jit
@@ -173,7 +174,7 @@ def _get_internal_functions(
     nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
     grids: dict[RegimeName, dict[str, Array]],
     params: ParamsDict,
-    regime_id_cls: type,
+    regime_id: object,
     *,
     enable_jit: bool,
 ) -> InternalFunctions:
@@ -185,7 +186,7 @@ def _get_internal_functions(
             Format: {"regime_name": {"next_state": fn, ...}, "next_regime": fn}
         grids: Dict containing the state grids for each regime.
         params: The parameters of the regime.
-        regime_id_cls: Dataclass mapping regime names to integer indices.
+        regime_id: Instance mapping regime names to integer indices.
         enable_jit: Whether to jit the internal functions.
 
     Returns:
@@ -311,7 +312,7 @@ def _get_internal_functions(
             internal_functions=internal_functions,
             regime_transition_probs=functions["next_regime"],
             grids=grids[regime.name],
-            regime_id_cls=regime_id_cls,
+            regime_id=regime_id,
             is_stochastic=is_stochastic_regime_transition,
             enable_jit=enable_jit,
         )
