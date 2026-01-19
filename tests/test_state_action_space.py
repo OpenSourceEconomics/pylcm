@@ -110,7 +110,6 @@ def test_create_state_space_info():
         bad: int = 1
 
     regime = Regime(
-        name="test",
         utility=lambda wealth: wealth,
         states={
             "wealth": LinspaceGrid(start=0, stop=100, n_points=5),

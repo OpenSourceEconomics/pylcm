@@ -1,3 +1,4 @@
+from types import MappingProxyType
 from typing import cast
 
 import jax.numpy as jnp
@@ -8,26 +9,28 @@ from lcm.input_processing import process_regimes
 from lcm.interfaces import InternalFunctions, PhaseVariantContainer, Target
 from lcm.next_state import _create_stochastic_next_func, get_next_state_function
 from lcm.typing import ContinuousState, FloatND, InternalUserFunction, ParamsDict
-from tests.test_models.deterministic.regression import RegimeId, dead, working
+from tests.test_models.deterministic.regression import dead, working
 
 
 def test_get_next_state_function_with_solve_target():
     ages = AgeGrid(start=0, stop=4, step="Y")
+    regimes = {"working": working, "dead": dead}
+    regime_id = MappingProxyType({name: idx for idx, name in enumerate(regimes.keys())})
     internal_regimes = process_regimes(
-        regimes=[working, dead],
+        regimes=regimes,
         ages=ages,
-        regime_id=RegimeId(),
+        regime_id=regime_id,
         enable_jit=True,
     )
 
-    internal_working = internal_regimes[working.name]
+    internal_working = internal_regimes["working"]
 
     got_func = get_next_state_function(
-        transitions=internal_working.transitions[working.name],
+        transitions=internal_working.transitions["working"],
         functions=internal_working.functions,
         grids={
-            working.name: internal_working.grids,
-            dead.name: internal_regimes[dead.name].grids,
+            "working": internal_working.grids,
+            "dead": internal_regimes["dead"].grids,
         },
         target=Target.SOLVE,
     )

@@ -2,7 +2,6 @@
 
 import functools
 import inspect
-from dataclasses import fields
 from typing import Any
 
 import jax
@@ -30,12 +29,12 @@ from lcm.state_action_space import (
 )
 from lcm.typing import (
     ArgmaxQOverAFunction,
-    CategoricalInstance,
     GridsDict,
     InternalUserFunction,
     MaxQOverAFunction,
     NextStateSimulationFunction,
     QAndFFunction,
+    RegimeIdMapping,
     RegimeName,
     RegimeTransitionFunction,
     VmappedRegimeTransitionFunction,
@@ -63,25 +62,26 @@ def build_state_action_space(
 
 def build_Q_and_F_functions(
     regime: Regime,
+    regime_name: RegimeName,
     regimes_to_active_periods: dict[RegimeName, list[int]],
     internal_functions: InternalFunctions,
     state_space_infos: dict[RegimeName, StateSpaceInfo],
     grids: GridsDict,
     ages: AgeGrid,
-    regime_id: CategoricalInstance,
+    regime_id: RegimeIdMapping,
 ) -> dict[int, QAndFFunction]:
     Q_and_F_functions = {}
     for period, age in enumerate(ages.values):
         if regime.terminal:
             Q_and_F = get_Q_and_F_terminal(
-                regime=regime,
+                regime_name=regime_name,
                 internal_functions=internal_functions,
                 period=period,
                 age=age,
             )
         else:
             Q_and_F = get_Q_and_F(
-                regime=regime,
+                regime_name=regime_name,
                 regimes_to_active_periods=regimes_to_active_periods,
                 period=period,
                 age=age,
@@ -202,7 +202,7 @@ def build_regime_transition_probs_functions(
     internal_functions: dict[str, InternalUserFunction],
     regime_transition_probs: InternalUserFunction,
     grids: dict[str, Array],
-    regime_id: CategoricalInstance,
+    regime_id: RegimeIdMapping,
     *,
     is_stochastic: bool,
     enable_jit: bool,
@@ -254,7 +254,7 @@ def build_regime_transition_probs_functions(
 
 def _wrap_deterministic_regime_transition(
     fn: InternalUserFunction,
-    regime_id: CategoricalInstance,
+    regime_id: RegimeIdMapping,
 ) -> InternalUserFunction:
     """Wrap deterministic next_regime to return one-hot probability array.
 
@@ -270,7 +270,7 @@ def _wrap_deterministic_regime_transition(
         A wrapped function that returns a one-hot probability array.
 
     """
-    n_regimes = len(fields(regime_id))
+    n_regimes = len(regime_id)
 
     # Preserve original annotations but update return type
     annotations = get_annotations(fn)

@@ -25,7 +25,6 @@ class Regime:
     """A user regime which can be processed into an internal regime.
 
     Attributes:
-        name: Name of the regime.
         active: Callable that takes age (float) and returns True if regime is active.
         utility: Utility function for this regime.
         constraints: Dictionary of constraint functions.
@@ -39,7 +38,6 @@ class Regime:
 
     """
 
-    name: str
     _: KW_ONLY
     active: ActiveFunction
     utility: UserFunction
@@ -146,13 +144,6 @@ def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
 def _validate_logical_consistency(regime: Regime) -> None:
     """Validate the logical consistency of the regime."""
     error_messages: list[str] = []
-
-    # Validate regime name does not contain the separator
-    if REGIME_SEPARATOR in regime.name:
-        error_messages.append(
-            f"Regime name '{regime.name}' contains the reserved separator "
-            f"'{REGIME_SEPARATOR}'. Please use a different name.",
-        )
 
     # Validate function names do not contain the separator
     all_function_names = (

@@ -354,7 +354,6 @@ def dead_is_active(age: float, initial_age: float) -> bool:
 
 
 ALIVE_REGIME = Regime(
-    name="alive",
     utility=utility,
     functions={
         "disutil": disutil,
@@ -406,16 +405,14 @@ ALIVE_REGIME = Regime(
 )
 
 DEAD_REGIME = Regime(
-    name="dead",
     terminal=True,
     utility=lambda: 0.0,
     active=partial(dead_is_active, initial_age=ages.values[0]),
 )
 
 MAHLER_YUM_MODEL = Model(
-    regimes=[ALIVE_REGIME, DEAD_REGIME],
+    regimes={"alive": ALIVE_REGIME, "dead": DEAD_REGIME},
     ages=ages,
-    regime_id_cls=RegimeId,
 )
 
 

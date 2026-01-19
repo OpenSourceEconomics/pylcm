@@ -43,7 +43,6 @@ def model() -> Model:
     ages = AgeGrid(start=0, stop=n_periods, step="Y")
 
     alive = Regime(
-        name="active",
         utility=utility,
         states={
             "wealth": LinspaceGrid(start=1, stop=100, n_points=10),
@@ -58,16 +57,14 @@ def model() -> Model:
     )
 
     dead = Regime(
-        name="terminal",
         terminal=True,
         utility=lambda: 0.0,
         active=lambda age: age >= n_periods - 1,
     )
 
     return Model(
-        [alive, dead],
+        regimes={"active": alive, "terminal": dead},
         ages=ages,
-        regime_id_cls=RegimeId,
     )
 
 

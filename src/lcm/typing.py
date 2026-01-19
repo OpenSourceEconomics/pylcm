@@ -1,13 +1,12 @@
+from types import MappingProxyType
 from typing import Any, Protocol
 
 from jax import Array
 from jaxtyping import Bool, Float, Int, Scalar
 
-# A frozen dataclass instance created by @categorical, with integer attributes
-# mapping category names to their indices (e.g., regime_id.working = 0).
-# Typed as Any because specific fields are only known at runtime and the type
-# checker cannot verify that dataclasses satisfy the structural protocol.
-type CategoricalInstance = Any
+# Immutable mapping from regime names to integer IDs (e.g., {"working": 0, "dead": 1}).
+# Created from the user's regime_id_cls dataclass in Model.__init__.
+type RegimeIdMapping = MappingProxyType[str, int]
 
 type ContinuousState = Float[Array, "..."]
 type ContinuousAction = Float[Array, "..."]

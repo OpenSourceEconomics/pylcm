@@ -88,7 +88,6 @@ def borrowing_constraint(
 
 # Note: active is set to a placeholder value here and will be replaced by get_model()
 working = Regime(
-    name="working",
     actions={
         "labor_supply": DiscreteGrid(LaborSupply),
         "consumption": LinspaceGrid(
@@ -122,7 +121,6 @@ working = Regime(
 
 
 dead = Regime(
-    name="dead",
     terminal=True,
     utility=lambda: 0.0,
     active=lambda _age: True,  # placeholder, will be replaced by get_model()
@@ -136,12 +134,11 @@ def get_model(n_periods: int) -> Model:
     stop_age = START_AGE + n_periods - 1
     final_age_alive = stop_age - 1
     return Model(
-        [
-            working.replace(active=lambda age: age <= final_age_alive),
-            dead.replace(active=lambda age: age > final_age_alive),
-        ],
+        regimes={
+            "working": working.replace(active=lambda age: age <= final_age_alive),
+            "dead": dead.replace(active=lambda age: age > final_age_alive),
+        },
         ages=AgeGrid(start=START_AGE, stop=stop_age, step="Y"),
-        regime_id_cls=RegimeId,
     )
 
 

@@ -12,41 +12,40 @@ from lcm.functools import get_union_of_arguments
 from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import InternalFunctions, StateSpaceInfo, Target
 from lcm.next_state import get_next_state_function, get_next_stochastic_weights_function
-from lcm.regime import Regime
 from lcm.typing import (
     BoolND,
-    CategoricalInstance,
     Float1D,
     FloatND,
     InternalUserFunction,
     ParamsDict,
     QAndFFunction,
+    RegimeIdMapping,
     RegimeName,
 )
 from lcm.utils import normalize_regime_transition_probs
 
 
 def get_Q_and_F(
-    regime: Regime,
+    regime_name: RegimeName,
     regimes_to_active_periods: dict[RegimeName, list[int]],
     period: int,
     age: float,
     next_state_space_infos: dict[RegimeName, StateSpaceInfo],
     grids: dict[RegimeName, Any],
     internal_functions: InternalFunctions,
-    regime_id: CategoricalInstance,
+    regime_id: RegimeIdMapping,
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
     Args:
-        regime: Regime instance.
+        regime_name: The name of the regime.
         regimes_to_active_periods: Mapping regime names to their active periods.
         period: The current period.
         age: The age corresponding to the current period.
         next_state_space_infos: The state space information of the next period.
         grids: Dict containing the state frids for all regimes.
         internal_functions: Internal functions instance.
-        regime_id: Instance mapping regime names to integer IDs.
+        regime_id: Immutable mapping from regime names to integer IDs.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -71,7 +70,7 @@ def get_Q_and_F(
     ]
     # Pre-compute active regime IDs as JAX array for normalization
     active_regime_ids_next_period = jnp.array(
-        [getattr(regime_id, r) for r in active_target_regimes]
+        [regime_id[r] for r in active_target_regimes]
     )
 
     for target_regime in active_target_regimes:
@@ -87,13 +86,13 @@ def get_Q_and_F(
         )
         next_stochastic_states_weights[target_regime] = (
             get_next_stochastic_weights_function(
-                regime_name=regime.name,
+                regime_name=regime_name,
                 functions=internal_functions.functions,
                 transitions=transitions,
             )
         )
         joint_weights_from_marginals[target_regime] = _get_joint_weights_function(
-            regime_name=regime.name, transitions=transitions
+            regime_name=regime_name, transitions=transitions
         )
         _scalar_next_V = get_value_function_representation(
             next_state_space_infos[target_regime]
@@ -141,13 +140,13 @@ def get_Q_and_F(
 
         """
         regime_transition_prob = regime_transition_prob_func(
-            **states_and_actions, period=period, age=age, params=params[regime.name]
+            **states_and_actions, period=period, age=age, params=params[regime_name]
         )
         U_arr, F_arr = U_and_F(
             **states_and_actions,
             period=period,
             age=age,
-            params=params[regime.name],
+            params=params[regime_name],
         )
         Q_arr = U_arr
         # Normalize probabilities over active regimes (array-based)
@@ -155,33 +154,33 @@ def get_Q_and_F(
             regime_transition_prob, active_regime_ids_next_period
         )
 
-        for regime_name in active_target_regimes:
-            target_regime_id = getattr(regime_id, regime_name)
-            next_states = state_transitions[regime_name](
+        for target_regime_name in active_target_regimes:
+            target_regime_id = regime_id[target_regime_name]
+            next_states = state_transitions[target_regime_name](
                 **states_and_actions,
                 period=period,
                 age=age,
-                params=params[regime.name],
+                params=params[regime_name],
             )
 
             marginal_next_stochastic_states_weights = next_stochastic_states_weights[
-                regime_name
+                target_regime_name
             ](
                 **states_and_actions,
                 period=period,
                 age=age,
-                params=params[regime.name],
+                params=params[regime_name],
             )
 
             joint_next_stochastic_states_weights = joint_weights_from_marginals[
-                regime_name
+                target_regime_name
             ](**marginal_next_stochastic_states_weights)
 
             # As we productmap'd the value function over the stochastic variables, the
             # resulting next value function gets a new dimension for each stochastic
             # variable.
-            next_V_at_stochastic_states_arr = next_V[regime_name](
-                **next_states, next_V_arr=next_V_arr[regime_name]
+            next_V_at_stochastic_states_arr = next_V[target_regime_name](
+                **next_states, next_V_arr=next_V_arr[target_regime_name]
             )
 
             # We then take the weighted average of the next value function at the
@@ -192,7 +191,7 @@ def get_Q_and_F(
             )
             Q_arr = (
                 Q_arr
-                + params[regime.name]["discount_factor"]
+                + params[regime_name]["discount_factor"]
                 * normalized_regime_transition_prob[target_regime_id]
                 * next_V_expected_arr
             )
@@ -205,7 +204,7 @@ def get_Q_and_F(
 
 
 def get_Q_and_F_terminal(
-    regime: Regime,
+    regime_name: RegimeName,
     internal_functions: InternalFunctions,
     period: int,
     age: float,
@@ -213,7 +212,7 @@ def get_Q_and_F_terminal(
     """Get the state-action (Q) and feasibility (F) function for the terminal period.
 
     Args:
-        regime: The current regime.
+        regime_name: The name of the regime.
         internal_functions: Internal functions instance.
         period: The current period.
         age: The age corresponding to the current period.
@@ -261,7 +260,7 @@ def get_Q_and_F_terminal(
             **states_and_actions,
             period=period,
             age=age,
-            params=params[regime.name],
+            params=params[regime_name],
         )
 
         return jnp.asarray(U_arr), jnp.asarray(F_arr)

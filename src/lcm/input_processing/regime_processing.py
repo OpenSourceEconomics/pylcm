@@ -1,4 +1,5 @@
 import functools
+from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any, cast
 
@@ -26,10 +27,10 @@ from lcm.input_processing.util import (
 from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
 from lcm.regime import Regime
 from lcm.typing import (
-    CategoricalInstance,
     Int1D,
     InternalUserFunction,
     ParamsDict,
+    RegimeIdMapping,
     RegimeName,
     UserFunction,
 )
@@ -41,9 +42,9 @@ from lcm.utils import (
 
 
 def process_regimes(
-    regimes: list[Regime],
+    regimes: Mapping[str, Regime],
     ages: AgeGrid,
-    regime_id: CategoricalInstance,
+    regime_id: RegimeIdMapping,
     *,
     enable_jit: bool,
 ) -> dict[str, InternalRegime]:
@@ -56,9 +57,9 @@ def process_regimes(
     - Check that the regime specification is valid.
 
     Args:
-        regimes: The regimes as provided by the user.
+        regimes: Mapping from regime names to user-provided Regime instances.
         ages: The AgeGrid for the model.
-        regime_id: Instance mapping regime names to integer indices.
+        regime_id: Immutable mapping from regime names to integer indices.
         enable_jit: Whether to jit the functions of the internal regime.
 
     Returns:
@@ -71,13 +72,13 @@ def process_regimes(
     # User provides flat format, internal processing uses nested format.
     # First, collect state names for each regime to know which transitions map where.
     states_per_regime: dict[str, set[str]] = {
-        regime.name: set(regime.states.keys()) for regime in regimes
+        name: set(regime.states.keys()) for name, regime in regimes.items()
     }
 
     # Convert each regime's flat transitions to nested format
     nested_transitions = {}
-    for regime in regimes:
-        nested_transitions[regime.name] = _convert_flat_to_nested_transitions(
+    for name, regime in regimes.items():
+        nested_transitions[name] = _convert_flat_to_nested_transitions(
             flat_transitions=regime.transitions,
             states_per_regime=states_per_regime,
             terminal=regime.terminal,
@@ -93,19 +94,19 @@ def process_regimes(
     state_action_spaces = {}
     regimes_to_active_periods = {}
 
-    for regime in regimes:
-        grids[regime.name] = get_grids(regime)
-        gridspecs[regime.name] = get_gridspecs(regime)
-        variable_info[regime.name] = get_variable_info(regime)
-        state_space_infos[regime.name] = build_state_space_info(regime)
-        state_action_spaces[regime.name] = build_state_action_space(regime)
-        regimes_to_active_periods[regime.name] = ages.get_periods_where(regime.active)
+    for name, regime in regimes.items():
+        grids[name] = get_grids(regime)
+        gridspecs[name] = get_gridspecs(regime)
+        variable_info[name] = get_variable_info(regime)
+        state_space_infos[name] = build_state_space_info(regime)
+        state_action_spaces[name] = build_state_action_space(regime)
+        regimes_to_active_periods[name] = ages.get_periods_where(regime.active)
 
     # ----------------------------------------------------------------------------------
     # Stage 2: Initialize regime components that depend on other regimes
     # ----------------------------------------------------------------------------------
     internal_regimes = {}
-    for regime in regimes:
+    for name, regime in regimes.items():
         params_template = create_params_template(
             regime,
             grids=grids,
@@ -113,7 +114,8 @@ def process_regimes(
 
         internal_functions = _get_internal_functions(
             regime,
-            nested_transitions=nested_transitions[regime.name],
+            regime_name=name,
+            nested_transitions=nested_transitions[name],
             grids=grids,
             params=params_template,
             regime_id=regime_id,
@@ -122,6 +124,7 @@ def process_regimes(
 
         Q_and_F_functions = build_Q_and_F_functions(
             regime=regime,
+            regime_name=name,
             regimes_to_active_periods=regimes_to_active_periods,
             internal_functions=internal_functions,
             state_space_infos=state_space_infos,
@@ -144,22 +147,22 @@ def process_regimes(
         # ------------------------------------------------------------------------------
         # Collect all components into the internal regime
         # ------------------------------------------------------------------------------
-        internal_regimes[regime.name] = InternalRegime(
-            name=regime.name,
+        internal_regimes[name] = InternalRegime(
+            name=name,
             terminal=regime.terminal,
-            grids=grids[regime.name],
-            gridspecs=gridspecs[regime.name],
-            variable_info=variable_info[regime.name],
+            grids=grids[name],
+            gridspecs=gridspecs[name],
+            variable_info=variable_info[name],
             functions=internal_functions.functions,
             utility=internal_functions.utility,
             constraints=internal_functions.constraints,
-            active_periods=regimes_to_active_periods[regime.name],
+            active_periods=regimes_to_active_periods[name],
             regime_transition_probs=internal_functions.regime_transition_probs,
             internal_functions=internal_functions,
             transitions=internal_functions.transitions,
             params_template=params_template,
-            state_action_spaces=state_action_spaces[regime.name],
-            state_space_infos=state_space_infos[regime.name],
+            state_action_spaces=state_action_spaces[name],
+            state_space_infos=state_space_infos[name],
             max_Q_over_a_functions=max_Q_over_a_functions,
             argmax_and_max_Q_over_a_functions=argmax_and_max_Q_over_a_functions,
             next_state_simulation_function=next_state_simulation_function,
@@ -172,10 +175,11 @@ def process_regimes(
 
 def _get_internal_functions(
     regime: Regime,
+    regime_name: RegimeName,
     nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
     grids: dict[RegimeName, dict[str, Array]],
     params: ParamsDict,
-    regime_id: CategoricalInstance,
+    regime_id: RegimeIdMapping,
     *,
     enable_jit: bool,
 ) -> InternalFunctions:
@@ -183,11 +187,12 @@ def _get_internal_functions(
 
     Args:
         regime: The regime as provided by the user.
+        regime_name: The name of the regime.
         nested_transitions: Nested transitions dict for internal processing.
             Format: {"regime_name": {"next_state": fn, ...}, "next_regime": fn}
         grids: Dict containing the state grids for each regime.
         params: The parameters of the regime.
-        regime_id: Instance mapping regime names to integer indices.
+        regime_id: Immutable mapping from regime names to integer indices.
         enable_jit: Whether to jit the internal functions.
 
     Returns:
@@ -312,7 +317,7 @@ def _get_internal_functions(
         internal_regime_transition_probs = build_regime_transition_probs_functions(
             internal_functions=internal_functions,
             regime_transition_probs=functions["next_regime"],
-            grids=grids[regime.name],
+            grids=grids[regime_name],
             regime_id=regime_id,
             is_stochastic=is_stochastic_regime_transition,
             enable_jit=enable_jit,

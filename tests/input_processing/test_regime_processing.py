@@ -1,3 +1,5 @@
+from types import MappingProxyType
+
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -15,7 +17,7 @@ from lcm.input_processing.regime_processing import (
     process_regimes,
 )
 from tests.regime_mock import RegimeMock
-from tests.test_models.deterministic.base import RegimeId, dead, working
+from tests.test_models.deterministic.base import dead, working
 
 
 def test_convert_flat_to_nested_transitions():
@@ -200,13 +202,15 @@ def test_get_grids(regime_mock):
 
 def test_process_regimes():
     ages = AgeGrid(start=0, stop=4, step="Y")
+    regimes = {"working": working, "dead": dead}
+    regime_id = MappingProxyType({name: idx for idx, name in enumerate(regimes.keys())})
     internal_regimes = process_regimes(
-        [working, dead],
+        regimes,
         ages=ages,
-        regime_id=RegimeId(),
+        regime_id=regime_id,
         enable_jit=True,
     )
-    internal_working_regime = internal_regimes[working.name]
+    internal_working_regime = internal_regimes["working"]
 
     # Variable Info
     assert (

@@ -23,7 +23,7 @@ def n_periods() -> int:
 
 
 @pytest.fixture
-def regimes_and_id_cls(n_periods: int) -> tuple[dict[str, Regime], type, AgeGrid]:
+def regimes_and_ages(n_periods: int) -> tuple[dict[str, Regime], AgeGrid]:
     @dataclass
     class RegimeId:
         non_terminal: int = 0
@@ -57,7 +57,6 @@ def regimes_and_id_cls(n_periods: int) -> tuple[dict[str, Regime], type, AgeGrid
         return consumption <= wealth
 
     non_terminal = Regime(
-        name="non_terminal",
         actions={
             "consumption": LinspaceGrid(
                 start=1,
@@ -90,7 +89,6 @@ def regimes_and_id_cls(n_periods: int) -> tuple[dict[str, Regime], type, AgeGrid
     )
 
     terminal = Regime(
-        name="terminal",
         terminal=True,
         utility=lambda: 0.0,
         active=lambda age, n=n_periods: age >= n - 1,
@@ -98,14 +96,14 @@ def regimes_and_id_cls(n_periods: int) -> tuple[dict[str, Regime], type, AgeGrid
 
     ages = AgeGrid(start=0, stop=n_periods, step="Y")
 
-    return {"non_terminal": non_terminal, "terminal": terminal}, RegimeId, ages
+    return {"non_terminal": non_terminal, "terminal": terminal}, ages
 
 
 @pytest.fixture
 def nan_value_model(
-    regimes_and_id_cls: tuple[dict[str, Regime], type, AgeGrid],
+    regimes_and_ages: tuple[dict[str, Regime], AgeGrid],
 ) -> Model:
-    regimes, regime_id_cls, ages = regimes_and_id_cls
+    regimes, ages = regimes_and_ages
 
     def invalid_utility(
         consumption: ContinuousAction,
@@ -121,17 +119,16 @@ def nan_value_model(
 
     invalid_regime = regimes["non_terminal"].replace(utility=invalid_utility)
     return Model(
-        regimes=[invalid_regime, regimes["terminal"]],
+        regimes={"non_terminal": invalid_regime, "terminal": regimes["terminal"]},
         ages=ages,
-        regime_id_cls=regime_id_cls,
     )
 
 
 @pytest.fixture
 def inf_value_model(
-    regimes_and_id_cls: tuple[dict[str, Regime], type, AgeGrid],
+    regimes_and_ages: tuple[dict[str, Regime], AgeGrid],
 ) -> Model:
-    regimes, regime_id_cls, ages = regimes_and_id_cls
+    regimes, ages = regimes_and_ages
 
     def invalid_utility(
         consumption: ContinuousAction,
@@ -147,9 +144,8 @@ def inf_value_model(
 
     inf_model = regimes["non_terminal"].replace(utility=invalid_utility)
     return Model(
-        regimes=[inf_model, regimes["terminal"]],
+        regimes={"non_terminal": inf_model, "terminal": regimes["terminal"]},
         ages=ages,
-        regime_id_cls=regime_id_cls,
     )
 
 

@@ -10,7 +10,6 @@ from lcm import Model
 from lcm.ages import AgeGrid, parse_step
 from lcm.exceptions import GridInitializationError
 from tests.test_models.deterministic.base import (
-    RegimeId,
     dead,
     retired,
     working,
@@ -138,13 +137,12 @@ def test_model_with_quarterly_steps():
     assert ages.step_size == 0.25
 
     model = Model(
-        [
-            working.replace(active=lambda age: age <= final_age_alive),
-            retired.replace(active=lambda age: age <= final_age_alive),
-            dead.replace(active=lambda age: age > final_age_alive),
-        ],
+        regimes={
+            "working": working.replace(active=lambda age: age <= final_age_alive),
+            "retired": retired.replace(active=lambda age: age <= final_age_alive),
+            "dead": dead.replace(active=lambda age: age > final_age_alive),
+        },
         ages=ages,
-        regime_id_cls=RegimeId,
     )
 
     params = {

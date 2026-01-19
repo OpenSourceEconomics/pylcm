@@ -120,7 +120,6 @@ def retired_is_active(age: float) -> bool:
 
 
 working = Regime(
-    name="working",
     utility=utility,
     functions={
         "labor_income": labor_income,
@@ -162,7 +161,6 @@ working = Regime(
 
 
 retired = Regime(
-    name="retirement",
     terminal=True,
     utility=utility_retired,
     states={
@@ -182,9 +180,8 @@ retired = Regime(
 
 
 model = Model(
-    regimes=[working, retired],
+    regimes={"working": working, "retirement": retired},
     ages=AgeGrid(start=18, stop=RETIREMENT_AGE, step="Y"),
-    regime_id_cls=RegimeId,
 )
 
 params = {

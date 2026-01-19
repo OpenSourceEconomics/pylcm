@@ -22,11 +22,11 @@ from lcm.simulation.util import (
     validate_flat_initial_states,
 )
 from lcm.typing import (
-    CategoricalInstance,
     FloatND,
     Int1D,
     IntND,
     ParamsDict,
+    RegimeIdMapping,
     RegimeName,
 )
 from lcm.utils import flatten_regime_namespace
@@ -37,7 +37,7 @@ def simulate(
     initial_states: dict[str, Array],
     initial_regimes: list[RegimeName],
     internal_regimes: dict[RegimeName, InternalRegime],
-    regime_id: CategoricalInstance,
+    regime_id: RegimeIdMapping,
     logger: logging.Logger,
     V_arr_dict: dict[int, dict[RegimeName, FloatND]],
     ages: AgeGrid,
@@ -84,7 +84,7 @@ def simulate(
     # The following variables are updated during the forward simulation
     states = flatten_regime_namespace(nested_initial_states)
     subject_regime_ids = jnp.asarray(
-        [getattr(regime_id, initial_regime) for initial_regime in initial_regimes]
+        [regime_id[initial_regime] for initial_regime in initial_regimes]
     )
 
     # Forward simulation
@@ -109,7 +109,7 @@ def simulate(
             if period + 1 in regime.active_periods
         ]
         active_regime_ids_next_period = jnp.array(
-            [getattr(regime_id, r) for r in active_regimes_next_period]
+            [regime_id[r] for r in active_regimes_next_period]
         )
 
         for regime_name, internal_regime in active_regimes.items():
@@ -153,7 +153,7 @@ def _simulate_regime_in_period(
     new_subject_regime_ids: Int1D,
     V_arr_dict: dict[int, dict[RegimeName, FloatND]],
     params: dict[RegimeName, ParamsDict],
-    regime_id: CategoricalInstance,
+    regime_id: RegimeIdMapping,
     active_regime_ids_next_period: Array,
     key: Array,
 ) -> tuple[PeriodRegimeSimulationData, Mapping[str, Array], Int1D, Array]:
@@ -187,9 +187,7 @@ def _simulate_regime_in_period(
     """
     # Select subjects in the current regime
     # ---------------------------------------------------------------------------------
-    subject_ids_in_regime = jnp.asarray(
-        getattr(regime_id, regime_name) == subject_regime_ids
-    )
+    subject_ids_in_regime = jnp.asarray(regime_id[regime_name] == subject_regime_ids)
 
     state_action_space = create_regime_state_action_space(
         internal_regime=internal_regime,
