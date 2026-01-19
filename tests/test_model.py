@@ -232,20 +232,11 @@ def test_multi_regime_without_next_regime_raises(binary_category_class):
         )
 
 
-def test_model_regime_name_with_separator():
-    """Model rejects regime names containing the reserved separator."""
-    regime = Regime(
-        states={},
-        actions={},
-        utility=lambda: 0,
-        terminal=True,
-        active=lambda age: age >= 0,
-    )
-    with pytest.raises(ModelInitializationError, match="reserved separator"):
-        Model(
-            regimes={"test__invalid": regime},
-            ages=AgeGrid(start=0, stop=2, step="Y"),
-        )
+def test_model_keyword_only():
+    """Model requires keyword arguments only."""
+    # Positional arguments should raise TypeError
+    with pytest.raises(TypeError, match="takes 1 positional argument"):
+        Model({}, AgeGrid(start=0, stop=2, step="Y"))  # ty: ignore[missing-argument,too-many-positional-arguments]
 
 
 def test_model_accepts_multiple_terminal_regimes(binary_category_class):
@@ -277,3 +268,54 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
         ages=AgeGrid(start=0, stop=2, step="Y"),
     )
     assert model.internal_regimes is not None
+
+
+def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):
+    """Model creates regime_id mapping from dict keys in order."""
+    alive = Regime(
+        states={"health": DiscreteGrid(binary_category_class)},
+        utility=lambda health: health,
+        transitions={
+            "next_health": lambda health: health,
+            "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
+        },
+        active=lambda age: age < 1,
+    )
+    dead = Regime(
+        states={"health": DiscreteGrid(binary_category_class)},
+        utility=lambda health: health * 0,
+        terminal=True,
+        active=lambda age: age >= 1,
+    )
+    model = Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+    )
+    # regime_id should be created from dict keys in order
+    assert model.regime_id["alive"] == 0
+    assert model.regime_id["dead"] == 1
+
+
+def test_model_regime_name_validation(binary_category_class):
+    """Model validates regime names don't contain the separator."""
+    alive = Regime(
+        states={"health": DiscreteGrid(binary_category_class)},
+        utility=lambda health: health,
+        transitions={
+            "next_health": lambda health: health,
+            "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
+        },
+        active=lambda age: age < 1,
+    )
+    dead = Regime(
+        states={"health": DiscreteGrid(binary_category_class)},
+        utility=lambda health: health * 0,
+        terminal=True,
+        active=lambda age: age >= 1,
+    )
+    # Using separator in regime name should raise error
+    with pytest.raises(ModelInitializationError, match="separator character"):
+        Model(
+            regimes={"alive__bad": alive, "dead": dead},
+            ages=AgeGrid(start=0, stop=2, step="Y"),
+        )

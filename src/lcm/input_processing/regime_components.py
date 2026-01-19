@@ -2,6 +2,7 @@
 
 import functools
 import inspect
+from types import MappingProxyType
 from typing import Any
 
 import jax
@@ -61,14 +62,13 @@ def build_state_action_space(
 
 
 def build_Q_and_F_functions(
+    regime_name: str,
     regime: Regime,
-    regime_name: RegimeName,
     regimes_to_active_periods: dict[RegimeName, list[int]],
     internal_functions: InternalFunctions,
     state_space_infos: dict[RegimeName, StateSpaceInfo],
     grids: GridsDict,
     ages: AgeGrid,
-    regime_id: RegimeIdMapping,
 ) -> dict[int, QAndFFunction]:
     Q_and_F_functions = {}
     for period, age in enumerate(ages.values):
@@ -88,7 +88,6 @@ def build_Q_and_F_functions(
                 next_state_space_infos=state_space_infos,
                 grids=grids,
                 internal_functions=internal_functions,
-                regime_id=regime_id,
             )
         Q_and_F_functions[period] = Q_and_F
 
@@ -215,12 +214,17 @@ def build_regime_transition_probs_functions(
             regime_transition_probs, regime_id
         )
 
-    # Keep array format - regime_transition_probs returns Array indexed by regime ID
-    functions_pool = internal_functions | {"regime_transition_probs": probs_fn}
+    # Wrap to convert array output to dict format
+    wrapped_regime_transition_probs = _wrap_regime_transition_probs(probs_fn, regime_id)
+
+    functions_pool = internal_functions | {
+        "regime_transition_probs": wrapped_regime_transition_probs
+    }
 
     next_regime = concatenate_functions(
         functions=functions_pool,
         targets="regime_transition_probs",
+        return_type="dict",
         enforce_signature=False,
         set_annotations=True,
     )
@@ -252,6 +256,50 @@ def build_regime_transition_probs_functions(
     )
 
 
+def _wrap_regime_transition_probs(
+    fn: InternalUserFunction,
+    regime_id: RegimeIdMapping,
+) -> InternalUserFunction:
+    """Wrap next_regime function to convert array output to dict format.
+
+    The next_regime function returns a JAX array of probabilities indexed by
+    the regime_id. This wrapper converts the array to dict format for internal
+    processing.
+
+    Args:
+        fn: The user's next_regime function (already wrapped with params).
+        regime_id: Immutable mapping from regime names to integer indices.
+
+    Returns:
+        A wrapped function that returns MappingProxyType[str, float|Array].
+
+    """
+    # Get regime names in index order from regime_id
+    regime_names_by_id: list[tuple[int, str]] = sorted(
+        [(idx, name) for name, idx in regime_id.items()],
+        key=lambda x: x[0],
+    )
+    regime_names = [name for _, name in regime_names_by_id]
+
+    # Preserve original annotations
+    annotations = get_annotations(fn)
+    annotations_with_params = annotations.copy()
+    return_annotation = annotations_with_params.pop("return", "dict[str, Any]")
+
+    @with_signature(args=annotations_with_params, return_annotation=return_annotation)
+    @functools.wraps(fn)
+    def wrapped(
+        *args: Array | int, params: dict[str, Any], **kwargs: Array | int
+    ) -> MappingProxyType[str, Any]:
+        result = fn(*args, params=params, **kwargs)
+        # Convert array to dict using regime_id ordering
+        return MappingProxyType(
+            {name: result[idx] for idx, name in enumerate(regime_names)}
+        )
+
+    return wrapped
+
+
 def _wrap_deterministic_regime_transition(
     fn: InternalUserFunction,
     regime_id: RegimeIdMapping,
@@ -264,7 +312,7 @@ def _wrap_deterministic_regime_transition(
 
     Args:
         fn: The user's deterministic next_regime function (returns int).
-        regime_id: Instance mapping regime names to integer indices.
+        regime_id: Immutable mapping from regime names to integer indices.
 
     Returns:
         A wrapped function that returns a one-hot probability array.
@@ -282,7 +330,7 @@ def _wrap_deterministic_regime_transition(
     def wrapped(
         *args: Array | int, params: dict[str, Any], **kwargs: Array | int
     ) -> Array:
-        regime_id = fn(*args, params=params, **kwargs)
-        return jax.nn.one_hot(regime_id, n_regimes)
+        regime_idx = fn(*args, params=params, **kwargs)
+        return jax.nn.one_hot(regime_idx, n_regimes)
 
     return wrapped

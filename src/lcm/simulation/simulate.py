@@ -53,7 +53,7 @@ def simulate(
             a state variable defined in at least one regime.
             Example: {"wealth": jnp.array([10.0, 50.0]), "health": jnp.array([0, 1])}
         internal_regimes: Dict of internal regime instances.
-        regime_id: Instance mapping regime names to integer IDs.
+        regime_id: Immutable mapping from regime names to integer indices.
         initial_regimes: List containing the names of the regimes the subjects start in.
         logger: Logger that logs to stdout.
         V_arr_dict: Dict of value function arrays of length n_periods.
@@ -108,9 +108,6 @@ def simulate(
             for regime_name, regime in internal_regimes.items()
             if period + 1 in regime.active_periods
         ]
-        active_regime_ids_next_period = jnp.array(
-            [regime_id[r] for r in active_regimes_next_period]
-        )
 
         for regime_name, internal_regime in active_regimes.items():
             result, new_states, new_subject_regime_ids, key = (
@@ -125,7 +122,7 @@ def simulate(
                     V_arr_dict=V_arr_dict,
                     params=params,
                     regime_id=regime_id,
-                    active_regime_ids_next_period=active_regime_ids_next_period,
+                    active_regimes_next_period=active_regimes_next_period,
                     key=key,
                 )
             )
@@ -153,8 +150,8 @@ def _simulate_regime_in_period(
     new_subject_regime_ids: Int1D,
     V_arr_dict: dict[int, dict[RegimeName, FloatND]],
     params: dict[RegimeName, ParamsDict],
-    regime_id: RegimeIdMapping,
-    active_regime_ids_next_period: Array,
+    regime_id: Mapping[RegimeName, int],
+    active_regimes_next_period: list[RegimeName],
     key: Array,
 ) -> tuple[PeriodRegimeSimulationData, Mapping[str, Array], Int1D, Array]:
     """Simulate one regime for one period.
@@ -172,9 +169,8 @@ def _simulate_regime_in_period(
         new_subject_regime_ids: Array to populate with next period's regime memberships.
         V_arr_dict: Value function arrays for all periods and regimes.
         params: Model parameters for all regimes.
-        regime_id: Instance mapping regime names to integer IDs.
-        active_regime_ids_next_period: Array of regime IDs that are active in the next
-          period.
+        regime_id: Mapping from regime names to integer IDs.
+        active_regimes_next_period: List of active regimes in the next period.
         key: JAX random key for stochastic operations.
 
     Returns:
@@ -212,7 +208,7 @@ def _simulate_regime_in_period(
         next_V_arr=next_V_arr,
         params=params,
     )
-    validate_value_function_array(V_arr, period=period)
+    validate_value_function_array(V_arr, age=age)
 
     optimal_actions = _lookup_values_from_indices(
         flat_indices=indices_optimal_actions,
@@ -258,15 +254,16 @@ def _simulate_regime_in_period(
         states = next_states
         new_subject_regime_ids = calculate_next_regime_membership(
             internal_regime=internal_regime,
-            state_action_space=state_action_space,
+            subjects_in_regime=subject_ids_in_regime,
             optimal_actions=optimal_actions,
             period=period,
             age=age,
             params=params[regime_name],
+            state_action_space=state_action_space,
             new_subject_regime_ids=new_subject_regime_ids,
-            active_regime_ids_next_period=active_regime_ids_next_period,
+            regime_id=regime_id,
+            active_regimes_next_period=active_regimes_next_period,
             key=next_regime_key,
-            subjects_in_regime=subject_ids_in_regime,
         )
 
     return simulation_result, states, new_subject_regime_ids, key

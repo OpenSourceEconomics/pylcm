@@ -1,6 +1,6 @@
 import dataclasses
 from collections.abc import Mapping
-from dataclasses import KW_ONLY, dataclass, field
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -38,9 +38,8 @@ class Regime:
 
     """
 
-    _: KW_ONLY
-    active: ActiveFunction
     utility: UserFunction
+    active: ActiveFunction = lambda _age: True
     constraints: dict[str, UserFunction] = field(default_factory=dict)
     transitions: dict[str, UserFunction] = field(default_factory=dict)
     functions: dict[str, UserFunction] = field(default_factory=dict)

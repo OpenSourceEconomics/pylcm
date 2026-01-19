@@ -38,7 +38,7 @@ def test_get_Q_and_F_function():
     regimes = {"working": working, "dead": dead}
     regime_id = MappingProxyType({name: idx for idx, name in enumerate(regimes.keys())})
     internal_regimes = process_regimes(
-        regimes,
+        regimes=regimes,
         ages=ages,
         regime_id=regime_id,
         enable_jit=True,

@@ -101,5 +101,7 @@ def test_gradients(map_coordinates):
         return ((x - shifted) ** 2)[border:-border].mean()
 
     # Gradient of f(step) is 2 * step
-    assert_allclose(jax.grad(f)(0.5), 1.0)
-    assert_allclose(jax.grad(f)(1.0), 2.0)
+    # Use looser tolerance for 32-bit precision
+    rtol = 1e-7 if X64_ENABLED else 1e-5
+    assert_allclose(jax.grad(f)(0.5), 1.0, rtol=rtol)
+    assert_allclose(jax.grad(f)(1.0), 2.0, rtol=rtol)

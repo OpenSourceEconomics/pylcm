@@ -12,7 +12,7 @@ See also the specifications in tests/test_models/deterministic.py.
 import jax.numpy as jnp
 
 import lcm
-from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime, categorical
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -175,7 +175,7 @@ def borrowing_constraint(
 working = Regime(
     actions={
         "labor_supply": DiscreteGrid(LaborSupply),
-        "consumption": LinspaceGrid(
+        "consumption": LinSpacedGrid(
             start=1,
             stop=100,
             n_points=200,
@@ -184,7 +184,7 @@ working = Regime(
     states={
         "health": DiscreteGrid(HealthStatus),
         "partner": DiscreteGrid(PartnerStatus),
-        "wealth": LinspaceGrid(
+        "wealth": LinSpacedGrid(
             start=1,
             stop=100,
             n_points=100,
@@ -209,11 +209,11 @@ working = Regime(
 
 
 retired = Regime(
-    actions={"consumption": LinspaceGrid(start=1, stop=100, n_points=200)},
+    actions={"consumption": LinSpacedGrid(start=1, stop=100, n_points=200)},
     states={
         "health": DiscreteGrid(HealthStatus),
         "partner": DiscreteGrid(PartnerStatus),
-        "wealth": LinspaceGrid(
+        "wealth": LinSpacedGrid(
             start=1,
             stop=100,
             n_points=100,

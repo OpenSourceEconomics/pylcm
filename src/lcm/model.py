@@ -62,30 +62,31 @@ class Model:
         """Initialize the Model.
 
         Args:
-            regimes: Mapping from regime names to user-provided Regime instances.
+            regimes: Dict mapping regime names to Regime instances.
             ages: Age grid for the model.
             description: Description of the model.
             enable_jit: Whether to jit the functions of the internal regime.
 
         """
-        self.ages = ages
-        self.n_periods = ages.n_periods
-        # Create regime_id mapping from dict keys (enumerated in insertion order)
+        # Create regime_id mapping from dict keys
         self.regime_id = MappingProxyType(
             {name: idx for idx, name in enumerate(regimes.keys())}
         )
+        self.regimes = MappingProxyType(dict(regimes))
+
+        self.ages = ages
+        self.n_periods = ages.n_periods
         self.description = description
         self.enable_jit = enable_jit
-        self.regimes = MappingProxyType(dict(regimes))
         self.internal_regimes = {}
 
         _validate_model_inputs(
             n_periods=self.n_periods,
-            regimes=self.regimes,
+            regimes=regimes,
         )
 
         self.internal_regimes = process_regimes(
-            regimes=self.regimes,
+            regimes=regimes,
             ages=self.ages,
             regime_id=self.regime_id,
             enable_jit=enable_jit,
@@ -216,26 +217,26 @@ def _validate_model_inputs(
             "At least one non-terminal and one terminal regime must be provided."
         )
 
-    # Validate regime names don't contain the separator
+    # Validate regime names don't contain separator
     invalid_names = [name for name in regimes if REGIME_SEPARATOR in name]
     if invalid_names:
         error_messages.append(
-            f"Regime names cannot contain the reserved separator "
+            f"Regime names cannot contain the separator character "
             f"'{REGIME_SEPARATOR}'. The following names are invalid: {invalid_names}."
         )
 
     # Assume all items in regimes are lcm.Regime instances beyond this point
-    terminal_regimes = [(name, r) for name, r in regimes.items() if r.terminal]
+    terminal_regimes = [name for name, r in regimes.items() if r.terminal]
     if len(terminal_regimes) < 1:
         error_messages.append("lcm.Model must have at least one terminal regime.")
 
-    non_terminal_regimes = [(name, r) for name, r in regimes.items() if not r.terminal]
+    non_terminal_regimes = {name: r for name, r in regimes.items() if not r.terminal}
     if len(non_terminal_regimes) < 1:
         error_messages.append("lcm.Model must have at least one non-terminal regime.")
     else:
         non_terminal_regimes_without_next_regime = [
             name
-            for name, r in non_terminal_regimes
+            for name, r in non_terminal_regimes.items()
             if "next_regime" not in r.transitions
         ]
         if non_terminal_regimes_without_next_regime:
@@ -258,7 +259,7 @@ def _validate_transition_completeness(regimes: Mapping[str, Regime]) -> list[str
     regimes, since they can potentially transition to any other regime.
 
     Args:
-        regimes: Mapping from regime names to Regime instances.
+        regimes: Mapping of regime names to regimes to validate.
 
     Returns:
         A list of error messages. Empty list if validation passes.

@@ -3,7 +3,9 @@ import pytest
 
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.simulation.util import _validate_normalized_regime_transition_probs
-from lcm.utils import normalize_regime_transition_probs
+from lcm.utils import (
+    normalize_regime_transition_probs,
+)
 
 
 def test_normalize_with_1d_array():
@@ -45,13 +47,11 @@ def test_normalize_with_2d_array():
 
 def test_validate_normalized_probs_passes_for_valid_probs():
     """Test that validation passes for valid normalized probabilities."""
-    # Shape is [n_regimes, n_subjects], here [2, 2]  # noqa: ERA001
-    normalized_probs = jnp.array(
-        [
-            [0.7, 0.6],  # working
-            [0.3, 0.4],  # retired
-        ]
-    )
+    # Dict format with shape [n_subjects] for each regime
+    normalized_probs = {
+        "working": jnp.array([0.7, 0.6]),
+        "retired": jnp.array([0.3, 0.4]),
+    }
     # Should not raise
     _validate_normalized_regime_transition_probs(
         normalized_probs, regime_name="working", period=0
@@ -66,12 +66,10 @@ def test_validate_normalized_probs_raises_for_nan_values():
     error is triggered.
     """
     # Simulate what happens when normalization divides by zero
-    normalized_probs = jnp.array(
-        [
-            [jnp.nan, 0.5],  # working
-            [jnp.nan, 0.5],  # retired
-        ]
-    )
+    normalized_probs = {
+        "working": jnp.array([jnp.nan, 0.5]),
+        "retired": jnp.array([jnp.nan, 0.5]),
+    }
     with pytest.raises(
         InvalidRegimeTransitionProbabilitiesError,
         match="do not sum to 1 after normalization",
@@ -86,12 +84,10 @@ def test_validate_normalized_probs_raises_for_inf_values():
 
     Since Inf values can't sum to 1.0, the "do not sum to 1" error is triggered.
     """
-    normalized_probs = jnp.array(
-        [
-            [jnp.inf, 0.5],  # working
-            [0.0, 0.5],  # retired
-        ]
-    )
+    normalized_probs = {
+        "working": jnp.array([jnp.inf, 0.5]),
+        "retired": jnp.array([0.0, 0.5]),
+    }
     with pytest.raises(
         InvalidRegimeTransitionProbabilitiesError,
         match="do not sum to 1 after normalization",
@@ -103,12 +99,10 @@ def test_validate_normalized_probs_raises_for_inf_values():
 
 def test_validate_normalized_probs_raises_for_probs_not_summing_to_one():
     """Test that validation raises error when probabilities don't sum to 1."""
-    normalized_probs = jnp.array(
-        [
-            [0.5, 0.6],  # working
-            [0.3, 0.4],  # retired - Sums to 0.8 and 1.0
-        ]
-    )
+    normalized_probs = {
+        "working": jnp.array([0.5, 0.6]),
+        "retired": jnp.array([0.3, 0.4]),  # Sums to 0.8 and 1.0
+    }
     with pytest.raises(
         InvalidRegimeTransitionProbabilitiesError,
         match="do not sum to 1 after normalization",

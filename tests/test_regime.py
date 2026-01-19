@@ -2,7 +2,7 @@
 
 import pytest
 
-from lcm import LinspaceGrid, Model, Regime
+from lcm import LinSpacedGrid, Model, Regime
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.utils import REGIME_SEPARATOR
@@ -16,8 +16,8 @@ def next_wealth(wealth, consumption):
     return wealth - consumption
 
 
-WEALTH_GRID = LinspaceGrid(start=1, stop=10, n_points=5)
-CONSUMPTION_GRID = LinspaceGrid(start=1, stop=5, n_points=5)
+WEALTH_GRID = LinSpacedGrid(start=1, stop=10, n_points=5)
+CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=5, n_points=5)
 
 
 def test_regime_name_does_not_contain_separator():
@@ -89,7 +89,7 @@ def test_terminal_regime_with_actions():
     regime = Regime(
         utility=lambda wealth, bequest_share: wealth * bequest_share,
         states={"wealth": WEALTH_GRID},
-        actions={"bequest_share": LinspaceGrid(start=0, stop=1, n_points=11)},
+        actions={"bequest_share": LinSpacedGrid(start=0, stop=1, n_points=11)},
         terminal=True,
         active=lambda age: age >= 5,
     )

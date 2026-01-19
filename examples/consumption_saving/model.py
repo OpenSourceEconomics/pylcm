@@ -6,9 +6,13 @@ Note that the parameterization of the model does not make a whole lot of sense, 
 look too closely inside the functions as opposed to their interfaces.
 """
 
+import jax
+
+jax.config.update("jax_enable_x64", True)
+
 import jax.numpy as jnp
 
-from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime, categorical
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -128,24 +132,24 @@ working = Regime(
     constraints={"borrowing_constraint": borrowing_constraint},
     actions={
         "working": DiscreteGrid(WorkingStatus),
-        "consumption": LinspaceGrid(
+        "consumption": LinSpacedGrid(
             start=1,
             stop=100,
             n_points=100,
         ),
-        "exercise": LinspaceGrid(
+        "exercise": LinSpacedGrid(
             start=0,
             stop=1,
             n_points=200,
         ),
     },
     states={
-        "wealth": LinspaceGrid(
+        "wealth": LinSpacedGrid(
             start=1,
             stop=100,
             n_points=100,
         ),
-        "health": LinspaceGrid(
+        "health": LinSpacedGrid(
             start=0,
             stop=1,
             n_points=100,
@@ -164,12 +168,12 @@ retired = Regime(
     terminal=True,
     utility=utility_retired,
     states={
-        "wealth": LinspaceGrid(
+        "wealth": LinSpacedGrid(
             start=1,
             stop=100,
             n_points=100,
         ),
-        "health": LinspaceGrid(
+        "health": LinSpacedGrid(
             start=0,
             stop=1,
             n_points=100,
@@ -180,7 +184,10 @@ retired = Regime(
 
 
 model = Model(
-    regimes={"working": working, "retirement": retired},
+    regimes={
+        "working": working,
+        "retirement": retired,
+    },
     ages=AgeGrid(start=18, stop=RETIREMENT_AGE, step="Y"),
 )
 

@@ -57,7 +57,7 @@ def process_regimes(
     - Check that the regime specification is valid.
 
     Args:
-        regimes: Mapping from regime names to user-provided Regime instances.
+        regimes: Mapping of regime names to Regime instances.
         ages: The AgeGrid for the model.
         regime_id: Immutable mapping from regime names to integer indices.
         enable_jit: Whether to jit the functions of the internal regime.
@@ -123,14 +123,13 @@ def process_regimes(
         )
 
         Q_and_F_functions = build_Q_and_F_functions(
-            regime=regime,
             regime_name=name,
+            regime=regime,
             regimes_to_active_periods=regimes_to_active_periods,
             internal_functions=internal_functions,
             state_space_infos=state_space_infos,
             grids=grids,
             ages=ages,
-            regime_id=regime_id,
         )
         max_Q_over_a_functions = build_max_Q_over_a_functions(
             regime=regime, Q_and_F_functions=Q_and_F_functions, enable_jit=enable_jit
@@ -175,7 +174,7 @@ def process_regimes(
 
 def _get_internal_functions(
     regime: Regime,
-    regime_name: RegimeName,
+    regime_name: str,
     nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
     grids: dict[RegimeName, dict[str, Array]],
     params: ParamsDict,

@@ -19,10 +19,9 @@ from lcm.typing import (
     InternalUserFunction,
     ParamsDict,
     QAndFFunction,
-    RegimeIdMapping,
     RegimeName,
 )
-from lcm.utils import normalize_regime_transition_probs
+from lcm.utils import normalize_regime_transition_probs_dict
 
 
 def get_Q_and_F(
@@ -33,7 +32,6 @@ def get_Q_and_F(
     next_state_space_infos: dict[RegimeName, StateSpaceInfo],
     grids: dict[RegimeName, Any],
     internal_functions: InternalFunctions,
-    regime_id: RegimeIdMapping,
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
@@ -43,9 +41,8 @@ def get_Q_and_F(
         period: The current period.
         age: The age corresponding to the current period.
         next_state_space_infos: The state space information of the next period.
-        grids: Dict containing the state frids for all regimes.
+        grids: Dict containing the state grids for all regimes.
         internal_functions: Internal functions instance.
-        regime_id: Immutable mapping from regime names to integer IDs.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -64,14 +61,10 @@ def get_Q_and_F(
 
     target_regimes = list(internal_functions.transitions)
     active_target_regimes = [
-        regime_name
-        for regime_name in target_regimes
-        if period + 1 in regimes_to_active_periods[regime_name]
+        target_name
+        for target_name in target_regimes
+        if period + 1 in regimes_to_active_periods[target_name]
     ]
-    # Pre-compute active regime IDs as JAX array for normalization
-    active_regime_ids_next_period = jnp.array(
-        [regime_id[r] for r in active_target_regimes]
-    )
 
     for target_regime in active_target_regimes:
         # Transitions from the current regime to the target regime
@@ -139,7 +132,7 @@ def get_Q_and_F(
             A tuple containing the arrays with state-action values and feasibilities.
 
         """
-        regime_transition_prob = regime_transition_prob_func(
+        regime_transition_prob: dict[str, Array] = regime_transition_prob_func(  # ty: ignore[invalid-assignment]
             **states_and_actions, period=period, age=age, params=params[regime_name]
         )
         U_arr, F_arr = U_and_F(
@@ -149,13 +142,12 @@ def get_Q_and_F(
             params=params[regime_name],
         )
         Q_arr = U_arr
-        # Normalize probabilities over active regimes (array-based)
-        normalized_regime_transition_prob = normalize_regime_transition_probs(
-            regime_transition_prob, active_regime_ids_next_period
+        # Normalize probabilities over active regimes
+        normalized_regime_transition_prob = normalize_regime_transition_probs_dict(
+            regime_transition_prob, active_target_regimes
         )
 
         for target_regime_name in active_target_regimes:
-            target_regime_id = regime_id[target_regime_name]
             next_states = state_transitions[target_regime_name](
                 **states_and_actions,
                 period=period,
@@ -192,7 +184,7 @@ def get_Q_and_F(
             Q_arr = (
                 Q_arr
                 + params[regime_name]["discount_factor"]
-                * normalized_regime_transition_prob[target_regime_id]
+                * normalized_regime_transition_prob[target_regime_name]
                 * next_V_expected_arr
             )
 

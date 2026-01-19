@@ -77,3 +77,44 @@ def normalize_regime_transition_probs(
     masked_probs = jnp.where(active_mask, probs, 0.0)
     total = jnp.sum(masked_probs, axis=0, keepdims=True)
     return masked_probs / total
+
+
+def normalize_regime_transition_probs_dict(
+    probs: dict[str, Array],
+    active_regimes: list[RegimeName],
+) -> dict[str, Array]:
+    """Normalize regime transition probabilities over active regimes (dict version).
+
+    This is the dict-based version for simulation, where regime transition
+    probabilities are returned as a dict mapping regime names to probability arrays.
+
+    Args:
+        probs: Dict mapping regime names to probability arrays.
+        active_regimes: List of regime names that are active in the next period.
+
+    Returns:
+        Normalized probabilities dict with same structure as input. Inactive regimes
+        have probability 0, active regimes sum to 1.
+
+    """
+    active_set = set(active_regimes)
+
+    # Get probabilities for active regimes only
+    active_probs = {name: prob for name, prob in probs.items() if name in active_set}
+
+    if not active_probs:
+        return probs
+
+    # Stack active probabilities and compute total
+    stacked = jnp.stack(list(active_probs.values()), axis=0)
+    total = jnp.sum(stacked, axis=0, keepdims=True)
+
+    # Normalize active regimes
+    result = {}
+    for name, prob in probs.items():
+        if name in active_set:
+            result[name] = prob / total.squeeze(0)
+        else:
+            result[name] = jnp.zeros_like(prob)
+
+    return result

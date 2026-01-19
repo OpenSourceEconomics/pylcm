@@ -14,7 +14,7 @@ from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.random import generate_simulation_keys
 from lcm.state_action_space import create_state_action_space
 from lcm.typing import Bool1D, Int1D, ParamsDict, RegimeName
-from lcm.utils import flatten_regime_namespace, normalize_regime_transition_probs
+from lcm.utils import flatten_regime_namespace, normalize_regime_transition_probs_dict
 
 
 def create_regime_state_action_space(
@@ -124,8 +124,9 @@ def calculate_next_regime_membership(
     period: int,
     age: float,
     params: dict[RegimeName, ParamsDict],
+    regime_id: Mapping[RegimeName, int],
     new_subject_regime_ids: Int1D,
-    active_regime_ids_next_period: Array,
+    active_regimes_next_period: list[RegimeName],
     key: Array,
     subjects_in_regime: Bool1D,
 ) -> Int1D:
@@ -141,11 +142,12 @@ def calculate_next_regime_membership(
         period: Current period.
         age: Age corresponding to current period.
         params: Model parameters for the regime.
+        regime_id: Mapping from regime names to integer IDs.
         new_subject_regime_ids: Array to update with next regime assignments.
-        active_regime_ids_next_period: Array of regime IDs that are active in the next
-          period.
+        active_regimes_next_period: List of active regimes in the next period.
         key: JAX random key.
         subjects_in_regime: Boolean array indicating if subject is in regime.
+
 
     Returns:
         Updated array of regime IDs with next period assignments for subjects in this
@@ -155,9 +157,7 @@ def calculate_next_regime_membership(
     """
     # Compute regime transition probabilities
     # ---------------------------------------------------------------------------------
-    # The vmapped function returns shape [n_subjects, n_regimes], but we need
-    # [n_regimes, n_subjects] for normalize_regime_transition_probs.
-    regime_transition_probs = (
+    regime_transition_probs: dict[str, Array] = (  # ty: ignore[invalid-assignment]
         internal_regime.internal_functions.regime_transition_probs.simulate(  # ty: ignore[possibly-missing-attribute]
             **state_action_space.states,
             **optimal_actions,
@@ -165,9 +165,9 @@ def calculate_next_regime_membership(
             age=age,
             params=params,
         )
-    ).T
-    normalized_regime_transition_probs = normalize_regime_transition_probs(
-        regime_transition_probs, active_regime_ids_next_period
+    )
+    normalized_regime_transition_probs = normalize_regime_transition_probs_dict(
+        regime_transition_probs, active_regimes_next_period
     )
 
     _validate_normalized_regime_transition_probs(
@@ -184,9 +184,10 @@ def calculate_next_regime_membership(
         n_initial_states=subjects_in_regime.shape[0],
     )
 
-    next_regime_ids = draw_regime_from_probs(
-        probs=normalized_regime_transition_probs,
+    next_regime_ids = draw_key_from_dict(
+        d=normalized_regime_transition_probs,
         keys=regime_transition_key["key_regime_transition"],
+        regime_id=regime_id,
     )
 
     # Update global regime membership array
@@ -194,30 +195,40 @@ def calculate_next_regime_membership(
     return jnp.where(subjects_in_regime, next_regime_ids, new_subject_regime_ids)
 
 
-def draw_regime_from_probs(
-    probs: Array,
-    keys: Array,
+def draw_key_from_dict(
+    d: Mapping[str, Array], regime_id: Mapping[str, int], keys: Array
 ) -> Int1D:
-    """Draw random regime IDs from transition probability array.
+    """Draw a random key from a dictionary of arrays.
 
     Args:
-        probs: Array of transition probabilities with shape [n_regimes, n_subjects].
-            Each column represents a probability distribution over regimes for one
-            subject. Probabilities should sum to 1 along axis 0.
-        keys: JAX random keys with shape [n_subjects, 2].
+        d: Dictionary of arrays, all of the same length. The values in the arrays
+            represent a probability distribution over the keys. That is, for the
+            dictionary {'regime1': jnp.array([0.2, 0.5]),
+            'regime2': jnp.array([0.8, 0.5])}, 0.2 + 0.8 = 1.0 and 0.5 + 0.5 = 1.0.
+        regime_id: Mapping of regime names to regime ids.
+        keys: JAX random keys.
 
     Returns:
-        Array of regime IDs drawn according to the probability distributions.
+        A random key from the dictionary for each entry in the arrays.
 
     """
-    regime_ids = jnp.arange(probs.shape[0])
+    regime_names = list(d)
+    regime_transition_probs = jnp.array(list(d.values())).T
+    regime_ids = jnp.array([regime_id[name] for name in regime_names])
 
-    def random_id(key: Array, p: Array) -> Int1D:
-        return jax.random.choice(key, regime_ids, p=p)
+    def random_id(
+        key: Array,
+        p: Array,
+    ) -> Int1D:
+        return jax.random.choice(
+            key,
+            regime_ids,
+            p=p,
+        )
 
-    random_ids = vmap(random_id, in_axes=(0, 1))
+    random_ids = vmap(random_id, in_axes=(0, 0))
 
-    return random_ids(keys, probs)
+    return random_ids(keys, regime_transition_probs)
 
 
 def _update_states_for_subjects(
@@ -338,31 +349,19 @@ def convert_flat_to_nested_initial_states(
 
 
 def _validate_normalized_regime_transition_probs(
-    normalized_probs: Array,
+    normalized_probs: dict[str, Array],
     regime_name: str,
     period: int,
 ) -> None:
-    """Validate normalized regime transition probabilities.
-
-    Args:
-        normalized_probs: Array of transition probabilities with shape
-            [n_regimes, n_subjects]. Probabilities should sum to 1 along axis 0.
-        regime_name: Name of the source regime (for error messages).
-        period: Current period (for error messages).
-
-    Raises:
-        InvalidRegimeTransitionProbabilitiesError: If probabilities don't sum to 1
-            or contain non-finite values.
-
-    """
-    sum_probs = jnp.sum(normalized_probs, axis=0)
+    probs = jnp.array(list(normalized_probs.values()))
+    sum_probs = jnp.sum(probs, axis=0)
     if not jnp.allclose(sum_probs, 1.0):
         raise InvalidRegimeTransitionProbabilitiesError(
             f"Regime transition probabilities from '{regime_name}' in period {period} "
             "do not sum to 1 after normalization. This indicates an error in the "
             "'next_regime' function of the regime."
         )
-    if jnp.any(~jnp.isfinite(normalized_probs)):
+    if jnp.any(~jnp.isfinite(probs)):
         raise InvalidRegimeTransitionProbabilitiesError(
             f"Non-finite values in regime transition probabilities from "
             f"'{regime_name}' in period {period} after normalization. This usually "

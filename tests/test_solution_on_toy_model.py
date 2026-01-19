@@ -8,7 +8,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
 import lcm
-from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime, categorical
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -78,7 +78,7 @@ alive_deterministic = Regime(
         "working": DiscreteGrid(WorkingStatus),
     },
     states={
-        "wealth": LinspaceGrid(
+        "wealth": LinSpacedGrid(
             start=0,
             stop=2,
             n_points=1,
@@ -430,7 +430,7 @@ def test_deterministic_solve(discount_factor, n_wealth_points):
 
     # Compute analytical solution
     # ==================================================================================
-    wealth_grid_class: LinspaceGrid = new_states["wealth"]
+    wealth_grid_class: LinSpacedGrid = new_states["wealth"]
     wealth_grid = np.linspace(
         start=wealth_grid_class.start,
         stop=wealth_grid_class.stop,
@@ -536,7 +536,7 @@ def test_stochastic_solve(discount_factor, n_wealth_points, health_transition):
 
     # Compute analytical solution
     # ==================================================================================
-    wealth_grid_class: LinspaceGrid = new_states["wealth"]
+    wealth_grid_class: LinSpacedGrid = new_states["wealth"]
     _wealth_grid = np.linspace(
         start=wealth_grid_class.start,
         stop=wealth_grid_class.stop,

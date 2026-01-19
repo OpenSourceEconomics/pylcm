@@ -42,7 +42,7 @@ def simulate_inputs():
     regimes = {"working": updated_working, "dead": updated_dead}
     regime_id = MappingProxyType({name: idx for idx, name in enumerate(regimes.keys())})
     internal_regimes = process_regimes(
-        regimes,
+        regimes=regimes,
         ages=ages,
         regime_id=regime_id,
         enable_jit=True,
@@ -117,7 +117,8 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
         # Since wage function is removed, wage becomes a parameter for labor_income
         params["working"]["labor_income"] = {"wage": 1.5}
         model = Model(
-            regimes={"working": updated_working, "dead": updated_dead}, ages=ages
+            regimes={"working": updated_working, "dead": updated_dead},
+            ages=ages,
         )
         V_arr_dict = model.solve(params=params)
         return V_arr_dict, params, model

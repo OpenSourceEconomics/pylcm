@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 
-from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime, categorical
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -106,14 +106,14 @@ def borrowing_constraint(
 working = Regime(
     actions={
         "labor_supply": DiscreteGrid(LaborSupply),
-        "consumption": LinspaceGrid(
+        "consumption": LinSpacedGrid(
             start=1,
             stop=400,
             n_points=500,
         ),
     },
     states={
-        "wealth": LinspaceGrid(
+        "wealth": LinSpacedGrid(
             start=1,
             stop=400,
             n_points=100,
@@ -135,9 +135,9 @@ working = Regime(
 )
 
 retired = Regime(
-    actions={"consumption": LinspaceGrid(start=1, stop=400, n_points=500)},
+    actions={"consumption": LinSpacedGrid(start=1, stop=400, n_points=500)},
     states={
-        "wealth": LinspaceGrid(
+        "wealth": LinSpacedGrid(
             start=1,
             stop=400,
             n_points=100,

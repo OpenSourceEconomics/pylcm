@@ -1,12 +1,10 @@
-from dataclasses import dataclass
-
 import jax.numpy as jnp
 import pytest
 
 from lcm import Model, Regime
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
-from lcm.grids import LinspaceGrid
+from lcm.grids import LinSpacedGrid
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -24,11 +22,6 @@ def n_periods() -> int:
 
 @pytest.fixture
 def regimes_and_ages(n_periods: int) -> tuple[dict[str, Regime], AgeGrid]:
-    @dataclass
-    class RegimeId:
-        non_terminal: int = 0
-        terminal: int = 1
-
     def utility(
         consumption: ContinuousAction,
         wealth: ContinuousState,  # noqa: ARG001
@@ -47,9 +40,8 @@ def regimes_and_ages(n_periods: int) -> tuple[dict[str, Regime], AgeGrid]:
 
     def next_regime(period: int, n_periods: int) -> ScalarInt:
         transition_into_terminal = period == (n_periods - 2)
-        return jnp.where(
-            transition_into_terminal, RegimeId.terminal, RegimeId.non_terminal
-        )
+        # 0 = non_terminal, 1 = terminal (based on dict order)
+        return jnp.where(transition_into_terminal, 1, 0)
 
     def borrowing_constraint(
         consumption: ContinuousAction, wealth: ContinuousState
@@ -58,19 +50,19 @@ def regimes_and_ages(n_periods: int) -> tuple[dict[str, Regime], AgeGrid]:
 
     non_terminal = Regime(
         actions={
-            "consumption": LinspaceGrid(
+            "consumption": LinSpacedGrid(
                 start=1,
                 stop=2,
                 n_points=3,
             ),
         },
         states={
-            "wealth": LinspaceGrid(
+            "wealth": LinSpacedGrid(
                 start=1,
                 stop=2,
                 n_points=3,
             ),
-            "health": LinspaceGrid(
+            "health": LinSpacedGrid(
                 start=0,
                 stop=1,
                 n_points=3,
@@ -119,7 +111,10 @@ def nan_value_model(
 
     invalid_regime = regimes["non_terminal"].replace(utility=invalid_utility)
     return Model(
-        regimes={"non_terminal": invalid_regime, "terminal": regimes["terminal"]},
+        regimes={
+            "non_terminal": invalid_regime,
+            "terminal": regimes["terminal"],
+        },
         ages=ages,
     )
 
@@ -142,9 +137,12 @@ def inf_value_model(
         )
         return jnp.log(consumption) + inf_term
 
-    inf_model = regimes["non_terminal"].replace(utility=invalid_utility)
+    inf_regime = regimes["non_terminal"].replace(utility=invalid_utility)
     return Model(
-        regimes={"non_terminal": inf_model, "terminal": regimes["terminal"]},
+        regimes={
+            "non_terminal": inf_regime,
+            "terminal": regimes["terminal"],
+        },
         ages=ages,
     )
 
