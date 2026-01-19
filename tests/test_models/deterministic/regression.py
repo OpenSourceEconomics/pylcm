@@ -4,9 +4,10 @@ from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 
-from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime, categorical
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 
 if TYPE_CHECKING:
+    from lcm.grids import ContinuousGrid
     from lcm.typing import (
         BoolND,
         ContinuousAction,
@@ -90,28 +91,21 @@ def borrowing_constraint(
 # Regime specifications
 # ======================================================================================
 
-# Note: active is set to a placeholder value here and will be replaced by get_model()
+START_AGE = 18
+DEFAULT_WEALTH_GRID = LinSpacedGrid(start=1, stop=400, n_points=100)
+DEFAULT_CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
+
 working = Regime(
     name="working",
     actions={
         "labor_supply": DiscreteGrid(LaborSupply),
-        "consumption": LinspaceGrid(
-            start=1,
-            stop=400,
-            n_points=500,
-        ),
+        "consumption": DEFAULT_CONSUMPTION_GRID,  # placeholder, will be replaced by get_model()  # noqa: E501
     },
     states={
-        "wealth": LinspaceGrid(
-            start=1,
-            stop=400,
-            n_points=100,
-        ),
+        "wealth": DEFAULT_WEALTH_GRID,  # placeholder, will be replaced by get_model()
     },
     utility=utility,
-    constraints={
-        "borrowing_constraint": borrowing_constraint,
-    },
+    constraints={"borrowing_constraint": borrowing_constraint},
     transitions={
         "next_wealth": next_wealth,
         "next_regime": next_regime,
@@ -133,18 +127,25 @@ dead = Regime(
 )
 
 
-START_AGE = 18
-
-
-def get_model(n_periods: int) -> Model:
-    stop_age = START_AGE + n_periods - 1
-    final_age_alive = stop_age - 1
+def get_model(
+    n_periods: int,
+    wealth_grid: ContinuousGrid = DEFAULT_WEALTH_GRID,
+    consumption_grid: ContinuousGrid = DEFAULT_CONSUMPTION_GRID,
+) -> Model:
+    final_age_alive = START_AGE + n_periods - 2
     return Model(
         [
-            working.replace(active=lambda age: age <= final_age_alive),
+            working.replace(
+                active=lambda age: age <= final_age_alive,
+                states={"wealth": wealth_grid},
+                actions={
+                    "labor_supply": DiscreteGrid(LaborSupply),
+                    "consumption": consumption_grid,
+                },
+            ),
             dead.replace(active=lambda age: age > final_age_alive),
         ],
-        ages=AgeGrid(start=START_AGE, stop=stop_age, step="Y"),
+        ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
         regime_id_cls=RegimeId,
     )
 

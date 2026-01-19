@@ -10,9 +10,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import jax
+
+jax.config.update("jax_enable_x64", True)
+
 import jax.numpy as jnp
 
-from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime, categorical
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -135,24 +139,24 @@ working = Regime(
     constraints={"borrowing_constraint": borrowing_constraint},
     actions={
         "working": DiscreteGrid(WorkingStatus),
-        "consumption": LinspaceGrid(
+        "consumption": LinSpacedGrid(
             start=1,
             stop=100,
             n_points=100,
         ),
-        "exercise": LinspaceGrid(
+        "exercise": LinSpacedGrid(
             start=0,
             stop=1,
             n_points=200,
         ),
     },
     states={
-        "wealth": LinspaceGrid(
+        "wealth": LinSpacedGrid(
             start=1,
             stop=100,
             n_points=100,
         ),
-        "health": LinspaceGrid(
+        "health": LinSpacedGrid(
             start=0,
             stop=1,
             n_points=100,
@@ -172,12 +176,12 @@ retired = Regime(
     terminal=True,
     utility=utility_retired,
     states={
-        "wealth": LinspaceGrid(
+        "wealth": LinSpacedGrid(
             start=1,
             stop=100,
             n_points=100,
         ),
-        "health": LinspaceGrid(
+        "health": LinSpacedGrid(
             start=0,
             stop=1,
             n_points=100,

@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 
 if TYPE_CHECKING:
-    from lcm.typing import Float1D, ScalarFloat
+    from lcm.typing import Float1D, ScalarFloat, ScalarInt
 
 
 def linspace(start: ScalarFloat, stop: ScalarFloat, n_points: int) -> Float1D:
@@ -48,7 +48,7 @@ def get_linspace_coordinate(
     value: ScalarFloat,
     start: ScalarFloat,
     stop: ScalarFloat,
-    n_points: int,
+    n_points: ScalarInt,
 ) -> ScalarFloat:
     """Map a value into the input needed for jax.scipy.ndimage.map_coordinates."""
     step_length = (stop - start) / (n_points - 1)
@@ -66,17 +66,21 @@ def logspace(start: ScalarFloat, stop: ScalarFloat, n_points: int) -> Float1D:
         In linear space, the sequence starts at base ** start (base to the power of
         start) and ends with base ** stop [...].
 
+    Note: Due to numerical precision in exp/log operations, we explicitly set the
+    first and last points to exactly start and stop.
+
     """
     start_linear = jnp.log(start)
     stop_linear = jnp.log(stop)
-    return jnp.logspace(start_linear, stop_linear, n_points, base=jnp.e)
+    grid = jnp.logspace(start_linear, stop_linear, n_points, base=jnp.e)
+    return grid.at[0].set(start).at[-1].set(stop)
 
 
 def get_logspace_coordinate(
     value: ScalarFloat,
     start: ScalarFloat,
     stop: ScalarFloat,
-    n_points: int,
+    n_points: ScalarInt,
 ) -> ScalarFloat:
     """Map a value into the input needed for jax.scipy.ndimage.map_coordinates."""
     # Transform start, stop, and value to linear scale
@@ -113,3 +117,45 @@ def get_logspace_coordinate(
     # gridpoints.
     decimal_part = distance_from_lower_gridpoint / logarithmic_step_size_at_coordinate
     return rank_lower_gridpoint + decimal_part
+
+
+def get_irreg_coordinate(
+    value: ScalarFloat,
+    points: Float1D,
+) -> ScalarFloat:
+    """Return the generalized coordinate of a value in an irregularly spaced grid.
+
+    Uses binary search (jnp.searchsorted) to find the position of the value among
+    the grid points, then linearly interpolates (or extrapolates) to get a
+    fractional coordinate.
+
+    Args:
+        value: The value to find the coordinate for.
+        points: The grid points as a JAX array in ascending order.
+
+    Returns:
+        The generalized coordinate of the value in the grid. For a value equal to
+        points[i], returns i. For values between grid points, returns a fractional
+        coordinate based on linear interpolation. For values outside the grid
+        range, extrapolates using the slope of the nearest segment.
+
+    """
+    n_points = len(points)
+
+    # Find the index of the first point greater than value
+    idx_upper = jnp.searchsorted(points, value, side="right")
+
+    # Clamp to valid range for interpolation
+    idx_upper = jnp.clip(idx_upper, 1, n_points - 1)
+    idx_lower = idx_upper - 1
+
+    # Get the lower and upper grid points
+    lower_point = points[idx_lower]
+    upper_point = points[idx_upper]
+
+    # Linear interpolation between grid points
+    step_size = upper_point - lower_point
+    distance_from_lower = value - lower_point
+    decimal_part = distance_from_lower / step_size
+
+    return idx_lower + decimal_part

@@ -11,13 +11,16 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 import jax
+
+jax.config.update("jax_enable_x64", False)
+
 import jax.numpy as jnp
 import numpy as np
 from jax import random
 from scipy.interpolate import interp1d
 
 import lcm
-from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime, categorical
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.dispatchers import _base_productmap
 
 if TYPE_CHECKING:
@@ -377,11 +380,11 @@ ALIVE_REGIME = Regime(
     },
     actions={
         "working": DiscreteGrid(WorkingStatus),
-        "saving": LinspaceGrid(start=0, stop=49, n_points=50),
+        "saving": LinSpacedGrid(start=0, stop=49, n_points=50),
         "effort": DiscreteGrid(Effort),
     },
     states={
-        "wealth": LinspaceGrid(start=0, stop=49, n_points=50),
+        "wealth": LinSpacedGrid(start=0, stop=49, n_points=50),
         "health": DiscreteGrid(HealthStatus),
         "productivity_shock": DiscreteGrid(ProductivityShock),
         "effort_t_1": DiscreteGrid(Effort),

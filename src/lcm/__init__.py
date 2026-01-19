@@ -7,7 +7,16 @@ except ImportError:
 
 from lcm import mark
 from lcm.ages import AgeGrid
-from lcm.grids import DiscreteGrid, LinspaceGrid, LogspaceGrid, categorical
+from lcm.grids import (
+    DiscreteGrid,
+    IrregSpacedGrid,
+    LinSpacedGrid,
+    LogSpacedGrid,
+    Piece,
+    PiecewiseLinSpacedGrid,
+    PiecewiseLogSpacedGrid,
+    categorical,
+)
 from lcm.model import Model
 from lcm.regime import Regime
 from lcm.simulation.result import SimulationResult
@@ -15,9 +24,13 @@ from lcm.simulation.result import SimulationResult
 __all__ = [
     "AgeGrid",
     "DiscreteGrid",
-    "LinspaceGrid",
-    "LogspaceGrid",
+    "IrregSpacedGrid",
+    "LinSpacedGrid",
+    "LogSpacedGrid",
     "Model",
+    "Piece",
+    "PiecewiseLinSpacedGrid",
+    "PiecewiseLogSpacedGrid",
     "Regime",
     "SimulationResult",
     "categorical",
