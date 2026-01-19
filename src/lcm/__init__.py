@@ -9,9 +9,12 @@ from lcm import mark
 from lcm.ages import AgeGrid
 from lcm.grids import (
     DiscreteGrid,
-    LinspaceGrid,
-    LogspaceGrid,
-    ShockGrid,
+    IrregSpacedGrid,
+    LinSpacedGrid,
+    LogSpacedGrid,
+    Piece,
+    PiecewiseLinSpacedGrid,
+    PiecewiseLogSpacedGrid,
     categorical,
 )
 from lcm.model import Model
@@ -21,9 +24,13 @@ from lcm.simulation.result import SimulationResult
 __all__ = [
     "AgeGrid",
     "DiscreteGrid",
-    "LinspaceGrid",
-    "LogspaceGrid",
+    "IrregSpacedGrid",
+    "LinSpacedGrid",
+    "LogSpacedGrid",
     "Model",
+    "Piece",
+    "PiecewiseLinSpacedGrid",
+    "PiecewiseLogSpacedGrid",
     "Regime",
     "ShockGrid",
     "SimulationResult",

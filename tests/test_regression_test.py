@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pandas as pd
 import pytest
 from jax import numpy as jnp
@@ -9,8 +10,12 @@ from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
 from lcm import (
-    LinspaceGrid,
-    LogspaceGrid,
+    IrregSpacedGrid,
+    LinSpacedGrid,
+    LogSpacedGrid,
+    Piece,
+    PiecewiseLinSpacedGrid,
+    PiecewiseLogSpacedGrid,
 )
 from lcm._config import TEST_DATA
 from tests.test_models.deterministic.regression import get_model, get_params
@@ -63,10 +68,34 @@ def _create_grid(
     grid_type: str, start: float, stop: float, n_points: int
 ) -> ContinuousGrid:
     """Create a grid of the specified type."""
-    if grid_type == "LinspaceGrid":
-        return LinspaceGrid(start=start, stop=stop, n_points=n_points)
-    if grid_type == "LogspaceGrid":
-        return LogspaceGrid(start=start, stop=stop, n_points=n_points)
+    if grid_type == "LinSpacedGrid":
+        return LinSpacedGrid(start=start, stop=stop, n_points=n_points)
+    if grid_type == "LogSpacedGrid":
+        return LogSpacedGrid(start=start, stop=stop, n_points=n_points)
+    if grid_type == "PiecewiseLinSpacedGrid":
+        # More points in lower part, cutoff at 100
+        n_lower = n_points // 3 * 2
+        return PiecewiseLinSpacedGrid(
+            pieces=(
+                Piece(interval=f"[{start}, 100)", n_points=n_lower),
+                Piece(interval=f"[100, {stop}]", n_points=n_points - n_lower + 1),
+            )
+        )
+    if grid_type == "PiecewiseLogSpacedGrid":
+        # Different cutoff at 50, more points in upper part
+        n_upper = n_points // 3 * 2
+        return PiecewiseLogSpacedGrid(
+            pieces=(
+                Piece(interval=f"[{start}, 50)", n_points=n_points - n_upper + 1),
+                Piece(interval=f"[50, {stop}]", n_points=n_upper),
+            )
+        )
+    if grid_type == "IrregSpacedGrid":
+        # Points between lin/log spacing - use average of both
+        lin_points = np.linspace(start, stop, n_points)
+        log_points = np.logspace(np.log10(start), np.log10(stop), n_points)
+        irreg_points = tuple((lin_points + log_points) / 2)
+        return IrregSpacedGrid(points=irreg_points)
     msg = f"Unknown grid type: {grid_type}"
     raise ValueError(msg)
 
@@ -74,8 +103,11 @@ def _create_grid(
 @pytest.mark.parametrize(
     "grid_type",
     [
-        "LinspaceGrid",
-        "LogspaceGrid",
+        "LinSpacedGrid",
+        "LogSpacedGrid",
+        "PiecewiseLinSpacedGrid",
+        "PiecewiseLogSpacedGrid",
+        "IrregSpacedGrid",
     ],
 )
 def test_model_with_different_grid_types(grid_type: str):

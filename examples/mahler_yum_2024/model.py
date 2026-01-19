@@ -20,7 +20,7 @@ from jax import random
 from scipy.interpolate import interp1d
 
 import lcm
-from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime, categorical
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.dispatchers import _base_productmap
 from lcm.grids import ShockGrid
 from lcm.shocks import rouwenhorst
@@ -374,11 +374,11 @@ ALIVE_REGIME = Regime(
     },
     actions={
         "working": DiscreteGrid(WorkingStatus),
-        "saving": LinspaceGrid(start=0, stop=49, n_points=50),
+        "saving": LinSpacedGrid(start=0, stop=49, n_points=50),
         "effort": DiscreteGrid(Effort),
     },
     states={
-        "wealth": LinspaceGrid(start=0, stop=49, n_points=50),
+        "wealth": LinSpacedGrid(start=0, stop=49, n_points=50),
         "health": DiscreteGrid(HealthStatus),
         "productivity_shock": ShockGrid(n_points=5, distribution_type="rouwenhorst"),
         "effort_t_1": DiscreteGrid(Effort),

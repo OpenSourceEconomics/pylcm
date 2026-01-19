@@ -9,7 +9,7 @@ import pytest
 from lcm import Model, Regime
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
-from lcm.grids import LinspaceGrid
+from lcm.grids import LinSpacedGrid
 
 if TYPE_CHECKING:
     from lcm.typing import (
@@ -64,19 +64,19 @@ def regimes_and_id_cls(n_periods: int) -> tuple[dict[str, Regime], type, AgeGrid
     non_terminal = Regime(
         name="non_terminal",
         actions={
-            "consumption": LinspaceGrid(
+            "consumption": LinSpacedGrid(
                 start=1,
                 stop=2,
                 n_points=3,
             ),
         },
         states={
-            "wealth": LinspaceGrid(
+            "wealth": LinSpacedGrid(
                 start=1,
                 stop=2,
                 n_points=3,
             ),
-            "health": LinspaceGrid(
+            "health": LinSpacedGrid(
                 start=0,
                 stop=1,
                 n_points=3,

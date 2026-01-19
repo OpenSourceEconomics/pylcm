@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import pytest
 from dags.exceptions import InvalidFunctionArgumentsError
 
-from lcm import LinspaceGrid
+from lcm import LinSpacedGrid
 from lcm.dispatchers import productmap
 from lcm.function_representation import (
     _fail_if_interpolation_axes_are_not_last,
@@ -33,11 +33,11 @@ def binary_discrete_grid():
 
 @pytest.fixture
 def dummy_continuous_grid():
-    return LinspaceGrid(start=0, stop=1, n_points=2)
+    return LinSpacedGrid(start=0, stop=1, n_points=2)
 
 
 def test_function_evaluator_with_one_continuous_variable():
-    wealth_grid = LinspaceGrid(start=-3, stop=3, n_points=7)
+    wealth_grid = LinSpacedGrid(start=-3, stop=3, n_points=7)
 
     state_space_info = StateSpaceInfo(
         states_names=("wealth",),
@@ -113,8 +113,8 @@ def test_function_evaluator(binary_discrete_grid):
 
     # create info on continuous grids
     continuous_vars: dict[str, ContinuousGrid] = {
-        "wealth": LinspaceGrid(start=100, stop=1100, n_points=6),
-        "human_capital": LinspaceGrid(start=-3, stop=3, n_points=7),
+        "wealth": LinSpacedGrid(start=100, stop=1100, n_points=6),
+        "human_capital": LinSpacedGrid(start=-3, stop=3, n_points=7),
     }
 
     # create info on axis of value function array
@@ -183,7 +183,7 @@ def test_get_lookup_function():
 def test_get_coordinate_finder():
     find_coordinate = _get_coordinate_finder(
         in_name="wealth",
-        grid=LinspaceGrid(start=0, stop=10, n_points=21),
+        grid=LinSpacedGrid(start=0, stop=10, n_points=21),
     )
     find_coordinate = partial(find_coordinate, params={})
     calculated = find_coordinate(wealth=5.75)
@@ -218,7 +218,7 @@ def test_get_interpolator():
 
 @pytest.mark.illustrative
 def test_get_function_evaluator_illustrative():
-    a_grid = LinspaceGrid(start=0, stop=1, n_points=3)
+    a_grid = LinSpacedGrid(start=0, stop=1, n_points=3)
 
     state_space_info = StateSpaceInfo(
         states_names=("a",),
@@ -259,7 +259,7 @@ def test_get_lookup_function_illustrative():
 def test_get_coordinate_finder_illustrative():
     find_coordinate = _get_coordinate_finder(
         in_name="a",
-        grid=LinspaceGrid(start=0, stop=1, n_points=3),
+        grid=LinSpacedGrid(start=0, stop=1, n_points=3),
     )
     find_coordinate = partial(find_coordinate, params={})
     assert find_coordinate(a=0) == 0
@@ -336,7 +336,7 @@ def test_fail_if_interpolation_axes_are_not_last_illustrative(dummy_continuous_g
 
 
 def test_function_evaluator_performs_linear_extrapolation():
-    wealth_grid = LinspaceGrid(start=0, stop=3, n_points=7)
+    wealth_grid = LinSpacedGrid(start=0, stop=3, n_points=7)
 
     state_space_info = StateSpaceInfo(
         states_names=("wealth",),

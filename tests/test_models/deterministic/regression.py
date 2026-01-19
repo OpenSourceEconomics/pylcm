@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 import jax.numpy as jnp
 
-from lcm import AgeGrid, DiscreteGrid, LinspaceGrid, Model, Regime, categorical
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 
 if TYPE_CHECKING:
     from lcm.grids import ContinuousGrid
@@ -92,8 +92,8 @@ def borrowing_constraint(
 # ======================================================================================
 
 START_AGE = 18
-DEFAULT_WEALTH_GRID = LinspaceGrid(start=1, stop=400, n_points=100)
-DEFAULT_CONSUMPTION_GRID = LinspaceGrid(start=1, stop=400, n_points=500)
+DEFAULT_WEALTH_GRID = LinSpacedGrid(start=1, stop=400, n_points=100)
+DEFAULT_CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 
 working = Regime(
     name="working",
