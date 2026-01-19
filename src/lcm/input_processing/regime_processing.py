@@ -26,6 +26,7 @@ from lcm.input_processing.util import (
 from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
 from lcm.regime import Regime
 from lcm.typing import (
+    CategoricalInstance,
     Int1D,
     InternalUserFunction,
     ParamsDict,
@@ -42,7 +43,7 @@ from lcm.utils import (
 def process_regimes(
     regimes: list[Regime],
     ages: AgeGrid,
-    regime_id: object,
+    regime_id: CategoricalInstance,
     *,
     enable_jit: bool,
 ) -> dict[str, InternalRegime]:
@@ -174,7 +175,7 @@ def _get_internal_functions(
     nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
     grids: dict[RegimeName, dict[str, Array]],
     params: ParamsDict,
-    regime_id: object,
+    regime_id: CategoricalInstance,
     *,
     enable_jit: bool,
 ) -> InternalFunctions:

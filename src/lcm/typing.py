@@ -3,6 +3,12 @@ from typing import Any, Protocol
 from jax import Array
 from jaxtyping import Bool, Float, Int, Scalar
 
+# A frozen dataclass instance created by @categorical, with integer attributes
+# mapping category names to their indices (e.g., regime_id.working = 0).
+# Typed as Any because specific fields are only known at runtime and the type
+# checker cannot verify that dataclasses satisfy the structural protocol.
+type CategoricalInstance = Any
+
 type ContinuousState = Float[Array, "..."]
 type ContinuousAction = Float[Array, "..."]
 type DiscreteState = Int[Array, "..."]

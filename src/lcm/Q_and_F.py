@@ -15,6 +15,7 @@ from lcm.next_state import get_next_state_function, get_next_stochastic_weights_
 from lcm.regime import Regime
 from lcm.typing import (
     BoolND,
+    CategoricalInstance,
     Float1D,
     FloatND,
     InternalUserFunction,
@@ -33,7 +34,7 @@ def get_Q_and_F(
     next_state_space_infos: dict[RegimeName, StateSpaceInfo],
     grids: dict[RegimeName, Any],
     internal_functions: InternalFunctions,
-    regime_id: object,
+    regime_id: CategoricalInstance,
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 

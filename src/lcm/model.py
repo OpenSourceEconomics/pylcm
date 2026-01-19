@@ -15,6 +15,7 @@ from lcm.simulation.result import SimulationResult
 from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
 from lcm.typing import (
+    CategoricalInstance,
     FloatND,
     ParamsDict,
     RegimeName,
@@ -44,7 +45,7 @@ class Model:
     ages: AgeGrid
     n_periods: int
     enable_jit: bool = True
-    regime_id: object
+    regime_id: CategoricalInstance
     regimes: dict[str, Regime]
     internal_regimes: dict[str, InternalRegime]
     params_template: ParamsDict

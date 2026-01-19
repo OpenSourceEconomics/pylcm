@@ -22,6 +22,7 @@ from lcm.simulation.util import (
     validate_flat_initial_states,
 )
 from lcm.typing import (
+    CategoricalInstance,
     FloatND,
     Int1D,
     IntND,
@@ -36,7 +37,7 @@ def simulate(
     initial_states: dict[str, Array],
     initial_regimes: list[RegimeName],
     internal_regimes: dict[RegimeName, InternalRegime],
-    regime_id: object,
+    regime_id: CategoricalInstance,
     logger: logging.Logger,
     V_arr_dict: dict[int, dict[RegimeName, FloatND]],
     ages: AgeGrid,
@@ -152,7 +153,7 @@ def _simulate_regime_in_period(
     new_subject_regime_ids: Int1D,
     V_arr_dict: dict[int, dict[RegimeName, FloatND]],
     params: dict[RegimeName, ParamsDict],
-    regime_id: object,
+    regime_id: CategoricalInstance,
     active_regime_ids_next_period: Array,
     key: Array,
 ) -> tuple[PeriodRegimeSimulationData, Mapping[str, Array], Int1D, Array]:

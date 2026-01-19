@@ -30,6 +30,7 @@ from lcm.state_action_space import (
 )
 from lcm.typing import (
     ArgmaxQOverAFunction,
+    CategoricalInstance,
     GridsDict,
     InternalUserFunction,
     MaxQOverAFunction,
@@ -67,7 +68,7 @@ def build_Q_and_F_functions(
     state_space_infos: dict[RegimeName, StateSpaceInfo],
     grids: GridsDict,
     ages: AgeGrid,
-    regime_id: object,
+    regime_id: CategoricalInstance,
 ) -> dict[int, QAndFFunction]:
     Q_and_F_functions = {}
     for period, age in enumerate(ages.values):
@@ -201,7 +202,7 @@ def build_regime_transition_probs_functions(
     internal_functions: dict[str, InternalUserFunction],
     regime_transition_probs: InternalUserFunction,
     grids: dict[str, Array],
-    regime_id: object,
+    regime_id: CategoricalInstance,
     *,
     is_stochastic: bool,
     enable_jit: bool,
@@ -253,7 +254,7 @@ def build_regime_transition_probs_functions(
 
 def _wrap_deterministic_regime_transition(
     fn: InternalUserFunction,
-    regime_id: object,
+    regime_id: CategoricalInstance,
 ) -> InternalUserFunction:
     """Wrap deterministic next_regime to return one-hot probability array.
 
@@ -269,7 +270,7 @@ def _wrap_deterministic_regime_transition(
         A wrapped function that returns a one-hot probability array.
 
     """
-    n_regimes = len(fields(regime_id))  # ty: ignore[invalid-argument-type]
+    n_regimes = len(fields(regime_id))
 
     # Preserve original annotations but update return type
     annotations = get_annotations(fn)
