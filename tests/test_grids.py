@@ -57,40 +57,6 @@ def test_get_fields_empty():
 # _validate_discrete_grid
 # --------------------------------------------------------------------------------------
 
-# ======================================================================================
-# Tests for DiscreteGrid and category class helpers
-# ======================================================================================
-
-
-# --------------------------------------------------------------------------------------
-# _get_field_names_and_values
-# --------------------------------------------------------------------------------------
-
-
-def test_get_fields_with_defaults():
-    category_class = make_dataclass("Category", [("a", int, 1), ("b", int, 2)])
-    assert _get_field_names_and_values(category_class) == {"a": 1, "b": 2}
-
-
-def test_get_fields_no_defaults():
-    category_class = make_dataclass("Category", [("a", int), ("b", int)])
-    assert _get_field_names_and_values(category_class) == {"a": None, "b": None}
-
-
-def test_get_fields_instance():
-    category_class = make_dataclass("Category", [("a", int), ("b", int)])
-    assert _get_field_names_and_values(category_class(a=1, b=2)) == {"a": 1, "b": 2}
-
-
-def test_get_fields_empty():
-    category_class = make_dataclass("Category", [])
-    assert _get_field_names_and_values(category_class) == {}
-
-
-# --------------------------------------------------------------------------------------
-# _validate_discrete_grid
-# --------------------------------------------------------------------------------------
-
 
 def test_validate_discrete_grid_empty():
     category_class = make_dataclass("Category", [])

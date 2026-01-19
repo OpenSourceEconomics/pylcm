@@ -230,9 +230,8 @@ class ShockGrid(ContinuousGrid):
         type: The shock type.
     """
 
-    start: int | float = 0
-    stop: int | float = 1
     distribution_type: Literal["uniform", "normal", "tauchen", "rouwenhorst"]
+    n_points: int
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
@@ -248,6 +247,7 @@ class ShockGrid(ContinuousGrid):
         )
 
 
+@dataclass(frozen=True, kw_only=True)
 class IrregSpacedGrid(ContinuousGrid):
     """A grid of continuous values at irregular (user-specified) points.
 

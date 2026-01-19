@@ -8,7 +8,7 @@ from jax import numpy as jnp
 
 import lcm
 from lcm.ages import AgeGrid
-from lcm.grids import DiscreteGrid, LinspaceGrid, ShockGrid
+from lcm.grids import DiscreteGrid, LinSpacedGrid, ShockGrid
 from lcm.model import Model
 from lcm.regime import Regime
 
@@ -115,7 +115,7 @@ def test_model_with_shock(distribution_type, params_for_shocks):
             "state2": DiscreteGrid(Discrete),
         },
         actions={
-            "action": LinspaceGrid(start=1, stop=5, n_points=2),
+            "action": LinSpacedGrid(start=1, stop=5, n_points=2),
         },
         utility=utility,
         transitions={
