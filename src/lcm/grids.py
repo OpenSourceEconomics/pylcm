@@ -15,7 +15,7 @@ from lcm.utils import find_duplicates
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from lcm.typing import Float1D, Int1D, ScalarFloat, ParamsDict
+    from lcm.typing import Float1D, Int1D, ParamsDict, ScalarFloat
 
 
 def categorical[T](cls: type[T]) -> type[T]:
@@ -246,6 +246,8 @@ class ShockGrid(ContinuousGrid):
             params=params,
             distribution_type=self.distribution_type,
         )
+
+
 class IrregSpacedGrid(ContinuousGrid):
     """A grid of continuous values at irregular (user-specified) points.
 

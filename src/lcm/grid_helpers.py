@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 
 if TYPE_CHECKING:
-    from lcm.typing import Float1D, ScalarFloat, ScalarInt, ParamsDict
+    from lcm.typing import Float1D, ParamsDict, ScalarFloat, ScalarInt
 
 
 def linspace(start: ScalarFloat, stop: ScalarFloat, n_points: int) -> Float1D:
@@ -148,6 +148,8 @@ def get_shock_coordinate(
     return get_linspace_coordinate(
         value=value, start=start, stop=stop, n_points=n_points
     )
+
+
 def get_irreg_coordinate(
     value: ScalarFloat,
     points: Float1D,
