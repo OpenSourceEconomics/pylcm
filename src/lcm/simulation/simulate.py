@@ -226,7 +226,7 @@ def _simulate_regime_in_period(
         next_V_arr=next_V_arr,
         params=params,
     )
-    validate_value_function_array(V_arr, period=period)
+    validate_value_function_array(V_arr, age=age)
 
     optimal_actions = _lookup_values_from_indices(
         flat_indices=indices_optimal_actions,

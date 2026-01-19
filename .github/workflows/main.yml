@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: prefix-dev/setup-pixi@v0.9.3
         with:
-          pixi-version: v0.62.2
+          pixi-version: v0.63.1
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: test-cpu
@@ -59,7 +59,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: prefix-dev/setup-pixi@v0.9.3
         with:
-          pixi-version: v0.62.2
+          pixi-version: v0.63.1
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: test-cpu
@@ -82,7 +82,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: prefix-dev/setup-pixi@v0.9.3
         with:
-          pixi-version: v0.62.2
+          pixi-version: v0.63.1
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
           environments: test-cuda12
@@ -90,6 +90,25 @@ jobs:
       - name: Run pytest on GPU
         shell: bash {0}
         run: pixi run -e test-cuda12 tests
+  run-tests-gpu-32bit:
+    name: Run tests on GPU (32-bit precision)
+    runs-on: ubuntu-latest-gpu
+    steps:
+      - name: Check CUDA version
+        run: |
+          nvidia-smi
+          nvcc --version || echo "nvcc not found"
+      - uses: actions/checkout@v6
+      - uses: prefix-dev/setup-pixi@v0.9.3
+        with:
+          pixi-version: v0.63.1
+          cache: true
+          cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
+          environments: test-cuda12
+          frozen: false
+      - name: Run pytest on GPU with 32-bit precision
+        shell: bash {0}
+        run: pixi run -e test-cuda12 tests-32bit
   # run-explanation-notebooks:
   #   name: Run explanation notebooks on Python 3.14
   #   runs-on: ubuntu-latest
@@ -97,7 +116,7 @@ jobs:
   #     - uses: actions/checkout@v6
   #     - uses: prefix-dev/setup-pixi@v0.9.3
   #       with:
-  #         pixi-version: v0.62.2
+  #         pixi-version: v0.63.1
   #         cache: true
   #         cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
   #         environments: test-cpu
