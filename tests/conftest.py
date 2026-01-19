@@ -1,21 +1,35 @@
 from __future__ import annotations
 
-import os
 from dataclasses import make_dataclass
 
 import pytest
-from jax import config
 
-# Check environment variable for x64 setting, default to True
-X64_ENABLED = os.environ.get("JAX_ENABLE_X64", "1").lower() in ("1", "true", "yes")
-
-# Precision settings for tests
-DECIMAL_PRECISION = 14 if X64_ENABLED else 5
-DECIMAL_PRECISION_RELAXED = 5  # For tests that need relaxed precision regardless
+# Module-level precision settings (updated by pytest_configure based on --precision)
+X64_ENABLED: bool = True
+DECIMAL_PRECISION: int = 14
 
 
-def pytest_sessionstart(session):  # noqa: ARG001
-    config.update("jax_enable_x64", val=X64_ENABLED)
+def pytest_addoption(parser):
+    """Register the --precision option for controlling JAX floating point precision."""
+    parser.addoption(
+        "--precision",
+        action="store",
+        default="64",
+        choices=["32", "64"],
+        help="Floating point precision for JAX (32 or 64 bit, default: 64)",
+    )
+
+
+def pytest_configure(config):
+    """Configure JAX precision based on the --precision flag."""
+    global X64_ENABLED, DECIMAL_PRECISION  # noqa: PLW0603
+
+    X64_ENABLED = config.getoption("--precision") == "64"
+    DECIMAL_PRECISION = 14 if X64_ENABLED else 5
+
+    from jax import config as jax_config  # noqa: PLC0415
+
+    jax_config.update("jax_enable_x64", val=X64_ENABLED)
 
 
 @pytest.fixture(scope="session")
