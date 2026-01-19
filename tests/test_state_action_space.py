@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import pandas as pd
 from numpy.testing import assert_array_equal
 
-from lcm.grids import DiscreteGrid, LinspaceGrid
+from lcm.grids import DiscreteGrid, LinSpacedGrid
 from lcm.interfaces import StateActionSpace, StateSpaceInfo
 from lcm.regime import Regime
 from lcm.state_action_space import (
@@ -110,10 +110,9 @@ def test_create_state_space_info():
         bad: int = 1
 
     regime = Regime(
-        name="test",
         utility=lambda wealth: wealth,
         states={
-            "wealth": LinspaceGrid(start=0, stop=100, n_points=5),
+            "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
             "health": DiscreteGrid(HealthStatus),
         },
         transitions={

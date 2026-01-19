@@ -1,12 +1,10 @@
-from dataclasses import dataclass
-
 import jax.numpy as jnp
 import pytest
 
 from lcm import Model, Regime
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
-from lcm.grids import LinspaceGrid
+from lcm.grids import LinSpacedGrid
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -23,12 +21,7 @@ def n_periods() -> int:
 
 
 @pytest.fixture
-def regimes_and_id_cls(n_periods: int) -> tuple[dict[str, Regime], type, AgeGrid]:
-    @dataclass
-    class RegimeId:
-        non_terminal: int = 0
-        terminal: int = 1
-
+def regimes_and_ages(n_periods: int) -> tuple[dict[str, Regime], AgeGrid]:
     def utility(
         consumption: ContinuousAction,
         wealth: ContinuousState,  # noqa: ARG001
@@ -47,9 +40,8 @@ def regimes_and_id_cls(n_periods: int) -> tuple[dict[str, Regime], type, AgeGrid
 
     def next_regime(period: int, n_periods: int) -> ScalarInt:
         transition_into_terminal = period == (n_periods - 2)
-        return jnp.where(
-            transition_into_terminal, RegimeId.terminal, RegimeId.non_terminal
-        )
+        # 0 = non_terminal, 1 = terminal (based on dict order)
+        return jnp.where(transition_into_terminal, 1, 0)
 
     def borrowing_constraint(
         consumption: ContinuousAction, wealth: ContinuousState
@@ -57,21 +49,20 @@ def regimes_and_id_cls(n_periods: int) -> tuple[dict[str, Regime], type, AgeGrid
         return consumption <= wealth
 
     non_terminal = Regime(
-        name="non_terminal",
         actions={
-            "consumption": LinspaceGrid(
+            "consumption": LinSpacedGrid(
                 start=1,
                 stop=2,
                 n_points=3,
             ),
         },
         states={
-            "wealth": LinspaceGrid(
+            "wealth": LinSpacedGrid(
                 start=1,
                 stop=2,
                 n_points=3,
             ),
-            "health": LinspaceGrid(
+            "health": LinSpacedGrid(
                 start=0,
                 stop=1,
                 n_points=3,
@@ -90,7 +81,6 @@ def regimes_and_id_cls(n_periods: int) -> tuple[dict[str, Regime], type, AgeGrid
     )
 
     terminal = Regime(
-        name="terminal",
         terminal=True,
         utility=lambda: 0.0,
         active=lambda age, n=n_periods: age >= n - 1,
@@ -98,14 +88,14 @@ def regimes_and_id_cls(n_periods: int) -> tuple[dict[str, Regime], type, AgeGrid
 
     ages = AgeGrid(start=0, stop=n_periods, step="Y")
 
-    return {"non_terminal": non_terminal, "terminal": terminal}, RegimeId, ages
+    return {"non_terminal": non_terminal, "terminal": terminal}, ages
 
 
 @pytest.fixture
 def nan_value_model(
-    regimes_and_id_cls: tuple[dict[str, Regime], type, AgeGrid],
+    regimes_and_ages: tuple[dict[str, Regime], AgeGrid],
 ) -> Model:
-    regimes, regime_id_cls, ages = regimes_and_id_cls
+    regimes, ages = regimes_and_ages
 
     def invalid_utility(
         consumption: ContinuousAction,
@@ -121,17 +111,19 @@ def nan_value_model(
 
     invalid_regime = regimes["non_terminal"].replace(utility=invalid_utility)
     return Model(
-        regimes=[invalid_regime, regimes["terminal"]],
+        regimes={
+            "non_terminal": invalid_regime,
+            "terminal": regimes["terminal"],
+        },
         ages=ages,
-        regime_id_cls=regime_id_cls,
     )
 
 
 @pytest.fixture
 def inf_value_model(
-    regimes_and_id_cls: tuple[dict[str, Regime], type, AgeGrid],
+    regimes_and_ages: tuple[dict[str, Regime], AgeGrid],
 ) -> Model:
-    regimes, regime_id_cls, ages = regimes_and_id_cls
+    regimes, ages = regimes_and_ages
 
     def invalid_utility(
         consumption: ContinuousAction,
@@ -145,11 +137,13 @@ def inf_value_model(
         )
         return jnp.log(consumption) + inf_term
 
-    inf_model = regimes["non_terminal"].replace(utility=invalid_utility)
+    inf_regime = regimes["non_terminal"].replace(utility=invalid_utility)
     return Model(
-        regimes=[inf_model, regimes["terminal"]],
+        regimes={
+            "non_terminal": inf_regime,
+            "terminal": regimes["terminal"],
+        },
         ages=ages,
-        regime_id_cls=regime_id_cls,
     )
 
 

@@ -1,3 +1,5 @@
+from types import MappingProxyType
+
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -5,7 +7,7 @@ import pytest
 from numpy.testing import assert_array_equal
 from pandas.testing import assert_frame_equal
 
-from lcm import DiscreteGrid, LinspaceGrid, grid_helpers
+from lcm import DiscreteGrid, LinSpacedGrid, grid_helpers
 from lcm.ages import AgeGrid
 from lcm.input_processing.regime_processing import (
     _convert_flat_to_nested_transitions,
@@ -15,7 +17,7 @@ from lcm.input_processing.regime_processing import (
     process_regimes,
 )
 from tests.regime_mock import RegimeMock
-from tests.test_models.deterministic.base import RegimeId, dead, working
+from tests.test_models.deterministic.base import dead, working
 
 
 def test_convert_flat_to_nested_transitions():
@@ -200,13 +202,15 @@ def test_get_grids(regime_mock):
 
 def test_process_regimes():
     ages = AgeGrid(start=0, stop=4, step="Y")
+    regimes = {"working": working, "dead": dead}
+    regime_id = MappingProxyType({name: idx for idx, name in enumerate(regimes.keys())})
     internal_regimes = process_regimes(
-        [working, dead],
+        regimes=regimes,
         ages=ages,
-        regime_id_cls=RegimeId,
+        regime_id=regime_id,
         enable_jit=True,
     )
-    internal_working_regime = internal_regimes[working.name]
+    internal_working_regime = internal_regimes["working"]
 
     # Variable Info
     assert (
@@ -220,7 +224,7 @@ def test_process_regimes():
     ).all()
 
     # Gridspecs
-    wealth_grid = LinspaceGrid(
+    wealth_grid = LinSpacedGrid(
         start=1,
         stop=400,
         n_points=working.states["wealth"].n_points,  # ty: ignore[unresolved-attribute]
@@ -228,7 +232,7 @@ def test_process_regimes():
 
     assert internal_working_regime.gridspecs["wealth"] == wealth_grid
 
-    consumption_grid = LinspaceGrid(
+    consumption_grid = LinSpacedGrid(
         start=1,
         stop=400,
         n_points=working.actions["consumption"].n_points,  # ty: ignore[unresolved-attribute]

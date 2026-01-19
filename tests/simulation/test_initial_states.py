@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import jax.numpy as jnp
 import pytest
 
-from lcm import DiscreteGrid, LinspaceGrid, Model, Regime
+from lcm import DiscreteGrid, LinSpacedGrid, Model, Regime
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidInitialStatesError
 from lcm.simulation.util import (
@@ -43,10 +43,9 @@ def model() -> Model:
     ages = AgeGrid(start=0, stop=n_periods, step="Y")
 
     alive = Regime(
-        name="active",
         utility=utility,
         states={
-            "wealth": LinspaceGrid(start=1, stop=100, n_points=10),
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
             "health": DiscreteGrid(HealthStatus),
         },
         transitions={
@@ -58,16 +57,14 @@ def model() -> Model:
     )
 
     dead = Regime(
-        name="terminal",
         terminal=True,
         utility=lambda: 0.0,
         active=lambda age: age >= n_periods - 1,
     )
 
     return Model(
-        [alive, dead],
+        regimes={"active": alive, "terminal": dead},
         ages=ages,
-        regime_id_cls=RegimeId,
     )
 
 

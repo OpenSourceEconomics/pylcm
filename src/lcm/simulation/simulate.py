@@ -19,7 +19,6 @@ from lcm.simulation.util import (
     calculate_next_states,
     convert_flat_to_nested_initial_states,
     create_regime_state_action_space,
-    get_regime_name_to_id_mapping,
     validate_flat_initial_states,
 )
 from lcm.typing import (
@@ -27,6 +26,7 @@ from lcm.typing import (
     Int1D,
     IntND,
     ParamsDict,
+    RegimeIdMapping,
     RegimeName,
 )
 from lcm.utils import flatten_regime_namespace
@@ -37,7 +37,7 @@ def simulate(
     initial_states: dict[str, Array],
     initial_regimes: list[RegimeName],
     internal_regimes: dict[RegimeName, InternalRegime],
-    regime_id_cls: type,
+    regime_id: RegimeIdMapping,
     logger: logging.Logger,
     V_arr_dict: dict[int, dict[RegimeName, FloatND]],
     ages: AgeGrid,
@@ -53,7 +53,7 @@ def simulate(
             a state variable defined in at least one regime.
             Example: {"wealth": jnp.array([10.0, 50.0]), "health": jnp.array([0, 1])}
         internal_regimes: Dict of internal regime instances.
-        regime_id_cls: Dataclass mapping regime names to integer indices.
+        regime_id: Immutable mapping from regime names to integer indices.
         initial_regimes: List containing the names of the regimes the subjects start in.
         logger: Logger that logs to stdout.
         V_arr_dict: Dict of value function arrays of length n_periods.
@@ -79,13 +79,12 @@ def simulate(
 
     # Preparations
     # ----------------------------------------------------------------------------------
-    regime_name_to_id = get_regime_name_to_id_mapping(regime_id_cls)
     key = jax.random.key(seed=seed)
 
     # The following variables are updated during the forward simulation
     states = flatten_regime_namespace(nested_initial_states)
     subject_regime_ids = jnp.asarray(
-        [regime_name_to_id[initial_regime] for initial_regime in initial_regimes]
+        [regime_id[initial_regime] for initial_regime in initial_regimes]
     )
 
     # Forward simulation
@@ -122,7 +121,7 @@ def simulate(
                     new_subject_regime_ids=new_subject_regime_ids,
                     V_arr_dict=V_arr_dict,
                     params=params,
-                    regime_name_to_id=regime_name_to_id,
+                    regime_id=regime_id,
                     active_regimes_next_period=active_regimes_next_period,
                     key=key,
                 )
@@ -151,7 +150,7 @@ def _simulate_regime_in_period(
     new_subject_regime_ids: Int1D,
     V_arr_dict: dict[int, dict[RegimeName, FloatND]],
     params: dict[RegimeName, ParamsDict],
-    regime_name_to_id: Mapping[RegimeName, int],
+    regime_id: Mapping[RegimeName, int],
     active_regimes_next_period: list[RegimeName],
     key: Array,
 ) -> tuple[PeriodRegimeSimulationData, Mapping[str, Array], Int1D, Array]:
@@ -170,7 +169,7 @@ def _simulate_regime_in_period(
         new_subject_regime_ids: Array to populate with next period's regime memberships.
         V_arr_dict: Value function arrays for all periods and regimes.
         params: Model parameters for all regimes.
-        regime_name_to_id: Mapping from regime names to integer IDs.
+        regime_id: Mapping from regime names to integer IDs.
         active_regimes_next_period: List of active regimes in the next period.
         key: JAX random key for stochastic operations.
 
@@ -184,9 +183,7 @@ def _simulate_regime_in_period(
     """
     # Select subjects in the current regime
     # ---------------------------------------------------------------------------------
-    subject_ids_in_regime = jnp.asarray(
-        regime_name_to_id[regime_name] == subject_regime_ids
-    )
+    subject_ids_in_regime = jnp.asarray(regime_id[regime_name] == subject_regime_ids)
 
     state_action_space = create_regime_state_action_space(
         internal_regime=internal_regime,
@@ -211,7 +208,7 @@ def _simulate_regime_in_period(
         next_V_arr=next_V_arr,
         params=params,
     )
-    validate_value_function_array(V_arr, period=period)
+    validate_value_function_array(V_arr, age=age)
 
     optimal_actions = _lookup_values_from_indices(
         flat_indices=indices_optimal_actions,
@@ -264,7 +261,7 @@ def _simulate_regime_in_period(
             params=params[regime_name],
             state_action_space=state_action_space,
             new_subject_regime_ids=new_subject_regime_ids,
-            regime_name_to_id=regime_name_to_id,
+            regime_id=regime_id,
             active_regimes_next_period=active_regimes_next_period,
             key=next_regime_key,
         )

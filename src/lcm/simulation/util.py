@@ -1,5 +1,4 @@
 from collections.abc import Mapping
-from dataclasses import fields
 from types import MappingProxyType
 
 import jax
@@ -16,23 +15,6 @@ from lcm.random import generate_simulation_keys
 from lcm.state_action_space import create_state_action_space
 from lcm.typing import Bool1D, Float1D, Int1D, ParamsDict, RegimeName
 from lcm.utils import flatten_regime_namespace, normalize_regime_transition_probs
-
-
-def get_regime_name_to_id_mapping(
-    regime_id_cls: type,
-) -> MappingProxyType[RegimeName, int]:
-    """Get mapping from regime names to integer IDs from regime_id_cls.
-
-    Args:
-        regime_id_cls: Dataclass mapping regime names to integer indices.
-
-    Returns:
-        Read-only mapping from regime names to their integer IDs.
-
-    """
-    return MappingProxyType(
-        {field.name: int(field.default) for field in fields(regime_id_cls)}  # ty: ignore[invalid-argument-type]
-    )
 
 
 def create_regime_state_action_space(
@@ -142,7 +124,7 @@ def calculate_next_regime_membership(
     period: int,
     age: float,
     params: dict[RegimeName, ParamsDict],
-    regime_name_to_id: Mapping[RegimeName, int],
+    regime_id: Mapping[RegimeName, int],
     new_subject_regime_ids: Int1D,
     active_regimes_next_period: list[RegimeName],
     key: Array,
@@ -160,7 +142,7 @@ def calculate_next_regime_membership(
         period: Current period.
         age: Age corresponding to current period.
         params: Model parameters for the regime.
-        regime_name_to_id: Mapping from regime names to integer IDs.
+        regime_id: Mapping from regime names to integer IDs.
         new_subject_regime_ids: Array to update with next regime assignments.
         active_regimes_next_period: List of active regimes in the next period.
         key: JAX random key.
@@ -205,7 +187,7 @@ def calculate_next_regime_membership(
     next_regime_ids = draw_key_from_dict(
         d=normalized_regime_transition_probs,
         keys=regime_transition_key["key_regime_transition"],
-        regime_name_to_id=regime_name_to_id,
+        regime_id=regime_id,
     )
 
     # Update global regime membership array
@@ -214,7 +196,7 @@ def calculate_next_regime_membership(
 
 
 def draw_key_from_dict(
-    d: Mapping[str, Array], regime_name_to_id: Mapping[str, int], keys: Array
+    d: Mapping[str, Array], regime_id: Mapping[str, int], keys: Array
 ) -> Int1D:
     """Draw a random key from a dictionary of arrays.
 
@@ -223,7 +205,7 @@ def draw_key_from_dict(
             represent a probability distribution over the keys. That is, for the
             dictionary {'regime1': jnp.array([0.2, 0.5]),
             'regime2': jnp.array([0.8, 0.5])}, 0.2 + 0.8 = 1.0 and 0.5 + 0.5 = 1.0.
-        regime_name_to_id: Mapping of regime names to regime ids.
+        regime_id: Mapping of regime names to regime ids.
         keys: JAX random keys.
 
     Returns:
@@ -232,7 +214,7 @@ def draw_key_from_dict(
     """
     regime_names = list(d)
     regime_transition_probs = jnp.array(list(d.values())).T
-    regime_ids = jnp.array([regime_name_to_id[name] for name in regime_names])
+    regime_ids = jnp.array([regime_id[name] for name in regime_names])
 
     def random_id(
         key: Array,

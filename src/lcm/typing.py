@@ -25,6 +25,7 @@ type ScalarFloat = float | Float[Scalar, ""]  # noqa: F722
 type Period = int | Int1D
 type Age = float
 type RegimeName = str
+type RegimeIdMapping = MappingProxyType[RegimeName, int]
 
 type _RegimeGridsDict = dict[str, Array]
 type GridsDict = dict[RegimeName, _RegimeGridsDict]

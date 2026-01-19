@@ -1,3 +1,5 @@
+from types import MappingProxyType
+
 import jax
 import jax.numpy as jnp
 import pytest
@@ -23,7 +25,6 @@ from lcm.typing import (
 )
 from tests.test_models.deterministic.regression import (
     LaborSupply,
-    RegimeId,
     dead,
     get_params,
     utility,
@@ -34,10 +35,12 @@ from tests.test_models.deterministic.regression import (
 @pytest.mark.illustrative
 def test_get_Q_and_F_function():
     ages = AgeGrid(start=0, stop=4, step="Y")
+    regimes = {"working": working, "dead": dead}
+    regime_id = MappingProxyType({name: idx for idx, name in enumerate(regimes.keys())})
     internal_regimes = process_regimes(
-        [working, dead],
+        regimes=regimes,
         ages=ages,
-        regime_id_cls=RegimeId,
+        regime_id=regime_id,
         enable_jit=True,
     )
 
@@ -45,8 +48,8 @@ def test_get_Q_and_F_function():
 
     # Test terminal period Q_and_F where Q = U (no continuation value)
     Q_and_F = get_Q_and_F_terminal(
-        regime=working,
-        internal_functions=internal_regimes[working.name].internal_functions,
+        regime_name="working",
+        internal_functions=internal_regimes["working"].internal_functions,
         period=3,
         age=ages.period_to_age(3),
     )
