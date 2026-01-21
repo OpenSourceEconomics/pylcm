@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, cast
 
 import jax.numpy as jnp
@@ -293,7 +293,7 @@ def _get_arg_names_of_Q_and_F(
 
 def _get_joint_weights_function(
     regime_name: RegimeName,
-    transitions: dict[RegimeName, InternalUserFunction],
+    transitions: Mapping[str, InternalUserFunction],
 ) -> Callable[..., FloatND]:
     """Get function that calculates the joint weights.
 

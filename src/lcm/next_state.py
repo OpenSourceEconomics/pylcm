@@ -1,6 +1,6 @@
 """Generate function that compute the next states for solution and simulation."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 import jax
 from dags import concatenate_functions
@@ -24,8 +24,8 @@ from lcm.utils import flatten_regime_namespace
 def get_next_state_function(
     *,
     grids: GridsDict,
-    transitions: dict[str, InternalUserFunction],
-    functions: dict[str, InternalUserFunction],
+    transitions: Mapping[str, InternalUserFunction],
+    functions: Mapping[str, InternalUserFunction],
     target: Target,
 ) -> NextStateSimulationFunction:
     """Get function that computes the next states during the solution.
@@ -44,14 +44,14 @@ def get_next_state_function(
 
     """
     if target == Target.SOLVE:
-        functions_to_concatenate = transitions | functions
+        functions_to_concatenate = dict(transitions) | dict(functions)
     elif target == Target.SIMULATE:
         # For the simulation target, we need to extend the functions dictionary with
         # stochastic next states functions and their weights.
         extended_transitions = _extend_transitions_for_simulation(
             grids=grids, transitions=transitions
         )
-        functions_to_concatenate = extended_transitions | functions
+        functions_to_concatenate = extended_transitions | dict(functions)
     else:
         raise ValueError(f"Invalid target: {target}")
 
@@ -66,8 +66,8 @@ def get_next_state_function(
 
 def get_next_stochastic_weights_function(
     regime_name: RegimeName,
-    functions: dict[str, InternalUserFunction],
-    transitions: dict[str, InternalUserFunction],
+    functions: Mapping[str, InternalUserFunction],
+    transitions: Mapping[str, InternalUserFunction],
 ) -> Callable[..., dict[str, Array]]:
     """Get function that computes the weights for the next stochastic states.
 
@@ -97,7 +97,7 @@ def get_next_stochastic_weights_function(
 
 def _extend_transitions_for_simulation(
     grids: GridsDict,
-    transitions: dict[str, InternalUserFunction],
+    transitions: Mapping[str, InternalUserFunction],
 ) -> dict[str, Callable[..., Array]]:
     """Extend the functions dictionary for the simulation target.
 
@@ -131,7 +131,7 @@ def _extend_transitions_for_simulation(
 
     # Overwrite regime transitions with generated stochastic next states functions
     # ----------------------------------------------------------------------------------
-    return transitions | stochastic_next
+    return dict(transitions) | stochastic_next
 
 
 def _create_stochastic_next_func(

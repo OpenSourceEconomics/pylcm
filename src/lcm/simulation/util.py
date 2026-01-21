@@ -233,7 +233,7 @@ def draw_key_from_dict(
 
 def _update_states_for_subjects(
     all_states: MappingProxyType[str, Array],
-    computed_next_states: dict[str, Array],
+    computed_next_states: Mapping[str, Array],
     subject_indices: Bool1D,
 ) -> MappingProxyType[str, Array]:
     """Update the global states dictionary with next states for specific subjects.

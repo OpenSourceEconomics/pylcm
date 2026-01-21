@@ -31,8 +31,14 @@ type RegimeIdMapping = MappingProxyType[RegimeName, int]
 type _RegimeGridsDict = Mapping[str, Array]
 type GridsDict = dict[RegimeName, _RegimeGridsDict]
 
-type TransitionFunctionsDict = dict[RegimeName, dict[str, InternalUserFunction]]
+type _RegimeTransitions = MappingProxyType[str, InternalUserFunction]
+type TransitionFunctionsMapping = MappingProxyType[RegimeName, _RegimeTransitions]
+
 type ParamsDict = dict[RegimeName, Any]
+
+# Type aliases for value function arrays
+type _PeriodVArrMapping = MappingProxyType[RegimeName, FloatND]
+type VArrMapping = MappingProxyType[int, _PeriodVArrMapping]
 
 
 class UserFunction(Protocol):
@@ -111,7 +117,7 @@ class MaxQOverCFunction(Protocol):
 
     def __call__(  # noqa: D102
         self,
-        next_V_arr: dict[RegimeName, Array],
+        next_V_arr: Mapping[RegimeName, Array],
         params: ParamsDict,
         period: Period,
         **kwargs: Array,
@@ -130,7 +136,7 @@ class ArgmaxQOverCFunction(Protocol):
 
     def __call__(  # noqa: D102
         self,
-        next_V_arr: dict[RegimeName, Array],
+        next_V_arr: Mapping[RegimeName, Array],
         params: ParamsDict,
         period: Period,
         **kwargs: Array,
@@ -149,7 +155,7 @@ class MaxQOverAFunction(Protocol):
 
     def __call__(  # noqa: D102
         self,
-        next_V_arr: dict[RegimeName, Array],
+        next_V_arr: Mapping[RegimeName, Array],
         params: ParamsDict,
         **states_and_actions: Array,
     ) -> Array: ...
@@ -167,7 +173,7 @@ class ArgmaxQOverAFunction(Protocol):
 
     def __call__(  # noqa: D102
         self,
-        next_V_arr: dict[RegimeName, Array],
+        next_V_arr: Mapping[RegimeName, Array],
         params: ParamsDict,
         **states_and_actions: Array,
     ) -> tuple[Array, Array]: ...
@@ -221,7 +227,7 @@ class NextStateSimulationFunction(Protocol):
     def __call__(  # noqa: D102
         self,
         **kwargs: Array | Period | Age | ParamsDict,
-    ) -> dict[str, DiscreteState | ContinuousState]: ...
+    ) -> MappingProxyType[str, DiscreteState | ContinuousState]: ...
 
 
 class ActiveFunction(Protocol):

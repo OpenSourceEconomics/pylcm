@@ -33,6 +33,7 @@ from lcm.typing import (
     ParamsDict,
     RegimeIdMapping,
     RegimeName,
+    TransitionFunctionsMapping,
     UserFunction,
 )
 from lcm.utils import (
@@ -40,6 +41,15 @@ from lcm.utils import (
     flatten_regime_namespace,
     unflatten_regime_namespace,
 )
+
+
+def _wrap_transitions(
+    transitions: dict[RegimeName, dict[str, InternalUserFunction]],
+) -> TransitionFunctionsMapping:
+    """Wrap nested transitions dict in MappingProxyType."""
+    return MappingProxyType(
+        {name: MappingProxyType(inner) for name, inner in transitions.items()}
+    )
 
 
 def process_regimes(
@@ -153,10 +163,10 @@ def process_regimes(
             grids=MappingProxyType(grids[name]),
             gridspecs=MappingProxyType(gridspecs[name]),
             variable_info=variable_info[name],
-            functions=internal_functions.functions,
+            functions=MappingProxyType(internal_functions.functions),
             utility=internal_functions.utility,
-            constraints=internal_functions.constraints,
-            active_periods=regimes_to_active_periods[name],
+            constraints=MappingProxyType(internal_functions.constraints),
+            active_periods=tuple(regimes_to_active_periods[name]),
             regime_transition_probs=internal_functions.regime_transition_probs,
             internal_functions=internal_functions,
             transitions=internal_functions.transitions,
@@ -329,7 +339,7 @@ def _get_internal_functions(
         functions=internal_functions,
         utility=internal_utility,
         constraints=internal_constraints,
-        transitions=unflatten_regime_namespace(internal_transition),
+        transitions=_wrap_transitions(unflatten_regime_namespace(internal_transition)),
         regime_transition_probs=internal_regime_transition_probs,
     )
 

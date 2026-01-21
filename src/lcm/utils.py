@@ -42,7 +42,7 @@ def first_non_none(*args: T | None) -> T:
     raise ValueError("All arguments are None")
 
 
-def flatten_regime_namespace(d: dict[RegimeName, Any]) -> dict[str, Any]:
+def flatten_regime_namespace(d: Mapping[RegimeName, Any]) -> dict[str, Any]:
     return flatten_to_qnames(d)
 
 

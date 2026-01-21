@@ -19,7 +19,7 @@ from lcm.typing import (
     NextStateSimulationFunction,
     ParamsDict,
     RegimeTransitionFunction,
-    TransitionFunctionsDict,
+    TransitionFunctionsMapping,
     VmappedRegimeTransitionFunction,
 )
 from lcm.utils import first_non_none, flatten_regime_namespace
@@ -173,10 +173,10 @@ class InternalRegime:
     gridspecs: MappingProxyType[str, Grid]
     variable_info: pd.DataFrame
     utility: InternalUserFunction
-    constraints: dict[str, InternalUserFunction]
-    transitions: TransitionFunctionsDict
-    functions: dict[str, InternalUserFunction]
-    active_periods: list[int]
+    constraints: MappingProxyType[str, InternalUserFunction]
+    transitions: TransitionFunctionsMapping
+    functions: MappingProxyType[str, InternalUserFunction]
+    active_periods: tuple[int, ...]
     regime_transition_probs: (
         PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]
         | None
@@ -224,17 +224,16 @@ class Target(Enum):
 class InternalFunctions:
     """All functions that are used in the regime."""
 
+    # Note: functions and constraints are kept as dict (not MappingProxyType) because
+    # they are heavily used with external libraries (dags) that don't recognize it.
     functions: dict[str, InternalUserFunction]
     utility: InternalUserFunction
     constraints: dict[str, InternalUserFunction]
-    transitions: TransitionFunctionsDict
+    transitions: TransitionFunctionsMapping
     regime_transition_probs: (
         PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]
         | None
     )
-
-    # Note: functions and constraints are not wrapped in MappingProxyType because
-    # they are heavily used with external libraries (dags) that don't recognize it.
 
     def get_all_functions(self) -> MappingProxyType[str, InternalUserFunction]:
         """Get all regime functions including utility, constraints, and transitions.

@@ -1,5 +1,5 @@
 import functools
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 import jax.numpy as jnp
 from jax import Array
@@ -14,6 +14,7 @@ from lcm.typing import (
     MaxQOverCFunction,
     ParamsDict,
     Period,
+    RegimeName,
 )
 
 
@@ -62,7 +63,7 @@ def get_max_Q_over_c(
 
     @functools.wraps(Q_and_F)
     def max_Q_over_c(
-        next_V_arr: dict[str, FloatND],
+        next_V_arr: Mapping[RegimeName, FloatND],
         params: ParamsDict,
         period: Period,
         **states_and_actions: Array,
@@ -119,7 +120,7 @@ def get_argmax_and_max_Q_over_c(
 
     @functools.wraps(Q_and_F)
     def argmax_and_max_Q_over_c(
-        next_V_arr: dict[str, FloatND],
+        next_V_arr: Mapping[RegimeName, FloatND],
         params: ParamsDict,
         period: Period,
         **states_and_actions: Array,
