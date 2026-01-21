@@ -175,7 +175,7 @@ def test_get_multiply_weights():
     transitions = {"next_a": next_a, "next_b": next_b}
     multiply_weights = _get_joint_weights_function(
         regime_name="test",
-        transitions=transitions,
+        transitions=transitions,  # ty: ignore[invalid-argument-type]
     )
 
     a = jnp.array([1, 2])

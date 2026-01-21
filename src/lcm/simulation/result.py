@@ -4,11 +4,9 @@ import contextlib
 import inspect
 import pickle
 import tempfile
-from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from types import MappingProxyType
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import jax.numpy as jnp
 import pandas as pd
@@ -21,14 +19,7 @@ from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.grids import DiscreteGrid
 from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
 from lcm.typing import FloatND, ParamsDict, RegimeName
-
-
-def _ensure_mapping_proxy[K, V](value: Mapping[K, V]) -> MappingProxyType[K, V]:
-    """Wrap a Mapping in MappingProxyType if not already wrapped."""
-    if isinstance(value, MappingProxyType):
-        return cast("MappingProxyType[K, V]", value)
-    return MappingProxyType(value)
-
+from lcm.utils import ensure_mapping_proxy
 
 CLOUDPICKLE_IMPORT_ERROR_MSG = (
     "Pickling SimulationResult objects requires the optional dependency 'cloudpickle'. "
@@ -247,13 +238,13 @@ class SimulationMetadata:
     def __post_init__(self) -> None:
         # Wrap mutable dicts in MappingProxyType to prevent accidental mutation
         object.__setattr__(
-            self, "regime_to_states", _ensure_mapping_proxy(self.regime_to_states)
+            self, "regime_to_states", ensure_mapping_proxy(self.regime_to_states)
         )
         object.__setattr__(
-            self, "regime_to_actions", _ensure_mapping_proxy(self.regime_to_actions)
+            self, "regime_to_actions", ensure_mapping_proxy(self.regime_to_actions)
         )
         object.__setattr__(
-            self, "discrete_categories", _ensure_mapping_proxy(self.discrete_categories)
+            self, "discrete_categories", ensure_mapping_proxy(self.discrete_categories)
         )
 
 
@@ -337,14 +328,12 @@ def _resolve_targets(
     if additional_targets == "all":
         return available_targets
 
-    # Validate user-provided targets
     invalid = set(additional_targets) - set(available_targets)
     if invalid:
         raise InvalidAdditionalTargetsError(
             f"Targets {invalid} not found in any regime. "
             f"Available targets: {available_targets}"
         )
-
     return additional_targets
 
 
@@ -518,10 +507,7 @@ def _add_missing_columns(
     action_names: list[str],
 ) -> pd.DataFrame:
     """Add NaN columns for states/actions not present in DataFrame."""
-    for name in state_names:
-        if name not in df.columns:
-            df[name] = float("nan")
-    for name in action_names:
+    for name in state_names + action_names:
         if name not in df.columns:
             df[name] = float("nan")
     return df

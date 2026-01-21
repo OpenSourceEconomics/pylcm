@@ -4,10 +4,6 @@ from typing import Any, Protocol
 from jax import Array
 from jaxtyping import Bool, Float, Int, Scalar
 
-# Immutable mapping from regime names to integer IDs (e.g., {"working": 0, "dead": 1}).
-# Created from the user's regime_id_cls dataclass in Model.__init__.
-type RegimeIdMapping = MappingProxyType[str, int]
-
 type ContinuousState = Float[Array, "..."]
 type ContinuousAction = Float[Array, "..."]
 type DiscreteState = Int[Array, "..."]
@@ -29,6 +25,7 @@ type ScalarFloat = float | Float[Scalar, ""]  # noqa: F722
 type Period = int | Int1D
 type Age = float
 type RegimeName = str
+
 type RegimeIdMapping = MappingProxyType[RegimeName, int]
 
 type _RegimeGridsDict = dict[str, Array]

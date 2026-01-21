@@ -263,7 +263,9 @@ def test_irreg_spaced_grid_creation():
 
 
 def test_irreg_spaced_grid_invalid_too_few_points():
-    with pytest.raises(GridInitializationError, match="at least 2 elements"):
+    with pytest.raises(
+        GridInitializationError, match="points must have more than one element"
+    ):
         IrregSpacedGrid(points=(1.0,))
 
 
@@ -487,7 +489,9 @@ def test_piecewise_lin_spaced_grid_invalid_not_piece():
 
 def test_piecewise_lin_spaced_grid_invalid_n_points():
     """n_points must be >= 2."""
-    with pytest.raises(GridInitializationError, match="n_points must be an int >= 2"):
+    with pytest.raises(
+        GridInitializationError, match="n_points must be an int > 1, but is 1"
+    ):
         PiecewiseLinSpacedGrid(pieces=(Piece(interval="[1, 4]", n_points=1),))
 
 

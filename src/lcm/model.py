@@ -210,7 +210,7 @@ def _validate_model_inputs(
     if not isinstance(n_periods, int):
         error_messages.append("n_periods must be an integer.")
     elif n_periods <= 1:
-        error_messages.append("n_periods must be at least 2.")
+        error_messages.append("must be an int > 1")
 
     if not regimes:
         error_messages.append(
@@ -281,10 +281,9 @@ def _validate_transition_completeness(regimes: Mapping[str, Regime]) -> list[str
             missing_transitions[name] = missing
 
     if missing_transitions:
-        error = "Non-terminal regimes have missing transitions: "
-        for regime_name, missing in sorted(missing_transitions.items()):
-            missing_list = ", ".join(f"next_{s}" for s in sorted(missing))
-            error += f"'{regime_name}': {missing_list}, "
-        return [error]
-
+        parts = [
+            f"'{name}': {', '.join(f'next_{s}' for s in sorted(missing))}"
+            for name, missing in sorted(missing_transitions.items())
+        ]
+        return [f"Non-terminal regimes have missing transitions: {', '.join(parts)}"]
     return []

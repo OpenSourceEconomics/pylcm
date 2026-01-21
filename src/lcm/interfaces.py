@@ -3,7 +3,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
-from typing import cast
 
 import pandas as pd
 from jax import Array
@@ -24,14 +23,7 @@ from lcm.typing import (
     TransitionFunctionsDict,
     VmappedRegimeTransitionFunction,
 )
-from lcm.utils import first_non_none, flatten_regime_namespace
-
-
-def _ensure_mapping_proxy[K, V](value: Mapping[K, V]) -> MappingProxyType[K, V]:
-    """Wrap a Mapping in MappingProxyType if not already wrapped."""
-    if isinstance(value, MappingProxyType):
-        return cast("MappingProxyType[K, V]", value)
-    return MappingProxyType(value)
+from lcm.utils import ensure_mapping_proxy, first_non_none, flatten_regime_namespace
 
 
 @dataclasses.dataclass(frozen=True)
@@ -75,12 +67,12 @@ class StateActionSpace:
 
     def __post_init__(self) -> None:
         # Wrap mutable dicts in MappingProxyType to prevent accidental mutation
-        object.__setattr__(self, "states", _ensure_mapping_proxy(self.states))
+        object.__setattr__(self, "states", ensure_mapping_proxy(self.states))
         object.__setattr__(
-            self, "discrete_actions", _ensure_mapping_proxy(self.discrete_actions)
+            self, "discrete_actions", ensure_mapping_proxy(self.discrete_actions)
         )
         object.__setattr__(
-            self, "continuous_actions", _ensure_mapping_proxy(self.continuous_actions)
+            self, "continuous_actions", ensure_mapping_proxy(self.continuous_actions)
         )
 
     @property
@@ -156,10 +148,10 @@ class StateSpaceInfo:
     def __post_init__(self) -> None:
         # Wrap mutable dicts in MappingProxyType to prevent accidental mutation
         object.__setattr__(
-            self, "discrete_states", _ensure_mapping_proxy(self.discrete_states)
+            self, "discrete_states", ensure_mapping_proxy(self.discrete_states)
         )
         object.__setattr__(
-            self, "continuous_states", _ensure_mapping_proxy(self.continuous_states)
+            self, "continuous_states", ensure_mapping_proxy(self.continuous_states)
         )
 
 
@@ -222,17 +214,17 @@ class InternalRegime:
         # Wrap mutable dicts in MappingProxyType to prevent accidental mutation.
         # Note: constraints and functions are not wrapped because they are heavily
         # used with external libraries (dags) that don't recognize MappingProxyType.
-        object.__setattr__(self, "grids", _ensure_mapping_proxy(self.grids))
-        object.__setattr__(self, "gridspecs", _ensure_mapping_proxy(self.gridspecs))
+        object.__setattr__(self, "grids", ensure_mapping_proxy(self.grids))
+        object.__setattr__(self, "gridspecs", ensure_mapping_proxy(self.gridspecs))
         object.__setattr__(
             self,
             "max_Q_over_a_functions",
-            _ensure_mapping_proxy(self.max_Q_over_a_functions),
+            ensure_mapping_proxy(self.max_Q_over_a_functions),
         )
         object.__setattr__(
             self,
             "argmax_and_max_Q_over_a_functions",
-            _ensure_mapping_proxy(self.argmax_and_max_Q_over_a_functions),
+            ensure_mapping_proxy(self.argmax_and_max_Q_over_a_functions),
         )
 
 
@@ -258,8 +250,8 @@ class PeriodRegimeSimulationData:
 
     def __post_init__(self) -> None:
         # Wrap mutable dicts in MappingProxyType to prevent accidental mutation
-        object.__setattr__(self, "actions", _ensure_mapping_proxy(self.actions))
-        object.__setattr__(self, "states", _ensure_mapping_proxy(self.states))
+        object.__setattr__(self, "actions", ensure_mapping_proxy(self.actions))
+        object.__setattr__(self, "states", ensure_mapping_proxy(self.states))
 
 
 class Target(Enum):

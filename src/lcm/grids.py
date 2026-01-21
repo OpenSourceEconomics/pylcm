@@ -573,27 +573,22 @@ def _validate_continuous_grid(
         GridInitializationError: If the grid parameters are invalid.
 
     """
-    error_messages = []
+    errors: list[str] = []
 
-    valid_start_type = isinstance(start, int | float)
-    if not valid_start_type:
-        error_messages.append("start must be a scalar int or float value")
+    valid_start = isinstance(start, int | float)
+    valid_stop = isinstance(stop, int | float)
 
-    valid_stop_type = isinstance(stop, int | float)
-    if not valid_stop_type:
-        error_messages.append("stop must be a scalar int or float value")
-
+    if not valid_start:
+        errors.append("start must be a scalar int or float value")
+    if not valid_stop:
+        errors.append("stop must be a scalar int or float value")
     if not isinstance(n_points, int) or n_points < 1:
-        error_messages.append(
-            f"n_points must be an int greater than 0 but is {n_points}",
-        )
+        errors.append(f"n_points must be an int greater than 0 but is {n_points}")
+    if valid_start and valid_stop and start >= stop:
+        errors.append("start must be less than stop")
 
-    if valid_start_type and valid_stop_type and start >= stop:
-        error_messages.append("start must be less than stop")
-
-    if error_messages:
-        msg = format_messages(error_messages)
-        raise GridInitializationError(msg)
+    if errors:
+        raise GridInitializationError(format_messages(errors))
 
 
 def _validate_irreg_spaced_grid(points: Sequence[float] | Float1D) -> None:
@@ -606,36 +601,28 @@ def _validate_irreg_spaced_grid(points: Sequence[float] | Float1D) -> None:
         GridInitializationError: If the grid parameters are invalid.
 
     """
-    error_messages = []
+    if len(points) <= 1:
+        raise GridInitializationError("points must have more than one element")
 
-    if len(points) < 2:  # noqa: PLR2004
-        error_messages.append("points must have at least 2 elements")
-    else:
-        # Check that all elements are numeric
-        non_numeric = [
-            (i, type(p).__name__)
-            for i, p in enumerate(points)
-            if not isinstance(p, int | float)
-        ]
-        if non_numeric:
-            error_messages.append(
-                f"All elements of points must be int or float. "
-                f"Non-numeric elements found at indices: {non_numeric}"
+    # Check that all elements are numeric
+    non_numeric = [
+        (i, type(p).__name__)
+        for i, p in enumerate(points)
+        if not isinstance(p, int | float)
+    ]
+    if non_numeric:
+        raise GridInitializationError(
+            f"All elements of points must be int or float. "
+            f"Non-numeric elements found at indices: {non_numeric}"
+        )
+
+    # Check that points are in ascending order
+    for i in range(len(points) - 1):
+        if points[i] >= points[i + 1]:
+            raise GridInitializationError(
+                "Points must be in strictly ascending order. "
+                f"Found points[{i}]={points[i]} >= points[{i + 1}]={points[i + 1]}"
             )
-        else:
-            # Check that points are in ascending order
-            for i in range(len(points) - 1):
-                if points[i] >= points[i + 1]:
-                    error_messages.append(
-                        "Points must be in strictly ascending order. "
-                        f"Found points[{i}]={points[i]} >= "
-                        f"points[{i + 1}]={points[i + 1]}"
-                    )
-                    break
-
-    if error_messages:
-        msg = format_messages(error_messages)
-        raise GridInitializationError(msg)
 
 
 def _validate_piecewise_lin_spaced_grid(  # noqa: C901, PLR0912
@@ -673,9 +660,9 @@ def _validate_piecewise_lin_spaced_grid(  # noqa: C901, PLR0912
             )
             continue
 
-        if not isinstance(piece.n_points, int) or piece.n_points < 2:  # noqa: PLR2004
+        if not isinstance(piece.n_points, int) or piece.n_points <= 1:
             error_messages.append(
-                f"pieces[{i}].n_points must be an int >= 2, but is {piece.n_points}"
+                f"pieces[{i}].n_points must be an int > 1, but is {piece.n_points}"
             )
 
         # Try to parse the interval
