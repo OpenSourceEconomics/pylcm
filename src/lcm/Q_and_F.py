@@ -16,6 +16,7 @@ from lcm.typing import (
     BoolND,
     Float1D,
     FloatND,
+    GridsDict,
     InternalUserFunction,
     ParamsDict,
     QAndFFunction,
@@ -26,11 +27,11 @@ from lcm.utils import normalize_regime_transition_probs
 
 def get_Q_and_F(
     regime_name: str,
-    regimes_to_active_periods: dict[RegimeName, list[int]],
+    regimes_to_active_periods: Mapping[RegimeName, tuple[int, ...]],
     period: int,
     age: float,
-    next_state_space_infos: dict[RegimeName, StateSpaceInfo],
-    grids: dict[RegimeName, Any],
+    next_state_space_infos: Mapping[RegimeName, StateSpaceInfo],
+    grids: GridsDict,
     internal_functions: InternalFunctions,
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
@@ -59,20 +60,21 @@ def get_Q_and_F(
     joint_weights_from_marginals = {}
     next_V = {}
 
-    target_regimes = list(internal_functions.transitions)
-    active_target_regimes = [
+    target_regimes = tuple(internal_functions.transitions)
+    active_target_regimes = tuple(
         target_name
         for target_name in target_regimes
         if period + 1 in regimes_to_active_periods[target_name]
-    ]
+    )
 
     for target_regime in active_target_regimes:
         # Transitions from the current regime to the target regime
         transitions = internal_functions.transitions[target_regime]
 
         # Functions required to calculate the expected continuation values
+        # Note: grids is not used for Target.SOLVE, but we pass the full dict for typing
         state_transitions[target_regime] = get_next_state_function(
-            grids=grids[target_regime],
+            grids=grids,
             functions=internal_functions.functions,
             transitions=transitions,
             target=Target.SOLVE,
@@ -142,12 +144,12 @@ def get_Q_and_F(
             params=params[regime_name],
         )
         Q_arr = U_arr
-        target_regimes = list(internal_functions.transitions)
-        active_target_regimes = [
+        target_regimes = tuple(internal_functions.transitions)
+        active_target_regimes = tuple(
             target_name
             for target_name in target_regimes
             if period + 1 in regimes_to_active_periods[target_name]
-        ]
+        )
         normalized_regime_transition_prob = normalize_regime_transition_probs(
             regime_transition_prob, active_target_regimes
         )
@@ -366,7 +368,8 @@ def _get_feasibility(internal_functions: InternalFunctions) -> InternalUserFunct
     """
     if internal_functions.constraints:
         combined_constraint = concatenate_functions(
-            functions=internal_functions.constraints | internal_functions.functions,
+            functions=dict(internal_functions.constraints)
+            | dict(internal_functions.functions),
             targets=list(internal_functions.constraints),
             aggregator=jnp.logical_and,
             aggregator_return_type="Feasibility",

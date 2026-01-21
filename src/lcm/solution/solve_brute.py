@@ -1,4 +1,5 @@
 import logging
+from types import MappingProxyType
 
 import jax.numpy as jnp
 
@@ -13,9 +14,9 @@ from lcm.typing import FloatND, ParamsDict, RegimeName
 def solve(
     params: ParamsDict,
     ages: AgeGrid,
-    internal_regimes: dict[RegimeName, InternalRegime],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     logger: logging.Logger,
-) -> dict[int, dict[RegimeName, FloatND]]:
+) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
     """Solve a model using grid search.
 
     Args:
@@ -29,10 +30,10 @@ def solve(
         Dict with one value function array per period.
 
     """
-    solution: dict[int, dict[RegimeName, FloatND]] = {}
-    next_V_arr: dict[RegimeName, FloatND] = {
-        name: jnp.empty(0) for name in internal_regimes
-    }
+    solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
+    next_V_arr: MappingProxyType[RegimeName, FloatND] = MappingProxyType(
+        {name: jnp.empty(0) for name in internal_regimes}
+    )
 
     logger.info("Starting solution")
 
@@ -61,8 +62,8 @@ def solve(
             validate_value_function_array(V_arr, age=ages.values[period])
             period_solution[name] = V_arr
 
-        next_V_arr = period_solution
-        solution[period] = period_solution
+        next_V_arr = MappingProxyType(period_solution)
+        solution[period] = next_V_arr
         logger.info("Age: %s", ages.values[period])
 
-    return solution
+    return MappingProxyType(solution)

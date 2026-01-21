@@ -1,6 +1,7 @@
 """Generate function that compute the next states for solution and simulation."""
 
 from collections.abc import Callable, Mapping
+from types import MappingProxyType
 
 import jax
 from dags import concatenate_functions
@@ -25,7 +26,7 @@ def get_next_state_function(
     *,
     grids: GridsDict,
     transitions: Mapping[str, InternalUserFunction],
-    functions: Mapping[str, InternalUserFunction],
+    functions: MappingProxyType[str, InternalUserFunction],
     target: Target,
 ) -> NextStateSimulationFunction:
     """Get function that computes the next states during the solution.
@@ -66,7 +67,7 @@ def get_next_state_function(
 
 def get_next_stochastic_weights_function(
     regime_name: RegimeName,
-    functions: Mapping[str, InternalUserFunction],
+    functions: MappingProxyType[str, InternalUserFunction],
     transitions: Mapping[str, InternalUserFunction],
 ) -> Callable[..., dict[str, Array]]:
     """Get function that computes the weights for the next stochastic states.

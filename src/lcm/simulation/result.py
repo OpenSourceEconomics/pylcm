@@ -4,6 +4,7 @@ import contextlib
 import inspect
 import pickle
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -37,10 +38,10 @@ class SimulationResult:
 
     def __init__(
         self,
-        raw_results: dict[str, dict[int, PeriodRegimeSimulationData]],
-        internal_regimes: dict[RegimeName, InternalRegime],
+        raw_results: Mapping[str, Mapping[int, PeriodRegimeSimulationData]],
+        internal_regimes: MappingProxyType[RegimeName, InternalRegime],
         params: ParamsDict,
-        V_arr_dict: dict[int, dict[RegimeName, FloatND]],
+        V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
         ages: AgeGrid,
     ) -> None:
         self._raw_results = raw_results
@@ -58,7 +59,7 @@ class SimulationResult:
     # ----------------------------------------------------------------------------------
 
     @property
-    def raw_results(self) -> dict[str, dict[int, PeriodRegimeSimulationData]]:
+    def raw_results(self) -> Mapping[str, Mapping[int, PeriodRegimeSimulationData]]:
         """Raw simulation results by regime and period."""
         return self._raw_results
 
@@ -68,7 +69,9 @@ class SimulationResult:
         return self._params
 
     @property
-    def V_arr_dict(self) -> dict[int, dict[RegimeName, FloatND]]:
+    def V_arr_dict(
+        self,
+    ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
         """Value function arrays from the solution."""
         return self._V_arr_dict
 
@@ -237,8 +240,8 @@ class SimulationMetadata:
 
 
 def _compute_metadata(
-    internal_regimes: dict[RegimeName, InternalRegime],
-    raw_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    raw_results: Mapping[RegimeName, Mapping[int, PeriodRegimeSimulationData]],
 ) -> SimulationMetadata:
     """Compute metadata from internal regimes and raw results."""
     regime_names = list(internal_regimes.keys())
@@ -279,7 +282,7 @@ def _compute_metadata(
 
 
 def _get_n_subjects(
-    raw_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]],
+    raw_results: Mapping[RegimeName, Mapping[int, PeriodRegimeSimulationData]],
 ) -> int:
     """Extract number of subjects from raw results."""
     for regime_results in raw_results.values():
@@ -328,7 +331,7 @@ def _resolve_targets(
 
 
 def _collect_all_available_targets(
-    internal_regimes: dict[RegimeName, InternalRegime],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
 ) -> set[str]:
     """Collect all available target names across all regimes."""
     all_targets: set[str] = set()
@@ -351,8 +354,8 @@ def _get_available_targets_for_regime(regime: InternalRegime) -> set[str]:
 
 
 def _create_flat_dataframe(
-    raw_results: dict[str, dict[int, PeriodRegimeSimulationData]],
-    internal_regimes: dict[RegimeName, InternalRegime],
+    raw_results: Mapping[str, Mapping[int, PeriodRegimeSimulationData]],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     params: ParamsDict,
     metadata: SimulationMetadata,
     additional_targets: list[str] | None,
@@ -382,7 +385,7 @@ def _create_flat_dataframe(
 
 def _process_regime(
     internal_regime: InternalRegime,
-    regime_results: dict[int, PeriodRegimeSimulationData],
+    regime_results: Mapping[int, PeriodRegimeSimulationData],
     regime_states: tuple[str, ...],
     regime_actions: tuple[str, ...],
     params: ParamsDict,

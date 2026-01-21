@@ -40,11 +40,17 @@ class Regime:
 
     utility: UserFunction
     active: ActiveFunction = lambda _age: True
-    constraints: dict[str, UserFunction] = field(default_factory=dict)
-    transitions: dict[str, UserFunction] = field(default_factory=dict)
-    functions: dict[str, UserFunction] = field(default_factory=dict)
-    actions: dict[str, Grid] = field(default_factory=dict)
-    states: dict[str, Grid] = field(default_factory=dict)
+    constraints: Mapping[str, UserFunction] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    transitions: Mapping[str, UserFunction] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    functions: Mapping[str, UserFunction] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    actions: Mapping[str, Grid] = field(default_factory=lambda: MappingProxyType({}))
+    states: Mapping[str, Grid] = field(default_factory=lambda: MappingProxyType({}))
     absorbing: bool = False
     terminal: bool = False
     description: str | None = None

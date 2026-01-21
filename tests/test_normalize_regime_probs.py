@@ -9,7 +9,7 @@ from lcm.utils import normalize_regime_transition_probs
 def test_normalize_with_float_values():
     """Test normalization with float values (solve phase)."""
     probs = {"working": 0.7, "retired": 0.1, "unemployed": 0.2}
-    active_regimes = ["working", "retired"]
+    active_regimes = ("working", "retired")
     got = normalize_regime_transition_probs(probs, active_regimes)
     assert jnp.allclose(got["working"], jnp.array(0.7 / 0.8))
     assert jnp.allclose(got["retired"], jnp.array(0.1 / 0.8))
@@ -22,7 +22,7 @@ def test_normalize_with_array_values():
         "retired": jnp.array([0.1, 0.3]),
         "unemployed": jnp.array([0.2, 0.1]),
     }
-    active_regimes = ["working", "retired"]
+    active_regimes = ("working", "retired")
     got = normalize_regime_transition_probs(probs, active_regimes)
     assert jnp.allclose(got["working"], jnp.array([0.7 / 0.8, 0.6 / 0.9]))
     assert jnp.allclose(got["retired"], jnp.array([0.1 / 0.8, 0.3 / 0.9]))
@@ -113,7 +113,7 @@ def test_normalize_produces_nan_when_all_active_probs_zero():
         "unemployed": jnp.array([1.0, 0.2]),  # Only this regime has probability
     }
     # But only working and retired are active
-    active_regimes = ["working", "retired"]
+    active_regimes = ("working", "retired")
     got = normalize_regime_transition_probs(probs, active_regimes)
 
     # First subject has all zeros for active regimes -> NaN after normalization

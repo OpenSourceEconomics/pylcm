@@ -2,6 +2,7 @@
 
 import functools
 import inspect
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any
 
@@ -64,12 +65,12 @@ def build_state_action_space(
 def build_Q_and_F_functions(
     regime_name: str,
     regime: Regime,
-    regimes_to_active_periods: dict[RegimeName, list[int]],
+    regimes_to_active_periods: Mapping[RegimeName, tuple[int, ...]],
     internal_functions: InternalFunctions,
-    state_space_infos: dict[RegimeName, StateSpaceInfo],
+    state_space_infos: Mapping[RegimeName, StateSpaceInfo],
     grids: GridsDict,
     ages: AgeGrid,
-) -> dict[int, QAndFFunction]:
+) -> MappingProxyType[int, QAndFFunction]:
     Q_and_F_functions = {}
     for period, age in enumerate(ages.values):
         if regime.terminal:
@@ -91,15 +92,15 @@ def build_Q_and_F_functions(
             )
         Q_and_F_functions[period] = Q_and_F
 
-    return Q_and_F_functions
+    return MappingProxyType(Q_and_F_functions)
 
 
 def build_max_Q_over_a_functions(
     regime: Regime,
-    Q_and_F_functions: dict[int, QAndFFunction],
+    Q_and_F_functions: MappingProxyType[int, QAndFFunction],
     *,
     enable_jit: bool,
-) -> dict[int, MaxQOverAFunction]:
+) -> MappingProxyType[int, MaxQOverAFunction]:
     state_action_space = build_state_action_space(regime)
     max_Q_over_a_functions = {}
     for period, Q_and_F in Q_and_F_functions.items():
@@ -108,7 +109,7 @@ def build_max_Q_over_a_functions(
             Q_and_F=Q_and_F,
             enable_jit=enable_jit,
         )
-    return max_Q_over_a_functions
+    return MappingProxyType(max_Q_over_a_functions)
 
 
 def _build_max_Q_over_a_function(
@@ -130,10 +131,10 @@ def _build_max_Q_over_a_function(
 
 def build_argmax_and_max_Q_over_a_functions(
     regime: Regime,
-    Q_and_F_functions: dict[int, QAndFFunction],
+    Q_and_F_functions: MappingProxyType[int, QAndFFunction],
     *,
     enable_jit: bool,
-) -> dict[int, ArgmaxQOverAFunction]:
+) -> MappingProxyType[int, ArgmaxQOverAFunction]:
     state_action_space = build_state_action_space(regime)
     argmax_and_max_Q_over_a_functions = {}
     for period, Q_and_F in Q_and_F_functions.items():
@@ -147,7 +148,7 @@ def build_argmax_and_max_Q_over_a_functions(
             actions_names=(),
             states_names=tuple(state_action_space.states),
         )
-    return argmax_and_max_Q_over_a_functions
+    return MappingProxyType(argmax_and_max_Q_over_a_functions)
 
 
 def _build_argmax_and_max_Q_over_a_function(
@@ -198,9 +199,9 @@ def build_next_state_simulation_functions(
 
 
 def build_regime_transition_probs_functions(
-    internal_functions: dict[str, InternalUserFunction],
+    internal_functions: Mapping[str, InternalUserFunction],
     regime_transition_probs: InternalUserFunction,
-    grids: dict[str, Array],
+    grids: Mapping[str, Array],
     regime_id: RegimeIdMapping,
     *,
     is_stochastic: bool,
@@ -217,7 +218,7 @@ def build_regime_transition_probs_functions(
     # Wrap to convert array output to dict format
     wrapped_regime_transition_probs = _wrap_regime_transition_probs(probs_fn, regime_id)
 
-    functions_pool = internal_functions | {
+    functions_pool = dict(internal_functions) | {
         "regime_transition_probs": wrapped_regime_transition_probs
     }
 

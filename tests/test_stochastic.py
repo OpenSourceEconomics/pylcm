@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from typing import Any
 
 import jax.numpy as jnp
@@ -160,10 +161,12 @@ def test_compare_deterministic_and_stochastic_results_value_function(
     # ==================================================================================
     # Compare value function arrays
     # ==================================================================================
-    solution_deterministic: dict[int, dict[str, FloatND]] = model_deterministic.solve(
+    solution_deterministic: Mapping[int, Mapping[str, FloatND]] = (
+        model_deterministic.solve(params)
+    )
+    solution_stochastic: Mapping[int, Mapping[str, FloatND]] = model_stochastic.solve(
         params
     )
-    solution_stochastic: dict[int, dict[str, FloatND]] = model_stochastic.solve(params)
 
     for period in range(model_deterministic.n_periods - 1):
         assert_array_almost_equal(

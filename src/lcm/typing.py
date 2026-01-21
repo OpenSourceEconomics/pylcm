@@ -29,7 +29,7 @@ type RegimeName = str
 type RegimeIdMapping = MappingProxyType[RegimeName, int]
 
 type _RegimeGridsDict = Mapping[str, Array]
-type GridsDict = dict[RegimeName, _RegimeGridsDict]
+type GridsDict = Mapping[RegimeName, _RegimeGridsDict]
 
 type _RegimeTransitions = MappingProxyType[str, InternalUserFunction]
 type TransitionFunctionsMapping = MappingProxyType[RegimeName, _RegimeTransitions]
@@ -117,7 +117,7 @@ class MaxQOverCFunction(Protocol):
 
     def __call__(  # noqa: D102
         self,
-        next_V_arr: Mapping[RegimeName, Array],
+        next_V_arr: MappingProxyType[RegimeName, Array],
         params: ParamsDict,
         period: Period,
         **kwargs: Array,
@@ -136,7 +136,7 @@ class ArgmaxQOverCFunction(Protocol):
 
     def __call__(  # noqa: D102
         self,
-        next_V_arr: Mapping[RegimeName, Array],
+        next_V_arr: MappingProxyType[RegimeName, Array],
         params: ParamsDict,
         period: Period,
         **kwargs: Array,
@@ -155,7 +155,7 @@ class MaxQOverAFunction(Protocol):
 
     def __call__(  # noqa: D102
         self,
-        next_V_arr: Mapping[RegimeName, Array],
+        next_V_arr: MappingProxyType[RegimeName, Array],
         params: ParamsDict,
         **states_and_actions: Array,
     ) -> Array: ...
@@ -173,7 +173,7 @@ class ArgmaxQOverAFunction(Protocol):
 
     def __call__(  # noqa: D102
         self,
-        next_V_arr: Mapping[RegimeName, Array],
+        next_V_arr: MappingProxyType[RegimeName, Array],
         params: ParamsDict,
         **states_and_actions: Array,
     ) -> tuple[Array, Array]: ...

@@ -224,9 +224,9 @@ def _get_internal_functions(
 
     # Build all_functions using nested_transitions (to get prefixed names)
     all_functions = deepcopy(
-        regime.functions
+        dict(regime.functions)
         | {"utility": regime.utility}
-        | regime.constraints
+        | dict(regime.constraints)
         | flatten_regime_namespace(nested_transitions)
     )
 
@@ -336,9 +336,9 @@ def _get_internal_functions(
         )
 
     return InternalFunctions(
-        functions=internal_functions,
+        functions=MappingProxyType(internal_functions),
         utility=internal_utility,
-        constraints=internal_constraints,
+        constraints=MappingProxyType(internal_constraints),
         transitions=_wrap_transitions(unflatten_regime_namespace(internal_transition)),
         regime_transition_probs=internal_regime_transition_probs,
     )
@@ -414,8 +414,8 @@ def _ensure_fn_only_depends_on_params(
 
 
 def _convert_flat_to_nested_transitions(
-    flat_transitions: dict[str, UserFunction],
-    states_per_regime: dict[str, set[str]],
+    flat_transitions: Mapping[str, UserFunction],
+    states_per_regime: Mapping[str, set[str]],
     *,
     terminal: bool = False,
 ) -> dict[str, dict[str, UserFunction] | UserFunction]:
@@ -442,17 +442,18 @@ def _convert_flat_to_nested_transitions(
         name: fn for name, fn in flat_transitions.items() if name != "next_regime"
     }
 
-    states_with_transitions = {name.removeprefix("next_") for name in state_transitions}
+    transitioned_state_names = {
+        name.removeprefix("next_") for name in state_transitions
+    }
 
     nested: dict[str, dict[str, UserFunction] | UserFunction] = {}
-
     nested["next_regime"] = next_regime_fn
 
-    for regime_name, state_names in states_per_regime.items():
-        if state_names <= states_with_transitions:
+    for regime_name, regime_state_names in states_per_regime.items():
+        if regime_state_names <= transitioned_state_names:
             nested[regime_name] = {
                 f"next_{state}": state_transitions[f"next_{state}"]
-                for state in state_names.intersection(states_with_transitions)
+                for state in regime_state_names & transitioned_state_names
             }
 
     return nested

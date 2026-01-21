@@ -53,20 +53,20 @@ def unflatten_regime_namespace(d: dict[str, Any]) -> dict[RegimeName, Any]:
 @overload
 def normalize_regime_transition_probs(
     probs: Mapping[str, float],
-    active_regimes: list[str],
+    active_regimes: tuple[str, ...],
 ) -> MappingProxyType[str, float]: ...
 
 
 @overload
 def normalize_regime_transition_probs(
     probs: Mapping[str, Float1D],
-    active_regimes: list[str],
+    active_regimes: tuple[str, ...],
 ) -> MappingProxyType[str, Float1D]: ...
 
 
 def normalize_regime_transition_probs(
     probs: Mapping[str, float] | Mapping[str, Float1D],
-    active_regimes: list[str],
+    active_regimes: tuple[str, ...],
 ) -> MappingProxyType[str, float] | MappingProxyType[str, Float1D]:
     """Normalize regime transition probabilities over active regimes only."""
     active_probs = jnp.array([probs[r] for r in active_regimes])

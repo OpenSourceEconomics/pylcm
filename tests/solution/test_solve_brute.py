@@ -117,8 +117,8 @@ def test_solve_brute():
         logger=get_logger(debug_mode=False),
     )
 
-    # Solution is now dict[int, dict[RegimeName, FloatND]]
-    assert isinstance(solution, dict)
+    # Solution is now MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
+    assert isinstance(solution, MappingProxyType)
     assert 0 in solution
     assert 1 in solution
     assert "default" in solution[0]

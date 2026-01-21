@@ -32,19 +32,14 @@ from lcm.typing import (
 from lcm.utils import flatten_regime_namespace
 
 
-def _ensure_mapping_proxy[K, V](value: Mapping[K, V]) -> MappingProxyType[K, V]:
-    """Wrap a Mapping in MappingProxyType if not already wrapped."""
-    return MappingProxyType(value)
-
-
 def simulate(
-    params: dict[RegimeName, ParamsDict],
-    initial_states: dict[str, Array],
+    params: ParamsDict,
+    initial_states: Mapping[str, Array],
     initial_regimes: list[RegimeName],
-    internal_regimes: dict[RegimeName, InternalRegime],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_id: RegimeIdMapping,
     logger: logging.Logger,
-    V_arr_dict: dict[int, dict[RegimeName, FloatND]],
+    V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
     ages: AgeGrid,
     *,
     seed: int | None = None,
@@ -108,11 +103,11 @@ def simulate(
             if period in regime.active_periods
         }
 
-        active_regimes_next_period = [
+        active_regimes_next_period = tuple(
             regime_name
             for regime_name, regime in internal_regimes.items()
             if period + 1 in regime.active_periods
-        ]
+        )
 
         for regime_name, internal_regime in active_regimes.items():
             result, new_states, new_subject_regime_ids, key = (
@@ -153,10 +148,10 @@ def _simulate_regime_in_period(
     states: MappingProxyType[str, Array],
     subject_regime_ids: Int1D,
     new_subject_regime_ids: Int1D,
-    V_arr_dict: dict[int, dict[RegimeName, FloatND]],
-    params: dict[RegimeName, ParamsDict],
+    V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
+    params: ParamsDict,
     regime_id: Mapping[RegimeName, int],
-    active_regimes_next_period: list[RegimeName],
+    active_regimes_next_period: tuple[RegimeName, ...],
     key: Array,
 ) -> tuple[PeriodRegimeSimulationData, MappingProxyType[str, Array], Int1D, Array]:
     """Simulate one regime for one period.
@@ -199,7 +194,7 @@ def _simulate_regime_in_period(
     # We need to pass the value function array of the next period to the
     # argmax_and_max_Q_over_a function, as the current Q-function requires the
     # next period's value function. In the last period, we pass an empty dict.
-    next_V_arr = V_arr_dict.get(period + 1, {})
+    next_V_arr = V_arr_dict.get(period + 1, MappingProxyType({}))
 
     # The Q-function values contain the information of how much value each
     # action combination is worth. To find the optimal discrete action, we
@@ -235,7 +230,7 @@ def _simulate_regime_in_period(
 
     simulation_result = PeriodRegimeSimulationData(
         V_arr=V_arr,
-        actions=_ensure_mapping_proxy(optimal_actions),
+        actions=optimal_actions,
         states=MappingProxyType(res),
         in_regime=subject_ids_in_regime,
     )

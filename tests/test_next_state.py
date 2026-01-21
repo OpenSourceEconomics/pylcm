@@ -67,9 +67,9 @@ def test_get_next_state_function_with_simulate_target():
     }
     internal_functions = InternalFunctions(
         utility=lambda: 0,  # ty: ignore[invalid-argument-type]
-        constraints={},
-        transitions={"next_a": f_a, "next_b": f_b},  # ty: ignore[invalid-argument-type]
-        functions={"f_weight_b": f_weight_b},  # ty: ignore[invalid-argument-type]
+        constraints=MappingProxyType({}),
+        transitions=MappingProxyType({"next_a": f_a, "next_b": f_b}),
+        functions=MappingProxyType({"f_weight_b": f_weight_b}),
         regime_transition_probs=PhaseVariantContainer(
             solve=mock_transition_solve, simulate=mock_transition_simulate
         ),

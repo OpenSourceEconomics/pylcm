@@ -52,7 +52,7 @@ def calculate_next_states(
     optimal_actions: MappingProxyType[str, Array],
     period: int,
     age: float,
-    params: dict[RegimeName, ParamsDict],
+    params: ParamsDict,
     states: MappingProxyType[str, Array],
     state_action_space: StateActionSpace,
     key: Array,
@@ -123,10 +123,10 @@ def calculate_next_regime_membership(
     optimal_actions: MappingProxyType[str, Array],
     period: int,
     age: float,
-    params: dict[RegimeName, ParamsDict],
+    params: ParamsDict,
     regime_id: Mapping[RegimeName, int],
     new_subject_regime_ids: Int1D,
-    active_regimes_next_period: list[RegimeName],
+    active_regimes_next_period: tuple[RegimeName, ...],
     key: Array,
     subjects_in_regime: Bool1D,
 ) -> Int1D:
@@ -253,19 +253,22 @@ def _update_states_for_subjects(
 
     """
     updated_states = dict(all_states)
-    for state_name, next_state_values in computed_next_states.items():
-        updated_states[state_name.replace("next_", "")] = jnp.where(
+    for next_state_name, next_state_values in computed_next_states.items():
+        # State names may be prefixed with regime (e.g., "working__next_wealth")
+        # We need to replace "next_" with "" to get "working__wealth"
+        state_name = next_state_name.replace("next_", "")
+        updated_states[state_name] = jnp.where(
             subject_indices,
             next_state_values,
-            all_states[state_name.replace("next_", "")],
+            all_states[state_name],
         )
 
     return MappingProxyType(updated_states)
 
 
 def validate_flat_initial_states(
-    flat_initial_states: dict[str, Array],
-    internal_regimes: dict[RegimeName, InternalRegime],
+    flat_initial_states: Mapping[str, Array],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
 ) -> None:
     """Validate flat initial_states dict.
 
@@ -318,8 +321,8 @@ def validate_flat_initial_states(
 
 
 def convert_flat_to_nested_initial_states(
-    flat_initial_states: dict[str, Array],
-    internal_regimes: dict[RegimeName, InternalRegime],
+    flat_initial_states: Mapping[str, Array],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
 ) -> dict[RegimeName, dict[str, Array]]:
     """Convert flat initial_states dict to nested format.
 

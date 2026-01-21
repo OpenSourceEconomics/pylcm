@@ -224,11 +224,9 @@ class Target(Enum):
 class InternalFunctions:
     """All functions that are used in the regime."""
 
-    # Note: functions and constraints are kept as dict (not MappingProxyType) because
-    # they are heavily used with external libraries (dags) that don't recognize it.
-    functions: dict[str, InternalUserFunction]
+    functions: MappingProxyType[str, InternalUserFunction]
     utility: InternalUserFunction
-    constraints: dict[str, InternalUserFunction]
+    constraints: MappingProxyType[str, InternalUserFunction]
     transitions: TransitionFunctionsMapping
     regime_transition_probs: (
         PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]

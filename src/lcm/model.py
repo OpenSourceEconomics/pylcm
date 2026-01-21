@@ -48,7 +48,7 @@ class Model:
     enable_jit: bool = True
     regime_id: RegimeIdMapping
     regimes: MappingProxyType[str, Regime]
-    internal_regimes: dict[str, InternalRegime]
+    internal_regimes: MappingProxyType[str, InternalRegime]
     params_template: ParamsDict
 
     def __init__(
@@ -78,18 +78,20 @@ class Model:
         self.n_periods = ages.n_periods
         self.description = description
         self.enable_jit = enable_jit
-        self.internal_regimes = {}
+        self.internal_regimes = MappingProxyType({})
 
         _validate_model_inputs(
             n_periods=self.n_periods,
             regimes=regimes,
         )
 
-        self.internal_regimes = process_regimes(
-            regimes=regimes,
-            ages=self.ages,
-            regime_id=self.regime_id,
-            enable_jit=enable_jit,
+        self.internal_regimes = MappingProxyType(
+            process_regimes(
+                regimes=regimes,
+                ages=self.ages,
+                regime_id=self.regime_id,
+                enable_jit=enable_jit,
+            )
         )
         self.params_template = {
             name: regime.params_template
@@ -101,7 +103,7 @@ class Model:
         params: ParamsDict,
         *,
         debug_mode: bool = True,
-    ) -> dict[int, dict[RegimeName, FloatND]]:
+    ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
         """Solve the model using the pre-computed functions.
 
         Args:
@@ -121,9 +123,9 @@ class Model:
     def simulate(
         self,
         params: ParamsDict,
-        initial_states: dict[str, Array],
+        initial_states: Mapping[str, Array],
         initial_regimes: list[RegimeName],
-        V_arr_dict: dict[int, dict[RegimeName, FloatND]],
+        V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
         *,
         seed: int | None = None,
         debug_mode: bool = True,
@@ -161,7 +163,7 @@ class Model:
     def solve_and_simulate(
         self,
         params: ParamsDict,
-        initial_states: dict[str, Array],
+        initial_states: Mapping[str, Array],
         initial_regimes: list[RegimeName],
         *,
         seed: int | None = None,

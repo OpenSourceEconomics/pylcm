@@ -257,12 +257,14 @@ def test_get_U_and_F_with_annotated_constraints():
 
     internal_functions = InternalFunctions(
         utility=utility_func,  # ty: ignore[invalid-argument-type]
-        constraints={
-            "budget_constraint": budget_constraint,
-            "positive_consumption_constraint": positive_consumption_constraint,
-        },  # ty: ignore[invalid-argument-type]
+        constraints=MappingProxyType(
+            {
+                "budget_constraint": budget_constraint,
+                "positive_consumption_constraint": positive_consumption_constraint,
+            }
+        ),
         transitions=MappingProxyType({}),
-        functions={},
+        functions=MappingProxyType({}),
         regime_transition_probs=PhaseVariantContainer(
             solve=mock_transition_solve, simulate=mock_transition_simulate
         ),

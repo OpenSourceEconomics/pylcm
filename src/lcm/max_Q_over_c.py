@@ -1,5 +1,6 @@
 import functools
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
+from types import MappingProxyType
 
 import jax.numpy as jnp
 from jax import Array
@@ -63,7 +64,7 @@ def get_max_Q_over_c(
 
     @functools.wraps(Q_and_F)
     def max_Q_over_c(
-        next_V_arr: Mapping[RegimeName, FloatND],
+        next_V_arr: MappingProxyType[RegimeName, FloatND],
         params: ParamsDict,
         period: Period,
         **states_and_actions: Array,
@@ -120,7 +121,7 @@ def get_argmax_and_max_Q_over_c(
 
     @functools.wraps(Q_and_F)
     def argmax_and_max_Q_over_c(
-        next_V_arr: Mapping[RegimeName, FloatND],
+        next_V_arr: MappingProxyType[RegimeName, FloatND],
         params: ParamsDict,
         period: Period,
         **states_and_actions: Array,

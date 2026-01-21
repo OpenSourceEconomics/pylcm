@@ -27,7 +27,7 @@ def get_variable_info(regime: Regime) -> pd.DataFrame:
         is_continuous, is_discrete.
 
     """
-    variables = regime.states | regime.actions
+    variables = dict(regime.states) | dict(regime.actions)
 
     info = pd.DataFrame(index=pd.Index(list(variables)))
 
@@ -132,7 +132,7 @@ def get_gridspecs(
     """
     variable_info = get_variable_info(regime)
 
-    raw_variables = regime.states | regime.actions
+    raw_variables = dict(regime.states) | dict(regime.actions)
     order = variable_info.index.tolist()
     return {k: raw_variables[k] for k in order}
 
