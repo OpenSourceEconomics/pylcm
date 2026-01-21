@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from types import MappingProxyType
 
 import jax.numpy as jnp
 import pandas as pd
@@ -98,7 +99,9 @@ def test_state_action_space_replace_method():
         states={"wealth": jnp.array([10.0, 20.0])},
     )
 
-    new_space = space.replace(states={"wealth": jnp.array([30.0, 40.0])})
+    new_space = space.replace(
+        states=MappingProxyType({"wealth": jnp.array([30.0, 40.0])})
+    )
 
     assert_array_equal(new_space.states["wealth"], jnp.array([30.0, 40.0]))
 

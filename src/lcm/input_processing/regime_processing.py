@@ -1,6 +1,7 @@
 import functools
 from collections.abc import Mapping
 from copy import deepcopy
+from types import MappingProxyType
 from typing import Any, cast
 
 from dags import get_annotations
@@ -149,8 +150,8 @@ def process_regimes(
         internal_regimes[name] = InternalRegime(
             name=name,
             terminal=regime.terminal,
-            grids=grids[name],
-            gridspecs=gridspecs[name],
+            grids=MappingProxyType(grids[name]),
+            gridspecs=MappingProxyType(gridspecs[name]),
             variable_info=variable_info[name],
             functions=internal_functions.functions,
             utility=internal_functions.utility,
@@ -162,8 +163,10 @@ def process_regimes(
             params_template=params_template,
             state_action_spaces=state_action_spaces[name],
             state_space_infos=state_space_infos[name],
-            max_Q_over_a_functions=max_Q_over_a_functions,
-            argmax_and_max_Q_over_a_functions=argmax_and_max_Q_over_a_functions,
+            max_Q_over_a_functions=MappingProxyType(max_Q_over_a_functions),
+            argmax_and_max_Q_over_a_functions=MappingProxyType(
+                argmax_and_max_Q_over_a_functions
+            ),
             next_state_simulation_function=next_state_simulation_function,
             # currently no additive utility shocks are supported
             random_utility_shocks=ShockType.NONE,

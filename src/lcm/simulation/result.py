@@ -4,11 +4,10 @@ import contextlib
 import inspect
 import pickle
 import tempfile
-from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import jax.numpy as jnp
 import pandas as pd
@@ -21,14 +20,6 @@ from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.grids import DiscreteGrid
 from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
 from lcm.typing import FloatND, ParamsDict, RegimeName
-
-
-def _ensure_mapping_proxy[K, V](value: Mapping[K, V]) -> MappingProxyType[K, V]:
-    """Wrap a Mapping in MappingProxyType if not already wrapped."""
-    if isinstance(value, MappingProxyType):
-        return cast("MappingProxyType[K, V]", value)
-    return MappingProxyType(value)
-
 
 CLOUDPICKLE_IMPORT_ERROR_MSG = (
     "Pickling SimulationResult objects requires the optional dependency 'cloudpickle'. "
@@ -240,21 +231,9 @@ class SimulationMetadata:
     action_names: list[str]
     n_periods: int
     n_subjects: int
-    regime_to_states: dict[str, tuple[str, ...]]
-    regime_to_actions: dict[str, tuple[str, ...]]
-    discrete_categories: dict[str, tuple[str, ...]]
-
-    def __post_init__(self) -> None:
-        # Wrap mutable dicts in MappingProxyType to prevent accidental mutation
-        object.__setattr__(
-            self, "regime_to_states", _ensure_mapping_proxy(self.regime_to_states)
-        )
-        object.__setattr__(
-            self, "regime_to_actions", _ensure_mapping_proxy(self.regime_to_actions)
-        )
-        object.__setattr__(
-            self, "discrete_categories", _ensure_mapping_proxy(self.discrete_categories)
-        )
+    regime_to_states: MappingProxyType[str, tuple[str, ...]]
+    regime_to_actions: MappingProxyType[str, tuple[str, ...]]
+    discrete_categories: MappingProxyType[str, tuple[str, ...]]
 
 
 def _compute_metadata(
@@ -293,9 +272,9 @@ def _compute_metadata(
         action_names=sorted(all_actions),
         n_periods=n_periods,
         n_subjects=n_subjects,
-        regime_to_states=regime_to_states,
-        regime_to_actions=regime_to_actions,
-        discrete_categories=discrete_categories,
+        regime_to_states=MappingProxyType(regime_to_states),
+        regime_to_actions=MappingProxyType(regime_to_actions),
+        discrete_categories=MappingProxyType(discrete_categories),
     )
 
 

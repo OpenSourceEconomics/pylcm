@@ -1,9 +1,7 @@
 import dataclasses
-from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
-from typing import cast
 
 import pandas as pd
 from jax import Array
@@ -25,13 +23,6 @@ from lcm.typing import (
     VmappedRegimeTransitionFunction,
 )
 from lcm.utils import first_non_none, flatten_regime_namespace
-
-
-def _ensure_mapping_proxy[K, V](value: Mapping[K, V]) -> MappingProxyType[K, V]:
-    """Wrap a Mapping in MappingProxyType if not already wrapped."""
-    if isinstance(value, MappingProxyType):
-        return cast("MappingProxyType[K, V]", value)
-    return MappingProxyType(value)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -68,20 +59,10 @@ class StateActionSpace:
 
     """
 
-    states: dict[str, ContinuousState | DiscreteState]
-    discrete_actions: dict[str, DiscreteAction]
-    continuous_actions: dict[str, ContinuousAction]
+    states: MappingProxyType[str, ContinuousState | DiscreteState]
+    discrete_actions: MappingProxyType[str, DiscreteAction]
+    continuous_actions: MappingProxyType[str, ContinuousAction]
     states_and_discrete_actions_names: tuple[str, ...]
-
-    def __post_init__(self) -> None:
-        # Wrap mutable dicts in MappingProxyType to prevent accidental mutation
-        object.__setattr__(self, "states", _ensure_mapping_proxy(self.states))
-        object.__setattr__(
-            self, "discrete_actions", _ensure_mapping_proxy(self.discrete_actions)
-        )
-        object.__setattr__(
-            self, "continuous_actions", _ensure_mapping_proxy(self.continuous_actions)
-        )
 
     @property
     def states_names(self) -> tuple[str, ...]:
@@ -107,18 +88,19 @@ class StateActionSpace:
 
     def replace(
         self,
-        states: dict[str, ContinuousState | DiscreteState] | None = None,
-        discrete_actions: dict[str, DiscreteAction] | None = None,
-        continuous_actions: dict[str, ContinuousAction] | None = None,
+        states: MappingProxyType[str, ContinuousState | DiscreteState] | None = None,
+        discrete_actions: MappingProxyType[str, DiscreteAction] | None = None,
+        continuous_actions: MappingProxyType[str, ContinuousAction] | None = None,
     ) -> StateActionSpace:
         """Replace the states or actions in the state-action space.
 
         Args:
-            states: Dictionary with new states. If None, the existing states are used.
-            discrete_actions: Dictionary with new discrete actions. If None, the
+            states: Read-only mapping with new states. If None, the existing states are
+                used.
+            discrete_actions: Read-only mapping with new discrete actions. If None, the
                 existing discrete actions are used.
-            continuous_actions: Dictionary with new continuous actions. If None, the
-                existing continuous actions are used.
+            continuous_actions: Read-only mapping with new continuous actions. If None,
+                the existing continuous actions are used.
 
         Returns:
             New state-action space with the replaced states or actions.
@@ -150,17 +132,8 @@ class StateSpaceInfo:
     """
 
     states_names: tuple[str, ...]
-    discrete_states: dict[str, DiscreteGrid]
-    continuous_states: dict[str, ContinuousGrid]
-
-    def __post_init__(self) -> None:
-        # Wrap mutable dicts in MappingProxyType to prevent accidental mutation
-        object.__setattr__(
-            self, "discrete_states", _ensure_mapping_proxy(self.discrete_states)
-        )
-        object.__setattr__(
-            self, "continuous_states", _ensure_mapping_proxy(self.continuous_states)
-        )
+    discrete_states: MappingProxyType[str, DiscreteGrid]
+    continuous_states: MappingProxyType[str, ContinuousGrid]
 
 
 class ShockType(Enum):
@@ -196,8 +169,8 @@ class InternalRegime:
 
     name: str
     terminal: bool
-    grids: dict[str, Array]
-    gridspecs: dict[str, Grid]
+    grids: MappingProxyType[str, Array]
+    gridspecs: MappingProxyType[str, Grid]
     variable_info: pd.DataFrame
     utility: InternalUserFunction
     constraints: dict[str, InternalUserFunction]
@@ -212,28 +185,11 @@ class InternalRegime:
     params_template: ParamsDict
     state_action_spaces: StateActionSpace
     state_space_infos: StateSpaceInfo
-    max_Q_over_a_functions: dict[int, MaxQOverAFunction]
-    argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction]
+    max_Q_over_a_functions: MappingProxyType[int, MaxQOverAFunction]
+    argmax_and_max_Q_over_a_functions: MappingProxyType[int, ArgmaxQOverAFunction]
     next_state_simulation_function: NextStateSimulationFunction
     # Not properly processed yet
     random_utility_shocks: ShockType
-
-    def __post_init__(self) -> None:
-        # Wrap mutable dicts in MappingProxyType to prevent accidental mutation.
-        # Note: constraints and functions are not wrapped because they are heavily
-        # used with external libraries (dags) that don't recognize MappingProxyType.
-        object.__setattr__(self, "grids", _ensure_mapping_proxy(self.grids))
-        object.__setattr__(self, "gridspecs", _ensure_mapping_proxy(self.gridspecs))
-        object.__setattr__(
-            self,
-            "max_Q_over_a_functions",
-            _ensure_mapping_proxy(self.max_Q_over_a_functions),
-        )
-        object.__setattr__(
-            self,
-            "argmax_and_max_Q_over_a_functions",
-            _ensure_mapping_proxy(self.argmax_and_max_Q_over_a_functions),
-        )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -252,14 +208,9 @@ class PeriodRegimeSimulationData:
     """
 
     V_arr: Array
-    actions: Mapping[str, Array]
-    states: Mapping[str, Array]
+    actions: MappingProxyType[str, Array]
+    states: MappingProxyType[str, Array]
     in_regime: Bool1D
-
-    def __post_init__(self) -> None:
-        # Wrap mutable dicts in MappingProxyType to prevent accidental mutation
-        object.__setattr__(self, "actions", _ensure_mapping_proxy(self.actions))
-        object.__setattr__(self, "states", _ensure_mapping_proxy(self.states))
 
 
 class Target(Enum):

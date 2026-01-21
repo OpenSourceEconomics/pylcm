@@ -1,4 +1,5 @@
 import dataclasses
+from types import MappingProxyType
 
 import jax.numpy as jnp
 import numpy as np
@@ -45,19 +46,26 @@ def test_solve_brute():
     # create the list of state_action_spaces
     # ==================================================================================
     state_action_space = StateActionSpace(
-        discrete_actions={
-            # pick [0, 1] such that no label translation is needed
-            # lazy is like a type, it influences utility but is not affected by actions
-            "lazy": jnp.array([0, 1]),
-            "working": jnp.array([0, 1]),
-        },
-        continuous_actions={
-            "consumption": jnp.array([0, 1, 2, 3]),
-        },
-        states={
-            # pick [0, 1, 2] such that no coordinate mapping is needed
-            "wealth": jnp.array([0.0, 1.0, 2.0]),
-        },
+        discrete_actions=MappingProxyType(
+            {
+                # pick [0, 1] such that no label translation is needed
+                # lazy is like a type, it influences utility but is not affected
+                # by actions
+                "lazy": jnp.array([0, 1]),
+                "working": jnp.array([0, 1]),
+            }
+        ),
+        continuous_actions=MappingProxyType(
+            {
+                "consumption": jnp.array([0, 1, 2, 3]),
+            }
+        ),
+        states=MappingProxyType(
+            {
+                # pick [0, 1, 2] such that no coordinate mapping is needed
+                "wealth": jnp.array([0.0, 1.0, 2.0]),
+            }
+        ),
         states_and_discrete_actions_names=("lazy", "working", "wealth"),
     )
     # ==================================================================================
@@ -119,15 +127,19 @@ def test_solve_brute():
 
 def test_solve_brute_single_period_Qc_arr():
     state_action_space = StateActionSpace(
-        discrete_actions={
-            "a": jnp.array([0, 1.0]),
-            "b": jnp.array([2, 3.0]),
-            "c": jnp.array([4, 5, 6]),
-        },
-        continuous_actions={
-            "d": jnp.arange(12.0),
-        },
-        states={},
+        discrete_actions=MappingProxyType(
+            {
+                "a": jnp.array([0, 1.0]),
+                "b": jnp.array([2, 3.0]),
+                "c": jnp.array([4, 5, 6]),
+            }
+        ),
+        continuous_actions=MappingProxyType(
+            {
+                "d": jnp.arange(12.0),
+            }
+        ),
+        states=MappingProxyType({}),
         states_and_discrete_actions_names=("a", "b", "c"),
     )
 

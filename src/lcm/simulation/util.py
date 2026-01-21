@@ -19,7 +19,7 @@ from lcm.utils import flatten_regime_namespace, normalize_regime_transition_prob
 
 def create_regime_state_action_space(
     internal_regime: InternalRegime,
-    states: Mapping[str, Array],
+    states: MappingProxyType[str, Array],
 ) -> StateActionSpace:
     """Create the state-action space containing only the relevant subjects in a regime.
 
@@ -49,11 +49,11 @@ def create_regime_state_action_space(
 
 def calculate_next_states(
     internal_regime: InternalRegime,
-    optimal_actions: Mapping[str, Array],
+    optimal_actions: MappingProxyType[str, Array],
     period: int,
     age: float,
     params: dict[RegimeName, ParamsDict],
-    states: Mapping[str, Array],
+    states: MappingProxyType[str, Array],
     state_action_space: StateActionSpace,
     key: Array,
     subjects_in_regime: Bool1D,
@@ -120,7 +120,7 @@ def calculate_next_states(
 def calculate_next_regime_membership(
     internal_regime: InternalRegime,
     state_action_space: StateActionSpace,
-    optimal_actions: Mapping[str, Array],
+    optimal_actions: MappingProxyType[str, Array],
     period: int,
     age: float,
     params: dict[RegimeName, ParamsDict],
@@ -232,7 +232,7 @@ def draw_key_from_dict(
 
 
 def _update_states_for_subjects(
-    all_states: Mapping[str, Array],
+    all_states: MappingProxyType[str, Array],
     computed_next_states: dict[str, Array],
     subject_indices: Bool1D,
 ) -> MappingProxyType[str, Array]:

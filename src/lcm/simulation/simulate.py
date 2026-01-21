@@ -32,6 +32,11 @@ from lcm.typing import (
 from lcm.utils import flatten_regime_namespace
 
 
+def _ensure_mapping_proxy[K, V](value: Mapping[K, V]) -> MappingProxyType[K, V]:
+    """Wrap a Mapping in MappingProxyType if not already wrapped."""
+    return MappingProxyType(value)
+
+
 def simulate(
     params: dict[RegimeName, ParamsDict],
     initial_states: dict[str, Array],
@@ -82,7 +87,7 @@ def simulate(
     key = jax.random.key(seed=seed)
 
     # The following variables are updated during the forward simulation
-    states = flatten_regime_namespace(nested_initial_states)
+    states = MappingProxyType(flatten_regime_namespace(nested_initial_states))
     subject_regime_ids = jnp.asarray(
         [regime_id[initial_regime] for initial_regime in initial_regimes]
     )
@@ -145,7 +150,7 @@ def _simulate_regime_in_period(
     internal_regime: InternalRegime,
     period: int,
     age: float,
-    states: Mapping[str, Array],
+    states: MappingProxyType[str, Array],
     subject_regime_ids: Int1D,
     new_subject_regime_ids: Int1D,
     V_arr_dict: dict[int, dict[RegimeName, FloatND]],
@@ -153,7 +158,7 @@ def _simulate_regime_in_period(
     regime_id: Mapping[RegimeName, int],
     active_regimes_next_period: list[RegimeName],
     key: Array,
-) -> tuple[PeriodRegimeSimulationData, Mapping[str, Array], Int1D, Array]:
+) -> tuple[PeriodRegimeSimulationData, MappingProxyType[str, Array], Int1D, Array]:
     """Simulate one regime for one period.
 
     This function processes all subjects in a given regime for a single period,
@@ -230,8 +235,8 @@ def _simulate_regime_in_period(
 
     simulation_result = PeriodRegimeSimulationData(
         V_arr=V_arr,
-        actions=optimal_actions,
-        states=res,
+        actions=_ensure_mapping_proxy(optimal_actions),
+        states=MappingProxyType(res),
         in_regime=subject_ids_in_regime,
     )
 
