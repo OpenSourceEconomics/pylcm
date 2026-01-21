@@ -3,6 +3,7 @@
 import re
 from collections.abc import Callable, Iterable
 from fractions import Fraction
+from types import MappingProxyType
 from typing import overload
 
 import jax.numpy as jnp
@@ -14,11 +15,13 @@ from lcm.typing import Float1D
 # Step parsing
 # ======================================================================================
 
-STEP_UNITS: dict[str, Fraction] = {
-    "Y": Fraction(1, 1),
-    "M": Fraction(1, 12),
-    "Q": Fraction(1, 4),
-}
+STEP_UNITS: MappingProxyType[str, Fraction] = MappingProxyType(
+    {
+        "Y": Fraction(1, 1),
+        "M": Fraction(1, 12),
+        "Q": Fraction(1, 4),
+    }
+)
 
 
 def parse_step(step: str) -> int | Fraction:

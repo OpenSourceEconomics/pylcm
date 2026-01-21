@@ -1,3 +1,6 @@
+from collections.abc import Mapping
+from types import MappingProxyType
+
 import pandas as pd
 from jax import Array
 
@@ -9,7 +12,7 @@ from lcm.regime import Regime
 
 def create_state_action_space(
     variable_info: pd.DataFrame,
-    grids: dict[str, Array],
+    grids: Mapping[str, Array],
     *,
     states: dict[str, Array] | None = None,
 ) -> StateActionSpace:
@@ -50,9 +53,9 @@ def create_state_action_space(
     ordered_var_names = tuple(vi.query("is_state | is_discrete").index)
 
     return StateActionSpace(
-        states=_states,
-        discrete_actions=discrete_actions,
-        continuous_actions=continuous_actions,
+        states=MappingProxyType(_states),
+        discrete_actions=MappingProxyType(discrete_actions),
+        continuous_actions=MappingProxyType(continuous_actions),
         states_and_discrete_actions_names=ordered_var_names,
     )
 
@@ -96,8 +99,8 @@ def create_state_space_info(
 
     return StateSpaceInfo(
         states_names=tuple(state_names),
-        discrete_states=discrete_states,
-        continuous_states=continuous_states,
+        discrete_states=MappingProxyType(discrete_states),
+        continuous_states=MappingProxyType(continuous_states),
     )
 
 

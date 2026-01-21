@@ -1,5 +1,5 @@
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from itertools import chain
 from typing import Any, TypeVar
 
@@ -42,7 +42,7 @@ def first_non_none(*args: T | None) -> T:
     raise ValueError("All arguments are None")
 
 
-def flatten_regime_namespace(d: dict[RegimeName, Any]) -> dict[str, Any]:
+def flatten_regime_namespace(d: Mapping[RegimeName, Any]) -> dict[str, Any]:
     return flatten_to_qnames(d)
 
 
@@ -80,8 +80,8 @@ def normalize_regime_transition_probs(
 
 
 def normalize_regime_transition_probs_dict(
-    probs: dict[str, Array],
-    active_regimes: list[RegimeName],
+    probs: Mapping[str, Array],
+    active_regimes: tuple[str, ...],
 ) -> dict[str, Array]:
     """Normalize regime transition probabilities over active regimes (dict version).
 
@@ -90,7 +90,7 @@ def normalize_regime_transition_probs_dict(
 
     Args:
         probs: Dict mapping regime names to probability arrays.
-        active_regimes: List of regime names that are active in the next period.
+        active_regimes: Tuple of regime names that are active in the next period.
 
     Returns:
         Normalized probabilities dict with same structure as input. Inactive regimes
@@ -103,7 +103,7 @@ def normalize_regime_transition_probs_dict(
     active_probs = {name: prob for name, prob in probs.items() if name in active_set}
 
     if not active_probs:
-        return probs
+        return dict(probs)
 
     # Stack active probabilities and compute total
     stacked = jnp.stack(list(active_probs.values()), axis=0)

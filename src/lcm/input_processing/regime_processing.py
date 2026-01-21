@@ -1,6 +1,7 @@
 import functools
 from collections.abc import Mapping
 from copy import deepcopy
+from types import MappingProxyType
 from typing import Any, cast
 
 from dags import get_annotations
@@ -32,6 +33,7 @@ from lcm.typing import (
     ParamsDict,
     RegimeIdMapping,
     RegimeName,
+    TransitionFunctionsMapping,
     UserFunction,
 )
 from lcm.utils import (
@@ -39,6 +41,15 @@ from lcm.utils import (
     flatten_regime_namespace,
     unflatten_regime_namespace,
 )
+
+
+def _wrap_transitions(
+    transitions: dict[RegimeName, dict[str, InternalUserFunction]],
+) -> TransitionFunctionsMapping:
+    """Wrap nested transitions dict in MappingProxyType."""
+    return MappingProxyType(
+        {name: MappingProxyType(inner) for name, inner in transitions.items()}
+    )
 
 
 def process_regimes(
@@ -149,21 +160,23 @@ def process_regimes(
         internal_regimes[name] = InternalRegime(
             name=name,
             terminal=regime.terminal,
-            grids=grids[name],
-            gridspecs=gridspecs[name],
+            grids=MappingProxyType(grids[name]),
+            gridspecs=MappingProxyType(gridspecs[name]),
             variable_info=variable_info[name],
-            functions=internal_functions.functions,
+            functions=MappingProxyType(internal_functions.functions),
             utility=internal_functions.utility,
-            constraints=internal_functions.constraints,
-            active_periods=regimes_to_active_periods[name],
+            constraints=MappingProxyType(internal_functions.constraints),
+            active_periods=tuple(regimes_to_active_periods[name]),
             regime_transition_probs=internal_functions.regime_transition_probs,
             internal_functions=internal_functions,
             transitions=internal_functions.transitions,
             params_template=params_template,
             state_action_spaces=state_action_spaces[name],
             state_space_infos=state_space_infos[name],
-            max_Q_over_a_functions=max_Q_over_a_functions,
-            argmax_and_max_Q_over_a_functions=argmax_and_max_Q_over_a_functions,
+            max_Q_over_a_functions=MappingProxyType(max_Q_over_a_functions),
+            argmax_and_max_Q_over_a_functions=MappingProxyType(
+                argmax_and_max_Q_over_a_functions
+            ),
             next_state_simulation_function=next_state_simulation_function,
             # currently no additive utility shocks are supported
             random_utility_shocks=ShockType.NONE,
@@ -211,9 +224,9 @@ def _get_internal_functions(
 
     # Build all_functions using nested_transitions (to get prefixed names)
     all_functions = deepcopy(
-        regime.functions
+        dict(regime.functions)
         | {"utility": regime.utility}
-        | regime.constraints
+        | dict(regime.constraints)
         | flatten_regime_namespace(nested_transitions)
     )
 
@@ -323,10 +336,10 @@ def _get_internal_functions(
         )
 
     return InternalFunctions(
-        functions=internal_functions,
+        functions=MappingProxyType(internal_functions),
         utility=internal_utility,
-        constraints=internal_constraints,
-        transitions=unflatten_regime_namespace(internal_transition),
+        constraints=MappingProxyType(internal_constraints),
+        transitions=_wrap_transitions(unflatten_regime_namespace(internal_transition)),
         regime_transition_probs=internal_regime_transition_probs,
     )
 
@@ -401,8 +414,8 @@ def _ensure_fn_only_depends_on_params(
 
 
 def _convert_flat_to_nested_transitions(
-    flat_transitions: dict[str, UserFunction],
-    states_per_regime: dict[str, set[str]],
+    flat_transitions: Mapping[str, UserFunction],
+    states_per_regime: Mapping[str, set[str]],
     *,
     terminal: bool = False,
 ) -> dict[str, dict[str, UserFunction] | UserFunction]:
@@ -429,17 +442,18 @@ def _convert_flat_to_nested_transitions(
         name: fn for name, fn in flat_transitions.items() if name != "next_regime"
     }
 
-    states_with_transitions = {name.removeprefix("next_") for name in state_transitions}
+    transitioned_state_names = {
+        name.removeprefix("next_") for name in state_transitions
+    }
 
     nested: dict[str, dict[str, UserFunction] | UserFunction] = {}
-
     nested["next_regime"] = next_regime_fn
 
-    for regime_name, state_names in states_per_regime.items():
-        if state_names <= states_with_transitions:
+    for regime_name, regime_state_names in states_per_regime.items():
+        if regime_state_names <= transitioned_state_names:
             nested[regime_name] = {
                 f"next_{state}": state_transitions[f"next_{state}"]
-                for state in state_names.intersection(states_with_transitions)
+                for state in regime_state_names & transitioned_state_names
             }
 
     return nested

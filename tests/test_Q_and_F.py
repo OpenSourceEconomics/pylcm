@@ -124,7 +124,7 @@ def internal_functions_illustrative():
     }
     return InternalFunctions(
         utility=lambda: 0,  # ty: ignore[invalid-argument-type]
-        transitions={},
+        transitions=MappingProxyType({}),
         constraints=constraints,  # ty: ignore[invalid-argument-type]
         functions=functions,  # ty: ignore[invalid-argument-type]
         regime_transition_probs=PhaseVariantContainer(
@@ -203,7 +203,7 @@ def test_get_combined_constraint():
     internal_functions = InternalFunctions(
         utility=lambda: 0,  # ty: ignore[invalid-argument-type]
         constraints={"f": f, "g": g},  # ty: ignore[invalid-argument-type]
-        transitions={},
+        transitions=MappingProxyType({}),
         functions={"h": h},  # ty: ignore[invalid-argument-type]
         regime_transition_probs=PhaseVariantContainer(
             solve=mock_transition_solve, simulate=mock_transition_simulate
@@ -257,12 +257,14 @@ def test_get_U_and_F_with_annotated_constraints():
 
     internal_functions = InternalFunctions(
         utility=utility_func,  # ty: ignore[invalid-argument-type]
-        constraints={
-            "budget_constraint": budget_constraint,
-            "positive_consumption_constraint": positive_consumption_constraint,
-        },  # ty: ignore[invalid-argument-type]
-        transitions={},
-        functions={},
+        constraints=MappingProxyType(
+            {
+                "budget_constraint": budget_constraint,
+                "positive_consumption_constraint": positive_consumption_constraint,
+            }
+        ),
+        transitions=MappingProxyType({}),
+        functions=MappingProxyType({}),
         regime_transition_probs=PhaseVariantContainer(
             solve=mock_transition_solve, simulate=mock_transition_simulate
         ),

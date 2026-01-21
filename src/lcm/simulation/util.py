@@ -19,7 +19,7 @@ from lcm.utils import flatten_regime_namespace, normalize_regime_transition_prob
 
 def create_regime_state_action_space(
     internal_regime: InternalRegime,
-    states: Mapping[str, Array],
+    states: MappingProxyType[str, Array],
 ) -> StateActionSpace:
     """Create the state-action space containing only the relevant subjects in a regime.
 
@@ -49,11 +49,11 @@ def create_regime_state_action_space(
 
 def calculate_next_states(
     internal_regime: InternalRegime,
-    optimal_actions: Mapping[str, Array],
+    optimal_actions: MappingProxyType[str, Array],
     period: int,
     age: float,
-    params: dict[RegimeName, ParamsDict],
-    states: Mapping[str, Array],
+    params: ParamsDict,
+    states: MappingProxyType[str, Array],
     state_action_space: StateActionSpace,
     key: Array,
     subjects_in_regime: Bool1D,
@@ -120,13 +120,13 @@ def calculate_next_states(
 def calculate_next_regime_membership(
     internal_regime: InternalRegime,
     state_action_space: StateActionSpace,
-    optimal_actions: Mapping[str, Array],
+    optimal_actions: MappingProxyType[str, Array],
     period: int,
     age: float,
-    params: dict[RegimeName, ParamsDict],
+    params: ParamsDict,
     regime_id: Mapping[RegimeName, int],
     new_subject_regime_ids: Int1D,
-    active_regimes_next_period: list[RegimeName],
+    active_regimes_next_period: tuple[RegimeName, ...],
     key: Array,
     subjects_in_regime: Bool1D,
 ) -> Int1D:
@@ -232,8 +232,8 @@ def draw_key_from_dict(
 
 
 def _update_states_for_subjects(
-    all_states: Mapping[str, Array],
-    computed_next_states: dict[str, Array],
+    all_states: MappingProxyType[str, Array],
+    computed_next_states: Mapping[str, Array],
     subject_indices: Bool1D,
 ) -> MappingProxyType[str, Array]:
     """Update the global states dictionary with next states for specific subjects.
@@ -253,19 +253,22 @@ def _update_states_for_subjects(
 
     """
     updated_states = dict(all_states)
-    for state_name, next_state_values in computed_next_states.items():
-        updated_states[state_name.replace("next_", "")] = jnp.where(
+    for next_state_name, next_state_values in computed_next_states.items():
+        # State names may be prefixed with regime (e.g., "working__next_wealth")
+        # We need to replace "next_" with "" to get "working__wealth"
+        state_name = next_state_name.replace("next_", "")
+        updated_states[state_name] = jnp.where(
             subject_indices,
             next_state_values,
-            all_states[state_name.replace("next_", "")],
+            all_states[state_name],
         )
 
     return MappingProxyType(updated_states)
 
 
 def validate_flat_initial_states(
-    flat_initial_states: dict[str, Array],
-    internal_regimes: dict[RegimeName, InternalRegime],
+    flat_initial_states: Mapping[str, Array],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
 ) -> None:
     """Validate flat initial_states dict.
 
@@ -318,8 +321,8 @@ def validate_flat_initial_states(
 
 
 def convert_flat_to_nested_initial_states(
-    flat_initial_states: dict[str, Array],
-    internal_regimes: dict[RegimeName, InternalRegime],
+    flat_initial_states: Mapping[str, Array],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
 ) -> dict[RegimeName, dict[str, Array]]:
     """Convert flat initial_states dict to nested format.
 

@@ -1,5 +1,6 @@
 import functools
 from collections.abc import Callable
+from types import MappingProxyType
 
 import jax.numpy as jnp
 from dags.signature import with_signature
@@ -64,7 +65,7 @@ def get_max_Q_over_a(
         return_annotation="FloatND",
     )
     def max_Q_over_a(
-        next_V_arr: dict[RegimeName, FloatND],
+        next_V_arr: MappingProxyType[RegimeName, FloatND],
         params: ParamsDict,
         **states_and_actions: Array,
     ) -> FloatND:
@@ -119,7 +120,7 @@ def get_argmax_and_max_Q_over_a(
 
     @functools.wraps(Q_and_F)
     def argmax_and_max_Q_over_a(
-        next_V_arr: dict[RegimeName, FloatND],
+        next_V_arr: MappingProxyType[RegimeName, FloatND],
         params: ParamsDict,
         **states_and_actions: Array,
     ) -> tuple[IntND, FloatND]:

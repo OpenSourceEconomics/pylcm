@@ -70,10 +70,12 @@ def test_simulate_using_raw_inputs(simulate_inputs):
 
     result = simulate(
         params=params,
-        V_arr_dict={
-            0: {"working": jnp.zeros(100), "dead": jnp.zeros(2)},
-            1: {"working": jnp.zeros(100), "dead": jnp.zeros(2)},
-        },
+        V_arr_dict=MappingProxyType(
+            {
+                0: MappingProxyType({"working": jnp.zeros(100), "dead": jnp.zeros(2)}),
+                1: MappingProxyType({"working": jnp.zeros(100), "dead": jnp.zeros(2)}),
+            }
+        ),
         initial_states={"wealth": jnp.array([1.0, 50.400803])},
         initial_regimes=["working"] * 2,
         logger=get_logger(debug_mode=False),

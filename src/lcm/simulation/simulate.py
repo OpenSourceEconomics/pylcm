@@ -33,13 +33,13 @@ from lcm.utils import flatten_regime_namespace
 
 
 def simulate(
-    params: dict[RegimeName, ParamsDict],
-    initial_states: dict[str, Array],
+    params: ParamsDict,
+    initial_states: Mapping[str, Array],
     initial_regimes: list[RegimeName],
-    internal_regimes: dict[RegimeName, InternalRegime],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_id: RegimeIdMapping,
     logger: logging.Logger,
-    V_arr_dict: dict[int, dict[RegimeName, FloatND]],
+    V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
     ages: AgeGrid,
     *,
     seed: int | None = None,
@@ -82,7 +82,7 @@ def simulate(
     key = jax.random.key(seed=seed)
 
     # The following variables are updated during the forward simulation
-    states = flatten_regime_namespace(nested_initial_states)
+    states = MappingProxyType(flatten_regime_namespace(nested_initial_states))
     subject_regime_ids = jnp.asarray(
         [regime_id[initial_regime] for initial_regime in initial_regimes]
     )
@@ -103,11 +103,11 @@ def simulate(
             if period in regime.active_periods
         }
 
-        active_regimes_next_period = [
+        active_regimes_next_period = tuple(
             regime_name
             for regime_name, regime in internal_regimes.items()
             if period + 1 in regime.active_periods
-        ]
+        )
 
         for regime_name, internal_regime in active_regimes.items():
             result, new_states, new_subject_regime_ids, key = (
@@ -145,15 +145,15 @@ def _simulate_regime_in_period(
     internal_regime: InternalRegime,
     period: int,
     age: float,
-    states: Mapping[str, Array],
+    states: MappingProxyType[str, Array],
     subject_regime_ids: Int1D,
     new_subject_regime_ids: Int1D,
-    V_arr_dict: dict[int, dict[RegimeName, FloatND]],
-    params: dict[RegimeName, ParamsDict],
+    V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
+    params: ParamsDict,
     regime_id: Mapping[RegimeName, int],
-    active_regimes_next_period: list[RegimeName],
+    active_regimes_next_period: tuple[RegimeName, ...],
     key: Array,
-) -> tuple[PeriodRegimeSimulationData, Mapping[str, Array], Int1D, Array]:
+) -> tuple[PeriodRegimeSimulationData, MappingProxyType[str, Array], Int1D, Array]:
     """Simulate one regime for one period.
 
     This function processes all subjects in a given regime for a single period,
@@ -194,7 +194,7 @@ def _simulate_regime_in_period(
     # We need to pass the value function array of the next period to the
     # argmax_and_max_Q_over_a function, as the current Q-function requires the
     # next period's value function. In the last period, we pass an empty dict.
-    next_V_arr = V_arr_dict.get(period + 1, {})
+    next_V_arr = V_arr_dict.get(period + 1, MappingProxyType({}))
 
     # The Q-function values contain the information of how much value each
     # action combination is worth. To find the optimal discrete action, we
@@ -231,7 +231,7 @@ def _simulate_regime_in_period(
     simulation_result = PeriodRegimeSimulationData(
         V_arr=V_arr,
         actions=optimal_actions,
-        states=res,
+        states=MappingProxyType(res),
         in_regime=subject_ids_in_regime,
     )
 
