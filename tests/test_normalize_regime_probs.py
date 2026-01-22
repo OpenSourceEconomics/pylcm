@@ -20,9 +20,10 @@ def test_normalize_with_scalar_values():
     active_regimes = ("working", "retired")
     got = normalize_regime_transition_probs(probs, active_regimes)
     # Should normalize over active regimes only (0.7 + 0.1 = 0.8)
+    # Only active regimes are returned
+    assert set(got.keys()) == {"working", "retired"}
     assert jnp.allclose(got["working"], jnp.array(0.7 / 0.8))
     assert jnp.allclose(got["retired"], jnp.array(0.1 / 0.8))
-    assert jnp.allclose(got["unemployed"], jnp.array(0.0))  # inactive, zeroed out
 
 
 def test_normalize_with_array_values():
@@ -38,9 +39,10 @@ def test_normalize_with_array_values():
     got = normalize_regime_transition_probs(probs, active_regimes)
     # Should normalize over active regimes only
     # Subject 0: 0.7 + 0.1 = 0.8, Subject 1: 0.6 + 0.3 = 0.9
+    # Only active regimes are returned
+    assert set(got.keys()) == {"working", "retired"}
     assert jnp.allclose(got["working"], jnp.array([0.7 / 0.8, 0.6 / 0.9]))
     assert jnp.allclose(got["retired"], jnp.array([0.1 / 0.8, 0.3 / 0.9]))
-    assert jnp.allclose(got["unemployed"], jnp.array([0.0, 0.0]))  # zeroed out
 
 
 # ======================================================================================
@@ -140,6 +142,9 @@ def test_normalize_produces_nan_when_all_active_probs_zero():
     # But only working and retired are active
     active_regimes = ("working", "retired")
     got = normalize_regime_transition_probs(probs, active_regimes)
+
+    # Only active regimes are returned
+    assert set(got.keys()) == {"working", "retired"}
 
     # First subject has all zeros for active regimes -> NaN after normalization
     assert jnp.isnan(got["working"][0])
