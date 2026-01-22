@@ -2,7 +2,6 @@
 
 import functools
 import inspect
-from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any
 
@@ -36,8 +35,8 @@ from lcm.typing import (
     MaxQOverAFunction,
     NextStateSimulationFunction,
     QAndFFunction,
-    RegimeIdMapping,
     RegimeName,
+    RegimeNamesToIds,
     RegimeTransitionFunction,
     VmappedRegimeTransitionFunction,
 )
@@ -65,9 +64,9 @@ def build_state_action_space(
 def build_Q_and_F_functions(
     regime_name: str,
     regime: Regime,
-    regimes_to_active_periods: Mapping[RegimeName, tuple[int, ...]],
+    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     internal_functions: InternalFunctions,
-    state_space_infos: Mapping[RegimeName, StateSpaceInfo],
+    state_space_infos: MappingProxyType[RegimeName, StateSpaceInfo],
     grids: GridsDict,
     ages: AgeGrid,
 ) -> MappingProxyType[int, QAndFFunction]:
@@ -199,10 +198,10 @@ def build_next_state_simulation_functions(
 
 
 def build_regime_transition_probs_functions(
-    internal_functions: Mapping[str, InternalUserFunction],
+    internal_functions: MappingProxyType[str, InternalUserFunction],
     regime_transition_probs: InternalUserFunction,
-    grids: Mapping[str, Array],
-    regime_id: RegimeIdMapping,
+    grids: MappingProxyType[str, Array],
+    regime_names_to_ids: RegimeNamesToIds,
     *,
     is_stochastic: bool,
     enable_jit: bool,
@@ -212,11 +211,13 @@ def build_regime_transition_probs_functions(
         probs_fn = regime_transition_probs
     else:
         probs_fn = _wrap_deterministic_regime_transition(
-            regime_transition_probs, regime_id
+            regime_transition_probs, regime_names_to_ids
         )
 
     # Wrap to convert array output to dict format
-    wrapped_regime_transition_probs = _wrap_regime_transition_probs(probs_fn, regime_id)
+    wrapped_regime_transition_probs = _wrap_regime_transition_probs(
+        probs_fn, regime_names_to_ids
+    )
 
     functions_pool = dict(internal_functions) | {
         "regime_transition_probs": wrapped_regime_transition_probs
@@ -259,7 +260,7 @@ def build_regime_transition_probs_functions(
 
 def _wrap_regime_transition_probs(
     fn: InternalUserFunction,
-    regime_id: RegimeIdMapping,
+    regime_id: RegimeNamesToIds,
 ) -> InternalUserFunction:
     """Wrap next_regime function to convert array output to dict format.
 
@@ -303,7 +304,7 @@ def _wrap_regime_transition_probs(
 
 def _wrap_deterministic_regime_transition(
     fn: InternalUserFunction,
-    regime_id: RegimeIdMapping,
+    regime_id: RegimeNamesToIds,
 ) -> InternalUserFunction:
     """Wrap deterministic next_regime to return one-hot probability array.
 

@@ -2,7 +2,7 @@
 
 import pytest
 
-from lcm import LinSpacedGrid, Model, Regime
+from lcm import LinSpacedGrid, Model, Regime, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.utils import REGIME_SEPARATOR
@@ -22,6 +22,12 @@ CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=5, n_points=5)
 
 def test_regime_name_does_not_contain_separator():
     """Regime name validation happens at Model level, not Regime level."""
+
+    @categorical
+    class RegimeId:
+        work__test: int  # Contains separator - but RegimeId class has matching field
+        dead: int
+
     working = Regime(
         utility=utility,
         states={"wealth": WEALTH_GRID},
@@ -41,6 +47,7 @@ def test_regime_name_does_not_contain_separator():
         Model(
             regimes={f"work{REGIME_SEPARATOR}test": working, "dead": dead},
             ages=ages,
+            regime_id_class=RegimeId,
         )
 
 

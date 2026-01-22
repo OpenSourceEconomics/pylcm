@@ -140,6 +140,7 @@ def get_model(
             "dead": dead.replace(active=lambda age: age > final_age_alive),
         },
         ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
+        regime_id_class=RegimeId,
     )
 
 

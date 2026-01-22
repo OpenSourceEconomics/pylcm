@@ -14,11 +14,11 @@ from lcm.grids import (
     Piece,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
-    _get_field_names_and_values,
     _validate_continuous_grid,
     _validate_discrete_grid,
     validate_category_class,
 )
+from lcm.utils import get_field_names_and_values
 from tests.conftest import X64_ENABLED
 
 # ======================================================================================
@@ -27,28 +27,28 @@ from tests.conftest import X64_ENABLED
 
 
 # --------------------------------------------------------------------------------------
-# _get_field_names_and_values
+# get_field_names_and_values
 # --------------------------------------------------------------------------------------
 
 
 def test_get_fields_with_defaults():
     category_class = make_dataclass("Category", [("a", int, 1), ("b", int, 2)])
-    assert _get_field_names_and_values(category_class) == {"a": 1, "b": 2}
+    assert get_field_names_and_values(category_class) == {"a": 1, "b": 2}
 
 
 def test_get_fields_no_defaults():
     category_class = make_dataclass("Category", [("a", int), ("b", int)])
-    assert _get_field_names_and_values(category_class) == {"a": None, "b": None}
+    assert get_field_names_and_values(category_class) == {"a": None, "b": None}
 
 
 def test_get_fields_instance():
     category_class = make_dataclass("Category", [("a", int), ("b", int)])
-    assert _get_field_names_and_values(category_class(a=1, b=2)) == {"a": 1, "b": 2}
+    assert get_field_names_and_values(category_class(a=1, b=2)) == {"a": 1, "b": 2}
 
 
 def test_get_fields_empty():
     category_class = make_dataclass("Category", [])
-    assert _get_field_names_and_values(category_class) == {}
+    assert get_field_names_and_values(category_class) == {}
 
 
 # --------------------------------------------------------------------------------------

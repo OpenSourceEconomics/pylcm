@@ -1,8 +1,7 @@
 import dataclasses
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from dataclasses import dataclass, fields, is_dataclass
-from typing import Any
+from dataclasses import dataclass, is_dataclass
 
 import jax.numpy as jnp
 import portion
@@ -10,7 +9,7 @@ import portion
 from lcm import grid_helpers
 from lcm.exceptions import GridInitializationError, format_messages
 from lcm.typing import Float1D, Int1D, ScalarFloat
-from lcm.utils import find_duplicates
+from lcm.utils import find_duplicates, get_field_names_and_values
 
 
 def categorical[T](cls: type[T]) -> type[T]:
@@ -100,7 +99,7 @@ class DiscreteGrid(Grid):
         """
         _validate_discrete_grid(category_class)
 
-        names_and_values = _get_field_names_and_values(category_class)
+        names_and_values = get_field_names_and_values(category_class)
 
         self.__categories = tuple(names_and_values.keys())
         self.__codes = tuple(names_and_values.values())
@@ -510,7 +509,7 @@ def validate_category_class(category_class: type) -> list[str]:
         )
         return error_messages
 
-    names_and_values = _get_field_names_and_values(category_class)
+    names_and_values = get_field_names_and_values(category_class)
 
     if not names_and_values:
         error_messages.append("category_class must have at least one field.")
@@ -541,20 +540,6 @@ def validate_category_class(category_class: type) -> list[str]:
         )
 
     return error_messages
-
-
-def _get_field_names_and_values(dc: type) -> dict[str, Any]:
-    """Return the fields of a dataclass.
-
-    Args:
-        dc: The dataclass to get the fields of.
-
-    Returns:
-        A dictionary with the field names as keys and the field values as values. If
-        no value is provided for a field, the value is set to None.
-
-    """
-    return {field.name: getattr(dc, field.name, None) for field in fields(dc)}
 
 
 def _validate_continuous_grid(

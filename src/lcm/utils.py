@@ -1,5 +1,6 @@
 from collections import Counter
 from collections.abc import Iterable, Mapping
+from dataclasses import fields
 from itertools import chain
 from types import MappingProxyType
 from typing import Any, TypeVar
@@ -24,6 +25,22 @@ def find_duplicates(*containers: Iterable[T]) -> set[T]:
     return {v for v, count in counts.items() if count > 1}
 
 
+def get_field_names_and_values(dc: type) -> MappingProxyType[str, Any]:
+    """Return the fields of a dataclass.
+
+    Args:
+        dc: The dataclass to get the fields of.
+
+    Returns:
+        An immutable dictionary with the field names as keys and the field values as
+        values. If no value is provided for a field, the value is set to None.
+
+    """
+    return MappingProxyType(
+        {field.name: getattr(dc, field.name, None) for field in fields(dc)}
+    )
+
+
 def first_non_none(*args: T | None) -> T:
     """Return the first non-None argument.
 
@@ -43,8 +60,8 @@ def first_non_none(*args: T | None) -> T:
     raise ValueError("All arguments are None")
 
 
-def flatten_regime_namespace(d: Mapping[RegimeName, Any]) -> dict[str, Any]:
-    return flatten_to_qnames(d)
+def flatten_regime_namespace(d: Mapping[RegimeName, Any]) -> MappingProxyType[str, Any]:
+    return MappingProxyType(flatten_to_qnames(d))
 
 
 def unflatten_regime_namespace(d: dict[str, Any]) -> dict[RegimeName, Any]:

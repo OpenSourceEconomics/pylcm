@@ -50,7 +50,6 @@ def test_normalize_with_array_values():
 
 def test_validate_normalized_probs_passes_for_valid_probs():
     """Test that validation passes for valid normalized probabilities."""
-    # Dict format with shape [n_subjects] for each regime
     normalized_probs = MappingProxyType(
         {
             "working": jnp.array([0.7, 0.6]),
@@ -70,7 +69,6 @@ def test_validate_normalized_probs_raises_for_nan_values():
     produces NaN values. Since NaN values can't sum to 1.0, the "do not sum to 1"
     error is triggered.
     """
-    # Simulate what happens when normalization divides by zero
     normalized_probs = MappingProxyType(
         {
             "working": jnp.array([jnp.nan, 0.5]),

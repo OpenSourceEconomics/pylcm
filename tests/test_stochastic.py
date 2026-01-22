@@ -10,6 +10,7 @@ import lcm
 from lcm import AgeGrid, Model
 from lcm.typing import DiscreteState, FloatND
 from tests.test_models.stochastic import (
+    RegimeId,
     dead,
     get_model,
     get_params,
@@ -138,6 +139,7 @@ def models_and_params() -> tuple[Model, Model, dict[str, Any]]:
             "dead": dead_updated,
         },
         ages=ages,
+        regime_id_class=RegimeId,
     )
 
     model_stochastic = Model(
@@ -147,6 +149,7 @@ def models_and_params() -> tuple[Model, Model, dict[str, Any]]:
             "dead": dead_updated,
         },
         ages=ages,
+        regime_id_class=RegimeId,
     )
 
     return model_deterministic, model_stochastic, get_params(n_periods=n_periods)

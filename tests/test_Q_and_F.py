@@ -40,7 +40,7 @@ def test_get_Q_and_F_function():
     internal_regimes = process_regimes(
         regimes=regimes,
         ages=ages,
-        regime_id=regime_id,
+        regime_names_to_ids=regime_id,
         enable_jit=True,
     )
 
@@ -172,7 +172,7 @@ def test_get_multiply_weights():
     def next_b():
         return jnp.array([0.2, 0.8])
 
-    transitions = {"next_a": next_a, "next_b": next_b}
+    transitions = MappingProxyType({"next_a": next_a, "next_b": next_b})
     multiply_weights = _get_joint_weights_function(
         regime_name="test",
         transitions=transitions,

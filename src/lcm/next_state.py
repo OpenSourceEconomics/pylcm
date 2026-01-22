@@ -1,6 +1,6 @@
 """Generate function that compute the next states for solution and simulation."""
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from types import MappingProxyType
 
 import jax
@@ -25,7 +25,7 @@ from lcm.utils import flatten_regime_namespace
 def get_next_state_function(
     *,
     grids: GridsDict,
-    transitions: Mapping[str, InternalUserFunction],
+    transitions: MappingProxyType[str, InternalUserFunction],
     functions: MappingProxyType[str, InternalUserFunction],
     target: Target,
 ) -> NextStateSimulationFunction:
@@ -68,7 +68,7 @@ def get_next_state_function(
 def get_next_stochastic_weights_function(
     regime_name: RegimeName,
     functions: MappingProxyType[str, InternalUserFunction],
-    transitions: Mapping[str, InternalUserFunction],
+    transitions: MappingProxyType[str, InternalUserFunction],
 ) -> Callable[..., dict[str, Array]]:
     """Get function that computes the weights for the next stochastic states.
 
@@ -98,7 +98,7 @@ def get_next_stochastic_weights_function(
 
 def _extend_transitions_for_simulation(
     grids: GridsDict,
-    transitions: Mapping[str, InternalUserFunction],
+    transitions: MappingProxyType[str, InternalUserFunction],
 ) -> dict[str, Callable[..., Array]]:
     """Extend the functions dictionary for the simulation target.
 

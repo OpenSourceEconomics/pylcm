@@ -31,8 +31,8 @@ from lcm.typing import (
     Int1D,
     InternalUserFunction,
     ParamsDict,
-    RegimeIdMapping,
     RegimeName,
+    RegimeNamesToIds,
     TransitionFunctionsMapping,
     UserFunction,
 )
@@ -55,7 +55,7 @@ def _wrap_transitions(
 def process_regimes(
     regimes: Mapping[str, Regime],
     ages: AgeGrid,
-    regime_id: RegimeIdMapping,
+    regime_names_to_ids: RegimeNamesToIds,
     *,
     enable_jit: bool,
 ) -> dict[str, InternalRegime]:
@@ -70,7 +70,7 @@ def process_regimes(
     Args:
         regimes: Mapping of regime names to Regime instances.
         ages: The AgeGrid for the model.
-        regime_id: Immutable mapping from regime names to integer indices.
+        regime_names_to_ids: Immutable mapping from regime names to integer indices.
         enable_jit: Whether to jit the functions of the internal regime.
 
     Returns:
@@ -98,20 +98,20 @@ def process_regimes(
     # ----------------------------------------------------------------------------------
     # Stage 1: Initialize regime components that do not depend on other regimes
     # ----------------------------------------------------------------------------------
-    grids = {}
-    gridspecs = {}
-    variable_info = {}
-    state_space_infos = {}
-    state_action_spaces = {}
-    regimes_to_active_periods = {}
-
-    for name, regime in regimes.items():
-        grids[name] = get_grids(regime)
-        gridspecs[name] = get_gridspecs(regime)
-        variable_info[name] = get_variable_info(regime)
-        state_space_infos[name] = build_state_space_info(regime)
-        state_action_spaces[name] = build_state_action_space(regime)
-        regimes_to_active_periods[name] = ages.get_periods_where(regime.active)
+    grids = MappingProxyType({n: get_grids(r) for n, r in regimes.items()})
+    gridspecs = MappingProxyType({n: get_gridspecs(r) for n, r in regimes.items()})
+    variable_info = MappingProxyType(
+        {n: get_variable_info(r) for n, r in regimes.items()}
+    )
+    state_space_infos = MappingProxyType(
+        {n: build_state_space_info(r) for n, r in regimes.items()}
+    )
+    state_action_spaces = MappingProxyType(
+        {n: build_state_action_space(r) for n, r in regimes.items()}
+    )
+    regimes_to_active_periods = MappingProxyType(
+        {n: ages.get_periods_where(r.active) for n, r in regimes.items()}
+    )
 
     # ----------------------------------------------------------------------------------
     # Stage 2: Initialize regime components that depend on other regimes
@@ -129,7 +129,7 @@ def process_regimes(
             nested_transitions=nested_transitions[name],
             grids=grids,
             params=params_template,
-            regime_id=regime_id,
+            regime_id=regime_names_to_ids,
             enable_jit=enable_jit,
         )
 
@@ -160,8 +160,8 @@ def process_regimes(
         internal_regimes[name] = InternalRegime(
             name=name,
             terminal=regime.terminal,
-            grids=MappingProxyType(grids[name]),
-            gridspecs=MappingProxyType(gridspecs[name]),
+            grids=grids[name],
+            gridspecs=gridspecs[name],
             variable_info=variable_info[name],
             functions=MappingProxyType(internal_functions.functions),
             utility=internal_functions.utility,
@@ -189,9 +189,9 @@ def _get_internal_functions(
     regime: Regime,
     regime_name: str,
     nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
-    grids: dict[RegimeName, dict[str, Array]],
+    grids: MappingProxyType[RegimeName, MappingProxyType[str, Array]],
     params: ParamsDict,
-    regime_id: RegimeIdMapping,
+    regime_id: RegimeNamesToIds,
     *,
     enable_jit: bool,
 ) -> InternalFunctions:
@@ -303,16 +303,18 @@ def _get_internal_functions(
         if fn_name != "next_regime"
     }
     internal_utility = functions["utility"]
-    internal_constraints = {
-        fn_name: functions[fn_name] for fn_name in regime.constraints
-    }
-    internal_functions = {
-        fn_name: functions[fn_name]
-        for fn_name in functions
-        if fn_name not in flat_nested_transitions
-        and fn_name not in regime.constraints
-        and fn_name not in {"utility", "next_regime"}
-    }
+    internal_constraints = MappingProxyType(
+        {fn_name: functions[fn_name] for fn_name in regime.constraints}
+    )
+    internal_functions = MappingProxyType(
+        {
+            fn_name: functions[fn_name]
+            for fn_name in functions
+            if fn_name not in flat_nested_transitions
+            and fn_name not in regime.constraints
+            and fn_name not in {"utility", "next_regime"}
+        }
+    )
     # Determine if next_regime is stochastic (decorated with @lcm.mark.stochastic)
     # next_regime is at top level in both flat and nested formats
     next_regime_fn = nested_transitions.get("next_regime")
@@ -330,15 +332,15 @@ def _get_internal_functions(
             internal_functions=internal_functions,
             regime_transition_probs=functions["next_regime"],
             grids=grids[regime_name],
-            regime_id=regime_id,
+            regime_names_to_ids=regime_id,
             is_stochastic=is_stochastic_regime_transition,
             enable_jit=enable_jit,
         )
 
     return InternalFunctions(
-        functions=MappingProxyType(internal_functions),
+        functions=internal_functions,
         utility=internal_utility,
-        constraints=MappingProxyType(internal_constraints),
+        constraints=internal_constraints,
         transitions=_wrap_transitions(unflatten_regime_namespace(internal_transition)),
         regime_transition_probs=internal_regime_transition_probs,
     )

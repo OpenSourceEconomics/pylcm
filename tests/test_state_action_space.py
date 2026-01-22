@@ -40,10 +40,12 @@ def test_create_state_action_space_solution_discrete_action_continuous_state():
         discrete_states=[],
         continuous_actions=[],
     )
-    grids = {
-        "wealth": jnp.array([0.0, 50.0, 100.0]),
-        "work": jnp.array([0, 1]),
-    }
+    grids = MappingProxyType(
+        {
+            "wealth": jnp.array([0.0, 50.0, 100.0]),
+            "work": jnp.array([0, 1]),
+        }
+    )
 
     space = create_state_action_space(
         variable_info=variable_info,
@@ -64,10 +66,12 @@ def test_create_state_action_space_solution_continuous_action():
         discrete_states=[],
         discrete_actions=[],
     )
-    grids = {
-        "wealth": jnp.array([0.0, 50.0, 100.0]),
-        "consumption": jnp.array([0.0, 25.0, 50.0]),
-    }
+    grids = MappingProxyType(
+        {
+            "wealth": jnp.array([0.0, 50.0, 100.0]),
+            "consumption": jnp.array([0.0, 25.0, 50.0]),
+        }
+    )
 
     space = create_state_action_space(
         variable_info=variable_info,
@@ -88,10 +92,12 @@ def test_state_action_space_replace_method():
         discrete_states=[],
         continuous_actions=[],
     )
-    grids = {
-        "wealth": jnp.array([0.0, 50.0, 100.0]),
-        "work": jnp.array([0, 1]),
-    }
+    grids = MappingProxyType(
+        {
+            "wealth": jnp.array([0.0, 50.0, 100.0]),
+            "work": jnp.array([0, 1]),
+        }
+    )
 
     space = create_state_action_space(
         variable_info=variable_info,
