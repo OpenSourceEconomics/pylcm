@@ -2,7 +2,7 @@ import jax.numpy as jnp
 import pytest
 
 import lcm
-from lcm import AgeGrid, DiscreteGrid, Model, Regime
+from lcm import AgeGrid, DiscreteGrid, Model, Regime, categorical
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 
 
@@ -171,6 +171,11 @@ def test_regime_overlapping_states_actions(binary_category_class):
 
 def test_model_requires_terminal_regime(binary_category_class):
     """Model must have at least one terminal regime."""
+
+    @categorical
+    class RegimeId:
+        test: int
+
     regime = Regime(
         states={"health": DiscreteGrid(binary_category_class)},
         actions={},
@@ -185,11 +190,17 @@ def test_model_requires_terminal_regime(binary_category_class):
         Model(
             regimes={"test": regime},
             ages=AgeGrid(start=0, stop=2, step="Y"),
+            regime_id_class=RegimeId,
         )
 
 
 def test_model_requires_non_terminal_regime(binary_category_class):
     """Model must have at least one non-terminal regime."""
+
+    @categorical
+    class RegimeId:
+        dead: int
+
     dead = Regime(
         states={"health": DiscreteGrid(binary_category_class)},
         utility=lambda health: health * 0,
@@ -200,11 +211,18 @@ def test_model_requires_non_terminal_regime(binary_category_class):
         Model(
             regimes={"dead": dead},
             ages=AgeGrid(start=0, stop=2, step="Y"),
+            regime_id_class=RegimeId,
         )
 
 
 def test_multi_regime_without_next_regime_raises(binary_category_class):
     """Multi-regime models must have next_regime in each regime."""
+
+    @categorical
+    class RegimeId:
+        regime1: int
+        regime2: int
+
     regime1 = Regime(
         states={"health": DiscreteGrid(binary_category_class)},
         actions={},
@@ -229,6 +247,7 @@ def test_multi_regime_without_next_regime_raises(binary_category_class):
         Model(
             regimes={"regime1": regime1, "regime2": regime2},
             ages=AgeGrid(start=0, stop=2, step="Y"),
+            regime_id_class=RegimeId,
         )
 
 
@@ -241,6 +260,13 @@ def test_model_keyword_only():
 
 def test_model_accepts_multiple_terminal_regimes(binary_category_class):
     """Model can have multiple terminal regimes."""
+
+    @categorical
+    class RegimeId:
+        alive: int
+        dead1: int
+        dead2: int
+
     alive = Regime(
         states={"health": DiscreteGrid(binary_category_class)},
         utility=lambda health: health,
@@ -266,12 +292,19 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
     model = Model(
         regimes={"alive": alive, "dead1": dead1, "dead2": dead2},
         ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=RegimeId,
     )
     assert model.internal_regimes is not None
 
 
 def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):
     """Model creates regime_id mapping from dict keys in order."""
+
+    @categorical
+    class RegimeId:
+        alive: int
+        dead: int
+
     alive = Regime(
         states={"health": DiscreteGrid(binary_category_class)},
         utility=lambda health: health,
@@ -290,14 +323,21 @@ def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):
     model = Model(
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=RegimeId,
     )
     # regime_id should be created from dict keys in order
-    assert model.regime_id["alive"] == 0
-    assert model.regime_id["dead"] == 1
+    assert model.regime_names_to_ids["alive"] == 0
+    assert model.regime_names_to_ids["dead"] == 1
 
 
 def test_model_regime_name_validation(binary_category_class):
     """Model validates regime names don't contain the separator."""
+
+    @categorical
+    class RegimeId:
+        alive__bad: int
+        dead: int
+
     alive = Regime(
         states={"health": DiscreteGrid(binary_category_class)},
         utility=lambda health: health,
@@ -318,4 +358,5 @@ def test_model_regime_name_validation(binary_category_class):
         Model(
             regimes={"alive__bad": alive, "dead": dead},
             ages=AgeGrid(start=0, stop=2, step="Y"),
+            regime_id_class=RegimeId,
         )

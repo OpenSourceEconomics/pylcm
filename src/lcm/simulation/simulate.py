@@ -26,8 +26,8 @@ from lcm.typing import (
     Int1D,
     IntND,
     ParamsDict,
-    RegimeIdMapping,
     RegimeName,
+    RegimeNamesToIds,
 )
 from lcm.utils import flatten_regime_namespace
 
@@ -37,7 +37,7 @@ def simulate(
     initial_states: Mapping[str, Array],
     initial_regimes: list[RegimeName],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-    regime_id: RegimeIdMapping,
+    regime_names_to_ids: RegimeNamesToIds,
     logger: logging.Logger,
     V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
     ages: AgeGrid,
@@ -53,7 +53,7 @@ def simulate(
             a state variable defined in at least one regime.
             Example: {"wealth": jnp.array([10.0, 50.0]), "health": jnp.array([0, 1])}
         internal_regimes: Dict of internal regime instances.
-        regime_id: Immutable mapping from regime names to integer indices.
+        regime_names_to_ids: Immutable mapping from regime names to integer indices.
         initial_regimes: List containing the names of the regimes the subjects start in.
         logger: Logger that logs to stdout.
         V_arr_dict: Dict of value function arrays of length n_periods.
@@ -84,7 +84,7 @@ def simulate(
     # The following variables are updated during the forward simulation
     states = MappingProxyType(flatten_regime_namespace(nested_initial_states))
     subject_regime_ids = jnp.asarray(
-        [regime_id[initial_regime] for initial_regime in initial_regimes]
+        [regime_names_to_ids[initial_regime] for initial_regime in initial_regimes]
     )
 
     # Forward simulation
@@ -121,7 +121,7 @@ def simulate(
                     new_subject_regime_ids=new_subject_regime_ids,
                     V_arr_dict=V_arr_dict,
                     params=params,
-                    regime_id=regime_id,
+                    regime_id=regime_names_to_ids,
                     active_regimes_next_period=active_regimes_next_period,
                     key=key,
                 )

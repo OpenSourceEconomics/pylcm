@@ -1,7 +1,7 @@
 import jax.numpy as jnp
 import pytest
 
-from lcm import Model, Regime
+from lcm import Model, Regime, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.grids import LinSpacedGrid
@@ -18,6 +18,12 @@ from lcm.typing import (
 @pytest.fixture
 def n_periods() -> int:
     return 2
+
+
+@categorical
+class RegimeId:
+    non_terminal: int
+    terminal: int
 
 
 @pytest.fixture
@@ -116,6 +122,7 @@ def nan_value_model(
             "terminal": regimes["terminal"],
         },
         ages=ages,
+        regime_id_class=RegimeId,
     )
 
 
@@ -144,6 +151,7 @@ def inf_value_model(
             "terminal": regimes["terminal"],
         },
         ages=ages,
+        regime_id_class=RegimeId,
     )
 
 

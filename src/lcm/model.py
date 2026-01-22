@@ -1,6 +1,7 @@
 """Collection of classes that are used by the user to define the model and grids."""
 
 from collections.abc import Mapping
+from dataclasses import fields
 from itertools import chain
 from types import MappingProxyType
 
@@ -17,8 +18,8 @@ from lcm.solution.solve_brute import solve
 from lcm.typing import (
     FloatND,
     ParamsDict,
-    RegimeIdMapping,
     RegimeName,
+    RegimeNamesToIds,
 )
 from lcm.utils import REGIME_SEPARATOR
 
@@ -45,18 +46,19 @@ class Model:
     description: str | None = None
     ages: AgeGrid
     n_periods: int
-    enable_jit: bool = True
-    regime_id: RegimeIdMapping
+    regime_names_to_ids: RegimeNamesToIds
     regimes: MappingProxyType[str, Regime]
     internal_regimes: MappingProxyType[str, InternalRegime]
+    enable_jit: bool = True
     params_template: ParamsDict
 
     def __init__(
         self,
         *,
-        regimes: Mapping[str, Regime],
-        ages: AgeGrid,
         description: str | None = None,
+        ages: AgeGrid,
+        regimes: Mapping[str, Regime],
+        regime_id_class: type,
         enable_jit: bool = True,
     ) -> None:
         """Initialize the Model.
@@ -65,34 +67,36 @@ class Model:
             regimes: Dict mapping regime names to Regime instances.
             ages: Age grid for the model.
             description: Description of the model.
+            regime_id_class: Dataclass mapping regime names to integer indices.
             enable_jit: Whether to jit the functions of the internal regime.
 
         """
         # Create regime_id mapping from dict keys
-        self.regime_id = MappingProxyType(
-            {name: idx for idx, name in enumerate(regimes.keys())}
-        )
-        self.regimes = MappingProxyType(dict(regimes))
-
+        self.description = description
         self.ages = ages
         self.n_periods = ages.n_periods
-        self.description = description
-        self.enable_jit = enable_jit
-        self.internal_regimes = MappingProxyType({})
 
         _validate_model_inputs(
-            n_periods=self.n_periods,
-            regimes=regimes,
+            n_periods=self.n_periods, regimes=regimes, regime_id_class=regime_id_class
         )
-
+        self.regime_names_to_ids = MappingProxyType(
+            dict(
+                sorted(
+                    ((field.name, field.default) for field in fields(regime_id_class)),
+                    key=lambda x: x[1],
+                )
+            )
+        )
+        self.regimes = MappingProxyType(dict(regimes))
         self.internal_regimes = MappingProxyType(
             process_regimes(
                 regimes=regimes,
                 ages=self.ages,
-                regime_id=self.regime_id,
+                regime_names_to_ids=self.regime_names_to_ids,
                 enable_jit=enable_jit,
             )
         )
+        self.enable_jit = enable_jit
         self.params_template = {
             name: regime.params_template
             for name, regime in self.internal_regimes.items()
@@ -153,7 +157,7 @@ class Model:
             initial_states=initial_states,
             initial_regimes=initial_regimes,
             internal_regimes=self.internal_regimes,
-            regime_id=self.regime_id,
+            regime_names_to_ids=self.regime_names_to_ids,
             logger=get_logger(debug_mode=debug_mode),
             V_arr_dict=V_arr_dict,
             ages=self.ages,
@@ -197,9 +201,10 @@ class Model:
         )
 
 
-def _validate_model_inputs(
+def _validate_model_inputs(  # noqa: C901
     n_periods: int,
     regimes: Mapping[str, Regime],
+    regime_id_class: type,
 ) -> None:
     # Early exit if regimes are not lcm.Regime instances
     if not all(isinstance(regime, Regime) for regime in regimes.values()):
@@ -246,6 +251,17 @@ def _validate_model_inputs(
                 "The following regimes are missing 'next_regime' in their transitions: "
                 f"{non_terminal_regimes_without_next_regime}."
             )
+
+    regime_id_fields = sorted([f.name for f in fields(regime_id_class)])
+    regime_names = sorted(regimes.keys())
+    if regime_id_fields != regime_names:
+        error_messages.append(
+            f"regime_id_cls fields must match regime names.\n Got:"
+            "regime_id_cls fields:\n"
+            f"    {regime_id_fields}\n"
+            "regime names:\n"
+            f"    {regime_names}."
+        )
 
     error_messages.extend(_validate_transition_completeness(regimes))
 

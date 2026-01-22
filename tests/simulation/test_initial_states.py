@@ -65,6 +65,7 @@ def model() -> Model:
     return Model(
         regimes={"active": alive, "terminal": dead},
         ages=ages,
+        regime_id_class=RegimeId,
     )
 
 

@@ -416,6 +416,7 @@ DEAD_REGIME = Regime(
 MAHLER_YUM_MODEL = Model(
     regimes={"alive": ALIVE_REGIME, "dead": DEAD_REGIME},
     ages=ages,
+    regime_id_class=RegimeId,
 )
 
 

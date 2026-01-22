@@ -115,10 +115,12 @@ alive_stochastic = alive_deterministic.replace(
 model_deterministic = Model(
     regimes={"alive": alive_deterministic, "dead": dead},
     ages=AgeGrid(start=0, stop=2, step="Y"),
+    regime_id_class=RegimeId,
 )
 model_stochastic = Model(
     regimes={"alive": alive_stochastic, "dead": dead},
     ages=AgeGrid(start=0, stop=2, step="Y"),
+    regime_id_class=RegimeId,
 )
 
 
@@ -417,6 +419,7 @@ def test_deterministic_solve(discount_factor, n_wealth_points):
             "dead": dead.replace(active=lambda age: age >= n_periods - 1),
         },
         ages=ages,
+        regime_id_class=RegimeId,
     )
 
     # Solve model using LCM
@@ -466,6 +469,7 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
             "dead": dead.replace(active=lambda age: age >= n_periods - 1),
         },
         ages=ages,
+        regime_id_class=RegimeId,
     )
 
     # Simulate model using LCM
@@ -523,6 +527,7 @@ def test_stochastic_solve(discount_factor, n_wealth_points, health_transition):
             "dead": dead.replace(active=lambda age: age >= n_periods - 1),
         },
         ages=ages,
+        regime_id_class=RegimeId,
     )
 
     # Solve model using LCM
@@ -586,6 +591,7 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, health_transition
             "dead": dead.replace(active=lambda age: age >= n_periods - 1),
         },
         ages=ages,
+        regime_id_class=RegimeId,
     )
 
     # Simulate model using LCM

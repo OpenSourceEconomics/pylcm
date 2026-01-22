@@ -249,6 +249,7 @@ def get_model(n_periods: int) -> Model:
             "dead": dead.replace(active=lambda age, n=n_periods: age >= n - 1),
         },
         ages=ages,
+        regime_id_class=RegimeId,
     )
 
 

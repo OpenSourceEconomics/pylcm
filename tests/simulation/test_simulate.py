@@ -40,17 +40,19 @@ def simulate_inputs():
     )
     updated_dead = dead.replace(active=lambda age: age > final_age_alive)
     regimes = {"working": updated_working, "dead": updated_dead}
-    regime_id = MappingProxyType({name: idx for idx, name in enumerate(regimes.keys())})
+    regime_names_to_ids = MappingProxyType(
+        {name: idx for idx, name in enumerate(regimes.keys())}
+    )
     internal_regimes = process_regimes(
         regimes=regimes,
         ages=ages,
-        regime_id=regime_id,
+        regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
     )
 
     return {
         "internal_regimes": internal_regimes,
-        "regime_id": regime_id,
+        "regime_names_to_ids": regime_names_to_ids,
         "ages": ages,
     }
 
@@ -96,6 +98,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
 def iskhakov_et_al_2017_stripped_down_model_solution():
     from tests.test_models.deterministic.regression import (  # noqa: PLC0415
         START_AGE,
+        RegimeId,
         dead,
         get_params,
         working,
@@ -121,6 +124,7 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
         model = Model(
             regimes={"working": updated_working, "dead": updated_dead},
             ages=ages,
+            regime_id_class=RegimeId,
         )
         V_arr_dict = model.solve(params=params)
         return V_arr_dict, params, model
