@@ -1,6 +1,7 @@
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from itertools import chain
+from types import MappingProxyType
 from typing import Any, TypeVar
 
 import jax.numpy as jnp
@@ -51,70 +52,39 @@ def unflatten_regime_namespace(d: dict[str, Any]) -> dict[RegimeName, Any]:
 
 
 def normalize_regime_transition_probs(
-    probs: Array,
-    active_regime_ids: Array,
-) -> Array:
+    probs: MappingProxyType[str, Array],
+    active_regimes_next_period: tuple[str, ...],
+) -> MappingProxyType[str, Array]:
     """Normalize regime transition probabilities over active regimes only.
 
     Args:
-        probs: Array of transition probabilities indexed by regime ID.
-            Shape [n_regimes] (solve) or [n_regimes, n_subjects] (simulate).
-        active_regime_ids: 1D array of regime IDs that are active in the next period.
+        probs: Mapping of regime names to probability arrays.
+        active_regimes_next_period: Tuple of regime names that are active in the
+            next period.
 
     Returns:
-        Normalized probabilities array with same shape as input. Inactive regimes
+        Normalized probabilities mapping with same structure as input. Inactive regimes
         have probability 0, active regimes sum to 1.
 
     """
-    # Create mask for active regimes
-    active_mask = jnp.isin(jnp.arange(probs.shape[0]), active_regime_ids)
-
-    # Expand mask dimensions to match probs shape
-    if probs.ndim > 1:
-        active_mask = active_mask[:, None]
-
-    # Zero out inactive regimes and normalize
-    masked_probs = jnp.where(active_mask, probs, 0.0)
-    total = jnp.sum(masked_probs, axis=0, keepdims=True)
-    return masked_probs / total
-
-
-def normalize_regime_transition_probs_dict(
-    probs: Mapping[str, Array],
-    active_regimes: tuple[str, ...],
-) -> dict[str, Array]:
-    """Normalize regime transition probabilities over active regimes (dict version).
-
-    This is the dict-based version for simulation, where regime transition
-    probabilities are returned as a dict mapping regime names to probability arrays.
-
-    Args:
-        probs: Dict mapping regime names to probability arrays.
-        active_regimes: Tuple of regime names that are active in the next period.
-
-    Returns:
-        Normalized probabilities dict with same structure as input. Inactive regimes
-        have probability 0, active regimes sum to 1.
-
-    """
-    active_set = set(active_regimes)
-
     # Get probabilities for active regimes only
-    active_probs = {name: prob for name, prob in probs.items() if name in active_set}
+    active_probs = {
+        name: prob for name, prob in probs.items() if name in active_regimes_next_period
+    }
 
     if not active_probs:
-        return dict(probs)
+        return MappingProxyType(dict(probs))
 
     # Stack active probabilities and compute total
     stacked = jnp.stack(list(active_probs.values()), axis=0)
-    total = jnp.sum(stacked, axis=0, keepdims=True)
+    total = jnp.sum(stacked, axis=0, keepdims=True).squeeze(0)
 
     # Normalize active regimes
     result = {}
     for name, prob in probs.items():
-        if name in active_set:
-            result[name] = prob / total.squeeze(0)
+        if name in active_regimes_next_period:
+            result[name] = prob / total
         else:
             result[name] = jnp.zeros_like(prob)
 
-    return result
+    return MappingProxyType(result)

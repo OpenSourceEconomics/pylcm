@@ -1,4 +1,5 @@
 from collections.abc import Callable, Mapping
+from types import MappingProxyType
 from typing import Any, cast
 
 import jax.numpy as jnp
@@ -22,7 +23,7 @@ from lcm.typing import (
     QAndFFunction,
     RegimeName,
 )
-from lcm.utils import normalize_regime_transition_probs_dict
+from lcm.utils import normalize_regime_transition_probs
 
 
 def get_Q_and_F(
@@ -134,8 +135,10 @@ def get_Q_and_F(
             A tuple containing the arrays with state-action values and feasibilities.
 
         """
-        regime_transition_prob: dict[str, Array] = regime_transition_prob_func(  # ty: ignore[invalid-assignment]
-            **states_and_actions, period=period, age=age, params=params[regime_name]
+        regime_transition_prob: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
+            regime_transition_prob_func(
+                **states_and_actions, period=period, age=age, params=params[regime_name]
+            )
         )
         U_arr, F_arr = U_and_F(
             **states_and_actions,
@@ -145,7 +148,7 @@ def get_Q_and_F(
         )
         Q_arr = U_arr
         # Normalize probabilities over active regimes
-        normalized_regime_transition_prob = normalize_regime_transition_probs_dict(
+        normalized_regime_transition_prob = normalize_regime_transition_probs(
             regime_transition_prob, active_target_regimes
         )
 
