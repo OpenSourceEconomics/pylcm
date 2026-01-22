@@ -1,6 +1,4 @@
-from __future__ import annotations
-
-from copy import deepcopy
+from types import MappingProxyType
 
 import jax.numpy as jnp
 import numpy as np
@@ -19,7 +17,7 @@ from lcm.input_processing.regime_processing import (
     process_regimes,
 )
 from tests.regime_mock import RegimeMock
-from tests.test_models.deterministic.base import RegimeId, dead, working
+from tests.test_models.deterministic.base import dead, working
 
 
 def test_convert_flat_to_nested_transitions():
@@ -117,7 +115,7 @@ def test_convert_flat_to_nested_multi_regime():
     assert result == expected
 
 
-def test_convert_flat_to_nested_absorbing_multi_regime():
+def test_convert_flat_to_nested_terminal_multi_regime():
     def next_wealth():
         pass
 
@@ -204,13 +202,15 @@ def test_get_grids(regime_mock):
 
 def test_process_regimes():
     ages = AgeGrid(start=0, stop=4, step="Y")
+    regimes = {"working": working, "dead": dead}
+    regime_id = MappingProxyType({name: idx for idx, name in enumerate(regimes.keys())})
     internal_regimes = process_regimes(
-        [working, dead],
+        regimes=regimes,
         ages=ages,
-        regime_id_cls=RegimeId,
+        regime_names_to_ids=regime_id,
         enable_jit=True,
     )
-    internal_working_regime = internal_regimes[working.name]
+    internal_working_regime = internal_regimes["working"]
 
     # Variable Info
     assert (
@@ -265,8 +265,9 @@ def test_variable_info_with_continuous_constraint_has_unique_index():
     def wealth_constraint(wealth):
         return wealth > 200
 
-    working_copy = deepcopy(working)
-    working_copy.constraints["wealth_constraint"] = wealth_constraint
+    working_copy = working.replace(
+        constraints=dict(working.constraints) | {"wealth_constraint": wealth_constraint}
+    )
 
     got = get_variable_info(working_copy)
     assert got.index.is_unique

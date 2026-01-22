@@ -1,7 +1,6 @@
-from __future__ import annotations
-
 import inspect
 from collections.abc import Callable
+from types import MappingProxyType
 from typing import Literal, TypeVar, cast
 
 from jax import Array, vmap
@@ -11,7 +10,10 @@ from lcm.utils import find_duplicates
 
 FunctionWithArrayReturn = TypeVar(
     "FunctionWithArrayReturn",
-    bound=Callable[..., Array | tuple[Array, Array] | dict[str, Array]],
+    bound=Callable[
+        ...,
+        Array | tuple[Array, Array] | MappingProxyType[str, Array],
+    ],
 )
 
 

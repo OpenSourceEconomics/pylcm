@@ -108,7 +108,6 @@ def test_model_with_shock(distribution_type, params_for_shocks):
         test_term: int = 1
 
     test_regime = Regime(
-        name="test",
         active=test_active,
         states={
             "state": ShockGrid(n_points=5, distribution_type=distribution_type),
@@ -125,14 +124,13 @@ def test_model_with_shock(distribution_type, params_for_shocks):
         },
     )
     test_regime_term = Regime(
-        name="test_term",
         terminal=True,
         active=test_term_active,
         utility=lambda: 0.0,
     )
     model = Model(
-        regimes=[test_regime, test_regime_term],
-        regime_id_cls=RegimeId,
+        regimes={"test": test_regime, "test_term": test_regime_term},
+        regime_id_class=RegimeId,
         ages=AgeGrid(start=0, stop=4, step="Y"),
     )
     params = params_for_shocks[distribution_type]

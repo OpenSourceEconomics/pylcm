@@ -1,6 +1,4 @@
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
+from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
@@ -17,33 +15,32 @@ from lcm.Q_and_F import (
     _get_U_and_F,
     get_Q_and_F_terminal,
 )
+from lcm.typing import (
+    BoolND,
+    DiscreteAction,
+    DiscreteState,
+    Int1D,
+    ParamsDict,
+    Period,
+)
 from tests.test_models.deterministic.regression import (
     LaborSupply,
-    RegimeId,
     dead,
     get_params,
     utility,
     working,
 )
 
-if TYPE_CHECKING:
-    from lcm.typing import (
-        BoolND,
-        DiscreteAction,
-        DiscreteState,
-        Int1D,
-        ParamsDict,
-        Period,
-    )
-
 
 @pytest.mark.illustrative
 def test_get_Q_and_F_function():
     ages = AgeGrid(start=0, stop=4, step="Y")
+    regimes = {"working": working, "dead": dead}
+    regime_id = MappingProxyType({name: idx for idx, name in enumerate(regimes.keys())})
     internal_regimes = process_regimes(
-        [working, dead],
+        regimes=regimes,
         ages=ages,
-        regime_id_cls=RegimeId,
+        regime_names_to_ids=regime_id,
         enable_jit=True,
     )
 
@@ -51,8 +48,8 @@ def test_get_Q_and_F_function():
 
     # Test terminal period Q_and_F where Q = U (no continuation value)
     Q_and_F = get_Q_and_F_terminal(
-        regime=working,
-        internal_functions=internal_regimes[working.name].internal_functions,
+        regime_name="working",
+        internal_functions=internal_regimes["working"].internal_functions,
         period=3,
         age=ages.period_to_age(3),
     )
@@ -127,7 +124,7 @@ def internal_functions_illustrative():
     }
     return InternalFunctions(
         utility=lambda: 0,  # ty: ignore[invalid-argument-type]
-        transitions={},
+        transitions=MappingProxyType({}),
         constraints=constraints,  # ty: ignore[invalid-argument-type]
         functions=functions,  # ty: ignore[invalid-argument-type]
         regime_transition_probs=PhaseVariantContainer(
@@ -175,7 +172,7 @@ def test_get_multiply_weights():
     def next_b():
         return jnp.array([0.2, 0.8])
 
-    transitions = {"next_a": next_a, "next_b": next_b}
+    transitions = MappingProxyType({"next_a": next_a, "next_b": next_b})
     multiply_weights = _get_joint_weights_function(
         regime_name="test",
         transitions=transitions,
@@ -206,7 +203,7 @@ def test_get_combined_constraint():
     internal_functions = InternalFunctions(
         utility=lambda: 0,  # ty: ignore[invalid-argument-type]
         constraints={"f": f, "g": g},  # ty: ignore[invalid-argument-type]
-        transitions={},
+        transitions=MappingProxyType({}),
         functions={"h": h},  # ty: ignore[invalid-argument-type]
         regime_transition_probs=PhaseVariantContainer(
             solve=mock_transition_solve, simulate=mock_transition_simulate
@@ -260,12 +257,14 @@ def test_get_U_and_F_with_annotated_constraints():
 
     internal_functions = InternalFunctions(
         utility=utility_func,  # ty: ignore[invalid-argument-type]
-        constraints={
-            "budget_constraint": budget_constraint,
-            "positive_consumption_constraint": positive_consumption_constraint,
-        },  # ty: ignore[invalid-argument-type]
-        transitions={},
-        functions={},
+        constraints=MappingProxyType(
+            {
+                "budget_constraint": budget_constraint,
+                "positive_consumption_constraint": positive_consumption_constraint,
+            }
+        ),
+        transitions=MappingProxyType({}),
+        functions=MappingProxyType({}),
         regime_transition_probs=PhaseVariantContainer(
             solve=mock_transition_solve, simulate=mock_transition_simulate
         ),

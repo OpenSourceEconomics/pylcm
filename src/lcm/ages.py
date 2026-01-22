@@ -1,30 +1,27 @@
 """Age grid and step parsing utilities for lifecycle models."""
 
-from __future__ import annotations
-
 import re
+from collections.abc import Callable, Iterable
 from fractions import Fraction
-from typing import TYPE_CHECKING, overload
+from types import MappingProxyType
+from typing import overload
 
 import jax.numpy as jnp
 
 from lcm.exceptions import GridInitializationError, format_messages
-
-if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
-
-    from lcm.typing import Float1D
-
+from lcm.typing import Float1D
 
 # ======================================================================================
 # Step parsing
 # ======================================================================================
 
-STEP_UNITS: dict[str, Fraction] = {
-    "Y": Fraction(1, 1),
-    "M": Fraction(1, 12),
-    "Q": Fraction(1, 4),
-}
+STEP_UNITS: MappingProxyType[str, Fraction] = MappingProxyType(
+    {
+        "Y": Fraction(1, 1),
+        "M": Fraction(1, 12),
+        "Q": Fraction(1, 4),
+    }
+)
 
 
 def parse_step(step: str) -> int | Fraction:

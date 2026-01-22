@@ -1,6 +1,5 @@
-from __future__ import annotations
-
-from typing import TYPE_CHECKING, cast
+from types import MappingProxyType
+from typing import cast
 
 import jax.numpy as jnp
 from pybaum import tree_equal
@@ -12,30 +11,32 @@ from lcm.next_state import (
     _create_discrete_stochastic_next_func,
     get_next_state_function,
 )
-from tests.test_models.deterministic.regression import RegimeId, dead, working
-
-if TYPE_CHECKING:
-    from lcm.typing import ContinuousState, FloatND, InternalUserFunction, ParamsDict
+from lcm.typing import ContinuousState, FloatND, InternalUserFunction, ParamsDict
+from tests.test_models.deterministic.regression import dead, working
 
 
 def test_get_next_state_function_with_solve_target():
     ages = AgeGrid(start=0, stop=4, step="Y")
+    regimes = {"working": working, "dead": dead}
+    regime_id = MappingProxyType({name: idx for idx, name in enumerate(regimes.keys())})
     internal_regimes = process_regimes(
-        regimes=[working, dead],
+        regimes=regimes,
         ages=ages,
-        regime_id_cls=RegimeId,
+        regime_names_to_ids=regime_id,
         enable_jit=True,
     )
 
-    internal_working = internal_regimes[working.name]
+    internal_working = internal_regimes["working"]
 
     got_func = get_next_state_function(
-        transitions=internal_working.transitions[working.name],
+        transitions=internal_working.transitions["working"],
         functions=internal_working.functions,
-        grids={
-            working.name: internal_working.grids,
-            dead.name: internal_regimes[dead.name].grids,
-        },
+        grids=MappingProxyType(
+            {
+                "working": internal_working.grids,
+                "dead": internal_regimes["dead"].grids,
+            }
+        ),
         target=Target.SOLVE,
     )
 
@@ -64,23 +65,24 @@ def test_get_next_state_function_with_simulate_target():
     def f_weight_b(state: ContinuousState, params: ParamsDict) -> FloatND:  # noqa: ARG001
         return jnp.array([0.0, 1.0])
 
-    grids = {"mock": {"b": jnp.arange(2)}}
+    grids = MappingProxyType({"mock": MappingProxyType({"b": jnp.arange(2)})})
     mock_transition_solve = lambda *args, params, **kwargs: {"mock": 1.0}  # noqa: E731, ARG005
     mock_transition_simulate = lambda *args, params, **kwargs: {  # noqa: E731, ARG005
         "mock": jnp.array([1.0])
     }
     internal_functions = InternalFunctions(
         utility=lambda: 0,  # ty: ignore[invalid-argument-type]
-        constraints={},
-        transitions={"next_a": f_a, "next_b": f_b},  # ty: ignore[invalid-argument-type]
-        functions={"f_weight_b": f_weight_b},  # ty: ignore[invalid-argument-type]
+        constraints=MappingProxyType({}),
+        transitions=MappingProxyType({"next_a": f_a, "next_b": f_b}),
+        functions=MappingProxyType({"f_weight_b": f_weight_b}),
         regime_transition_probs=PhaseVariantContainer(
             solve=mock_transition_solve, simulate=mock_transition_simulate
         ),
     )
     got_func = get_next_state_function(
         transitions=cast(
-            "dict[str, InternalUserFunction]", internal_functions.transitions
+            "MappingProxyType[str, InternalUserFunction]",
+            internal_functions.transitions,
         ),
         functions=internal_functions.functions,
         grids=grids,

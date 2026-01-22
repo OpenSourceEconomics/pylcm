@@ -1,7 +1,5 @@
-from __future__ import annotations
-
 import dataclasses
-from typing import TYPE_CHECKING
+from types import MappingProxyType
 
 import jax.numpy as jnp
 import numpy as np
@@ -14,9 +12,7 @@ from lcm.logging import get_logger
 from lcm.max_Q_over_a import get_max_Q_over_a
 from lcm.ndimage import map_coordinates
 from lcm.solution.solve_brute import solve
-
-if TYPE_CHECKING:
-    from lcm.typing import MaxQOverAFunction
+from lcm.typing import MaxQOverAFunction
 
 
 @dataclasses.dataclass(frozen=True)
@@ -29,7 +25,7 @@ class InternalRegimeMock:
     - active: list of periods the regime is active
     """
 
-    state_action_space: StateActionSpace
+    state_action_spaces: StateActionSpace
     max_Q_over_a_functions: dict[int, MaxQOverAFunction]
     active_periods: list[int]
     transition_info: pd.DataFrame
@@ -52,19 +48,26 @@ def test_solve_brute():
     # create the list of state_action_spaces
     # ==================================================================================
     state_action_space = StateActionSpace(
-        discrete_actions={
-            # pick [0, 1] such that no label translation is needed
-            # lazy is like a type, it influences utility but is not affected by actions
-            "lazy": jnp.array([0, 1]),
-            "working": jnp.array([0, 1]),
-        },
-        continuous_actions={
-            "consumption": jnp.array([0, 1, 2, 3]),
-        },
-        states={
-            # pick [0, 1, 2] such that no coordinate mapping is needed
-            "wealth": jnp.array([0.0, 1.0, 2.0]),
-        },
+        discrete_actions=MappingProxyType(
+            {
+                # pick [0, 1] such that no label translation is needed
+                # lazy is like a type, it influences utility but is not affected
+                # by actions
+                "lazy": jnp.array([0, 1]),
+                "working": jnp.array([0, 1]),
+            }
+        ),
+        continuous_actions=MappingProxyType(
+            {
+                "consumption": jnp.array([0, 1, 2, 3]),
+            }
+        ),
+        states=MappingProxyType(
+            {
+                # pick [0, 1, 2] such that no coordinate mapping is needed
+                "wealth": jnp.array([0.0, 1.0, 2.0]),
+            }
+        ),
         states_and_discrete_actions_names=("lazy", "working", "wealth"),
     )
     # ==================================================================================
@@ -104,7 +107,7 @@ def test_solve_brute():
     # ==================================================================================
 
     internal_regime = InternalRegimeMock(
-        state_action_space=state_action_space,
+        state_action_spaces=state_action_space,
         max_Q_over_a_functions={0: max_Q_over_a, 1: max_Q_over_a},
         active_periods=[0, 1],
         transition_info=pd.DataFrame({"type": []}),
@@ -117,8 +120,8 @@ def test_solve_brute():
         logger=get_logger(debug_mode=False),
     )
 
-    # Solution is now dict[int, dict[RegimeName, FloatND]]
-    assert isinstance(solution, dict)
+    # Solution is now MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
+    assert isinstance(solution, MappingProxyType)
     assert 0 in solution
     assert 1 in solution
     assert "default" in solution[0]
@@ -127,15 +130,19 @@ def test_solve_brute():
 
 def test_solve_brute_single_period_Qc_arr():
     state_action_space = StateActionSpace(
-        discrete_actions={
-            "a": jnp.array([0, 1.0]),
-            "b": jnp.array([2, 3.0]),
-            "c": jnp.array([4, 5, 6]),
-        },
-        continuous_actions={
-            "d": jnp.arange(12.0),
-        },
-        states={},
+        discrete_actions=MappingProxyType(
+            {
+                "a": jnp.array([0, 1.0]),
+                "b": jnp.array([2, 3.0]),
+                "c": jnp.array([4, 5, 6]),
+            }
+        ),
+        continuous_actions=MappingProxyType(
+            {
+                "d": jnp.arange(12.0),
+            }
+        ),
+        states=MappingProxyType({}),
         states_and_discrete_actions_names=("a", "b", "c"),
     )
 
@@ -157,7 +164,7 @@ def test_solve_brute_single_period_Qc_arr():
     # is correctly applied to the state_action_space
 
     internal_regime = InternalRegimeMock(
-        state_action_space=state_action_space,
+        state_action_spaces=state_action_space,
         max_Q_over_a_functions={0: max_Q_over_a, 1: max_Q_over_a},
         active_periods=[0, 1],
         transition_info=pd.DataFrame({"type": []}),

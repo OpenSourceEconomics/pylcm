@@ -1,8 +1,7 @@
-from __future__ import annotations
-
 import re
 from dataclasses import make_dataclass
 from functools import partial
+from types import MappingProxyType
 
 import jax.numpy as jnp
 import pytest
@@ -41,10 +40,12 @@ def test_function_evaluator_with_one_continuous_variable():
 
     state_space_info = StateSpaceInfo(
         states_names=("wealth",),
-        discrete_states={},
-        continuous_states={
-            "wealth": wealth_grid,
-        },
+        discrete_states=MappingProxyType({}),
+        continuous_states=MappingProxyType(
+            {
+                "wealth": wealth_grid,
+            }
+        ),
     )
 
     next_V_arr = jnp.pi * wealth_grid.to_jax() + 2
@@ -66,8 +67,8 @@ def test_function_evaluator_with_one_discrete_variable(binary_discrete_grid):
 
     state_space_info = StateSpaceInfo(
         states_names=("working",),
-        discrete_states={"working": binary_discrete_grid},
-        continuous_states={},
+        discrete_states=MappingProxyType({"working": binary_discrete_grid}),
+        continuous_states=MappingProxyType({}),
     )
 
     # create the evaluator
@@ -122,8 +123,8 @@ def test_function_evaluator(binary_discrete_grid):
 
     state_space_info = StateSpaceInfo(
         states_names=var_names,
-        discrete_states=discrete_vars,
-        continuous_states=continuous_vars,
+        discrete_states=MappingProxyType(discrete_vars),
+        continuous_states=MappingProxyType(continuous_vars),
     )
 
     # create the evaluator
@@ -222,10 +223,12 @@ def test_get_function_evaluator_illustrative():
 
     state_space_info = StateSpaceInfo(
         states_names=("a",),
-        discrete_states={},
-        continuous_states={
-            "a": a_grid,
-        },
+        discrete_states=MappingProxyType({}),
+        continuous_states=MappingProxyType(
+            {
+                "a": a_grid,
+            }
+        ),
     )
 
     values = jnp.pi * a_grid.to_jax() + 2
@@ -295,10 +298,12 @@ def test_fail_if_interpolation_axes_are_not_last_illustrative(dummy_continuous_g
 
     state_space_info = StateSpaceInfo(
         states_names=("a", "b"),
-        continuous_states={
-            "c": dummy_continuous_grid,
-        },
-        discrete_states={},
+        continuous_states=MappingProxyType(
+            {
+                "c": dummy_continuous_grid,
+            }
+        ),
+        discrete_states=MappingProxyType({}),
     )
 
     _fail_if_interpolation_axes_are_not_last(state_space_info)  # does not fail
@@ -308,12 +313,14 @@ def test_fail_if_interpolation_axes_are_not_last_illustrative(dummy_continuous_g
 
     state_space_info = StateSpaceInfo(
         states_names=("a", "b", "c"),
-        continuous_states={
-            "b": dummy_continuous_grid,
-            "c": dummy_continuous_grid,
-            "d": dummy_continuous_grid,
-        },
-        discrete_states={},
+        continuous_states=MappingProxyType(
+            {
+                "b": dummy_continuous_grid,
+                "c": dummy_continuous_grid,
+                "d": dummy_continuous_grid,
+            }
+        ),
+        discrete_states=MappingProxyType({}),
     )
 
     _fail_if_interpolation_axes_are_not_last(state_space_info)  # does not fail
@@ -323,12 +330,14 @@ def test_fail_if_interpolation_axes_are_not_last_illustrative(dummy_continuous_g
 
     state_space_info = StateSpaceInfo(
         states_names=("b", "c", "a"),  # "b", "c" are not last anymore
-        continuous_states={
-            "b": dummy_continuous_grid,
-            "c": dummy_continuous_grid,
-            "d": dummy_continuous_grid,
-        },
-        discrete_states={},
+        continuous_states=MappingProxyType(
+            {
+                "b": dummy_continuous_grid,
+                "c": dummy_continuous_grid,
+                "d": dummy_continuous_grid,
+            }
+        ),
+        discrete_states=MappingProxyType({}),
     )
 
     with pytest.raises(ValueError, match="Continuous variables need to be the last"):
@@ -340,10 +349,12 @@ def test_function_evaluator_performs_linear_extrapolation():
 
     state_space_info = StateSpaceInfo(
         states_names=("wealth",),
-        discrete_states={},
-        continuous_states={
-            "wealth": wealth_grid,
-        },
+        discrete_states=MappingProxyType({}),
+        continuous_states=MappingProxyType(
+            {
+                "wealth": wealth_grid,
+            }
+        ),
     )
 
     next_V_arr = jnp.pi * wealth_grid.to_jax() + 2

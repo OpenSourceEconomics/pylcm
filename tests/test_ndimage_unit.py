@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_equal

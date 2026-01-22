@@ -69,7 +69,7 @@ Grid class hierarchy: `Grid` is the base class. `ContinuousGrid(Grid)` is the ba
 ### Processing Pipeline
 
 1. User defines `Regime`(s) with grids, functions, states/actions
-2. User creates `Model` from regime(s) with `ages` and `regime_id_cls`
+2. User creates `Model` from a dict of regimes with `ages` and `regime_id_class`
 3. `process_regimes()` converts to `InternalRegime` and pre-compiles optimization functions
 4. `model.solve()` performs backward induction using dynamic programming
 5. `model.simulate()` performs forward simulation using solved policy functions
@@ -94,13 +94,12 @@ Grid class hierarchy: `Grid` is the base class. `ContinuousGrid(Grid)` is the ba
 ## Model and Regime Interface
 
 ### Regime Definition
-The `Regime` class defines a single regime in the model:
+The `Regime` class defines a single regime in the model. The regime name is specified as the key in the `regimes` dict passed to `Model`:
 
 ```python
 Regime(
-    name="regime_name",
-    active=lambda age: 25 <= age < 65,           # Required: age-based predicate
     utility=utility_function,                    # Required: utility function
+    active=lambda age: 25 <= age < 65,           # Optional: age-based predicate (default: always True)
     constraints={"name": constraint_fn, ...},    # Optional: constraint functions
     transitions={                                # Required for non-terminal regimes
         "next_state1": transition_fn,
@@ -115,12 +114,12 @@ Regime(
 ```
 
 **Regime Requirements:**
-- `active` is required and must be a callable taking `age: float` and returning `bool`
+- `active` is optional; defaults to `lambda _age: True` (always active)
 - All transition function names must start with `next_`
 - Non-terminal regimes must have transitions for ALL states across ALL regimes
 - Non-terminal regimes must include a `next_regime` function returning `dict[str, float]`
 - Terminal regimes (`terminal=True`) cannot have any transitions
-- Regime names cannot contain the reserved separator `__`
+- Regime names (dict keys) cannot contain the reserved separator `__`
 
 ### Model Creation
 ```python
@@ -132,9 +131,12 @@ class RegimeId:
     retired: int
 
 Model(
-    regimes=[working_regime, retired_regime],
+    regimes={                           # Required: dict mapping names to Regime instances
+        "working": working_regime,
+        "retired": retired_regime,
+    },
     ages=AgeGrid(start=25, stop=75, step='Y'),  # Required: lifecycle age grid
-    regime_id_cls=RegimeId,             # Required: dataclass mapping names to indices
+    regime_id_class=RegimeId,           # Required: dataclass mapping names to indices
     description="Optional description",
     enable_jit=True,                    # Control JAX compilation (default: True)
 )
@@ -142,7 +144,7 @@ Model(
 
 **Model Requirements:**
 - Must have at least one terminal regime and one non-terminal regime
-- `regime_id_cls` must be a dataclass with fields matching regime names (use `@categorical`)
+- `regime_id_class` must be a dataclass with fields matching regime names (use `@categorical`)
 - Field values must be consecutive integers starting from 0 (auto-assigned by `@categorical`)
 
 ### Core Methods
@@ -199,11 +201,11 @@ initial_regimes = ["working", "working", "retired"]
 
 ### Key Attributes
 - `model.params_template` - Template for parameter dictionary structure (dict by regime name)
-- `model.regimes` - Dict mapping regime names to user `Regime` objects
-- `model.internal_regimes` - Dict mapping regime names to processed `InternalRegime` objects
+- `model.regimes` - Immutable mapping of regime names to user `Regime` objects
+- `model.internal_regimes` - Immutable mapping of regime names to processed `InternalRegime` objects
 - `model.ages` - The AgeGrid defining the lifecycle
 - `model.n_periods` - Number of periods in the model (derived from `ages`)
-- `model.regime_id_cls` - Dataclass mapping regime names to integer indices
+- `model.regime_names_to_ids` - Immutable mapping from regime names to integer indices
 
 ## Development Notes
 
@@ -211,6 +213,12 @@ initial_regimes = ["working", "working", "retired"]
 - All numerical computations use JAX arrays
 - GPU support available via jax[cuda13] (Linux) or jax-metal (macOS)
 - Functions are JIT-compiled during Model initialization for performance
+- `MappingProxyType` is registered as a JAX pytree for use in JIT-compiled functions
+
+### Immutability
+- Internal data structures use `MappingProxyType` instead of `dict` for immutability
+- Type annotations use `Mapping` for read-only dict-like interfaces
+- User-provided dicts in `Regime` are automatically wrapped in `MappingProxyType`
 
 ### Type System
 - Extensive use of typing with custom types in `src/lcm/typing.py`

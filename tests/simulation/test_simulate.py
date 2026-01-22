@@ -1,6 +1,5 @@
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
+from pathlib import Path
+from types import MappingProxyType
 
 import jax.numpy as jnp
 import pandas as pd
@@ -18,9 +17,6 @@ from lcm.simulation.simulate import (
     simulate,
 )
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
 # ======================================================================================
 # Test simulate using raw inputs
 # ======================================================================================
@@ -29,7 +25,6 @@ if TYPE_CHECKING:
 @pytest.fixture
 def simulate_inputs():
     from tests.test_models.deterministic.regression import (  # noqa: PLC0415
-        RegimeId,
         dead,
         working,
     )
@@ -44,16 +39,20 @@ def simulate_inputs():
         active=lambda age: age <= final_age_alive,
     )
     updated_dead = dead.replace(active=lambda age: age > final_age_alive)
+    regimes = {"working": updated_working, "dead": updated_dead}
+    regime_names_to_ids = MappingProxyType(
+        {name: idx for idx, name in enumerate(regimes.keys())}
+    )
     internal_regimes = process_regimes(
-        [updated_working, updated_dead],
+        regimes=regimes,
         ages=ages,
-        regime_id_cls=RegimeId,
+        regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
     )
 
     return {
         "internal_regimes": internal_regimes,
-        "regime_id_cls": RegimeId,
+        "regime_names_to_ids": regime_names_to_ids,
         "ages": ages,
     }
 
@@ -73,10 +72,12 @@ def test_simulate_using_raw_inputs(simulate_inputs):
 
     result = simulate(
         user_params=params,
-        V_arr_dict={
-            0: {"working": jnp.zeros(100), "dead": jnp.zeros(2)},
-            1: {"working": jnp.zeros(100), "dead": jnp.zeros(2)},
-        },
+        V_arr_dict=MappingProxyType(
+            {
+                0: MappingProxyType({"working": jnp.zeros(100), "dead": jnp.zeros(2)}),
+                1: MappingProxyType({"working": jnp.zeros(100), "dead": jnp.zeros(2)}),
+            }
+        ),
         initial_states={"wealth": jnp.array([1.0, 50.400803])},
         initial_regimes=["working"] * 2,
         logger=get_logger(debug_mode=False),
@@ -121,7 +122,9 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
         # Since wage function is removed, wage becomes a parameter for labor_income
         params["working"]["labor_income"] = {"wage": 1.5}
         model = Model(
-            [updated_working, updated_dead], ages=ages, regime_id_cls=RegimeId
+            regimes={"working": updated_working, "dead": updated_dead},
+            ages=ages,
+            regime_id_class=RegimeId,
         )
         V_arr_dict = model.solve(params=params)
         return V_arr_dict, params, model
@@ -427,7 +430,9 @@ def test_additional_targets_all(regression_simulation_result):
 def test_retrieve_actions():
     got = _lookup_values_from_indices(
         flat_indices=jnp.array([0, 3, 7]),
-        grids={"a": jnp.linspace(0, 1, 5), "b": jnp.linspace(10, 20, 6)},
+        grids=MappingProxyType(
+            {"a": jnp.linspace(0, 1, 5), "b": jnp.linspace(10, 20, 6)}
+        ),
     )
     assert_array_equal(got["a"], jnp.array([0, 0, 0.25]))
     assert_array_equal(got["b"], jnp.array([10, 16, 12]))

@@ -1,13 +1,12 @@
-from copy import deepcopy
-from typing import TYPE_CHECKING
+import dataclasses
+from types import MappingProxyType
 
 import jax
 from jax import numpy as jnp
 from jax.scipy.stats.norm import cdf
 
-if TYPE_CHECKING:
-    from lcm.interfaces import InternalRegime
-    from lcm.typing import Float1D, FloatND, ParamsDict
+from lcm.interfaces import InternalRegime
+from lcm.typing import Float1D, FloatND, ParamsDict, RegimeName
 
 
 def discretized_uniform_distribution(
@@ -198,7 +197,7 @@ SHOCK_CALCULATION_FUNCTIONS = {
 
 
 def pre_compute_shock_probabilities(
-    internal_regimes: dict[str, InternalRegime], params: ParamsDict
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime], params: ParamsDict
 ) -> ParamsDict:
     """Pre-compute the discretized probabilities for shocks.
 
@@ -215,26 +214,46 @@ def pre_compute_shock_probabilities(
         distribution.
 
     """
-    new_params = deepcopy(params)
+    # Build new params with pre_computed probabilities added where needed.
+    # We only create new dicts for the parts we're modifying.
+    new_params: ParamsDict = {}
+
     for regime_name, regime in internal_regimes.items():
+        if regime_name not in params:
+            continue
+
         transition_info = regime.transition_info
         need_precompute = transition_info.index[
             ~transition_info["type"].isin(["custom", "none"])
         ].tolist()
 
-        for trans_name in need_precompute:
-            n_points = regime.gridspecs[trans_name.removeprefix("next_")].n_points  # ty: ignore[unresolved-attribute]
-            new_params[regime_name][trans_name]["pre_computed"] = (
-                SHOCK_DISCRETIZATION_FUNCTIONS[transition_info.loc[trans_name, "type"]](
-                    **(params[regime_name][trans_name] | {"n_points": n_points})
-                )[1]
-            )
+        if not need_precompute:
+            # No modifications needed for this regime
+            new_params[regime_name] = params[regime_name]
+        else:
+            # Create new regime params dict with augmented transition params
+            new_regime_params = dict(params[regime_name])
+            for trans_name in need_precompute:
+                n_points = regime.gridspecs[trans_name.removeprefix("next_")].n_points  # ty: ignore[unresolved-attribute]
+                pre_computed = SHOCK_DISCRETIZATION_FUNCTIONS[
+                    transition_info.loc[trans_name, "type"]
+                ](**(params[regime_name][trans_name] | {"n_points": n_points}))[1]
+                new_regime_params[trans_name] = params[regime_name][trans_name] | {
+                    "pre_computed": pre_computed
+                }
+            new_params[regime_name] = new_regime_params
+
+    # Include any regime params not in internal_regimes (shouldn't happen normally)
+    for regime_name in params:
+        if regime_name not in new_params:
+            new_params[regime_name] = params[regime_name]
+
     return new_params
 
 
 def update_sas_with_shocks(
-    internal_regimes: dict[str, InternalRegime], params: ParamsDict
-) -> dict[str, InternalRegime]:
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime], params: ParamsDict
+) -> MappingProxyType[RegimeName, InternalRegime]:
     """Fill the shock grids.
 
     As the values for the shock grids depend on the parameters that the user supplies,
@@ -245,27 +264,41 @@ def update_sas_with_shocks(
         params: The parameters as given by the user.
 
     Returns:
-        The original internal regimes, but with the filled shock grids.
+        New internal regimes with the filled shock grids.
 
     """
-    new_internal_regimes = deepcopy(internal_regimes)
-    for regime_name, regime in new_internal_regimes.items():
+    new_internal_regimes: dict[str, InternalRegime] = {}
+
+    for regime_name, regime in internal_regimes.items():
         transition_info = regime.transition_info
         need_precompute = transition_info.index[
             ~transition_info["type"].isin(["custom", "none"])
         ].tolist()
+
+        if not need_precompute:
+            # No modifications needed
+            new_internal_regimes[regime_name] = regime
+            continue
+
+        updated_regime = regime
         for trans_name in need_precompute:
             n_points = regime.gridspecs[trans_name.removeprefix("next_")].n_points  # ty: ignore[unresolved-attribute]
-            param_copy = params[regime_name][trans_name].copy()
             new_values = SHOCK_DISCRETIZATION_FUNCTIONS[
                 transition_info.loc[trans_name, "type"]
-            ](**(param_copy | {"n_points": n_points}))[0]
+            ](**(params[regime_name][trans_name] | {"n_points": n_points}))[0]
 
-            if trans_name.removeprefix("next_") in regime.state_action_space.states:
-                new_internal_regimes[
-                    regime_name
-                ].state_action_space = regime.state_action_space.replace(
-                    states=regime.state_action_space.states
-                    | {trans_name.removeprefix("next_"): new_values}
+            state_name = trans_name.removeprefix("next_")
+            if state_name in updated_regime.state_action_spaces.states:
+                updated_regime = dataclasses.replace(
+                    updated_regime,
+                    state_action_spaces=updated_regime.state_action_spaces.replace(
+                        states=MappingProxyType(
+                            dict(updated_regime.state_action_spaces.states)
+                            | {state_name: new_values}
+                        )
+                    ),
                 )
-    return new_internal_regimes
+
+        new_internal_regimes[regime_name] = updated_regime
+
+    return MappingProxyType(new_internal_regimes)

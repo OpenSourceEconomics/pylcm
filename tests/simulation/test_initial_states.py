@@ -1,9 +1,6 @@
 """Tests for initial states conversion and validation utilities."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 import pytest
@@ -15,9 +12,7 @@ from lcm.simulation.util import (
     convert_flat_to_nested_initial_states,
     validate_flat_initial_states,
 )
-
-if TYPE_CHECKING:
-    from lcm.typing import ContinuousState, DiscreteState, FloatND, ScalarInt
+from lcm.typing import ContinuousState, DiscreteState, FloatND, ScalarInt
 
 
 @pytest.fixture
@@ -48,7 +43,6 @@ def model() -> Model:
     ages = AgeGrid(start=0, stop=n_periods, step="Y")
 
     alive = Regime(
-        name="active",
         utility=utility,
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
@@ -63,16 +57,15 @@ def model() -> Model:
     )
 
     dead = Regime(
-        name="terminal",
         terminal=True,
         utility=lambda: 0.0,
         active=lambda age: age >= n_periods - 1,
     )
 
     return Model(
-        [alive, dead],
+        regimes={"active": alive, "terminal": dead},
         ages=ages,
-        regime_id_cls=RegimeId,
+        regime_id_class=RegimeId,
     )
 
 
