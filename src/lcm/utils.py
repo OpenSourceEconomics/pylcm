@@ -73,6 +73,8 @@ def normalize_regime_transition_probs(
     active_regimes_next_period: tuple[str, ...],
 ) -> MappingProxyType[str, Array]:
     """Normalize regime transition probabilities over active regimes only."""
+    if not active_regimes_next_period:
+        return MappingProxyType({})
     active_probs = jnp.stack([probs[r] for r in active_regimes_next_period])
     total = jnp.sum(active_probs, axis=0)
     return MappingProxyType({r: probs[r] / total for r in active_regimes_next_period})
