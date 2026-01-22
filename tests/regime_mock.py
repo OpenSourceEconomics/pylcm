@@ -1,8 +1,7 @@
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    from lcm.typing import UserFunction
+from lcm.typing import UserFunction
 
 
 @dataclass

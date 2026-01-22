@@ -1,12 +1,8 @@
-from typing import TYPE_CHECKING
-
 import jax.numpy as jnp
 from jax import Array
 
 from lcm.exceptions import InvalidValueFunctionError
-
-if TYPE_CHECKING:
-    from lcm.typing import ScalarFloat
+from lcm.typing import ScalarFloat
 
 
 def validate_value_function_array(V_arr: Array, age: ScalarFloat) -> None:

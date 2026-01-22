@@ -1,10 +1,5 @@
 """Test analytical solution and simulation with only discrete actions."""
 
-from __future__ import annotations
-
-from copy import deepcopy
-from typing import TYPE_CHECKING
-
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -14,17 +9,15 @@ from pandas.testing import assert_frame_equal
 
 import lcm
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm.typing import (
+    BoolND,
+    ContinuousState,
+    DiscreteAction,
+    DiscreteState,
+    FloatND,
+    ScalarInt,
+)
 from tests.conftest import DECIMAL_PRECISION
-
-if TYPE_CHECKING:
-    from lcm.typing import (
-        BoolND,
-        ContinuousState,
-        DiscreteAction,
-        DiscreteState,
-        FloatND,
-        ScalarInt,
-    )
 
 
 # ======================================================================================
@@ -80,7 +73,6 @@ def borrowing_constraint(
 
 
 alive_deterministic = Regime(
-    name="alive",
     actions={
         "consumption": DiscreteGrid(ConsumptionChoice),
         "working": DiscreteGrid(WorkingStatus),
@@ -104,7 +96,6 @@ alive_deterministic = Regime(
 )
 
 dead = Regime(
-    name="dead",
     terminal=True,
     utility=lambda: 0.0,
     active=lambda age: age >= 1,  # n_periods=2, so active in period 1
@@ -116,19 +107,20 @@ def next_health(health: DiscreteState, health_transition: FloatND) -> FloatND:
     return health_transition[health]
 
 
-alive_stochastic = deepcopy(alive_deterministic)
-alive_stochastic.transitions["next_health"] = next_health
-alive_stochastic.states["health"] = DiscreteGrid(HealthStatus)
+alive_stochastic = alive_deterministic.replace(
+    transitions=dict(alive_deterministic.transitions) | {"next_health": next_health},
+    states=dict(alive_deterministic.states) | {"health": DiscreteGrid(HealthStatus)},
+)
 
 model_deterministic = Model(
-    [alive_deterministic, dead],
-    regime_id_cls=RegimeId,
+    regimes={"alive": alive_deterministic, "dead": dead},
     ages=AgeGrid(start=0, stop=2, step="Y"),
+    regime_id_class=RegimeId,
 )
 model_stochastic = Model(
-    [alive_stochastic, dead],
-    regime_id_cls=RegimeId,
+    regimes={"alive": alive_stochastic, "dead": dead},
     ages=AgeGrid(start=0, stop=2, step="Y"),
+    regime_id_class=RegimeId,
 )
 
 
@@ -417,17 +409,17 @@ def test_deterministic_solve(discount_factor, n_wealth_points):
     # ==================================================================================
     n_periods = 3
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
-    new_states = alive_deterministic.states
-    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # ty: ignore[unresolved-attribute]
+    new_states = dict(alive_deterministic.states)
+    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)
     model = Model(
-        [
-            alive_deterministic.replace(
+        regimes={
+            "alive": alive_deterministic.replace(
                 states=new_states, active=lambda age: age < n_periods - 1
             ),
-            dead.replace(active=lambda age: age >= n_periods - 1),
-        ],
-        regime_id_cls=RegimeId,
+            "dead": dead.replace(active=lambda age: age >= n_periods - 1),
+        },
         ages=ages,
+        regime_id_class=RegimeId,
     )
 
     # Solve model using LCM
@@ -467,17 +459,17 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
     # ==================================================================================
     n_periods = 3
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
-    new_states = alive_deterministic.states
-    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # ty: ignore[unresolved-attribute]
+    new_states = dict(alive_deterministic.states)
+    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)
     model = Model(
-        [
-            alive_deterministic.replace(
+        regimes={
+            "alive": alive_deterministic.replace(
                 states=new_states, active=lambda age: age < n_periods - 1
             ),
-            dead.replace(active=lambda age: age >= n_periods - 1),
-        ],
+            "dead": dead.replace(active=lambda age: age >= n_periods - 1),
+        },
         ages=ages,
-        regime_id_cls=RegimeId,
+        regime_id_class=RegimeId,
     )
 
     # Simulate model using LCM
@@ -525,17 +517,17 @@ def test_stochastic_solve(discount_factor, n_wealth_points, health_transition):
     # ==================================================================================
     n_periods = 3
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
-    new_states = alive_stochastic.states
-    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # ty: ignore[unresolved-attribute]
+    new_states = dict(alive_stochastic.states)
+    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)
     model = Model(
-        [
-            alive_stochastic.replace(
+        regimes={
+            "alive": alive_stochastic.replace(
                 states=new_states, active=lambda age: age < n_periods - 1
             ),
-            dead.replace(active=lambda age: age >= n_periods - 1),
-        ],
-        regime_id_cls=RegimeId,
+            "dead": dead.replace(active=lambda age: age >= n_periods - 1),
+        },
         ages=ages,
+        regime_id_class=RegimeId,
     )
 
     # Solve model using LCM
@@ -589,17 +581,17 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, health_transition
     # ==================================================================================
     n_periods = 3
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
-    new_states = alive_stochastic.states
-    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)  # ty: ignore[unresolved-attribute]
+    new_states = dict(alive_stochastic.states)
+    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)
     model = Model(
-        [
-            alive_stochastic.replace(
+        regimes={
+            "alive": alive_stochastic.replace(
                 states=new_states, active=lambda age: age < n_periods - 1
             ),
-            dead.replace(active=lambda age: age >= n_periods - 1),
-        ],
+            "dead": dead.replace(active=lambda age: age >= n_periods - 1),
+        },
         ages=ages,
-        regime_id_cls=RegimeId,
+        regime_id_class=RegimeId,
     )
 
     # Simulate model using LCM

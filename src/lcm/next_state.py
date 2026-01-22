@@ -1,40 +1,35 @@
 """Generate function that compute the next states for solution and simulation."""
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING, Any
+from collections.abc import Callable
+from types import MappingProxyType
 
 import jax
 from dags import concatenate_functions
 from dags.signature import with_signature
+from jax import Array
 
 from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import Target
 from lcm.shocks import SHOCK_CALCULATION_FUNCTIONS
+from lcm.typing import (
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    GridsDict,
+    InternalUserFunction,
+    NextStateSimulationFunction,
+    ParamsDict,
+    RegimeName,
+    StochasticNextFunction,
+)
 from lcm.utils import flatten_regime_namespace
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from jax import Array
-
-    from lcm.typing import (
-        ContinuousState,
-        DiscreteState,
-        FloatND,
-        GridsDict,
-        InternalUserFunction,
-        NextStateSimulationFunction,
-        RegimeName,
-        StochasticNextFunction,
-    )
 
 
 def get_next_state_function(
     *,
     grids: GridsDict,
-    transitions: dict[str, InternalUserFunction],
-    functions: dict[str, InternalUserFunction],
+    transitions: MappingProxyType[str, InternalUserFunction],
+    functions: MappingProxyType[str, InternalUserFunction],
     target: Target,
 ) -> NextStateSimulationFunction:
     """Get function that computes the next states during the solution.
@@ -53,14 +48,14 @@ def get_next_state_function(
 
     """
     if target == Target.SOLVE:
-        functions_to_concatenate = transitions | functions
+        functions_to_concatenate = dict(transitions) | dict(functions)
     elif target == Target.SIMULATE:
         # For the simulation target, we need to extend the functions dictionary with
         # stochastic next states functions and their weights.
         extended_transitions = _extend_transitions_for_simulation(
             grids=grids, transitions=transitions
         )
-        functions_to_concatenate = extended_transitions | functions
+        functions_to_concatenate = extended_transitions | dict(functions)
     else:
         raise ValueError(f"Invalid target: {target}")
 
@@ -75,8 +70,8 @@ def get_next_state_function(
 
 def get_next_stochastic_weights_function(
     regime_name: RegimeName,
-    functions: dict[str, InternalUserFunction],
-    transitions: dict[str, InternalUserFunction],
+    functions: MappingProxyType[str, InternalUserFunction],
+    transitions: MappingProxyType[str, InternalUserFunction],
 ) -> Callable[..., dict[str, Array]]:
     """Get function that computes the weights for the next stochastic states.
 
@@ -106,7 +101,7 @@ def get_next_stochastic_weights_function(
 
 def _extend_transitions_for_simulation(
     grids: GridsDict,
-    transitions: dict[str, InternalUserFunction],
+    transitions: MappingProxyType[str, InternalUserFunction],
 ) -> dict[str, Callable[..., Array]]:
     """Extend the functions dictionary for the simulation target.
 
@@ -153,7 +148,7 @@ def _extend_transitions_for_simulation(
 
     # Overwrite regime transitions with generated stochastic next states functions
     # ----------------------------------------------------------------------------------
-    return transitions | discrete_stochastic_next | continuous_stochastic_next
+    return dict(transitions) | discrete_stochastic_next | continuous_stochastic_next
 
 
 def _create_discrete_stochastic_next_func(
@@ -221,9 +216,12 @@ def _create_continuous_stochastic_next_func(
         args=args,
         return_annotation="ContinuousState",
     )
-    def next_stochastic_state(**kwargs: Any) -> ContinuousState:  # noqa: ANN401
+    def next_stochastic_state(
+        params: ParamsDict,
+        **kwargs: FloatND,
+    ) -> ContinuousState:
         return SHOCK_CALCULATION_FUNCTIONS[distribution_type](
-            params=kwargs["params"][fn_name_in_params],
+            params=params[fn_name_in_params],
             key=kwargs[f"key_{name}"],
             prev_value=kwargs[prev_state_name],
         )

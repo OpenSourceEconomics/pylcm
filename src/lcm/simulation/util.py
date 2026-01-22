@@ -1,5 +1,5 @@
-from dataclasses import fields
-from typing import TYPE_CHECKING
+from collections.abc import Mapping
+from types import MappingProxyType
 
 import jax
 from jax import Array, vmap
@@ -10,32 +10,16 @@ from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
 )
 from lcm.input_processing.util import is_stochastic_transition
+from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.random import generate_simulation_keys
 from lcm.state_action_space import create_state_action_space
-from lcm.typing import Bool1D, Float1D, Int1D  # noqa: TC001
+from lcm.typing import Bool1D, Int1D, ParamsDict, RegimeName
 from lcm.utils import flatten_regime_namespace, normalize_regime_transition_probs
-
-if TYPE_CHECKING:
-    from lcm.interfaces import InternalRegime, StateActionSpace
-    from lcm.typing import ParamsDict, RegimeName
-
-
-def get_regime_name_to_id_mapping(regime_id_cls: type) -> dict[RegimeName, int]:
-    """Get mapping from regime names to integer IDs from regime_id_cls.
-
-    Args:
-        regime_id_cls: Dataclass mapping regime names to integer indices.
-
-    Returns:
-        Dict mapping regime names to their integer IDs.
-
-    """
-    return {field.name: int(field.default) for field in fields(regime_id_cls)}  # ty: ignore[invalid-argument-type]
 
 
 def create_regime_state_action_space(
     internal_regime: InternalRegime,
-    states: dict[str, Array],
+    states: MappingProxyType[str, Array],
 ) -> StateActionSpace:
     """Create the state-action space containing only the relevant subjects in a regime.
 
@@ -65,15 +49,15 @@ def create_regime_state_action_space(
 
 def calculate_next_states(
     internal_regime: InternalRegime,
-    optimal_actions: dict[str, Array],
+    optimal_actions: MappingProxyType[str, Array],
     period: int,
     age: float,
-    params: dict[RegimeName, ParamsDict],
-    states: dict[str, Array],
+    params: ParamsDict,
+    states: MappingProxyType[str, Array],
     state_action_space: StateActionSpace,
     key: Array,
     subjects_in_regime: Bool1D,
-) -> dict[str, Array]:
+) -> MappingProxyType[str, Array]:
     """Calculate next period states for subjects in a regime.
 
     Args:
@@ -136,13 +120,13 @@ def calculate_next_states(
 def calculate_next_regime_membership(
     internal_regime: InternalRegime,
     state_action_space: StateActionSpace,
-    optimal_actions: dict[str, Array],
+    optimal_actions: MappingProxyType[str, Array],
     period: int,
     age: float,
-    params: dict[RegimeName, ParamsDict],
-    regime_name_to_id: dict[RegimeName, int],
+    params: ParamsDict,
+    regime_id: MappingProxyType[RegimeName, int],
     new_subject_regime_ids: Int1D,
-    active_regimes_next_period: list[RegimeName],
+    active_regimes_next_period: tuple[RegimeName, ...],
     key: Array,
     subjects_in_regime: Bool1D,
 ) -> Int1D:
@@ -158,7 +142,7 @@ def calculate_next_regime_membership(
         period: Current period.
         age: Age corresponding to current period.
         params: Model parameters for the regime.
-        regime_name_to_id: Mapping from regime names to integer IDs.
+        regime_id: Mapping from regime names to integer IDs.
         new_subject_regime_ids: Array to update with next regime assignments.
         active_regimes_next_period: List of active regimes in the next period.
         key: JAX random key.
@@ -173,7 +157,7 @@ def calculate_next_regime_membership(
     """
     # Compute regime transition probabilities
     # ---------------------------------------------------------------------------------
-    regime_transition_probs = (
+    regime_transition_probs: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
         internal_regime.internal_functions.regime_transition_probs.simulate(  # ty: ignore[possibly-missing-attribute]
             **state_action_space.states,
             **optimal_actions,
@@ -203,7 +187,7 @@ def calculate_next_regime_membership(
     next_regime_ids = draw_key_from_dict(
         d=normalized_regime_transition_probs,
         keys=regime_transition_key["key_regime_transition"],
-        regime_name_to_id=regime_name_to_id,
+        regime_id=regime_id,
     )
 
     # Update global regime membership array
@@ -212,7 +196,9 @@ def calculate_next_regime_membership(
 
 
 def draw_key_from_dict(
-    d: dict[str, Array], regime_name_to_id: dict[str, int], keys: Array
+    d: MappingProxyType[str, Array],
+    regime_id: MappingProxyType[str, int],
+    keys: Array,
 ) -> Int1D:
     """Draw a random key from a dictionary of arrays.
 
@@ -221,7 +207,7 @@ def draw_key_from_dict(
             represent a probability distribution over the keys. That is, for the
             dictionary {'regime1': jnp.array([0.2, 0.5]),
             'regime2': jnp.array([0.8, 0.5])}, 0.2 + 0.8 = 1.0 and 0.5 + 0.5 = 1.0.
-        regime_name_to_id: Mapping of regime names to regime ids.
+        regime_id: Mapping of regime names to regime ids.
         keys: JAX random keys.
 
     Returns:
@@ -230,7 +216,7 @@ def draw_key_from_dict(
     """
     regime_names = list(d)
     regime_transition_probs = jnp.array(list(d.values())).T
-    regime_ids = jnp.array([regime_name_to_id[name] for name in regime_names])
+    regime_ids = jnp.array([regime_id[name] for name in regime_names])
 
     def random_id(
         key: Array,
@@ -248,10 +234,10 @@ def draw_key_from_dict(
 
 
 def _update_states_for_subjects(
-    all_states: dict[str, Array],
-    computed_next_states: dict[str, Array],
+    all_states: MappingProxyType[str, Array],
+    computed_next_states: MappingProxyType[str, Array],
     subject_indices: Bool1D,
-) -> dict[str, Array]:
+) -> MappingProxyType[str, Array]:
     """Update the global states dictionary with next states for specific subjects.
 
     The transition functions add a 'next_' prefix to state variable names. This function
@@ -268,20 +254,23 @@ def _update_states_for_subjects(
         Updated states dictionary with next states for the specified subjects.
 
     """
-    updated_states = all_states
-    for state_name, next_state_values in computed_next_states.items():
-        updated_states[state_name.replace("next_", "")] = jnp.where(
+    updated_states = dict(all_states)
+    for next_state_name, next_state_values in computed_next_states.items():
+        # State names may be prefixed with regime (e.g., "working__next_wealth")
+        # We need to replace "next_" with "" to get "working__wealth"
+        state_name = next_state_name.replace("next_", "")
+        updated_states[state_name] = jnp.where(
             subject_indices,
             next_state_values,
-            all_states[state_name.replace("next_", "")],
+            all_states[state_name],
         )
 
-    return updated_states
+    return MappingProxyType(updated_states)
 
 
 def validate_flat_initial_states(
-    flat_initial_states: dict[str, Array],
-    internal_regimes: dict[RegimeName, InternalRegime],
+    flat_initial_states: Mapping[str, Array],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
 ) -> None:
     """Validate flat initial_states dict.
 
@@ -334,8 +323,8 @@ def validate_flat_initial_states(
 
 
 def convert_flat_to_nested_initial_states(
-    flat_initial_states: dict[str, Array],
-    internal_regimes: dict[RegimeName, InternalRegime],
+    flat_initial_states: Mapping[str, Array],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
 ) -> dict[RegimeName, dict[str, Array]]:
     """Convert flat initial_states dict to nested format.
 
@@ -365,7 +354,7 @@ def convert_flat_to_nested_initial_states(
 
 
 def _validate_normalized_regime_transition_probs(
-    normalized_probs: dict[str, Float1D],
+    normalized_probs: MappingProxyType[str, Array],
     regime_name: str,
     period: int,
 ) -> None:

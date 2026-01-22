@@ -4,11 +4,9 @@ This model replicates the lifecycle model from the paper "Lifestyle Behaviors an
 Wealth-Health Gaps in Germany" by Lukas Mahler and Minchul Yum (Econometrica, 2024)
 """
 
-from __future__ import annotations
-
 from dataclasses import make_dataclass
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import Any
 
 import jax
 
@@ -24,21 +22,18 @@ from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.dispatchers import _base_productmap
 from lcm.grids import ShockGrid
 from lcm.shocks import rouwenhorst
-
-if TYPE_CHECKING:
-    from lcm.typing import (
-        Any,
-        BoolND,
-        ContinuousAction,
-        ContinuousState,
-        DiscreteAction,
-        DiscreteState,
-        Float1D,
-        FloatND,
-        Int1D,
-        Period,
-        RegimeName,
-    )
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteAction,
+    DiscreteState,
+    Float1D,
+    FloatND,
+    Int1D,
+    Period,
+    RegimeName,
+)
 
 # ======================================================================================
 # Parameters
@@ -356,7 +351,6 @@ def dead_is_active(age: float, initial_age: float) -> bool:
 
 
 ALIVE_REGIME = Regime(
-    name="alive",
     utility=utility,
     functions={
         "disutil": disutil,
@@ -408,16 +402,15 @@ ALIVE_REGIME = Regime(
 )
 
 DEAD_REGIME = Regime(
-    name="dead",
     terminal=True,
     utility=lambda: 0.0,
     active=partial(dead_is_active, initial_age=ages.values[0]),
 )
 
 MAHLER_YUM_MODEL = Model(
-    regimes=[ALIVE_REGIME, DEAD_REGIME],
+    regimes={"alive": ALIVE_REGIME, "dead": DEAD_REGIME},
     ages=ages,
-    regime_id_cls=RegimeId,
+    regime_id_class=RegimeId,
 )
 
 

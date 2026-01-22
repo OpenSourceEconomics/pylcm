@@ -1,21 +1,20 @@
-from __future__ import annotations
-
 from collections import Counter
+from collections.abc import Iterable, Mapping
+from dataclasses import fields
 from itertools import chain
-from typing import TYPE_CHECKING, Any, TypeVar, overload
+from types import MappingProxyType
+from typing import Any, TypeVar
 
 import jax.numpy as jnp
 from dags.tree import QNAME_DELIMITER, flatten_to_qnames, unflatten_from_qnames
+from jax import Array
+
+from lcm.typing import RegimeName
 
 # Re-export for use in other modules. This is the separator used by dags to
 # concatenate nested dictionary keys into qualified names (e.g., "work__next_wealth").
 # User-defined regime names and function names must NOT contain this separator.
 REGIME_SEPARATOR = QNAME_DELIMITER
-
-if TYPE_CHECKING:
-    from collections.abc import Iterable
-
-    from lcm.typing import Float1D, RegimeName
 
 T = TypeVar("T")
 
@@ -24,6 +23,22 @@ def find_duplicates(*containers: Iterable[T]) -> set[T]:
     combined = chain.from_iterable(containers)
     counts = Counter(combined)
     return {v for v, count in counts.items() if count > 1}
+
+
+def get_field_names_and_values(dc: type) -> MappingProxyType[str, Any]:
+    """Return the fields of a dataclass.
+
+    Args:
+        dc: The dataclass to get the fields of.
+
+    Returns:
+        An immutable dictionary with the field names as keys and the field values as
+        values. If no value is provided for a field, the value is set to None.
+
+    """
+    return MappingProxyType(
+        {field.name: getattr(dc, field.name, None) for field in fields(dc)}
+    )
 
 
 def first_non_none(*args: T | None) -> T:
@@ -45,33 +60,21 @@ def first_non_none(*args: T | None) -> T:
     raise ValueError("All arguments are None")
 
 
-def flatten_regime_namespace(d: dict[RegimeName, Any]) -> dict[str, Any]:
-    return flatten_to_qnames(d)
+def flatten_regime_namespace(d: Mapping[RegimeName, Any]) -> MappingProxyType[str, Any]:
+    return MappingProxyType(flatten_to_qnames(d))
 
 
 def unflatten_regime_namespace(d: dict[str, Any]) -> dict[RegimeName, Any]:
     return unflatten_from_qnames(d)  # ty: ignore[invalid-return-type]
 
 
-@overload
 def normalize_regime_transition_probs(
-    probs: dict[str, float],
-    active_regimes: list[str],
-) -> dict[str, float]: ...
-
-
-@overload
-def normalize_regime_transition_probs(
-    probs: dict[str, Float1D],
-    active_regimes: list[str],
-) -> dict[str, Float1D]: ...
-
-
-def normalize_regime_transition_probs(
-    probs: dict[str, float] | dict[str, Float1D],
-    active_regimes: list[str],
-) -> dict[str, float] | dict[str, Float1D]:
+    probs: MappingProxyType[str, Array],
+    active_regimes_next_period: tuple[str, ...],
+) -> MappingProxyType[str, Array]:
     """Normalize regime transition probabilities over active regimes only."""
-    active_probs = jnp.array([probs[r] for r in active_regimes])
+    if not active_regimes_next_period:
+        return MappingProxyType({})
+    active_probs = jnp.stack([probs[r] for r in active_regimes_next_period])
     total = jnp.sum(active_probs, axis=0)
-    return {r: probs[r] / total for r in active_regimes}
+    return MappingProxyType({r: probs[r] / total for r in active_regimes_next_period})

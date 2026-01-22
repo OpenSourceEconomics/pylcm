@@ -1,6 +1,5 @@
-from __future__ import annotations
-
 from dataclasses import dataclass
+from types import MappingProxyType
 
 import jax.numpy as jnp
 import pandas as pd
@@ -41,10 +40,12 @@ def test_create_state_action_space_solution_discrete_action_continuous_state():
         discrete_states=[],
         continuous_actions=[],
     )
-    grids = {
-        "wealth": jnp.array([0.0, 50.0, 100.0]),
-        "work": jnp.array([0, 1]),
-    }
+    grids = MappingProxyType(
+        {
+            "wealth": jnp.array([0.0, 50.0, 100.0]),
+            "work": jnp.array([0, 1]),
+        }
+    )
 
     space = create_state_action_space(
         variable_info=variable_info,
@@ -65,10 +66,12 @@ def test_create_state_action_space_solution_continuous_action():
         discrete_states=[],
         discrete_actions=[],
     )
-    grids = {
-        "wealth": jnp.array([0.0, 50.0, 100.0]),
-        "consumption": jnp.array([0.0, 25.0, 50.0]),
-    }
+    grids = MappingProxyType(
+        {
+            "wealth": jnp.array([0.0, 50.0, 100.0]),
+            "consumption": jnp.array([0.0, 25.0, 50.0]),
+        }
+    )
 
     space = create_state_action_space(
         variable_info=variable_info,
@@ -89,10 +92,12 @@ def test_state_action_space_replace_method():
         discrete_states=[],
         continuous_actions=[],
     )
-    grids = {
-        "wealth": jnp.array([0.0, 50.0, 100.0]),
-        "work": jnp.array([0, 1]),
-    }
+    grids = MappingProxyType(
+        {
+            "wealth": jnp.array([0.0, 50.0, 100.0]),
+            "work": jnp.array([0, 1]),
+        }
+    )
 
     space = create_state_action_space(
         variable_info=variable_info,
@@ -100,7 +105,9 @@ def test_state_action_space_replace_method():
         states={"wealth": jnp.array([10.0, 20.0])},
     )
 
-    new_space = space.replace(states={"wealth": jnp.array([30.0, 40.0])})
+    new_space = space.replace(
+        states=MappingProxyType({"wealth": jnp.array([30.0, 40.0])})
+    )
 
     assert_array_equal(new_space.states["wealth"], jnp.array([30.0, 40.0]))
 
@@ -112,7 +119,6 @@ def test_create_state_space_info():
         bad: int = 1
 
     regime = Regime(
-        name="test",
         utility=lambda wealth: wealth,
         states={
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),

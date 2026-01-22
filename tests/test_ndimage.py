@@ -13,8 +13,6 @@
 # limitations under the License.
 #
 # Modifications made by Tim Mensinger, 2024.
-from __future__ import annotations
-
 from functools import partial
 
 import jax.numpy as jnp

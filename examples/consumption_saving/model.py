@@ -6,10 +6,6 @@ Note that the parameterization of the model does not make a whole lot of sense, 
 look too closely inside the functions as opposed to their interfaces.
 """
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -17,16 +13,14 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
-
-if TYPE_CHECKING:
-    from lcm.typing import (
-        BoolND,
-        ContinuousAction,
-        ContinuousState,
-        DiscreteAction,
-        FloatND,
-        ScalarInt,
-    )
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteAction,
+    FloatND,
+    ScalarInt,
+)
 
 # ======================================================================================
 # Model functions
@@ -130,7 +124,6 @@ def retired_is_active(age: float) -> bool:
 
 
 working = Regime(
-    name="working",
     utility=utility,
     functions={
         "labor_income": labor_income,
@@ -172,7 +165,6 @@ working = Regime(
 
 
 retired = Regime(
-    name="retirement",
     terminal=True,
     utility=utility_retired,
     states={
@@ -192,9 +184,12 @@ retired = Regime(
 
 
 model = Model(
-    regimes=[working, retired],
+    regimes={
+        "working": working,
+        "retirement": retired,
+    },
     ages=AgeGrid(start=18, stop=RETIREMENT_AGE, step="Y"),
-    regime_id_cls=RegimeId,
+    regime_id_class=RegimeId,
 )
 
 params = {

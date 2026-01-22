@@ -1,21 +1,17 @@
-from __future__ import annotations
-
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import jax.numpy as jnp
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
-
-if TYPE_CHECKING:
-    from lcm.grids import ContinuousGrid
-    from lcm.typing import (
-        BoolND,
-        ContinuousAction,
-        ContinuousState,
-        DiscreteAction,
-        FloatND,
-        ScalarInt,
-    )
+from lcm.grids import ContinuousGrid
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteAction,
+    FloatND,
+    ScalarInt,
+)
 
 
 # --------------------------------------------------------------------------------------
@@ -96,7 +92,6 @@ DEFAULT_WEALTH_GRID = LinSpacedGrid(start=1, stop=400, n_points=100)
 DEFAULT_CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 
 working = Regime(
-    name="working",
     actions={
         "labor_supply": DiscreteGrid(LaborSupply),
         "consumption": DEFAULT_CONSUMPTION_GRID,  # placeholder, will be replaced by get_model()  # noqa: E501
@@ -120,7 +115,6 @@ working = Regime(
 
 
 dead = Regime(
-    name="dead",
     terminal=True,
     utility=lambda: 0.0,
     active=lambda _age: True,  # placeholder, will be replaced by get_model()
@@ -134,8 +128,8 @@ def get_model(
 ) -> Model:
     final_age_alive = START_AGE + n_periods - 2
     return Model(
-        [
-            working.replace(
+        regimes={
+            "working": working.replace(
                 active=lambda age: age <= final_age_alive,
                 states={"wealth": wealth_grid},
                 actions={
@@ -143,10 +137,10 @@ def get_model(
                     "consumption": consumption_grid,
                 },
             ),
-            dead.replace(active=lambda age: age > final_age_alive),
-        ],
+            "dead": dead.replace(active=lambda age: age > final_age_alive),
+        },
         ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
-        regime_id_cls=RegimeId,
+        regime_id_class=RegimeId,
     )
 
 

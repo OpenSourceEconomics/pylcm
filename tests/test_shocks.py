@@ -1,67 +1,62 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
-
 import pytest
 from jax import numpy as jnp
 
 import lcm
 from lcm.ages import AgeGrid
-from lcm.grids import DiscreteGrid, LinSpacedGrid, ShockGrid
+from lcm.grids import DiscreteGrid, LinSpacedGrid, ShockGrid, categorical
 from lcm.model import Model
 from lcm.regime import Regime
-
-if TYPE_CHECKING:
-    from lcm.typing import (
-        ContinuousAction,
-        ContinuousState,
-        DiscreteState,
-        FloatND,
-        ScalarInt,
-    )
+from lcm.typing import (
+    ContinuousAction,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    ScalarInt,
+)
 
 
 @pytest.fixture
 def params_for_shocks():
     return {
         "uniform": {
-            "test": {
+            "test_regime": {
                 "discount_factor": 1.0,
                 "next_state": {"start": 0, "stop": 1},
                 "next_state2": {"state2_transition": jnp.full((2, 2), fill_value=0.5)},
             },
-            "test_term": {
+            "test_regime_term": {
                 "discount_factor": 1.0,
             },
         },
         "normal": {
-            "test": {
+            "test_regime": {
                 "discount_factor": 1.0,
                 "next_state": {"mu_eps": 0, "sigma_eps": 1, "n_std": 2},
                 "next_state2": {"state2_transition": jnp.full((2, 2), fill_value=0.5)},
             },
-            "test_term": {
+            "test_regime_term": {
                 "discount_factor": 1.0,
             },
         },
         "tauchen": {
-            "test": {
+            "test_regime": {
                 "discount_factor": 1.0,
                 "next_state": {"rho": 0.8, "mu_eps": 0, "sigma_eps": 1, "n_std": 2},
                 "next_state2": {"state2_transition": jnp.full((2, 2), fill_value=0.5)},
             },
-            "test_term": {
+            "test_regime_term": {
                 "discount_factor": 1.0,
             },
         },
         "rouwenhorst": {
-            "test": {
+            "test_regime": {
                 "discount_factor": 1.0,
                 "next_state": {"rho": 0.8, "mu_eps": 0, "sigma_eps": 1},
                 "next_state2": {"state2_transition": jnp.full((2, 2), fill_value=0.5)},
             },
-            "test_term": {
+            "test_regime_term": {
                 "discount_factor": 1.0,
             },
         },
@@ -82,7 +77,7 @@ def test_model_with_shock(distribution_type, params_for_shocks):
 
     def next_regime(period: int) -> ScalarInt:
         terminal = period >= 5 - 2  # is test_term in last period
-        return jnp.where(terminal, RegimeId.test_term, RegimeId.test)
+        return jnp.where(terminal, RegimeId.test_regime_term, RegimeId.test_regime)
 
     def utility(
         state: ContinuousState,  # noqa: ARG001
@@ -97,18 +92,17 @@ def test_model_with_shock(distribution_type, params_for_shocks):
     def test_term_active(age):
         return age == 4
 
-    @dataclass
+    @categorical
     class Discrete:
         test: int = 0
         test_term: int = 1
 
-    @dataclass
+    @categorical
     class RegimeId:
-        test: int = 0
-        test_term: int = 1
+        test_regime: int
+        test_regime_term: int
 
     test_regime = Regime(
-        name="test",
         active=test_active,
         states={
             "state": ShockGrid(n_points=5, distribution_type=distribution_type),
@@ -125,20 +119,19 @@ def test_model_with_shock(distribution_type, params_for_shocks):
         },
     )
     test_regime_term = Regime(
-        name="test_term",
         terminal=True,
         active=test_term_active,
         utility=lambda: 0.0,
     )
     model = Model(
-        regimes=[test_regime, test_regime_term],
-        regime_id_cls=RegimeId,
+        regimes={"test_regime": test_regime, "test_regime_term": test_regime_term},
+        regime_id_class=RegimeId,
         ages=AgeGrid(start=0, stop=4, step="Y"),
     )
     params = params_for_shocks[distribution_type]
 
     model.solve_and_simulate(
         params=params,
-        initial_regimes=["test"],
+        initial_regimes=["test_regime"],
         initial_states={"state": jnp.asarray([0]), "state2": jnp.asarray([0])},
     )

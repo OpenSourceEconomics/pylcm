@@ -9,26 +9,20 @@ See also the specifications in tests/test_models/deterministic.py.
 
 """
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
 import jax.numpy as jnp
 
 import lcm
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
-
-if TYPE_CHECKING:
-    from lcm.typing import (
-        BoolND,
-        ContinuousAction,
-        ContinuousState,
-        DiscreteAction,
-        DiscreteState,
-        FloatND,
-        Period,
-        ScalarInt,
-    )
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteAction,
+    DiscreteState,
+    FloatND,
+    Period,
+    ScalarInt,
+)
 
 # ======================================================================================
 # Model functions
@@ -179,7 +173,6 @@ def borrowing_constraint(
 # ======================================================================================
 
 working = Regime(
-    name="working",
     actions={
         "labor_supply": DiscreteGrid(LaborSupply),
         "consumption": LinSpacedGrid(
@@ -216,7 +209,6 @@ working = Regime(
 
 
 retired = Regime(
-    name="retired",
     actions={"consumption": LinSpacedGrid(start=1, stop=100, n_points=200)},
     states={
         "health": DiscreteGrid(HealthStatus),
@@ -242,7 +234,6 @@ retired = Regime(
 
 
 dead = Regime(
-    name="dead",
     terminal=True,
     utility=lambda: 0.0,
     active=lambda _age: True,  # Placeholder, overridden at model creation
@@ -252,13 +243,13 @@ dead = Regime(
 def get_model(n_periods: int) -> Model:
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     return Model(
-        [
-            working.replace(active=lambda age, n=n_periods: age < n - 1),
-            retired.replace(active=lambda age, n=n_periods: age < n - 1),
-            dead.replace(active=lambda age, n=n_periods: age >= n - 1),
-        ],
+        regimes={
+            "working": working.replace(active=lambda age, n=n_periods: age < n - 1),
+            "retired": retired.replace(active=lambda age, n=n_periods: age < n - 1),
+            "dead": dead.replace(active=lambda age, n=n_periods: age >= n - 1),
+        },
         ages=ages,
-        regime_id_cls=RegimeId,
+        regime_id_class=RegimeId,
     )
 
 

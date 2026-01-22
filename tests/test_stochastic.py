@@ -1,6 +1,5 @@
-from __future__ import annotations
-
-from typing import TYPE_CHECKING, Any
+from collections.abc import Mapping
+from typing import Any
 
 import jax.numpy as jnp
 import pandas as pd
@@ -9,6 +8,7 @@ from numpy.testing import assert_array_almost_equal
 
 import lcm
 from lcm import AgeGrid, Model
+from lcm.typing import DiscreteState, FloatND
 from tests.test_models.stochastic import (
     RegimeId,
     dead,
@@ -17,9 +17,6 @@ from tests.test_models.stochastic import (
     retired,
     working,
 )
-
-if TYPE_CHECKING:
-    from lcm.typing import DiscreteState, FloatND
 
 # ======================================================================================
 # Simulate
@@ -136,15 +133,23 @@ def models_and_params() -> tuple[Model, Model, dict[str, Any]]:
     dead_updated = dead.replace(active=lambda age: age >= n_periods - 1)
 
     model_deterministic = Model(
-        [working_deterministic, retired_deterministic, dead_updated],
+        regimes={
+            "working": working_deterministic,
+            "retired": retired_deterministic,
+            "dead": dead_updated,
+        },
         ages=ages,
-        regime_id_cls=RegimeId,
+        regime_id_class=RegimeId,
     )
 
     model_stochastic = Model(
-        [working_stochastic, retired_stochastic, dead_updated],
+        regimes={
+            "working": working_stochastic,
+            "retired": retired_stochastic,
+            "dead": dead_updated,
+        },
         ages=ages,
-        regime_id_cls=RegimeId,
+        regime_id_class=RegimeId,
     )
 
     return model_deterministic, model_stochastic, get_params(n_periods=n_periods)
@@ -159,10 +164,12 @@ def test_compare_deterministic_and_stochastic_results_value_function(
     # ==================================================================================
     # Compare value function arrays
     # ==================================================================================
-    solution_deterministic: dict[int, dict[str, FloatND]] = model_deterministic.solve(
+    solution_deterministic: Mapping[int, Mapping[str, FloatND]] = (
+        model_deterministic.solve(params)
+    )
+    solution_stochastic: Mapping[int, Mapping[str, FloatND]] = model_stochastic.solve(
         params
     )
-    solution_stochastic: dict[int, dict[str, FloatND]] = model_stochastic.solve(params)
 
     for period in range(model_deterministic.n_periods - 1):
         assert_array_almost_equal(

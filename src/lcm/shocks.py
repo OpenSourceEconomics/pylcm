@@ -1,13 +1,11 @@
 from copy import deepcopy
-from typing import TYPE_CHECKING
 
 import jax
 from jax import numpy as jnp
 from jax.scipy.stats.norm import cdf
 
-if TYPE_CHECKING:
-    from lcm.interfaces import InternalRegime
-    from lcm.typing import Float1D, FloatND, ParamsDict
+from lcm.interfaces import InternalRegime
+from lcm.typing import Float1D, FloatND, MappingProxyType, ParamsDict, RegimeName
 
 
 def discretized_uniform_distribution(
@@ -173,19 +171,19 @@ SHOCK_DISCRETIZATION_FUNCTIONS = {
 }
 
 
-def uniform(params: ParamsDict, key: Float1D, prev_value: Float1D) -> Float1D:  # noqa: ARG001
+def uniform(params: ParamsDict, key: FloatND, prev_value: Float1D) -> Float1D:  # noqa: ARG001
     return jax.random.uniform(minval=params["start"], maxval=params["stop"], key=key)
 
 
-def normal(params: ParamsDict, key: Float1D, prev_value: Float1D) -> Float1D:  # noqa: ARG001
+def normal(params: ParamsDict, key: FloatND, prev_value: Float1D) -> Float1D:  # noqa: ARG001
     return jax.random.normal(key=key) * params["sigma_eps"] + params["mu_eps"]
 
 
-def ar1_tauchen(params: ParamsDict, key: Float1D, prev_value: Float1D) -> Float1D:
+def ar1_tauchen(params: ParamsDict, key: FloatND, prev_value: Float1D) -> Float1D:
     return prev_value * params["rho"] + jax.random.normal(key=key) * params["sigma_eps"]
 
 
-def ar1_rouwenhorst(params: ParamsDict, key: Float1D, prev_value: Float1D) -> Float1D:
+def ar1_rouwenhorst(params: ParamsDict, key: FloatND, prev_value: Float1D) -> Float1D:
     return prev_value * params["rho"] + jax.random.normal(key=key) * params["sigma_eps"]
 
 
@@ -198,7 +196,7 @@ SHOCK_CALCULATION_FUNCTIONS = {
 
 
 def pre_compute_shock_probabilities(
-    internal_regimes: dict[str, InternalRegime], params: ParamsDict
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime], params: ParamsDict
 ) -> ParamsDict:
     """Pre-compute the discretized probabilities for shocks.
 
@@ -233,8 +231,8 @@ def pre_compute_shock_probabilities(
 
 
 def update_sas_with_shocks(
-    internal_regimes: dict[str, InternalRegime], params: ParamsDict
-) -> dict[str, InternalRegime]:
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime], params: ParamsDict
+) -> MappingProxyType[RegimeName, InternalRegime]:
     """Fill the shock grids.
 
     As the values for the shock grids depend on the parameters that the user supplies,
@@ -248,24 +246,29 @@ def update_sas_with_shocks(
         The original internal regimes, but with the filled shock grids.
 
     """
-    new_internal_regimes = deepcopy(internal_regimes)
-    for regime_name, regime in new_internal_regimes.items():
-        transition_info = regime.transition_info
+    new_internal_regimes = {}
+    for name, internal_regime in internal_regimes.items():
+        transition_info = internal_regime.transition_info
         need_precompute = transition_info.index[
             ~transition_info["type"].isin(["custom", "none"])
         ].tolist()
-        for trans_name in need_precompute:
-            n_points = regime.gridspecs[trans_name.removeprefix("next_")].n_points  # ty: ignore[unresolved-attribute]
-            param_copy = params[regime_name][trans_name].copy()
-            new_values = SHOCK_DISCRETIZATION_FUNCTIONS[
-                transition_info.loc[trans_name, "type"]
-            ](**(param_copy | {"n_points": n_points}))[0]
+        if need_precompute:
+            new_states = {}
+            for trans_name in need_precompute:
+                n_points = internal_regime.gridspecs[
+                    trans_name.removeprefix("next_")
+                ].n_points  # ty: ignore[unresolved-attribute]
+                param_copy = params[name][trans_name].copy()
+                new_values = SHOCK_DISCRETIZATION_FUNCTIONS[
+                    transition_info.loc[trans_name, "type"]
+                ](**(param_copy | {"n_points": n_points}))[0]
+                new_states[trans_name.removeprefix("next_")] = new_values
 
-            if trans_name.removeprefix("next_") in regime.state_action_space.states:
-                new_internal_regimes[
-                    regime_name
-                ].state_action_space = regime.state_action_space.replace(
-                    states=regime.state_action_space.states
-                    | {trans_name.removeprefix("next_"): new_values}
-                )
-    return new_internal_regimes
+            new_states = internal_regime.state_action_space.states | new_states
+            new_state_action_space = internal_regime.state_action_space.replace(
+                states=MappingProxyType(new_states)
+            )
+            new_internal_regimes[name] = internal_regime.replace(
+                state_action_space=new_state_action_space
+            )
+    return MappingProxyType(internal_regimes | new_internal_regimes)

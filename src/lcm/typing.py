@@ -1,3 +1,4 @@
+from types import MappingProxyType
 from typing import Any, Protocol
 
 from jax import Array
@@ -24,12 +25,19 @@ type ScalarFloat = float | Float[Scalar, ""]  # noqa: F722
 type Period = int | Int1D
 type Age = float
 type RegimeName = str
+type RegimeNamesToIds = MappingProxyType[RegimeName, int]
 
-type _RegimeGridsDict = dict[str, Array]
-type GridsDict = dict[RegimeName, _RegimeGridsDict]
+type _RegimeGridsDict = MappingProxyType[str, Array]
+type GridsDict = MappingProxyType[RegimeName, _RegimeGridsDict]
 
-type TransitionFunctionsDict = dict[RegimeName, dict[str, InternalUserFunction]]
+type _RegimeTransitions = MappingProxyType[str, InternalUserFunction]
+type TransitionFunctionsMapping = MappingProxyType[RegimeName, _RegimeTransitions]
+
 type ParamsDict = dict[RegimeName, Any]
+
+# Type aliases for value function arrays
+type _PeriodVArrMapping = MappingProxyType[RegimeName, FloatND]
+type VArrMapping = MappingProxyType[int, _PeriodVArrMapping]
 
 
 class UserFunction(Protocol):
@@ -57,17 +65,21 @@ class InternalUserFunction(Protocol):
 class RegimeTransitionFunction(Protocol):
     """The regime transition function provided by the user.
 
+    Returns an array of transition probabilities indexed by regime ID.
+
     Only used for type checking.
 
     """
 
     def __call__(  # noqa: D102
         self, *args: Array | float, params: ParamsDict, **kwargs: Array | float
-    ) -> dict[RegimeName, float]: ...
+    ) -> Float1D: ...
 
 
 class VmappedRegimeTransitionFunction(Protocol):
-    """The regime transition function provided by the user.
+    """The vmapped regime transition function.
+
+    Returns a 2D array of transition probabilities with shape [n_regimes, n_subjects].
 
     Only used for type checking.
 
@@ -75,7 +87,7 @@ class VmappedRegimeTransitionFunction(Protocol):
 
     def __call__(  # noqa: D102
         self, *args: Array | float, params: ParamsDict, **kwargs: Array | float
-    ) -> dict[RegimeName, Float1D]: ...
+    ) -> FloatND: ...
 
 
 class QAndFFunction(Protocol):
@@ -108,7 +120,7 @@ class MaxQOverCFunction(Protocol):
 
     def __call__(  # noqa: D102
         self,
-        next_V_arr: dict[RegimeName, Array],
+        next_V_arr: MappingProxyType[RegimeName, Array],
         params: ParamsDict,
         period: Period,
         **kwargs: Array,
@@ -127,7 +139,7 @@ class ArgmaxQOverCFunction(Protocol):
 
     def __call__(  # noqa: D102
         self,
-        next_V_arr: dict[RegimeName, Array],
+        next_V_arr: MappingProxyType[RegimeName, Array],
         params: ParamsDict,
         period: Period,
         **kwargs: Array,
@@ -146,7 +158,7 @@ class MaxQOverAFunction(Protocol):
 
     def __call__(  # noqa: D102
         self,
-        next_V_arr: dict[RegimeName, Array],
+        next_V_arr: MappingProxyType[RegimeName, Array],
         params: ParamsDict,
         **states_and_actions: Array,
     ) -> Array: ...
@@ -164,7 +176,7 @@ class ArgmaxQOverAFunction(Protocol):
 
     def __call__(  # noqa: D102
         self,
-        next_V_arr: dict[RegimeName, Array],
+        next_V_arr: MappingProxyType[RegimeName, Array],
         params: ParamsDict,
         **states_and_actions: Array,
     ) -> tuple[Array, Array]: ...
@@ -218,7 +230,7 @@ class NextStateSimulationFunction(Protocol):
     def __call__(  # noqa: D102
         self,
         **kwargs: Array | Period | Age | ParamsDict,
-    ) -> dict[str, DiscreteState | ContinuousState]: ...
+    ) -> MappingProxyType[str, DiscreteState | ContinuousState]: ...
 
 
 class ActiveFunction(Protocol):
