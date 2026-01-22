@@ -110,7 +110,7 @@ def test_terminal_regime_cannot_have_transitions():
 
 
 def test_terminal_regime_can_be_created_without_states():
-    """Terminal regime can be created without states (e.g., absorbing death state)."""
+    """Terminal regime can be created without states (e.g., death state)."""
     regime = Regime(
         utility=lambda: 0,
         states={},
