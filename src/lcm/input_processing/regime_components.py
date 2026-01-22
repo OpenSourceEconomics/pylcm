@@ -2,7 +2,6 @@
 
 import functools
 import inspect
-from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any
 
@@ -65,9 +64,9 @@ def build_state_action_space(
 def build_Q_and_F_functions(
     regime_name: str,
     regime: Regime,
-    regimes_to_active_periods: Mapping[RegimeName, tuple[int, ...]],
+    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     internal_functions: InternalFunctions,
-    state_space_infos: Mapping[RegimeName, StateSpaceInfo],
+    state_space_infos: MappingProxyType[RegimeName, StateSpaceInfo],
     grids: GridsDict,
     ages: AgeGrid,
 ) -> MappingProxyType[int, QAndFFunction]:
@@ -199,9 +198,9 @@ def build_next_state_simulation_functions(
 
 
 def build_regime_transition_probs_functions(
-    internal_functions: Mapping[str, InternalUserFunction],
+    internal_functions: MappingProxyType[str, InternalUserFunction],
     regime_transition_probs: InternalUserFunction,
-    grids: Mapping[str, Array],
+    grids: MappingProxyType[str, Array],
     regime_names_to_ids: RegimeNamesToIds,
     *,
     is_stochastic: bool,

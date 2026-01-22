@@ -1,4 +1,5 @@
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
+from types import MappingProxyType
 from typing import Any, cast
 
 import jax.numpy as jnp
@@ -27,10 +28,10 @@ from lcm.utils import normalize_regime_transition_probs
 
 def get_Q_and_F(
     regime_name: str,
-    regimes_to_active_periods: Mapping[RegimeName, tuple[int, ...]],
+    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     period: int,
     age: float,
-    next_state_space_infos: Mapping[RegimeName, StateSpaceInfo],
+    next_state_space_infos: MappingProxyType[RegimeName, StateSpaceInfo],
     grids: GridsDict,
     internal_functions: InternalFunctions,
 ) -> QAndFFunction:
@@ -295,7 +296,7 @@ def _get_arg_names_of_Q_and_F(
 
 def _get_joint_weights_function(
     regime_name: RegimeName,
-    transitions: Mapping[str, InternalUserFunction],
+    transitions: MappingProxyType[str, InternalUserFunction],
 ) -> Callable[..., FloatND]:
     """Get function that calculates the joint weights.
 

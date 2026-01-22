@@ -1,7 +1,6 @@
 """Collection of classes that are used by the user to define the model and grids."""
 
 from collections.abc import Mapping
-from dataclasses import fields
 from itertools import chain
 from types import MappingProxyType
 
@@ -21,7 +20,7 @@ from lcm.typing import (
     RegimeName,
     RegimeNamesToIds,
 )
-from lcm.utils import REGIME_SEPARATOR
+from lcm.utils import REGIME_SEPARATOR, get_field_names_and_values
 
 
 class Model:
@@ -82,7 +81,7 @@ class Model:
         self.regime_names_to_ids = MappingProxyType(
             dict(
                 sorted(
-                    ((field.name, field.default) for field in fields(regime_id_class)),
+                    get_field_names_and_values(regime_id_class).items(),
                     key=lambda x: x[1],
                 )
             )
@@ -252,7 +251,7 @@ def _validate_model_inputs(  # noqa: C901
                 f"{non_terminal_regimes_without_next_regime}."
             )
 
-    regime_id_fields = sorted([f.name for f in fields(regime_id_class)])
+    regime_id_fields = sorted(get_field_names_and_values(regime_id_class).keys())
     regime_names = sorted(regimes.keys())
     if regime_id_fields != regime_names:
         error_messages.append(

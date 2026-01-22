@@ -28,10 +28,12 @@ def test_get_next_state_function_with_solve_target():
     got_func = get_next_state_function(
         transitions=internal_working.transitions["working"],
         functions=internal_working.functions,
-        grids={
-            "working": internal_working.grids,
-            "dead": internal_regimes["dead"].grids,
-        },
+        grids=MappingProxyType(
+            {
+                "working": internal_working.grids,
+                "dead": internal_regimes["dead"].grids,
+            }
+        ),
         target=Target.SOLVE,
     )
 
@@ -60,7 +62,7 @@ def test_get_next_state_function_with_simulate_target():
     def f_weight_b(state: ContinuousState, params: ParamsDict) -> FloatND:  # noqa: ARG001
         return jnp.array([0.0, 1.0])
 
-    grids = {"mock": {"b": jnp.arange(2)}}
+    grids = MappingProxyType({"mock": MappingProxyType({"b": jnp.arange(2)})})
     mock_transition_solve = lambda *args, params, **kwargs: {"mock": 1.0}  # noqa: E731, ARG005
     mock_transition_simulate = lambda *args, params, **kwargs: {  # noqa: E731, ARG005
         "mock": jnp.array([1.0])
@@ -76,7 +78,8 @@ def test_get_next_state_function_with_simulate_target():
     )
     got_func = get_next_state_function(
         transitions=cast(
-            "dict[str, InternalUserFunction]", internal_functions.transitions
+            "MappingProxyType[str, InternalUserFunction]",
+            internal_functions.transitions,
         ),
         functions=internal_functions.functions,
         grids=grids,

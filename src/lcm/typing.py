@@ -1,4 +1,3 @@
-from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, Protocol
 
@@ -28,8 +27,8 @@ type Age = float
 type RegimeName = str
 type RegimeNamesToIds = MappingProxyType[RegimeName, int]
 
-type _RegimeGridsDict = Mapping[str, Array]
-type GridsDict = Mapping[RegimeName, _RegimeGridsDict]
+type _RegimeGridsDict = MappingProxyType[str, Array]
+type GridsDict = MappingProxyType[RegimeName, _RegimeGridsDict]
 
 type _RegimeTransitions = MappingProxyType[str, InternalUserFunction]
 type TransitionFunctionsMapping = MappingProxyType[RegimeName, _RegimeTransitions]

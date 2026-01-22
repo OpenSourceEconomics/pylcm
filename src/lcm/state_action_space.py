@@ -1,4 +1,3 @@
-from collections.abc import Mapping
 from types import MappingProxyType
 
 import pandas as pd
@@ -12,7 +11,7 @@ from lcm.regime import Regime
 
 def create_state_action_space(
     variable_info: pd.DataFrame,
-    grids: Mapping[str, Array],
+    grids: MappingProxyType[str, Array],
     *,
     states: dict[str, Array] | None = None,
 ) -> StateActionSpace:
