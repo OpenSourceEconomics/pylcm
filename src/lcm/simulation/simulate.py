@@ -131,8 +131,16 @@ def simulate(
 
         subject_regime_ids = new_subject_regime_ids
 
+    # Wrap results in MappingProxyType for immutability
+    wrapped_results = MappingProxyType(
+        {
+            regime_name: MappingProxyType(period_results)
+            for regime_name, period_results in simulation_results.items()
+        }
+    )
+
     return SimulationResult(
-        raw_results=simulation_results,
+        raw_results=wrapped_results,
         internal_regimes=internal_regimes,
         params=params,
         V_arr_dict=V_arr_dict,
@@ -150,7 +158,7 @@ def _simulate_regime_in_period(
     new_subject_regime_ids: Int1D,
     V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
     params: ParamsDict,
-    regime_id: Mapping[RegimeName, int],
+    regime_id: MappingProxyType[RegimeName, int],
     active_regimes_next_period: tuple[RegimeName, ...],
     key: Array,
 ) -> tuple[PeriodRegimeSimulationData, MappingProxyType[str, Array], Int1D, Array]:
@@ -271,7 +279,7 @@ def _simulate_regime_in_period(
 
 def _lookup_values_from_indices(
     flat_indices: IntND,
-    grids: Mapping[str, Array],
+    grids: MappingProxyType[str, Array],
 ) -> MappingProxyType[str, Array]:
     """Retrieve values from indices.
 

@@ -430,7 +430,9 @@ def test_additional_targets_all(regression_simulation_result):
 def test_retrieve_actions():
     got = _lookup_values_from_indices(
         flat_indices=jnp.array([0, 3, 7]),
-        grids={"a": jnp.linspace(0, 1, 5), "b": jnp.linspace(10, 20, 6)},
+        grids=MappingProxyType(
+            {"a": jnp.linspace(0, 1, 5), "b": jnp.linspace(10, 20, 6)}
+        ),
     )
     assert_array_equal(got["a"], jnp.array([0, 0, 0.25]))
     assert_array_equal(got["b"], jnp.array([10, 16, 12]))

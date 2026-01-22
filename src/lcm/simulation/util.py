@@ -124,7 +124,7 @@ def calculate_next_regime_membership(
     period: int,
     age: float,
     params: ParamsDict,
-    regime_id: Mapping[RegimeName, int],
+    regime_id: MappingProxyType[RegimeName, int],
     new_subject_regime_ids: Int1D,
     active_regimes_next_period: tuple[RegimeName, ...],
     key: Array,
@@ -196,7 +196,9 @@ def calculate_next_regime_membership(
 
 
 def draw_key_from_dict(
-    d: Mapping[str, Array], regime_id: Mapping[str, int], keys: Array
+    d: MappingProxyType[str, Array],
+    regime_id: MappingProxyType[str, int],
+    keys: Array,
 ) -> Int1D:
     """Draw a random key from a dictionary of arrays.
 
@@ -233,7 +235,7 @@ def draw_key_from_dict(
 
 def _update_states_for_subjects(
     all_states: MappingProxyType[str, Array],
-    computed_next_states: Mapping[str, Array],
+    computed_next_states: MappingProxyType[str, Array],
     subject_indices: Bool1D,
 ) -> MappingProxyType[str, Array]:
     """Update the global states dictionary with next states for specific subjects.
@@ -352,7 +354,7 @@ def convert_flat_to_nested_initial_states(
 
 
 def _validate_normalized_regime_transition_probs(
-    normalized_probs: Mapping[str, Float1D],
+    normalized_probs: MappingProxyType[str, Float1D],
     regime_name: str,
     period: int,
 ) -> None:

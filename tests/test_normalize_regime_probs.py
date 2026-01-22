@@ -1,3 +1,5 @@
+from types import MappingProxyType
+
 import jax.numpy as jnp
 import pytest
 
@@ -35,10 +37,12 @@ def test_normalize_with_array_values():
 
 def test_validate_normalized_probs_passes_for_valid_probs():
     """Test that validation passes for valid normalized probabilities."""
-    normalized_probs = {
-        "working": jnp.array([0.7, 0.6]),
-        "retired": jnp.array([0.3, 0.4]),
-    }
+    normalized_probs = MappingProxyType(
+        {
+            "working": jnp.array([0.7, 0.6]),
+            "retired": jnp.array([0.3, 0.4]),
+        }
+    )
     # Should not raise
     _validate_normalized_regime_transition_probs(
         normalized_probs, regime_name="working", period=0
@@ -54,10 +58,12 @@ def test_validate_normalized_probs_raises_for_nan_values():
     """
     # Simulate what happens when normalization divides by zero
     # (all active regimes had 0 probability before normalization)
-    normalized_probs = {
-        "working": jnp.array([jnp.nan, 0.5]),
-        "retired": jnp.array([jnp.nan, 0.5]),
-    }
+    normalized_probs = MappingProxyType(
+        {
+            "working": jnp.array([jnp.nan, 0.5]),
+            "retired": jnp.array([jnp.nan, 0.5]),
+        }
+    )
     with pytest.raises(
         InvalidRegimeTransitionProbabilitiesError,
         match="do not sum to 1 after normalization",
@@ -72,10 +78,12 @@ def test_validate_normalized_probs_raises_for_inf_values():
 
     Since Inf values can't sum to 1.0, the "do not sum to 1" error is triggered.
     """
-    normalized_probs = {
-        "working": jnp.array([jnp.inf, 0.5]),
-        "retired": jnp.array([0.0, 0.5]),
-    }
+    normalized_probs = MappingProxyType(
+        {
+            "working": jnp.array([jnp.inf, 0.5]),
+            "retired": jnp.array([0.0, 0.5]),
+        }
+    )
     with pytest.raises(
         InvalidRegimeTransitionProbabilitiesError,
         match="do not sum to 1 after normalization",
@@ -87,10 +95,12 @@ def test_validate_normalized_probs_raises_for_inf_values():
 
 def test_validate_normalized_probs_raises_for_probs_not_summing_to_one():
     """Test that validation raises error when probabilities don't sum to 1."""
-    normalized_probs = {
-        "working": jnp.array([0.5, 0.6]),
-        "retired": jnp.array([0.3, 0.4]),  # Sums to 0.8 and 1.0
-    }
+    normalized_probs = MappingProxyType(
+        {
+            "working": jnp.array([0.5, 0.6]),
+            "retired": jnp.array([0.3, 0.4]),  # Sums to 0.8 and 1.0
+        }
+    )
     with pytest.raises(
         InvalidRegimeTransitionProbabilitiesError,
         match="do not sum to 1 after normalization",
