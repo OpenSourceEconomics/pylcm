@@ -13,7 +13,7 @@ from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.random import generate_simulation_keys
 from lcm.state_action_space import create_state_action_space
-from lcm.typing import Bool1D, Float1D, Int1D, ParamsDict, RegimeName
+from lcm.typing import Bool1D, Int1D, ParamsDict, RegimeName
 from lcm.utils import flatten_regime_namespace, normalize_regime_transition_probs
 
 
@@ -157,7 +157,7 @@ def calculate_next_regime_membership(
     """
     # Compute regime transition probabilities
     # ---------------------------------------------------------------------------------
-    regime_transition_probs = (
+    regime_transition_probs: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
         internal_regime.internal_functions.regime_transition_probs.simulate(  # ty: ignore[possibly-missing-attribute]
             **state_action_space.states,
             **optimal_actions,
@@ -354,7 +354,7 @@ def convert_flat_to_nested_initial_states(
 
 
 def _validate_normalized_regime_transition_probs(
-    normalized_probs: MappingProxyType[str, Float1D],
+    normalized_probs: MappingProxyType[str, Array],
     regime_name: str,
     period: int,
 ) -> None:

@@ -38,12 +38,12 @@ def get_Q_and_F(
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
     Args:
-        regime_name: Name of the regime.
+        regime_name: The name of the regime.
         regimes_to_active_periods: Mapping regime names to their active periods.
         period: The current period.
         age: The age corresponding to the current period.
         next_state_space_infos: The state space information of the next period.
-        grids: Dict containing the state frids for all regimes.
+        grids: Dict containing the state grids for all regimes.
         internal_functions: Internal functions instance.
 
     Returns:
@@ -135,8 +135,10 @@ def get_Q_and_F(
             A tuple containing the arrays with state-action values and feasibilities.
 
         """
-        regime_transition_prob = regime_transition_prob_func(
-            **states_and_actions, period=period, age=age, params=params[regime_name]
+        regime_transition_prob: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
+            regime_transition_prob_func(
+                **states_and_actions, period=period, age=age, params=params[regime_name]
+            )
         )
         U_arr, F_arr = U_and_F(
             **states_and_actions,
@@ -145,18 +147,13 @@ def get_Q_and_F(
             params=params[regime_name],
         )
         Q_arr = U_arr
-        target_regimes = tuple(internal_functions.transitions)
-        active_target_regimes = tuple(
-            target_name
-            for target_name in target_regimes
-            if period + 1 in regimes_to_active_periods[target_name]
-        )
+        # Normalize probabilities over active regimes
         normalized_regime_transition_prob = normalize_regime_transition_probs(
             regime_transition_prob, active_target_regimes
         )
 
-        for target_regime in active_target_regimes:
-            next_states = state_transitions[target_regime](
+        for target_regime_name in active_target_regimes:
+            next_states = state_transitions[target_regime_name](
                 **states_and_actions,
                 period=period,
                 age=age,
@@ -164,7 +161,7 @@ def get_Q_and_F(
             )
 
             marginal_next_stochastic_states_weights = next_stochastic_states_weights[
-                target_regime
+                target_regime_name
             ](
                 **states_and_actions,
                 period=period,
@@ -173,14 +170,14 @@ def get_Q_and_F(
             )
 
             joint_next_stochastic_states_weights = joint_weights_from_marginals[
-                target_regime
+                target_regime_name
             ](**marginal_next_stochastic_states_weights)
 
             # As we productmap'd the value function over the stochastic variables, the
             # resulting next value function gets a new dimension for each stochastic
             # variable.
-            next_V_at_stochastic_states_arr = next_V[target_regime](
-                **next_states, next_V_arr=next_V_arr[target_regime]
+            next_V_at_stochastic_states_arr = next_V[target_regime_name](
+                **next_states, next_V_arr=next_V_arr[target_regime_name]
             )
 
             # We then take the weighted average of the next value function at the
@@ -192,7 +189,7 @@ def get_Q_and_F(
             Q_arr = (
                 Q_arr
                 + params[regime_name]["discount_factor"]
-                * normalized_regime_transition_prob[target_regime]
+                * normalized_regime_transition_prob[target_regime_name]
                 * next_V_expected_arr
             )
 
@@ -204,7 +201,7 @@ def get_Q_and_F(
 
 
 def get_Q_and_F_terminal(
-    regime_name: str,
+    regime_name: RegimeName,
     internal_functions: InternalFunctions,
     period: int,
     age: float,
@@ -212,7 +209,7 @@ def get_Q_and_F_terminal(
     """Get the state-action (Q) and feasibility (F) function for the terminal period.
 
     Args:
-        regime_name: Name of the regime.
+        regime_name: The name of the regime.
         internal_functions: Internal functions instance.
         period: The current period.
         age: The age corresponding to the current period.

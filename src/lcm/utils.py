@@ -3,12 +3,13 @@ from collections.abc import Iterable, Mapping
 from dataclasses import fields
 from itertools import chain
 from types import MappingProxyType
-from typing import Any, TypeVar, overload
+from typing import Any, TypeVar
 
 import jax.numpy as jnp
 from dags.tree import QNAME_DELIMITER, flatten_to_qnames, unflatten_from_qnames
+from jax import Array
 
-from lcm.typing import Float1D, RegimeName
+from lcm.typing import RegimeName
 
 # Re-export for use in other modules. This is the separator used by dags to
 # concatenate nested dictionary keys into qualified names (e.g., "work__next_wealth").
@@ -67,25 +68,13 @@ def unflatten_regime_namespace(d: dict[str, Any]) -> dict[RegimeName, Any]:
     return unflatten_from_qnames(d)  # ty: ignore[invalid-return-type]
 
 
-@overload
 def normalize_regime_transition_probs(
-    probs: Mapping[str, float],
-    active_regimes: tuple[str, ...],
-) -> MappingProxyType[str, float]: ...
-
-
-@overload
-def normalize_regime_transition_probs(
-    probs: Mapping[str, Float1D],
-    active_regimes: tuple[str, ...],
-) -> MappingProxyType[str, Float1D]: ...
-
-
-def normalize_regime_transition_probs(
-    probs: Mapping[str, float] | Mapping[str, Float1D],
-    active_regimes: tuple[str, ...],
-) -> MappingProxyType[str, float] | MappingProxyType[str, Float1D]:
+    probs: MappingProxyType[str, Array],
+    active_regimes_next_period: tuple[str, ...],
+) -> MappingProxyType[str, Array]:
     """Normalize regime transition probabilities over active regimes only."""
-    active_probs = jnp.array([probs[r] for r in active_regimes])
+    if not active_regimes_next_period:
+        return MappingProxyType({})
+    active_probs = jnp.stack([probs[r] for r in active_regimes_next_period])
     total = jnp.sum(active_probs, axis=0)
-    return MappingProxyType({r: probs[r] / total for r in active_regimes})
+    return MappingProxyType({r: probs[r] / total for r in active_regimes_next_period})

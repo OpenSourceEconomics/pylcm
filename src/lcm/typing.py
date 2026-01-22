@@ -65,17 +65,21 @@ class InternalUserFunction(Protocol):
 class RegimeTransitionFunction(Protocol):
     """The regime transition function provided by the user.
 
+    Returns an array of transition probabilities indexed by regime ID.
+
     Only used for type checking.
 
     """
 
     def __call__(  # noqa: D102
         self, *args: Array | float, params: ParamsDict, **kwargs: Array | float
-    ) -> MappingProxyType[RegimeName, float]: ...
+    ) -> Float1D: ...
 
 
 class VmappedRegimeTransitionFunction(Protocol):
-    """The regime transition function provided by the user.
+    """The vmapped regime transition function.
+
+    Returns a 2D array of transition probabilities with shape [n_regimes, n_subjects].
 
     Only used for type checking.
 
@@ -83,7 +87,7 @@ class VmappedRegimeTransitionFunction(Protocol):
 
     def __call__(  # noqa: D102
         self, *args: Array | float, params: ParamsDict, **kwargs: Array | float
-    ) -> MappingProxyType[RegimeName, Float1D]: ...
+    ) -> FloatND: ...
 
 
 class QAndFFunction(Protocol):

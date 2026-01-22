@@ -115,7 +115,7 @@ def test_convert_flat_to_nested_multi_regime():
     assert result == expected
 
 
-def test_convert_flat_to_nested_absorbing_multi_regime():
+def test_convert_flat_to_nested_terminal_multi_regime():
     def next_wealth():
         pass
 
