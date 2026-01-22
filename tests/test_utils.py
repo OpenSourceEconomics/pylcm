@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from lcm.utils import find_duplicates
 
 

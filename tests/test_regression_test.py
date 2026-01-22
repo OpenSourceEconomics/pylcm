@@ -1,6 +1,4 @@
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
+from collections.abc import Mapping
 
 import numpy as np
 import pandas as pd
@@ -18,11 +16,9 @@ from lcm import (
     PiecewiseLogSpacedGrid,
 )
 from lcm._config import TEST_DATA
+from lcm.grids import ContinuousGrid
+from lcm.typing import FloatND
 from tests.test_models.deterministic.regression import get_model, get_params
-
-if TYPE_CHECKING:
-    from lcm.grids import ContinuousGrid
-    from lcm.typing import FloatND
 
 
 def test_regression_test():
@@ -43,7 +39,7 @@ def test_regression_test():
         interest_rate=0.05,
     )
 
-    got_solve: dict[int, dict[str, FloatND]] = model.solve(params)
+    got_solve: Mapping[int, Mapping[str, FloatND]] = model.solve(params)
     got_simulate = model.solve_and_simulate(
         params=params,
         initial_states={"wealth": jnp.array([5.0, 20, 40, 70])},

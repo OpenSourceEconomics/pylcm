@@ -1,32 +1,28 @@
-from __future__ import annotations
-
 import dataclasses
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING
+from types import MappingProxyType
 
+import pandas as pd
+from jax import Array
+
+from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
+from lcm.typing import (
+    ArgmaxQOverAFunction,
+    Bool1D,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteAction,
+    DiscreteState,
+    InternalUserFunction,
+    MaxQOverAFunction,
+    NextStateSimulationFunction,
+    ParamsDict,
+    RegimeTransitionFunction,
+    TransitionFunctionsMapping,
+    VmappedRegimeTransitionFunction,
+)
 from lcm.utils import first_non_none, flatten_regime_namespace
-
-if TYPE_CHECKING:
-    import pandas as pd
-    from jax import Array
-
-    from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
-    from lcm.typing import (
-        ArgmaxQOverAFunction,
-        Bool1D,
-        ContinuousAction,
-        ContinuousState,
-        DiscreteAction,
-        DiscreteState,
-        InternalUserFunction,
-        MaxQOverAFunction,
-        NextStateSimulationFunction,
-        ParamsDict,
-        RegimeTransitionFunction,
-        TransitionFunctionsDict,
-        VmappedRegimeTransitionFunction,
-    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -63,9 +59,9 @@ class StateActionSpace:
 
     """
 
-    states: dict[str, ContinuousState | DiscreteState]
-    discrete_actions: dict[str, DiscreteAction]
-    continuous_actions: dict[str, ContinuousAction]
+    states: MappingProxyType[str, ContinuousState | DiscreteState]
+    discrete_actions: MappingProxyType[str, DiscreteAction]
+    continuous_actions: MappingProxyType[str, ContinuousAction]
     states_and_discrete_actions_names: tuple[str, ...]
 
     @property
@@ -79,9 +75,11 @@ class StateActionSpace:
         return tuple(self.discrete_actions) + tuple(self.continuous_actions)
 
     @property
-    def actions(self) -> dict[str, DiscreteAction | ContinuousAction]:
-        """Dictionary with all action variables."""
-        return self.discrete_actions | self.continuous_actions
+    def actions(self) -> MappingProxyType[str, DiscreteAction | ContinuousAction]:
+        """Read-only mapping with all action variables."""
+        return MappingProxyType(
+            dict(self.discrete_actions) | dict(self.continuous_actions)
+        )
 
     @property
     def actions_grid_shapes(self) -> tuple[int, ...]:
@@ -90,18 +88,19 @@ class StateActionSpace:
 
     def replace(
         self,
-        states: dict[str, ContinuousState | DiscreteState] | None = None,
-        discrete_actions: dict[str, DiscreteAction] | None = None,
-        continuous_actions: dict[str, ContinuousAction] | None = None,
+        states: MappingProxyType[str, ContinuousState | DiscreteState] | None = None,
+        discrete_actions: MappingProxyType[str, DiscreteAction] | None = None,
+        continuous_actions: MappingProxyType[str, ContinuousAction] | None = None,
     ) -> StateActionSpace:
         """Replace the states or actions in the state-action space.
 
         Args:
-            states: Dictionary with new states. If None, the existing states are used.
-            discrete_actions: Dictionary with new discrete actions. If None, the
+            states: Read-only mapping with new states. If None, the existing states are
+                used.
+            discrete_actions: Read-only mapping with new discrete actions. If None, the
                 existing discrete actions are used.
-            continuous_actions: Dictionary with new continuous actions. If None, the
-                existing continuous actions are used.
+            continuous_actions: Read-only mapping with new continuous actions. If None,
+                the existing continuous actions are used.
 
         Returns:
             New state-action space with the replaced states or actions.
@@ -133,8 +132,8 @@ class StateSpaceInfo:
     """
 
     states_names: tuple[str, ...]
-    discrete_states: dict[str, DiscreteGrid]
-    continuous_states: dict[str, ContinuousGrid]
+    discrete_states: MappingProxyType[str, DiscreteGrid]
+    continuous_states: MappingProxyType[str, ContinuousGrid]
 
 
 class ShockType(Enum):
@@ -170,14 +169,14 @@ class InternalRegime:
 
     name: str
     terminal: bool
-    grids: dict[str, Array]
-    gridspecs: dict[str, Grid]
+    grids: MappingProxyType[str, Array]
+    gridspecs: MappingProxyType[str, Grid]
     variable_info: pd.DataFrame
     utility: InternalUserFunction
-    constraints: dict[str, InternalUserFunction]
-    transitions: TransitionFunctionsDict
-    functions: dict[str, InternalUserFunction]
-    active_periods: list[int]
+    constraints: MappingProxyType[str, InternalUserFunction]
+    transitions: TransitionFunctionsMapping
+    functions: MappingProxyType[str, InternalUserFunction]
+    active_periods: tuple[int, ...]
     regime_transition_probs: (
         PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]
         | None
@@ -186,8 +185,8 @@ class InternalRegime:
     params_template: ParamsDict
     state_action_spaces: StateActionSpace
     state_space_infos: StateSpaceInfo
-    max_Q_over_a_functions: dict[int, MaxQOverAFunction]
-    argmax_and_max_Q_over_a_functions: dict[int, ArgmaxQOverAFunction]
+    max_Q_over_a_functions: MappingProxyType[int, MaxQOverAFunction]
+    argmax_and_max_Q_over_a_functions: MappingProxyType[int, ArgmaxQOverAFunction]
     next_state_simulation_function: NextStateSimulationFunction
     # Not properly processed yet
     random_utility_shocks: ShockType
@@ -209,8 +208,8 @@ class PeriodRegimeSimulationData:
     """
 
     V_arr: Array
-    actions: dict[str, Array]
-    states: dict[str, Array]
+    actions: MappingProxyType[str, Array]
+    states: MappingProxyType[str, Array]
     in_regime: Bool1D
 
 
@@ -225,23 +224,23 @@ class Target(Enum):
 class InternalFunctions:
     """All functions that are used in the regime."""
 
-    functions: dict[str, InternalUserFunction]
+    functions: MappingProxyType[str, InternalUserFunction]
     utility: InternalUserFunction
-    constraints: dict[str, InternalUserFunction]
-    transitions: TransitionFunctionsDict
+    constraints: MappingProxyType[str, InternalUserFunction]
+    transitions: TransitionFunctionsMapping
     regime_transition_probs: (
         PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]
         | None
     )
 
-    def get_all_functions(self) -> dict[str, InternalUserFunction]:
+    def get_all_functions(self) -> MappingProxyType[str, InternalUserFunction]:
         """Get all regime functions including utility, constraints, and transitions.
 
         Returns:
-            Dictionary that maps names of all regime functions to the functions.
+            Read-only mapping of all regime functions to the functions.
 
         """
-        functions_pool = self.functions | {
+        functions_pool = dict(self.functions) | {
             "utility": self.utility,
             **self.constraints,
             **self.transitions,
@@ -253,4 +252,4 @@ class InternalFunctions:
             functions_pool["regime_transition_probs_simulate"] = (
                 self.regime_transition_probs.simulate
             )
-        return flatten_regime_namespace(functions_pool)
+        return MappingProxyType(flatten_regime_namespace(functions_pool))

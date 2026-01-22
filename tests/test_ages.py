@@ -1,7 +1,5 @@
 """Tests for the ages module (AgeGrid and step parsing)."""
 
-from __future__ import annotations
-
 from fractions import Fraction
 
 import jax.numpy as jnp
@@ -140,13 +138,13 @@ def test_model_with_quarterly_steps():
     assert ages.step_size == 0.25
 
     model = Model(
-        [
-            working.replace(active=lambda age: age <= final_age_alive),
-            retired.replace(active=lambda age: age <= final_age_alive),
-            dead.replace(active=lambda age: age > final_age_alive),
-        ],
+        regimes={
+            "working": working.replace(active=lambda age: age <= final_age_alive),
+            "retired": retired.replace(active=lambda age: age <= final_age_alive),
+            "dead": dead.replace(active=lambda age: age > final_age_alive),
+        },
         ages=ages,
-        regime_id_cls=RegimeId,
+        regime_id_class=RegimeId,
     )
 
     params = {

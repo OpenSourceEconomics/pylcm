@@ -1,26 +1,22 @@
-from __future__ import annotations
-
 import functools
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from types import MappingProxyType
 
 import jax.numpy as jnp
 from jax import Array
 
 from lcm.argmax import argmax_and_max
 from lcm.dispatchers import productmap
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from lcm.typing import (
-        ArgmaxQOverCFunction,
-        BoolND,
-        FloatND,
-        IntND,
-        MaxQOverCFunction,
-        ParamsDict,
-        Period,
-    )
+from lcm.typing import (
+    ArgmaxQOverCFunction,
+    BoolND,
+    FloatND,
+    IntND,
+    MaxQOverCFunction,
+    ParamsDict,
+    Period,
+    RegimeName,
+)
 
 
 def get_max_Q_over_c(
@@ -68,7 +64,7 @@ def get_max_Q_over_c(
 
     @functools.wraps(Q_and_F)
     def max_Q_over_c(
-        next_V_arr: dict[str, FloatND],
+        next_V_arr: MappingProxyType[RegimeName, FloatND],
         params: ParamsDict,
         period: Period,
         **states_and_actions: Array,
@@ -125,7 +121,7 @@ def get_argmax_and_max_Q_over_c(
 
     @functools.wraps(Q_and_F)
     def argmax_and_max_Q_over_c(
-        next_V_arr: dict[str, FloatND],
+        next_V_arr: MappingProxyType[RegimeName, FloatND],
         params: ParamsDict,
         period: Period,
         **states_and_actions: Array,

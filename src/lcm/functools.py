@@ -1,12 +1,7 @@
-from __future__ import annotations
-
 import functools
 import inspect
-from typing import TYPE_CHECKING, Any, TypeVar, cast
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
+from collections.abc import Callable
+from typing import Any, TypeVar, cast
 
 ReturnType = TypeVar("ReturnType")
 

@@ -1,11 +1,12 @@
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
+import logging
+from collections.abc import Mapping
+from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
 from jax import Array, vmap
 
+from lcm.ages import AgeGrid
 from lcm.error_handling import validate_value_function_array
 from lcm.interfaces import (
     InternalRegime,
@@ -18,32 +19,27 @@ from lcm.simulation.util import (
     calculate_next_states,
     convert_flat_to_nested_initial_states,
     create_regime_state_action_space,
-    get_regime_name_to_id_mapping,
     validate_flat_initial_states,
+)
+from lcm.typing import (
+    FloatND,
+    Int1D,
+    IntND,
+    ParamsDict,
+    RegimeName,
+    RegimeNamesToIds,
 )
 from lcm.utils import flatten_regime_namespace
 
-if TYPE_CHECKING:
-    import logging
-
-    from lcm.ages import AgeGrid
-    from lcm.typing import (
-        FloatND,
-        Int1D,
-        IntND,
-        ParamsDict,
-        RegimeName,
-    )
-
 
 def simulate(
-    params: dict[RegimeName, ParamsDict],
-    initial_states: dict[str, Array],
+    params: ParamsDict,
+    initial_states: Mapping[str, Array],
     initial_regimes: list[RegimeName],
-    internal_regimes: dict[RegimeName, InternalRegime],
-    regime_id_cls: type,
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    regime_names_to_ids: RegimeNamesToIds,
     logger: logging.Logger,
-    V_arr_dict: dict[int, dict[RegimeName, FloatND]],
+    V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
     ages: AgeGrid,
     *,
     seed: int | None = None,
@@ -57,7 +53,7 @@ def simulate(
             a state variable defined in at least one regime.
             Example: {"wealth": jnp.array([10.0, 50.0]), "health": jnp.array([0, 1])}
         internal_regimes: Dict of internal regime instances.
-        regime_id_cls: Dataclass mapping regime names to integer indices.
+        regime_names_to_ids: Immutable mapping from regime names to integer indices.
         initial_regimes: List containing the names of the regimes the subjects start in.
         logger: Logger that logs to stdout.
         V_arr_dict: Dict of value function arrays of length n_periods.
@@ -83,13 +79,12 @@ def simulate(
 
     # Preparations
     # ----------------------------------------------------------------------------------
-    regime_name_to_id = get_regime_name_to_id_mapping(regime_id_cls)
     key = jax.random.key(seed=seed)
 
     # The following variables are updated during the forward simulation
-    states = flatten_regime_namespace(nested_initial_states)
+    states = MappingProxyType(flatten_regime_namespace(nested_initial_states))
     subject_regime_ids = jnp.asarray(
-        [regime_name_to_id[initial_regime] for initial_regime in initial_regimes]
+        [regime_names_to_ids[initial_regime] for initial_regime in initial_regimes]
     )
 
     # Forward simulation
@@ -108,11 +103,11 @@ def simulate(
             if period in regime.active_periods
         }
 
-        active_regimes_next_period = [
+        active_regimes_next_period = tuple(
             regime_name
             for regime_name, regime in internal_regimes.items()
             if period + 1 in regime.active_periods
-        ]
+        )
 
         for regime_name, internal_regime in active_regimes.items():
             result, new_states, new_subject_regime_ids, key = (
@@ -126,7 +121,7 @@ def simulate(
                     new_subject_regime_ids=new_subject_regime_ids,
                     V_arr_dict=V_arr_dict,
                     params=params,
-                    regime_name_to_id=regime_name_to_id,
+                    regime_id=regime_names_to_ids,
                     active_regimes_next_period=active_regimes_next_period,
                     key=key,
                 )
@@ -136,8 +131,16 @@ def simulate(
 
         subject_regime_ids = new_subject_regime_ids
 
+    # Wrap results in MappingProxyType for immutability
+    wrapped_results = MappingProxyType(
+        {
+            regime_name: MappingProxyType(period_results)
+            for regime_name, period_results in simulation_results.items()
+        }
+    )
+
     return SimulationResult(
-        raw_results=simulation_results,
+        raw_results=wrapped_results,
         internal_regimes=internal_regimes,
         params=params,
         V_arr_dict=V_arr_dict,
@@ -150,15 +153,15 @@ def _simulate_regime_in_period(
     internal_regime: InternalRegime,
     period: int,
     age: float,
-    states: dict[str, Array],
+    states: MappingProxyType[str, Array],
     subject_regime_ids: Int1D,
     new_subject_regime_ids: Int1D,
-    V_arr_dict: dict[int, dict[RegimeName, FloatND]],
-    params: dict[RegimeName, ParamsDict],
-    regime_name_to_id: dict[RegimeName, int],
-    active_regimes_next_period: list[RegimeName],
+    V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
+    params: ParamsDict,
+    regime_id: MappingProxyType[RegimeName, int],
+    active_regimes_next_period: tuple[RegimeName, ...],
     key: Array,
-) -> tuple[PeriodRegimeSimulationData, dict[str, Array], Int1D, Array]:
+) -> tuple[PeriodRegimeSimulationData, MappingProxyType[str, Array], Int1D, Array]:
     """Simulate one regime for one period.
 
     This function processes all subjects in a given regime for a single period,
@@ -174,7 +177,7 @@ def _simulate_regime_in_period(
         new_subject_regime_ids: Array to populate with next period's regime memberships.
         V_arr_dict: Value function arrays for all periods and regimes.
         params: Model parameters for all regimes.
-        regime_name_to_id: Mapping from regime names to integer IDs.
+        regime_id: Mapping from regime names to integer IDs.
         active_regimes_next_period: List of active regimes in the next period.
         key: JAX random key for stochastic operations.
 
@@ -188,9 +191,7 @@ def _simulate_regime_in_period(
     """
     # Select subjects in the current regime
     # ---------------------------------------------------------------------------------
-    subject_ids_in_regime = jnp.asarray(
-        regime_name_to_id[regime_name] == subject_regime_ids
-    )
+    subject_ids_in_regime = jnp.asarray(regime_id[regime_name] == subject_regime_ids)
 
     state_action_space = create_regime_state_action_space(
         internal_regime=internal_regime,
@@ -201,7 +202,7 @@ def _simulate_regime_in_period(
     # We need to pass the value function array of the next period to the
     # argmax_and_max_Q_over_a function, as the current Q-function requires the
     # next period's value function. In the last period, we pass an empty dict.
-    next_V_arr = V_arr_dict.get(period + 1, {})
+    next_V_arr = V_arr_dict.get(period + 1, MappingProxyType({}))
 
     # The Q-function values contain the information of how much value each
     # action combination is worth. To find the optimal discrete action, we
@@ -238,7 +239,7 @@ def _simulate_regime_in_period(
     simulation_result = PeriodRegimeSimulationData(
         V_arr=V_arr,
         actions=optimal_actions,
-        states=res,
+        states=MappingProxyType(res),
         in_regime=subject_ids_in_regime,
     )
 
@@ -268,7 +269,7 @@ def _simulate_regime_in_period(
             params=params[regime_name],
             state_action_space=state_action_space,
             new_subject_regime_ids=new_subject_regime_ids,
-            regime_name_to_id=regime_name_to_id,
+            regime_id=regime_id,
             active_regimes_next_period=active_regimes_next_period,
             key=next_regime_key,
         )
@@ -278,8 +279,8 @@ def _simulate_regime_in_period(
 
 def _lookup_values_from_indices(
     flat_indices: IntND,
-    grids: dict[str, Array],
-) -> dict[str, Array]:
+    grids: MappingProxyType[str, Array],
+) -> MappingProxyType[str, Array]:
     """Retrieve values from indices.
 
     Args:
@@ -287,20 +288,22 @@ def _lookup_values_from_indices(
         grids: Dictionary of grid values.
 
     Returns:
-        Dictionary of values.
+        Read-only mapping of values.
 
     """
     # Handle empty grids case (no actions)
     if not grids:
-        return {}
+        return MappingProxyType({})
 
     grids_shapes = tuple(len(grid) for grid in grids.values())
 
     nd_indices = vmapped_unravel_index(flat_indices, grids_shapes)
-    return {
-        name: grid[index]
-        for (name, grid), index in zip(grids.items(), nd_indices, strict=True)
-    }
+    return MappingProxyType(
+        {
+            name: grid[index]
+            for (name, grid), index in zip(grids.items(), nd_indices, strict=True)
+        }
+    )
 
 
 # vmap jnp.unravel_index over the first axis of the `indices` argument, while holding

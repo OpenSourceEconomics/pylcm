@@ -1,30 +1,25 @@
 """Simulation result object with deferred DataFrame computation."""
 
-from __future__ import annotations
-
 import contextlib
 import inspect
 import pickle
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from types import MappingProxyType
+from typing import Any, Literal
 
 import jax.numpy as jnp
 import pandas as pd
 from dags import concatenate_functions
+from jax import Array
 
+from lcm.ages import AgeGrid
 from lcm.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.grids import DiscreteGrid
-
-if TYPE_CHECKING:
-    from jax import Array
-
-    from lcm.ages import AgeGrid
-    from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
-    from lcm.typing import FloatND, ParamsDict, RegimeName
-
+from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
+from lcm.typing import FloatND, ParamsDict, RegimeName
 
 CLOUDPICKLE_IMPORT_ERROR_MSG = (
     "Pickling SimulationResult objects requires the optional dependency 'cloudpickle'. "
@@ -42,10 +37,12 @@ class SimulationResult:
 
     def __init__(
         self,
-        raw_results: dict[str, dict[int, PeriodRegimeSimulationData]],
-        internal_regimes: dict[RegimeName, InternalRegime],
+        raw_results: MappingProxyType[
+            str, MappingProxyType[int, PeriodRegimeSimulationData]
+        ],
+        internal_regimes: MappingProxyType[RegimeName, InternalRegime],
         params: ParamsDict,
-        V_arr_dict: dict[int, dict[RegimeName, FloatND]],
+        V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
         ages: AgeGrid,
     ) -> None:
         self._raw_results = raw_results
@@ -63,7 +60,9 @@ class SimulationResult:
     # ----------------------------------------------------------------------------------
 
     @property
-    def raw_results(self) -> dict[str, dict[int, PeriodRegimeSimulationData]]:
+    def raw_results(
+        self,
+    ) -> MappingProxyType[str, MappingProxyType[int, PeriodRegimeSimulationData]]:
         """Raw simulation results by regime and period."""
         return self._raw_results
 
@@ -73,7 +72,9 @@ class SimulationResult:
         return self._params
 
     @property
-    def V_arr_dict(self) -> dict[int, dict[RegimeName, FloatND]]:
+    def V_arr_dict(
+        self,
+    ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
         """Value function arrays from the solution."""
         return self._V_arr_dict
 
@@ -236,14 +237,16 @@ class SimulationMetadata:
     action_names: list[str]
     n_periods: int
     n_subjects: int
-    regime_to_states: dict[str, tuple[str, ...]]
-    regime_to_actions: dict[str, tuple[str, ...]]
-    discrete_categories: dict[str, tuple[str, ...]]
+    regime_to_states: MappingProxyType[str, tuple[str, ...]]
+    regime_to_actions: MappingProxyType[str, tuple[str, ...]]
+    discrete_categories: MappingProxyType[str, tuple[str, ...]]
 
 
 def _compute_metadata(
-    internal_regimes: dict[RegimeName, InternalRegime],
-    raw_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    raw_results: MappingProxyType[
+        RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
+    ],
 ) -> SimulationMetadata:
     """Compute metadata from internal regimes and raw results."""
     regime_names = list(internal_regimes.keys())
@@ -277,14 +280,16 @@ def _compute_metadata(
         action_names=sorted(all_actions),
         n_periods=n_periods,
         n_subjects=n_subjects,
-        regime_to_states=regime_to_states,
-        regime_to_actions=regime_to_actions,
-        discrete_categories=discrete_categories,
+        regime_to_states=MappingProxyType(regime_to_states),
+        regime_to_actions=MappingProxyType(regime_to_actions),
+        discrete_categories=MappingProxyType(discrete_categories),
     )
 
 
 def _get_n_subjects(
-    raw_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]],
+    raw_results: MappingProxyType[
+        RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
+    ],
 ) -> int:
     """Extract number of subjects from raw results."""
     for regime_results in raw_results.values():
@@ -333,7 +338,7 @@ def _resolve_targets(
 
 
 def _collect_all_available_targets(
-    internal_regimes: dict[RegimeName, InternalRegime],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
 ) -> set[str]:
     """Collect all available target names across all regimes."""
     all_targets: set[str] = set()
@@ -356,8 +361,10 @@ def _get_available_targets_for_regime(regime: InternalRegime) -> set[str]:
 
 
 def _create_flat_dataframe(
-    raw_results: dict[str, dict[int, PeriodRegimeSimulationData]],
-    internal_regimes: dict[RegimeName, InternalRegime],
+    raw_results: MappingProxyType[
+        str, MappingProxyType[int, PeriodRegimeSimulationData]
+    ],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     params: ParamsDict,
     metadata: SimulationMetadata,
     additional_targets: list[str] | None,
@@ -387,7 +394,7 @@ def _create_flat_dataframe(
 
 def _process_regime(
     internal_regime: InternalRegime,
-    regime_results: dict[int, PeriodRegimeSimulationData],
+    regime_results: MappingProxyType[int, PeriodRegimeSimulationData],
     regime_states: tuple[str, ...],
     regime_actions: tuple[str, ...],
     params: ParamsDict,

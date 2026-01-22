@@ -1,20 +1,14 @@
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from types import MappingProxyType
+from typing import Any
 
 import pandas as pd
 from dags import get_ancestors
+from jax import Array
 
 from lcm.grids import ContinuousGrid, Grid
+from lcm.regime import Regime
 from lcm.utils import flatten_regime_namespace
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from jax import Array
-
-    from lcm.regime import Regime
-    from lcm.typing import Any
 
 
 def is_stochastic_transition(fn: Callable[..., Any]) -> bool:
@@ -34,7 +28,7 @@ def get_variable_info(regime: Regime) -> pd.DataFrame:
         is_continuous, is_discrete.
 
     """
-    variables = regime.states | regime.actions
+    variables = dict(regime.states) | dict(regime.actions)
 
     info = pd.DataFrame(index=pd.Index(list(variables)))
 
@@ -84,7 +78,7 @@ def _indicator_enters_concurrent_valuation(
         "utility",
         *list(regime.constraints),
     ]
-    user_functions = regime.get_all_functions()
+    user_functions = dict(regime.get_all_functions())
     ancestors = get_ancestors(
         user_functions,
         targets=enters_Q_and_F_fn_names,
@@ -110,7 +104,7 @@ def _indicator_enters_transition(
 
     """
     next_fn_names = list(flatten_regime_namespace(regime.transitions))
-    user_functions = regime.get_all_functions()
+    user_functions = dict(regime.get_all_functions())
     ancestors = get_ancestors(
         user_functions,
         targets=next_fn_names,
@@ -124,37 +118,37 @@ def _indicator_enters_transition(
 
 def get_gridspecs(
     regime: Regime,
-) -> dict[str, Grid]:
+) -> MappingProxyType[str, Grid]:
     """Create a dictionary of grid specifications for each variable in the regime.
 
     Args:
         regime (dict): The regime as provided by the user.
 
     Returns:
-        Dictionary containing all variables of the regime. The keys are the names of the
-        variables. The values describe which values the variable can take. For discrete
-        variables these are the codes. For continuous variables this is information
-        about how to build the grids.
+        Immutable dictionary containing all variables of the regime. The keys are the
+        names of the variables. The values describe which values the variable can take.
+        For discrete variables these are the codes. For continuous variables this is
+        information about how to build the grids.
 
     """
     variable_info = get_variable_info(regime)
 
-    raw_variables = regime.states | regime.actions
+    raw_variables = dict(regime.states) | dict(regime.actions)
     order = variable_info.index.tolist()
-    return {k: raw_variables[k] for k in order}
+    return MappingProxyType({k: raw_variables[k] for k in order})
 
 
 def get_grids(
     regime: Regime,
-) -> dict[str, Array]:
+) -> MappingProxyType[str, Array]:
     """Create a dictionary of array grids for each variable in the regime.
 
     Args:
         regime: The regime as provided by the user.
 
     Returns:
-        Dictionary containing all variables of the regime. The keys are the names of the
-        variables. The values are the grids.
+        Immutable dictionary containing all variables of the regime. The keys are the
+        names of the variables. The values are the grids.
 
     """
     variable_info = get_variable_info(regime)
@@ -162,4 +156,4 @@ def get_grids(
 
     grids = {name: spec.to_jax() for name, spec in gridspecs.items()}
     order = variable_info.index.tolist()
-    return {k: grids[k] for k in order}
+    return MappingProxyType({k: grids[k] for k in order})
