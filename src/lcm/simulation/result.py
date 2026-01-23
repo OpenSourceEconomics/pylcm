@@ -634,7 +634,7 @@ def _build_functions_pool(internal_regime: InternalRegime) -> dict[str, Any]:
 def _create_target_function(
     functions_pool: dict[str, Any],
     targets: list[str],
-) -> Any:
+) -> Any:  # noqa: ANN401
     """Create combined function for computing targets."""
     return concatenate_functions(
         functions=functions_pool,
@@ -644,7 +644,7 @@ def _create_target_function(
     )
 
 
-def _get_function_variables(func: Any) -> tuple[str, ...]:
+def _get_function_variables(func: Any) -> tuple[str, ...]:  # noqa: ANN401
     """Get variable names from function signature, excluding 'params'."""
     return tuple(p for p in inspect.signature(func).parameters if p != "params")
 
@@ -654,7 +654,7 @@ def _get_function_variables(func: Any) -> tuple[str, ...]:
 # ======================================================================================
 
 
-def _atomic_dump(obj: Any, path: str | Path, *, protocol: int) -> Path:
+def _atomic_dump(obj: Any, path: str | Path, *, protocol: int) -> Path:  # noqa: ANN401
     """Serialize `obj` to `path` in an atomic (all-or-nothing) way.
 
     Args:

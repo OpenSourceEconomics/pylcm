@@ -167,7 +167,6 @@ unsafe-fixes = false
 
 [tool.ruff.lint]
 extend-ignore = [
-  "ANN401",  # Dynamically typed expressions (Any)
   "COM812",  # Conflicts with ruff-format
   "D",       # Docstrings
   "EM101",   # Exception must not use a string literal
@@ -188,6 +187,25 @@ extend-ignore = [
 select = [ "ALL" ]
 
 [tool.ruff.lint.per-file-ignores]
+"examples/*" = [
+  "E402",   # Module level import not at top of file
+  "INP001", # Implicit namespace package
+]
+"explanations/*" = [
+  "ANN",    # Annotations
+  "E402",   # Module level import not at top of file
+  "T201",   # print found
+  "INP001", # Implicit namespace package
+]
+"src/lcm/functools.py" = [
+  "ANN401", # Dynamically typed expressions (Any)
+]
+"src/lcm/max_*" = [
+  "N999", # Module name mixing uppercase and lowercase
+]
+"src/lcm/Q_and_F.py" = [
+  "N999", # Module name mixing uppercase and lowercase
+]
 "tests/*" = [
   "ANN",     # Annotations
   "D",       # Docstrings
@@ -196,23 +214,6 @@ select = [ "ALL" ]
   "PLR2004", # Magic values in comparison
   "S101",    # Use of assert
   "S301",    # Use of pickle
-]
-"src/lcm/max_*" = [
-  "N999", # Module name mixing uppercase and lowercase
-]
-"src/lcm/Q_and_F.py" = [
-  "N999", # Module name mixing uppercase and lowercase
-]
-"examples/*" = [
-  "E402", # Module level import not at top of file
-  #"FBT003",
-  "INP001", # Implicit namespace package
-]
-"explanations/*" = [
-  "ANN",    # Annotations
-  "E402",   # Module level import not at top of file
-  "T201",   # print found
-  "INP001", # Implicit namespace package
 ]
 
 [tool.ruff.lint.pydocstyle]

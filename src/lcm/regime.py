@@ -72,7 +72,7 @@ class Regime:
             | dict(self.transitions)
         )
 
-    def replace(self, **kwargs: Any) -> Regime:
+    def replace(self, **kwargs: Any) -> Regime:  # noqa: ANN401
         """Replace the attributes of the regime.
 
         Args:
