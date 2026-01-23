@@ -3,7 +3,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import fields
 from itertools import chain
 from types import MappingProxyType
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 import jax.numpy as jnp
 from dags.tree import QNAME_DELIMITER, flatten_to_qnames, unflatten_from_qnames
@@ -17,6 +17,24 @@ from lcm.typing import RegimeName
 REGIME_SEPARATOR = QNAME_DELIMITER
 
 T = TypeVar("T")
+
+
+def ensure_mapping_proxy[K, V](value: Mapping[K, V]) -> MappingProxyType[K, V]:
+    """Wrap a Mapping in MappingProxyType if not already wrapped.
+
+    This utility helps ensure immutability of dictionaries in frozen dataclasses
+    while avoiding unnecessary wrapping if the value is already a MappingProxyType.
+
+    Args:
+        value: Any Mapping to wrap.
+
+    Returns:
+        A MappingProxyType containing the mapping's items.
+
+    """
+    if isinstance(value, MappingProxyType):
+        return cast("MappingProxyType[K, V]", value)
+    return MappingProxyType(value)
 
 
 def find_duplicates(*containers: Iterable[T]) -> set[T]:
