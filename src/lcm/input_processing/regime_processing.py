@@ -1,17 +1,17 @@
 import functools
-import inspect
 from collections.abc import Mapping
 from copy import deepcopy
 from types import MappingProxyType
 from typing import Any, cast
 
+import pandas as pd
 from dags import get_annotations
 from dags.signature import with_signature
 from jax import Array
 from jax import numpy as jnp
 
 from lcm.ages import AgeGrid
-from lcm.grid_helpers import get_shock_coordinate
+from lcm.grids import Grid
 from lcm.input_processing.create_params_template import create_params_template
 from lcm.input_processing.regime_components import (
     build_argmax_and_max_Q_over_a_functions,
@@ -25,13 +25,13 @@ from lcm.input_processing.regime_components import (
 from lcm.input_processing.util import (
     get_grids,
     get_gridspecs,
-    get_transition_info,
     get_variable_info,
     is_stochastic_transition,
 )
 from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
-from lcm.ndimage import map_coordinates
+from lcm.mark import stochastic
 from lcm.regime import Regime
+from lcm.shocks import SHOCK_TRANSITION_PROBABILITY_FUNCTIONS
 from lcm.typing import (
     Float1D,
     Int1D,
@@ -100,7 +100,6 @@ def process_regimes(
             states_per_regime=states_per_regime,
             terminal=regime.terminal,
         )
-
     # ----------------------------------------------------------------------------------
     # Stage 1: Initialize regime components that do not depend on other regimes
     # ----------------------------------------------------------------------------------
@@ -108,9 +107,6 @@ def process_regimes(
     gridspecs = MappingProxyType({n: get_gridspecs(r) for n, r in regimes.items()})
     variable_info = MappingProxyType(
         {n: get_variable_info(r) for n, r in regimes.items()}
-    )
-    transition_info = MappingProxyType(
-        {n: get_transition_info(r) for n, r in regimes.items()}
     )
     state_space_infos = MappingProxyType(
         {n: build_state_space_info(r) for n, r in regimes.items()}
@@ -137,6 +133,8 @@ def process_regimes(
             regime_name=name,
             nested_transitions=nested_transitions[name],
             grids=grids,
+            gridspecs=gridspecs[name],
+            variable_info=variable_info[name],
             params=params_template,
             regime_id=regime_names_to_ids,
             enable_jit=enable_jit,
@@ -148,7 +146,6 @@ def process_regimes(
             regimes_to_active_periods=regimes_to_active_periods,
             internal_functions=internal_functions,
             state_space_infos=state_space_infos,
-            grids=grids,
             ages=ages,
         )
         max_Q_over_a_functions = build_max_Q_over_a_functions(
@@ -160,6 +157,8 @@ def process_regimes(
         next_state_simulation_function = build_next_state_simulation_functions(
             internal_functions=internal_functions,
             grids=grids,
+            gridspecs=gridspecs[name],
+            variable_info=variable_info[name],
             enable_jit=enable_jit,
         )
 
@@ -172,7 +171,6 @@ def process_regimes(
             grids=grids[name],
             gridspecs=gridspecs[name],
             variable_info=variable_info[name],
-            transition_info=transition_info[name],
             functions=MappingProxyType(internal_functions.functions),
             utility=internal_functions.utility,
             constraints=MappingProxyType(internal_functions.constraints),
@@ -200,6 +198,8 @@ def _get_internal_functions(
     regime_name: str,
     nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
     grids: MappingProxyType[RegimeName, MappingProxyType[str, Array]],
+    gridspecs: MappingProxyType[str, Grid],
+    variable_info: pd.DataFrame,
     params: ParamsDict,
     regime_id: RegimeNamesToIds,
     *,
@@ -213,6 +213,8 @@ def _get_internal_functions(
         nested_transitions: Nested transitions dict for internal processing.
             Format: {"regime_name": {"next_state": fn, ...}, "next_regime": fn}
         grids: Dict containing the state grids for each regime.
+        gridspecs: The specifications of the current regimes grids.
+        variable_info: Variable info of the regime.
         params: The parameters of the regime.
         regime_id: Immutable mapping from regime names to integer indices.
         enable_jit: Whether to jit the internal functions.
@@ -295,28 +297,27 @@ def _get_internal_functions(
             if REGIME_SEPARATOR in fn_name
             else fn_name
         )
-        if fn._stochastic_info.distribution_type != "custom":
-            fn_with_pre_computed_weights = _get_fn_with_precomputed_weights(
-                fn_name, fn, flat_grids
-            )
-            functions[f"weight_{fn_name}"] = _ensure_fn_only_depends_on_params(
-                fn=fn_with_pre_computed_weights,
-                fn_name=fn_name,
-                param_key=param_key,
-                params=params,
-            )
-        else:
-            functions[f"weight_{fn_name}"] = _ensure_fn_only_depends_on_params(
-                fn=fn,
-                fn_name=fn_name,
-                param_key=param_key,
-                params=params,
-            )
+        functions[f"weight_{fn_name}"] = _ensure_fn_only_depends_on_params(
+            fn=fn,
+            fn_name=fn_name,
+            param_key=param_key,
+            params=params,
+        )
         functions[fn_name] = _get_stochastic_next_function(
             fn=fn,
             grid=flat_grids[fn_name.replace("next_", "")],
         )
-
+    for shock_name in variable_info.query("is_shock").index.tolist():
+        relative_name = f"{regime_name}__next_{shock_name}"
+        functions[f"weight_{relative_name}"] = _get_fn_with_precomputed_weights(
+            name=shock_name,
+            flat_grid=flat_grids[relative_name.replace("next_", "")],
+            gridspec=gridspecs[shock_name],
+        )
+        functions[relative_name] = _get_stochastic_next_function_for_shock(
+            name=shock_name,
+            grid=flat_grids[relative_name.replace("next_", "")],
+        )
     internal_transition = {
         fn_name: functions[fn_name]
         for fn_name in flat_nested_transitions
@@ -356,7 +357,6 @@ def _get_internal_functions(
             is_stochastic=is_stochastic_regime_transition,
             enable_jit=enable_jit,
         )
-
     return InternalFunctions(
         functions=internal_functions,
         utility=internal_utility,
@@ -416,32 +416,30 @@ def _get_stochastic_next_function(fn: UserFunction, grid: Int1D) -> UserFunction
     return next_func
 
 
+def _get_stochastic_next_function_for_shock(name: str, grid: Float1D) -> UserFunction:
+    @with_signature(args={f"{name}": "ContinuousState"}, return_annotation="Int1D")
+    @stochastic
+    def next_func(**kwargs: Any) -> Int1D:  # noqa: ARG001, ANN401
+        return jnp.arange(grid.shape[0])
+
+    return next_func
+
+
 def _get_fn_with_precomputed_weights(
-    fn_name: str, fn: UserFunction, flat_grids
+    name: str, flat_grid, gridspec: Grid
 ) -> UserFunction:
-    n_points = flat_grids[fn_name.replace("next_", "")].shape[0]
-    old_args = inspect.signature(fn).parameters
+    transition_probs = SHOCK_TRANSITION_PROBABILITY_FUNCTIONS[
+        gridspec.distribution_type  # ty: ignore[unresolved-attribute]
+    ](gridspec.n_points, **gridspec.shock_params)  # ty: ignore[unresolved-attribute]
 
     @with_signature(
-        args={"pre_computed": "FloatND"} | dict.fromkeys(old_args, "ContinousState"),
+        args={f"{name}": "ContinuousState"},
         return_annotation="FloatND",
         enforce=False,
     )
-    @functools.wraps(fn)
-    def weights_func(*args: Any, pre_computed: Any, **kwargs: Any) -> Float1D:  # noqa: ARG001, ANN401
-        coordinate = get_shock_coordinate(
-            kwargs[next(iter(old_args.keys()))],
-            n_points=n_points,
-            distribution_type=fn._stochastic_info.distribution_type,  # ty: ignore[unresolved-attribute]
-            params=kwargs,
-        )
-        return map_coordinates(
-            input=pre_computed,
-            coordinates=[
-                jnp.full(n_points, fill_value=coordinate),
-                jnp.arange(n_points),
-            ],
-        )
+    def weights_func(*args: Array, **kwargs: Array) -> Float1D:  # noqa: ARG001
+        coordinate = jnp.searchsorted(a=flat_grid, v=kwargs[f"{name}"]) + 1
+        return transition_probs[coordinate]
 
     return weights_func
 
@@ -500,12 +498,10 @@ def _convert_flat_to_nested_transitions(
 
     nested: dict[str, dict[str, UserFunction] | UserFunction] = {}
     nested["next_regime"] = next_regime_fn
-
     for regime_name, regime_state_names in states_per_regime.items():
         if regime_state_names <= transitioned_state_names:
             nested[regime_name] = {
                 f"next_{state}": state_transitions[f"next_{state}"]
                 for state in regime_state_names & transitioned_state_names
             }
-
     return nested

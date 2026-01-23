@@ -114,7 +114,7 @@ def test_solve_brute():
     )
 
     solution = solve(
-        user_params=params,
+        params=params,
         ages=AgeGrid(start=0, stop=2, step="Y"),
         internal_regimes={"default": internal_regime},  # ty: ignore[invalid-argument-type]
         logger=get_logger(debug_mode=False),
@@ -171,7 +171,7 @@ def test_solve_brute_single_period_Qc_arr():
     )
 
     got = solve(
-        user_params={},
+        params={},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         internal_regimes={"default": internal_regime},  # ty: ignore[invalid-argument-type]
         logger=get_logger(debug_mode=False),

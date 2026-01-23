@@ -6,6 +6,7 @@ from types import MappingProxyType
 from typing import Any
 
 import jax
+import pandas as pd
 from dags import concatenate_functions, get_annotations
 from dags.signature import with_signature
 from jax import Array
@@ -18,10 +19,9 @@ from lcm.interfaces import (
     PhaseVariantContainer,
     StateActionSpace,
     StateSpaceInfo,
-    Target,
 )
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a, get_max_Q_over_a
-from lcm.next_state import get_next_state_function
+from lcm.next_state import get_next_state_function_for_simulation
 from lcm.Q_and_F import get_Q_and_F, get_Q_and_F_terminal
 from lcm.regime import Regime
 from lcm.state_action_space import (
@@ -67,7 +67,6 @@ def build_Q_and_F_functions(
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     internal_functions: InternalFunctions,
     state_space_infos: MappingProxyType[RegimeName, StateSpaceInfo],
-    grids: GridsDict,
     ages: AgeGrid,
 ) -> MappingProxyType[int, QAndFFunction]:
     Q_and_F_functions = {}
@@ -86,7 +85,6 @@ def build_Q_and_F_functions(
                 period=period,
                 age=age,
                 next_state_space_infos=state_space_infos,
-                grids=grids,
                 internal_functions=internal_functions,
             )
         Q_and_F_functions[period] = Q_and_F
@@ -169,14 +167,17 @@ def _build_argmax_and_max_Q_over_a_function(
 def build_next_state_simulation_functions(
     internal_functions: InternalFunctions,
     grids: GridsDict,
+    gridspecs,
+    variable_info: pd.DataFrame,
     *,
     enable_jit: bool,
 ) -> NextStateSimulationFunction:
-    next_state = get_next_state_function(
+    next_state = get_next_state_function_for_simulation(
         transitions=flatten_regime_namespace(internal_functions.transitions),
         functions=internal_functions.functions,
+        variable_info=variable_info,
         grids=grids,
-        target=Target.SIMULATE,
+        gridspecs=gridspecs,
     )
     signature = inspect.signature(next_state)
     parameters = list(signature.parameters)

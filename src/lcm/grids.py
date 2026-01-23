@@ -1,7 +1,7 @@
 import dataclasses
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from dataclasses import dataclass, is_dataclass
+from dataclasses import dataclass, field, is_dataclass
 from typing import Literal
 
 import jax.numpy as jnp
@@ -9,7 +9,8 @@ import portion
 
 from lcm import grid_helpers
 from lcm.exceptions import GridInitializationError, format_messages
-from lcm.typing import Float1D, Int1D, ParamsDict, ScalarFloat
+from lcm.shocks import SHOCK_GRIDPOINT_FUNCTIONS
+from lcm.typing import Float1D, Int1D, MappingProxyType, ParamsDict, ScalarFloat
 from lcm.utils import find_duplicates, get_field_names_and_values
 
 
@@ -212,37 +213,6 @@ class LogSpacedGrid(UniformContinuousGrid):
 
 
 @dataclass(frozen=True, kw_only=True)
-class ShockGrid(ContinuousGrid):
-    """An empty grid for discretized continuous shocks.
-
-    The actual values will be calculated once the prameters for the shock are
-    available during the solution or simulation.
-
-    Attributes:
-        start: This argument is not used.
-        stop: This argument is not used.
-        n_points: The number of points in the grid. Must be an int greater than 0.
-        type: The shock type.
-    """
-
-    distribution_type: Literal["uniform", "normal", "tauchen", "rouwenhorst"]
-    n_points: int
-
-    def to_jax(self) -> Float1D:
-        """Convert the grid to a Jax array."""
-        return jnp.arange(self.n_points)
-
-    def get_coordinate(self, value: ScalarFloat, params: ParamsDict) -> ScalarFloat:  # ty: ignore[invalid-method-override]
-        """Get the generalized coordinate of a value in the grid."""
-        return grid_helpers.get_shock_coordinate(
-            value,
-            n_points=self.n_points,
-            params=params,
-            distribution_type=self.distribution_type,
-        )
-
-
-@dataclass(frozen=True, kw_only=True)
 class IrregSpacedGrid(ContinuousGrid):
     """A grid of continuous values at irregular (user-specified) points.
 
@@ -272,6 +242,35 @@ class IrregSpacedGrid(ContinuousGrid):
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
         return jnp.asarray(self.points)
+
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
+        """Return the generalized coordinate of a value in the grid."""
+        return grid_helpers.get_irreg_coordinate(value, self.to_jax())
+
+
+@dataclass(frozen=True, kw_only=True)
+class ShockGrid(ContinuousGrid):
+    """An empty grid for discretized continuous shocks.
+
+    The actual values will be calculated once the prameters for the shock are
+    available during the solution or simulation.
+
+    Attributes:
+        distribution_type: Type of the shock.
+        n_points: The number of points for the discretization of the shock.
+        shock_params: Fixed parameters that are needed for the discretization function
+            of the specified shock type.
+    """
+
+    distribution_type: Literal["uniform", "normal", "tauchen", "rouwenhorst"]
+    n_points: int
+    shock_params: ParamsDict = field(default_factory=lambda: MappingProxyType({}))
+
+    def to_jax(self) -> Float1D:
+        """Convert the grid to a Jax array."""
+        return SHOCK_GRIDPOINT_FUNCTIONS[self.distribution_type](
+            self.n_points, **self.shock_params
+        )
 
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
         """Return the generalized coordinate of a value in the grid."""

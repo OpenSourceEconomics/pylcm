@@ -1,7 +1,6 @@
 """Collection of classes that are used by the user to define the model and grids."""
 
 from collections.abc import Mapping
-from itertools import chain
 from types import MappingProxyType
 
 from jax import Array
@@ -117,7 +116,7 @@ class Model:
             Dictionary mapping period to a value function array for each regime.
         """
         return solve(
-            user_params=params,
+            params=params,
             ages=self.ages,
             internal_regimes=self.internal_regimes,
             logger=get_logger(debug_mode=debug_mode),
@@ -152,7 +151,7 @@ class Model:
 
         """
         return simulate(
-            user_params=params,
+            params=params,
             initial_states=initial_states,
             initial_regimes=initial_regimes,
             internal_regimes=self.internal_regimes,
@@ -262,46 +261,6 @@ def _validate_model_inputs(  # noqa: C901
             f"    {regime_names}."
         )
 
-    error_messages.extend(_validate_transition_completeness(regimes))
-
     if error_messages:
         msg = format_messages(error_messages)
         raise ModelInitializationError(msg)
-
-
-def _validate_transition_completeness(regimes: Mapping[str, Regime]) -> list[str]:
-    """Validate that non-terminal regimes have complete transitions.
-
-    Non-terminal regimes must have transition functions for ALL states across ALL
-    regimes, since they can potentially transition to any other regime.
-
-    Args:
-        regimes: Mapping of regime names to regimes to validate.
-
-    Returns:
-        A list of error messages. Empty list if validation passes.
-
-    """
-    all_states = set(chain.from_iterable(r.states.keys() for r in regimes.values()))
-
-    missing_transitions: dict[str, set[str]] = {}
-
-    for name, regime in regimes.items():
-        if regime.terminal:
-            continue
-        states_from_transitions = {
-            fn_key.removeprefix("next_") for fn_key in regime.transitions
-        }
-
-        missing = all_states - states_from_transitions
-        if missing:
-            missing_transitions[name] = missing
-
-    if missing_transitions:
-        error = "Non-terminal regimes have missing transitions: "
-        for regime_name, missing in sorted(missing_transitions.items()):
-            missing_list = ", ".join(f"next_{s}" for s in sorted(missing))
-            error += f"'{regime_name}': {missing_list}, "
-        return [error]
-
-    return []

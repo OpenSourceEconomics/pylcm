@@ -13,7 +13,6 @@ from lcm.interfaces import (
     PeriodRegimeSimulationData,
 )
 from lcm.random import draw_random_seed
-from lcm.shocks import pre_compute_shock_probabilities, update_sas_with_shocks
 from lcm.simulation.result import SimulationResult
 from lcm.simulation.util import (
     calculate_next_regime_membership,
@@ -34,7 +33,7 @@ from lcm.utils import flatten_regime_namespace
 
 
 def simulate(
-    user_params: ParamsDict,
+    params: ParamsDict,
     initial_states: Mapping[str, Array],
     initial_regimes: list[RegimeName],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
@@ -48,7 +47,7 @@ def simulate(
     """Simulate the model forward in time given pre-computed value function arrays.
 
     Args:
-        user_params: Dict of model parameters as provided by the user.
+        params: Dict of model parameters as provided by the user.
         initial_states: Flat dict mapping state names to arrays. All arrays must have
             the same length (number of subjects). Each state name should correspond to
             a state variable defined in at least one regime.
@@ -82,16 +81,6 @@ def simulate(
     # ----------------------------------------------------------------------------------
     key = jax.random.key(seed=seed)
 
-    # Augment the params provided by the user with transition probabilities
-    # for all shocks and then fill the grids in the state action space with
-    # the shock values calculated from the params
-    params_with_precomputed_shocks = pre_compute_shock_probabilities(
-        internal_regimes, user_params
-    )
-    internal_regimes_with_updated_sas = update_sas_with_shocks(
-        internal_regimes, user_params
-    )
-
     # The following variables are updated during the forward simulation
     states = MappingProxyType(flatten_regime_namespace(nested_initial_states))
     subject_regime_ids = jnp.asarray(
@@ -101,7 +90,7 @@ def simulate(
     # Forward simulation
     # ----------------------------------------------------------------------------------
     simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
-        regime_name: {} for regime_name in internal_regimes_with_updated_sas
+        regime_name: {} for regime_name in internal_regimes
     }
     for period, age in enumerate(ages.values):
         logger.info("Age: %s", age)
@@ -110,13 +99,13 @@ def simulate(
 
         active_regimes = {
             regime_name: regime
-            for regime_name, regime in internal_regimes_with_updated_sas.items()
+            for regime_name, regime in internal_regimes.items()
             if period in regime.active_periods
         }
 
         active_regimes_next_period = tuple(
             regime_name
-            for regime_name, regime in internal_regimes_with_updated_sas.items()
+            for regime_name, regime in internal_regimes.items()
             if period + 1 in regime.active_periods
         )
 
@@ -131,7 +120,7 @@ def simulate(
                     subject_regime_ids=subject_regime_ids,
                     new_subject_regime_ids=new_subject_regime_ids,
                     V_arr_dict=V_arr_dict,
-                    params=params_with_precomputed_shocks,
+                    params=params,
                     regime_id=regime_names_to_ids,
                     active_regimes_next_period=active_regimes_next_period,
                     key=key,
@@ -152,8 +141,8 @@ def simulate(
 
     return SimulationResult(
         raw_results=wrapped_results,
-        internal_regimes=internal_regimes_with_updated_sas,
-        params=params_with_precomputed_shocks,
+        internal_regimes=internal_regimes,
+        params=params,
         V_arr_dict=V_arr_dict,
         ages=ages,
     )

@@ -172,7 +172,6 @@ class InternalRegime:
     grids: MappingProxyType[str, Array]
     gridspecs: MappingProxyType[str, Grid]
     variable_info: pd.DataFrame
-    transition_info: pd.DataFrame
     utility: InternalUserFunction
     constraints: MappingProxyType[str, InternalUserFunction]
     transitions: TransitionFunctionsMapping

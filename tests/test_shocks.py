@@ -17,66 +17,20 @@ from lcm.typing import (
 )
 
 
-@pytest.fixture
-def params_for_shocks():
-    return {
-        "uniform": {
-            "test_regime": {
-                "discount_factor": 1.0,
-                "next_state": {"start": 0, "stop": 1},
-                "next_state2": {"state2_transition": jnp.full((2, 2), fill_value=0.5)},
-            },
-            "test_regime_term": {
-                "discount_factor": 1.0,
-            },
-        },
-        "normal": {
-            "test_regime": {
-                "discount_factor": 1.0,
-                "next_state": {"mu_eps": 0, "sigma_eps": 1, "n_std": 2},
-                "next_state2": {"state2_transition": jnp.full((2, 2), fill_value=0.5)},
-            },
-            "test_regime_term": {
-                "discount_factor": 1.0,
-            },
-        },
-        "tauchen": {
-            "test_regime": {
-                "discount_factor": 1.0,
-                "next_state": {"rho": 0.8, "mu_eps": 0, "sigma_eps": 1, "n_std": 2},
-                "next_state2": {"state2_transition": jnp.full((2, 2), fill_value=0.5)},
-            },
-            "test_regime_term": {
-                "discount_factor": 1.0,
-            },
-        },
-        "rouwenhorst": {
-            "test_regime": {
-                "discount_factor": 1.0,
-                "next_state": {"rho": 0.8, "mu_eps": 0, "sigma_eps": 1},
-                "next_state2": {"state2_transition": jnp.full((2, 2), fill_value=0.5)},
-            },
-            "test_regime_term": {
-                "discount_factor": 1.0,
-            },
-        },
-    }
-
-
 @pytest.mark.parametrize(
     "distribution_type", ["uniform", "normal", "tauchen", "rouwenhorst"]
 )
-def test_model_with_shock(distribution_type, params_for_shocks):
-    @lcm.mark.stochastic(distribution_type=distribution_type)
-    def next_state(state: ContinuousState) -> None:
-        pass
-
+def test_model_with_shock(distribution_type):
     @lcm.mark.stochastic
     def next_state2(state2: DiscreteState, state2_transition: FloatND) -> FloatND:
         return state2_transition[state2]
 
+    @lcm.mark.stochastic
+    def next_state() -> None:
+        pass
+
     def next_regime(period: int) -> ScalarInt:
-        terminal = period >= 5 - 2  # is test_term in last period
+        terminal = period >= 4 - 1  # is test_term in last period
         return jnp.where(terminal, RegimeId.test_regime_term, RegimeId.test_regime)
 
     def utility(
@@ -94,8 +48,8 @@ def test_model_with_shock(distribution_type, params_for_shocks):
 
     @categorical
     class Discrete:
-        test: int = 0
-        test_term: int = 1
+        a: int = 0
+        b: int = 1
 
     @categorical
     class RegimeId:
@@ -105,7 +59,13 @@ def test_model_with_shock(distribution_type, params_for_shocks):
     test_regime = Regime(
         active=test_active,
         states={
-            "state": ShockGrid(n_points=5, distribution_type=distribution_type),
+            "state": ShockGrid(
+                n_points=5,
+                distribution_type=distribution_type,
+                shock_params={"rho": 0.975}
+                if distribution_type in ["rouwenhorst", "tauchen"]
+                else {},
+            ),
             "state2": DiscreteGrid(Discrete),
         },
         actions={
@@ -128,7 +88,15 @@ def test_model_with_shock(distribution_type, params_for_shocks):
         regime_id_class=RegimeId,
         ages=AgeGrid(start=0, stop=4, step="Y"),
     )
-    params = params_for_shocks[distribution_type]
+    params = {
+        "test_regime": {
+            "discount_factor": 1.0,
+            "next_state2": {"state2_transition": jnp.full((2, 2), fill_value=0.5)},
+        },
+        "test_regime_term": {
+            "discount_factor": 1.0,
+        },
+    }
 
     model.solve_and_simulate(
         params=params,

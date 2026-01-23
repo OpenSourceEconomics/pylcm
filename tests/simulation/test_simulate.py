@@ -69,7 +69,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
     }
 
     result = simulate(
-        user_params=params,
+        params=params,
         V_arr_dict=MappingProxyType(
             {
                 0: MappingProxyType({"working": jnp.zeros(100), "dead": jnp.zeros(2)}),
