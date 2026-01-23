@@ -2,7 +2,6 @@
 
 from collections.abc import Callable
 from types import MappingProxyType
-from typing import Any
 
 import jax
 from dags import concatenate_functions
@@ -19,6 +18,7 @@ from lcm.typing import (
     GridsDict,
     InternalUserFunction,
     NextStateSimulationFunction,
+    ParamsDict,
     RegimeName,
     StochasticNextFunction,
 )
@@ -216,9 +216,12 @@ def _create_continuous_stochastic_next_func(
         args=args,
         return_annotation="ContinuousState",
     )
-    def next_stochastic_state(**kwargs: Any) -> ContinuousState:  # noqa: ANN401
+    def next_stochastic_state(
+        params: ParamsDict,
+        **kwargs: FloatND,
+    ) -> ContinuousState:
         return SHOCK_CALCULATION_FUNCTIONS[distribution_type](
-            params=kwargs["params"][fn_name_in_params],
+            params=params[fn_name_in_params],
             key=kwargs[f"key_{name}"],
             prev_value=kwargs[prev_state_name],
         )

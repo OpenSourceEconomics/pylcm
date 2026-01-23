@@ -34,7 +34,7 @@ from lcm.utils import flatten_regime_namespace
 
 
 def simulate(
-    user_params: dict[RegimeName, ParamsDict],
+    user_params: ParamsDict,
     initial_states: Mapping[str, Array],
     initial_regimes: list[RegimeName],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],

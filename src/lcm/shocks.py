@@ -1,4 +1,3 @@
-import dataclasses
 from types import MappingProxyType
 
 import jax
@@ -172,19 +171,19 @@ SHOCK_DISCRETIZATION_FUNCTIONS = {
 }
 
 
-def uniform(params: ParamsDict, key: Float1D, prev_value: Float1D) -> Float1D:  # noqa: ARG001
+def uniform(params: ParamsDict, key: FloatND, prev_value: Float1D) -> Float1D:  # noqa: ARG001
     return jax.random.uniform(minval=params["start"], maxval=params["stop"], key=key)
 
 
-def normal(params: ParamsDict, key: Float1D, prev_value: Float1D) -> Float1D:  # noqa: ARG001
+def normal(params: ParamsDict, key: FloatND, prev_value: Float1D) -> Float1D:  # noqa: ARG001
     return jax.random.normal(key=key) * params["sigma_eps"] + params["mu_eps"]
 
 
-def ar1_tauchen(params: ParamsDict, key: Float1D, prev_value: Float1D) -> Float1D:
+def ar1_tauchen(params: ParamsDict, key: FloatND, prev_value: Float1D) -> Float1D:
     return prev_value * params["rho"] + jax.random.normal(key=key) * params["sigma_eps"]
 
 
-def ar1_rouwenhorst(params: ParamsDict, key: Float1D, prev_value: Float1D) -> Float1D:
+def ar1_rouwenhorst(params: ParamsDict, key: FloatND, prev_value: Float1D) -> Float1D:
     return prev_value * params["rho"] + jax.random.normal(key=key) * params["sigma_eps"]
 
 
@@ -267,38 +266,29 @@ def update_sas_with_shocks(
         New internal regimes with the filled shock grids.
 
     """
-    new_internal_regimes: dict[str, InternalRegime] = {}
-
-    for regime_name, regime in internal_regimes.items():
-        transition_info = regime.transition_info
+    new_internal_regimes = {}
+    for name, internal_regime in internal_regimes.items():
+        transition_info = internal_regime.transition_info
         need_precompute = transition_info.index[
             ~transition_info["type"].isin(["custom", "none"])
         ].tolist()
+        if need_precompute:
+            new_states = {}
+            for trans_name in need_precompute:
+                n_points = internal_regime.gridspecs[
+                    trans_name.removeprefix("next_")
+                ].n_points  # ty: ignore[unresolved-attribute]
+                param_copy = params[name][trans_name].copy()
+                new_values = SHOCK_DISCRETIZATION_FUNCTIONS[
+                    transition_info.loc[trans_name, "type"]
+                ](**(param_copy | {"n_points": n_points}))[0]
+                new_states[trans_name.removeprefix("next_")] = new_values
 
-        if not need_precompute:
-            # No modifications needed
-            new_internal_regimes[regime_name] = regime
-            continue
-
-        updated_regime = regime
-        for trans_name in need_precompute:
-            n_points = regime.gridspecs[trans_name.removeprefix("next_")].n_points  # ty: ignore[unresolved-attribute]
-            new_values = SHOCK_DISCRETIZATION_FUNCTIONS[
-                transition_info.loc[trans_name, "type"]
-            ](**(params[regime_name][trans_name] | {"n_points": n_points}))[0]
-
-            state_name = trans_name.removeprefix("next_")
-            if state_name in updated_regime.state_action_spaces.states:
-                updated_regime = dataclasses.replace(
-                    updated_regime,
-                    state_action_spaces=updated_regime.state_action_spaces.replace(
-                        states=MappingProxyType(
-                            dict(updated_regime.state_action_spaces.states)
-                            | {state_name: new_values}
-                        )
-                    ),
-                )
-
-        new_internal_regimes[regime_name] = updated_regime
-
-    return MappingProxyType(new_internal_regimes)
+            new_states = internal_regime.state_action_space.states | new_states
+            new_state_action_space = internal_regime.state_action_space.replace(
+                states=MappingProxyType(new_states)
+            )
+            new_internal_regimes[name] = internal_regime.replace(
+                state_action_space=new_state_action_space
+            )
+    return MappingProxyType(internal_regimes | new_internal_regimes)

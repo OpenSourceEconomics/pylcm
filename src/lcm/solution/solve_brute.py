@@ -59,7 +59,7 @@ def solve(
         }
 
         for name, internal_regime in active_regimes.items():
-            state_action_space = internal_regime.state_action_spaces
+            state_action_space = internal_regime.state_action_space
             max_Q_over_a = internal_regime.max_Q_over_a_functions[period]
 
             # evaluate Q-function on states and actions, and maximize over actions

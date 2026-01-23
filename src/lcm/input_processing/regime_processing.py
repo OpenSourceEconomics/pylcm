@@ -181,8 +181,8 @@ def process_regimes(
             internal_functions=internal_functions,
             transitions=internal_functions.transitions,
             params_template=params_template,
-            state_action_spaces=state_action_spaces[name],
-            state_space_infos=state_space_infos[name],
+            state_action_space=state_action_spaces[name],
+            state_space_info=state_space_infos[name],
             max_Q_over_a_functions=MappingProxyType(max_Q_over_a_functions),
             argmax_and_max_Q_over_a_functions=MappingProxyType(
                 argmax_and_max_Q_over_a_functions
