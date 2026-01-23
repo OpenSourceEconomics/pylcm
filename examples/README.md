@@ -7,9 +7,10 @@
 | [`consumption_saving`](./consumption_saving.py) | Simple illustrative consumption-savings model with health and leisure                                                                                          | CPU: ~20s, GPU: \<5s    |
 | [`mahler_yum_2024`](./mahler_yum_2024.py)       | Replication of the lifecycle model from the paper "Lifestyle Behaviors and Wealth-Health Gaps in Germany" by Lukas Mahler and Minchul Yum (Econometrica, 2024) | CPU: ~20min, GPU: \<40s |
 
-> [!NOTE] Runtime refers to a single simulation call for 1,000 individuals. CPU times
-> come from a MacBook Pro with M4 Pro chip with 24GB RAM. GPU times were recorded on a
-> Nvidia Geforce RTX 3050.
+> [!NOTE]
+> Runtime refers to a single simulation call for 1,000 individuals. CPU times come from
+> a MacBook Pro with M4 Pro chip with 24GB RAM. GPU times were recorded on a Nvidia
+> Geforce RTX 3050.
 
 ## Running an example model
 
