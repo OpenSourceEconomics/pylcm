@@ -390,7 +390,7 @@ def _add_dummy_params_argument(fn: UserFunction) -> InternalUserFunction:
 def _get_stochastic_next_function(fn: UserFunction, grid: Int1D) -> UserFunction:
     @with_signature(args=None, return_annotation="Int1D")
     @functools.wraps(fn)
-    def next_func(**kwargs: Any) -> Int1D:  # noqa: ARG001, ANN401
+    def next_func(**kwargs: Any) -> Int1D:  # noqa: ARG001
         return grid
 
     return next_func

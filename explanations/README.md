@@ -1,6 +1,7 @@
 # Explanations of internal PyLCM concepts
 
 > [!NOTE]
+>
 > 1. The following explanations are designed for PyLCM developers and not users.
 > 1. Figures are only rendered correctly on nbviewer, not on GitHub. Please use the
 >    links below to view the correctly rendered notebooks.

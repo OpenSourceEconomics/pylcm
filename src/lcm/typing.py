@@ -47,7 +47,7 @@ class UserFunction(Protocol):
 
     """
 
-    def __call__(self, *args: Any, **kwargs: Any) -> Any: ...  # noqa: ANN401, D102
+    def __call__(self, *args: Any, **kwargs: Any) -> Any: ...
 
 
 class InternalUserFunction(Protocol):
@@ -57,7 +57,7 @@ class InternalUserFunction(Protocol):
 
     """
 
-    def __call__(  # noqa: D102
+    def __call__(
         self, *args: Array | float, params: ParamsDict, **kwargs: Array | float
     ) -> Array: ...
 
@@ -71,7 +71,7 @@ class RegimeTransitionFunction(Protocol):
 
     """
 
-    def __call__(  # noqa: D102
+    def __call__(
         self, *args: Array | float, params: ParamsDict, **kwargs: Array | float
     ) -> Float1D: ...
 
@@ -85,7 +85,7 @@ class VmappedRegimeTransitionFunction(Protocol):
 
     """
 
-    def __call__(  # noqa: D102
+    def __call__(
         self, *args: Array | float, params: ParamsDict, **kwargs: Array | float
     ) -> FloatND: ...
 
@@ -100,7 +100,7 @@ class QAndFFunction(Protocol):
 
     """
 
-    def __call__(  # noqa: D102
+    def __call__(
         self,
         next_V_arr: FloatND,
         params: ParamsDict,
@@ -118,7 +118,7 @@ class MaxQOverCFunction(Protocol):
 
     """
 
-    def __call__(  # noqa: D102
+    def __call__(
         self,
         next_V_arr: MappingProxyType[RegimeName, Array],
         params: ParamsDict,
@@ -137,7 +137,7 @@ class ArgmaxQOverCFunction(Protocol):
 
     """
 
-    def __call__(  # noqa: D102
+    def __call__(
         self,
         next_V_arr: MappingProxyType[RegimeName, Array],
         params: ParamsDict,
@@ -156,7 +156,7 @@ class MaxQOverAFunction(Protocol):
 
     """
 
-    def __call__(  # noqa: D102
+    def __call__(
         self,
         next_V_arr: MappingProxyType[RegimeName, Array],
         params: ParamsDict,
@@ -174,7 +174,7 @@ class ArgmaxQOverAFunction(Protocol):
 
     """
 
-    def __call__(  # noqa: D102
+    def __call__(
         self,
         next_V_arr: MappingProxyType[RegimeName, Array],
         params: ParamsDict,
@@ -193,7 +193,7 @@ class MaxQcOverDFunction(Protocol):
 
     """
 
-    def __call__(self, Qc_arr: Array, params: ParamsDict) -> Array: ...  # noqa: D102
+    def __call__(self, Qc_arr: Array, params: ParamsDict) -> Array: ...
 
 
 class ArgmaxQcOverDFunction(Protocol):
@@ -207,7 +207,7 @@ class ArgmaxQcOverDFunction(Protocol):
 
     """
 
-    def __call__(self, Qc_arr: Array, params: ParamsDict) -> tuple[Array, Array]: ...  # noqa: D102
+    def __call__(self, Qc_arr: Array, params: ParamsDict) -> tuple[Array, Array]: ...
 
 
 class StochasticNextFunction(Protocol):
@@ -217,7 +217,7 @@ class StochasticNextFunction(Protocol):
 
     """
 
-    def __call__(self, **kwargs: Array) -> Array: ...  # noqa: D102
+    def __call__(self, **kwargs: Array) -> Array: ...
 
 
 class NextStateSimulationFunction(Protocol):
@@ -227,7 +227,7 @@ class NextStateSimulationFunction(Protocol):
 
     """
 
-    def __call__(  # noqa: D102
+    def __call__(
         self,
         **kwargs: Array | Period | Age | ParamsDict,
     ) -> MappingProxyType[str, DiscreteState | ContinuousState]: ...
@@ -240,4 +240,4 @@ class ActiveFunction(Protocol):
 
     """
 
-    def __call__(self, age: float, /) -> bool: ...  # noqa: D102
+    def __call__(self, age: float, /) -> bool: ...
