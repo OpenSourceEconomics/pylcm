@@ -73,7 +73,7 @@ jobs:
     # https://github.com/organizations/OpenSourceEconomics/settings/actions/runners
     # Docs on GPU runners:
     # https://docs.github.com/en/actions/using-github-hosted-runners/using-larger-runners
-    runs-on: ubuntu-latests-gpu
+    runs-on: ubuntu-latest-gpu
     steps:
       - name: Check CUDA version
         run: |
@@ -92,7 +92,7 @@ jobs:
         run: pixi run -e tests-cuda12 tests
   run-tests-gpu-32bit:
     name: Run tests on GPU (32-bit precision)
-    runs-on: ubuntu-latests-gpu
+    runs-on: ubuntu-latest-gpu
     steps:
       - name: Check CUDA version
         run: |
