@@ -20,7 +20,7 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-  # "dags>=0.4.3",
+  # "dags>=0.5.0",
   "jax>=0.8",
   "jaxtyping>=0.3.2",
   "pandas",
@@ -102,7 +102,7 @@ scipy = ">=1.16"
 snakeviz = "*"
 
 [tool.pixi.pypi-dependencies]
-dags = { git = "https://github.com/OpenSourceEconomics/dags.git", branch = "mapping-proxy-input" }
+dags = { git = "https://github.com/OpenSourceEconomics/dags.git", branch = "main" }
 pdbp = "*"
 pylcm = { path = ".", editable = true }
 
