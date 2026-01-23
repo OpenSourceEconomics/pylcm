@@ -157,8 +157,6 @@ def get_params(
             "utility": {"disutility_of_work": disutility_of_work},
             "next_wealth": {"interest_rate": interest_rate},
             "next_regime": {"final_age_alive": final_age_alive},
-            "borrowing_constraint": {},
-            "labor_income": {},
         },
         "dead": {},
     }

@@ -705,7 +705,6 @@ def create_inputs(
         "next_productivity_shock": {"productivity_shock_transition": xtrans.T},
         "next_health": {"health_transition": tr2yp_grid},
         "next_adjustment_cost": {"adjustment_cost_transition": jnp.full((5, 5), 1 / 5)},
-        "next_dead": {},
         "next_regime": {"regime_transition": regime_transition},
     }
 
