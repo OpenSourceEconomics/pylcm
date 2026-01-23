@@ -673,7 +673,6 @@ def create_inputs(
         },
         "next_health": {"health_transition": tr2yp_grid},
         "next_adjustment_cost": {"start": 0, "stop": 1},
-        "next_dead": {},
         "next_regime": {"regime_transition": regime_transition},
     }
 

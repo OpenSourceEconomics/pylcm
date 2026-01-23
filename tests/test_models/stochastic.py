@@ -308,23 +308,18 @@ def get_params(
             "discount_factor": discount_factor,
             "utility": {"disutility_of_work": disutility_of_work},
             "next_wealth": {"interest_rate": interest_rate},
-            "next_health": {},
             "next_partner": {"partner_transition": partner_transition},
             "next_regime": {"final_age_alive": final_age_alive},
-            "borrowing_constraint": {},
             "labor_income": {"wage": wage},
         },
         "retired": {
             "discount_factor": discount_factor,
-            "utility": {},
             "next_wealth": {"interest_rate": interest_rate, "labor_income": 0.0},
-            "next_health": {},
             "next_partner": {
                 "labor_supply": LaborSupply.retire,
                 "partner_transition": partner_transition,
             },
             "next_regime": {"final_age_alive": final_age_alive},
-            "borrowing_constraint": {},
         },
         "dead": {},
     }
