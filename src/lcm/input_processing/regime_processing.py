@@ -9,7 +9,7 @@ from dags.signature import with_signature
 from jax import Array
 
 from lcm.ages import AgeGrid
-from lcm.input_processing.lcm.input_processing.create_regime_params_template import (
+from lcm.input_processing.create_regime_params_template import (
     create_regime_params_template,
 )
 from lcm.input_processing.regime_components import (

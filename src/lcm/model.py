@@ -9,7 +9,7 @@ from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, format_messages
-from lcm.input_processing.process_params import process_params
+from lcm.input_processing.process_params import create_params_template, process_params
 from lcm.input_processing.regime_processing import InternalRegime, process_regimes
 from lcm.logging import get_logger
 from lcm.regime import Regime
@@ -98,12 +98,7 @@ class Model:
             )
         )
         self.enable_jit = enable_jit
-        self.params_template = MappingProxyType(
-            {
-                name: regime.params_template
-                for name, regime in self.internal_regimes.items()
-            }
-        )
+        self.params_template = create_params_template(self.internal_regimes)
 
     def solve(
         self,
