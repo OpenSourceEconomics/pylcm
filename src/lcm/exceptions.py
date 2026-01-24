@@ -18,6 +18,10 @@ class InvalidParamsError(PyLCMError):
     """Raised when the params structure does not match the params template."""
 
 
+class InvalidNameError(PyLCMError):
+    """Raised when names are invalid (e.g., contain separator or are not disjoint)."""
+
+
 class InvalidAdditionalTargetsError(PyLCMError):
     """Raised when the additional targets are invalid."""
 
