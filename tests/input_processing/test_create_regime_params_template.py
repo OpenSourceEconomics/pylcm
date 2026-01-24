@@ -1,7 +1,7 @@
 from lcm.grids import DiscreteGrid
-from lcm.input_processing.create_params_template import (
+from lcm.input_processing.create_regime_params_template import (
     _create_function_params,
-    create_params_template,
+    create_regime_params_template,
 )
 from tests.regime_mock import RegimeMock
 
@@ -20,7 +20,7 @@ def test_create_params_without_shocks(binary_category_class):
             "next_b": lambda b: b,
         },
     )
-    got = create_params_template(regime)  # ty: ignore[invalid-argument-type]
+    got = create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
     assert got == {
         "discount_factor": float,
         "utility": {"c": "no_annotation_found"},

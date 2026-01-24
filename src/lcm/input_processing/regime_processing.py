@@ -9,7 +9,9 @@ from dags.signature import with_signature
 from jax import Array
 
 from lcm.ages import AgeGrid
-from lcm.input_processing.create_params_template import create_params_template
+from lcm.input_processing.lcm.input_processing.create_regime_params_template import (
+    create_regime_params_template,
+)
 from lcm.input_processing.regime_components import (
     build_argmax_and_max_Q_over_a_functions,
     build_max_Q_over_a_functions,
@@ -118,7 +120,7 @@ def process_regimes(
     # ----------------------------------------------------------------------------------
     internal_regimes = {}
     for name, regime in regimes.items():
-        params_template = create_params_template(regime)
+        params_template = create_regime_params_template(regime)
 
         internal_functions = _get_internal_functions(
             regime,

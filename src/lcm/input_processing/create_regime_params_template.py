@@ -6,7 +6,7 @@ import dags.tree as dt
 from lcm.regime import Regime
 
 
-def create_params_template(
+def create_regime_params_template(
     regime: Regime,
     default_params: dict[str, type] = {"discount_factor": float},  # noqa: B006
 ) -> MappingProxyType[str, Any]:
