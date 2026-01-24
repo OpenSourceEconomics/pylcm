@@ -6,10 +6,17 @@ from typing import Any
 
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.typing import InternalParams
-from lcm.utils import REGIME_SEPARATOR
+from lcm.utils import (
+    REGIME_SEPARATOR,
+    ensure_mapping_proxy,
+    flatten_regime_namespace,
+    unflatten_regime_namespace,
+)
+
+_NUM_PARTS_FUNCTION_PARAM = 3
 
 
-def process_params(
+def process_params(  # noqa: C901
     params: Mapping[str, Any],
     params_template: InternalParams,
 ) -> InternalParams:
@@ -35,227 +42,62 @@ def process_params(
         InvalidNameError: If the same parameter is specified at multiple levels.
 
     """
-    template = _to_dict(params_template)
+    template_flat = flatten_regime_namespace(params_template)
+    params_flat = flatten_regime_namespace(params)
 
-    # Collect all known names at each level from template
-    regime_names = set(template.keys())
-    function_names: set[str] = set()
-    argument_names: set[str] = set()
+    result_flat = {}
+    used_keys: set[str] = set()
 
-    for regime_template in template.values():
-        for key, val in regime_template.items():
-            if isinstance(val, (dict, Mapping)):
-                function_names.add(key)
-                argument_names.update(val.keys())
-            else:
-                # Top-level param like discount_factor, treat as argument
-                argument_names.add(key)
+    for key in template_flat:
+        parts = key.split(REGIME_SEPARATOR)
+        param_name = parts[-1]
 
-    # Process params with propagation
-    errors: list[str] = []
-    result = _process_with_propagation(
-        params=_to_dict(params),
-        template=template,
-        regime_names=regime_names,
-        function_names=function_names,
-        argument_names=argument_names,
-        errors=errors,
-    )
+        candidates = []
 
-    if errors:
-        raise InvalidParamsError("\n".join(errors))
+        # 1. Exact match (e.g. regime__function__param or regime__param)
+        if key in params_flat:
+            candidates.append(key)
 
-    return _to_mapping_proxy(result)
+        # 2. Regime level (if key is function level: regime__function__param)
+        # We want to check for regime__param
+        if len(parts) == _NUM_PARTS_FUNCTION_PARAM:
+            regime = parts[0]
+            regime_level_key = f"{regime}{REGIME_SEPARATOR}{param_name}"
+            # Check if this regime-level key was provided in params
+            if regime_level_key in params_flat:
+                candidates.append(regime_level_key)
 
+        # 3. Model level (Global: param)
+        if param_name in params_flat:
+            candidates.append(param_name)
 
-def _process_with_propagation(
-    params: dict[str, Any],
-    template: dict[str, Any],
-    regime_names: set[str],
-    function_names: set[str],
-    argument_names: set[str],
-    errors: list[str],
-) -> dict[str, Any]:
-    """Process params with propagation from higher levels.
-
-    Args:
-        params: User-provided params dict.
-        template: The params template.
-        regime_names: Set of all regime names.
-        function_names: Set of all function names.
-        argument_names: Set of all argument names.
-        errors: List to collect error messages.
-
-    Returns:
-        Processed params matching template structure.
-
-    """
-    # Separate params into model-level args and regime-level entries
-    model_level_args: dict[str, Any] = {}
-    regime_entries: dict[str, Any] = {}
-
-    for key, val in params.items():
-        if key in regime_names:
-            regime_entries[key] = val
-        elif key in argument_names:
-            model_level_args[key] = val
-        else:
-            errors.append(f"Unknown key at model level: {key!r}")
-
-    # Process each regime
-    result: dict[str, Any] = {}
-    for regime_name, regime_template in template.items():
-        regime_params = regime_entries.get(regime_name, {})
-        if not isinstance(regime_params, (dict, Mapping)):
-            got = type(regime_params).__name__
-            errors.append(f"Expected dict for regime {regime_name!r}, got {got}")
-            regime_params = {}
-
-        result[regime_name] = _process_regime(
-            regime_name=regime_name,
-            regime_params=dict(regime_params),
-            regime_template=regime_template,
-            model_level_args=model_level_args,
-            function_names=function_names,
-            argument_names=argument_names,
-            errors=errors,
-        )
-
-    return result
-
-
-def _process_regime(  # noqa: C901
-    regime_name: str,
-    regime_params: dict[str, Any],
-    regime_template: dict[str, Any],
-    model_level_args: dict[str, Any],
-    function_names: set[str],
-    argument_names: set[str],
-    errors: list[str],
-) -> dict[str, Any]:
-    """Process a single regime's params with propagation.
-
-    Args:
-        regime_name: Name of the regime.
-        regime_params: User params for this regime.
-        regime_template: Template for this regime.
-        model_level_args: Arguments specified at model level.
-        function_names: Set of all function names.
-        argument_names: Set of all argument names.
-        errors: List to collect error messages.
-
-    Returns:
-        Processed regime params matching template structure.
-
-    """
-    # Separate regime_params into regime-level args and function-level entries
-    regime_level_args: dict[str, Any] = {}
-    function_entries: dict[str, Any] = {}
-
-    for key, val in regime_params.items():
-        if key in function_names:
-            function_entries[key] = val
-        elif key in argument_names:
-            regime_level_args[key] = val
-        else:
-            errors.append(f"Unknown key in regime {regime_name!r}: {key!r}")
-
-    # Check for ambiguity between model and regime level
-    ambiguous = set(model_level_args.keys()) & set(regime_level_args.keys())
-    if ambiguous:
-        raise InvalidNameError(
-            f"Ambiguous parameter specification in regime {regime_name!r}: "
-            f"{sorted(ambiguous)} specified at both model and regime level"
-        )
-
-    # Merge model and regime level args (regime takes precedence if no ambiguity)
-    inherited_args = {**model_level_args, **regime_level_args}
-
-    # Process each function in the template
-    result: dict[str, Any] = {}
-    for key, template_val in regime_template.items():
-        if isinstance(template_val, (dict, Mapping)):
-            # It's a function with params
-            func_params = function_entries.get(key, {})
-            if not isinstance(func_params, (dict, Mapping)):
-                errors.append(
-                    f"Expected dict for {regime_name}[{key!r}], "
-                    f"got {type(func_params).__name__}"
-                )
-                func_params = {}
-
-            result[key] = _process_function(
-                regime_name=regime_name,
-                func_name=key,
-                func_params=dict(func_params),
-                func_template=dict(template_val),
-                inherited_args=inherited_args,
-                errors=errors,
+        # Check for ambiguity
+        if len(candidates) > 1:
+            raise InvalidNameError(
+                f"Ambiguous parameter specification for {key!r}. "
+                f"Found values at: {candidates}"
             )
-        # It's a top-level param like discount_factor
-        elif key in regime_level_args:
-            # Check ambiguity with model level
-            if key in model_level_args:
-                raise InvalidNameError(
-                    f"Ambiguous parameter specification: {key!r} specified at "
-                    f"both model level and in regime {regime_name!r}"
-                )
-            result[key] = regime_level_args[key]
-        elif key in model_level_args:
-            result[key] = model_level_args[key]
-        # If key not in either, it's not provided - OK for optional params
 
-    return result
+        if candidates:
+            chosen_key = candidates[0]
+            result_flat[key] = params_flat[chosen_key]
+            used_keys.add(chosen_key)
 
+    # Check for unknown keys
+    # Keys in params that were not used to satisfy any template requirement
+    unknown_keys = set(params_flat.keys()) - used_keys
+    if unknown_keys:
+        raise InvalidParamsError(f"Unknown keys: {sorted(unknown_keys)}")
 
-def _process_function(
-    regime_name: str,
-    func_name: str,
-    func_params: dict[str, Any],
-    func_template: dict[str, type],
-    inherited_args: dict[str, Any],
-    errors: list[str],
-) -> dict[str, Any]:
-    """Process a single function's params with propagation.
+    result = unflatten_regime_namespace(result_flat)
 
-    Args:
-        regime_name: Name of the regime.
-        func_name: Name of the function.
-        func_params: User params for this function.
-        func_template: Template for this function (arg_name -> type).
-        inherited_args: Arguments inherited from model/regime level.
-        errors: List to collect error messages.
+    # Ensure all regimes from the template are present in the result
+    # (even if they have no parameters)
+    for regime_name in params_template:
+        if regime_name not in result:
+            result[regime_name] = {}
 
-    Returns:
-        Processed function params matching template structure.
-
-    """
-    # Check for ambiguity between inherited and function level
-    ambiguous = set(inherited_args.keys()) & set(func_params.keys())
-    if ambiguous:
-        raise InvalidNameError(
-            f"Ambiguous parameter specification in {regime_name}[{func_name!r}]: "
-            f"{sorted(ambiguous)} specified at multiple levels"
-        )
-
-    # Check for unexpected keys in func_params
-    expected_keys = set(func_template.keys())
-    extra = set(func_params.keys()) - expected_keys
-    if extra:
-        errors.append(
-            f"Unexpected keys in {regime_name}[{func_name!r}]: {sorted(extra)}"
-        )
-
-    # Build result: use func_params if provided, else inherited, else skip
-    result: dict[str, Any] = {}
-    for arg_name in func_template:
-        if arg_name in func_params:
-            result[arg_name] = func_params[arg_name]
-        elif arg_name in inherited_args:
-            result[arg_name] = inherited_args[arg_name]
-        # If not in either, leave it out - it's optional
-
-    return result
+    return ensure_mapping_proxy(result)
 
 
 def create_params_template(  # noqa: C901
@@ -337,17 +179,6 @@ def create_params_template(  # noqa: C901
     # E.g., labor_income is a function in 'working' but a param in 'retired'.
 
     return _to_mapping_proxy(template)
-
-
-def _to_dict(m: Mapping[str, Any]) -> dict[str, Any]:
-    """Recursively convert a Mapping to a dict."""
-    result = {}
-    for k, v in m.items():
-        if isinstance(v, Mapping):
-            result[k] = _to_dict(v)
-        else:
-            result[k] = v
-    return result
 
 
 def _to_mapping_proxy(d: dict[str, Any]) -> MappingProxyType[str, Any]:
