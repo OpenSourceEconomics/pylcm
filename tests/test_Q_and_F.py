@@ -20,7 +20,7 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     Int1D,
-    ParamsDict,
+    InternalParams,
     Period,
 )
 from tests.test_models.deterministic.regression import (
@@ -44,7 +44,7 @@ def test_get_Q_and_F_function():
         enable_jit=True,
     )
 
-    params = get_params(n_periods=4)
+    internal_params = MappingProxyType(get_params(n_periods=4))
 
     # Test terminal period Q_and_F where Q = U (no continuation value)
     Q_and_F = get_Q_and_F_terminal(
@@ -62,7 +62,7 @@ def test_get_Q_and_F_function():
         consumption=consumption,
         labor_supply=labor_supply,
         wealth=wealth,
-        params=params,
+        internal_params=internal_params,
         next_V_arr=jnp.empty(0),  # Terminal period doesn't use continuation value
     )
 
@@ -85,7 +85,7 @@ def internal_functions_illustrative():
     def mandatory_retirement_constraint(
         retirement: DiscreteAction,
         age: int | Int1D,
-        params: ParamsDict,  # noqa: ARG001
+        internal_params: InternalParams,  # noqa: ARG001
     ) -> BoolND:
         # Individuals must be retired from age 65 onwards
         return jnp.logical_or(retirement == 1, age < 65)
@@ -93,7 +93,7 @@ def internal_functions_illustrative():
     def mandatory_lagged_retirement_constraint(
         lagged_retirement: DiscreteState,
         age: int | Int1D,
-        params: ParamsDict,  # noqa: ARG001
+        internal_params: InternalParams,  # noqa: ARG001
     ) -> BoolND:
         # Individuals must have been retired last year from age 66 onwards
         return jnp.logical_or(lagged_retirement == 1, age < 66)
@@ -101,7 +101,7 @@ def internal_functions_illustrative():
     def absorbing_retirement_constraint(
         retirement: DiscreteAction,
         lagged_retirement: DiscreteState,
-        params: ParamsDict,  # noqa: ARG001
+        internal_params: InternalParams,  # noqa: ARG001
     ) -> BoolND:
         # If an individual was retired last year, it must be retired this year
         return jnp.logical_or(retirement == 1, lagged_retirement == 0)
@@ -118,8 +118,8 @@ def internal_functions_illustrative():
 
     # create an internal regime instance where some attributes are set to None
     # because they are not needed to create the feasibilty mask
-    mock_transition_solve = lambda *args, params, **kwargs: {"mock": 1.0}  # noqa: E731, ARG005
-    mock_transition_simulate = lambda *args, params, **kwargs: {  # noqa: E731, ARG005
+    mock_transition_solve = lambda *args, internal_params, **kwargs: {"mock": 1.0}  # noqa: E731, ARG005
+    mock_transition_simulate = lambda *args, internal_params, **kwargs: {  # noqa: E731, ARG005
         "mock": jnp.array([1.0])
     }
     return InternalFunctions(
@@ -158,7 +158,7 @@ def test_get_combined_constraint_illustrative(internal_functions_illustrative):
         period=period,
         retirement=retirement,
         lagged_retirement=lagged_retirement,
-        params={},
+        internal_params=MappingProxyType({}),
     )
     assert_array_equal(got, exp)
 
@@ -187,17 +187,17 @@ def test_get_multiply_weights():
 
 
 def test_get_combined_constraint():
-    def f(params):  # noqa: ARG001
+    def f(internal_params):  # noqa: ARG001
         return True
 
-    def g(params):  # noqa: ARG001
+    def g(internal_params):  # noqa: ARG001
         return False
 
-    def h(params):  # noqa: ARG001
+    def h(internal_params):  # noqa: ARG001
         return None
 
-    mock_transition_solve = lambda *args, params, **kwargs: {"mock": 1.0}  # noqa: E731, ARG005
-    mock_transition_simulate = lambda *args, params, **kwargs: {  # noqa: E731, ARG005
+    mock_transition_solve = lambda *args, internal_params, **kwargs: {"mock": 1.0}  # noqa: E731, ARG005
+    mock_transition_simulate = lambda *args, internal_params, **kwargs: {  # noqa: E731, ARG005
         "mock": jnp.array([1.0])
     }
     internal_functions = InternalFunctions(
@@ -210,7 +210,7 @@ def test_get_combined_constraint():
         ),
     )
     combined_constraint = _get_feasibility(internal_functions)
-    feasibility: BoolND = combined_constraint(params={})
+    feasibility: BoolND = combined_constraint(internal_params=MappingProxyType({}))
     assert feasibility.item() is False
 
 
@@ -232,26 +232,26 @@ def test_get_U_and_F_with_annotated_constraints():
     def budget_constraint(
         consumption: float,
         wealth: float,
-        params: ParamsDict,  # noqa: ARG001
+        internal_params: InternalParams,  # noqa: ARG001
     ) -> bool:
         return consumption <= wealth
 
     # Another constraint with type annotations
     def positive_consumption_constraint(
         consumption: float,
-        params: ParamsDict,  # noqa: ARG001
+        internal_params: InternalParams,  # noqa: ARG001
     ) -> bool:
         return consumption >= 0
 
     # Utility function with type annotations for the same arguments
     def utility_func(
         consumption: float,
-        params: ParamsDict,  # noqa: ARG001
+        internal_params: InternalParams,  # noqa: ARG001
     ) -> jax.Array:
         return jnp.log(consumption + 1)
 
-    mock_transition_solve = lambda *args, params, **kwargs: {"mock": 1.0}  # noqa: E731, ARG005
-    mock_transition_simulate = lambda *args, params, **kwargs: {  # noqa: E731, ARG005
+    mock_transition_solve = lambda *args, internal_params, **kwargs: {"mock": 1.0}  # noqa: E731, ARG005
+    mock_transition_simulate = lambda *args, internal_params, **kwargs: {  # noqa: E731, ARG005
         "mock": jnp.array([1.0])
     }
 
@@ -274,10 +274,10 @@ def test_get_U_and_F_with_annotated_constraints():
     U_and_F = _get_U_and_F(internal_functions)
 
     # Verify it works correctly
-    U, F = U_and_F(consumption=5.0, wealth=10.0, params={})
+    U, F = U_and_F(consumption=5.0, wealth=10.0, internal_params=MappingProxyType({}))
     assert jnp.isclose(U, jnp.log(6.0))
     assert F.item() is True
 
     # Test infeasible case
-    U, F = U_and_F(consumption=15.0, wealth=10.0, params={})
+    U, F = U_and_F(consumption=15.0, wealth=10.0, internal_params=MappingProxyType({}))
     assert F.item() is False

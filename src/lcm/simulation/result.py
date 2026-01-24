@@ -19,7 +19,7 @@ from lcm.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.grids import DiscreteGrid
 from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
-from lcm.typing import FloatND, ParamsDict, RegimeName
+from lcm.typing import FloatND, InternalParams, RegimeName
 
 CLOUDPICKLE_IMPORT_ERROR_MSG = (
     "Pickling SimulationResult objects requires the optional dependency 'cloudpickle'. "
@@ -41,13 +41,13 @@ class SimulationResult:
             str, MappingProxyType[int, PeriodRegimeSimulationData]
         ],
         internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-        params: ParamsDict,
+        internal_params: InternalParams,
         V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
         ages: AgeGrid,
     ) -> None:
         self._raw_results = raw_results
         self._internal_regimes = internal_regimes
-        self._params = params
+        self._internal_params = internal_params
         self._V_arr_dict = V_arr_dict
         self._ages = ages
         self._metadata = _compute_metadata(internal_regimes, raw_results)
@@ -67,9 +67,9 @@ class SimulationResult:
         return self._raw_results
 
     @property
-    def params(self) -> ParamsDict:
+    def internal_params(self) -> InternalParams:
         """Model parameters used in simulation."""
-        return self._params
+        return self._internal_params
 
     @property
     def V_arr_dict(
@@ -150,7 +150,7 @@ class SimulationResult:
         df = _create_flat_dataframe(
             raw_results=self._raw_results,
             internal_regimes=self._internal_regimes,
-            params=self._params,
+            internal_params=self._internal_params,
             metadata=self._metadata,
             additional_targets=resolved_targets,
             ages=self._ages,
@@ -365,7 +365,7 @@ def _create_flat_dataframe(
         str, MappingProxyType[int, PeriodRegimeSimulationData]
     ],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-    params: ParamsDict,
+    internal_params: InternalParams,
     metadata: SimulationMetadata,
     additional_targets: list[str] | None,
     ages: AgeGrid,
@@ -377,7 +377,7 @@ def _create_flat_dataframe(
             regime_results=raw_results[name],
             regime_states=metadata.regime_to_states[name],
             regime_actions=metadata.regime_to_actions[name],
-            params=params[name],
+            internal_params=internal_params[name],
             additional_targets=additional_targets,
             ages=ages,
         )
@@ -397,7 +397,7 @@ def _process_regime(
     regime_results: MappingProxyType[int, PeriodRegimeSimulationData],
     regime_states: tuple[str, ...],
     regime_actions: tuple[str, ...],
-    params: ParamsDict,
+    internal_params: InternalParams,
     additional_targets: list[str] | None,
     ages: AgeGrid,
 ) -> pd.DataFrame:
@@ -424,7 +424,7 @@ def _process_regime(
         )
         if targets_for_regime:
             target_values = _compute_targets(
-                data, targets_for_regime, internal_regime, params
+                data, targets_for_regime, internal_regime, internal_params
             )
             data.update(target_values)
 
@@ -604,7 +604,7 @@ def _compute_targets(
     data: dict[str, Any],
     targets: list[str],
     internal_regime: InternalRegime,
-    params: ParamsDict,
+    internal_params: InternalParams,
 ) -> dict[str, Array]:
     """Compute additional targets for a regime."""
     functions_pool = _build_functions_pool(internal_regime)
@@ -612,7 +612,7 @@ def _compute_targets(
     variables = _get_function_variables(target_func)
     vectorized_func = vmap_1d(target_func, variables=variables)
     kwargs = {k: jnp.asarray(v) for k, v in data.items() if k in variables}
-    result = vectorized_func(params=params, **kwargs)
+    result = vectorized_func(internal_params=internal_params, **kwargs)
     # Squeeze any (n, 1) shaped arrays to (n,)
     return {k: jnp.squeeze(v) for k, v in result.items()}
 
@@ -645,8 +645,10 @@ def _create_target_function(
 
 
 def _get_function_variables(func: Any) -> tuple[str, ...]:  # noqa: ANN401
-    """Get variable names from function signature, excluding 'params'."""
-    return tuple(p for p in inspect.signature(func).parameters if p != "params")
+    """Get variable names from function signature, excluding 'internal_params'."""
+    return tuple(
+        p for p in inspect.signature(func).parameters if p != "internal_params"
+    )
 
 
 # ======================================================================================

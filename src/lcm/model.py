@@ -3,11 +3,13 @@
 from collections.abc import Mapping
 from itertools import chain
 from types import MappingProxyType
+from typing import Any
 
 from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, format_messages
+from lcm.input_processing.process_params import process_params
 from lcm.input_processing.regime_processing import InternalRegime, process_regimes
 from lcm.logging import get_logger
 from lcm.regime import Regime
@@ -16,7 +18,7 @@ from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
 from lcm.typing import (
     FloatND,
-    ParamsDict,
+    InternalParams,
     RegimeName,
     RegimeNamesToIds,
 )
@@ -49,7 +51,7 @@ class Model:
     regimes: MappingProxyType[str, Regime]
     internal_regimes: MappingProxyType[str, InternalRegime]
     enable_jit: bool = True
-    params_template: ParamsDict
+    params_template: InternalParams
 
     def __init__(
         self,
@@ -96,14 +98,16 @@ class Model:
             )
         )
         self.enable_jit = enable_jit
-        self.params_template = {
-            name: regime.params_template
-            for name, regime in self.internal_regimes.items()
-        }
+        self.params_template = MappingProxyType(
+            {
+                name: regime.params_template
+                for name, regime in self.internal_regimes.items()
+            }
+        )
 
     def solve(
         self,
-        params: ParamsDict,
+        params: dict[str, Any],
         *,
         debug_mode: bool = True,
     ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
@@ -116,8 +120,9 @@ class Model:
         Returns:
             Dictionary mapping period to a value function array for each regime.
         """
+        internal_params = process_params(params, self.params_template)
         return solve(
-            params=params,
+            internal_params=internal_params,
             ages=self.ages,
             internal_regimes=self.internal_regimes,
             logger=get_logger(debug_mode=debug_mode),
@@ -125,7 +130,7 @@ class Model:
 
     def simulate(
         self,
-        params: ParamsDict,
+        params: dict[str, Any],
         initial_states: Mapping[str, Array],
         initial_regimes: list[RegimeName],
         V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
@@ -151,8 +156,9 @@ class Model:
             optionally with additional_targets.
 
         """
+        internal_params = process_params(params, self.params_template)
         return simulate(
-            params=params,
+            internal_params=internal_params,
             initial_states=initial_states,
             initial_regimes=initial_regimes,
             internal_regimes=self.internal_regimes,
@@ -165,7 +171,7 @@ class Model:
 
     def solve_and_simulate(
         self,
-        params: ParamsDict,
+        params: dict[str, Any],
         initial_states: Mapping[str, Array],
         initial_regimes: list[RegimeName],
         *,

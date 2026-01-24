@@ -1,56 +1,55 @@
-import inspect
+from types import MappingProxyType
+from typing import Any
 
-import jax.numpy as jnp
+import dags.tree as dt
 
 from lcm.regime import Regime
-from lcm.typing import GridsDict, ParamsDict
 
 
 def create_params_template(
     regime: Regime,
-    grids: GridsDict,  # noqa: ARG001
-    default_params: dict[str, float] = {"discount_factor": jnp.nan},  # noqa: B006
-) -> ParamsDict:
+    default_params: dict[str, type] = {"discount_factor": float},  # noqa: B006
+) -> MappingProxyType[str, Any]:
     """Create parameter template from a regime specification.
 
     Args:
         regime: The regime as provided by the user.
-        grids: Dictionary containing the state grids for each regime.
-        default_params: A dictionary of default parameters. Default is None. If None,
-            the default {"discount_factor": np.nan} is used. For other lifetime reward
-            objectives, additional parameters may be required, for example
-            {"discount_factor": np.nan, "short_run_discount_factor": np.nan} for
+        default_params: A dictionary of default parameters with their type annotations.
+            Default is {"discount_factor": float}. For other lifetime reward objectives,
+            additional parameters may be required, for example
+            {"discount_factor": float, "short_run_discount_factor": float} for
             beta-delta discounting.
 
     Returns:
-        The regime parameter template.
+        The regime parameter template with type annotations as values.
 
     """
     function_params = _create_function_params(regime)
 
-    return default_params | function_params
+    return MappingProxyType(default_params | function_params)
 
 
 def _create_function_params(
     regime: Regime,
-) -> dict[str, dict[str, float]]:
-    """Get function parameters from a regime specification.
+) -> dict[str, dict[str, Any]]:
+    """Get function parameters from a regime specification using dags.tree.
 
-    Explanation: We consider the arguments of all regime functions, from which we
-    exclude all variables that are states, actions or the period argument. Everything
-    else is considered a parameter of the respective regime function that is provided by
-    the user.
+    Uses dags.tree.create_tree_with_input_types() to discover parameters and their
+    type annotations from function signatures. Parameters are identified as function
+    arguments that are not states, actions, auxiliary functions, or special variables
+    (period, age).
 
     Args:
         regime: The regime as provided by the user.
 
     Returns:
-        A dictionary for each regime function, containing a parameters required in the
-        regime functions, initialized with jnp.nan.
+        A dictionary for each regime function, containing the parameters required in the
+        regime functions with their type annotations as values. If no annotation exists,
+        the value is "no_annotation_found" (dags.tree default).
 
     """
-    # Collect all regime variables, that includes actions, states, special variables
-    # (period, age), and auxiliary variables (regime function names).
+    # Collect all regime variables: actions, states, special variables (period, age),
+    # and auxiliary variables (regime function names). These are NOT parameters.
     variables = {
         *regime.functions,
         *regime.actions,
@@ -60,11 +59,11 @@ def _create_function_params(
     }
 
     function_params = {}
-    # For each user function, capture the arguments of the function that are not in the
-    # set of regime variables, and initialize them.
+    # Use dags.tree to discover parameters and their type annotations for each function.
     for name, func in regime.get_all_functions().items():
-        arguments = set(inspect.signature(func).parameters)
-        params = sorted(arguments.difference(variables))
-        function_params[name] = dict.fromkeys(params, jnp.nan)
+        tree = dt.create_tree_with_input_types({name: func})
+        # Filter out variables to get only the parameters
+        params = {k: v for k, v in sorted(tree.items()) if k not in variables}
+        function_params[name] = params
 
     return function_params

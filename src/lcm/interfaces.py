@@ -14,10 +14,10 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     DiscreteState,
+    InternalParams,
     InternalUserFunction,
     MaxQOverAFunction,
     NextStateSimulationFunction,
-    ParamsDict,
     RegimeTransitionFunction,
     TransitionFunctionsMapping,
     VmappedRegimeTransitionFunction,
@@ -182,7 +182,7 @@ class InternalRegime:
         | None
     )
     internal_functions: InternalFunctions
-    params_template: ParamsDict
+    params_template: InternalParams
     state_action_spaces: StateActionSpace
     state_space_infos: StateSpaceInfo
     max_Q_over_a_functions: MappingProxyType[int, MaxQOverAFunction]

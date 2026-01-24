@@ -8,11 +8,11 @@ from lcm.error_handling import validate_value_function_array
 from lcm.interfaces import (
     InternalRegime,
 )
-from lcm.typing import FloatND, ParamsDict, RegimeName
+from lcm.typing import FloatND, InternalParams, RegimeName
 
 
 def solve(
-    params: ParamsDict,
+    internal_params: InternalParams,
     ages: AgeGrid,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     logger: logging.Logger,
@@ -20,7 +20,7 @@ def solve(
     """Solve a model using grid search.
 
     Args:
-        params: Dict of model parameters.
+        internal_params: Dict of model parameters.
         ages: Age grid for the model.
         internal_regimes: The internal regimes, that contain all necessary functions
             to solve the model.
@@ -56,7 +56,7 @@ def solve(
                 **state_action_space.states,
                 **state_action_space.actions,
                 next_V_arr=next_V_arr,
-                params=params,
+                internal_params=internal_params,
             )
 
             validate_value_function_array(V_arr, age=ages.values[period])

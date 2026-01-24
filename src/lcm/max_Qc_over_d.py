@@ -8,9 +8,9 @@ from lcm.interfaces import ShockType
 from lcm.typing import (
     ArgmaxQcOverDFunction,
     FloatND,
+    InternalParams,
     IntND,
     MaxQcOverDFunction,
-    ParamsDict,
 )
 
 
@@ -116,7 +116,7 @@ def get_argmax_and_max_Qc_over_d(
     def argmax_and_max_Qc_over_d(
         Qc_arr: FloatND,
         discrete_action_axes: tuple[int, ...],
-        params: ParamsDict,  # noqa: ARG001
+        internal_params: InternalParams,  # noqa: ARG001
     ) -> tuple[IntND, FloatND]:
         return argmax_and_max(Qc_arr, axis=discrete_action_axes)
 
@@ -131,7 +131,7 @@ def get_argmax_and_max_Qc_over_d(
 def _max_Qc_over_d_no_shocks(
     Qc_arr: FloatND,
     discrete_action_axes: tuple[int, ...],
-    params: ParamsDict,  # noqa: ARG001
+    internal_params: InternalParams,  # noqa: ARG001
 ) -> FloatND:
     """Take the maximum of the Qc-function over the discrete actions.
 
@@ -141,7 +141,7 @@ def _max_Qc_over_d_no_shocks(
             state and discrete action variable.
         discrete_action_axes: Tuple of indices representing the axes in the value
             function that correspond to discrete actions.
-        params: See `get_solve_discrete_problem`.
+        internal_params: See `get_solve_discrete_problem`.
 
     Returns:
         The maximum of Qc_arr over the discrete action axes.
@@ -158,7 +158,9 @@ def _max_Qc_over_d_no_shocks(
 
 
 def _max_Qc_over_d_extreme_value_shocks(
-    Qc_arr: FloatND, discrete_action_axes: tuple[int, ...], params: ParamsDict
+    Qc_arr: FloatND,
+    discrete_action_axes: tuple[int, ...],
+    internal_params: InternalParams,
 ) -> FloatND:
     """Take the expected maximum of the Qc-function over the discrete actions.
 
@@ -168,13 +170,13 @@ def _max_Qc_over_d_extreme_value_shocks(
             state and discrete action variable.
         discrete_action_axes: Tuple of indices representing the axes in the value
             function that correspond to discrete actions.
-        params: See `get_solve_discrete_problem`.
+        internal_params: See `get_solve_discrete_problem`.
 
     Returns:
         The expected maximum of Qc_arr over the discrete action axes.
 
     """
-    scale = params["additive_utility_shock"]["scale"]
+    scale = internal_params["additive_utility_shock"]["scale"]
     return scale * jax.scipy.special.logsumexp(
         Qc_arr / scale, axis=discrete_action_axes
     )

@@ -29,8 +29,8 @@ from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
 from lcm.regime import Regime
 from lcm.typing import (
     Int1D,
+    InternalParams,
     InternalUserFunction,
-    ParamsDict,
     RegimeName,
     RegimeNamesToIds,
     TransitionFunctionsMapping,
@@ -118,17 +118,14 @@ def process_regimes(
     # ----------------------------------------------------------------------------------
     internal_regimes = {}
     for name, regime in regimes.items():
-        params_template = create_params_template(
-            regime,
-            grids=grids,
-        )
+        params_template = create_params_template(regime)
 
         internal_functions = _get_internal_functions(
             regime,
             regime_name=name,
             nested_transitions=nested_transitions[name],
             grids=grids,
-            params=params_template,
+            internal_params=params_template,
             regime_id=regime_names_to_ids,
             enable_jit=enable_jit,
         )
@@ -190,7 +187,7 @@ def _get_internal_functions(
     regime_name: str,
     nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
     grids: MappingProxyType[RegimeName, MappingProxyType[str, Array]],
-    params: ParamsDict,
+    internal_params: InternalParams,
     regime_id: RegimeNamesToIds,
     *,
     enable_jit: bool,
@@ -203,7 +200,7 @@ def _get_internal_functions(
         nested_transitions: Nested transitions dict for internal processing.
             Format: {"regime_name": {"next_state": fn, ...}, "next_regime": fn}
         grids: Dict containing the state grids for each regime.
-        params: The parameters of the regime.
+        internal_params: The parameters of the regime.
         regime_id: Immutable mapping from regime names to integer indices.
         enable_jit: Whether to jit the internal functions.
 
@@ -217,10 +214,10 @@ def _get_internal_functions(
     flat_nested_transitions = flatten_regime_namespace(nested_transitions)
 
     # ==================================================================================
-    # Add 'params' argument to functions
+    # Add 'internal_params' argument to functions
     # ==================================================================================
-    # We wrap the user functions such that they can be called with the 'params' argument
-    # instead of the individual parameters.
+    # We wrap the user functions such that they can be called with the 'internal_params'
+    # argument instead of the individual parameters.
 
     # Build all_functions using nested_transitions (to get prefixed names)
     all_functions = deepcopy(
@@ -253,15 +250,15 @@ def _get_internal_functions(
     functions: dict[str, InternalUserFunction] = {}
 
     for fn_name, fn in deterministic_functions.items():
-        functions[fn_name] = _ensure_fn_only_depends_on_params(
+        functions[fn_name] = _ensure_fn_only_depends_on_internal_params(
             fn=fn,
             fn_name=fn_name,
-            params=params,
+            internal_params=internal_params,
         )
 
     for fn_name, fn in deterministic_transition_functions.items():
         # For transition functions with prefixed names like "work__next_wealth",
-        # extract the flat param key "next_wealth" to look up in params
+        # extract the flat param key "next_wealth" to look up in internal_params
         if fn_name == "next_regime":
             param_key = fn_name
         elif REGIME_SEPARATOR in fn_name:
@@ -269,11 +266,11 @@ def _get_internal_functions(
             param_key = fn_name.split(REGIME_SEPARATOR, 1)[1]
         else:
             param_key = fn_name
-        functions[fn_name] = _ensure_fn_only_depends_on_params(
+        functions[fn_name] = _ensure_fn_only_depends_on_internal_params(
             fn=fn,
             fn_name=fn_name,
             param_key=param_key,
-            params=params,
+            internal_params=internal_params,
         )
 
     for fn_name, fn in stochastic_transition_functions.items():
@@ -286,11 +283,11 @@ def _get_internal_functions(
             if REGIME_SEPARATOR in fn_name
             else fn_name
         )
-        functions[f"weight_{fn_name}"] = _ensure_fn_only_depends_on_params(
+        functions[f"weight_{fn_name}"] = _ensure_fn_only_depends_on_internal_params(
             fn=fn,
             fn_name=fn_name,
             param_key=param_key,
-            params=params,
+            internal_params=internal_params,
         )
         functions[fn_name] = _get_stochastic_next_function(
             fn=fn,
@@ -346,42 +343,55 @@ def _get_internal_functions(
     )
 
 
-def _replace_func_parameters_by_params(
+def _replace_func_parameters_by_internal_params(
     fn: UserFunction,
-    params: ParamsDict,
+    internal_params: InternalParams,
     param_key: str,
 ) -> InternalUserFunction:
-    """Wrap a function to get its parameters from the params dict.
+    """Wrap a function to get its parameters from the internal_params dict.
 
     Args:
         fn: The user function to wrap.
-        params: The params dict template.
-        param_key: The key to look up in params (e.g., "next_wealth").
+        internal_params: The internal_params dict template.
+        param_key: The key to look up in internal_params (e.g., "next_wealth").
 
     Returns:
-        A wrapped function that accepts a params dict and extracts its parameters.
+        A wrapped function that accepts an internal_params dict and extracts its
+        parameters.
     """
     annotations = {
-        k: v for k, v in get_annotations(fn).items() if k not in params[param_key]
+        k: v
+        for k, v in get_annotations(fn).items()
+        if k not in internal_params[param_key]
     }
-    annotations_with_params = annotations | {"params": "ParamsDict"}
-    return_annotation = annotations_with_params.pop("return")
+    annotations_with_internal_params = annotations | {
+        "internal_params": "InternalParams"
+    }
+    return_annotation = annotations_with_internal_params.pop("return")
 
-    @with_signature(args=annotations_with_params, return_annotation=return_annotation)
+    @with_signature(
+        args=annotations_with_internal_params, return_annotation=return_annotation
+    )
     @functools.wraps(fn)
-    def processed_func(*args: Array, params: ParamsDict, **kwargs: Array) -> Array:
-        return fn(*args, **kwargs, **params[param_key])
+    def processed_func(
+        *args: Array, internal_params: InternalParams, **kwargs: Array
+    ) -> Array:
+        return fn(*args, **kwargs, **internal_params[param_key])
 
     return cast("InternalUserFunction", processed_func)
 
 
-def _add_dummy_params_argument(fn: UserFunction) -> InternalUserFunction:
-    annotations = get_annotations(fn) | {"params": "ParamsDict"}
+def _add_dummy_internal_params_argument(fn: UserFunction) -> InternalUserFunction:
+    annotations = get_annotations(fn) | {"internal_params": "InternalParams"}
     return_annotation = annotations.pop("return")
 
     @with_signature(args=annotations, return_annotation=return_annotation)
     @functools.wraps(fn)
-    def processed_func(*args: Array, params: ParamsDict, **kwargs: Array) -> Array:  # noqa: ARG001
+    def processed_func(
+        *args: Array,
+        internal_params: InternalParams,  # noqa: ARG001
+        **kwargs: Array,
+    ) -> Array:
         return fn(*args, **kwargs)
 
     return cast("InternalUserFunction", processed_func)
@@ -396,23 +406,23 @@ def _get_stochastic_next_function(fn: UserFunction, grid: Int1D) -> UserFunction
     return next_func
 
 
-def _ensure_fn_only_depends_on_params(
+def _ensure_fn_only_depends_on_internal_params(
     fn: UserFunction,
     fn_name: str,
-    params: ParamsDict,
+    internal_params: InternalParams,
     param_key: str | None = None,
 ) -> InternalUserFunction:
-    # param_key is the key to look up in params (may differ from fn_name).
+    # param_key is the key to look up in internal_params (may differ from fn_name).
     key = param_key if param_key is not None else fn_name
-    # params[key] contains the dictionary of parameters used by the function, which
-    # is empty if the function does not depend on any regime parameters.
-    if params[key]:
-        return _replace_func_parameters_by_params(
+    # internal_params[key] contains the dictionary of parameters used by the function,
+    # which is empty if the function does not depend on any regime parameters.
+    if internal_params[key]:
+        return _replace_func_parameters_by_internal_params(
             fn=fn,
-            params=params,
+            internal_params=internal_params,
             param_key=key,
         )
-    return _add_dummy_params_argument(fn)
+    return _add_dummy_internal_params_argument(fn)
 
 
 def _convert_flat_to_nested_transitions(

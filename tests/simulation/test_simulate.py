@@ -58,18 +58,20 @@ def simulate_inputs():
 
 
 def test_simulate_using_raw_inputs(simulate_inputs):
-    params = {
-        "working": {
-            "discount_factor": 1.0,
-            "utility": {"disutility_of_work": 1.0},
-            "next_wealth": {"interest_rate": 0.05},
-            "next_regime": {"final_age_alive": 0},
-        },
-        "dead": {},
-    }
+    internal_params = MappingProxyType(
+        {
+            "working": {
+                "discount_factor": 1.0,
+                "utility": {"disutility_of_work": 1.0},
+                "next_wealth": {"interest_rate": 0.05},
+                "next_regime": {"final_age_alive": 0},
+            },
+            "dead": {},
+        }
+    )
 
     result = simulate(
-        params=params,
+        internal_params=internal_params,
         V_arr_dict=MappingProxyType(
             {
                 0: MappingProxyType({"working": jnp.zeros(100), "dead": jnp.zeros(2)}),

@@ -32,16 +32,15 @@ def get_next_state_function(
     """Get function that computes the next states during the solution.
 
     Args:
-        grids: Grids of a regime.
-        transitions: Transitions to the next states of a regime.
-        functions: Dict of auxiliary functions of a regime.
-        target: Whether to generate the function for the solve or simulate target.
+        grids: Grids of a regime. transitions: Transitions to the next states of a
+        regime. functions: Dict of auxiliary functions of a regime. target: Whether to
+        generate the function for the solve or simulate target.
 
     Returns:
         Function that computes the next states. Depends on states and actions of the
-        current period, and the regime parameters ("params"). If target is "simulate",
-        the function also depends on the dictionary of random keys ("keys"), which
-        corresponds to the names of stochastic next functions.
+        current period, and the regime parameters ("internal_params"). If target is
+        "simulate", the function also depends on the dictionary of random keys ("keys"),
+        which corresponds to the names of stochastic next functions.
 
     """
     if target == Target.SOLVE:
