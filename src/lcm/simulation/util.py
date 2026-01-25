@@ -13,7 +13,7 @@ from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.random import generate_simulation_keys
 from lcm.state_action_space import create_state_action_space
-from lcm.typing import Bool1D, Int1D, InternalParams, RegimeName
+from lcm.typing import Bool1D, Int1D, InternalRegimeParams, RegimeName
 from lcm.utils import flatten_regime_namespace, normalize_regime_transition_probs
 
 
@@ -52,7 +52,7 @@ def calculate_next_states(
     optimal_actions: MappingProxyType[str, Array],
     period: int,
     age: float,
-    internal_params: InternalParams,
+    internal_params: InternalRegimeParams,
     states: MappingProxyType[str, Array],
     state_action_space: StateActionSpace,
     key: Array,
@@ -123,7 +123,7 @@ def calculate_next_regime_membership(
     optimal_actions: MappingProxyType[str, Array],
     period: int,
     age: float,
-    internal_params: InternalParams,
+    internal_params: InternalRegimeParams,
     regime_id: MappingProxyType[RegimeName, int],
     new_subject_regime_ids: Int1D,
     active_regimes_next_period: tuple[RegimeName, ...],

@@ -1,6 +1,5 @@
 import functools
 from collections.abc import Mapping
-from copy import deepcopy
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -35,11 +34,13 @@ from lcm.typing import (
     InternalUserFunction,
     RegimeName,
     RegimeNamesToIds,
+    RegimeParamsTemplate,
     TransitionFunctionsMapping,
     UserFunction,
 )
 from lcm.utils import (
     REGIME_SEPARATOR,
+    ensure_containers_are_immutable,
     flatten_regime_namespace,
     unflatten_regime_namespace,
 )
@@ -60,7 +61,7 @@ def process_regimes(
     regime_names_to_ids: RegimeNamesToIds,
     *,
     enable_jit: bool,
-) -> dict[str, InternalRegime]:
+) -> MappingProxyType[RegimeName, InternalRegime]:
     """Process the user regime.
 
     This entails the following steps:
@@ -127,7 +128,7 @@ def process_regimes(
             regime_name=name,
             nested_transitions=nested_transitions[name],
             grids=grids,
-            internal_params=params_template,
+            params_template=params_template,
             regime_id=regime_names_to_ids,
             enable_jit=enable_jit,
         )
@@ -181,7 +182,7 @@ def process_regimes(
             random_utility_shocks=ShockType.NONE,
         )
 
-    return internal_regimes
+    return ensure_containers_are_immutable(internal_regimes)
 
 
 def _get_internal_functions(
@@ -189,7 +190,7 @@ def _get_internal_functions(
     regime_name: str,
     nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
     grids: MappingProxyType[RegimeName, MappingProxyType[str, Array]],
-    internal_params: InternalParams,
+    params_template: RegimeParamsTemplate,
     regime_id: RegimeNamesToIds,
     *,
     enable_jit: bool,
@@ -202,8 +203,8 @@ def _get_internal_functions(
         nested_transitions: Nested transitions dict for internal processing.
             Format: {"regime_name": {"next_state": fn, ...}, "next_regime": fn}
         grids: Dict containing the state grids for each regime.
-        internal_params: The parameters of the regime.
-        regime_id: Immutable mapping from regime names to integer indices.
+        params_template: The regime's parameter template.
+        regime_id: Mapping from regime names to integer indices.
         enable_jit: Whether to jit the internal functions.
 
     Returns:
@@ -222,12 +223,12 @@ def _get_internal_functions(
     # argument instead of the individual parameters.
 
     # Build all_functions using nested_transitions (to get prefixed names)
-    all_functions = deepcopy(
-        dict(regime.functions)
-        | {"utility": regime.utility}
-        | dict(regime.constraints)
-        | flatten_regime_namespace(nested_transitions)
-    )
+    all_functions = {
+        "utility": regime.utility,
+        **regime.functions,
+        **regime.constraints,
+        **flat_nested_transitions,
+    }
 
     stochastic_transition_functions = {
         fn_name: fn
@@ -255,7 +256,7 @@ def _get_internal_functions(
         functions[fn_name] = _ensure_fn_only_depends_on_internal_params(
             fn=fn,
             fn_name=fn_name,
-            internal_params=internal_params,
+            params_template=params_template,
         )
 
     for fn_name, fn in deterministic_transition_functions.items():
@@ -272,7 +273,7 @@ def _get_internal_functions(
             fn=fn,
             fn_name=fn_name,
             param_key=param_key,
-            internal_params=internal_params,
+            params_template=params_template,
         )
 
     for fn_name, fn in stochastic_transition_functions.items():
@@ -289,7 +290,7 @@ def _get_internal_functions(
             fn=fn,
             fn_name=fn_name,
             param_key=param_key,
-            internal_params=internal_params,
+            params_template=params_template,
         )
         functions[fn_name] = _get_stochastic_next_function(
             fn=fn,
@@ -347,24 +348,24 @@ def _get_internal_functions(
 
 def _replace_func_parameters_by_internal_params(
     fn: UserFunction,
-    internal_params: InternalParams,
+    params_template: RegimeParamsTemplate,
     param_key: str,
 ) -> InternalUserFunction:
     """Wrap a function to get its parameters from the internal_params dict.
 
     Args:
         fn: The user function to wrap.
-        internal_params: The internal_params dict template.
-        param_key: The key to look up in internal_params (e.g., "next_wealth").
+        params_template: The params template dict.
+        param_key: The key to look up in params_template (e.g., "next_wealth").
 
     Returns:
-        A wrapped function that accepts an internal_params dict and extracts its
+        A wrapped function that accepts the internal_params pytree and extracts its
         parameters.
     """
     annotations = {
         k: v
         for k, v in get_annotations(fn).items()
-        if k not in internal_params[param_key]
+        if k not in params_template[param_key]  # ty: ignore[unsupported-operator]
     }
     annotations_with_internal_params = annotations | {
         "internal_params": "InternalParams"
@@ -411,17 +412,17 @@ def _get_stochastic_next_function(fn: UserFunction, grid: Int1D) -> UserFunction
 def _ensure_fn_only_depends_on_internal_params(
     fn: UserFunction,
     fn_name: str,
-    internal_params: InternalParams,
+    params_template: RegimeParamsTemplate,
     param_key: str | None = None,
 ) -> InternalUserFunction:
     # param_key is the key to look up in internal_params (may differ from fn_name).
     key = param_key if param_key is not None else fn_name
     # internal_params[key] contains the dictionary of parameters used by the function,
     # which is empty if the function does not depend on any regime parameters.
-    if internal_params[key]:
+    if params_template[key]:
         return _replace_func_parameters_by_internal_params(
             fn=fn,
-            internal_params=internal_params,
+            params_template=params_template,
             param_key=key,
         )
     return _add_dummy_internal_params_argument(fn)

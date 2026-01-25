@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, Protocol
 
@@ -27,17 +28,32 @@ type Age = float
 type RegimeName = str
 type RegimeNamesToIds = MappingProxyType[RegimeName, int]
 
-type _RegimeGridsDict = MappingProxyType[str, Array]
-type GridsDict = MappingProxyType[RegimeName, _RegimeGridsDict]
+type GridsDict = MappingProxyType[RegimeName, MappingProxyType[str, Array]]
 
-type _RegimeTransitions = MappingProxyType[str, InternalUserFunction]
-type TransitionFunctionsMapping = MappingProxyType[RegimeName, _RegimeTransitions]
+type TransitionFunctionsMapping = MappingProxyType[
+    RegimeName, MappingProxyType[str, InternalUserFunction]
+]
 
-type InternalParams = MappingProxyType[RegimeName, MappingProxyType[str, Any]]
+
+type UserParams = Mapping[str, bool | float | Array | "UserParams"]
+
+# Recursive type for internal regime parameters: a pytree where leaves are numbers or
+# arrays, and intermediate nodes are MappingProxyType dictionaries.
+type InternalRegimeParams = MappingProxyType[
+    str, bool | float | Array | "InternalRegimeParams"
+]
+type InternalParams = MappingProxyType[RegimeName, InternalRegimeParams]
+
+# Immutable templates, used internally
+type RegimeParamsTemplate = MappingProxyType[str, type | "RegimeParamsTemplate"]
+type ParamsTemplate = MappingProxyType[RegimeName, RegimeParamsTemplate]
+
+# Dictionary-templates; returned to users.
+type MutableRegimeParamsTemplate = dict[str, type | "MutableRegimeParamsTemplate"]
+type MutableParamsTemplate = dict[RegimeName, MutableRegimeParamsTemplate]
 
 # Type aliases for value function arrays
-type _PeriodVArrMapping = MappingProxyType[RegimeName, FloatND]
-type VArrMapping = MappingProxyType[int, _PeriodVArrMapping]
+type VArrMapping = MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
 
 
 class UserFunction(Protocol):
@@ -77,7 +93,7 @@ class RegimeTransitionFunction(Protocol):
     def __call__(
         self,
         *args: Array | float,
-        internal_params: InternalParams,
+        internal_params: InternalRegimeParams,
         **kwargs: Array | float,
     ) -> Float1D: ...
 
@@ -94,7 +110,7 @@ class VmappedRegimeTransitionFunction(Protocol):
     def __call__(
         self,
         *args: Array | float,
-        internal_params: InternalParams,
+        internal_params: InternalRegimeParams,
         **kwargs: Array | float,
     ) -> FloatND: ...
 
@@ -240,7 +256,7 @@ class NextStateSimulationFunction(Protocol):
 
     def __call__(
         self,
-        **kwargs: Array | Period | Age | InternalParams,
+        **kwargs: Array | Period | Age | InternalRegimeParams,
     ) -> MappingProxyType[str, DiscreteState | ContinuousState]: ...
 
 

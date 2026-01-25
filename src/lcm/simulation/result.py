@@ -19,7 +19,7 @@ from lcm.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.grids import DiscreteGrid
 from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
-from lcm.typing import FloatND, InternalParams, RegimeName
+from lcm.typing import FloatND, InternalParams, InternalRegimeParams, RegimeName
 
 CLOUDPICKLE_IMPORT_ERROR_MSG = (
     "Pickling SimulationResult objects requires the optional dependency 'cloudpickle'. "
@@ -397,7 +397,7 @@ def _process_regime(
     regime_results: MappingProxyType[int, PeriodRegimeSimulationData],
     regime_states: tuple[str, ...],
     regime_actions: tuple[str, ...],
-    internal_params: InternalParams,
+    internal_params: InternalRegimeParams,
     additional_targets: list[str] | None,
     ages: AgeGrid,
 ) -> pd.DataFrame:
@@ -604,7 +604,7 @@ def _compute_targets(
     data: dict[str, Any],
     targets: list[str],
     internal_regime: InternalRegime,
-    internal_params: InternalParams,
+    internal_params: InternalRegimeParams,
 ) -> dict[str, Array]:
     """Compute additional targets for a regime."""
     functions_pool = _build_functions_pool(internal_regime)

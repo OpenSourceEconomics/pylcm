@@ -195,6 +195,7 @@ select = [ "ALL" ]
   "ANN",    # Annotations
   "E402",   # Module level import not at top of file
   "T201",   # print found
+  "T203",   # pprint found
   "INP001", # Implicit namespace package
 ]
 "src/lcm/functools.py" = [

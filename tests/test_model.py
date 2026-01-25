@@ -33,7 +33,7 @@ def test_regime_invalid_actions():
 def test_regime_invalid_functions():
     """Regime rejects non-dict functions argument."""
     with pytest.raises(
-        RegimeInitializationError, match="functions must be a dictionary"
+        RegimeInitializationError, match="functions must each be a dictionary"
     ):
         Regime(
             states={},

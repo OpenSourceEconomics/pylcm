@@ -1,15 +1,14 @@
-from types import MappingProxyType
-from typing import Any
-
 import dags.tree as dt
 
 from lcm.regime import Regime
+from lcm.typing import RegimeParamsTemplate
+from lcm.utils import ensure_containers_are_immutable
 
 
 def create_regime_params_template(
     regime: Regime,
     default_params: dict[str, type] = {"discount_factor": float},  # noqa: B006
-) -> MappingProxyType[str, Any]:
+) -> RegimeParamsTemplate:
     """Create parameter template from a regime specification.
 
     Args:
@@ -26,12 +25,10 @@ def create_regime_params_template(
     """
     function_params = _create_function_params(regime)
 
-    return MappingProxyType(default_params | function_params)
+    return ensure_containers_are_immutable(default_params | function_params)
 
 
-def _create_function_params(
-    regime: Regime,
-) -> dict[str, dict[str, Any]]:
+def _create_function_params(regime: Regime) -> RegimeParamsTemplate:
     """Get function parameters from a regime specification using dags.tree.
 
     Uses dags.tree.create_tree_with_input_types() to discover parameters and their
@@ -66,4 +63,4 @@ def _create_function_params(
         params = {k: v for k, v in sorted(tree.items()) if k not in variables}
         function_params[name] = params
 
-    return function_params
+    return ensure_containers_are_immutable(function_params)

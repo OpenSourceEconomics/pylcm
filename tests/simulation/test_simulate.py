@@ -66,7 +66,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
                 "next_wealth": {"interest_rate": 0.05},
                 "next_regime": {"final_age_alive": 0},
             },
-            "dead": {},
+            "dead": {"discount_factor": 1.0},
         }
     )
 

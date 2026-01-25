@@ -5,10 +5,11 @@ from types import MappingProxyType
 from typing import Any
 
 from lcm.exceptions import InvalidNameError, InvalidParamsError
-from lcm.typing import InternalParams
+from lcm.interfaces import InternalRegime
+from lcm.typing import InternalParams, ParamsTemplate, RegimeName, UserParams
 from lcm.utils import (
     REGIME_SEPARATOR,
-    ensure_mapping_proxy,
+    ensure_containers_are_immutable,
     flatten_regime_namespace,
     unflatten_regime_namespace,
 )
@@ -17,8 +18,8 @@ _NUM_PARTS_FUNCTION_PARAM = 3
 
 
 def process_params(  # noqa: C901
-    params: Mapping[str, Any],
-    params_template: InternalParams,
+    params: UserParams,
+    params_template: ParamsTemplate,
 ) -> InternalParams:
     """Process user-provided params into internal params.
 
@@ -78,10 +79,12 @@ def process_params(  # noqa: C901
                 f"Found values at: {candidates}"
             )
 
-        if candidates:
-            chosen_key = candidates[0]
-            result_flat[key] = params_flat[chosen_key]
-            used_keys.add(chosen_key)
+        if not candidates:
+            raise InvalidParamsError(f"Missing required parameter: {key!r}")
+
+        chosen_key = candidates[0]
+        result_flat[key] = params_flat[chosen_key]
+        used_keys.add(chosen_key)
 
     # Check for unknown keys
     # Keys in params that were not used to satisfy any template requirement
@@ -97,12 +100,12 @@ def process_params(  # noqa: C901
         if regime_name not in result:
             result[regime_name] = {}
 
-    return ensure_mapping_proxy(result)
+    return ensure_containers_are_immutable(result)
 
 
 def create_params_template(  # noqa: C901
-    internal_regimes: Mapping[str, Any],
-) -> InternalParams:
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+) -> ParamsTemplate:
     """Create params_template from internal regimes and validate name uniqueness.
 
     This function validates that regime names, function names, and argument names
@@ -112,7 +115,7 @@ def create_params_template(  # noqa: C901
         internal_regimes: Mapping of regime names to InternalRegime instances.
 
     Returns:
-        The params_template as an immutable MappingProxyType.
+        The parameter template.
 
     Raises:
         InvalidNameError: If names are not disjoint or contain the separator.
@@ -178,11 +181,4 @@ def create_params_template(  # noqa: C901
     # This happens when a function output in one regime is a parameter in another.
     # E.g., labor_income is a function in 'working' but a param in 'retired'.
 
-    return _to_mapping_proxy(template)
-
-
-def _to_mapping_proxy(d: dict[str, Any]) -> MappingProxyType[str, Any]:
-    """Recursively convert a dict to MappingProxyType."""
-    return MappingProxyType(
-        {k: _to_mapping_proxy(v) if isinstance(v, dict) else v for k, v in d.items()}
-    )
+    return ensure_containers_are_immutable(template)

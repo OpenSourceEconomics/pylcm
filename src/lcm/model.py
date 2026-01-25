@@ -18,11 +18,17 @@ from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
 from lcm.typing import (
     FloatND,
-    InternalParams,
+    MutableParamsTemplate,
+    ParamsTemplate,
     RegimeName,
     RegimeNamesToIds,
+    UserParams,
 )
-from lcm.utils import REGIME_SEPARATOR, get_field_names_and_values
+from lcm.utils import (
+    REGIME_SEPARATOR,
+    ensure_containers_are_mutable,
+    get_field_names_and_values,
+)
 
 
 class Model:
@@ -51,7 +57,7 @@ class Model:
     regimes: MappingProxyType[str, Regime]
     internal_regimes: MappingProxyType[str, InternalRegime]
     enable_jit: bool = True
-    params_template: InternalParams
+    params_template: ParamsTemplate
 
     def __init__(
         self,
@@ -89,20 +95,33 @@ class Model:
             )
         )
         self.regimes = MappingProxyType(dict(regimes))
-        self.internal_regimes = MappingProxyType(
-            process_regimes(
-                regimes=regimes,
-                ages=self.ages,
-                regime_names_to_ids=self.regime_names_to_ids,
-                enable_jit=enable_jit,
-            )
+        self.internal_regimes = process_regimes(
+            regimes=regimes,
+            ages=self.ages,
+            regime_names_to_ids=self.regime_names_to_ids,
+            enable_jit=enable_jit,
         )
         self.enable_jit = enable_jit
         self.params_template = create_params_template(self.internal_regimes)
 
+    def get_params_template(self) -> MutableParamsTemplate:
+        """Get a mutable copy of the params template.
+
+        Returns a deep copy of the params_template where all immutable containers
+        (MappingProxyType, tuple, frozenset) are converted to their mutable
+        equivalents (dict, list, set).
+
+        Returns:
+            A mutable nested dict with the same structure as params_template.
+
+        """
+        return ensure_containers_are_mutable(  # ty: ignore[invalid-return-type]
+            self.params_template
+        )
+
     def solve(
         self,
-        params: dict[str, Any],
+        params: UserParams,
         *,
         debug_mode: bool = True,
     ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
@@ -125,7 +144,7 @@ class Model:
 
     def simulate(
         self,
-        params: dict[str, Any],
+        params: UserParams,
         initial_states: Mapping[str, Array],
         initial_regimes: list[RegimeName],
         V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],

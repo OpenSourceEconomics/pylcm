@@ -19,22 +19,76 @@ REGIME_SEPARATOR = QNAME_DELIMITER
 T = TypeVar("T")
 
 
-def ensure_mapping_proxy[K, V](value: Mapping[K, V]) -> MappingProxyType[K, V]:
-    """Wrap a Mapping in MappingProxyType if not already wrapped.
+def _make_immutable(value: Any) -> Any:  # noqa: ANN401
+    """Recursively convert a value to its immutable equivalent."""
+    if isinstance(value, (MappingProxyType, tuple, frozenset)):
+        return value
+    if isinstance(value, Mapping):
+        return MappingProxyType({k: _make_immutable(v) for k, v in value.items()})
+    if isinstance(value, set):
+        return frozenset(_make_immutable(v) for v in value)
+    if isinstance(value, list):
+        return tuple(_make_immutable(v) for v in value)
+    return value
 
-    This utility helps ensure immutability of dictionaries in frozen dataclasses
-    while avoiding unnecessary wrapping if the value is already a MappingProxyType.
+
+def ensure_containers_are_immutable[K, V](
+    value: Mapping[K, V],
+) -> MappingProxyType[K, V]:
+    """Recursively convert mutable containers to immutable equivalents.
+
+    Conversions:
+        - dict/Mapping -> MappingProxyType
+        - list -> tuple
+        - set -> frozenset
+
+    This utility ensures deep immutability of nested data structures. Values that
+    are already immutable (MappingProxyType, tuple, frozenset) are returned as-is.
 
     Args:
-        value: Any Mapping to wrap.
+        value: Any Mapping to convert.
 
     Returns:
-        A MappingProxyType containing the mapping's items.
+        A MappingProxyType containing the mapping's items, with all nested containers
+        converted to their immutable equivalents.
 
     """
-    if isinstance(value, MappingProxyType):
-        return cast("MappingProxyType[K, V]", value)
-    return MappingProxyType(value)
+    return cast("MappingProxyType[K, V]", _make_immutable(value))
+
+
+def _make_mutable(value: Any) -> Any:  # noqa: ANN401
+    """Recursively convert a value to its mutable equivalent."""
+    if isinstance(value, (set, list)):
+        return value
+    if isinstance(value, (MappingProxyType, Mapping)):
+        return {k: _make_mutable(v) for k, v in value.items()}
+    if isinstance(value, frozenset):
+        return {_make_mutable(v) for v in value}
+    if isinstance(value, tuple):
+        return [_make_mutable(v) for v in value]
+    return value
+
+
+def ensure_containers_are_mutable[K, V](value: Mapping[K, V]) -> dict[K, V]:
+    """Recursively convert immutable containers to mutable equivalents.
+
+    Conversions:
+        - MappingProxyType/Mapping -> dict
+        - tuple -> list
+        - frozenset -> set
+
+    This utility ensures deep mutability of nested data structures. Values that
+    are already mutable (dict, list, set) are returned as-is.
+
+    Args:
+        value: Any Mapping to convert.
+
+    Returns:
+        A dict containing the mapping's items, with all nested containers
+        converted to their mutable equivalents.
+
+    """
+    return cast("dict[K, V]", _make_mutable(value))
 
 
 def find_duplicates(*containers: Iterable[T]) -> set[T]:

@@ -154,8 +154,8 @@ def get_params(
 ) -> dict[str, Any]:
     final_age_alive = n_periods - 2
     return {
+        "discount_factor": discount_factor,
         "working": {
-            "discount_factor": discount_factor,
             "utility": {"disutility_of_work": disutility_of_work},
             "next_wealth": {"interest_rate": interest_rate},
             "next_regime": {"final_age_alive": final_age_alive},

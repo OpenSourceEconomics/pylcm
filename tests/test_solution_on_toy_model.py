@@ -425,11 +425,12 @@ def test_deterministic_solve(discount_factor, n_wealth_points):
     # Solve model using LCM
     # ==================================================================================
     params_alive = {
-        "discount_factor": discount_factor,
         "utility": {"health": 1},
         "next_regime": {"final_age_alive": model.n_periods - 2},
     }
-    got = model.solve(params={"alive": params_alive, "dead": {}})
+    got = model.solve(
+        params={"discount_factor": discount_factor, "alive": params_alive, "dead": {}}
+    )
 
     # Compute analytical solution
     # ==================================================================================
@@ -439,7 +440,8 @@ def test_deterministic_solve(discount_factor, n_wealth_points):
         stop=wealth_grid_class.stop,
         num=wealth_grid_class.n_points,
     )
-    expected = analytical_solve_deterministic(wealth_grid, params=params_alive)
+    analytical_params = {"discount_factor": discount_factor, **params_alive}
+    expected = analytical_solve_deterministic(wealth_grid, params=analytical_params)
 
     # Do not assert that in the first period, the arrays have the same values on the
     # first and last index: TODO (@timmens): THIS IS A BUG AND NEEDS TO BE INVESTIGATED.
@@ -475,12 +477,11 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
     # Simulate model using LCM
     # ==================================================================================
     params_alive = {
-        "discount_factor": discount_factor,
         "utility": {"health": 1},
         "next_regime": {"final_age_alive": model.n_periods - 2},
     }
     result = model.solve_and_simulate(
-        params={"alive": params_alive, "dead": {}},
+        params={"discount_factor": discount_factor, "alive": params_alive, "dead": {}},
         initial_states={"wealth": jnp.array([0.25, 0.75, 1.25, 1.75])},
         initial_regimes=["alive"] * 4,
     )
@@ -492,9 +493,10 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
         .reset_index(drop=True)
     )
 
+    analytical_params = {"discount_factor": discount_factor, **params_alive}
     expected = analytical_simulate_deterministic(
         initial_wealth=np.array([0.25, 0.75, 1.25, 1.75]),
-        params=params_alive,
+        params=analytical_params,
     )
 
     assert_frame_equal(
@@ -533,11 +535,12 @@ def test_stochastic_solve(discount_factor, n_wealth_points, health_transition):
     # Solve model using LCM
     # ==================================================================================
     params = {
-        "discount_factor": discount_factor,
         "next_health": {"health_transition": health_transition},
         "next_regime": {"final_age_alive": model.n_periods - 2},
     }
-    got = model.solve(params={"alive": params, "dead": {}})
+    got = model.solve(
+        params={"discount_factor": discount_factor, "alive": params, "dead": {}}
+    )
 
     # Compute analytical solution
     # ==================================================================================
@@ -553,10 +556,11 @@ def test_stochastic_solve(discount_factor, n_wealth_points, health_transition):
     wealth_grid = np.tile(_wealth_grid, len(_health_grid))
     health_grid = np.repeat(_health_grid, len(_wealth_grid))
 
+    analytical_params = {"discount_factor": discount_factor, **params}
     _expected = analytical_solve_stochastic(
         wealth_grid=wealth_grid,
         health_grid=health_grid,
-        params=params,
+        params=analytical_params,
     )
     expected = [
         arr.reshape((len(_health_grid), len(_wealth_grid))) for arr in _expected
@@ -597,7 +601,6 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, health_transition
     # Simulate model using LCM
     # ==================================================================================
     params_alive = {
-        "discount_factor": discount_factor,
         "next_health": {"health_transition": health_transition},
         "next_regime": {"final_age_alive": model.n_periods - 2},
     }
@@ -606,7 +609,7 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, health_transition
         "health": jnp.array([0, 1, 0, 1, 1]),
     }
     result = model.solve_and_simulate(
-        params={"alive": params_alive, "dead": {}},
+        params={"discount_factor": discount_factor, "alive": params_alive, "dead": {}},
         initial_states=initial_states,
         initial_regimes=["alive"] * 5,
     )
@@ -618,11 +621,12 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, health_transition
     # Convert categorical health to codes for analytical function
     health_1 = got.query("period == 1")["health"].cat.codes.to_numpy()
 
+    analytical_params = {"discount_factor": discount_factor, **params_alive}
     expected = analytical_simulate_stochastic(
         initial_wealth=initial_states["wealth"],
         initial_health=initial_states["health"],
         health_1=health_1,
-        params=params_alive,
+        params=analytical_params,
     )
 
     # Drop rows with wealth at boundary (analytical solution has edge effects)

@@ -1,8 +1,10 @@
 """Tests for process_params function."""
 
+from types import MappingProxyType
+
 import pytest
 
-from lcm.exceptions import InvalidNameError
+from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.input_processing.process_params import create_params_template, process_params
 
 
@@ -47,7 +49,7 @@ def test_params_at_function_level(params_template):
             params_template[regime].keys()
         )
         for func in params_template[regime]:
-            assert set(internal_params[regime][func].keys()) == set(
+            assert set(internal_params[regime][func].keys()) == set(  # ty: ignore[possibly-missing-attribute]
                 params_template[regime][func].keys()
             )
 
@@ -177,8 +179,13 @@ def test_ambiguous_model_regime_level(params_template):
 class MockRegime:
     """Mock regime with params_template for testing create_params_template."""
 
-    def __init__(self, params_template):
-        self.params_template = params_template
+    def __init__(self, params_template: dict) -> None:
+        self._params_template = params_template
+
+    @property
+    def params_template(self) -> MappingProxyType:
+        """Return params_template as MappingProxyType."""
+        return MappingProxyType(self._params_template)
 
 
 def test_function_params_no_qname_separator():
@@ -189,7 +196,7 @@ def test_function_params_no_qname_separator():
         ),
     }
     with pytest.raises(InvalidNameError):
-        create_params_template(internal_regimes)
+        create_params_template(internal_regimes)  # ty: ignore[invalid-argument-type]
 
 
 def test_regime_name_no_qname_separator():
@@ -200,7 +207,7 @@ def test_regime_name_no_qname_separator():
         ),
     }
     with pytest.raises(InvalidNameError):
-        create_params_template(internal_regimes)
+        create_params_template(internal_regimes)  # ty: ignore[invalid-argument-type]
 
 
 def test_function_name_no_qname_separator():
@@ -211,7 +218,7 @@ def test_function_name_no_qname_separator():
         ),
     }
     with pytest.raises(InvalidNameError):
-        create_params_template(internal_regimes)
+        create_params_template(internal_regimes)  # ty: ignore[invalid-argument-type]
 
 
 def test_regime_function_names_disjoint():
@@ -223,7 +230,7 @@ def test_regime_function_names_disjoint():
         ),
     }
     with pytest.raises(InvalidNameError):
-        create_params_template(internal_regimes)
+        create_params_template(internal_regimes)  # ty: ignore[invalid-argument-type]
 
 
 def test_regime_argument_names_disjoint():
@@ -235,4 +242,17 @@ def test_regime_argument_names_disjoint():
         ),
     }
     with pytest.raises(InvalidNameError):
-        create_params_template(internal_regimes)
+        create_params_template(internal_regimes)  # ty: ignore[invalid-argument-type]
+
+
+# ======================================================================================
+# Tests for missing parameters
+# ======================================================================================
+
+
+def test_missing_parameter_raises_error(params_template):
+    """Test that missing required parameters raise InvalidParamsError."""
+    # Only provide arg_0, but arg_1 is also required in the template
+    params = {"arg_0": 0.0}
+    with pytest.raises(InvalidParamsError, match="Missing required parameter"):
+        process_params(params, params_template)
