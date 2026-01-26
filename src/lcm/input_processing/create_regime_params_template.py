@@ -11,6 +11,11 @@ def create_regime_params_template(
 ) -> RegimeParamsTemplate:
     """Create parameter template from a regime specification.
 
+    Uses dags.tree.create_tree_with_input_types() to discover parameters and their
+    type annotations from function signatures. Parameters are identified as function
+    arguments that are not states, actions, auxiliary functions, or special variables
+    (period, age).
+
     Args:
         regime: The regime as provided by the user.
         default_params: A dictionary of default parameters with their type annotations.
@@ -20,29 +25,9 @@ def create_regime_params_template(
             beta-delta discounting.
 
     Returns:
-        The regime parameter template with type annotations as values.
-
-    """
-    function_params = _create_function_params(regime)
-
-    return ensure_containers_are_immutable(default_params | function_params)
-
-
-def _create_function_params(regime: Regime) -> RegimeParamsTemplate:
-    """Get function parameters from a regime specification using dags.tree.
-
-    Uses dags.tree.create_tree_with_input_types() to discover parameters and their
-    type annotations from function signatures. Parameters are identified as function
-    arguments that are not states, actions, auxiliary functions, or special variables
-    (period, age).
-
-    Args:
-        regime: The regime as provided by the user.
-
-    Returns:
-        A dictionary for each regime function, containing the parameters required in the
-        regime functions with their type annotations as values. If no annotation exists,
-        the value is "no_annotation_found" (dags.tree default).
+        The regime parameter template with type annotations as values. Contains
+        default_params at the top level, plus a dictionary for each regime function
+        containing the parameters required by that function.
 
     """
     # Collect all regime variables: actions, states, special variables (period, age),
@@ -63,4 +48,4 @@ def _create_function_params(regime: Regime) -> RegimeParamsTemplate:
         params = {k: v for k, v in sorted(tree.items()) if k not in variables}
         function_params[name] = params
 
-    return ensure_containers_are_immutable(function_params)
+    return ensure_containers_are_immutable(default_params | function_params)
