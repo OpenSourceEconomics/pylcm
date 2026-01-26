@@ -211,6 +211,7 @@ def test_process_regimes():
         ages=ages,
         regime_names_to_ids=regime_id,
         enable_jit=True,
+        fixed_params={},
     )
     internal_working_regime = internal_regimes["working"]
 

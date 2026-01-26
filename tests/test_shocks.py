@@ -87,6 +87,9 @@ def test_model_with_shock(distribution_type):
         regimes={"test_regime": test_regime, "test_regime_term": test_regime_term},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=0, stop=4, step="Y"),
+        fixed_params={"state": {"rho": 0.975}}
+        if distribution_type in ["rouwenhorst", "tauchen"]
+        else {},
     )
     params = {
         "test_regime": {

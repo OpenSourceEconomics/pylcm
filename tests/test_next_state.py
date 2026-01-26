@@ -26,6 +26,7 @@ def test_get_next_state_function_with_solve_target():
         ages=ages,
         regime_names_to_ids=regime_id,
         enable_jit=True,
+        fixed_params={},
     )
 
     internal_working = internal_regimes["working"]

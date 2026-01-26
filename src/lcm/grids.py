@@ -276,6 +276,10 @@ class ShockGrid(ContinuousGrid):
         """Return the generalized coordinate of a value in the grid."""
         return grid_helpers.get_irreg_coordinate(value, self.to_jax())
 
+    def init_params(self, params: ParamsDict):
+        """Augment the grid with fixed params from model initialization."""
+        return dataclasses.replace(self, shock_params=params)
+
 
 @dataclass(frozen=True, kw_only=True)
 class Piece:

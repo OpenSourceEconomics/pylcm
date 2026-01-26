@@ -12,7 +12,7 @@ from jax import numpy as jnp
 
 from lcm.ages import AgeGrid
 from lcm.grid_helpers import get_irreg_coordinate
-from lcm.grids import Grid
+from lcm.grids import Grid, ShockGrid
 from lcm.input_processing.create_params_template import create_params_template
 from lcm.input_processing.regime_components import (
     build_argmax_and_max_Q_over_a_functions,
@@ -65,7 +65,8 @@ def process_regimes(
     ages: AgeGrid,
     regime_names_to_ids: RegimeNamesToIds,
     *,
-    enable_jit: bool,
+    fixed_params: ParamsDict,
+    enable_jit: bool = True,
 ) -> dict[str, InternalRegime]:
     """Process the user regime.
 
@@ -79,6 +80,7 @@ def process_regimes(
         regimes: Mapping of regime names to Regime instances.
         ages: The AgeGrid for the model.
         regime_names_to_ids: Immutable mapping from regime names to integer indices.
+        fixed_params: Parameters that can be fixed at model initialization.
         enable_jit: Whether to jit the functions of the internal regime.
 
     Returns:
@@ -86,17 +88,29 @@ def process_regimes(
 
     """
     # ----------------------------------------------------------------------------------
+    # Fixed Parameter Distribution
+    # ----------------------------------------------------------------------------------
+    # Pass the fixed parameters from the model to the classes and functions that need
+    # them
+    regimes_with_fixed_params = {}
+    for name, regime in regimes.items():
+        regimes_with_fixed_params[name] = _pass_fixed_params(
+            regime, fixed_params=fixed_params
+        )
+
+    # ----------------------------------------------------------------------------------
     # Convert flat transitions to nested format
     # ----------------------------------------------------------------------------------
     # User provides flat format, internal processing uses nested format.
     # First, collect state names for each regime to know which transitions map where.
     states_per_regime: dict[str, set[str]] = {
-        name: set(regime.states.keys()) for name, regime in regimes.items()
+        name: set(regime.states.keys())
+        for name, regime in regimes_with_fixed_params.items()
     }
 
     # Convert each regime's flat transitions to nested format
     nested_transitions = {}
-    for name, regime in regimes.items():
+    for name, regime in regimes_with_fixed_params.items():
         nested_transitions[name] = _convert_flat_to_nested_transitions(
             flat_transitions=regime.transitions,
             states_per_regime=states_per_regime,
@@ -105,26 +119,33 @@ def process_regimes(
     # ----------------------------------------------------------------------------------
     # Stage 1: Initialize regime components that do not depend on other regimes
     # ----------------------------------------------------------------------------------
-    grids = MappingProxyType({n: get_grids(r) for n, r in regimes.items()})
-    gridspecs = MappingProxyType({n: get_gridspecs(r) for n, r in regimes.items()})
+    grids = MappingProxyType(
+        {n: get_grids(r) for n, r in regimes_with_fixed_params.items()}
+    )
+    gridspecs = MappingProxyType(
+        {n: get_gridspecs(r) for n, r in regimes_with_fixed_params.items()}
+    )
     variable_info = MappingProxyType(
-        {n: get_variable_info(r) for n, r in regimes.items()}
+        {n: get_variable_info(r) for n, r in regimes_with_fixed_params.items()}
     )
     state_space_infos = MappingProxyType(
-        {n: build_state_space_info(r) for n, r in regimes.items()}
+        {n: build_state_space_info(r) for n, r in regimes_with_fixed_params.items()}
     )
     state_action_spaces = MappingProxyType(
-        {n: build_state_action_space(r) for n, r in regimes.items()}
+        {n: build_state_action_space(r) for n, r in regimes_with_fixed_params.items()}
     )
     regimes_to_active_periods = MappingProxyType(
-        {n: ages.get_periods_where(r.active) for n, r in regimes.items()}
+        {
+            n: ages.get_periods_where(r.active)
+            for n, r in regimes_with_fixed_params.items()
+        }
     )
 
     # ----------------------------------------------------------------------------------
     # Stage 2: Initialize regime components that depend on other regimes
     # ----------------------------------------------------------------------------------
     internal_regimes = {}
-    for name, regime in regimes.items():
+    for name, regime in regimes_with_fixed_params.items():
         params_template = create_params_template(
             regime,
             grids=grids,
@@ -469,6 +490,19 @@ def _ensure_fn_only_depends_on_params(
             param_key=key,
         )
     return _add_dummy_params_argument(fn)
+
+
+def _pass_fixed_params(regime: Regime, fixed_params: ParamsDict):
+    states_with_fixed_params = {}
+    for name, state in regime.states.items():
+        if isinstance(state, ShockGrid):
+            if fixed_params:
+                states_with_fixed_params[name] = state.init_params(fixed_params[name])
+            else:
+                states_with_fixed_params[name] = state
+        else:
+            states_with_fixed_params[name] = state
+    return regime.replace(states=states_with_fixed_params)
 
 
 def _convert_flat_to_nested_transitions(

@@ -22,7 +22,7 @@ from lcm.typing import (
     RegimeName,
     StochasticNextFunction,
 )
-from lcm.utils import flatten_regime_namespace, REGIME_SEPARATOR
+from lcm.utils import REGIME_SEPARATOR, flatten_regime_namespace
 
 
 def get_next_state_function_for_solution(
