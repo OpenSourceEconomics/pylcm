@@ -129,7 +129,7 @@ def process_regimes(
             nested_transitions=nested_transitions[name],
             grids=grids,
             params_template=params_template,
-            regime_id=regime_names_to_ids,
+            regime_names_to_ids=regime_names_to_ids,
             enable_jit=enable_jit,
         )
 
@@ -191,7 +191,7 @@ def _get_internal_functions(
     nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
     grids: MappingProxyType[RegimeName, MappingProxyType[str, Array]],
     params_template: RegimeParamsTemplate,
-    regime_id: RegimeNamesToIds,
+    regime_names_to_ids: RegimeNamesToIds,
     *,
     enable_jit: bool,
 ) -> InternalFunctions:
@@ -204,7 +204,7 @@ def _get_internal_functions(
             Format: {"regime_name": {"next_state": fn, ...}, "next_regime": fn}
         grids: Dict containing the state grids for each regime.
         params_template: The regime's parameter template.
-        regime_id: Mapping from regime names to integer indices.
+        regime_names_to_ids: Mapping from regime names to integer indices.
         enable_jit: Whether to jit the internal functions.
 
     Returns:
@@ -332,7 +332,7 @@ def _get_internal_functions(
             internal_functions=internal_functions,
             regime_transition_probs=functions["next_regime"],
             grids=grids[regime_name],
-            regime_names_to_ids=regime_id,
+            regime_names_to_ids=regime_names_to_ids,
             is_stochastic=is_stochastic_regime_transition,
             enable_jit=enable_jit,
         )

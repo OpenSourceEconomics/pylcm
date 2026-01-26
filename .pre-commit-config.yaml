@@ -81,5 +81,3 @@ repos:
           - --wrap
           - '88'
         files: (CLAUDE\.md|README\.md)
-ci:
-  autoupdate_schedule: monthly

@@ -121,7 +121,7 @@ def simulate(
                     new_subject_regime_ids=new_subject_regime_ids,
                     V_arr_dict=V_arr_dict,
                     internal_params=internal_params,
-                    regime_id=regime_names_to_ids,
+                    regime_names_to_ids=regime_names_to_ids,
                     active_regimes_next_period=active_regimes_next_period,
                     key=key,
                 )
@@ -158,7 +158,7 @@ def _simulate_regime_in_period(
     new_subject_regime_ids: Int1D,
     V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
     internal_params: InternalParams,
-    regime_id: MappingProxyType[RegimeName, int],
+    regime_names_to_ids: MappingProxyType[RegimeName, int],
     active_regimes_next_period: tuple[RegimeName, ...],
     key: Array,
 ) -> tuple[PeriodRegimeSimulationData, MappingProxyType[str, Array], Int1D, Array]:
@@ -177,7 +177,7 @@ def _simulate_regime_in_period(
         new_subject_regime_ids: Array to populate with next period's regime memberships.
         V_arr_dict: Value function arrays for all periods and regimes.
         internal_params: Model parameters for all regimes.
-        regime_id: Mapping from regime names to integer IDs.
+        regime_names_to_ids: Mapping from regime names to integer IDs.
         active_regimes_next_period: List of active regimes in the next period.
         key: JAX random key for stochastic operations.
 
@@ -191,7 +191,9 @@ def _simulate_regime_in_period(
     """
     # Select subjects in the current regime
     # ---------------------------------------------------------------------------------
-    subject_ids_in_regime = jnp.asarray(regime_id[regime_name] == subject_regime_ids)
+    subject_ids_in_regime = jnp.asarray(
+        regime_names_to_ids[regime_name] == subject_regime_ids
+    )
 
     state_action_space = create_regime_state_action_space(
         internal_regime=internal_regime,
@@ -269,7 +271,7 @@ def _simulate_regime_in_period(
             internal_params=internal_params[regime_name],
             state_action_space=state_action_space,
             new_subject_regime_ids=new_subject_regime_ids,
-            regime_id=regime_id,
+            regime_names_to_ids=regime_names_to_ids,
             active_regimes_next_period=active_regimes_next_period,
             key=next_regime_key,
         )

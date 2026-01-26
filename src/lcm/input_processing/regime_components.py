@@ -261,25 +261,25 @@ def build_regime_transition_probs_functions(
 
 def _wrap_regime_transition_probs(
     fn: InternalUserFunction,
-    regime_id: RegimeNamesToIds,
+    regime_names_to_ids: RegimeNamesToIds,
 ) -> InternalUserFunction:
     """Wrap next_regime function to convert array output to dict format.
 
     The next_regime function returns a JAX array of probabilities indexed by
-    the regime_id. This wrapper converts the array to dict format for internal
+    the regime' id. This wrapper converts the array to dict format for internal
     processing.
 
     Args:
         fn: The user's next_regime function (already wrapped with internal_params).
-        regime_id: Immutable mapping from regime names to integer indices.
+        regime_names_to_ids: Mapping from regime names to integer indices.
 
     Returns:
         A wrapped function that returns MappingProxyType[str, float|Array].
 
     """
-    # Get regime names in index order from regime_id
+    # Get regime names in index order from regime_names_to_ids
     regime_names_by_id: list[tuple[int, str]] = sorted(
-        [(idx, name) for name, idx in regime_id.items()],
+        [(idx, name) for name, idx in regime_names_to_ids.items()],
         key=lambda x: x[0],
     )
     regime_names = [name for _, name in regime_names_by_id]
@@ -297,7 +297,7 @@ def _wrap_regime_transition_probs(
         *args: Array | int, internal_params: InternalParams, **kwargs: Array | int
     ) -> MappingProxyType[str, Any]:
         result = fn(*args, internal_params=internal_params, **kwargs)
-        # Convert array to dict using regime_id ordering
+        # Convert array to dict using ordering by regime id
         return MappingProxyType(
             {name: result[idx] for idx, name in enumerate(regime_names)}
         )
@@ -307,7 +307,7 @@ def _wrap_regime_transition_probs(
 
 def _wrap_deterministic_regime_transition(
     fn: InternalUserFunction,
-    regime_id: RegimeNamesToIds,
+    regime_names_to_ids: RegimeNamesToIds,
 ) -> InternalUserFunction:
     """Wrap deterministic next_regime to return one-hot probability array.
 
@@ -317,13 +317,13 @@ def _wrap_deterministic_regime_transition(
 
     Args:
         fn: The user's deterministic next_regime function (returns int).
-        regime_id: Immutable mapping from regime names to integer indices.
+        regime_names_to_ids: Mapping from regime names to integer indices.
 
     Returns:
         A wrapped function that returns a one-hot probability array.
 
     """
-    n_regimes = len(regime_id)
+    n_regimes = len(regime_names_to_ids)
 
     # Preserve original annotations but update return type
     annotations = get_annotations(fn)

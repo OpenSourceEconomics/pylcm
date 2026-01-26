@@ -298,7 +298,7 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
 
 
 def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):
-    """Model creates regime_id mapping from dict keys in order."""
+    """Model creates regime id mapping from dict keys in order."""
 
     @categorical
     class RegimeId:
@@ -325,7 +325,7 @@ def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
     )
-    # regime_id should be created from dict keys in order
+    # regime id should be created from dict keys in order
     assert model.regime_names_to_ids["alive"] == 0
     assert model.regime_names_to_ids["dead"] == 1
 

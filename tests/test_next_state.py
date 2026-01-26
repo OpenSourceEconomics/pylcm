@@ -15,11 +15,13 @@ from tests.test_models.deterministic.regression import dead, working
 def test_get_next_state_function_with_solve_target():
     ages = AgeGrid(start=0, stop=4, step="Y")
     regimes = {"working": working, "dead": dead}
-    regime_id = MappingProxyType({name: idx for idx, name in enumerate(regimes.keys())})
+    regime_names_to_ids = MappingProxyType(
+        {name: idx for idx, name in enumerate(regimes.keys())}
+    )
     internal_regimes = process_regimes(
         regimes=regimes,
         ages=ages,
-        regime_names_to_ids=regime_id,
+        regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
     )
 

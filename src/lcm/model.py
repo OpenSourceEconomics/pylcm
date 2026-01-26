@@ -41,7 +41,7 @@ class Model:
         description: Description of the model.
         n_periods: Number of periods in the model.
         enable_jit: Whether to jit the functions of the internal regime.
-        regime_id: Immutable mapping from regime names to integer indices.
+        regime_names_to_ids: Mapping from regime names to integer indices.
         regimes: The user provided regimes that contain the information
             about the model's regimes.
         internal_regimes: The internal regime instances created by LCM, which allow
@@ -55,7 +55,7 @@ class Model:
     n_periods: int
     regime_names_to_ids: RegimeNamesToIds
     regimes: MappingProxyType[str, Regime]
-    internal_regimes: MappingProxyType[str, InternalRegime]
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime]
     enable_jit: bool = True
     params_template: ParamsTemplate
 
@@ -78,7 +78,6 @@ class Model:
             enable_jit: Whether to jit the functions of the internal regime.
 
         """
-        # Create regime_id mapping from dict keys
         self.description = description
         self.ages = ages
         self.n_periods = ages.n_periods
