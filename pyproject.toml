@@ -3,45 +3,45 @@
 # ======================================================================================
 
 [project]
-name = "pylcm"
-description = "Specification, solution, and simulation of finite-horizon dynamic choice models."
-requires-python = ">= 3.14"
-dependencies = [
-    # "dags>=0.4.3",
-    "jax>=0.8",
-    "jaxtyping>=0.3.2",
-    "pandas",
-    "portion>=2.6",
-]
-dynamic = ["version"]
-keywords = [
-    "Dynamic programming",
-    "Econometrics",
-    "Economics",
-    "Estimation",
-    "Life cycle models",
-    "Statistics",
+authors = [
+  { name = "Tim Mensinger", email = "mensingertim@gmail.com" },
+  { name = "Janos Gabler" },
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: Apache Software License",
-    "Operating System :: MacOS :: MacOS X",
-    "Operating System :: Microsoft :: Windows",
-    "Operating System :: POSIX",
-    "Operating System :: Unix",
-    "Programming Language :: Python :: 3.14",
-    "Topic :: Scientific/Engineering",
-    "Typing :: Typed",
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: MacOS :: MacOS X",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX",
+  "Operating System :: Unix",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering",
+  "Typing :: Typed",
 ]
-authors = [
-    { name = "Tim Mensinger", email = "mensingertim@gmail.com" },
-    { name = "Janos Gabler" },
+dependencies = [
+  # "dags>=0.5.0",
+  "jax>=0.8",
+  "jaxtyping>=0.3.2",
+  "pandas",
+  "portion>=2.6",
+]
+description = "Specification, solution, and simulation of finite-horizon dynamic choice models."
+dynamic = [ "version" ]
+keywords = [
+  "Dynamic programming",
+  "Econometrics",
+  "Economics",
+  "Estimation",
+  "Life cycle models",
+  "Statistics",
 ]
 maintainers = [
-    { name = "Tim Mensinger", email = "mensingertim@gmail.com" },
-    { name = "Hans-Martin von Gaudecker", email = "hmgaudecker@uni-bonn.de" },
+  { name = "Tim Mensinger", email = "mensingertim@gmail.com" },
+  { name = "Hans-Martin von Gaudecker", email = "hmgaudecker@uni-bonn.de" },
 ]
+name = "pylcm"
+requires-python = ">= 3.14"
 
 [project.readme]
 file = "README.md"
@@ -51,43 +51,41 @@ content-type = "text/markdown"
 file = "LICENSE"
 
 [project.urls]
-Repository = "https://github.com/opensourceeconomics/pylcm"
 Github = "https://github.com/opensourceeconomics/pylcm"
+Repository = "https://github.com/opensourceeconomics/pylcm"
 Tracker = "https://github.com/opensourceeconomics/pylcm/issues"
-
 
 # ======================================================================================
 # Build system configuration
 # ======================================================================================
 
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+requires = [ "hatchling", "hatch-vcs" ]
 
 [tool.hatch.build.hooks.vcs]
 version-file = "src/lcm/_version.py"
 
 [tool.hatch.build.targets.sdist]
-exclude = ["tests"]
+exclude = [ "tests" ]
 only-packages = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/lcm"]
-
-[tool.hatch.version]
-source = "vcs"
+packages = [ "src/lcm" ]
 
 [tool.hatch.metadata]
 allow-direct-references = true
 
+[tool.hatch.version]
+source = "vcs"
 
 # ======================================================================================
-# Pixi
+# Pixi configuration
 # ======================================================================================
 
 [tool.pixi.workspace]
-channels = ["conda-forge"]
-platforms = ["linux-64", "osx-arm64", "win-64"]
+channels = [ "conda-forge" ]
+platforms = [ "linux-64", "osx-arm64", "win-64" ]
 
 # Development Dependencies (conda and pypi)
 # --------------------------------------------------------------------------------------
@@ -103,38 +101,36 @@ pybaum = "*"
 scipy = ">=1.16"
 snakeviz = "*"
 
-
 [tool.pixi.pypi-dependencies]
-dags = {git = "https://github.com/OpenSourceEconomics/dags.git", branch = "mapping-proxy-input"}
-pylcm = {path = ".", editable = true}
+dags = { git = "https://github.com/OpenSourceEconomics/dags.git", branch = "main" }
 pdbp = "*"
-
+pylcm = { path = ".", editable = true }
 
 # Features and Tasks
 # --------------------------------------------------------------------------------------
 
 [tool.pixi.feature.cuda12]
-platforms = ["linux-64"]
-system-requirements = {cuda = "12"}
+platforms = [ "linux-64" ]
+system-requirements = { cuda = "12" }
 
 [tool.pixi.feature.cuda12.target.linux-64.dependencies]
 cuda-nvcc = "~=12.0"
 
 [tool.pixi.feature.cuda12.target.linux-64.pypi-dependencies]
-jax = {version = ">=0.8", extras = ["cuda12"]}
+jax = { version = ">=0.8", extras = [ "cuda12" ] }
 
 [tool.pixi.feature.cuda13]
-platforms = ["linux-64"]
-system-requirements = {cuda = "13"}
+platforms = [ "linux-64" ]
+system-requirements = { cuda = "13" }
 
 [tool.pixi.feature.cuda13.target.linux-64.dependencies]
 cuda-nvcc = "~=13.0"
 
 [tool.pixi.feature.cuda13.target.linux-64.pypi-dependencies]
-jax = {version = ">=0.8", extras = ["cuda13"]}
+jax = { version = ">=0.8", extras = [ "cuda13" ] }
 
-[tool.pixi.feature.testing.dependencies]
-matplotlib = "*"  # required because of pandas
+[tool.pixi.feature.tests.dependencies]
+matplotlib = "*"   # required because of pandas
 pandas-stubs = "*"
 pytest = "*"
 pytest-cov = "*"
@@ -142,7 +138,7 @@ pytest-xdist = "*"
 scipy-stubs = "*"
 ty = "*"
 
-[tool.pixi.feature.testing.tasks]
+[tool.pixi.feature.tests.tasks]
 explanation-notebooks = "jupyter execute explanations/*.ipynb"
 tests = "pytest tests"
 tests-32bit = "pytest tests --precision=32"
@@ -153,108 +149,79 @@ ty = "ty check"
 # --------------------------------------------------------------------------------------
 
 [tool.pixi.environments]
-cuda12 = {features = ["cuda12"], solve-group = "cuda12"}
-cuda13 = {features = ["cuda13"], solve-group = "cuda13"}
-test-cpu = {features = ["testing"], solve-group = "default"}
-test-cuda12 = {features = ["testing", "cuda12"], solve-group = "cuda12"}
-test-cuda13 = {features = ["testing", "cuda13"], solve-group = "cuda13"}
-
+cuda12 = { features = [ "cuda12" ], solve-group = "cuda12" }
+cuda13 = { features = [ "cuda13" ], solve-group = "cuda13" }
+tests-cpu = { features = [ "tests" ], solve-group = "default" }
+tests-cuda12 = { features = [ "tests", "cuda12" ], solve-group = "cuda12" }
+tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
 
 # ======================================================================================
 # Ruff configuration
 # ======================================================================================
 
 [tool.ruff]
+exclude = [ "src/lcm/sandbox" ]
 fix = true
-exclude = ["src/lcm/sandbox"]
+target-version = "py314"
+unsafe-fixes = false
 
 [tool.ruff.lint]
-select = ["ALL"]
 extend-ignore = [
-    "A005",  # module shadows module from the python standard-library
-    "ANN001",  # missing type annotation
-    "ANN002",  # missing type annotation for `*args`
-    "ANN003",  # missing type annotation for `**kwargs`
-    "ANN201",  # missing return type annotation for public function
-    "ANN202",  # missing return type annotation for private function
-    "D100",  # Missing docstring in public module
-    "D103",  # missing docstring in public function
-    "D104",  # missing docstring in public package
-    "D105",  # Missing docstring in magic method
-    "D107",  # missing docstring in __init__
-    "EM101",  # exception must not use a string literal
-    "EM102",  # exception must not use an f-string literal
-    "FIX002",  # line contains a todo
-    "N802",  # Function name should be lowercase
-    "N803",  # Argument name should be lowercase
-    "N806",  # Variable in function should be lowercase
-    "N815",  # Variable in class scope should not be mixedCase
-    "PLR0913",  # Too many arguments to function call
-    "S101",  # use of `assert` detected
-    "S301",  # `pickle` module is unsafe
-    "SIM105",  # Use `contextlib.suppress(ImportError)` instead of `try`-`except`-`pass`
-    "SLF001",  # Private member accessed: `_stochastic_info`
-    "TC001",  # Move application import into a type-checking block
-    "TC002",  # Move third-party import into a type-checking block
-    "TC003",  # Move standard library import into a type-checking block
-    "TRY003",  # long messages outside the exception class
-    "UP047",  # Checks for standalone type variables in generic functions
-    # Rules ignored to avoid conflict with formatter
-    # ----------------------------------------------------------------------------------
-    "COM812",
-    "ISC001",
+  "COM812",  # Conflicts with ruff-format
+  "D",       # Docstrings
+  "EM101",   # Exception must not use a string literal
+  "EM102",   # Exception must not use an f-string literal
+  "FIX002",  # Line contains TODO
+  "ISC001",  # Conflicts with ruff-format
+  "N802",    # Function name should be lowercase
+  "N803",    # Argument name should be lowercase
+  "N806",    # Variable in function should be lowercase
+  "N815",    # Variable in class scope should not be mixedCase
+  "PLR0913", # Too many arguments in function definition
+  "TC001",   # Move application import into a type-checking block
+  "TC002",   # Move third-party import into a type-checking block
+  "TC003",   # Move standard library import into a type-checking block
+  "TRY003",  # Long messages outside exception class
+  "UP047",   # Generic function should use type parameters
 ]
+select = [ "ALL" ]
 
 [tool.ruff.lint.per-file-ignores]
-"**/*.ipynb" = ["D101", "E402", "FBT003"]
-"examples/*" = ["D101", "E402", "FBT003", "INP001"]
-"explanations/*" = ["B018", "E402", "INP001", "PD008", "T201"]
-"src/lcm/functools.py" = ["ANN401"]
-"src/lcm/max_Q_over_a.py" = ["N999"]
-"src/lcm/max_Q_over_c.py" = ["N999"]
-"src/lcm/max_Qc_over_d.py" = ["N999"]
-"src/lcm/ndimage.py" = ["A002"]
-"src/lcm/Q_and_F.py" = ["N999"]
-"tests/*" = ["D101", "FBT001", "PLR2004"]
-"tests/test_max_Q_over_a.py" = ["N999"]
-"tests/test_max_Qc_over_d.py" = ["N999"]
-"tests/test_Q_and_F.py" = ["N999"]
+"examples/*" = [
+  "E402",   # Module level import not at top of file
+  "INP001", # Implicit namespace package
+]
+"explanations/*" = [
+  "ANN",    # Annotations
+  "E402",   # Module level import not at top of file
+  "T201",   # print found
+  "INP001", # Implicit namespace package
+]
+"src/lcm/functools.py" = [
+  "ANN401", # Dynamically typed expressions (Any)
+]
+"src/lcm/max_*" = [
+  "N999", # Module name mixing uppercase and lowercase
+]
+"src/lcm/Q_and_F.py" = [
+  "N999", # Module name mixing uppercase and lowercase
+]
+"tests/*" = [
+  "ANN",     # Annotations
+  "D",       # Docstrings
+  "INP001",  # Implicit namespace package
+  "N999",    # Module name mixing uppercase and lowercase
+  "PLR2004", # Magic values in comparison
+  "S101",    # Use of assert
+  "S301",    # Use of pickle
+]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
 # ======================================================================================
-# Pytest configuration
-# ======================================================================================
-
-[tool.pytest.ini_options]
-addopts = ["--pdbcls=pdbp:Pdb"]
-markers = [
-    "wip: Tests that are work-in-progress.",
-    "slow: Tests that take a long time to run and are skipped in continuous integration.",
-    "illustrative: Tests are designed for illustrative purposes",
-]
-norecursedirs = ["docs", ".envs"]
-
-
-# ======================================================================================
-# yamlfix configuration
-# ======================================================================================
-
-[tool.yamlfix]
-line_length = 88
-none_representation = "null"
-sequence_style = "block_style"
-
-# ======================================================================================
 # ty configuration
 # ======================================================================================
-
-[tool.ty.environment]
-root = ["."]
-
-[tool.ty.src]
-include = ["src/", "tests/", "examples/"]
 
 [tool.ty.rules]
 ambiguous-protocol-member = "error"
@@ -274,3 +241,29 @@ unresolved-global = "error"
 unsupported-base = "error"
 unused-ignore-comment = "error"
 useless-overload-body = "error"
+
+[tool.ty.src]
+include = [ "src/", "tests/", "examples/" ]
+
+# ======================================================================================
+# pytest configuration
+# ======================================================================================
+
+[tool.pytest.ini_options]
+addopts = [ "--pdbcls=pdbp:Pdb" ]
+filterwarnings = [  ]
+markers = [
+  "wip: Tests that are work-in-progress.",
+  "slow: Tests that take a long time to run and are skipped in continuous integration.",
+  "illustrative: Tests are designed for illustrative purposes",
+]
+norecursedirs = [ "docs", ".envs" ]
+
+# ======================================================================================
+# yamlfix configuration
+# ======================================================================================
+
+[tool.yamlfix]
+line_length = 88
+none_representation = "null"
+sequence_style = "block_style"

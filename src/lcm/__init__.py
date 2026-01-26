@@ -1,11 +1,10 @@
+import contextlib
 from types import MappingProxyType
 
 import jax
 
-try:
+with contextlib.suppress(ImportError):
     import pdbp  # noqa: F401
-except ImportError:
-    pass
 
 from lcm import mark
 from lcm.ages import AgeGrid

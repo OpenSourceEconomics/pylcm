@@ -10,7 +10,7 @@ from typing import Any
 
 import jax
 
-jax.config.update("jax_enable_x64", False)
+jax.config.update("jax_enable_x64", val=False)
 
 import jax.numpy as jnp
 import numpy as np
