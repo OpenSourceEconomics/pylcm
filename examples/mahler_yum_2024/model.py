@@ -141,7 +141,7 @@ def utility(
     wealth: ContinuousState,  # noqa: ARG001
     health_type: DiscreteState,  # noqa: ARG001
     education: DiscreteState,  # noqa: ARG001
-    adj_cost: FloatND,
+    scaled_adjustment_cost: FloatND,
     fcost: FloatND,
     disutil: FloatND,
     cons_util: FloatND,
@@ -150,7 +150,7 @@ def utility(
     beta_std: float,
 ) -> FloatND:
     beta = beta_mean + jnp.where(discount_factor, beta_std, -beta_std)
-    f = cons_util - disutil - fcost - adj_cost
+    f = cons_util - disutil - fcost - scaled_adjustment_cost
     return f * (beta**period)
 
 
@@ -164,9 +164,9 @@ def disutil(
     return phigrid[period, education, health] * ((working / 2) ** (2)) / 2
 
 
-def adj_cost(
+def scaled_adjustment_cost(
     period: Period,
-    adjustment_cost: DiscreteState,
+    adjustment_cost: ContinuousState,
     effort: DiscreteAction,
     effort_t_1: DiscreteState,
     chimaxgrid: Float1D,
@@ -215,20 +215,26 @@ def net_income(benefits: FloatND, taxed_income: FloatND, pension: FloatND) -> Fl
     return taxed_income + pension + benefits
 
 
+def scaled_productivity_shock(
+    productivity_shock: ContinuousState, sigx: float
+) -> FloatND:
+    return productivity_shock * sigx
+
+
 def income(
     working: DiscreteAction,
     period: Period,
     health: DiscreteState,
     education: DiscreteState,
     productivity: DiscreteState,
-    productivity_shock: DiscreteState,
+    scaled_productivity_shock: FloatND,
     income_grid: FloatND,
 ) -> FloatND:
     return (
         income_grid[period, health, education]
         * (working / 2)
         * theta_val[productivity]
-        * jnp.exp(productivity_shock)
+        * jnp.exp(scaled_productivity_shock)
     )
 
 
@@ -297,12 +303,12 @@ def next_education(education: DiscreteState) -> DiscreteState:
     return education
 
 
-@lcm.mark.stochastic(distribution_type="uniform")
+@lcm.mark.stochastic()
 def next_adjustment_cost(adjustment_cost: ContinuousState) -> None:
     pass
 
 
-@lcm.mark.stochastic(distribution_type="rouwenhorst")
+@lcm.mark.stochastic()
 def next_productivity_shock(productivity_shock: ContinuousState) -> None:
     pass
 
@@ -359,12 +365,11 @@ ALIVE_REGIME = Regime(
         "cnow": cnow,
         "income": income,
         "benefits": benefits,
-        "adj_cost": adj_cost,
+        "scaled_adjustment_cost": scaled_adjustment_cost,
         "net_income": net_income,
         "taxed_income": taxed_income,
         "pension": pension,
-        "retirement_constraint": retirement_constraint,
-        "savings_constraint": savings_constraint,
+        "scaled_productivity_shock": scaled_productivity_shock,
     },
     actions={
         "working": DiscreteGrid(WorkingStatus),
@@ -411,6 +416,7 @@ MAHLER_YUM_MODEL = Model(
     regimes={"alive": ALIVE_REGIME, "dead": DEAD_REGIME},
     ages=ages,
     regime_id_class=RegimeId,
+    fixed_params={"productivity_shock": {"rho": rho}},
 )
 
 
@@ -666,12 +672,8 @@ def create_inputs(
         "utility": {"beta_mean": beta["mean"], "beta_std": beta["std"]},
         "income": {"income_grid": income_grid},
         "pension": {"income_grid": income_grid, "penre": penre},
-        "adj_cost": {"chimaxgrid": chimax_grid},
-        "next_productivity_shock": {
-            "rho": rho,
-            "sigma_eps": jnp.sqrt(income_process["sigx"]),  # ty: ignore[invalid-argument-type]
-            "mu_eps": 0.0,
-        },
+        "scaled_adjustment_cost": {"chimaxgrid": chimax_grid},
+        "scaled_productivity_shock": {"sigx": jnp.sqrt(income_process["sigx"])},  # ty: ignore[invalid-argument-type]
         "next_health": {"health_transition": tr2yp_grid},
         "next_adjustment_cost": {"start": 0, "stop": 1},
         "next_regime": {"regime_transition": regime_transition},

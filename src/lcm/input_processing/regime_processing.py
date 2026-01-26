@@ -496,7 +496,7 @@ def _pass_fixed_params(regime: Regime, fixed_params: ParamsDict):
     states_with_fixed_params = {}
     for name, state in regime.states.items():
         if isinstance(state, ShockGrid):
-            if fixed_params:
+            if name in fixed_params:
                 states_with_fixed_params[name] = state.init_params(fixed_params[name])
             else:
                 states_with_fixed_params[name] = state
