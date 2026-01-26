@@ -11,6 +11,7 @@ from jax import Array
 from jax import numpy as jnp
 
 from lcm.ages import AgeGrid
+from lcm.grid_helpers import get_irreg_coordinate
 from lcm.grids import Grid
 from lcm.input_processing.create_params_template import create_params_template
 from lcm.input_processing.regime_components import (
@@ -30,6 +31,7 @@ from lcm.input_processing.util import (
 )
 from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
 from lcm.mark import stochastic
+from lcm.ndimage import map_coordinates
 from lcm.regime import Regime
 from lcm.shocks import SHOCK_TRANSITION_PROBABILITY_FUNCTIONS
 from lcm.typing import (
@@ -438,8 +440,14 @@ def _get_fn_with_precomputed_weights(
         enforce=False,
     )
     def weights_func(*args: Array, **kwargs: Array) -> Float1D:  # noqa: ARG001
-        coordinate = jnp.searchsorted(a=flat_grid, v=kwargs[f"{name}"]) + 1
-        return transition_probs[coordinate]
+        coordinate = get_irreg_coordinate(kwargs[f"{name}"], flat_grid)
+        return map_coordinates(
+            input=transition_probs,
+            coordinates=[
+                jnp.full(gridspec.n_points, fill_value=coordinate),  # ty: ignore[unresolved-attribute]
+                jnp.arange(gridspec.n_points),  # ty: ignore[unresolved-attribute]
+            ],
+        )
 
     return weights_func
 
