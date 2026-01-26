@@ -266,7 +266,7 @@ def _wrap_regime_transition_probs(
     """Wrap next_regime function to convert array output to dict format.
 
     The next_regime function returns a JAX array of probabilities indexed by
-    the regime' id. This wrapper converts the array to dict format for internal
+    the regime's id. This wrapper converts the array to dict format for internal
     processing.
 
     Args:

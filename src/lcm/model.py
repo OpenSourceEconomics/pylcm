@@ -3,7 +3,6 @@
 from collections.abc import Mapping
 from itertools import chain
 from types import MappingProxyType
-from typing import Any
 
 from jax import Array
 
@@ -184,7 +183,7 @@ class Model:
 
     def solve_and_simulate(
         self,
-        params: dict[str, Any],
+        params: UserParams,
         initial_states: Mapping[str, Array],
         initial_regimes: list[RegimeName],
         *,

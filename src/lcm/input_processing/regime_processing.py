@@ -73,7 +73,7 @@ def process_regimes(
     Args:
         regimes: Mapping of regime names to Regime instances.
         ages: The AgeGrid for the model.
-        regime_names_to_ids: Immutable mapping from regime names to integer indices.
+        regime_names_to_ids: Mapping from regime names to integer indices.
         enable_jit: Whether to jit the functions of the internal regime.
 
     Returns:
@@ -355,7 +355,7 @@ def _replace_func_parameters_by_internal_params(
 
     Args:
         fn: The user function to wrap.
-        params_template: The params template dict.
+        params_template: The parameter template for the regime.
         param_key: The key to look up in params_template (e.g., "next_wealth").
 
     Returns:

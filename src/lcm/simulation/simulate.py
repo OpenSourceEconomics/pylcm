@@ -53,7 +53,7 @@ def simulate(
             a state variable defined in at least one regime.
             Example: {"wealth": jnp.array([10.0, 50.0]), "health": jnp.array([0, 1])}
         internal_regimes: Dict of internal regime instances.
-        regime_names_to_ids: Immutable mapping from regime names to integer indices.
+        regime_names_to_ids: Mapping from regime names to integer indices.
         initial_regimes: List containing the names of the regimes the subjects start in.
         logger: Logger that logs to stdout.
         V_arr_dict: Dict of value function arrays of length n_periods.
