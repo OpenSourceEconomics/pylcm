@@ -22,7 +22,7 @@ from lcm.typing import (
     RegimeName,
     StochasticNextFunction,
 )
-from lcm.utils import flatten_regime_namespace
+from lcm.utils import flatten_regime_namespace, REGIME_SEPARATOR
 
 
 def get_next_state_function_for_solution(
@@ -151,13 +151,13 @@ def _extend_transitions_for_simulation(
         fn_name
         for fn_name, fn in transitions.items()
         if is_stochastic_transition(fn)
-        and fn_name.split("__")[-1].replace("next_", "") not in shock_names
+        and fn_name.split(REGIME_SEPARATOR)[-1].replace("next_", "") not in shock_names
     ]
     continuous_stochastic_targets = [
         (fn_name, fn)
         for fn_name, fn in transitions.items()
         if is_stochastic_transition(fn)
-        and fn_name.split("__")[-1].replace("next_", "") in shock_names
+        and fn_name.split(REGIME_SEPARATOR)[-1].replace("next_", "") in shock_names
     ]
     # Handle stochastic next states functions
     # ----------------------------------------------------------------------------------
