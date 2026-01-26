@@ -17,7 +17,7 @@ from lcm.typing import (
     InternalUserFunction,
     MaxQOverAFunction,
     NextStateSimulationFunction,
-    ParamsDict,
+    RegimeParamsTemplate,
     RegimeTransitionFunction,
     TransitionFunctionsMapping,
     VmappedRegimeTransitionFunction,
@@ -182,7 +182,7 @@ class InternalRegime:
         | None
     )
     internal_functions: InternalFunctions
-    params_template: ParamsDict
+    params_template: RegimeParamsTemplate
     state_action_spaces: StateActionSpace
     state_space_infos: StateSpaceInfo
     max_Q_over_a_functions: MappingProxyType[int, MaxQOverAFunction]
@@ -240,8 +240,9 @@ class InternalFunctions:
             Read-only mapping of all regime functions to the functions.
 
         """
-        functions_pool = dict(self.functions) | {
+        functions_pool = {
             "utility": self.utility,
+            **self.functions,
             **self.constraints,
             **self.transitions,
         }

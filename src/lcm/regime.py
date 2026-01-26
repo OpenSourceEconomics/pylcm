@@ -10,7 +10,10 @@ from lcm.typing import (
     ActiveFunction,
     UserFunction,
 )
-from lcm.utils import REGIME_SEPARATOR, ensure_mapping_proxy, flatten_regime_namespace
+from lcm.utils import (
+    REGIME_SEPARATOR,
+    ensure_containers_are_immutable,
+)
 
 
 @dataclass(frozen=True)
@@ -52,11 +55,19 @@ class Regime:
         _validate_attribute_types(self)
         _validate_logical_consistency(self)
         # Wrap mutable dicts in MappingProxyType to prevent accidental mutation
-        object.__setattr__(self, "states", ensure_mapping_proxy(self.states))
-        object.__setattr__(self, "actions", ensure_mapping_proxy(self.actions))
-        object.__setattr__(self, "constraints", ensure_mapping_proxy(self.constraints))
-        object.__setattr__(self, "transitions", ensure_mapping_proxy(self.transitions))
-        object.__setattr__(self, "functions", ensure_mapping_proxy(self.functions))
+        object.__setattr__(self, "states", ensure_containers_are_immutable(self.states))
+        object.__setattr__(
+            self, "actions", ensure_containers_are_immutable(self.actions)
+        )
+        object.__setattr__(
+            self, "constraints", ensure_containers_are_immutable(self.constraints)
+        )
+        object.__setattr__(
+            self, "transitions", ensure_containers_are_immutable(self.transitions)
+        )
+        object.__setattr__(
+            self, "functions", ensure_containers_are_immutable(self.functions)
+        )
 
     def get_all_functions(self) -> MappingProxyType[str, UserFunction]:
         """Get all regime functions including utility, constraints, and transitions.
@@ -110,7 +121,7 @@ def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
     # Validate types of functions
     # ----------------------------------------------------------------------------------
     function_collections = [
-        flatten_regime_namespace(regime.transitions),
+        regime.transitions,
         regime.constraints,
         regime.functions,
     ]
@@ -127,7 +138,7 @@ def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
                     )
         else:
             error_messages.append(
-                "transitions, constraints, and functions must be a dictionary of "
+                "transitions, constraints, and functions must each be a dictionary of "
                 "callables."
             )
 

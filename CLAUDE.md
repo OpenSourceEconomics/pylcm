@@ -215,7 +215,7 @@ result.available_targets  # list[str] - computable additional targets
 
 # Access raw data for advanced users
 result.raw_results  # dict[RegimeName, dict[int, PeriodRegimeSimulationData]]
-result.params  # ParamsDict
+result.internal_params  # InternalParams
 result.V_arr_dict  # dict[int, dict[RegimeName, FloatND]]
 
 # Serialization (requires cloudpickle)

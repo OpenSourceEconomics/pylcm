@@ -40,7 +40,7 @@ def test_solve_brute():
     # ==================================================================================
     # create the params
     # ==================================================================================
-    params = {"discount_factor": 0.9}
+    internal_params = MappingProxyType({"discount_factor": 0.9})
 
     # ==================================================================================
     # create the list of state_action_spaces
@@ -72,7 +72,7 @@ def test_solve_brute():
     # create the Q_and_F functions
     # ==================================================================================
 
-    def _Q_and_F(consumption, lazy, wealth, working, next_V_arr, params):
+    def _Q_and_F(consumption, lazy, wealth, working, next_V_arr, internal_params):
         next_wealth = wealth + working - consumption
         next_lazy = lazy
 
@@ -90,7 +90,7 @@ def test_solve_brute():
         U_arr = consumption - 0.2 * lazy * working
         F_arr = next_wealth >= 0
 
-        Q_arr = U_arr + params["discount_factor"] * expected_V
+        Q_arr = U_arr + internal_params["discount_factor"] * expected_V
 
         return Q_arr, F_arr
 
@@ -111,7 +111,7 @@ def test_solve_brute():
     )
 
     solution = solve(
-        params=params,
+        internal_params=internal_params,
         ages=AgeGrid(start=0, stop=2, step="Y"),
         internal_regimes={"default": internal_regime},  # ty: ignore[invalid-argument-type]
         logger=get_logger(debug_mode=False),
@@ -143,7 +143,7 @@ def test_solve_brute_single_period_Qc_arr():
         states_and_discrete_actions_names=("a", "b", "c"),
     )
 
-    def _Q_and_F(a, c, b, d, next_V_arr, params):  # noqa: ARG001
+    def _Q_and_F(a, c, b, d, next_V_arr, internal_params):  # noqa: ARG001
         # next_V_arr is now a dict but not used in this test
         util = d
         feasib = d <= a + b + c
@@ -167,7 +167,7 @@ def test_solve_brute_single_period_Qc_arr():
     )
 
     got = solve(
-        params={},
+        internal_params=MappingProxyType({}),
         ages=AgeGrid(start=0, stop=2, step="Y"),
         internal_regimes={"default": internal_regime},  # ty: ignore[invalid-argument-type]
         logger=get_logger(debug_mode=False),

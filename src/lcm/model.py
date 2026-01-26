@@ -8,6 +8,7 @@ from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, format_messages
+from lcm.input_processing.process_params import create_params_template, process_params
 from lcm.input_processing.regime_processing import InternalRegime, process_regimes
 from lcm.logging import get_logger
 from lcm.regime import Regime
@@ -16,11 +17,17 @@ from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
 from lcm.typing import (
     FloatND,
-    ParamsDict,
+    MutableParamsTemplate,
+    ParamsTemplate,
     RegimeName,
     RegimeNamesToIds,
+    UserParams,
 )
-from lcm.utils import REGIME_SEPARATOR, get_field_names_and_values
+from lcm.utils import (
+    REGIME_SEPARATOR,
+    ensure_containers_are_mutable,
+    get_field_names_and_values,
+)
 
 
 class Model:
@@ -33,7 +40,7 @@ class Model:
         description: Description of the model.
         n_periods: Number of periods in the model.
         enable_jit: Whether to jit the functions of the internal regime.
-        regime_id: Immutable mapping from regime names to integer indices.
+        regime_names_to_ids: Mapping from regime names to integer indices.
         regimes: The user provided regimes that contain the information
             about the model's regimes.
         internal_regimes: The internal regime instances created by LCM, which allow
@@ -47,9 +54,9 @@ class Model:
     n_periods: int
     regime_names_to_ids: RegimeNamesToIds
     regimes: MappingProxyType[str, Regime]
-    internal_regimes: MappingProxyType[str, InternalRegime]
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime]
     enable_jit: bool = True
-    params_template: ParamsDict
+    params_template: ParamsTemplate
 
     def __init__(
         self,
@@ -70,7 +77,6 @@ class Model:
             enable_jit: Whether to jit the functions of the internal regime.
 
         """
-        # Create regime_id mapping from dict keys
         self.description = description
         self.ages = ages
         self.n_periods = ages.n_periods
@@ -87,23 +93,33 @@ class Model:
             )
         )
         self.regimes = MappingProxyType(dict(regimes))
-        self.internal_regimes = MappingProxyType(
-            process_regimes(
-                regimes=regimes,
-                ages=self.ages,
-                regime_names_to_ids=self.regime_names_to_ids,
-                enable_jit=enable_jit,
-            )
+        self.internal_regimes = process_regimes(
+            regimes=regimes,
+            ages=self.ages,
+            regime_names_to_ids=self.regime_names_to_ids,
+            enable_jit=enable_jit,
         )
         self.enable_jit = enable_jit
-        self.params_template = {
-            name: regime.params_template
-            for name, regime in self.internal_regimes.items()
-        }
+        self.params_template = create_params_template(self.internal_regimes)
+
+    def get_params_template(self) -> MutableParamsTemplate:
+        """Get a mutable copy of the params template.
+
+        Returns a deep copy of the params_template where all immutable containers
+        (MappingProxyType, tuple, frozenset) are converted to their mutable
+        equivalents (dict, list, set).
+
+        Returns:
+            A mutable nested dict with the same structure as params_template.
+
+        """
+        return ensure_containers_are_mutable(  # ty: ignore[invalid-return-type]
+            self.params_template
+        )
 
     def solve(
         self,
-        params: ParamsDict,
+        params: UserParams,
         *,
         debug_mode: bool = True,
     ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
@@ -116,8 +132,9 @@ class Model:
         Returns:
             Dictionary mapping period to a value function array for each regime.
         """
+        internal_params = process_params(params, self.params_template)
         return solve(
-            params=params,
+            internal_params=internal_params,
             ages=self.ages,
             internal_regimes=self.internal_regimes,
             logger=get_logger(debug_mode=debug_mode),
@@ -125,7 +142,7 @@ class Model:
 
     def simulate(
         self,
-        params: ParamsDict,
+        params: UserParams,
         initial_states: Mapping[str, Array],
         initial_regimes: list[RegimeName],
         V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
@@ -151,8 +168,9 @@ class Model:
             optionally with additional_targets.
 
         """
+        internal_params = process_params(params, self.params_template)
         return simulate(
-            params=params,
+            internal_params=internal_params,
             initial_states=initial_states,
             initial_regimes=initial_regimes,
             internal_regimes=self.internal_regimes,
@@ -165,7 +183,7 @@ class Model:
 
     def solve_and_simulate(
         self,
-        params: ParamsDict,
+        params: UserParams,
         initial_states: Mapping[str, Array],
         initial_regimes: list[RegimeName],
         *,

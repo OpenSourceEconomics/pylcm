@@ -8,3 +8,4 @@
 | Module name                                                                                                                                | Description                                                            |
 | ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
 | [`function_representation.py`](https://nbviewer.org/github/opensourceeconomics/pylcm/blob/main/explanations/function_representation.ipynb) | Explanations of what the function representation does and how it works |
+| [`params_workflow.ipynb`](https://nbviewer.org/github/opensourceeconomics/pylcm/blob/main/explanations/params_workflow.ipynb)              | How to specify parameters at model, regime, and function levels        |

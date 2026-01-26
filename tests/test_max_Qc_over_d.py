@@ -1,3 +1,5 @@
+from types import MappingProxyType
+
 import jax.numpy as jnp
 import pandas as pd
 import pytest
@@ -42,7 +44,7 @@ def test_get_solve_discrete_problem_illustrative():
         ],
     )
 
-    got = max_Qc_over_d(Qc_arr, params={})
+    got = max_Qc_over_d(Qc_arr, internal_params=MappingProxyType({}))
     aaae(got, jnp.array([1, 3, 5]))
 
 
@@ -58,7 +60,7 @@ def test_solve_discrete_problem_no_shocks_illustrative_single_action_axis():
     got = _max_Qc_over_d_no_shocks(
         Qc_arr,
         discrete_action_axes=(0,),
-        params={},
+        internal_params=MappingProxyType({}),
     )
     aaae(got, jnp.array([4, 5]))
 
@@ -75,7 +77,7 @@ def test_solve_discrete_problem_no_shocks_illustrative_multiple_action_axes():
     got = _max_Qc_over_d_no_shocks(
         Qc_arr,
         discrete_action_axes=(0, 1),
-        params={},
+        internal_params=MappingProxyType({}),
     )
     aaae(got, 5)
 
@@ -93,7 +95,7 @@ def test_max_Qc_over_d_extreme_value_shocks_illustrative_single_action_axis():
     got = _max_Qc_over_d_extreme_value_shocks(
         Qc_arr,
         discrete_action_axes=(0,),
-        params={"additive_utility_shock": {"scale": 0.1}},
+        internal_params=MappingProxyType({"additive_utility_shock": {"scale": 0.1}}),
     )
     aaae(got, jnp.array([4, 5]), decimal=5)
 
@@ -110,7 +112,7 @@ def test_max_Qc_over_d_extreme_value_shocks_illustrative_multiple_action_axes():
     got = _max_Qc_over_d_extreme_value_shocks(
         Qc_arr,
         discrete_action_axes=(0, 1),
-        params={"additive_utility_shock": {"scale": 0.1}},
+        internal_params=MappingProxyType({"additive_utility_shock": {"scale": 0.1}}),
     )
     aaae(got, 5, decimal=5)
 
