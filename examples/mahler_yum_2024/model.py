@@ -719,7 +719,7 @@ def create_inputs(
     initial_adjustment_cost = random.uniform(new_keys[1], (n_simulation_subjects,))
     prod_dist = jax.lax.fori_loop(
         0,
-        1000000,
+        200,
         lambda i, a: a @ xtrans.T,  # noqa: ARG005
         jnp.full(5, 1 / 5),
     )
