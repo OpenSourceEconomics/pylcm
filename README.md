@@ -30,7 +30,7 @@ installation of `jaxlib`, please consult the `jax`
 [docs](https://jax.readthedocs.io/en/latest/installation.html#supported-platforms).
 
 > [!NOTE]
-> GPU support is currently only tested on Linux with CUDA 12.
+> GPU support is currently only tested on Linux with CUDA 12 and 13.
 
 ## Developing
 

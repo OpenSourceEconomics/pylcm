@@ -28,19 +28,19 @@ jobs:
       - uses: actions/checkout@v6
       - uses: prefix-dev/setup-pixi@v0.9.3
         with:
-          pixi-version: v0.63.1
+          pixi-version: v0.63.2
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
-          environments: test-cpu
+          environments: tests-cpu
           activate-environment: true
           frozen: true
       - name: Run pytest
         shell: bash {0}
-        run: pixi run -e test-cpu tests
+        run: pixi run -e tests-cpu tests
         if: runner.os != 'Linux' || matrix.python-version != '3.14'
       - name: Run pytest and collect coverage
         shell: bash {0}
-        run: pixi run -e test-cpu tests-with-cov
+        run: pixi run -e tests-cpu tests-with-cov
         if: runner.os == 'Linux' && matrix.python-version == '3.14'
       - name: Upload coverage report
         if: runner.os == 'Linux' && matrix.python-version == '3.14'
@@ -59,14 +59,14 @@ jobs:
       - uses: actions/checkout@v6
       - uses: prefix-dev/setup-pixi@v0.9.3
         with:
-          pixi-version: v0.63.1
+          pixi-version: v0.63.2
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
-          environments: test-cpu
+          environments: tests-cpu
           frozen: true
       - name: Run ty
         shell: bash {0}
-        run: pixi run -e test-cpu ty
+        run: pixi run -e tests-cpu ty
   run-tests-gpu:
     name: Run tests on GPU
     # Config:
@@ -82,14 +82,14 @@ jobs:
       - uses: actions/checkout@v6
       - uses: prefix-dev/setup-pixi@v0.9.3
         with:
-          pixi-version: v0.63.1
+          pixi-version: v0.63.2
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
-          environments: test-cuda12
+          environments: tests-cuda12
           frozen: false
       - name: Run pytest on GPU
         shell: bash {0}
-        run: pixi run -e test-cuda12 tests
+        run: pixi run -e tests-cuda12 tests
   run-tests-gpu-32bit:
     name: Run tests on GPU (32-bit precision)
     runs-on: ubuntu-latest-gpu
@@ -101,14 +101,14 @@ jobs:
       - uses: actions/checkout@v6
       - uses: prefix-dev/setup-pixi@v0.9.3
         with:
-          pixi-version: v0.63.1
+          pixi-version: v0.63.2
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
-          environments: test-cuda12
+          environments: tests-cuda12
           frozen: false
       - name: Run pytest on GPU with 32-bit precision
         shell: bash {0}
-        run: pixi run -e test-cuda12 tests-32bit
+        run: pixi run -e tests-cuda12 tests-32bit
   # run-explanation-notebooks:
   #   name: Run explanation notebooks on Python 3.14
   #   runs-on: ubuntu-latest
@@ -116,11 +116,11 @@ jobs:
   #     - uses: actions/checkout@v6
   #     - uses: prefix-dev/setup-pixi@v0.9.3
   #       with:
-  #         pixi-version: v0.63.1
+  #         pixi-version: v0.63.2
   #         cache: true
   #         cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
-  #         environments: test-cpu
+  #         environments: tests-cpu
   #         frozen: true
   #     - name: Run explanation notebooks
   #       shell: bash {0}
-  #       run: pixi run -e test-cpu explanation-notebooks
+  #       run: pixi run -e tests-cpu explanation-notebooks
