@@ -21,7 +21,7 @@ import lcm
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.dispatchers import _base_productmap
 from lcm.grids import ShockGrid
-from lcm.shocks import rouwenhorst_gridpoints, rouwenhorst_probs
+from lcm.shocks import Shock
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -656,8 +656,11 @@ def create_inputs(
     # Create variable grids from supplied parameters
     income_grid = create_income_grid(income_process)  # ty: ignore[invalid-argument-type]
     chimax_grid = create_chimaxgrid(chi)
-    xvalues = rouwenhorst_gridpoints(n_points=5, rho=rho)
-    xtrans = rouwenhorst_probs(n_points=5, rho=rho)
+    prod_shock = Shock(
+        distribution_type="rouwenhorst", n_points=5, shock_params={"rho": rho}
+    )
+    xvalues = prod_shock.get_gridpoints()
+    xtrans = prod_shock.get_transition_probs()
     xi_grid = create_xigrid(xi)
     phi_grid = create_phigrid(nu)
 

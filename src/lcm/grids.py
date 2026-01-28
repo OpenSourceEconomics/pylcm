@@ -9,7 +9,7 @@ import portion
 
 from lcm import grid_helpers
 from lcm.exceptions import GridInitializationError, format_messages
-from lcm.shocks import SHOCK_GRIDPOINT_FUNCTIONS
+from lcm.shocks import Shock
 from lcm.typing import Float1D, Int1D, MappingProxyType, ParamsDict, ScalarFloat
 from lcm.utils import find_duplicates, get_field_names_and_values
 
@@ -268,15 +268,18 @@ class ShockGrid(ContinuousGrid):
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
-        return SHOCK_GRIDPOINT_FUNCTIONS[self.distribution_type](
-            self.n_points, **self.shock_params
+        shock = Shock(
+            n_points=self.n_points,
+            distribution_type=self.distribution_type,
+            shock_params=self.shock_params,
         )
+        return shock.get_gridpoints()
 
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
         """Return the generalized coordinate of a value in the grid."""
         return grid_helpers.get_irreg_coordinate(value, self.to_jax())
 
-    def init_params(self, params: ParamsDict):
+    def init_params(self, params: ParamsDict) -> ShockGrid:
         """Augment the grid with fixed params from model initialization."""
         return dataclasses.replace(self, shock_params=params)
 

@@ -272,7 +272,7 @@ def _validate_model_inputs(  # noqa: C901
         )
     mising_fixed_params = _validate_fixed_params_present(regimes, fixed_params)
     if mising_fixed_params:
-        error_messages.append(mising_fixed_params)
+        error_messages.extend(mising_fixed_params)
 
     if error_messages:
         msg = format_messages(error_messages)
@@ -281,7 +281,7 @@ def _validate_model_inputs(  # noqa: C901
 
 def _validate_fixed_params_present(
     regimes: Mapping[str, Regime], fixed_params: ParamsDict
-):
+) -> list[str]:
     error_messages = []
     for regime_name, regime in regimes.items():
         fixed_params_needed = set()

@@ -1,3 +1,6 @@
+from dataclasses import dataclass
+from typing import Literal
+
 import jax
 from jax import numpy as jnp
 from jax.scipy.stats.norm import cdf
@@ -5,7 +8,29 @@ from jax.scipy.stats.norm import cdf
 from lcm.typing import Float1D, FloatND, ParamsDict
 
 
-def discretized_uniform_distribution_gridpoints(
+@dataclass(frozen=True, kw_only=True)
+class Shock:
+    distribution_type: Literal["uniform", "normal", "tauchen", "rouwenhorst"]
+    n_points: int
+    shock_params: ParamsDict
+
+    def get_gridpoints(self) -> Float1D:
+        return SHOCK_GRIDPOINT_FUNCTIONS[self.distribution_type](
+            self.n_points, **self.shock_params
+        )
+
+    def get_transition_probs(self) -> FloatND:
+        return SHOCK_TRANSITION_PROBABILITY_FUNCTIONS[self.distribution_type](
+            self.n_points, **self.shock_params
+        )
+
+    def draw_shock(self, key: FloatND, prev_value: Float1D) -> Float1D:
+        return SHOCK_CALCULATION_FUNCTIONS[self.distribution_type](
+            params=self.shock_params, key=key, prev_value=prev_value
+        )
+
+
+def _discretized_uniform_distribution_gridpoints(
     n_points: int, start: float = 0, stop: float = 1
 ) -> FloatND:
     """Calculate the gridpoints for a discretized uniform distribution.
@@ -22,7 +47,7 @@ def discretized_uniform_distribution_gridpoints(
     return jnp.linspace(start=start, stop=stop, num=n_points)
 
 
-def discretized_uniform_distribution_probs(n_points: int) -> FloatND:
+def _discretized_uniform_distribution_probs(n_points: int) -> FloatND:
     """Calculate the transition probabilities for a discretized uniform distribution.
 
     Args:
@@ -37,7 +62,7 @@ def discretized_uniform_distribution_probs(n_points: int) -> FloatND:
     return jnp.full((n_points, n_points), fill_value=1 / n_points)
 
 
-def discretized_normal_distribution_gridpoints(
+def _discretized_normal_distribution_gridpoints(
     n_points: int, mu_eps: float = 0.0, sigma_eps: float = 1.0, n_std: int = 3
 ) -> FloatND:
     """Calculate the gridpoints for a discretized uniform distribution.
@@ -58,7 +83,7 @@ def discretized_normal_distribution_gridpoints(
     return jnp.linspace(start=x_min, stop=x_max, num=n_points)
 
 
-def discretized_normal_distribution_probs(
+def _discretized_normal_distribution_probs(
     n_points: int, mu_eps: float = 0.0, sigma_eps: float = 1.0, n_std: int = 3
 ) -> FloatND:
     """Calculate the transition probabilities for a discretized normal distribution.
@@ -85,7 +110,7 @@ def discretized_normal_distribution_probs(
     return jnp.full((n_points, n_points), fill_value=P)
 
 
-def tauchen_gridpoints(
+def _tauchen_gridpoints(
     n_points: int,
     rho: float,
     sigma_eps: float = 1.0,
@@ -126,7 +151,7 @@ def tauchen_gridpoints(
     return x + mu_eps
 
 
-def tauchen_probs(
+def _tauchen_probs(
     n_points: int,
     rho: float,
     sigma_eps: float = 1.0,
@@ -183,7 +208,7 @@ def tauchen_probs(
     return P
 
 
-def rouwenhorst_gridpoints(
+def _rouwenhorst_gridpoints(
     n_points: int, rho: float, sigma_eps: float = 1.0, mu_eps: float = 0.0
 ) -> FloatND:
     r"""Calculate the gridpoints for the AR1 process with the 'Rouwenhorst'-method.
@@ -208,7 +233,7 @@ def rouwenhorst_gridpoints(
     return jnp.linspace(mu_eps / (1.0 - rho) - nu, mu_eps / (1.0 - rho) + nu, n_points)
 
 
-def rouwenhorst_probs(n_points: int, rho: float) -> FloatND:
+def _rouwenhorst_probs(n_points: int, rho: float) -> FloatND:
     r"""Calculate the gridpoints for the AR1 process with the 'Rouwenhorst'-method.
 
     X_t = \rho*X_(t-1) + \\eps_t, \\eps_t= N(mu_eps, sigma_eps)
@@ -254,17 +279,17 @@ def rouwenhorst_probs(n_points: int, rho: float) -> FloatND:
 
 
 SHOCK_TRANSITION_PROBABILITY_FUNCTIONS = {
-    "uniform": discretized_uniform_distribution_probs,
-    "normal": discretized_normal_distribution_probs,
-    "tauchen": tauchen_probs,
-    "rouwenhorst": rouwenhorst_probs,
+    "uniform": _discretized_uniform_distribution_probs,
+    "normal": _discretized_normal_distribution_probs,
+    "tauchen": _tauchen_probs,
+    "rouwenhorst": _rouwenhorst_probs,
 }
 
 SHOCK_GRIDPOINT_FUNCTIONS = {
-    "uniform": discretized_uniform_distribution_gridpoints,
-    "normal": discretized_normal_distribution_gridpoints,
-    "tauchen": tauchen_gridpoints,
-    "rouwenhorst": rouwenhorst_gridpoints,
+    "uniform": _discretized_uniform_distribution_gridpoints,
+    "normal": _discretized_normal_distribution_gridpoints,
+    "tauchen": _tauchen_gridpoints,
+    "rouwenhorst": _rouwenhorst_gridpoints,
 }
 
 

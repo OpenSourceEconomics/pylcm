@@ -11,7 +11,7 @@ from jax import Array
 
 from lcm.grids import Grid
 from lcm.input_processing.util import is_stochastic_transition
-from lcm.shocks import SHOCK_CALCULATION_FUNCTIONS
+from lcm.shocks import Shock
 from lcm.typing import (
     ContinuousState,
     DiscreteState,
@@ -242,6 +242,11 @@ def _create_continuous_stochastic_next_func(
         f"key_{name}": "dict[str, Array]",
         prev_state_name: "Array",
     }
+    shock = Shock(
+        n_points=1,
+        distribution_type=distribution_type,
+        shock_params=gridspecs[prev_state_name].shock_params,  # ty: ignore[unresolved-attribute]
+    )
 
     @with_signature(
         args=args,
@@ -250,8 +255,7 @@ def _create_continuous_stochastic_next_func(
     def next_stochastic_state(
         **kwargs: FloatND,
     ) -> ContinuousState:
-        return SHOCK_CALCULATION_FUNCTIONS[distribution_type](
-            params=gridspecs[prev_state_name].shock_params,  # ty: ignore[unresolved-attribute]
+        return shock.draw_shock(
             key=kwargs[f"key_{name}"],
             prev_value=kwargs[prev_state_name],
         )

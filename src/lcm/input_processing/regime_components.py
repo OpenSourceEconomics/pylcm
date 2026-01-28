@@ -13,6 +13,7 @@ from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.dispatchers import simulation_spacemap, vmap_1d
+from lcm.grids import Grid
 from lcm.input_processing.util import get_grids, get_variable_info
 from lcm.interfaces import (
     InternalFunctions,
@@ -167,7 +168,7 @@ def _build_argmax_and_max_Q_over_a_function(
 def build_next_state_simulation_functions(
     internal_functions: InternalFunctions,
     grids: GridsDict,
-    gridspecs,
+    gridspecs: MappingProxyType[str, Grid],
     variable_info: pd.DataFrame,
     *,
     enable_jit: bool,
