@@ -5,7 +5,7 @@ from types import MappingProxyType
 from typing import Any
 
 from lcm.exceptions import RegimeInitializationError, format_messages
-from lcm.grids import Grid, ShockGrid
+from lcm.grids import Grid
 from lcm.typing import (
     ActiveFunction,
     UserFunction,
@@ -214,9 +214,7 @@ def _validate_terminal_or_transitions(regime: Regime) -> list[str]:
             )
 
         # Validate each state has a corresponding transition
-        states = set(regime.states) - {
-            name for name, grid in regime.states.items() if isinstance(grid, ShockGrid)
-        }
+        states = set(regime.states)
 
         states_via_transition = {
             fn_name.removeprefix("next_") for fn_name in regime.transitions

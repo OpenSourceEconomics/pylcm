@@ -33,7 +33,6 @@ from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
 from lcm.mark import stochastic
 from lcm.ndimage import map_coordinates
 from lcm.regime import Regime
-from lcm.shocks import Shock
 from lcm.typing import (
     Float1D,
     Int1D,
@@ -94,7 +93,7 @@ def process_regimes(
     # them
     regimes_with_fixed_params = {}
     for name, regime in regimes.items():
-        regimes_with_fixed_params[name] = _pass_fixed_params(
+        regimes_with_fixed_params[name] = _pass_fixed_params_to_shocks(
             regime, fixed_params=fixed_params
         )
 
@@ -449,12 +448,7 @@ def _get_stochastic_next_function_for_shock(name: str, grid: Float1D) -> UserFun
 
 
 def _get_fn_for_shock(name: str, flat_grid: Float1D, gridspec: Grid) -> UserFunction:
-    shock = Shock(
-        n_points=gridspec.n_points,  # ty: ignore[unresolved-attribute]
-        distribution_type=gridspec.distribution_type,  # ty: ignore[unresolved-attribute]
-        shock_params=gridspec.shock_params,  # ty: ignore[unresolved-attribute]
-    )
-    transition_probs = shock.get_transition_probs()
+    transition_probs = gridspec.shock.get_transition_probs()  # ty: ignore[unresolved-attribute]
 
     @with_signature(
         args={f"{name}": "ContinuousState"},
@@ -493,12 +487,16 @@ def _ensure_fn_only_depends_on_params(
     return _add_dummy_params_argument(fn)
 
 
-def _pass_fixed_params(regime: Regime, fixed_params: ParamsDict) -> Regime:
+def _pass_fixed_params_to_shocks(regime: Regime, fixed_params: ParamsDict) -> Regime:
     states_with_fixed_params = {}
     for name, state in regime.states.items():
         if isinstance(state, ShockGrid):
             if name in fixed_params:
-                states_with_fixed_params[name] = state.init_params(fixed_params[name])
+                states_with_fixed_params[name] = ShockGrid(
+                    distribution_type=state.distribution_type,
+                    n_points=state.n_points,
+                    shock_params=fixed_params[name],
+                )
             else:
                 states_with_fixed_params[name] = state
         else:

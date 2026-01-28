@@ -259,21 +259,26 @@ class ShockGrid(ContinuousGrid):
         distribution_type: Type of the shock.
         n_points: The number of points for the discretization of the shock.
         shock_params: Fixed parameters that are needed for the discretization function
-            of the specified shock type.
+            of the specified shock type. Can be supplied directly or via the model fixed
+            parameters.
     """
 
     distribution_type: Literal["uniform", "normal", "tauchen", "rouwenhorst"]
     n_points: int
     shock_params: ParamsDict = field(default_factory=lambda: MappingProxyType({}))
 
-    def to_jax(self) -> Float1D:
-        """Convert the grid to a Jax array."""
-        shock = Shock(
+    @property
+    def shock(self) -> Shock:
+        """Return the number of points in the grid."""
+        return Shock(
             n_points=self.n_points,
             distribution_type=self.distribution_type,
             shock_params=self.shock_params,
         )
-        return shock.get_gridpoints()
+
+    def to_jax(self) -> Float1D:
+        """Convert the grid to a Jax array."""
+        return self.shock.get_gridpoints()
 
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
         """Return the generalized coordinate of a value in the grid."""

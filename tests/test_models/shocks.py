@@ -21,8 +21,8 @@ def get_model(
     distribution_type: Literal["uniform", "normal", "tauchen", "rouwenhorst"],
 ):
     @lcm.mark.stochastic
-    def next_health(state2: DiscreteState, state2_transition: FloatND) -> FloatND:
-        return state2_transition[state2]
+    def next_health(health: DiscreteState, health_transition: FloatND) -> FloatND:
+        return health_transition[health]
 
     @lcm.mark.stochastic
     def next_income() -> None:
@@ -83,7 +83,7 @@ def get_model(
         utility=utility,
         transitions={
             "next_wealth": next_wealth,
-            "next_state": next_income,
+            "next_income": next_income,
             "next_health": next_health,
             "next_regime": next_regime,
         },
@@ -108,7 +108,7 @@ def get_params():
     return {
         "test_regime": {
             "discount_factor": 0.97,
-            "next_state2": {"state2_transition": jnp.full((2, 2), fill_value=0.5)},
+            "next_health": {"health_transition": jnp.full((2, 2), fill_value=0.5)},
         },
         "test_regime_term": {
             "discount_factor": 0.97,
