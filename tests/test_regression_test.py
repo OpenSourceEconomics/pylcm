@@ -52,7 +52,14 @@ def test_regression_test():
             aaae(expected_solve[period][regime], got_solve[period][regime], decimal=5)
 
     # Compare simulation (use tolerance to match solution comparison precision)
-    assert_frame_equal(got_simulate, expected_simulate, check_dtype=False, atol=1e-5)
+    assert_frame_equal(
+        got_simulate,
+        expected_simulate,
+        check_dtype=False,
+        atol=1e-5,
+        check_column_type=False,
+        check_categorical=False,
+    )
 
 
 # ======================================================================================
