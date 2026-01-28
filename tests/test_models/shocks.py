@@ -1,13 +1,25 @@
 from typing import Literal
+
+from jax import numpy as jnp
+
 import lcm
 from lcm.ages import AgeGrid
 from lcm.grids import DiscreteGrid, LinSpacedGrid, ShockGrid, categorical
 from lcm.model import Model
 from lcm.regime import Regime
-from lcm.typing import ContinuousAction, ContinuousState, DiscreteState, FloatND, ScalarInt
-from jax import numpy as jnp
+from lcm.typing import (
+    ContinuousAction,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    ScalarInt,
+)
 
-def get_model(n_periods: int, distribution_type: Literal["uniform", "normal", "tauchen", "rouwenhorst"]):
+
+def get_model(
+    n_periods: int,
+    distribution_type: Literal["uniform", "normal", "tauchen", "rouwenhorst"],
+):
     @lcm.mark.stochastic
     def next_health(state2: DiscreteState, state2_transition: FloatND) -> FloatND:
         return state2_transition[state2]
@@ -90,6 +102,8 @@ def get_model(n_periods: int, distribution_type: Literal["uniform", "normal", "t
         if distribution_type in ["rouwenhorst", "tauchen"]
         else {},
     )
+
+
 def get_params():
     return {
         "test_regime": {
