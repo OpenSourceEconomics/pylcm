@@ -191,18 +191,6 @@ class InternalRegime:
     # Not properly processed yet
     random_utility_shocks: ShockType
 
-    def replace(self, state_action_space: StateActionSpace) -> InternalRegime:
-        """Replace the state-action space of an internal regime.
-
-        Args:
-            state_action_space: The new state action space.
-
-        Returns:
-            New internal regime with the replaced state-action space.
-
-        """
-        return dataclasses.replace(self, state_action_space=state_action_space)
-
 
 @dataclasses.dataclass(frozen=True)
 class PeriodRegimeSimulationData:

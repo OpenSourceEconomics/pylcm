@@ -54,7 +54,7 @@ def test_function_evaluator_with_one_continuous_variable():
     evaluator = get_value_function_representation(state_space_info)
 
     # partial the function values into the evaluator
-    func = partial(evaluator, next_V_arr=next_V_arr, params={})
+    func = partial(evaluator, next_V_arr=next_V_arr)
 
     # test the evaluator
     got = func(next_wealth=0.5)
@@ -141,7 +141,6 @@ def test_function_evaluator(binary_discrete_grid):
         next_wealth=600,
         next_human_capital=1.5,
         next_V_arr=next_V_arr,
-        params={},
     )
 
     assert jnp.allclose(out, 801.5)
@@ -186,7 +185,7 @@ def test_get_coordinate_finder():
         in_name="wealth",
         grid=LinSpacedGrid(start=0, stop=10, n_points=21),
     )
-    find_coordinate = partial(find_coordinate, params={})
+    find_coordinate = partial(find_coordinate)
     calculated = find_coordinate(wealth=5.75)
     assert calculated == 11.5
 
@@ -241,7 +240,7 @@ def test_get_function_evaluator_illustrative():
     )
 
     # partial the function values into the evaluator
-    f = partial(evaluator, values_name=values, params={})
+    f = partial(evaluator, values_name=values)
 
     got = f(prefix_a=0.25)
     expected = jnp.pi * 0.25 + 2
@@ -264,7 +263,6 @@ def test_get_coordinate_finder_illustrative():
         in_name="a",
         grid=LinSpacedGrid(start=0, stop=1, n_points=3),
     )
-    find_coordinate = partial(find_coordinate, params={})
     assert find_coordinate(a=0) == 0
     assert find_coordinate(a=0.5) == 1
     assert find_coordinate(a=1) == 2
@@ -363,7 +361,7 @@ def test_function_evaluator_performs_linear_extrapolation():
     evaluator = get_value_function_representation(state_space_info)
 
     # partial the function values into the evaluator
-    func = partial(evaluator, next_V_arr=next_V_arr, params={})
+    func = partial(evaluator, next_V_arr=next_V_arr)
 
     # test the evaluator on values outside the grid
     wealth_outside_of_grid = [-0.5, 3.5, 10]

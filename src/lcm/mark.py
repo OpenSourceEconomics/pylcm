@@ -13,12 +13,9 @@ R = TypeVar("R")
 class StochasticInfo:
     """Information on the stochastic nature of user provided functions."""
 
-    distribution_type: str = "custom"
-
 
 def stochastic(
     func: Callable[..., Any] | None = None,
-    distribution_type: str = "custom",
 ) -> Callable[..., Any]:
     """Decorator to mark a function as stochastic and add information.
 
@@ -30,7 +27,7 @@ def stochastic(
         The decorated function
 
     """
-    stochastic_info = StochasticInfo(distribution_type=distribution_type)
+    stochastic_info = StochasticInfo()
 
     def decorator_stochastic(func: Callable[P, R]) -> Callable[P, R]:
         @functools.wraps(func)
