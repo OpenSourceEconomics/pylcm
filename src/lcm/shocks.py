@@ -10,21 +10,38 @@ from lcm.typing import Float1D, FloatND, ParamsDict
 
 @dataclass(frozen=True, kw_only=True)
 class Shock:
+    """A description of a shock.
+
+    The shock class can be used to access the shock discretization functions
+    inside and outside of LCM. It can either be a uniformly distributed or a normally
+    distributed shock or an AR-1 process where the type describes the used
+    discretization algorithm.
+
+    Attributes:
+        distribution_type: Type of the shock.
+        n_points: The number of points for the discretization of the shock.
+        shock_params: Fixed parameters that are needed for the discretization function
+            of the specified shock type.
+    """
+
     distribution_type: Literal["uniform", "normal", "tauchen", "rouwenhorst"]
     n_points: int
     shock_params: ParamsDict
 
     def get_gridpoints(self) -> Float1D:
+        """Get the gridpoints used for discretization."""
         return SHOCK_GRIDPOINT_FUNCTIONS[self.distribution_type](
             self.n_points, **self.shock_params
         )
 
     def get_transition_probs(self) -> FloatND:
+        """Get the transition probabilities at the gridpoints."""
         return SHOCK_TRANSITION_PROBABILITY_FUNCTIONS[self.distribution_type](
             self.n_points, **self.shock_params
         )
 
     def draw_shock(self, key: FloatND, prev_value: Float1D) -> Float1D:
+        """Draw a shock from its distribution."""
         return SHOCK_CALCULATION_FUNCTIONS[self.distribution_type](
             params=self.shock_params, key=key, prev_value=prev_value
         )

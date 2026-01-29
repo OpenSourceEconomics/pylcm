@@ -282,6 +282,7 @@ def _validate_model_inputs(  # noqa: C901
 def _validate_fixed_params_present(
     regimes: Mapping[str, Regime], fixed_params: ParamsDict
 ) -> list[str]:
+    """Return error messages if params for shocks are missing."""
     error_messages = []
     for regime_name, regime in regimes.items():
         fixed_params_needed = set()

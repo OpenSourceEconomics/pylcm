@@ -331,7 +331,7 @@ def _get_internal_functions(
         )
     for shock_name in variable_info.query("is_shock").index.tolist():
         relative_name = f"{regime_name}__next_{shock_name}"
-        functions[f"weight_{relative_name}"] = _get_fn_for_shock(
+        functions[f"weight_{relative_name}"] = _get_weights_fn_for_shock(
             name=shock_name,
             flat_grid=flat_grids[relative_name.replace("next_", "")],
             gridspec=gridspecs[shock_name],
@@ -439,6 +439,8 @@ def _get_stochastic_next_function(fn: UserFunction, grid: Int1D) -> UserFunction
 
 
 def _get_stochastic_next_function_for_shock(name: str, grid: Float1D) -> UserFunction:
+    """Get function that returns the indices in the vf arr of the next shock states."""
+
     @with_signature(args={f"{name}": "ContinuousState"}, return_annotation="Int1D")
     @stochastic
     def next_func(**kwargs: Any) -> Int1D:  # noqa: ARG001, ANN401
@@ -447,7 +449,10 @@ def _get_stochastic_next_function_for_shock(name: str, grid: Float1D) -> UserFun
     return next_func
 
 
-def _get_fn_for_shock(name: str, flat_grid: Float1D, gridspec: Grid) -> UserFunction:
+def _get_weights_fn_for_shock(
+    name: str, flat_grid: Float1D, gridspec: Grid
+) -> UserFunction:
+    """Get function that uses linear interpolation to calculate the shock weights."""
     transition_probs = gridspec.shock.get_transition_probs()  # ty: ignore[unresolved-attribute]
 
     @with_signature(
