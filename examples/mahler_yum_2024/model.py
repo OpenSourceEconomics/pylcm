@@ -748,7 +748,7 @@ def create_inputs(
 if __name__ == "__main__":
     params, initial_states, initial_regimes = create_inputs(
         seed=7235,
-        n_simulation_subjects=10,
+        n_simulation_subjects=1_000,
         **START_PARAMS,  # ty: ignore[invalid-argument-type]
     )
 

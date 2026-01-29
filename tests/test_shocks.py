@@ -25,11 +25,11 @@ def test_model_with_shock(distribution_type):
 
     got_simulate = model.simulate(
         params=params,
-        initial_regimes=["test_regime"],
+        initial_regimes=["test_regime"] * 2,
         initial_states={
-            "health": jnp.asarray([0]),
-            "income": jnp.asarray([0]),
-            "wealth": jnp.asarray([1]),
+            "health": jnp.asarray([0, 0]),
+            "income": jnp.asarray([0, 0]),
+            "wealth": jnp.asarray([1, 1]),
         },
         V_arr_dict=got_solve,
         seed=42,

@@ -78,7 +78,7 @@ def get_model(
             "health": DiscreteGrid(Health),
         },
         actions={
-            "consumption": LinSpacedGrid(start=1, stop=5, n_points=4),
+            "consumption": LinSpacedGrid(start=0.1, stop=1, n_points=4),
         },
         utility=utility,
         transitions={
@@ -92,7 +92,7 @@ def get_model(
     test_regime_term = Regime(
         terminal=True,
         active=test_term_active,
-        utility=lambda: 0.0,
+        utility=lambda: 0,
     )
     return Model(
         regimes={"test_regime": test_regime, "test_regime_term": test_regime_term},
@@ -107,10 +107,10 @@ def get_model(
 def get_params():
     return {
         "test_regime": {
-            "discount_factor": 0.97,
+            "discount_factor": 1,
             "next_health": {"health_transition": jnp.full((2, 2), fill_value=0.5)},
         },
         "test_regime_term": {
-            "discount_factor": 0.97,
+            "discount_factor": 1,
         },
     }
