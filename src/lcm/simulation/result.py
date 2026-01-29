@@ -18,6 +18,7 @@ from lcm.ages import AgeGrid
 from lcm.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.grids import DiscreteGrid
+from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
 from lcm.typing import FloatND, ParamsDict, RegimeName
 from lcm.utils import flatten_regime_namespace
@@ -366,7 +367,11 @@ def _get_stochastic_weight_function_names(regime: InternalRegime) -> set[str]:
     for stochastic state transitions. They should not be exposed as available targets.
     """
     flat_transitions = flatten_regime_namespace(regime.transitions)
-    return {f"weight_{name}" for name in flat_transitions}
+    return {
+        f"weight_{name}"
+        for name, fn in flat_transitions.items()
+        if is_stochastic_transition(fn)
+    }
 
 
 # ======================================================================================
