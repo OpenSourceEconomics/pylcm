@@ -20,7 +20,7 @@ def solve(
     """Solve a model using grid search.
 
     Args:
-        params: Dict of model parameters.
+        params: Dict of model parameters as provided by the user.
         ages: Age grid for the model.
         internal_regimes: The internal regimes, that contain all necessary functions
             to solve the model.
@@ -48,7 +48,7 @@ def solve(
         }
 
         for name, internal_regime in active_regimes.items():
-            state_action_space = internal_regime.state_action_spaces
+            state_action_space = internal_regime.state_action_space
             max_Q_over_a = internal_regime.max_Q_over_a_functions[period]
 
             # evaluate Q-function on states and actions, and maximize over actions

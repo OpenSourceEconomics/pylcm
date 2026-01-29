@@ -24,7 +24,7 @@ class InternalRegimeMock:
     - active: list of periods the regime is active
     """
 
-    state_action_spaces: StateActionSpace
+    state_action_space: StateActionSpace
     max_Q_over_a_functions: dict[int, MaxQOverAFunction]
     active_periods: list[int]
 
@@ -105,7 +105,7 @@ def test_solve_brute():
     # ==================================================================================
 
     internal_regime = InternalRegimeMock(
-        state_action_spaces=state_action_space,
+        state_action_space=state_action_space,
         max_Q_over_a_functions={0: max_Q_over_a, 1: max_Q_over_a},
         active_periods=[0, 1],
     )
@@ -161,7 +161,7 @@ def test_solve_brute_single_period_Qc_arr():
     # is correctly applied to the state_action_space
 
     internal_regime = InternalRegimeMock(
-        state_action_spaces=state_action_space,
+        state_action_space=state_action_space,
         max_Q_over_a_functions={0: max_Q_over_a, 1: max_Q_over_a},
         active_periods=[0, 1],
     )

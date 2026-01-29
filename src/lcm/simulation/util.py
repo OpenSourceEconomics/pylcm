@@ -86,6 +86,9 @@ def calculate_next_states(
         ).items()
         if is_stochastic_transition(next_fn)
     ]
+    # There is a bug that sometimes changes the order of the names,
+    # sorting fixes this
+    stochastic_next_function_names.sort()
 
     key, stochastic_variables_keys = generate_simulation_keys(
         key=key,
