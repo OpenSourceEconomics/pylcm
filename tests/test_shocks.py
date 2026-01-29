@@ -7,9 +7,11 @@ from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
 from lcm._config import TEST_DATA
+from tests.conftest import X64_ENABLED
 from tests.test_models.shocks import get_model, get_params
 
 
+@pytest.mark.skipif(not X64_ENABLED, reason="Not working with 32-Bit because of RNG")
 @pytest.mark.parametrize(
     "distribution_type", ["uniform", "normal", "tauchen", "rouwenhorst"]
 )

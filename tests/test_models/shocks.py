@@ -46,7 +46,7 @@ def get_model(
         health: DiscreteState,
         consumption: ContinuousAction,
     ) -> FloatND:
-        return jnp.log(consumption) * (1 - (1 - health) * 0.3)
+        return jnp.log(consumption) * (1.0 - (1.0 - health) * 0.3)
 
     def test_active(age):
         return age < n_periods
@@ -78,7 +78,7 @@ def get_model(
             "health": DiscreteGrid(Health),
         },
         actions={
-            "consumption": LinSpacedGrid(start=0.1, stop=1, n_points=4),
+            "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
         },
         utility=utility,
         transitions={
@@ -92,7 +92,7 @@ def get_model(
     test_regime_term = Regime(
         terminal=True,
         active=test_term_active,
-        utility=lambda: 0,
+        utility=lambda: 0.0,
     )
     return Model(
         regimes={"test_regime": test_regime, "test_regime_term": test_regime_term},
