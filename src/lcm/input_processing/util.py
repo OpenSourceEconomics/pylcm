@@ -1,4 +1,3 @@
-import warnings
 from collections.abc import Callable
 from types import MappingProxyType
 from typing import Any
@@ -7,13 +6,10 @@ import pandas as pd
 from dags import get_ancestors
 from jax import Array
 
+from lcm.exceptions import ModelInitializationError
 from lcm.grids import ContinuousGrid, Grid
 from lcm.regime import Regime
 from lcm.utils import flatten_regime_namespace
-
-
-class UnusedVariableWarning(UserWarning):
-    """Warning raised when a state or action is defined but never used."""
 
 
 def is_stochastic_transition(fn: Callable[..., Any]) -> bool:
@@ -121,30 +117,35 @@ def _indicator_enters_transition(
     )
 
 
-def warn_about_unused_variables(variable_info: pd.DataFrame, regime_name: str) -> None:
-    """Warn if any states or actions are defined but never used.
+def check_all_variables_used(variable_info: pd.DataFrame, regime_name: str) -> None:
+    """Check that all states and actions are used somewhere in the model.
 
-    Each state or action should appear in at least one of:
+    Each state or action must appear in at least one of:
     - The concurrent valuation (utility or constraints)
     - A transition function
-
-    If a variable is defined but never used, a warning is issued. The unused variables
-    will be filtered out from the state-action space to allow the model to still work.
 
     Args:
         variable_info: DataFrame with variable information including
             enters_concurrent_valuation and enters_transition columns.
         regime_name: Name of the regime for clearer error messages.
 
-    """
-    vi = variable_info.copy()
+    Raises:
+        ModelInitializationError: If any variable is not used.
 
-    is_used = vi["enters_concurrent_valuation"] | vi["enters_transition"]
-    unused_variables = vi.index[~is_used].tolist()
+    """
+    is_used = (
+        variable_info["enters_concurrent_valuation"]
+        | variable_info["enters_transition"]
+    )
+    unused_variables = variable_info.index[~is_used].tolist()
 
     if unused_variables:
-        unused_states = [v for v in unused_variables if vi.loc[v, "is_state"]]
-        unused_actions = [v for v in unused_variables if vi.loc[v, "is_action"]]
+        unused_states = [
+            v for v in unused_variables if variable_info.loc[v, "is_state"]
+        ]
+        unused_actions = [
+            v for v in unused_variables if variable_info.loc[v, "is_action"]
+        ]
 
         msg_parts = []
         if unused_states:
@@ -156,12 +157,11 @@ def warn_about_unused_variables(variable_info: pd.DataFrame, regime_name: str) -
 
         msg = (
             f"The following variables are defined but never used in regime "
-            f"{regime_name}: {' and '.join(msg_parts)}. "
-            f"Unused variables will be ignored. "
-            f"Each state and action should be used in at least one of: "
+            f"'{regime_name}': {' and '.join(msg_parts)}. "
+            f"Each state and action must be used in at least one of: "
             f"utility, constraints, or transition functions."
         )
-        warnings.warn(msg, UnusedVariableWarning, stacklevel=2)
+        raise ModelInitializationError(msg)
 
 
 def get_gridspecs(

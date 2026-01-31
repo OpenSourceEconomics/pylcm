@@ -20,11 +20,11 @@ from lcm.input_processing.regime_components import (
     build_state_space_info,
 )
 from lcm.input_processing.util import (
+    check_all_variables_used,
     get_grids,
     get_gridspecs,
     get_variable_info,
     is_stochastic_transition,
-    warn_about_unused_variables,
 )
 from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
 from lcm.regime import Regime
@@ -105,8 +105,9 @@ def process_regimes(
         {n: get_variable_info(r) for n, r in regimes.items()}
     )
 
+    # Check that all variables are used in each regime
     for regime_name, vi in variable_infos.items():
-        warn_about_unused_variables(vi, regime_name)
+        check_all_variables_used(vi, regime_name)
 
     state_space_infos = MappingProxyType(
         {n: build_state_space_info(r) for n, r in regimes.items()}

@@ -4,7 +4,6 @@ import pytest
 import lcm
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.input_processing.util import UnusedVariableWarning
 
 
 def test_regime_invalid_states():
@@ -363,8 +362,8 @@ def test_model_regime_name_validation(binary_category_class):
         )
 
 
-def test_unused_state_warns_and_model_still_works():
-    """Model warns when a state is defined but never used, and still works."""
+def test_unused_state_raises_error():
+    """Model raises error when a state is defined but never used."""
 
     @categorical
     class RegimeId:
@@ -403,21 +402,17 @@ def test_unused_state_warns_and_model_still_works():
         active=lambda age: age >= 5,
     )
 
-    # Should warn about unused_state but still create the model
-    with pytest.warns(UnusedVariableWarning, match="unused_state"):
-        model = Model(
+    # Should raise error about unused_state
+    with pytest.raises(ModelInitializationError, match="unused_state"):
+        Model(
             regimes={"working": working, "retired": retired},
             ages=AgeGrid(start=0, stop=5, step="Y"),
             regime_id_class=RegimeId,
         )
 
-    # Model should be created and functional
-    assert model is not None
-    assert model.n_periods == 6  # AgeGrid(0, 5) = [0, 1, 2, 3, 4, 5] = 6 periods
 
-
-def test_unused_action_warns_and_model_still_works():
-    """Model warns when an action is defined but never used, and still works."""
+def test_unused_action_raises_error():
+    """Model raises error when an action is defined but never used."""
 
     @categorical
     class RegimeId:
@@ -450,14 +445,10 @@ def test_unused_action_warns_and_model_still_works():
         active=lambda age: age >= 5,
     )
 
-    # Should warn about unused_action but still create the model
-    with pytest.warns(UnusedVariableWarning, match="unused_action"):
-        model = Model(
+    # Should raise error about unused_action
+    with pytest.raises(ModelInitializationError, match="unused_action"):
+        Model(
             regimes={"working": working, "retired": retired},
             ages=AgeGrid(start=0, stop=5, step="Y"),
             regime_id_class=RegimeId,
         )
-
-    # Model should be created and functional
-    assert model is not None
-    assert model.n_periods == 6  # AgeGrid(0, 5) = [0, 1, 2, 3, 4, 5] = 6 periods
