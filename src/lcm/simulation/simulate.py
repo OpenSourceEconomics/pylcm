@@ -47,7 +47,7 @@ def simulate(
     """Simulate the model forward in time given pre-computed value function arrays.
 
     Args:
-        params: Dict of model parameters.
+        params: Dict of model parameters as provided by the user.
         initial_states: Flat dict mapping state names to arrays. All arrays must have
             the same length (number of subjects). Each state name should correspond to
             a state variable defined in at least one regime.

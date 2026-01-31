@@ -185,7 +185,7 @@ def test_get_coordinate_finder():
         in_name="wealth",
         grid=LinSpacedGrid(start=0, stop=10, n_points=21),
     )
-
+    find_coordinate = partial(find_coordinate)
     calculated = find_coordinate(wealth=5.75)
     assert calculated == 11.5
 
@@ -263,7 +263,6 @@ def test_get_coordinate_finder_illustrative():
         in_name="a",
         grid=LinSpacedGrid(start=0, stop=1, n_points=3),
     )
-
     assert find_coordinate(a=0) == 0
     assert find_coordinate(a=0.5) == 1
     assert find_coordinate(a=1) == 2

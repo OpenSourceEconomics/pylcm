@@ -15,22 +15,19 @@ class StochasticInfo:
 
 
 def stochastic(
-    func: Callable[..., Any],
-    *args: tuple[Any, ...],
-    **kwargs: dict[str, Any],
+    func: Callable[..., Any] | None = None,
 ) -> Callable[..., Any]:
     """Decorator to mark a function as stochastic and add information.
 
     Args:
         func (callable): The function to be decorated.
-        *args (list): Positional arguments to be passed to the StochasticInfo.
-        **kwargs (dict): Keyword arguments to be passed to the StochasticInfo.
+        distribution_type: Type of the stochastic transitions distribution.
 
     Returns:
         The decorated function
 
     """
-    stochastic_info = StochasticInfo(*args, **kwargs)
+    stochastic_info = StochasticInfo()
 
     def decorator_stochastic(func: Callable[P, R]) -> Callable[P, R]:
         @functools.wraps(func)

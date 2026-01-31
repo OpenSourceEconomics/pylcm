@@ -6,7 +6,7 @@ from types import MappingProxyType
 import pandas as pd
 from jax import Array
 
-from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
+from lcm.grids import ContinuousGrid, DiscreteGrid, Grid, ShockGrid
 from lcm.typing import (
     ArgmaxQOverAFunction,
     Bool1D,
@@ -132,7 +132,7 @@ class StateSpaceInfo:
     """
 
     states_names: tuple[str, ...]
-    discrete_states: MappingProxyType[str, DiscreteGrid]
+    discrete_states: MappingProxyType[str, DiscreteGrid | ShockGrid]
     continuous_states: MappingProxyType[str, ContinuousGrid]
 
 
@@ -183,8 +183,8 @@ class InternalRegime:
     )
     internal_functions: InternalFunctions
     params_template: ParamsDict
-    state_action_spaces: StateActionSpace
-    state_space_infos: StateSpaceInfo
+    state_action_space: StateActionSpace
+    state_space_info: StateSpaceInfo
     max_Q_over_a_functions: MappingProxyType[int, MaxQOverAFunction]
     argmax_and_max_Q_over_a_functions: MappingProxyType[int, ArgmaxQOverAFunction]
     next_state_simulation_function: NextStateSimulationFunction

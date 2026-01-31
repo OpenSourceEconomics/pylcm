@@ -2,12 +2,17 @@ from types import MappingProxyType
 from typing import cast
 
 import jax.numpy as jnp
+import pandas as pd
 from pybaum import tree_equal
 
 from lcm.ages import AgeGrid
 from lcm.input_processing import process_regimes
-from lcm.interfaces import InternalFunctions, PhaseVariantContainer, Target
-from lcm.next_state import _create_stochastic_next_func, get_next_state_function
+from lcm.interfaces import InternalFunctions, PhaseVariantContainer
+from lcm.next_state import (
+    _create_discrete_stochastic_next_func,
+    get_next_state_function_for_simulation,
+    get_next_state_function_for_solution,
+)
 from lcm.typing import ContinuousState, FloatND, InternalUserFunction, ParamsDict
 from tests.test_models.deterministic.regression import dead, working
 
@@ -21,20 +26,14 @@ def test_get_next_state_function_with_solve_target():
         ages=ages,
         regime_names_to_ids=regime_id,
         enable_jit=True,
+        fixed_params={},
     )
 
     internal_working = internal_regimes["working"]
 
-    got_func = get_next_state_function(
+    got_func = get_next_state_function_for_solution(
         transitions=internal_working.transitions["working"],
         functions=internal_working.functions,
-        grids=MappingProxyType(
-            {
-                "working": internal_working.grids,
-                "dead": internal_regimes["dead"].grids,
-            }
-        ),
-        target=Target.SOLVE,
     )
 
     params = {
@@ -63,6 +62,8 @@ def test_get_next_state_function_with_simulate_target():
         return jnp.array([0.0, 1.0])
 
     grids = MappingProxyType({"mock": MappingProxyType({"b": jnp.arange(2)})})
+    gridspecs = MappingProxyType({})
+    variable_info = pd.DataFrame({"is_shock": [False], "distribution_type": ["none"]})
     mock_transition_solve = lambda *args, params, **kwargs: {"mock": 1.0}  # noqa: E731, ARG005
     mock_transition_simulate = lambda *args, params, **kwargs: {  # noqa: E731, ARG005
         "mock": jnp.array([1.0])
@@ -76,14 +77,15 @@ def test_get_next_state_function_with_simulate_target():
             solve=mock_transition_solve, simulate=mock_transition_simulate
         ),
     )
-    got_func = get_next_state_function(
+    got_func = get_next_state_function_for_simulation(
         transitions=cast(
             "MappingProxyType[str, InternalUserFunction]",
             internal_functions.transitions,
         ),
         functions=internal_functions.functions,
         grids=grids,
-        target=Target.SIMULATE,
+        variable_info=variable_info,
+        gridspecs=gridspecs,
     )
 
     key = jnp.arange(2, dtype="uint32")
@@ -95,7 +97,7 @@ def test_get_next_state_function_with_simulate_target():
 
 def test_create_stochastic_next_func():
     labels = jnp.arange(2)
-    got_func = _create_stochastic_next_func(name="a", labels=labels)
+    got_func = _create_discrete_stochastic_next_func(name="a", labels=labels)
 
     key = jnp.arange(2, dtype="uint32")  # PRNG dtype
     weights = jnp.array([0.0, 1])

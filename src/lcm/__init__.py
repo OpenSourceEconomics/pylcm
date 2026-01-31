@@ -41,6 +41,7 @@ __all__ = [
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",
     "Regime",
+    "ShockGrid",
     "SimulationResult",
     "categorical",
     "mark",

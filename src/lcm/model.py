@@ -1,13 +1,13 @@
 """Collection of classes that are used by the user to define the model and grids."""
 
 from collections.abc import Mapping
-from itertools import chain
 from types import MappingProxyType
 
 from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, format_messages
+from lcm.grids import ShockGrid
 from lcm.input_processing.regime_processing import InternalRegime, process_regimes
 from lcm.logging import get_logger
 from lcm.regime import Regime
@@ -49,6 +49,7 @@ class Model:
     regimes: MappingProxyType[str, Regime]
     internal_regimes: MappingProxyType[str, InternalRegime]
     enable_jit: bool = True
+    fixed_params: ParamsDict
     params_template: ParamsDict
 
     def __init__(
@@ -59,6 +60,7 @@ class Model:
         regimes: Mapping[str, Regime],
         regime_id_class: type,
         enable_jit: bool = True,
+        fixed_params: ParamsDict | None = None,
     ) -> None:
         """Initialize the Model.
 
@@ -68,15 +70,20 @@ class Model:
             description: Description of the model.
             regime_id_class: Dataclass mapping regime names to integer indices.
             enable_jit: Whether to jit the functions of the internal regime.
+            fixed_params: Parameters that can be fixed at model initialization.
 
         """
         # Create regime_id mapping from dict keys
         self.description = description
         self.ages = ages
         self.n_periods = ages.n_periods
+        self.fixed_params = fixed_params if fixed_params is not None else {}
 
         _validate_model_inputs(
-            n_periods=self.n_periods, regimes=regimes, regime_id_class=regime_id_class
+            n_periods=self.n_periods,
+            regimes=regimes,
+            regime_id_class=regime_id_class,
+            fixed_params=self.fixed_params,
         )
         self.regime_names_to_ids = MappingProxyType(
             dict(
@@ -92,6 +99,7 @@ class Model:
                 regimes=regimes,
                 ages=self.ages,
                 regime_names_to_ids=self.regime_names_to_ids,
+                fixed_params=self.fixed_params,
                 enable_jit=enable_jit,
             )
         )
@@ -204,6 +212,7 @@ def _validate_model_inputs(  # noqa: C901
     n_periods: int,
     regimes: Mapping[str, Regime],
     regime_id_class: type,
+    fixed_params: ParamsDict,
 ) -> None:
     # Early exit if regimes are not lcm.Regime instances
     if not all(isinstance(regime, Regime) for regime in regimes.values()):
@@ -261,47 +270,31 @@ def _validate_model_inputs(  # noqa: C901
             "regime names:\n"
             f"    {regime_names}."
         )
-
-    error_messages.extend(_validate_transition_completeness(regimes))
+    missing_fixed_params = _validate_fixed_params_present(regimes, fixed_params)
+    if missing_fixed_params:
+        error_messages.extend(missing_fixed_params)
 
     if error_messages:
         msg = format_messages(error_messages)
         raise ModelInitializationError(msg)
 
 
-def _validate_transition_completeness(regimes: Mapping[str, Regime]) -> list[str]:
-    """Validate that non-terminal regimes have complete transitions.
-
-    Non-terminal regimes must have transition functions for ALL states across ALL
-    regimes, since they can potentially transition to any other regime.
-
-    Args:
-        regimes: Mapping of regime names to regimes to validate.
-
-    Returns:
-        A list of error messages. Empty list if validation passes.
-
-    """
-    all_states = set(chain.from_iterable(r.states.keys() for r in regimes.values()))
-
-    missing_transitions: dict[str, set[str]] = {}
-
-    for name, regime in regimes.items():
-        if regime.terminal:
-            continue
-        states_from_transitions = {
-            fn_key.removeprefix("next_") for fn_key in regime.transitions
-        }
-
-        missing = all_states - states_from_transitions
-        if missing:
-            missing_transitions[name] = missing
-
-    if missing_transitions:
-        error = "Non-terminal regimes have missing transitions: "
-        for regime_name, missing in sorted(missing_transitions.items()):
-            missing_list = ", ".join(f"next_{s}" for s in sorted(missing))
-            error += f"'{regime_name}': {missing_list}, "
-        return [error]
-
-    return []
+def _validate_fixed_params_present(
+    regimes: Mapping[str, Regime], fixed_params: ParamsDict
+) -> list[str]:
+    """Return error messages if params for shocks are missing."""
+    error_messages = []
+    for regime_name, regime in regimes.items():
+        fixed_params_needed = set()
+        for state_name, state in regime.states.items():
+            if isinstance(state, ShockGrid) and state.distribution_type in [
+                "tauchen",
+                "rouwenhorst",
+            ]:
+                fixed_params_needed.add(state_name)
+        if fixed_params_needed - set(fixed_params):
+            error_messages.append(
+                f"Regime {regime_name} is missing fixed params:\n"
+                f"{fixed_params_needed.difference(fixed_params)}"
+            )
+    return error_messages
