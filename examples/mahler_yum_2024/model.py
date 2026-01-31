@@ -21,7 +21,6 @@ import lcm
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.dispatchers import _base_productmap
 from lcm.grids import ShockGrid
-from lcm.shocks import Shock
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -356,6 +355,10 @@ def dead_is_active(age: float, initial_age: float) -> bool:
     return age > initial_age
 
 
+prod_shock_grid = ShockGrid(
+    distribution_type="rouwenhorst", n_points=5, shock_params={"rho": rho}
+)
+
 ALIVE_REGIME = Regime(
     utility=utility,
     functions={
@@ -379,7 +382,7 @@ ALIVE_REGIME = Regime(
     states={
         "wealth": LinSpacedGrid(start=0, stop=49, n_points=50),
         "health": DiscreteGrid(HealthStatus),
-        "productivity_shock": ShockGrid(n_points=5, distribution_type="rouwenhorst"),
+        "productivity_shock": prod_shock_grid,
         "effort_t_1": DiscreteGrid(Effort),
         "adjustment_cost": ShockGrid(n_points=5, distribution_type="uniform"),
         "education": DiscreteGrid(EducationStatus),
@@ -656,11 +659,8 @@ def create_inputs(
     # Create variable grids from supplied parameters
     income_grid = create_income_grid(income_process)  # ty: ignore[invalid-argument-type]
     chimax_grid = create_chimaxgrid(chi)
-    prod_shock = Shock(
-        distribution_type="rouwenhorst", n_points=5, shock_params={"rho": rho}
-    )
-    xvalues = prod_shock.get_gridpoints()
-    xtrans = prod_shock.get_transition_probs()
+    xvalues = prod_shock_grid.shock.get_gridpoints()
+    xtrans = prod_shock_grid.shock.get_transition_probs()
     xi_grid = create_xigrid(xi)
     phi_grid = create_phigrid(nu)
 

@@ -270,9 +270,9 @@ def _validate_model_inputs(  # noqa: C901
             "regime names:\n"
             f"    {regime_names}."
         )
-    mising_fixed_params = _validate_fixed_params_present(regimes, fixed_params)
-    if mising_fixed_params:
-        error_messages.extend(mising_fixed_params)
+    missing_fixed_params = _validate_fixed_params_present(regimes, fixed_params)
+    if missing_fixed_params:
+        error_messages.extend(missing_fixed_params)
 
     if error_messages:
         msg = format_messages(error_messages)
