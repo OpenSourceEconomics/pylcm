@@ -24,6 +24,7 @@ from lcm.input_processing.util import (
     get_gridspecs,
     get_variable_info,
     is_stochastic_transition,
+    warn_about_unused_variables,
 )
 from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
 from lcm.regime import Regime
@@ -100,9 +101,13 @@ def process_regimes(
     # ----------------------------------------------------------------------------------
     grids = MappingProxyType({n: get_grids(r) for n, r in regimes.items()})
     gridspecs = MappingProxyType({n: get_gridspecs(r) for n, r in regimes.items()})
-    variable_info = MappingProxyType(
+    variable_infos = MappingProxyType(
         {n: get_variable_info(r) for n, r in regimes.items()}
     )
+
+    for regime_name, vi in variable_infos.items():
+        warn_about_unused_variables(vi, regime_name)
+
     state_space_infos = MappingProxyType(
         {n: build_state_space_info(r) for n, r in regimes.items()}
     )
@@ -162,7 +167,7 @@ def process_regimes(
             terminal=regime.terminal,
             grids=grids[name],
             gridspecs=gridspecs[name],
-            variable_info=variable_info[name],
+            variable_info=variable_infos[name],
             functions=MappingProxyType(internal_functions.functions),
             utility=internal_functions.utility,
             constraints=MappingProxyType(internal_functions.constraints),

@@ -1,3 +1,4 @@
+import warnings
 from collections.abc import Callable
 from types import MappingProxyType
 from typing import Any
@@ -9,6 +10,10 @@ from jax import Array
 from lcm.grids import ContinuousGrid, Grid
 from lcm.regime import Regime
 from lcm.utils import flatten_regime_namespace
+
+
+class UnusedVariableWarning(UserWarning):
+    """Warning raised when a state or action is defined but never used."""
 
 
 def is_stochastic_transition(fn: Callable[..., Any]) -> bool:
@@ -116,13 +121,56 @@ def _indicator_enters_transition(
     )
 
 
+def warn_about_unused_variables(variable_info: pd.DataFrame, regime_name: str) -> None:
+    """Warn if any states or actions are defined but never used.
+
+    Each state or action should appear in at least one of:
+    - The concurrent valuation (utility or constraints)
+    - A transition function
+
+    If a variable is defined but never used, a warning is issued. The unused variables
+    will be filtered out from the state-action space to allow the model to still work.
+
+    Args:
+        variable_info: DataFrame with variable information including
+            enters_concurrent_valuation and enters_transition columns.
+        regime_name: Name of the regime for clearer error messages.
+
+    """
+    vi = variable_info.copy()
+
+    is_used = vi["enters_concurrent_valuation"] | vi["enters_transition"]
+    unused_variables = vi.index[~is_used].tolist()
+
+    if unused_variables:
+        unused_states = [v for v in unused_variables if vi.loc[v, "is_state"]]
+        unused_actions = [v for v in unused_variables if vi.loc[v, "is_action"]]
+
+        msg_parts = []
+        if unused_states:
+            state_word = "state" if len(unused_states) == 1 else "states"
+            msg_parts.append(f"{state_word} {unused_states}")
+        if unused_actions:
+            action_word = "action" if len(unused_actions) == 1 else "actions"
+            msg_parts.append(f"{action_word} {unused_actions}")
+
+        msg = (
+            f"The following variables are defined but never used in regime "
+            f"{regime_name}: {' and '.join(msg_parts)}. "
+            f"Unused variables will be ignored. "
+            f"Each state and action should be used in at least one of: "
+            f"utility, constraints, or transition functions."
+        )
+        warnings.warn(msg, UnusedVariableWarning, stacklevel=2)
+
+
 def get_gridspecs(
     regime: Regime,
 ) -> MappingProxyType[str, Grid]:
     """Create a dictionary of grid specifications for each variable in the regime.
 
     Args:
-        regime (dict): The regime as provided by the user.
+        regime: The regime as provided by the user.
 
     Returns:
         Immutable dictionary containing all variables of the regime. The keys are the

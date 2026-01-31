@@ -2,8 +2,9 @@ import jax.numpy as jnp
 import pytest
 
 import lcm
-from lcm import AgeGrid, DiscreteGrid, Model, Regime, categorical
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.input_processing.util import UnusedVariableWarning
 
 
 def test_regime_invalid_states():
@@ -360,3 +361,103 @@ def test_model_regime_name_validation(binary_category_class):
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=RegimeId,
         )
+
+
+def test_unused_state_warns_and_model_still_works():
+    """Model warns when a state is defined but never used, and still works."""
+
+    @categorical
+    class RegimeId:
+        working: int
+        retired: int
+
+    @categorical
+    class UnusedState:
+        low: int
+        medium: int
+        high: int
+
+    # Define a regime where 'unused_state' is not used in any function
+    working = Regime(
+        utility=lambda wealth, consumption: jnp.log(consumption) + wealth * 0.001,
+        states={
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
+            "unused_state": DiscreteGrid(UnusedState),  # Not used anywhere!
+        },
+        actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
+        transitions={
+            "next_wealth": lambda wealth, consumption: wealth - consumption,
+            "next_unused_state": lambda unused_state: unused_state,
+            "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.9, 0.1])),
+        },
+        active=lambda age: age < 5,
+    )
+
+    retired = Regime(
+        utility=lambda wealth: wealth * 0.5,
+        states={
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
+            "unused_state": DiscreteGrid(UnusedState),
+        },
+        terminal=True,
+        active=lambda age: age >= 5,
+    )
+
+    # Should warn about unused_state but still create the model
+    with pytest.warns(UnusedVariableWarning, match="unused_state"):
+        model = Model(
+            regimes={"working": working, "retired": retired},
+            ages=AgeGrid(start=0, stop=5, step="Y"),
+            regime_id_class=RegimeId,
+        )
+
+    # Model should be created and functional
+    assert model is not None
+    assert model.n_periods == 6  # AgeGrid(0, 5) = [0, 1, 2, 3, 4, 5] = 6 periods
+
+
+def test_unused_action_warns_and_model_still_works():
+    """Model warns when an action is defined but never used, and still works."""
+
+    @categorical
+    class RegimeId:
+        working: int
+        retired: int
+
+    @categorical
+    class UnusedAction:
+        option_a: int
+        option_b: int
+
+    working = Regime(
+        utility=lambda wealth, consumption: jnp.log(consumption) + wealth * 0.001,
+        states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
+        actions={
+            "consumption": LinSpacedGrid(start=1, stop=50, n_points=10),
+            "unused_action": DiscreteGrid(UnusedAction),  # Not used anywhere!
+        },
+        transitions={
+            "next_wealth": lambda wealth, consumption: wealth - consumption,
+            "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.9, 0.1])),
+        },
+        active=lambda age: age < 5,
+    )
+
+    retired = Regime(
+        utility=lambda wealth: wealth * 0.5,
+        states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
+        terminal=True,
+        active=lambda age: age >= 5,
+    )
+
+    # Should warn about unused_action but still create the model
+    with pytest.warns(UnusedVariableWarning, match="unused_action"):
+        model = Model(
+            regimes={"working": working, "retired": retired},
+            ages=AgeGrid(start=0, stop=5, step="Y"),
+            regime_id_class=RegimeId,
+        )
+
+    # Model should be created and functional
+    assert model is not None
+    assert model.n_periods == 6  # AgeGrid(0, 5) = [0, 1, 2, 3, 4, 5] = 6 periods

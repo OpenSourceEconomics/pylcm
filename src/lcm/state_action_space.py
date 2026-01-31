@@ -32,7 +32,14 @@ def create_state_action_space(
         appear in the variable info table.
 
     """
-    vi = variable_info.copy()
+    # Filter to only include variables that enter the concurrent valuation (utility
+    # or constraints). Variables that only appear in transitions but not in
+    # utility/constraints don't affect the value function: even though their
+    # transitions are computed, the next period's V doesn't depend on them.
+    # dags.concatenate_functions correctly identifies this and excludes them from
+    # Q_and_F's parameters, so we must also exclude them from the state-action
+    # space to avoid vmap errors.
+    vi = variable_info.query("enters_concurrent_valuation").copy()
 
     if states is None:
         _states = {sn: grids[sn] for sn in vi.query("is_state").index}
@@ -41,7 +48,8 @@ def create_state_action_space(
             provided_states=states,
             required_states_names=set(vi.query("is_state").index),
         )
-        _states = states
+        # Filter provided states to only include used ones
+        _states = {k: v for k, v in states.items() if k in vi.index}
 
     discrete_actions = {
         name: grids[name] for name in vi.query("is_action & is_discrete").index
