@@ -20,7 +20,6 @@ from lcm.input_processing.regime_components import (
     build_state_space_info,
 )
 from lcm.input_processing.util import (
-    check_all_variables_used,
     get_grids,
     get_gridspecs,
     get_variable_info,
@@ -104,10 +103,6 @@ def process_regimes(
     variable_infos = MappingProxyType(
         {n: get_variable_info(r) for n, r in regimes.items()}
     )
-
-    # Check that all variables are used in each regime
-    for regime_name, vi in variable_infos.items():
-        check_all_variables_used(vi, regime_name)
 
     state_space_infos = MappingProxyType(
         {n: build_state_space_info(r) for n, r in regimes.items()}

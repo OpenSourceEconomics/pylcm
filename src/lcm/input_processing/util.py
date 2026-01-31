@@ -6,7 +6,6 @@ import pandas as pd
 from dags import get_ancestors
 from jax import Array
 
-from lcm.exceptions import ModelInitializationError
 from lcm.grids import ContinuousGrid, Grid
 from lcm.regime import Regime
 from lcm.utils import flatten_regime_namespace
@@ -115,53 +114,6 @@ def _indicator_enters_transition(
         [var in ancestors for var in states_and_actions_names],
         index=states_and_actions_names,
     )
-
-
-def check_all_variables_used(variable_info: pd.DataFrame, regime_name: str) -> None:
-    """Check that all states and actions are used somewhere in the model.
-
-    Each state or action must appear in at least one of:
-    - The concurrent valuation (utility or constraints)
-    - A transition function
-
-    Args:
-        variable_info: DataFrame with variable information including
-            enters_concurrent_valuation and enters_transition columns.
-        regime_name: Name of the regime for clearer error messages.
-
-    Raises:
-        ModelInitializationError: If any variable is not used.
-
-    """
-    is_used = (
-        variable_info["enters_concurrent_valuation"]
-        | variable_info["enters_transition"]
-    )
-    unused_variables = variable_info.index[~is_used].tolist()
-
-    if unused_variables:
-        unused_states = [
-            v for v in unused_variables if variable_info.loc[v, "is_state"]
-        ]
-        unused_actions = [
-            v for v in unused_variables if variable_info.loc[v, "is_action"]
-        ]
-
-        msg_parts = []
-        if unused_states:
-            state_word = "state" if len(unused_states) == 1 else "states"
-            msg_parts.append(f"{state_word} {unused_states}")
-        if unused_actions:
-            action_word = "action" if len(unused_actions) == 1 else "actions"
-            msg_parts.append(f"{action_word} {unused_actions}")
-
-        msg = (
-            f"The following variables are defined but never used in regime "
-            f"'{regime_name}': {' and '.join(msg_parts)}. "
-            f"Each state and action must be used in at least one of: "
-            f"utility, constraints, or transition functions."
-        )
-        raise ModelInitializationError(msg)
 
 
 def get_gridspecs(

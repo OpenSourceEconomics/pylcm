@@ -9,6 +9,7 @@ from jax import Array
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, format_messages
 from lcm.input_processing.regime_processing import InternalRegime, process_regimes
+from lcm.input_processing.util import get_variable_info
 from lcm.logging import get_logger
 from lcm.regime import Regime
 from lcm.simulation.result import SimulationResult
@@ -263,6 +264,7 @@ def _validate_model_inputs(  # noqa: C901
         )
 
     error_messages.extend(_validate_transition_completeness(regimes))
+    error_messages.extend(_validate_all_variables_used(regimes))
 
     if error_messages:
         msg = format_messages(error_messages)
@@ -305,3 +307,53 @@ def _validate_transition_completeness(regimes: Mapping[str, Regime]) -> list[str
         return [error]
 
     return []
+
+
+def _validate_all_variables_used(regimes: Mapping[str, Regime]) -> list[str]:
+    """Validate that all states and actions are used somewhere in each regime.
+
+    Each state or action must appear in at least one of:
+    - The concurrent valuation (utility or constraints)
+    - A transition function
+
+    Args:
+        regimes: Mapping of regime names to regimes to validate.
+
+    Returns:
+        A list of error messages. Empty list if validation passes.
+
+    """
+    error_messages = []
+
+    for regime_name, regime in regimes.items():
+        variable_info = get_variable_info(regime)
+        is_used = (
+            variable_info["enters_concurrent_valuation"]
+            | variable_info["enters_transition"]
+        )
+        unused_variables = variable_info.index[~is_used].tolist()
+
+        if unused_variables:
+            unused_states = [
+                v for v in unused_variables if variable_info.loc[v, "is_state"]
+            ]
+            unused_actions = [
+                v for v in unused_variables if variable_info.loc[v, "is_action"]
+            ]
+
+            msg_parts = []
+            if unused_states:
+                state_word = "state" if len(unused_states) == 1 else "states"
+                msg_parts.append(f"{state_word} {unused_states}")
+            if unused_actions:
+                action_word = "action" if len(unused_actions) == 1 else "actions"
+                msg_parts.append(f"{action_word} {unused_actions}")
+
+            error_messages.append(
+                f"The following variables are defined but never used in regime "
+                f"'{regime_name}': {' and '.join(msg_parts)}. "
+                f"Each state and action must be used in at least one of: "
+                f"utility, constraints, or transition functions."
+            )
+
+    return error_messages
