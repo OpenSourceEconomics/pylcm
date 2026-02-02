@@ -1,14 +1,16 @@
 import dataclasses
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
-from dataclasses import dataclass, is_dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, is_dataclass
+from typing import Literal
 
 import jax.numpy as jnp
 import portion
 
 from lcm import grid_helpers
 from lcm.exceptions import GridInitializationError, format_messages
-from lcm.typing import Float1D, Int1D, ScalarFloat
+from lcm.shocks import Shock
+from lcm.typing import Float1D, Int1D, MappingProxyType, ScalarFloat
 from lcm.utils import find_duplicates, get_field_names_and_values
 
 
@@ -244,6 +246,49 @@ class IrregSpacedGrid(ContinuousGrid):
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
         """Return the generalized coordinate of a value in the grid."""
         return grid_helpers.get_irreg_coordinate(value, self.to_jax())
+
+
+@dataclass(frozen=True, kw_only=True)
+class ShockGrid(ContinuousGrid):
+    """An empty grid for discretized continuous shocks.
+
+    The actual values will be calculated once the prameters for the shock are
+    available during the solution or simulation.
+
+    Attributes:
+        distribution_type: Type of the shock.
+        n_points: The number of points for the discretization of the shock.
+        shock_params: Fixed parameters that are needed for the discretization function
+            of the specified shock type. Can be supplied directly or via the model fixed
+            parameters.
+    """
+
+    distribution_type: Literal["uniform", "normal", "tauchen", "rouwenhorst"]
+    n_points: int
+    shock_params: MappingProxyType[str, float] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+
+    @property
+    def shock(self) -> Shock:
+        """Return the number of points in the grid."""
+        return Shock(
+            n_points=self.n_points,
+            distribution_type=self.distribution_type,
+            shock_params=self.shock_params,
+        )
+
+    def to_jax(self) -> Float1D:
+        """Convert the grid to a Jax array."""
+        return self.shock.get_gridpoints()
+
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
+        """Return the generalized coordinate of a value in the grid."""
+        return grid_helpers.get_irreg_coordinate(value, self.to_jax())
+
+    def init_params(self, params: Mapping[str, float]) -> ShockGrid:
+        """Augment the grid with fixed params from model initialization."""
+        return dataclasses.replace(self, shock_params=MappingProxyType(params))
 
 
 @dataclass(frozen=True, kw_only=True)

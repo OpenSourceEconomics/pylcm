@@ -226,6 +226,7 @@ def _validate_terminal_or_transitions(regime: Regime) -> list[str]:
 
         # Validate each state has a corresponding transition
         states = set(regime.states)
+
         states_via_transition = {
             fn_name.removeprefix("next_") for fn_name in regime.transitions
         }

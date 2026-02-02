@@ -18,8 +18,10 @@ from lcm.ages import AgeGrid
 from lcm.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.grids import DiscreteGrid
+from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
 from lcm.typing import FloatND, InternalParams, InternalRegimeParams, RegimeName
+from lcm.utils import flatten_regime_namespace
 
 CLOUDPICKLE_IMPORT_ERROR_MSG = (
     "Pickling SimulationResult objects requires the optional dependency 'cloudpickle'. "
@@ -349,10 +351,27 @@ def _collect_all_available_targets(
 
 def _get_available_targets_for_regime(regime: InternalRegime) -> set[str]:
     """Get available target names for a single regime."""
+    stochastic_weight_names = _get_stochastic_weight_function_names(regime)
     targets = {"utility"}
-    targets.update(regime.functions.keys())
+    targets.update(
+        name for name in regime.functions if name not in stochastic_weight_names
+    )
     targets.update(regime.constraints.keys())
     return targets
+
+
+def _get_stochastic_weight_function_names(regime: InternalRegime) -> set[str]:
+    """Get names of internal stochastic weight functions.
+
+    These are functions named `weight_{transition_name}` that return probability arrays
+    for stochastic state transitions. They should not be exposed as available targets.
+    """
+    flat_transitions = flatten_regime_namespace(regime.transitions)
+    return {
+        f"weight_{name}"
+        for name, fn in flat_transitions.items()
+        if is_stochastic_transition(fn)
+    }
 
 
 # ======================================================================================

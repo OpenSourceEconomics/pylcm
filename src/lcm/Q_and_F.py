@@ -11,13 +11,15 @@ from lcm.dispatchers import productmap
 from lcm.function_representation import get_value_function_representation
 from lcm.functools import get_union_of_arguments
 from lcm.input_processing.util import is_stochastic_transition
-from lcm.interfaces import InternalFunctions, StateSpaceInfo, Target
-from lcm.next_state import get_next_state_function, get_next_stochastic_weights_function
+from lcm.interfaces import InternalFunctions, StateSpaceInfo
+from lcm.next_state import (
+    get_next_state_function_for_solution,
+    get_next_stochastic_weights_function,
+)
 from lcm.typing import (
     BoolND,
     Float1D,
     FloatND,
-    GridsDict,
     InternalParams,
     InternalUserFunction,
     QAndFFunction,
@@ -32,7 +34,6 @@ def get_Q_and_F(
     period: int,
     age: float,
     next_state_space_infos: MappingProxyType[RegimeName, StateSpaceInfo],
-    grids: GridsDict,
     internal_functions: InternalFunctions,
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
@@ -43,7 +44,6 @@ def get_Q_and_F(
         period: The current period.
         age: The age corresponding to the current period.
         next_state_space_infos: The state space information of the next period.
-        grids: Dict containing the state grids for all regimes.
         internal_functions: Internal functions instance.
 
     Returns:
@@ -74,11 +74,9 @@ def get_Q_and_F(
 
         # Functions required to calculate the expected continuation values
         # Note: grids is not used for Target.SOLVE, but we pass the full dict for typing
-        state_transitions[target_regime] = get_next_state_function(
-            grids=grids,
+        state_transitions[target_regime] = get_next_state_function_for_solution(
             functions=internal_functions.functions,
             transitions=transitions,
-            target=Target.SOLVE,
         )
         next_stochastic_states_weights[target_regime] = (
             get_next_stochastic_weights_function(
@@ -162,7 +160,6 @@ def get_Q_and_F(
                 age=age,
                 internal_params=internal_params[regime_name],
             )
-
             marginal_next_stochastic_states_weights = next_stochastic_states_weights[
                 target_regime_name
             ](
@@ -171,7 +168,6 @@ def get_Q_and_F(
                 age=age,
                 internal_params=internal_params[regime_name],
             )
-
             joint_next_stochastic_states_weights = joint_weights_from_marginals[
                 target_regime_name
             ](**marginal_next_stochastic_states_weights)
@@ -180,7 +176,8 @@ def get_Q_and_F(
             # resulting next value function gets a new dimension for each stochastic
             # variable.
             next_V_at_stochastic_states_arr = next_V[target_regime_name](
-                **next_states, next_V_arr=next_V_arr[target_regime_name]
+                **next_states,
+                next_V_arr=next_V_arr[target_regime_name],
             )
 
             # We then take the weighted average of the next value function at the

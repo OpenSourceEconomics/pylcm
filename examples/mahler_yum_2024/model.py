@@ -6,6 +6,7 @@ Wealth-Health Gaps in Germany" by Lukas Mahler and Minchul Yum (Econometrica, 20
 
 from dataclasses import make_dataclass
 from functools import partial
+from types import MappingProxyType
 from typing import Any
 
 import jax
@@ -20,6 +21,7 @@ from scipy.interpolate import interp1d
 import lcm
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.dispatchers import _base_productmap
+from lcm.grids import ShockGrid
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -82,9 +84,6 @@ class EducationStatus:
     high: int
 
 
-AdjustmentCost = make_dataclass(
-    "AdjustmentCost", [("class" + str(i), int, int(i)) for i in range(5)]
-)
 Effort = make_dataclass(
     "HealthEffort", [("class" + str(i), int, int(i)) for i in range(40)]
 )
@@ -142,7 +141,7 @@ def utility(
     wealth: ContinuousState,  # noqa: ARG001
     health_type: DiscreteState,  # noqa: ARG001
     education: DiscreteState,  # noqa: ARG001
-    adj_cost: FloatND,
+    scaled_adjustment_cost: FloatND,
     fcost: FloatND,
     disutil: FloatND,
     cons_util: FloatND,
@@ -151,7 +150,7 @@ def utility(
     beta_std: float,
 ) -> FloatND:
     beta = beta_mean + jnp.where(discount_factor, beta_std, -beta_std)
-    f = cons_util - disutil - fcost - adj_cost
+    f = cons_util - disutil - fcost - scaled_adjustment_cost
     return f * (beta**period)
 
 
@@ -165,16 +164,16 @@ def disutil(
     return phigrid[period, education, health] * ((working / 2) ** (2)) / 2
 
 
-def adj_cost(
+def scaled_adjustment_cost(
     period: Period,
-    adjustment_cost: DiscreteState,
+    adjustment_cost: ContinuousState,
     effort: DiscreteAction,
     effort_t_1: DiscreteState,
     chimaxgrid: Float1D,
 ) -> FloatND:
     return jnp.where(
         jnp.logical_not(effort == effort_t_1),
-        adjustment_cost * (chimaxgrid[period] / 4),
+        adjustment_cost * chimaxgrid[period],
         0,
     )
 
@@ -216,21 +215,26 @@ def net_income(benefits: FloatND, taxed_income: FloatND, pension: FloatND) -> Fl
     return taxed_income + pension + benefits
 
 
+def scaled_productivity_shock(
+    productivity_shock: ContinuousState, sigx: float
+) -> FloatND:
+    return productivity_shock * sigx
+
+
 def income(
     working: DiscreteAction,
     period: Period,
     health: DiscreteState,
     education: DiscreteState,
     productivity: DiscreteState,
-    productivity_shock: DiscreteState,
-    xvalues: Float1D,
+    scaled_productivity_shock: FloatND,
     income_grid: FloatND,
 ) -> FloatND:
     return (
         income_grid[period, health, education]
         * (working / 2)
         * theta_val[productivity]
-        * jnp.exp(xvalues[productivity_shock])
+        * jnp.exp(scaled_productivity_shock)
     )
 
 
@@ -299,18 +303,14 @@ def next_education(education: DiscreteState) -> DiscreteState:
     return education
 
 
-@lcm.mark.stochastic
-def next_adjustment_cost(
-    adjustment_cost: DiscreteState, adjustment_cost_transition: FloatND
-) -> FloatND:
-    return adjustment_cost_transition[adjustment_cost]
+@lcm.mark.stochastic()
+def next_adjustment_cost(adjustment_cost: ContinuousState) -> None:
+    pass
 
 
-@lcm.mark.stochastic
-def next_productivity_shock(
-    productivity_shock: DiscreteState, productivity_shock_transition: FloatND
-) -> FloatND:
-    return productivity_shock_transition[productivity_shock]
+@lcm.mark.stochastic()
+def next_productivity_shock(productivity_shock: ContinuousState) -> None:
+    pass
 
 
 # --------------------------------------------------------------------------------------
@@ -356,6 +356,12 @@ def dead_is_active(age: float, initial_age: float) -> bool:
     return age > initial_age
 
 
+prod_shock_grid = ShockGrid(
+    distribution_type="rouwenhorst",
+    n_points=5,
+    shock_params=MappingProxyType({"rho": rho}),
+)
+
 ALIVE_REGIME = Regime(
     utility=utility,
     functions={
@@ -365,12 +371,11 @@ ALIVE_REGIME = Regime(
         "cnow": cnow,
         "income": income,
         "benefits": benefits,
-        "adj_cost": adj_cost,
+        "scaled_adjustment_cost": scaled_adjustment_cost,
         "net_income": net_income,
         "taxed_income": taxed_income,
         "pension": pension,
-        "retirement_constraint": retirement_constraint,
-        "savings_constraint": savings_constraint,
+        "scaled_productivity_shock": scaled_productivity_shock,
     },
     actions={
         "working": DiscreteGrid(WorkingStatus),
@@ -380,9 +385,9 @@ ALIVE_REGIME = Regime(
     states={
         "wealth": LinSpacedGrid(start=0, stop=49, n_points=50),
         "health": DiscreteGrid(HealthStatus),
-        "productivity_shock": DiscreteGrid(ProductivityShock),
+        "productivity_shock": prod_shock_grid,
         "effort_t_1": DiscreteGrid(Effort),
-        "adjustment_cost": DiscreteGrid(AdjustmentCost),
+        "adjustment_cost": ShockGrid(n_points=5, distribution_type="uniform"),
         "education": DiscreteGrid(EducationStatus),
         "discount_factor": DiscreteGrid(DiscountFactor),
         "productivity": DiscreteGrid(ProductivityType),
@@ -417,6 +422,7 @@ MAHLER_YUM_MODEL = Model(
     regimes={"alive": ALIVE_REGIME, "dead": DEAD_REGIME},
     ages=ages,
     regime_id_class=RegimeId,
+    fixed_params={"productivity_shock": {"rho": rho}},
 )
 
 
@@ -629,36 +635,6 @@ tr2yp_grid = tr2yp_grid.at[:, :, :, :, :, :, 0].set(
 )
 
 
-def rouwenhorst(rho: float, sigma_eps: Float1D, n: int) -> tuple[FloatND, FloatND]:
-    mu_eps = 0
-
-    q = (rho + 1) / 2
-    nu = jnp.sqrt((n - 1) / (1 - rho**2)) * sigma_eps
-    P = jnp.zeros((n, n))
-
-    P = P.at[0, 0].set(q)
-    P = P.at[0, 1].set(1 - q)
-    P = P.at[1, 0].set(1 - q)
-    P = P.at[1, 1].set(q)
-
-    for i in range(2, n):
-        P11 = jnp.zeros((i + 1, i + 1))
-        P12 = jnp.zeros((i + 1, i + 1))
-        P21 = jnp.zeros((i + 1, i + 1))
-        P22 = jnp.zeros((i + 1, i + 1))
-
-        P11 = P11.at[0:i, 0:i].set(P[0:i, 0:i])
-        P12 = P12.at[0:i, 1 : i + 1].set(P[0:i, 0:i])
-        P21 = P21.at[1 : i + 1, 0:i].set(P[0:i, 0:i])
-        P22 = P22.at[1 : i + 1, 1 : i + 1].set(P[0:i, 0:i])
-
-        P = P.at[0 : i + 1, 0 : i + 1].set(
-            q * P11 + (1 - q) * P12 + (1 - q) * P21 + q * P22
-        )
-        P = P.at[1:i, :].set(P[1:i, :] / 2)
-    return jnp.linspace(mu_eps / (1.0 - rho) - nu, mu_eps / (1.0 - rho) + nu, n), P.T
-
-
 def create_regime_transition_grid() -> FloatND:
     surv_hs: FloatND = jnp.array(np.loadtxt("data/surv_hs.txt", skiprows=1))
     surv_cl: FloatND = jnp.array(np.loadtxt("data/surv_cl.txt", skiprows=1))
@@ -674,7 +650,7 @@ def create_inputs(
     n_simulation_subjects: int,
     nu: dict[str, list[float]],
     xi: dict[str, dict[str, list[float]]],
-    income_process: dict[str, dict[str, float]],
+    income_process: dict[str, dict[str, float] | float],
     chi: list[float],
     psi: float,
     bb: float,
@@ -684,9 +660,10 @@ def create_inputs(
     sigma: int,
 ) -> tuple[dict[RegimeName, Any], dict[RegimeName, Any], list[RegimeName]]:
     # Create variable grids from supplied parameters
-    income_grid = create_income_grid(income_process)
+    income_grid = create_income_grid(income_process)  # ty: ignore[invalid-argument-type]
     chimax_grid = create_chimaxgrid(chi)
-    xvalues, xtrans = rouwenhorst(rho, jnp.sqrt(income_process["sigx"]), 5)  # ty: ignore[invalid-argument-type]
+    xvalues = prod_shock_grid.shock.get_gridpoints()
+    xtrans = prod_shock_grid.shock.get_transition_probs()
     xi_grid = create_xigrid(xi)
     phi_grid = create_phigrid(nu)
 
@@ -699,12 +676,12 @@ def create_inputs(
         "fcost": {"psi": psi, "xigrid": xi_grid},
         "cons_util": {"sigma": sigma, "bb": bb, "kappa": conp},
         "utility": {"beta_mean": beta["mean"], "beta_std": beta["std"]},
-        "income": {"income_grid": income_grid, "xvalues": xvalues},
+        "income": {"income_grid": income_grid},
         "pension": {"income_grid": income_grid, "penre": penre},
-        "adj_cost": {"chimaxgrid": chimax_grid},
-        "next_productivity_shock": {"productivity_shock_transition": xtrans.T},
+        "scaled_adjustment_cost": {"chimaxgrid": chimax_grid},
+        "scaled_productivity_shock": {"sigx": jnp.sqrt(income_process["sigx"])},  # ty: ignore[invalid-argument-type]
         "next_health": {"health_transition": tr2yp_grid},
-        "next_adjustment_cost": {"adjustment_cost_transition": jnp.full((5, 5), 1 / 5)},
+        "next_adjustment_cost": {"start": 0, "stop": 1},
         "next_regime": {"regime_transition": regime_transition},
     }
 
@@ -742,18 +719,16 @@ def create_inputs(
     initial_productivity = prod[types]
     initial_discount = discount[types]
     initial_effort = jnp.searchsorted(eff_grid, init_distr_2b2t2h[:, 2][types])
-    initial_adjustment_cost = random.choice(
-        new_keys[1], jnp.arange(5), (n_simulation_subjects,)
-    )
+    initial_adjustment_cost = random.uniform(new_keys[1], (n_simulation_subjects,))
     prod_dist = jax.lax.fori_loop(
         0,
-        1000000,
+        200,
         lambda i, a: a @ xtrans.T,  # noqa: ARG005
         jnp.full(5, 1 / 5),
     )
-    initial_productivity_shock = random.choice(
-        new_keys[2], jnp.arange(5), (n_simulation_subjects,), p=prod_dist
-    )
+    initial_productivity_shock = xvalues[
+        random.choice(new_keys[2], jnp.arange(5), (n_simulation_subjects,), p=prod_dist)
+    ]
     initial_states = {
         "wealth": initial_wealth,
         "health": initial_health,
