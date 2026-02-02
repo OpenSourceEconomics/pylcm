@@ -127,6 +127,7 @@ def process_regimes(
     variable_info = MappingProxyType(
         {n: get_variable_info(r) for n, r in regimes_with_fixed_params.items()}
     )
+
     state_space_infos = MappingProxyType(
         {n: build_state_space_info(r) for n, r in regimes_with_fixed_params.items()}
     )

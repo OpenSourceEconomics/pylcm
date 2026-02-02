@@ -128,7 +128,7 @@ def get_gridspecs(
     """Create a dictionary of grid specifications for each variable in the regime.
 
     Args:
-        regime (dict): The regime as provided by the user.
+        regime: The regime as provided by the user.
 
     Returns:
         Immutable dictionary containing all variables of the regime. The keys are the
