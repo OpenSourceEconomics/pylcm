@@ -455,6 +455,43 @@ def test_unused_action_raises_error():
         )
 
 
+def test_missing_transition_for_other_regime_state_raises_error():
+    """Non-terminal regimes must have transitions for all states across all regimes."""
+
+    @categorical
+    class RegimeId:
+        working: int
+        retired: int
+
+    # Working regime only has 'wealth', but retired has 'wealth' AND 'pension'.
+    # Working must define next_pension since it can transition to retired.
+    working = Regime(
+        utility=lambda wealth: wealth,
+        states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
+        transitions={
+            "next_wealth": lambda wealth: wealth,
+            # Missing next_pension!
+            "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
+        },
+    )
+
+    retired = Regime(
+        utility=lambda wealth, pension: wealth + pension,
+        states={
+            "wealth": LinSpacedGrid(start=1, stop=10, n_points=5),
+            "pension": LinSpacedGrid(start=0, stop=5, n_points=3),
+        },
+        terminal=True,
+    )
+
+    with pytest.raises(ModelInitializationError, match="next_pension"):
+        Model(
+            regimes={"working": working, "retired": retired},
+            ages=AgeGrid(start=0, stop=2, step="Y"),
+            regime_id_class=RegimeId,
+        )
+
+
 def test_fixed_params_validation():
     """Model validates that fixed params exist when are shocks used."""
 
