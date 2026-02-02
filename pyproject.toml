@@ -43,12 +43,12 @@ maintainers = [
 name = "pylcm"
 requires-python = ">= 3.14"
 
+[project.license]
+file = "LICENSE"
+
 [project.readme]
 file = "README.md"
 content-type = "text/markdown"
-
-[project.license]
-file = "LICENSE"
 
 [project.urls]
 Github = "https://github.com/opensourceeconomics/pylcm"
@@ -79,17 +79,6 @@ allow-direct-references = true
 [tool.hatch.version]
 source = "vcs"
 
-# ======================================================================================
-# Pixi configuration
-# ======================================================================================
-
-[tool.pixi.workspace]
-channels = [ "conda-forge" ]
-platforms = [ "linux-64", "osx-arm64", "win-64" ]
-
-# Development Dependencies (conda and pypi)
-# --------------------------------------------------------------------------------------
-
 [tool.pixi.dependencies]
 cloudpickle = ">=3.1.2,<4"
 jupyterlab = "*"
@@ -101,10 +90,19 @@ pybaum = "*"
 scipy = ">=1.16"
 snakeviz = "*"
 
-[tool.pixi.pypi-dependencies]
-dags = { git = "https://github.com/OpenSourceEconomics/dags.git", branch = "main" }
-pdbp = "*"
-pylcm = { path = ".", editable = true }
+# Environments
+# --------------------------------------------------------------------------------------
+
+[tool.pixi.environments]
+cuda12 = { features = [ "cuda12" ], solve-group = "cuda12" }
+cuda13 = { features = [ "cuda13" ], solve-group = "cuda13" }
+tests-cpu = { features = [ "tests" ], solve-group = "default" }
+tests-cuda12 = { features = [ "tests", "cuda12" ], solve-group = "cuda12" }
+tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
+
+# ======================================================================================
+# Ruff configuration
+# ======================================================================================
 
 # Features and Tasks
 # --------------------------------------------------------------------------------------
@@ -145,18 +143,38 @@ tests-32bit = "pytest tests --precision=32"
 tests-with-cov = "pytest tests --cov-report=xml --cov=./"
 ty = "ty check"
 
-# Environments
-# --------------------------------------------------------------------------------------
-
-[tool.pixi.environments]
-cuda12 = { features = [ "cuda12" ], solve-group = "cuda12" }
-cuda13 = { features = [ "cuda13" ], solve-group = "cuda13" }
-tests-cpu = { features = [ "tests" ], solve-group = "default" }
-tests-cuda12 = { features = [ "tests", "cuda12" ], solve-group = "cuda12" }
-tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
+[tool.pixi.pypi-dependencies]
+dags = { git = "https://github.com/OpenSourceEconomics/dags.git", branch = "main" }
+pdbp = "*"
+pylcm = { path = ".", editable = true }
 
 # ======================================================================================
-# Ruff configuration
+# Pixi configuration
+# ======================================================================================
+
+[tool.pixi.workspace]
+channels = [ "conda-forge" ]
+platforms = [ "linux-64", "osx-arm64", "win-64" ]
+
+# Development Dependencies (conda and pypi)
+# --------------------------------------------------------------------------------------
+
+# ======================================================================================
+# pytest configuration
+# ======================================================================================
+
+[tool.pytest.ini_options]
+addopts = [ "--pdbcls=pdbp:Pdb" ]
+filterwarnings = [  ]
+markers = [
+  "wip: Tests that are work-in-progress.",
+  "slow: Tests that take a long time to run and are skipped in continuous integration.",
+  "illustrative: Tests are designed for illustrative purposes",
+]
+norecursedirs = [ "docs", ".envs" ]
+
+# ======================================================================================
+# yamlfix configuration
 # ======================================================================================
 
 [tool.ruff]
@@ -244,24 +262,6 @@ useless-overload-body = "error"
 
 [tool.ty.src]
 include = [ "src/", "tests/", "examples/" ]
-
-# ======================================================================================
-# pytest configuration
-# ======================================================================================
-
-[tool.pytest.ini_options]
-addopts = [ "--pdbcls=pdbp:Pdb" ]
-filterwarnings = [  ]
-markers = [
-  "wip: Tests that are work-in-progress.",
-  "slow: Tests that take a long time to run and are skipped in continuous integration.",
-  "illustrative: Tests are designed for illustrative purposes",
-]
-norecursedirs = [ "docs", ".envs" ]
-
-# ======================================================================================
-# yamlfix configuration
-# ======================================================================================
 
 [tool.yamlfix]
 line_length = 88
