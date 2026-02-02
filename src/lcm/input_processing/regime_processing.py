@@ -4,11 +4,15 @@ from copy import deepcopy
 from types import MappingProxyType
 from typing import Any, cast
 
+import pandas as pd
 from dags import get_annotations
 from dags.signature import with_signature
 from jax import Array
+from jax import numpy as jnp
 
 from lcm.ages import AgeGrid
+from lcm.grid_helpers import get_irreg_coordinate
+from lcm.grids import Grid, ShockGrid
 from lcm.input_processing.create_params_template import create_params_template
 from lcm.input_processing.regime_components import (
     build_argmax_and_max_Q_over_a_functions,
@@ -26,8 +30,11 @@ from lcm.input_processing.util import (
     is_stochastic_transition,
 )
 from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
+from lcm.mark import stochastic
+from lcm.ndimage import map_coordinates
 from lcm.regime import Regime
 from lcm.typing import (
+    Float1D,
     Int1D,
     InternalUserFunction,
     ParamsDict,
@@ -57,7 +64,8 @@ def process_regimes(
     ages: AgeGrid,
     regime_names_to_ids: RegimeNamesToIds,
     *,
-    enable_jit: bool,
+    fixed_params: ParamsDict,
+    enable_jit: bool = True,
 ) -> dict[str, InternalRegime]:
     """Process the user regime.
 
@@ -71,6 +79,7 @@ def process_regimes(
         regimes: Mapping of regime names to Regime instances.
         ages: The AgeGrid for the model.
         regime_names_to_ids: Immutable mapping from regime names to integer indices.
+        fixed_params: Parameters that can be fixed at model initialization.
         enable_jit: Whether to jit the functions of the internal regime.
 
     Returns:
@@ -78,47 +87,65 @@ def process_regimes(
 
     """
     # ----------------------------------------------------------------------------------
+    # Fixed Parameter Distribution
+    # ----------------------------------------------------------------------------------
+    # Pass the fixed parameters from the model to the classes and functions that need
+    # them
+    regimes_with_fixed_params = {}
+    for name, regime in regimes.items():
+        regimes_with_fixed_params[name] = _pass_fixed_params_to_shocks(
+            regime, fixed_params=fixed_params
+        )
+
+    # ----------------------------------------------------------------------------------
     # Convert flat transitions to nested format
     # ----------------------------------------------------------------------------------
     # User provides flat format, internal processing uses nested format.
     # First, collect state names for each regime to know which transitions map where.
     states_per_regime: dict[str, set[str]] = {
-        name: set(regime.states.keys()) for name, regime in regimes.items()
+        name: set(regime.states.keys())
+        for name, regime in regimes_with_fixed_params.items()
     }
 
     # Convert each regime's flat transitions to nested format
     nested_transitions = {}
-    for name, regime in regimes.items():
+    for name, regime in regimes_with_fixed_params.items():
         nested_transitions[name] = _convert_flat_to_nested_transitions(
             flat_transitions=regime.transitions,
             states_per_regime=states_per_regime,
             terminal=regime.terminal,
         )
-
     # ----------------------------------------------------------------------------------
     # Stage 1: Initialize regime components that do not depend on other regimes
     # ----------------------------------------------------------------------------------
-    grids = MappingProxyType({n: get_grids(r) for n, r in regimes.items()})
-    gridspecs = MappingProxyType({n: get_gridspecs(r) for n, r in regimes.items()})
-    variable_infos = MappingProxyType(
-        {n: get_variable_info(r) for n, r in regimes.items()}
+    grids = MappingProxyType(
+        {n: get_grids(r) for n, r in regimes_with_fixed_params.items()}
+    )
+    gridspecs = MappingProxyType(
+        {n: get_gridspecs(r) for n, r in regimes_with_fixed_params.items()}
+    )
+    variable_info = MappingProxyType(
+        {n: get_variable_info(r) for n, r in regimes_with_fixed_params.items()}
     )
 
     state_space_infos = MappingProxyType(
-        {n: build_state_space_info(r) for n, r in regimes.items()}
+        {n: build_state_space_info(r) for n, r in regimes_with_fixed_params.items()}
     )
     state_action_spaces = MappingProxyType(
-        {n: build_state_action_space(r) for n, r in regimes.items()}
+        {n: build_state_action_space(r) for n, r in regimes_with_fixed_params.items()}
     )
     regimes_to_active_periods = MappingProxyType(
-        {n: ages.get_periods_where(r.active) for n, r in regimes.items()}
+        {
+            n: ages.get_periods_where(r.active)
+            for n, r in regimes_with_fixed_params.items()
+        }
     )
 
     # ----------------------------------------------------------------------------------
     # Stage 2: Initialize regime components that depend on other regimes
     # ----------------------------------------------------------------------------------
     internal_regimes = {}
-    for name, regime in regimes.items():
+    for name, regime in regimes_with_fixed_params.items():
         params_template = create_params_template(
             regime,
             grids=grids,
@@ -129,6 +156,8 @@ def process_regimes(
             regime_name=name,
             nested_transitions=nested_transitions[name],
             grids=grids,
+            gridspecs=gridspecs[name],
+            variable_info=variable_info[name],
             params=params_template,
             regime_id=regime_names_to_ids,
             enable_jit=enable_jit,
@@ -140,7 +169,6 @@ def process_regimes(
             regimes_to_active_periods=regimes_to_active_periods,
             internal_functions=internal_functions,
             state_space_infos=state_space_infos,
-            grids=grids,
             ages=ages,
         )
         max_Q_over_a_functions = build_max_Q_over_a_functions(
@@ -152,6 +180,8 @@ def process_regimes(
         next_state_simulation_function = build_next_state_simulation_functions(
             internal_functions=internal_functions,
             grids=grids,
+            gridspecs=gridspecs[name],
+            variable_info=variable_info[name],
             enable_jit=enable_jit,
         )
 
@@ -163,7 +193,7 @@ def process_regimes(
             terminal=regime.terminal,
             grids=grids[name],
             gridspecs=gridspecs[name],
-            variable_info=variable_infos[name],
+            variable_info=variable_info[name],
             functions=MappingProxyType(internal_functions.functions),
             utility=internal_functions.utility,
             constraints=MappingProxyType(internal_functions.constraints),
@@ -172,8 +202,8 @@ def process_regimes(
             internal_functions=internal_functions,
             transitions=internal_functions.transitions,
             params_template=params_template,
-            state_action_spaces=state_action_spaces[name],
-            state_space_infos=state_space_infos[name],
+            state_action_space=state_action_spaces[name],
+            state_space_info=state_space_infos[name],
             max_Q_over_a_functions=MappingProxyType(max_Q_over_a_functions),
             argmax_and_max_Q_over_a_functions=MappingProxyType(
                 argmax_and_max_Q_over_a_functions
@@ -191,6 +221,8 @@ def _get_internal_functions(
     regime_name: str,
     nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
     grids: MappingProxyType[RegimeName, MappingProxyType[str, Array]],
+    gridspecs: MappingProxyType[str, Grid],
+    variable_info: pd.DataFrame,
     params: ParamsDict,
     regime_id: RegimeNamesToIds,
     *,
@@ -204,6 +236,8 @@ def _get_internal_functions(
         nested_transitions: Nested transitions dict for internal processing.
             Format: {"regime_name": {"next_state": fn, ...}, "next_regime": fn}
         grids: Dict containing the state grids for each regime.
+        gridspecs: The specifications of the current regimes grids.
+        variable_info: Variable info of the regime.
         params: The parameters of the regime.
         regime_id: Immutable mapping from regime names to integer indices.
         enable_jit: Whether to jit the internal functions.
@@ -213,7 +247,6 @@ def _get_internal_functions(
 
     """
     flat_grids = flatten_regime_namespace(grids)
-
     # Flatten nested transitions to get prefixed names like "regime__next_wealth"
     flat_nested_transitions = flatten_regime_namespace(nested_transitions)
 
@@ -297,7 +330,17 @@ def _get_internal_functions(
             fn=fn,
             grid=flat_grids[fn_name.replace("next_", "")],
         )
-
+    for shock_name in variable_info.query("is_shock").index.tolist():
+        relative_name = f"{regime_name}__next_{shock_name}"
+        functions[f"weight_{relative_name}"] = _get_weights_fn_for_shock(
+            name=shock_name,
+            flat_grid=flat_grids[relative_name.replace("next_", "")],
+            gridspec=gridspecs[shock_name],
+        )
+        functions[relative_name] = _get_stochastic_next_function_for_shock(
+            name=shock_name,
+            grid=flat_grids[relative_name.replace("next_", "")],
+        )
     internal_transition = {
         fn_name: functions[fn_name]
         for fn_name in flat_nested_transitions
@@ -337,7 +380,6 @@ def _get_internal_functions(
             is_stochastic=is_stochastic_regime_transition,
             enable_jit=enable_jit,
         )
-
     return InternalFunctions(
         functions=internal_functions,
         utility=internal_utility,
@@ -397,6 +439,41 @@ def _get_stochastic_next_function(fn: UserFunction, grid: Int1D) -> UserFunction
     return next_func
 
 
+def _get_stochastic_next_function_for_shock(name: str, grid: Float1D) -> UserFunction:
+    """Get function that returns the indices in the vf arr of the next shock states."""
+
+    @with_signature(args={f"{name}": "ContinuousState"}, return_annotation="Int1D")
+    @stochastic
+    def next_func(**kwargs: Any) -> Int1D:  # noqa: ARG001, ANN401
+        return jnp.arange(grid.shape[0])
+
+    return next_func
+
+
+def _get_weights_fn_for_shock(
+    name: str, flat_grid: Float1D, gridspec: Grid
+) -> UserFunction:
+    """Get function that uses linear interpolation to calculate the shock weights."""
+    transition_probs = gridspec.shock.get_transition_probs()  # ty: ignore[unresolved-attribute]
+
+    @with_signature(
+        args={f"{name}": "ContinuousState"},
+        return_annotation="FloatND",
+        enforce=False,
+    )
+    def weights_func(*args: Array, **kwargs: Array) -> Float1D:  # noqa: ARG001
+        coordinate = get_irreg_coordinate(kwargs[f"{name}"], flat_grid)
+        return map_coordinates(
+            input=transition_probs,
+            coordinates=[
+                jnp.full(gridspec.n_points, fill_value=coordinate),  # ty: ignore[unresolved-attribute]
+                jnp.arange(gridspec.n_points),  # ty: ignore[unresolved-attribute]
+            ],
+        )
+
+    return weights_func
+
+
 def _ensure_fn_only_depends_on_params(
     fn: UserFunction,
     fn_name: str,
@@ -414,6 +491,23 @@ def _ensure_fn_only_depends_on_params(
             param_key=key,
         )
     return _add_dummy_params_argument(fn)
+
+
+def _pass_fixed_params_to_shocks(regime: Regime, fixed_params: ParamsDict) -> Regime:
+    states_with_fixed_params = {}
+    for name, state in regime.states.items():
+        if isinstance(state, ShockGrid):
+            if name in fixed_params:
+                states_with_fixed_params[name] = ShockGrid(
+                    distribution_type=state.distribution_type,
+                    n_points=state.n_points,
+                    shock_params=fixed_params[name],
+                )
+            else:
+                states_with_fixed_params[name] = state
+        else:
+            states_with_fixed_params[name] = state
+    return regime.replace(states=states_with_fixed_params)
 
 
 def _convert_flat_to_nested_transitions(
@@ -451,12 +545,10 @@ def _convert_flat_to_nested_transitions(
 
     nested: dict[str, dict[str, UserFunction] | UserFunction] = {}
     nested["next_regime"] = next_regime_fn
-
     for regime_name, regime_state_names in states_per_regime.items():
         if regime_state_names <= transitioned_state_names:
             nested[regime_name] = {
                 f"next_{state}": state_transitions[f"next_{state}"]
                 for state in regime_state_names & transitioned_state_names
             }
-
     return nested

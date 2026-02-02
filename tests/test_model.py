@@ -4,6 +4,7 @@ import pytest
 import lcm
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.grids import ShockGrid
 
 
 def test_regime_invalid_states():
@@ -451,4 +452,37 @@ def test_unused_action_raises_error():
             regimes={"working": working, "retired": retired},
             ages=AgeGrid(start=0, stop=5, step="Y"),
             regime_id_class=RegimeId,
+        )
+
+
+def test_fixed_params_validation():
+    """Model validates that fixed params exist when are shocks used."""
+
+    @categorical
+    class RegimeId:
+        alive: int
+        dead: int
+
+    alive = Regime(
+        states={"health": ShockGrid(distribution_type="tauchen", n_points=2)},
+        utility=lambda health: health,
+        transitions={
+            "next_health": lambda health: health,
+            "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
+        },
+        active=lambda age: age < 1,
+    )
+    dead = Regime(
+        utility=lambda: 0,
+        terminal=True,
+        active=lambda age: age >= 1,
+    )
+
+    # Using separator in regime name should raise error
+    with pytest.raises(ModelInitializationError, match="is missing fixed params"):
+        Model(
+            regimes={"alive": alive, "dead": dead},
+            ages=AgeGrid(start=0, stop=2, step="Y"),
+            regime_id_class=RegimeId,
+            fixed_params={},
         )

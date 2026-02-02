@@ -8,6 +8,7 @@ from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, format_messages
+from lcm.grids import ShockGrid
 from lcm.input_processing.regime_processing import InternalRegime, process_regimes
 from lcm.input_processing.util import get_variable_info
 from lcm.logging import get_logger
@@ -50,6 +51,7 @@ class Model:
     regimes: MappingProxyType[str, Regime]
     internal_regimes: MappingProxyType[str, InternalRegime]
     enable_jit: bool = True
+    fixed_params: ParamsDict
     params_template: ParamsDict
 
     def __init__(
@@ -60,6 +62,7 @@ class Model:
         regimes: Mapping[str, Regime],
         regime_id_class: type,
         enable_jit: bool = True,
+        fixed_params: ParamsDict | None = None,
     ) -> None:
         """Initialize the Model.
 
@@ -69,15 +72,20 @@ class Model:
             description: Description of the model.
             regime_id_class: Dataclass mapping regime names to integer indices.
             enable_jit: Whether to jit the functions of the internal regime.
+            fixed_params: Parameters that can be fixed at model initialization.
 
         """
         # Create regime_id mapping from dict keys
         self.description = description
         self.ages = ages
         self.n_periods = ages.n_periods
+        self.fixed_params = fixed_params if fixed_params is not None else {}
 
         _validate_model_inputs(
-            n_periods=self.n_periods, regimes=regimes, regime_id_class=regime_id_class
+            n_periods=self.n_periods,
+            regimes=regimes,
+            regime_id_class=regime_id_class,
+            fixed_params=self.fixed_params,
         )
         self.regime_names_to_ids = MappingProxyType(
             dict(
@@ -93,6 +101,7 @@ class Model:
                 regimes=regimes,
                 ages=self.ages,
                 regime_names_to_ids=self.regime_names_to_ids,
+                fixed_params=self.fixed_params,
                 enable_jit=enable_jit,
             )
         )
@@ -205,6 +214,7 @@ def _validate_model_inputs(  # noqa: C901
     n_periods: int,
     regimes: Mapping[str, Regime],
     regime_id_class: type,
+    fixed_params: ParamsDict,
 ) -> None:
     # Early exit if regimes are not lcm.Regime instances
     if not all(isinstance(regime, Regime) for regime in regimes.values()):
@@ -262,9 +272,9 @@ def _validate_model_inputs(  # noqa: C901
             "regime names:\n"
             f"    {regime_names}."
         )
-
     error_messages.extend(_validate_transition_completeness(regimes))
     error_messages.extend(_validate_all_variables_used(regimes))
+    error_messages.extend(_validate_fixed_params_present(regimes, fixed_params))
 
     if error_messages:
         msg = format_messages(error_messages)
@@ -356,4 +366,25 @@ def _validate_all_variables_used(regimes: Mapping[str, Regime]) -> list[str]:
                 f"utility, constraints, or transition functions."
             )
 
+    return error_messages
+
+
+def _validate_fixed_params_present(
+    regimes: Mapping[str, Regime], fixed_params: ParamsDict
+) -> list[str]:
+    """Return error messages if params for shocks are missing."""
+    error_messages = []
+    for regime_name, regime in regimes.items():
+        fixed_params_needed = set()
+        for state_name, state in regime.states.items():
+            if isinstance(state, ShockGrid) and state.distribution_type in [
+                "tauchen",
+                "rouwenhorst",
+            ]:
+                fixed_params_needed.add(state_name)
+        if fixed_params_needed - set(fixed_params):
+            error_messages.append(
+                f"Regime {regime_name} is missing fixed params:\n"
+                f"{fixed_params_needed.difference(fixed_params)}"
+            )
     return error_messages
