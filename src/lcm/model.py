@@ -295,16 +295,13 @@ def _validate_transition_completeness(regimes: Mapping[str, Regime]) -> list[str
 
     """
     all_states = set(chain.from_iterable(r.states.keys() for r in regimes.values()))
+    non_terminal_regimes = {n: r for n, r in regimes.items() if not r.terminal}
 
     missing_transitions: dict[str, set[str]] = {}
-
-    for name, regime in regimes.items():
-        if regime.terminal:
-            continue
+    for name, regime in non_terminal_regimes.items():
         states_from_transitions = {
             fn_key.removeprefix("next_") for fn_key in regime.transitions
         }
-
         missing = all_states - states_from_transitions
         if missing:
             missing_transitions[name] = missing
