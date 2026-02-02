@@ -21,11 +21,9 @@ from lcm.input_processing.regime_components import (
     build_next_state_simulation_functions,
     build_Q_and_F_functions,
     build_regime_transition_probs_functions,
-    build_state_action_space,
     build_state_space_info,
 )
 from lcm.input_processing.util import (
-    get_grids,
     get_gridspecs,
     get_variable_info,
     is_stochastic_transition,
@@ -34,10 +32,12 @@ from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
 from lcm.mark import stochastic
 from lcm.ndimage import map_coordinates
 from lcm.regime import Regime
+from lcm.state_action_space import create_state_action_space
 from lcm.typing import (
     Float1D,
     Int1D,
     InternalParams,
+    InternalRegimeParams,
     InternalUserFunction,
     RegimeName,
     RegimeNamesToIds,
@@ -90,16 +90,6 @@ def process_regimes(
         The processed regime.
 
     """
-    # ----------------------------------------------------------------------------------
-    # Fixed Parameter Distribution
-    # ----------------------------------------------------------------------------------
-    # Pass the fixed parameters from the model to the classes and functions that need
-    # them
-    regimes_with_fixed_params = {}
-    for name, regime in regimes.items():
-        regimes_with_fixed_params[name] = _pass_fixed_params_to_shocks(
-            regime, fixed_params=fixed_params
-        )
 
     # ----------------------------------------------------------------------------------
     # Convert flat transitions to nested format
@@ -107,13 +97,12 @@ def process_regimes(
     # User provides flat format, internal processing uses nested format.
     # First, collect state names for each regime to know which transitions map where.
     states_per_regime: dict[str, set[str]] = {
-        name: set(regime.states.keys())
-        for name, regime in regimes_with_fixed_params.items()
+        name: set(regime.states.keys()) for name, regime in regimes.items()
     }
 
     # Convert each regime's flat transitions to nested format
     nested_transitions = {}
-    for name, regime in regimes_with_fixed_params.items():
+    for name, regime in regimes.items():
         nested_transitions[name] = _convert_flat_to_nested_transitions(
             flat_transitions=regime.transitions,
             states_per_regime=states_per_regime,
@@ -122,33 +111,48 @@ def process_regimes(
     # ----------------------------------------------------------------------------------
     # Stage 1: Initialize regime components that do not depend on other regimes
     # ----------------------------------------------------------------------------------
-    grids = MappingProxyType(
-        {n: get_grids(r) for n, r in regimes_with_fixed_params.items()}
-    )
-    gridspecs = MappingProxyType(
-        {n: get_gridspecs(r) for n, r in regimes_with_fixed_params.items()}
-    )
     variable_info = MappingProxyType(
-        {n: get_variable_info(r) for n, r in regimes_with_fixed_params.items()}
+        {n: get_variable_info(r) for n, r in regimes.items()}
+    )
+    internal_fixed_params = {
+        n: _extract_regime_fixed_params(regime=r, fixed_params=fixed_params)
+        for n, r in regimes.items()
+    }
+    gridspecs = MappingProxyType(
+        {
+            n: _init_shock_gridspecs(
+                gridspecs=get_gridspecs(r),
+                internal_fixed_params=internal_fixed_params[n],
+            )
+            for n, r in regimes.items()
+        }
+    )
+    grids = MappingProxyType(
+        {
+            n: MappingProxyType(
+                {name: spec.to_jax() for name, spec in gridspecs[n].items()}
+            )
+            for n in regimes
+        }
     )
     state_space_infos = MappingProxyType(
-        {n: build_state_space_info(r) for n, r in regimes_with_fixed_params.items()}
+        {n: build_state_space_info(r) for n, r in regimes.items()}
     )
     state_action_spaces = MappingProxyType(
-        {n: build_state_action_space(r) for n, r in regimes_with_fixed_params.items()}
+        {
+            n: create_state_action_space(variable_info=variable_info[n], grids=grids[n])
+            for n in regimes
+        }
     )
     regimes_to_active_periods = MappingProxyType(
-        {
-            n: ages.get_periods_where(r.active)
-            for n, r in regimes_with_fixed_params.items()
-        }
+        {n: ages.get_periods_where(r.active) for n, r in regimes.items()}
     )
 
     # ----------------------------------------------------------------------------------
     # Stage 2: Initialize regime components that depend on other regimes
     # ----------------------------------------------------------------------------------
     internal_regimes = {}
-    for name, regime in regimes_with_fixed_params.items():
+    for name, regime in regimes.items():
         params_template = create_regime_params_template(regime)
 
         internal_functions = _get_internal_functions(
@@ -200,6 +204,7 @@ def process_regimes(
             active_periods=tuple(regimes_to_active_periods[name]),
             regime_transition_probs=internal_functions.regime_transition_probs,
             internal_functions=internal_functions,
+            internal_fixed_params=internal_fixed_params[name],
             transitions=internal_functions.transitions,
             params_template=params_template,
             state_action_space=state_action_spaces[name],
@@ -506,21 +511,31 @@ def _ensure_fn_only_depends_on_internal_params(
     return _add_dummy_internal_params_argument(fn)
 
 
-def _pass_fixed_params_to_shocks(regime: Regime, fixed_params: UserParams) -> Regime:
-    states_with_fixed_params = {}
-    for name, state in regime.states.items():
-        if isinstance(state, ShockGrid):
-            if name in fixed_params:
-                states_with_fixed_params[name] = ShockGrid(
-                    distribution_type=state.distribution_type,
-                    n_points=state.n_points,
-                    shock_params=fixed_params[name],  # ty: ignore[invalid-argument-type]
-                )
-            else:
-                states_with_fixed_params[name] = state
+def _extract_regime_fixed_params(
+    regime: Regime, fixed_params: UserParams
+) -> InternalRegimeParams:
+    """Extract and process fixed params relevant to a regime's shocks."""
+    result: dict[str, Any] = {}
+    for state_name, state in regime.states.items():
+        if isinstance(state, ShockGrid) and state_name in fixed_params:
+            result[state_name] = fixed_params[state_name]
+    return ensure_containers_are_immutable(result)
+
+
+def _init_shock_gridspecs(
+    gridspecs: MappingProxyType[str, Grid],
+    internal_fixed_params: InternalRegimeParams,
+) -> MappingProxyType[str, Grid]:
+    """Initialize ShockGrid instances with their fixed parameters."""
+    result: dict[str, Grid] = {}
+    for name, spec in gridspecs.items():
+        if isinstance(spec, ShockGrid) and name in internal_fixed_params:
+            result[name] = spec.init_params(
+                cast("MappingProxyType[str, float]", internal_fixed_params[name])
+            )
         else:
-            states_with_fixed_params[name] = state
-    return regime.replace(states=states_with_fixed_params)
+            result[name] = spec
+    return MappingProxyType(result)
 
 
 def _convert_flat_to_nested_transitions(

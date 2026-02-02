@@ -11,11 +11,9 @@ from lcm import DiscreteGrid, LinSpacedGrid, grid_helpers
 from lcm.ages import AgeGrid
 from lcm.input_processing.regime_processing import (
     _convert_flat_to_nested_transitions,
-    get_grids,
-    get_gridspecs,
-    get_variable_info,
     process_regimes,
 )
+from lcm.input_processing.util import get_grids, get_gridspecs, get_variable_info
 from tests.regime_mock import RegimeMock
 from tests.test_models.deterministic.base import dead, working
 
