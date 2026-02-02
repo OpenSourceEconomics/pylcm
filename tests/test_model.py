@@ -2,7 +2,7 @@ import jax.numpy as jnp
 import pytest
 
 import lcm
-from lcm import AgeGrid, DiscreteGrid, Model, Regime, categorical
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.grids import ShockGrid
 
@@ -358,6 +358,135 @@ def test_model_regime_name_validation(binary_category_class):
     with pytest.raises(ModelInitializationError, match="separator character"):
         Model(
             regimes={"alive__bad": alive, "dead": dead},
+            ages=AgeGrid(start=0, stop=2, step="Y"),
+            regime_id_class=RegimeId,
+        )
+
+
+def test_unused_state_raises_error():
+    """Model raises error when a state is defined but never used."""
+
+    @categorical
+    class RegimeId:
+        working: int
+        retired: int
+
+    @categorical
+    class UnusedState:
+        low: int
+        medium: int
+        high: int
+
+    # Define a regime where 'unused_state' is not used in any function
+    working = Regime(
+        utility=lambda wealth, consumption: jnp.log(consumption) + wealth * 0.001,
+        states={
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
+            "unused_state": DiscreteGrid(UnusedState),  # Not used anywhere!
+        },
+        actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
+        transitions={
+            "next_wealth": lambda wealth, consumption: wealth - consumption,
+            "next_unused_state": lambda unused_state: unused_state,
+            "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.9, 0.1])),
+        },
+        active=lambda age: age < 5,
+    )
+
+    retired = Regime(
+        utility=lambda wealth: wealth * 0.5,
+        states={
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
+            "unused_state": DiscreteGrid(UnusedState),
+        },
+        terminal=True,
+        active=lambda age: age >= 5,
+    )
+
+    # Should raise error about unused_state
+    with pytest.raises(ModelInitializationError, match="unused_state"):
+        Model(
+            regimes={"working": working, "retired": retired},
+            ages=AgeGrid(start=0, stop=5, step="Y"),
+            regime_id_class=RegimeId,
+        )
+
+
+def test_unused_action_raises_error():
+    """Model raises error when an action is defined but never used."""
+
+    @categorical
+    class RegimeId:
+        working: int
+        retired: int
+
+    @categorical
+    class UnusedAction:
+        option_a: int
+        option_b: int
+
+    working = Regime(
+        utility=lambda wealth, consumption: jnp.log(consumption) + wealth * 0.001,
+        states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
+        actions={
+            "consumption": LinSpacedGrid(start=1, stop=50, n_points=10),
+            "unused_action": DiscreteGrid(UnusedAction),  # Not used anywhere!
+        },
+        transitions={
+            "next_wealth": lambda wealth, consumption: wealth - consumption,
+            "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.9, 0.1])),
+        },
+        active=lambda age: age < 5,
+    )
+
+    retired = Regime(
+        utility=lambda wealth: wealth * 0.5,
+        states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
+        terminal=True,
+        active=lambda age: age >= 5,
+    )
+
+    # Should raise error about unused_action
+    with pytest.raises(ModelInitializationError, match="unused_action"):
+        Model(
+            regimes={"working": working, "retired": retired},
+            ages=AgeGrid(start=0, stop=5, step="Y"),
+            regime_id_class=RegimeId,
+        )
+
+
+def test_missing_transition_for_other_regime_state_raises_error():
+    """Non-terminal regimes must have transitions for all states across all regimes."""
+
+    @categorical
+    class RegimeId:
+        working: int
+        retired: int
+
+    # Working regime only has 'wealth', but retired has 'wealth' AND 'pension'.
+    # Working must define next_pension since it can transition to retired.
+    working = Regime(
+        utility=lambda wealth: wealth,
+        states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
+        transitions={
+            "next_wealth": lambda wealth: wealth,
+            # Missing next_pension!
+            "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
+        },
+    )
+
+    retired = Regime(
+        utility=lambda wealth, pension: wealth + pension,
+        states={
+            "wealth": LinSpacedGrid(start=1, stop=10, n_points=5),
+            "pension": LinSpacedGrid(start=0, stop=5, n_points=3),
+        },
+        terminal=True,
+    )
+
+    with pytest.raises(ModelInitializationError, match="next_pension"):
+        Model(
+            regimes={"working": working, "retired": retired},
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=RegimeId,
         )

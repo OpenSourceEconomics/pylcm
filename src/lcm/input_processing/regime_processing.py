@@ -135,6 +135,7 @@ def process_regimes(
             for n in regimes
         }
     )
+
     state_space_infos = MappingProxyType(
         {n: build_state_space_info(r) for n, r in regimes.items()}
     )
