@@ -32,6 +32,7 @@ from lcm.state_action_space import (
 from lcm.typing import (
     ArgmaxQOverAFunction,
     GridsDict,
+    InternalRegimeParams,
     InternalUserFunction,
     MaxQOverAFunction,
     NextStateSimulationFunction,
@@ -74,7 +75,6 @@ def build_Q_and_F_functions(
     for period, age in enumerate(ages.values):
         if regime.terminal:
             Q_and_F = get_Q_and_F_terminal(
-                regime_name=regime_name,
                 internal_functions=internal_functions,
                 period=period,
                 age=age,
@@ -94,12 +94,11 @@ def build_Q_and_F_functions(
 
 
 def build_max_Q_over_a_functions(
-    regime: Regime,
+    state_action_space: StateActionSpace,
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
     *,
     enable_jit: bool,
 ) -> MappingProxyType[int, MaxQOverAFunction]:
-    state_action_space = build_state_action_space(regime)
     max_Q_over_a_functions = {}
     for period, Q_and_F in Q_and_F_functions.items():
         max_Q_over_a_functions[period] = _build_max_Q_over_a_function(
@@ -128,12 +127,11 @@ def _build_max_Q_over_a_function(
 
 
 def build_argmax_and_max_Q_over_a_functions(
-    regime: Regime,
+    state_action_space: StateActionSpace,
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
     *,
     enable_jit: bool,
 ) -> MappingProxyType[int, ArgmaxQOverAFunction]:
-    state_action_space = build_state_action_space(regime)
     argmax_and_max_Q_over_a_functions = {}
     for period, Q_and_F in Q_and_F_functions.items():
         fn = _build_argmax_and_max_Q_over_a_function(
@@ -188,7 +186,7 @@ def build_next_state_simulation_functions(
         variables=tuple(
             parameter
             for parameter in parameters
-            if parameter not in ("period", "age", "params")
+            if parameter not in ("period", "age", "internal_regime_params")
         ),
     )
 
@@ -250,7 +248,7 @@ def build_regime_transition_probs_functions(
         variables=tuple(
             parameter
             for parameter in parameters
-            if parameter not in ("period", "age", "params")
+            if parameter not in ("period", "age", "internal_regime_params")
         ),
     )
 
@@ -262,41 +260,49 @@ def build_regime_transition_probs_functions(
 
 def _wrap_regime_transition_probs(
     fn: InternalUserFunction,
-    regime_id: RegimeNamesToIds,
+    regime_names_to_ids: RegimeNamesToIds,
 ) -> InternalUserFunction:
     """Wrap next_regime function to convert array output to dict format.
 
     The next_regime function returns a JAX array of probabilities indexed by
-    the regime_id. This wrapper converts the array to dict format for internal
+    the regime's id. This wrapper converts the array to dict format for internal
     processing.
 
     Args:
-        fn: The user's next_regime function (already wrapped with params).
-        regime_id: Immutable mapping from regime names to integer indices.
+        fn: The user's next_regime function (already wrapped with
+            internal_regime_params).
+        regime_names_to_ids: Mapping from regime names to integer indices.
 
     Returns:
         A wrapped function that returns MappingProxyType[str, float|Array].
 
     """
-    # Get regime names in index order from regime_id
+    # Get regime names in index order from regime_names_to_ids
     regime_names_by_id: list[tuple[int, str]] = sorted(
-        [(idx, name) for name, idx in regime_id.items()],
+        [(idx, name) for name, idx in regime_names_to_ids.items()],
         key=lambda x: x[0],
     )
     regime_names = [name for _, name in regime_names_by_id]
 
     # Preserve original annotations
     annotations = get_annotations(fn)
-    annotations_with_params = annotations.copy()
-    return_annotation = annotations_with_params.pop("return", "dict[str, Any]")
+    annotations_with_internal_regime_params = annotations.copy()
+    return_annotation = annotations_with_internal_regime_params.pop(
+        "return", "dict[str, Any]"
+    )
 
-    @with_signature(args=annotations_with_params, return_annotation=return_annotation)
+    @with_signature(
+        args=annotations_with_internal_regime_params,
+        return_annotation=return_annotation,
+    )
     @functools.wraps(fn)
     def wrapped(
-        *args: Array | int, params: dict[str, Any], **kwargs: Array | int
+        *args: Array | int,
+        internal_regime_params: InternalRegimeParams,
+        **kwargs: Array | int,
     ) -> MappingProxyType[str, Any]:
-        result = fn(*args, params=params, **kwargs)
-        # Convert array to dict using regime_id ordering
+        result = fn(*args, internal_regime_params=internal_regime_params, **kwargs)
+        # Convert array to dict using ordering by regime id
         return MappingProxyType(
             {name: result[idx] for idx, name in enumerate(regime_names)}
         )
@@ -306,7 +312,7 @@ def _wrap_regime_transition_probs(
 
 def _wrap_deterministic_regime_transition(
     fn: InternalUserFunction,
-    regime_id: RegimeNamesToIds,
+    regime_names_to_ids: RegimeNamesToIds,
 ) -> InternalUserFunction:
     """Wrap deterministic next_regime to return one-hot probability array.
 
@@ -316,25 +322,29 @@ def _wrap_deterministic_regime_transition(
 
     Args:
         fn: The user's deterministic next_regime function (returns int).
-        regime_id: Immutable mapping from regime names to integer indices.
+        regime_names_to_ids: Mapping from regime names to integer indices.
 
     Returns:
         A wrapped function that returns a one-hot probability array.
 
     """
-    n_regimes = len(regime_id)
+    n_regimes = len(regime_names_to_ids)
 
     # Preserve original annotations but update return type
     annotations = get_annotations(fn)
-    annotations_with_params = annotations.copy()
-    annotations_with_params.pop("return", None)
+    annotations_with_internal_regime_params = annotations.copy()
+    annotations_with_internal_regime_params.pop("return", None)
 
-    @with_signature(args=annotations_with_params, return_annotation="Array")
+    @with_signature(
+        args=annotations_with_internal_regime_params, return_annotation="Array"
+    )
     @functools.wraps(fn)
     def wrapped(
-        *args: Array | int, params: dict[str, Any], **kwargs: Array | int
+        *args: Array | int,
+        internal_regime_params: InternalRegimeParams,
+        **kwargs: Array | int,
     ) -> Array:
-        regime_idx = fn(*args, params=params, **kwargs)
+        regime_idx = fn(*args, internal_regime_params=internal_regime_params, **kwargs)
         return jax.nn.one_hot(regime_idx, n_regimes)
 
     return wrapped

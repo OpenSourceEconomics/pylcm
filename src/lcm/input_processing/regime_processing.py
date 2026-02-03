@@ -1,6 +1,5 @@
 import functools
 from collections.abc import Mapping
-from copy import deepcopy
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -13,18 +12,18 @@ from jax import numpy as jnp
 from lcm.ages import AgeGrid
 from lcm.grid_helpers import get_irreg_coordinate
 from lcm.grids import Grid, ShockGrid
-from lcm.input_processing.create_params_template import create_params_template
+from lcm.input_processing.create_regime_params_template import (
+    create_regime_params_template,
+)
 from lcm.input_processing.regime_components import (
     build_argmax_and_max_Q_over_a_functions,
     build_max_Q_over_a_functions,
     build_next_state_simulation_functions,
     build_Q_and_F_functions,
     build_regime_transition_probs_functions,
-    build_state_action_space,
     build_state_space_info,
 )
 from lcm.input_processing.util import (
-    get_grids,
     get_gridspecs,
     get_variable_info,
     is_stochastic_transition,
@@ -33,18 +32,22 @@ from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
 from lcm.mark import stochastic
 from lcm.ndimage import map_coordinates
 from lcm.regime import Regime
+from lcm.state_action_space import create_state_action_space
 from lcm.typing import (
     Float1D,
     Int1D,
+    InternalRegimeParams,
     InternalUserFunction,
-    ParamsDict,
     RegimeName,
     RegimeNamesToIds,
+    RegimeParamsTemplate,
     TransitionFunctionsMapping,
     UserFunction,
+    UserParams,
 )
 from lcm.utils import (
     REGIME_SEPARATOR,
+    ensure_containers_are_immutable,
     flatten_regime_namespace,
     unflatten_regime_namespace,
 )
@@ -64,9 +67,9 @@ def process_regimes(
     ages: AgeGrid,
     regime_names_to_ids: RegimeNamesToIds,
     *,
-    fixed_params: ParamsDict,
-    enable_jit: bool = True,
-) -> dict[str, InternalRegime]:
+    fixed_params: UserParams,
+    enable_jit: bool,
+) -> MappingProxyType[RegimeName, InternalRegime]:
     """Process the user regime.
 
     This entails the following steps:
@@ -86,16 +89,6 @@ def process_regimes(
         The processed regime.
 
     """
-    # ----------------------------------------------------------------------------------
-    # Fixed Parameter Distribution
-    # ----------------------------------------------------------------------------------
-    # Pass the fixed parameters from the model to the classes and functions that need
-    # them
-    regimes_with_fixed_params = {}
-    for name, regime in regimes.items():
-        regimes_with_fixed_params[name] = _pass_fixed_params_to_shocks(
-            regime, fixed_params=fixed_params
-        )
 
     # ----------------------------------------------------------------------------------
     # Convert flat transitions to nested format
@@ -103,13 +96,12 @@ def process_regimes(
     # User provides flat format, internal processing uses nested format.
     # First, collect state names for each regime to know which transitions map where.
     states_per_regime: dict[str, set[str]] = {
-        name: set(regime.states.keys())
-        for name, regime in regimes_with_fixed_params.items()
+        name: set(regime.states.keys()) for name, regime in regimes.items()
     }
 
     # Convert each regime's flat transitions to nested format
     nested_transitions = {}
-    for name, regime in regimes_with_fixed_params.items():
+    for name, regime in regimes.items():
         nested_transitions[name] = _convert_flat_to_nested_transitions(
             flat_transitions=regime.transitions,
             states_per_regime=states_per_regime,
@@ -118,48 +110,62 @@ def process_regimes(
     # ----------------------------------------------------------------------------------
     # Stage 1: Initialize regime components that do not depend on other regimes
     # ----------------------------------------------------------------------------------
-    grids = MappingProxyType(
-        {n: get_grids(r) for n, r in regimes_with_fixed_params.items()}
-    )
-    gridspecs = MappingProxyType(
-        {n: get_gridspecs(r) for n, r in regimes_with_fixed_params.items()}
-    )
     variable_info = MappingProxyType(
-        {n: get_variable_info(r) for n, r in regimes_with_fixed_params.items()}
+        {n: get_variable_info(r) for n, r in regimes.items()}
+    )
+    internal_fixed_params = {
+        n: _extract_regime_fixed_params(
+            regime=r, regime_name=n, fixed_params=fixed_params
+        )
+        for n, r in regimes.items()
+    }
+    gridspecs = MappingProxyType(
+        {
+            n: _init_shock_gridspecs(
+                gridspecs=get_gridspecs(r),
+                internal_fixed_params=internal_fixed_params[n],
+            )
+            for n, r in regimes.items()
+        }
+    )
+    grids = MappingProxyType(
+        {
+            n: MappingProxyType(
+                {name: spec.to_jax() for name, spec in gridspecs[n].items()}
+            )
+            for n in regimes
+        }
     )
 
     state_space_infos = MappingProxyType(
-        {n: build_state_space_info(r) for n, r in regimes_with_fixed_params.items()}
+        {n: build_state_space_info(r) for n, r in regimes.items()}
     )
     state_action_spaces = MappingProxyType(
-        {n: build_state_action_space(r) for n, r in regimes_with_fixed_params.items()}
+        {
+            n: create_state_action_space(variable_info=variable_info[n], grids=grids[n])
+            for n in regimes
+        }
     )
     regimes_to_active_periods = MappingProxyType(
-        {
-            n: ages.get_periods_where(r.active)
-            for n, r in regimes_with_fixed_params.items()
-        }
+        {n: ages.get_periods_where(r.active) for n, r in regimes.items()}
     )
 
     # ----------------------------------------------------------------------------------
     # Stage 2: Initialize regime components that depend on other regimes
     # ----------------------------------------------------------------------------------
     internal_regimes = {}
-    for name, regime in regimes_with_fixed_params.items():
-        params_template = create_params_template(
-            regime,
-            grids=grids,
-        )
+    for name, regime in regimes.items():
+        params_template = create_regime_params_template(regime)
 
         internal_functions = _get_internal_functions(
             regime,
             regime_name=name,
             nested_transitions=nested_transitions[name],
             grids=grids,
+            params_template=params_template,
+            regime_names_to_ids=regime_names_to_ids,
             gridspecs=gridspecs[name],
             variable_info=variable_info[name],
-            params=params_template,
-            regime_id=regime_names_to_ids,
             enable_jit=enable_jit,
         )
 
@@ -172,10 +178,14 @@ def process_regimes(
             ages=ages,
         )
         max_Q_over_a_functions = build_max_Q_over_a_functions(
-            regime=regime, Q_and_F_functions=Q_and_F_functions, enable_jit=enable_jit
+            state_action_space=state_action_spaces[name],
+            Q_and_F_functions=Q_and_F_functions,
+            enable_jit=enable_jit,
         )
         argmax_and_max_Q_over_a_functions = build_argmax_and_max_Q_over_a_functions(
-            regime=regime, Q_and_F_functions=Q_and_F_functions, enable_jit=enable_jit
+            state_action_space=state_action_spaces[name],
+            Q_and_F_functions=Q_and_F_functions,
+            enable_jit=enable_jit,
         )
         next_state_simulation_function = build_next_state_simulation_functions(
             internal_functions=internal_functions,
@@ -200,6 +210,7 @@ def process_regimes(
             active_periods=tuple(regimes_to_active_periods[name]),
             regime_transition_probs=internal_functions.regime_transition_probs,
             internal_functions=internal_functions,
+            internal_fixed_params=internal_fixed_params[name],
             transitions=internal_functions.transitions,
             params_template=params_template,
             state_action_space=state_action_spaces[name],
@@ -213,7 +224,7 @@ def process_regimes(
             random_utility_shocks=ShockType.NONE,
         )
 
-    return internal_regimes
+    return ensure_containers_are_immutable(internal_regimes)
 
 
 def _get_internal_functions(
@@ -221,10 +232,10 @@ def _get_internal_functions(
     regime_name: str,
     nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
     grids: MappingProxyType[RegimeName, MappingProxyType[str, Array]],
+    params_template: RegimeParamsTemplate,
+    regime_names_to_ids: RegimeNamesToIds,
     gridspecs: MappingProxyType[str, Grid],
     variable_info: pd.DataFrame,
-    params: ParamsDict,
-    regime_id: RegimeNamesToIds,
     *,
     enable_jit: bool,
 ) -> InternalFunctions:
@@ -236,10 +247,10 @@ def _get_internal_functions(
         nested_transitions: Nested transitions dict for internal processing.
             Format: {"regime_name": {"next_state": fn, ...}, "next_regime": fn}
         grids: Dict containing the state grids for each regime.
+        params_template: The regime's parameter template.
+        regime_names_to_ids: Mapping from regime names to integer indices.
         gridspecs: The specifications of the current regimes grids.
         variable_info: Variable info of the regime.
-        params: The parameters of the regime.
-        regime_id: Immutable mapping from regime names to integer indices.
         enable_jit: Whether to jit the internal functions.
 
     Returns:
@@ -251,18 +262,18 @@ def _get_internal_functions(
     flat_nested_transitions = flatten_regime_namespace(nested_transitions)
 
     # ==================================================================================
-    # Add 'params' argument to functions
+    # Add 'internal_regime_params' argument to functions
     # ==================================================================================
-    # We wrap the user functions such that they can be called with the 'params' argument
-    # instead of the individual parameters.
+    # We wrap the user functions such that they can be called with the
+    # 'internal_regime_params' argument instead of the individual parameters.
 
     # Build all_functions using nested_transitions (to get prefixed names)
-    all_functions = deepcopy(
-        dict(regime.functions)
-        | {"utility": regime.utility}
-        | dict(regime.constraints)
-        | flatten_regime_namespace(nested_transitions)
-    )
+    all_functions = {
+        "utility": regime.utility,
+        **regime.functions,
+        **regime.constraints,
+        **flat_nested_transitions,
+    }
 
     stochastic_transition_functions = {
         fn_name: fn
@@ -287,15 +298,15 @@ def _get_internal_functions(
     functions: dict[str, InternalUserFunction] = {}
 
     for fn_name, fn in deterministic_functions.items():
-        functions[fn_name] = _ensure_fn_only_depends_on_params(
+        functions[fn_name] = _ensure_fn_only_depends_on_internal_regime_params(
             fn=fn,
             fn_name=fn_name,
-            params=params,
+            params_template=params_template,
         )
 
     for fn_name, fn in deterministic_transition_functions.items():
         # For transition functions with prefixed names like "work__next_wealth",
-        # extract the flat param key "next_wealth" to look up in params
+        # extract the flat param key "next_wealth" to look up in internal_regime_params
         if fn_name == "next_regime":
             param_key = fn_name
         elif REGIME_SEPARATOR in fn_name:
@@ -303,11 +314,11 @@ def _get_internal_functions(
             param_key = fn_name.split(REGIME_SEPARATOR, 1)[1]
         else:
             param_key = fn_name
-        functions[fn_name] = _ensure_fn_only_depends_on_params(
+        functions[fn_name] = _ensure_fn_only_depends_on_internal_regime_params(
             fn=fn,
             fn_name=fn_name,
             param_key=param_key,
-            params=params,
+            params_template=params_template,
         )
 
     for fn_name, fn in stochastic_transition_functions.items():
@@ -320,11 +331,13 @@ def _get_internal_functions(
             if REGIME_SEPARATOR in fn_name
             else fn_name
         )
-        functions[f"weight_{fn_name}"] = _ensure_fn_only_depends_on_params(
-            fn=fn,
-            fn_name=fn_name,
-            param_key=param_key,
-            params=params,
+        functions[f"weight_{fn_name}"] = (
+            _ensure_fn_only_depends_on_internal_regime_params(
+                fn=fn,
+                fn_name=fn_name,
+                param_key=param_key,
+                params_template=params_template,
+            )
         )
         functions[fn_name] = _get_stochastic_next_function(
             fn=fn,
@@ -376,7 +389,7 @@ def _get_internal_functions(
             internal_functions=internal_functions,
             regime_transition_probs=functions["next_regime"],
             grids=grids[regime_name],
-            regime_names_to_ids=regime_id,
+            regime_names_to_ids=regime_names_to_ids,
             is_stochastic=is_stochastic_regime_transition,
             enable_jit=enable_jit,
         )
@@ -389,42 +402,60 @@ def _get_internal_functions(
     )
 
 
-def _replace_func_parameters_by_params(
+def _replace_func_parameters_by_internal_regime_params(
     fn: UserFunction,
-    params: ParamsDict,
+    params_template: RegimeParamsTemplate,
     param_key: str,
 ) -> InternalUserFunction:
-    """Wrap a function to get its parameters from the params dict.
+    """Wrap a function to get its parameters from the internal_regime_params dict.
 
     Args:
         fn: The user function to wrap.
-        params: The params dict template.
-        param_key: The key to look up in params (e.g., "next_wealth").
+        params_template: The parameter template for the regime.
+        param_key: The key to look up in params_template (e.g., "next_wealth").
 
     Returns:
-        A wrapped function that accepts a params dict and extracts its parameters.
+        A wrapped function that accepts the internal_regime_params pytree and extracts
+        its parameters.
     """
     annotations = {
-        k: v for k, v in get_annotations(fn).items() if k not in params[param_key]
+        k: v
+        for k, v in get_annotations(fn).items()
+        if k not in params_template[param_key]  # ty: ignore[unsupported-operator]
     }
-    annotations_with_params = annotations | {"params": "ParamsDict"}
-    return_annotation = annotations_with_params.pop("return")
+    annotations_with_internal_regime_params = annotations | {
+        "internal_regime_params": "InternalRegimeParams"
+    }
+    return_annotation = annotations_with_internal_regime_params.pop("return")
 
-    @with_signature(args=annotations_with_params, return_annotation=return_annotation)
+    @with_signature(
+        args=annotations_with_internal_regime_params,
+        return_annotation=return_annotation,
+    )
     @functools.wraps(fn)
-    def processed_func(*args: Array, params: ParamsDict, **kwargs: Array) -> Array:
-        return fn(*args, **kwargs, **params[param_key])
+    def processed_func(
+        *args: Array, internal_regime_params: InternalRegimeParams, **kwargs: Array
+    ) -> Array:
+        return fn(*args, **kwargs, **internal_regime_params[param_key])  # ty: ignore[invalid-argument-type]
 
     return cast("InternalUserFunction", processed_func)
 
 
-def _add_dummy_params_argument(fn: UserFunction) -> InternalUserFunction:
-    annotations = get_annotations(fn) | {"params": "ParamsDict"}
+def _add_dummy_internal_regime_params_argument(
+    fn: UserFunction,
+) -> InternalUserFunction:
+    annotations = get_annotations(fn) | {
+        "internal_regime_params": "InternalRegimeParams"
+    }
     return_annotation = annotations.pop("return")
 
     @with_signature(args=annotations, return_annotation=return_annotation)
     @functools.wraps(fn)
-    def processed_func(*args: Array, params: ParamsDict, **kwargs: Array) -> Array:  # noqa: ARG001
+    def processed_func(
+        *args: Array,
+        internal_regime_params: InternalRegimeParams,  # noqa: ARG001
+        **kwargs: Array,
+    ) -> Array:
         return fn(*args, **kwargs)
 
     return cast("InternalUserFunction", processed_func)
@@ -474,40 +505,70 @@ def _get_weights_fn_for_shock(
     return weights_func
 
 
-def _ensure_fn_only_depends_on_params(
+def _ensure_fn_only_depends_on_internal_regime_params(
     fn: UserFunction,
     fn_name: str,
-    params: ParamsDict,
+    params_template: RegimeParamsTemplate,
     param_key: str | None = None,
 ) -> InternalUserFunction:
-    # param_key is the key to look up in params (may differ from fn_name).
+    # param_key is the key to look up in internal_regime_params (may differ from
+    # fn_name).
     key = param_key if param_key is not None else fn_name
-    # params[key] contains the dictionary of parameters used by the function, which
-    # is empty if the function does not depend on any regime parameters.
-    if params[key]:
-        return _replace_func_parameters_by_params(
+    # internal_regime_params[key] contains the dictionary of parameters used by the
+    # function, which is empty if the function does not depend on any regime parameters.
+    if params_template[key]:
+        return _replace_func_parameters_by_internal_regime_params(
             fn=fn,
-            params=params,
+            params_template=params_template,
             param_key=key,
         )
-    return _add_dummy_params_argument(fn)
+    return _add_dummy_internal_regime_params_argument(fn)
 
 
-def _pass_fixed_params_to_shocks(regime: Regime, fixed_params: ParamsDict) -> Regime:
-    states_with_fixed_params = {}
-    for name, state in regime.states.items():
+def _extract_regime_fixed_params(
+    regime: Regime, regime_name: str, fixed_params: UserParams
+) -> InternalRegimeParams:
+    """Extract and process fixed params relevant to a regime's shocks.
+
+    Fixed params can be provided at two levels:
+    - Model level: {"state_name": {...}} - applies to all regimes
+    - Regime level: {"regime_name": {"state_name": {...}}} - applies to specific regime
+
+    Regime-level params take precedence over model-level params.
+
+    """
+    result: dict[str, Any] = {}
+
+    # Get regime-specific fixed_params if provided
+    regime_fixed_params = fixed_params.get(regime_name, {})
+    if not isinstance(regime_fixed_params, Mapping):
+        regime_fixed_params = {}
+
+    for state_name, state in regime.states.items():
         if isinstance(state, ShockGrid):
-            if name in fixed_params:
-                states_with_fixed_params[name] = ShockGrid(
-                    distribution_type=state.distribution_type,
-                    n_points=state.n_points,
-                    shock_params=fixed_params[name],
-                )
-            else:
-                states_with_fixed_params[name] = state
+            # Check regime-level first, then model-level
+            if state_name in regime_fixed_params:
+                result[state_name] = regime_fixed_params[state_name]
+            elif state_name in fixed_params:
+                result[state_name] = fixed_params[state_name]
+
+    return ensure_containers_are_immutable(result)
+
+
+def _init_shock_gridspecs(
+    gridspecs: MappingProxyType[str, Grid],
+    internal_fixed_params: InternalRegimeParams,
+) -> MappingProxyType[str, Grid]:
+    """Initialize ShockGrid instances with their fixed parameters."""
+    result: dict[str, Grid] = {}
+    for name, spec in gridspecs.items():
+        if isinstance(spec, ShockGrid) and name in internal_fixed_params:
+            result[name] = spec.init_params(
+                cast("MappingProxyType[str, float]", internal_fixed_params[name])
+            )
         else:
-            states_with_fixed_params[name] = state
-    return regime.replace(states=states_with_fixed_params)
+            result[name] = spec
+    return MappingProxyType(result)
 
 
 def _convert_flat_to_nested_transitions(

@@ -10,8 +10,8 @@ from lcm.typing import (
     ContinuousAction,
     ContinuousState,
     FloatND,
-    ParamsDict,
     ScalarInt,
+    UserParams,
 )
 
 
@@ -156,10 +156,10 @@ def inf_value_model(
 
 
 @pytest.fixture
-def params(n_periods: int) -> ParamsDict:
+def params(n_periods: int) -> UserParams:
     return {
+        "discount_factor": 0.95,
         "non_terminal": {
-            "discount_factor": 0.95,
             "next_regime": {"n_periods": n_periods},
         },
         "terminal": {},
@@ -167,21 +167,21 @@ def params(n_periods: int) -> ParamsDict:
 
 
 def test_solve_model_with_nan_value_function_array_raises_error(
-    nan_value_model: Model, params: ParamsDict
+    nan_value_model: Model, params: UserParams
 ) -> None:
     with pytest.raises(InvalidValueFunctionError):
         nan_value_model.solve(params)
 
 
 def test_solve_model_with_inf_value_function_does_not_raise_error(
-    inf_value_model: Model, params: ParamsDict
+    inf_value_model: Model, params: UserParams
 ) -> None:
     # This should not raise an error
     inf_value_model.solve(params)
 
 
 def test_simulate_model_with_nan_value_function_array_raises_error(
-    nan_value_model: Model, params: ParamsDict
+    nan_value_model: Model, params: UserParams
 ) -> None:
     initial_states = {
         "wealth": jnp.array([0.9, 1.0]),
@@ -195,7 +195,7 @@ def test_simulate_model_with_nan_value_function_array_raises_error(
 
 
 def test_simulate_model_with_inf_value_function_array_does_not_raise_error(
-    inf_value_model: Model, params: ParamsDict
+    inf_value_model: Model, params: UserParams
 ) -> None:
     initial_states = {
         "wealth": jnp.array([0.9, 1.0]),

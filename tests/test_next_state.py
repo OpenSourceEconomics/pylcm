@@ -13,18 +13,25 @@ from lcm.next_state import (
     get_next_state_function_for_simulation,
     get_next_state_function_for_solution,
 )
-from lcm.typing import ContinuousState, FloatND, InternalUserFunction, ParamsDict
+from lcm.typing import (
+    ContinuousState,
+    FloatND,
+    InternalRegimeParams,
+    InternalUserFunction,
+)
 from tests.test_models.deterministic.regression import dead, working
 
 
 def test_get_next_state_function_with_solve_target():
     ages = AgeGrid(start=0, stop=4, step="Y")
     regimes = {"working": working, "dead": dead}
-    regime_id = MappingProxyType({name: idx for idx, name in enumerate(regimes.keys())})
+    regime_names_to_ids = MappingProxyType(
+        {name: idx for idx, name in enumerate(regimes.keys())}
+    )
     internal_regimes = process_regimes(
         regimes=regimes,
         ages=ages,
-        regime_names_to_ids=regime_id,
+        regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
         fixed_params={},
     )
@@ -36,36 +43,51 @@ def test_get_next_state_function_with_solve_target():
         functions=internal_working.functions,
     )
 
-    params = {
-        "discount_factor": 1.0,
-        "utility": {"disutility_of_work": 1.0},
-        "next_wealth": {
-            "interest_rate": 0.05,
-        },
-    }
-
+    internal_regime_params = MappingProxyType(
+        {
+            "discount_factor": 1.0,
+            "utility": {"disutility_of_work": 1.0},
+            "next_wealth": {
+                "interest_rate": 0.05,
+            },
+        }
+    )
     action = {"labor_supply": 1, "consumption": 10}
     state = {"wealth": 20}
 
-    got = got_func(**action, **state, period=1, age=1.0, params=params)
+    got = got_func(
+        **action,
+        **state,
+        period=1,
+        age=1.0,
+        internal_regime_params=internal_regime_params,
+    )
     assert got == {"next_wealth": 1.05 * (20 - 10)}
 
 
 def test_get_next_state_function_with_simulate_target():
-    def f_a(state: ContinuousState, params: ParamsDict) -> ContinuousState:  # noqa: ARG001
+    def f_a(
+        state: ContinuousState, internal_regime_params: InternalRegimeParams
+    ) -> ContinuousState:
         return state[0]
 
-    def f_b(state: ContinuousState, params: ParamsDict) -> ContinuousState:  # noqa: ARG001
+    def f_b(
+        state: ContinuousState, internal_regime_params: InternalRegimeParams
+    ) -> ContinuousState:
         return None  # ty: ignore[invalid-return-type]
 
-    def f_weight_b(state: ContinuousState, params: ParamsDict) -> FloatND:  # noqa: ARG001
+    def f_weight_b(
+        state: ContinuousState, internal_regime_params: InternalRegimeParams
+    ) -> FloatND:
         return jnp.array([0.0, 1.0])
 
     grids = MappingProxyType({"mock": MappingProxyType({"b": jnp.arange(2)})})
     gridspecs = MappingProxyType({})
     variable_info = pd.DataFrame({"is_shock": [False], "distribution_type": ["none"]})
-    mock_transition_solve = lambda *args, params, **kwargs: {"mock": 1.0}  # noqa: E731, ARG005
-    mock_transition_simulate = lambda *args, params, **kwargs: {  # noqa: E731, ARG005
+    mock_transition_solve = lambda *args, internal_regime_params, **kwargs: {
+        "mock": 1.0
+    }
+    mock_transition_simulate = lambda *args, internal_regime_params, **kwargs: {
         "mock": jnp.array([1.0])
     }
     internal_functions = InternalFunctions(
@@ -89,7 +111,9 @@ def test_get_next_state_function_with_simulate_target():
     )
 
     key = jnp.arange(2, dtype="uint32")
-    got = got_func(state=jnp.arange(2), key_b=key, params={})
+    got = got_func(
+        state=jnp.arange(2), key_b=key, internal_regime_params=MappingProxyType({})
+    )
 
     expected = {"a": jnp.array([0]), "b": jnp.array([1])}
     assert tree_equal(expected, got)

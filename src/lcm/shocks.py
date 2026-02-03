@@ -1,11 +1,12 @@
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Literal
 
 import jax
 from jax import numpy as jnp
 from jax.scipy.stats.norm import cdf
 
-from lcm.typing import Float1D, FloatND, ParamsDict
+from lcm.typing import Float1D, FloatND
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -26,7 +27,7 @@ class Shock:
 
     distribution_type: Literal["uniform", "normal", "tauchen", "rouwenhorst"]
     n_points: int
-    shock_params: ParamsDict
+    shock_params: MappingProxyType[str, float]
 
     def get_gridpoints(self) -> Float1D:
         """Get the gridpoints used for discretization."""
@@ -80,7 +81,7 @@ def _discretized_uniform_distribution_probs(n_points: int) -> FloatND:
 
 
 def _discretized_normal_distribution_gridpoints(
-    n_points: int, mu_eps: float = 0.0, sigma_eps: float = 1.0, n_std: int = 3
+    n_points: int, mu_eps: float = 0.0, sigma_eps: float = 1.0, n_std: float = 3
 ) -> FloatND:
     """Calculate the gridpoints for a discretized uniform distribution.
 
@@ -101,7 +102,7 @@ def _discretized_normal_distribution_gridpoints(
 
 
 def _discretized_normal_distribution_probs(
-    n_points: int, mu_eps: float = 0.0, sigma_eps: float = 1.0, n_std: int = 3
+    n_points: int, mu_eps: float = 0.0, sigma_eps: float = 1.0, n_std: float = 3
 ) -> FloatND:
     """Calculate the transition probabilities for a discretized normal distribution.
 
@@ -310,19 +311,31 @@ SHOCK_GRIDPOINT_FUNCTIONS = {
 }
 
 
-def uniform(params: ParamsDict, key: FloatND, prev_value: Float1D) -> Float1D:  # noqa: ARG001
+def uniform(
+    params: MappingProxyType[str, float],  # noqa: ARG001
+    key: FloatND,
+    prev_value: Float1D,  # noqa: ARG001
+) -> Float1D:
     return jax.random.uniform(key=key)
 
 
-def normal(params: ParamsDict, key: FloatND, prev_value: Float1D) -> Float1D:  # noqa: ARG001
+def normal(
+    params: MappingProxyType[str, float],  # noqa: ARG001
+    key: FloatND,
+    prev_value: Float1D,  # noqa: ARG001
+) -> Float1D:
     return jax.random.normal(key=key)
 
 
-def ar1_tauchen(params: ParamsDict, key: FloatND, prev_value: Float1D) -> Float1D:
+def ar1_tauchen(
+    params: MappingProxyType[str, float], key: FloatND, prev_value: Float1D
+) -> Float1D:
     return prev_value * params["rho"] + jax.random.normal(key=key)
 
 
-def ar1_rouwenhorst(params: ParamsDict, key: FloatND, prev_value: Float1D) -> Float1D:
+def ar1_rouwenhorst(
+    params: MappingProxyType[str, float], key: FloatND, prev_value: Float1D
+) -> Float1D:
     return prev_value * params["rho"] + jax.random.normal(key=key)
 
 

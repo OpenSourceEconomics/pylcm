@@ -11,11 +11,9 @@ from lcm import DiscreteGrid, LinSpacedGrid, grid_helpers
 from lcm.ages import AgeGrid
 from lcm.input_processing.regime_processing import (
     _convert_flat_to_nested_transitions,
-    get_grids,
-    get_gridspecs,
-    get_variable_info,
     process_regimes,
 )
+from lcm.input_processing.util import get_grids, get_gridspecs, get_variable_info
 from tests.regime_mock import RegimeMock
 from tests.test_models.deterministic.base import dead, working
 
@@ -205,11 +203,13 @@ def test_get_grids(regime_mock):
 def test_process_regimes():
     ages = AgeGrid(start=0, stop=4, step="Y")
     regimes = {"working": working, "dead": dead}
-    regime_id = MappingProxyType({name: idx for idx, name in enumerate(regimes.keys())})
+    regime_names_to_ids = MappingProxyType(
+        {name: idx for idx, name in enumerate(regimes.keys())}
+    )
     internal_regimes = process_regimes(
         regimes=regimes,
         ages=ages,
-        regime_names_to_ids=regime_id,
+        regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
         fixed_params={},
     )

@@ -9,6 +9,10 @@ from jax import Array
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, format_messages
 from lcm.grids import ShockGrid
+from lcm.input_processing.params_processing import (
+    create_params_template,
+    process_params,
+)
 from lcm.input_processing.regime_processing import InternalRegime, process_regimes
 from lcm.input_processing.util import get_variable_info
 from lcm.logging import get_logger
@@ -18,11 +22,17 @@ from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
 from lcm.typing import (
     FloatND,
-    ParamsDict,
+    MutableParamsTemplate,
+    ParamsTemplate,
     RegimeName,
     RegimeNamesToIds,
+    UserParams,
 )
-from lcm.utils import REGIME_SEPARATOR, get_field_names_and_values
+from lcm.utils import (
+    REGIME_SEPARATOR,
+    ensure_containers_are_mutable,
+    get_field_names_and_values,
+)
 
 
 class Model:
@@ -35,7 +45,7 @@ class Model:
         description: Description of the model.
         n_periods: Number of periods in the model.
         enable_jit: Whether to jit the functions of the internal regime.
-        regime_id: Immutable mapping from regime names to integer indices.
+        regime_names_to_ids: Mapping from regime names to integer indices.
         regimes: The user provided regimes that contain the information
             about the model's regimes.
         internal_regimes: The internal regime instances created by LCM, which allow
@@ -49,20 +59,20 @@ class Model:
     n_periods: int
     regime_names_to_ids: RegimeNamesToIds
     regimes: MappingProxyType[str, Regime]
-    internal_regimes: MappingProxyType[str, InternalRegime]
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime]
     enable_jit: bool = True
-    fixed_params: ParamsDict
-    params_template: ParamsDict
+    fixed_params: UserParams
+    params_template: ParamsTemplate
 
     def __init__(
         self,
         *,
-        description: str | None = None,
+        description: str = "",
         ages: AgeGrid,
         regimes: Mapping[str, Regime],
         regime_id_class: type,
         enable_jit: bool = True,
-        fixed_params: ParamsDict | None = None,
+        fixed_params: UserParams = MappingProxyType({}),
     ) -> None:
         """Initialize the Model.
 
@@ -75,11 +85,10 @@ class Model:
             fixed_params: Parameters that can be fixed at model initialization.
 
         """
-        # Create regime_id mapping from dict keys
         self.description = description
         self.ages = ages
         self.n_periods = ages.n_periods
-        self.fixed_params = fixed_params if fixed_params is not None else {}
+        self.fixed_params = fixed_params
 
         _validate_model_inputs(
             n_periods=self.n_periods,
@@ -96,24 +105,34 @@ class Model:
             )
         )
         self.regimes = MappingProxyType(dict(regimes))
-        self.internal_regimes = MappingProxyType(
-            process_regimes(
-                regimes=regimes,
-                ages=self.ages,
-                regime_names_to_ids=self.regime_names_to_ids,
-                fixed_params=self.fixed_params,
-                enable_jit=enable_jit,
-            )
+        self.internal_regimes = process_regimes(
+            regimes=regimes,
+            ages=self.ages,
+            regime_names_to_ids=self.regime_names_to_ids,
+            fixed_params=self.fixed_params,
+            enable_jit=enable_jit,
         )
         self.enable_jit = enable_jit
-        self.params_template = {
-            name: regime.params_template
-            for name, regime in self.internal_regimes.items()
-        }
+        self.params_template = create_params_template(self.internal_regimes)
+
+    def get_params_template(self) -> MutableParamsTemplate:
+        """Get a mutable copy of the params template.
+
+        Returns a deep copy of the params_template where all immutable containers
+        (MappingProxyType, tuple, frozenset) are converted to their mutable
+        equivalents (dict, list, set).
+
+        Returns:
+            A mutable nested dict with the same structure as params_template.
+
+        """
+        return ensure_containers_are_mutable(  # ty: ignore[invalid-return-type]
+            self.params_template
+        )
 
     def solve(
         self,
-        params: ParamsDict,
+        params: UserParams,
         *,
         debug_mode: bool = True,
     ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
@@ -121,13 +140,21 @@ class Model:
 
         Args:
             params: Model parameters matching the template from self.params_template
+                Parameters can be provided at exactly one of three levels:
+                - Model level: {"arg_0": 0.0} - propagates to all functions needing
+                  arg_0
+                - Regime level: {"regime_0": {"arg_0": 0.0}} - propagates within
+                  regime_0
+                - Function level: {"regime_0": {"func": {"arg_0": 0.0}}} - direct
+                  specification
             debug_mode: Whether to enable debug logging
 
         Returns:
             Dictionary mapping period to a value function array for each regime.
         """
+        internal_params = process_params(params, self.params_template)
         return solve(
-            params=params,
+            internal_params=internal_params,
             ages=self.ages,
             internal_regimes=self.internal_regimes,
             logger=get_logger(debug_mode=debug_mode),
@@ -135,7 +162,7 @@ class Model:
 
     def simulate(
         self,
-        params: ParamsDict,
+        params: UserParams,
         initial_states: Mapping[str, Array],
         initial_regimes: list[RegimeName],
         V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
@@ -147,6 +174,13 @@ class Model:
 
         Args:
             params: Model parameters matching the template from self.params_template.
+                Parameters can be provided at exactly one of three levels:
+                - Model level: {"arg_0": 0.0} - propagates to all functions needing
+                  arg_0
+                - Regime level: {"regime_0": {"arg_0": 0.0}} - propagates within
+                  regime_0
+                - Function level: {"regime_0": {"func": {"arg_0": 0.0}}} - direct
+                  specification
             initial_states: Dict mapping state names to arrays. All arrays must have the
                 same length (number of subjects). Each state name should correspond to a
                 state variable defined in at least one regime.
@@ -161,8 +195,9 @@ class Model:
             optionally with additional_targets.
 
         """
+        internal_params = process_params(params, self.params_template)
         return simulate(
-            params=params,
+            internal_params=internal_params,
             initial_states=initial_states,
             initial_regimes=initial_regimes,
             internal_regimes=self.internal_regimes,
@@ -175,7 +210,7 @@ class Model:
 
     def solve_and_simulate(
         self,
-        params: ParamsDict,
+        params: UserParams,
         initial_states: Mapping[str, Array],
         initial_regimes: list[RegimeName],
         *,
@@ -186,6 +221,13 @@ class Model:
 
         Args:
             params: Model parameters matching the template from self.params_template.
+                Parameters can be provided at exactly one of three levels:
+                - Model level: {"arg_0": 0.0} - propagates to all functions needing
+                  arg_0
+                - Regime level: {"regime_0": {"arg_0": 0.0}} - propagates within
+                  regime_0
+                - Function level: {"regime_0": {"func": {"arg_0": 0.0}}} - direct
+                  specification
             initial_states: Dict mapping state names to arrays. All arrays must have the
                 same length (number of subjects). Each state name should correspond to a
                 state variable defined in at least one regime.
@@ -214,7 +256,7 @@ def _validate_model_inputs(  # noqa: C901
     n_periods: int,
     regimes: Mapping[str, Regime],
     regime_id_class: type,
-    fixed_params: ParamsDict,
+    fixed_params: UserParams,
 ) -> None:
     # Early exit if regimes are not lcm.Regime instances
     if not all(isinstance(regime, Regime) for regime in regimes.values()):
@@ -367,9 +409,15 @@ def _validate_all_variables_used(regimes: Mapping[str, Regime]) -> list[str]:
 
 
 def _validate_fixed_params_present(
-    regimes: Mapping[str, Regime], fixed_params: ParamsDict
+    regimes: Mapping[str, Regime], fixed_params: UserParams
 ) -> list[str]:
-    """Return error messages if params for shocks are missing."""
+    """Return error messages if params for shocks are missing.
+
+    Fixed params can be provided at two levels:
+    - Model level: {"state_name": {...}} - applies to all regimes
+    - Regime level: {"regime_name": {"state_name": {...}}} - applies to specific regime
+
+    """
     error_messages = []
     for regime_name, regime in regimes.items():
         fixed_params_needed = set()
@@ -379,9 +427,17 @@ def _validate_fixed_params_present(
                 "rouwenhorst",
             ]:
                 fixed_params_needed.add(state_name)
-        if fixed_params_needed - set(fixed_params):
+
+        # Check both model-level and regime-level fixed_params
+        regime_fixed_params = fixed_params.get(regime_name, {})
+        if isinstance(regime_fixed_params, Mapping):
+            available_params = set(fixed_params) | set(regime_fixed_params)
+        else:
+            available_params = set(fixed_params)
+
+        missing_params = fixed_params_needed - available_params
+        if missing_params:
             error_messages.append(
-                f"Regime {regime_name} is missing fixed params:\n"
-                f"{fixed_params_needed.difference(fixed_params)}"
+                f"Regime {regime_name} is missing fixed params:\n{missing_params}"
             )
     return error_messages

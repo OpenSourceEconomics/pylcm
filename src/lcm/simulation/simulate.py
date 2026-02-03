@@ -24,8 +24,8 @@ from lcm.simulation.util import (
 from lcm.typing import (
     FloatND,
     Int1D,
+    InternalParams,
     IntND,
-    ParamsDict,
     RegimeName,
     RegimeNamesToIds,
 )
@@ -33,7 +33,7 @@ from lcm.utils import flatten_regime_namespace
 
 
 def simulate(
-    params: ParamsDict,
+    internal_params: InternalParams,
     initial_states: Mapping[str, Array],
     initial_regimes: list[RegimeName],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
@@ -47,13 +47,13 @@ def simulate(
     """Simulate the model forward in time given pre-computed value function arrays.
 
     Args:
-        params: Dict of model parameters as provided by the user.
+        internal_params: Dict of model parameters.
         initial_states: Flat dict mapping state names to arrays. All arrays must have
             the same length (number of subjects). Each state name should correspond to
             a state variable defined in at least one regime.
             Example: {"wealth": jnp.array([10.0, 50.0]), "health": jnp.array([0, 1])}
         internal_regimes: Dict of internal regime instances.
-        regime_names_to_ids: Immutable mapping from regime names to integer indices.
+        regime_names_to_ids: Mapping from regime names to integer indices.
         initial_regimes: List containing the names of the regimes the subjects start in.
         logger: Logger that logs to stdout.
         V_arr_dict: Dict of value function arrays of length n_periods.
@@ -120,8 +120,8 @@ def simulate(
                     subject_regime_ids=subject_regime_ids,
                     new_subject_regime_ids=new_subject_regime_ids,
                     V_arr_dict=V_arr_dict,
-                    params=params,
-                    regime_id=regime_names_to_ids,
+                    internal_params=internal_params,
+                    regime_names_to_ids=regime_names_to_ids,
                     active_regimes_next_period=active_regimes_next_period,
                     key=key,
                 )
@@ -142,7 +142,7 @@ def simulate(
     return SimulationResult(
         raw_results=wrapped_results,
         internal_regimes=internal_regimes,
-        params=params,
+        internal_params=internal_params,
         V_arr_dict=V_arr_dict,
         ages=ages,
     )
@@ -157,8 +157,8 @@ def _simulate_regime_in_period(
     subject_regime_ids: Int1D,
     new_subject_regime_ids: Int1D,
     V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
-    params: ParamsDict,
-    regime_id: MappingProxyType[RegimeName, int],
+    internal_params: InternalParams,
+    regime_names_to_ids: MappingProxyType[RegimeName, int],
     active_regimes_next_period: tuple[RegimeName, ...],
     key: Array,
 ) -> tuple[PeriodRegimeSimulationData, MappingProxyType[str, Array], Int1D, Array]:
@@ -176,8 +176,8 @@ def _simulate_regime_in_period(
         subject_regime_ids: Current regime membership for all subjects.
         new_subject_regime_ids: Array to populate with next period's regime memberships.
         V_arr_dict: Value function arrays for all periods and regimes.
-        params: Model parameters for all regimes.
-        regime_id: Mapping from regime names to integer IDs.
+        internal_params: Model parameters for all regimes.
+        regime_names_to_ids: Mapping from regime names to integer IDs.
         active_regimes_next_period: List of active regimes in the next period.
         key: JAX random key for stochastic operations.
 
@@ -191,7 +191,9 @@ def _simulate_regime_in_period(
     """
     # Select subjects in the current regime
     # ---------------------------------------------------------------------------------
-    subject_ids_in_regime = jnp.asarray(regime_id[regime_name] == subject_regime_ids)
+    subject_ids_in_regime = jnp.asarray(
+        regime_names_to_ids[regime_name] == subject_regime_ids
+    )
 
     state_action_space = create_regime_state_action_space(
         internal_regime=internal_regime,
@@ -214,7 +216,7 @@ def _simulate_regime_in_period(
         **state_action_space.discrete_actions,
         **state_action_space.continuous_actions,
         next_V_arr=next_V_arr,
-        params=params,
+        internal_regime_params=internal_params[regime_name],
     )
     validate_value_function_array(V_arr, age=age)
 
@@ -254,7 +256,7 @@ def _simulate_regime_in_period(
             optimal_actions=optimal_actions,
             period=period,
             age=age,
-            params=params[regime_name],
+            internal_regime_params=internal_params[regime_name],
             states=states,
             state_action_space=state_action_space,
             key=next_states_key,
@@ -266,10 +268,10 @@ def _simulate_regime_in_period(
             optimal_actions=optimal_actions,
             period=period,
             age=age,
-            params=params[regime_name],
+            internal_regime_params=internal_params[regime_name],
             state_action_space=state_action_space,
             new_subject_regime_ids=new_subject_regime_ids,
-            regime_id=regime_id,
+            regime_names_to_ids=regime_names_to_ids,
             active_regimes_next_period=active_regimes_next_period,
             key=next_regime_key,
         )

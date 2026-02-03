@@ -148,19 +148,16 @@ def test_model_with_quarterly_steps():
     )
 
     params = {
+        "discount_factor": 0.99,
+        "final_age_alive": final_age_alive,
         "working": {
-            "discount_factor": 0.99,
             "utility": {"disutility_of_work": 0.5},
             "next_wealth": {"interest_rate": 0.01},
-            "next_regime": {"final_age_alive": final_age_alive},
             "labor_income": {"wage": 5.0},
         },
         "retired": {
-            "discount_factor": 0.99,
             "next_wealth": {"interest_rate": 0.01, "labor_income": 0.0},
-            "next_regime": {"final_age_alive": final_age_alive},
         },
-        "dead": {},
     }
 
     # Solve and simulate

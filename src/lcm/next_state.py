@@ -32,14 +32,14 @@ def get_next_state_function_for_solution(
     """Get function that computes the next states during the solution.
 
     Args:
-        transitions: Transitions to the next states of a regime.
-        functions: Dict of auxiliary functions of a regime.
+        transitions: Transitions to the next states of a regime. functions: Dict of
+        auxiliary functions of a regime.
 
     Returns:
         Function that computes the next states. Depends on states and actions of the
-        current period, and the regime parameters ("params"). If target is "simulate",
-        the function also depends on the dictionary of random keys ("keys"), which
-        corresponds to the names of stochastic next functions.
+        current period, and the regime parameters ("internal_regime_params"). If target
+        is "simulate", the function also depends on the dictionary of random keys
+        ("keys"), which corresponds to the names of stochastic next functions.
 
     """
     functions_to_concatenate = dict(transitions) | dict(functions)
@@ -236,7 +236,7 @@ def _create_continuous_stochastic_next_func(
     """
     prev_state_name = name.split("next_")[1]
     args = {
-        "params": "ParamsDict",
+        "internal_regime_params": "InternalRegimeParams",
         f"key_{name}": "dict[str, Array]",
         prev_state_name: "Array",
     }

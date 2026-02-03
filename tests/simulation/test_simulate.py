@@ -59,18 +59,20 @@ def simulate_inputs():
 
 
 def test_simulate_using_raw_inputs(simulate_inputs):
-    params = {
-        "working": {
-            "discount_factor": 1.0,
-            "utility": {"disutility_of_work": 1.0},
-            "next_wealth": {"interest_rate": 0.05},
-            "next_regime": {"final_age_alive": 0},
-        },
-        "dead": {},
-    }
+    internal_params = MappingProxyType(
+        {
+            "working": {
+                "discount_factor": 1.0,
+                "utility": {"disutility_of_work": 1.0},
+                "next_wealth": {"interest_rate": 0.05},
+                "next_regime": {"final_age_alive": 0},
+            },
+            "dead": {"discount_factor": 1.0},
+        }
+    )
 
     result = simulate(
-        params=params,
+        internal_params=internal_params,
         V_arr_dict=MappingProxyType(
             {
                 0: MappingProxyType({"working": jnp.zeros(100), "dead": jnp.zeros(2)}),
@@ -119,7 +121,7 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
 
         params = get_params(n_periods=n_periods)
         # Since wage function is removed, wage becomes a parameter for labor_income
-        params["working"]["labor_income"] = {"wage": 1.5}
+        params["working"]["labor_income"] = {"wage": 1.5}  # ty: ignore[invalid-assignment]
         model = Model(
             regimes={"working": updated_working, "dead": updated_dead},
             ages=ages,

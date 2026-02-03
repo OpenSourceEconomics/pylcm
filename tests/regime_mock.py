@@ -6,10 +6,10 @@ from lcm.typing import UserFunction
 
 @dataclass
 class RegimeMock:
-    """A regime mock for testing the params creation functions.
+    """A regime mock for testing the params_template creation functions.
 
     This dataclass has the same attributes as the Regime dataclass, but does not perform
-    any checks, which helps us to test the params creation functions in isolation.
+    any checks, which helps us test the params_template creation functions in isolation.
 
     """
 

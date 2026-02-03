@@ -1,3 +1,4 @@
+from types import MappingProxyType
 from typing import Literal
 
 from jax import numpy as jnp
@@ -71,9 +72,9 @@ def get_model(
             "income": ShockGrid(
                 n_points=5,
                 distribution_type=distribution_type,
-                shock_params={"rho": 0.975}
+                shock_params=MappingProxyType({"rho": 0.975})
                 if distribution_type in ["rouwenhorst", "tauchen"]
-                else {},
+                else MappingProxyType({}),
             ),
             "health": DiscreteGrid(Health),
         },

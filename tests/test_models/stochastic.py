@@ -304,8 +304,8 @@ def get_params(
 
     final_age_alive = n_periods - 2
     return {
+        "discount_factor": discount_factor,
         "working": {
-            "discount_factor": discount_factor,
             "utility": {"disutility_of_work": disutility_of_work},
             "next_wealth": {"interest_rate": interest_rate},
             "next_partner": {"partner_transition": partner_transition},
@@ -313,7 +313,6 @@ def get_params(
             "labor_income": {"wage": wage},
         },
         "retired": {
-            "discount_factor": discount_factor,
             "next_wealth": {"interest_rate": interest_rate, "labor_income": 0.0},
             "next_partner": {
                 "labor_supply": LaborSupply.retire,
@@ -321,5 +320,4 @@ def get_params(
             },
             "next_regime": {"final_age_alive": final_age_alive},
         },
-        "dead": {},
     }

@@ -13,7 +13,7 @@ from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.random import generate_simulation_keys
 from lcm.state_action_space import create_state_action_space
-from lcm.typing import Bool1D, Int1D, ParamsDict, RegimeName
+from lcm.typing import Bool1D, Int1D, InternalRegimeParams, RegimeName, RegimeNamesToIds
 from lcm.utils import flatten_regime_namespace, normalize_regime_transition_probs
 
 
@@ -52,7 +52,7 @@ def calculate_next_states(
     optimal_actions: MappingProxyType[str, Array],
     period: int,
     age: float,
-    params: ParamsDict,
+    internal_regime_params: InternalRegimeParams,
     states: MappingProxyType[str, Array],
     state_action_space: StateActionSpace,
     key: Array,
@@ -66,7 +66,7 @@ def calculate_next_states(
         optimal_actions: Optimal actions computed for these subjects.
         period: Current period.
         age: Age corresponding to current period.
-        params: Model parameters for the regime.
+        internal_regime_params: Model parameters for the regime.
         states: Current states for all subjects (all regimes).
         state_action_space: State-action space for subjects in this regime.
         key: JAX random key.
@@ -106,7 +106,7 @@ def calculate_next_states(
         **stochastic_variables_keys,
         period=period,
         age=age,
-        params=params,
+        internal_regime_params=internal_regime_params,
     )
 
     # Update global states array with computed next states for subjects in regime
@@ -126,8 +126,8 @@ def calculate_next_regime_membership(
     optimal_actions: MappingProxyType[str, Array],
     period: int,
     age: float,
-    params: ParamsDict,
-    regime_id: MappingProxyType[RegimeName, int],
+    internal_regime_params: InternalRegimeParams,
+    regime_names_to_ids: MappingProxyType[RegimeName, int],
     new_subject_regime_ids: Int1D,
     active_regimes_next_period: tuple[RegimeName, ...],
     key: Array,
@@ -144,8 +144,8 @@ def calculate_next_regime_membership(
         optimal_actions: Optimal actions computed for these subjects.
         period: Current period.
         age: Age corresponding to current period.
-        params: Model parameters for the regime.
-        regime_id: Mapping from regime names to integer IDs.
+        internal_regime_params: Model parameters for the regime.
+        regime_names_to_ids: Mapping from regime names to integer IDs.
         new_subject_regime_ids: Array to update with next regime assignments.
         active_regimes_next_period: List of active regimes in the next period.
         key: JAX random key.
@@ -166,7 +166,7 @@ def calculate_next_regime_membership(
             **optimal_actions,
             period=period,
             age=age,
-            params=params,
+            internal_regime_params=internal_regime_params,
         )
     )
     normalized_regime_transition_probs = normalize_regime_transition_probs(
@@ -190,7 +190,7 @@ def calculate_next_regime_membership(
     next_regime_ids = draw_key_from_dict(
         d=normalized_regime_transition_probs,
         keys=regime_transition_key["key_regime_transition"],
-        regime_id=regime_id,
+        regime_names_to_ids=regime_names_to_ids,
     )
 
     # Update global regime membership array
@@ -200,7 +200,7 @@ def calculate_next_regime_membership(
 
 def draw_key_from_dict(
     d: MappingProxyType[str, Array],
-    regime_id: MappingProxyType[str, int],
+    regime_names_to_ids: RegimeNamesToIds,
     keys: Array,
 ) -> Int1D:
     """Draw a random key from a dictionary of arrays.
@@ -210,7 +210,7 @@ def draw_key_from_dict(
             represent a probability distribution over the keys. That is, for the
             dictionary {'regime1': jnp.array([0.2, 0.5]),
             'regime2': jnp.array([0.8, 0.5])}, 0.2 + 0.8 = 1.0 and 0.5 + 0.5 = 1.0.
-        regime_id: Mapping of regime names to regime ids.
+        regime_names_to_ids: Mapping of regime names to regime ids.
         keys: JAX random keys.
 
     Returns:
@@ -219,7 +219,7 @@ def draw_key_from_dict(
     """
     regime_names = list(d)
     regime_transition_probs = jnp.array(list(d.values())).T
-    regime_ids = jnp.array([regime_id[name] for name in regime_names])
+    regime_ids = jnp.array([regime_names_to_ids[name] for name in regime_names])
 
     def random_id(
         key: Array,

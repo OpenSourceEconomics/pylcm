@@ -16,6 +16,7 @@ from lcm.grids import (
     Piece,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
+    ShockGrid,
     categorical,
 )
 from lcm.model import Model
