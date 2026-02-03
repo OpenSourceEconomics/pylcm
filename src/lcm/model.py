@@ -9,7 +9,10 @@ from jax import Array
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, format_messages
 from lcm.grids import ShockGrid
-from lcm.input_processing.process_params import create_params_template, process_params
+from lcm.input_processing.params_processing import (
+    create_params_template,
+    process_params,
+)
 from lcm.input_processing.regime_processing import InternalRegime, process_regimes
 from lcm.input_processing.util import get_variable_info
 from lcm.logging import get_logger
@@ -137,6 +140,13 @@ class Model:
 
         Args:
             params: Model parameters matching the template from self.params_template
+                Parameters can be provided at exactly one of three levels:
+                - Model level: {"arg_0": 0.0} - propagates to all functions needing
+                  arg_0
+                - Regime level: {"regime_0": {"arg_0": 0.0}} - propagates within
+                  regime_0
+                - Function level: {"regime_0": {"func": {"arg_0": 0.0}}} - direct
+                  specification
             debug_mode: Whether to enable debug logging
 
         Returns:
@@ -164,6 +174,13 @@ class Model:
 
         Args:
             params: Model parameters matching the template from self.params_template.
+                Parameters can be provided at exactly one of three levels:
+                - Model level: {"arg_0": 0.0} - propagates to all functions needing
+                  arg_0
+                - Regime level: {"regime_0": {"arg_0": 0.0}} - propagates within
+                  regime_0
+                - Function level: {"regime_0": {"func": {"arg_0": 0.0}}} - direct
+                  specification
             initial_states: Dict mapping state names to arrays. All arrays must have the
                 same length (number of subjects). Each state name should correspond to a
                 state variable defined in at least one regime.
@@ -204,6 +221,13 @@ class Model:
 
         Args:
             params: Model parameters matching the template from self.params_template.
+                Parameters can be provided at exactly one of three levels:
+                - Model level: {"arg_0": 0.0} - propagates to all functions needing
+                  arg_0
+                - Regime level: {"regime_0": {"arg_0": 0.0}} - propagates within
+                  regime_0
+                - Function level: {"regime_0": {"func": {"arg_0": 0.0}}} - direct
+                  specification
             initial_states: Dict mapping state names to arrays. All arrays must have the
                 same length (number of subjects). Each state name should correspond to a
                 state variable defined in at least one regime.

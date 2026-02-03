@@ -8,8 +8,6 @@ continuous version.
 
 """
 
-from typing import Any
-
 import jax.numpy as jnp
 
 from lcm import AgeGrid, DiscreteGrid, Model, Regime, categorical
@@ -19,6 +17,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserParams,
 )
 from tests.test_models.deterministic.regression import (
     LaborSupply,
@@ -151,7 +150,7 @@ def get_params(
     disutility_of_work: float = 0.5,
     interest_rate: float = 0.05,
     wage: float = 10.0,
-) -> dict[str, Any]:
+) -> UserParams:
     final_age_alive = n_periods - 2
     return {
         "discount_factor": discount_factor,
@@ -161,5 +160,4 @@ def get_params(
             "next_regime": {"final_age_alive": final_age_alive},
             "labor_income": {"wage": wage},
         },
-        "dead": {},
     }

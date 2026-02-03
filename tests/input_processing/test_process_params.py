@@ -5,7 +5,10 @@ from types import MappingProxyType
 import pytest
 
 from lcm.exceptions import InvalidNameError, InvalidParamsError
-from lcm.input_processing.process_params import create_params_template, process_params
+from lcm.input_processing.params_processing import (
+    create_params_template,
+    process_params,
+)
 
 
 @pytest.fixture

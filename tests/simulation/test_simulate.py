@@ -121,7 +121,7 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
 
         params = get_params(n_periods=n_periods)
         # Since wage function is removed, wage becomes a parameter for labor_income
-        params["working"]["labor_income"] = {"wage": 1.5}
+        params["working"]["labor_income"] = {"wage": 1.5}  # ty: ignore[invalid-assignment]
         model = Model(
             regimes={"working": updated_working, "dead": updated_dead},
             ages=ages,

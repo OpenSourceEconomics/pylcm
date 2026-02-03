@@ -23,7 +23,8 @@ def process_params(  # noqa: C901
 ) -> InternalParams:
     """Process user-provided params into internal params.
 
-    Users can provide parameters at different levels:
+    Users can provide parameters at exactly one of three levels:
+
     - Model level: {"arg_0": 0.0} - propagates to all functions needing arg_0
     - Regime level: {"regime_0": {"arg_0": 0.0}} - propagates within regime_0
     - Function level: {"regime_0": {"func": {"arg_0": 0.0}}} - direct specification

@@ -320,5 +320,4 @@ def get_params(
             },
             "next_regime": {"final_age_alive": final_age_alive},
         },
-        "dead": {},
     }

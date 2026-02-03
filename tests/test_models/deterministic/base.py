@@ -185,15 +185,13 @@ def get_params(
     final_age_alive = n_periods - 2  # Last age before death transition
     return {
         "discount_factor": discount_factor,
+        "interest_rate": interest_rate,
+        "final_age_alive": final_age_alive,
         "working": {
             "utility": {"disutility_of_work": disutility_of_work},
-            "next_wealth": {"interest_rate": interest_rate},
-            "next_regime": {"final_age_alive": final_age_alive},
             "labor_income": {"wage": wage},
         },
         "retired": {
-            "next_wealth": {"interest_rate": interest_rate, "labor_income": 0.0},
-            "next_regime": {"final_age_alive": final_age_alive},
+            "next_wealth": {"labor_income": 0.0},
         },
-        "dead": {},
     }

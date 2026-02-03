@@ -429,7 +429,7 @@ def test_deterministic_solve(discount_factor, n_wealth_points):
         "next_regime": {"final_age_alive": model.n_periods - 2},
     }
     got = model.solve(
-        params={"discount_factor": discount_factor, "alive": params_alive, "dead": {}}
+        params={"discount_factor": discount_factor, "alive": params_alive}
     )
 
     # Compute analytical solution
@@ -481,7 +481,7 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
         "next_regime": {"final_age_alive": model.n_periods - 2},
     }
     result = model.solve_and_simulate(
-        params={"discount_factor": discount_factor, "alive": params_alive, "dead": {}},
+        params={"discount_factor": discount_factor, "alive": params_alive},
         initial_states={"wealth": jnp.array([0.25, 0.75, 1.25, 1.75])},
         initial_regimes=["alive"] * 4,
     )
@@ -538,9 +538,7 @@ def test_stochastic_solve(discount_factor, n_wealth_points, health_transition):
         "next_health": {"health_transition": health_transition},
         "next_regime": {"final_age_alive": model.n_periods - 2},
     }
-    got = model.solve(
-        params={"discount_factor": discount_factor, "alive": params, "dead": {}}
-    )
+    got = model.solve(params={"discount_factor": discount_factor, "alive": params})
 
     # Compute analytical solution
     # ==================================================================================
@@ -609,7 +607,7 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, health_transition
         "health": jnp.array([0, 1, 0, 1, 1]),
     }
     result = model.solve_and_simulate(
-        params={"discount_factor": discount_factor, "alive": params_alive, "dead": {}},
+        params={"discount_factor": discount_factor, "alive": params_alive},
         initial_states=initial_states,
         initial_regimes=["alive"] * 5,
     )

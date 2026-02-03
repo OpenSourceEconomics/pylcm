@@ -1,5 +1,4 @@
 from collections.abc import Mapping
-from typing import Any
 
 import jax.numpy as jnp
 import pandas as pd
@@ -8,7 +7,7 @@ from numpy.testing import assert_array_almost_equal
 
 import lcm
 from lcm import AgeGrid, Model
-from lcm.typing import DiscreteState, FloatND
+from lcm.typing import DiscreteState, FloatND, UserParams
 from tests.test_models.stochastic import (
     RegimeId,
     dead,
@@ -81,7 +80,7 @@ def test_model_solve_with_stochastic_model():
 
 
 @pytest.fixture
-def models_and_params() -> tuple[Model, Model, dict[str, Any]]:
+def models_and_params() -> tuple[Model, Model, UserParams]:
     """Return a deterministic and stochastic model with parameters.
 
     TODO(@timmens): Add this to tests/test_models/stochastic.py.
@@ -156,7 +155,7 @@ def models_and_params() -> tuple[Model, Model, dict[str, Any]]:
 
 
 def test_compare_deterministic_and_stochastic_results_value_function(
-    models_and_params: tuple[Model, Model, dict[str, Any]],
+    models_and_params: tuple[Model, Model, UserParams],
 ) -> None:
     """Test that the deterministic and stochastic models produce the same results."""
     model_deterministic, model_stochastic, params = models_and_params
