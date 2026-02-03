@@ -21,7 +21,6 @@ from lcm.input_processing.regime_components import (
     build_next_state_simulation_functions,
     build_Q_and_F_functions,
     build_regime_transition_probs_functions,
-    build_state_space_info,
 )
 from lcm.input_processing.util import (
     get_gridspecs,
@@ -32,7 +31,7 @@ from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
 from lcm.mark import stochastic
 from lcm.ndimage import map_coordinates
 from lcm.regime import Regime
-from lcm.state_action_space import create_state_action_space
+from lcm.state_action_space import create_state_action_space, create_state_space_info
 from lcm.typing import (
     Float1D,
     Int1D,
@@ -138,7 +137,7 @@ def process_regimes(
     )
 
     state_space_infos = MappingProxyType(
-        {n: build_state_space_info(r) for n, r in regimes.items()}
+        {n: create_state_space_info(r) for n, r in regimes.items()}
     )
     state_action_spaces = MappingProxyType(
         {

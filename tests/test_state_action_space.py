@@ -132,10 +132,7 @@ def test_create_state_space_info():
         active=lambda age: age < 5,
     )
 
-    state_space_info = create_state_space_info(
-        regime=regime,
-        is_last_period=False,
-    )
+    state_space_info = create_state_space_info(regime)
 
     assert isinstance(state_space_info, StateSpaceInfo)
     assert set(state_space_info.states_names) == {"wealth", "health"}

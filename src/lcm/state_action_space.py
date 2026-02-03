@@ -59,18 +59,13 @@ def create_state_action_space(
     )
 
 
-def create_state_space_info(
-    regime: Regime,
-    *,
-    is_last_period: bool,
-) -> StateSpaceInfo:
+def create_state_space_info(regime: Regime) -> StateSpaceInfo:
     """Collect information on the state space for the regime solution.
 
     A state-space information is a compressed representation of all feasible states.
 
     Args:
         regime: Regime instance.
-        is_last_period: Whether the function is created for the last period.
 
     Returns:
         The state-space information.
@@ -79,7 +74,7 @@ def create_state_space_info(
     vi = get_variable_info(regime)
     gridspecs = get_gridspecs(regime)
 
-    if is_last_period:
+    if regime.terminal:
         vi = vi.query("enters_concurrent_valuation")
 
     state_names = vi.query("is_state").index.tolist()

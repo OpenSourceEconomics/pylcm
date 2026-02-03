@@ -18,7 +18,7 @@ def get_max_Qc_over_d(
     *,
     random_utility_shock_type: ShockType,
     variable_info: pd.DataFrame,
-    is_last_period: bool,
+    is_terminal: bool,
 ) -> MaxQcOverDFunction:
     r"""Get the function returning the maximum of Qc over discrete actions.
 
@@ -49,7 +49,7 @@ def get_max_Qc_over_d(
         random_utility_shock_type: Type of action shock. Currently only Shock.NONE is
             supported. Work for "extreme_value" is in progress.
         variable_info: DataFrame with information about the variables.
-        is_last_period: Whether the function is created for the last period.
+        is_terminal: Whether the function is created for a terminal regime.
 
     Returns:
         Function that returns the argument that maximize the Qc-function over the
@@ -57,7 +57,7 @@ def get_max_Qc_over_d(
         the discrete actions.
 
     """
-    if is_last_period:
+    if is_terminal:
         variable_info = variable_info.query("enters_concurrent_valuation")
 
     discrete_action_axes = _determine_discrete_action_axes_solution(variable_info)
