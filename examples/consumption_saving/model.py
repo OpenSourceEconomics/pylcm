@@ -193,8 +193,8 @@ model = Model(
 )
 
 params = {
+    "discount_factor": 0.95,
     "working": {
-        "discount_factor": 0.95,
         "utility": {"disutility_of_work": 0.05},
         "next_wealth": {"interest_rate": 0.05},
         "next_regime": {"n_periods": model.n_periods},
