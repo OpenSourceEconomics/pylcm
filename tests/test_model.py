@@ -515,7 +515,7 @@ def test_fixed_params_validation():
         active=lambda age: age >= 1,
     )
 
-    # Using separator in regime name should raise error
+    # Missing fixed params should raise error
     with pytest.raises(ModelInitializationError, match="is missing fixed params"):
         Model(
             regimes={"alive": alive, "dead": dead},
@@ -523,3 +523,19 @@ def test_fixed_params_validation():
             regime_id_class=RegimeId,
             fixed_params={},
         )
+
+    # Model-level fixed_params should work
+    Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=RegimeId,
+        fixed_params={"health": {"rho": 0.9}},
+    )
+
+    # Regime-level fixed_params should also work
+    Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=RegimeId,
+        fixed_params={"alive": {"health": {"rho": 0.9}}},
+    )

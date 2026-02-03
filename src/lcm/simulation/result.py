@@ -396,7 +396,7 @@ def _create_flat_dataframe(
             regime_results=raw_results[name],
             regime_states=metadata.regime_to_states[name],
             regime_actions=metadata.regime_to_actions[name],
-            internal_params=internal_params[name],
+            internal_regime_params=internal_params[name],
             additional_targets=additional_targets,
             ages=ages,
         )
@@ -416,7 +416,7 @@ def _process_regime(
     regime_results: MappingProxyType[int, PeriodRegimeSimulationData],
     regime_states: tuple[str, ...],
     regime_actions: tuple[str, ...],
-    internal_params: InternalRegimeParams,
+    internal_regime_params: InternalRegimeParams,
     additional_targets: list[str] | None,
     ages: AgeGrid,
 ) -> pd.DataFrame:
@@ -443,7 +443,7 @@ def _process_regime(
         )
         if targets_for_regime:
             target_values = _compute_targets(
-                data, targets_for_regime, internal_regime, internal_params
+                data, targets_for_regime, internal_regime, internal_regime_params
             )
             data.update(target_values)
 
@@ -623,7 +623,7 @@ def _compute_targets(
     data: dict[str, Any],
     targets: list[str],
     internal_regime: InternalRegime,
-    internal_params: InternalRegimeParams,
+    internal_regime_params: InternalRegimeParams,
 ) -> dict[str, Array]:
     """Compute additional targets for a regime."""
     functions_pool = _build_functions_pool(internal_regime)
@@ -631,7 +631,7 @@ def _compute_targets(
     variables = _get_function_variables(target_func)
     vectorized_func = vmap_1d(target_func, variables=variables)
     kwargs = {k: jnp.asarray(v) for k, v in data.items() if k in variables}
-    result = vectorized_func(internal_params=internal_params, **kwargs)
+    result = vectorized_func(internal_regime_params=internal_regime_params, **kwargs)
     # Squeeze any (n, 1) shaped arrays to (n,)
     return {k: jnp.squeeze(v) for k, v in result.items()}
 
@@ -664,9 +664,9 @@ def _create_target_function(
 
 
 def _get_function_variables(func: Any) -> tuple[str, ...]:  # noqa: ANN401
-    """Get variable names from function signature, excluding 'internal_params'."""
+    """Get variable names from signature, excluding 'internal_regime_params'."""
     return tuple(
-        p for p in inspect.signature(func).parameters if p != "internal_params"
+        p for p in inspect.signature(func).parameters if p != "internal_regime_params"
     )
 
 

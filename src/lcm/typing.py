@@ -35,21 +35,29 @@ type TransitionFunctionsMapping = MappingProxyType[
 ]
 
 
-type UserParams = Mapping[str, bool | float | Array | "UserParams"]
+type UserParams = Mapping[
+    str,
+    bool
+    | float
+    | Array
+    | Mapping[str, bool | float | Array | Mapping[str, bool | float | Array]],
+]
 
-# Recursive type for internal regime parameters: a pytree where leaves are numbers or
-# arrays, and intermediate nodes are MappingProxyType dictionaries.
+# Internal regime parameters: A pytree with two levels:
+# - Top-level keys are almost always function names, except for discount_factor etc.
+# - Second-level keys are argument names
+# - Leaves are values to be passed to the functions.
 type InternalRegimeParams = MappingProxyType[
-    str, bool | float | Array | "InternalRegimeParams"
+    str, bool | float | Array | MappingProxyType[str, bool | float | Array]
 ]
 type InternalParams = MappingProxyType[RegimeName, InternalRegimeParams]
 
 # Immutable templates, used internally
-type RegimeParamsTemplate = MappingProxyType[str, type | "RegimeParamsTemplate"]
+type RegimeParamsTemplate = MappingProxyType[str, type | MappingProxyType[str, type]]
 type ParamsTemplate = MappingProxyType[RegimeName, RegimeParamsTemplate]
 
 # Dictionary-templates; returned to users.
-type MutableRegimeParamsTemplate = dict[str, type | "MutableRegimeParamsTemplate"]
+type MutableRegimeParamsTemplate = dict[str, type | dict[str, type]]
 type MutableParamsTemplate = dict[RegimeName, MutableRegimeParamsTemplate]
 
 # Type aliases for value function arrays
@@ -76,7 +84,7 @@ class InternalUserFunction(Protocol):
     def __call__(
         self,
         *args: Array | float,
-        internal_params: InternalParams,
+        internal_regime_params: InternalRegimeParams,
         **kwargs: Array | float,
     ) -> Array: ...
 
@@ -93,7 +101,7 @@ class RegimeTransitionFunction(Protocol):
     def __call__(
         self,
         *args: Array | float,
-        internal_params: InternalRegimeParams,
+        internal_regime_params: InternalRegimeParams,
         **kwargs: Array | float,
     ) -> Float1D: ...
 
@@ -110,7 +118,7 @@ class VmappedRegimeTransitionFunction(Protocol):
     def __call__(
         self,
         *args: Array | float,
-        internal_params: InternalRegimeParams,
+        internal_regime_params: InternalRegimeParams,
         **kwargs: Array | float,
     ) -> FloatND: ...
 
@@ -128,7 +136,7 @@ class QAndFFunction(Protocol):
     def __call__(
         self,
         next_V_arr: FloatND,
-        internal_params: InternalParams,
+        internal_regime_params: InternalRegimeParams,
         **states_and_actions: Array,
     ) -> tuple[FloatND, BoolND]: ...
 
@@ -146,7 +154,7 @@ class MaxQOverCFunction(Protocol):
     def __call__(
         self,
         next_V_arr: MappingProxyType[RegimeName, Array],
-        internal_params: InternalParams,
+        internal_regime_params: InternalRegimeParams,
         period: Period,
         **kwargs: Array,
     ) -> Array: ...
@@ -165,7 +173,7 @@ class ArgmaxQOverCFunction(Protocol):
     def __call__(
         self,
         next_V_arr: MappingProxyType[RegimeName, Array],
-        internal_params: InternalParams,
+        internal_regime_params: InternalRegimeParams,
         period: Period,
         **kwargs: Array,
     ) -> tuple[Array, Array]: ...
@@ -184,7 +192,7 @@ class MaxQOverAFunction(Protocol):
     def __call__(
         self,
         next_V_arr: MappingProxyType[RegimeName, Array],
-        internal_params: InternalParams,
+        internal_regime_params: InternalRegimeParams,
         **states_and_actions: Array,
     ) -> Array: ...
 
@@ -202,7 +210,7 @@ class ArgmaxQOverAFunction(Protocol):
     def __call__(
         self,
         next_V_arr: MappingProxyType[RegimeName, Array],
-        internal_params: InternalParams,
+        internal_regime_params: InternalRegimeParams,
         **states_and_actions: Array,
     ) -> tuple[Array, Array]: ...
 
@@ -218,7 +226,9 @@ class MaxQcOverDFunction(Protocol):
 
     """
 
-    def __call__(self, Qc_arr: Array, internal_params: InternalParams) -> Array: ...
+    def __call__(
+        self, Qc_arr: Array, internal_regime_params: InternalRegimeParams
+    ) -> Array: ...
 
 
 class ArgmaxQcOverDFunction(Protocol):
@@ -233,7 +243,7 @@ class ArgmaxQcOverDFunction(Protocol):
     """
 
     def __call__(
-        self, Qc_arr: Array, internal_params: InternalParams
+        self, Qc_arr: Array, internal_regime_params: InternalRegimeParams
     ) -> tuple[Array, Array]: ...
 
 

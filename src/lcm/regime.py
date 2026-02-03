@@ -77,8 +77,8 @@ class Regime:
 
         """
         return MappingProxyType(
-            dict(self.functions)
-            | {"utility": self.utility}
+            {"utility": self.utility}
+            | dict(self.functions)
             | dict(self.constraints)
             | dict(self.transitions)
         )

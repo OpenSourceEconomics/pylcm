@@ -56,7 +56,7 @@ def solve(
                 **state_action_space.states,
                 **state_action_space.actions,
                 next_V_arr=next_V_arr,
-                internal_params=internal_params,
+                internal_regime_params=internal_params[name],
             )
 
             validate_value_function_array(V_arr, age=ages.values[period])

@@ -411,7 +411,13 @@ def _validate_all_variables_used(regimes: Mapping[str, Regime]) -> list[str]:
 def _validate_fixed_params_present(
     regimes: Mapping[str, Regime], fixed_params: UserParams
 ) -> list[str]:
-    """Return error messages if params for shocks are missing."""
+    """Return error messages if params for shocks are missing.
+
+    Fixed params can be provided at two levels:
+    - Model level: {"state_name": {...}} - applies to all regimes
+    - Regime level: {"regime_name": {"state_name": {...}}} - applies to specific regime
+
+    """
     error_messages = []
     for regime_name, regime in regimes.items():
         fixed_params_needed = set()
@@ -421,9 +427,17 @@ def _validate_fixed_params_present(
                 "rouwenhorst",
             ]:
                 fixed_params_needed.add(state_name)
-        if fixed_params_needed - set(fixed_params):
+
+        # Check both model-level and regime-level fixed_params
+        regime_fixed_params = fixed_params.get(regime_name, {})
+        if isinstance(regime_fixed_params, Mapping):
+            available_params = set(fixed_params) | set(regime_fixed_params)
+        else:
+            available_params = set(fixed_params)
+
+        missing_params = fixed_params_needed - available_params
+        if missing_params:
             error_messages.append(
-                f"Regime {regime_name} is missing fixed params:\n"
-                f"{fixed_params_needed.difference(fixed_params)}"
+                f"Regime {regime_name} is missing fixed params:\n{missing_params}"
             )
     return error_messages

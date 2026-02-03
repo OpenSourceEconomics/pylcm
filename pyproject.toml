@@ -234,6 +234,16 @@ select = [ "ALL" ]
   "S101",    # Use of assert
   "S301",    # Use of pickle
 ]
+"tests/test_next_state.py" = [
+  "ARG001", # Unused function argument
+  "ARG005", # Unused lambda argument
+  "E731",   # Do not assign a `lambda` expression, use a `def`
+]
+"tests/test_Q_and_F.py" = [
+  "ARG001", # Unused function argument
+  "ARG005", # Unused lambda argument
+  "E731",   # Do not assign a `lambda` expression, use a `def`
+]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

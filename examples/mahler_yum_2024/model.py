@@ -422,7 +422,12 @@ MAHLER_YUM_MODEL = Model(
     regimes={"alive": ALIVE_REGIME, "dead": DEAD_REGIME},
     ages=ages,
     regime_id_class=RegimeId,
-    fixed_params={"productivity_shock": {"rho": rho}},
+    fixed_params={
+        "alive": {
+            "productivity_shock": {"rho": rho},
+            "next_adjustment_cost": {"start": 0, "stop": 1},
+        }
+    },
 )
 
 
@@ -681,7 +686,6 @@ def create_inputs(
         "scaled_adjustment_cost": {"chimaxgrid": chimax_grid},
         "scaled_productivity_shock": {"sigx": jnp.sqrt(income_process["sigx"])},  # ty: ignore[invalid-argument-type]
         "next_health": {"health_transition": tr2yp_grid},
-        "next_adjustment_cost": {"start": 0, "stop": 1},
         "next_regime": {"regime_transition": regime_transition},
     }
 
@@ -756,7 +760,10 @@ if __name__ == "__main__":
     )
 
     simulation_result = MAHLER_YUM_MODEL.solve_and_simulate(
-        params={"alive": params, "dead": params},
+        params={
+            "alive": params,
+            "dead": {"discount_factor": params["discount_factor"]},
+        },
         initial_states=initial_states,
         initial_regimes=initial_regimes,
         seed=8295,
