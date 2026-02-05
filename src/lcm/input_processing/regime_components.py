@@ -147,6 +147,7 @@ def _build_argmax_and_max_Q_over_a_function(
     argmax_and_max_Q_over_a = get_argmax_and_max_Q_over_a(
         Q_and_F=Q_and_F,
         actions_names=state_action_space.actions_names,
+        states_names=state_action_space.states_names,
     )
 
     if enable_jit:
