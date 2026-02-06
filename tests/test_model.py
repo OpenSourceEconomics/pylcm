@@ -5,6 +5,14 @@ import lcm
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.grids import ShockGrid
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    ScalarInt,
+)
 
 
 def test_regime_invalid_states():
@@ -538,4 +546,180 @@ def test_fixed_params_validation():
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
         fixed_params={"alive": {"health": {"rho": 0.9}}},
+    )
+
+
+# ======================================================================================
+# Reproducers for GitHub issue #230
+# ======================================================================================
+
+
+def test_constraint_depending_on_transition_output():
+    """Test that constraints can depend on transition outputs like next_assets.
+
+    Previously this worked, but now fails with:
+    ValueError: list.index(x): x not in list
+
+    The workaround is to rewrite the constraint to use raw states/actions instead
+    of transition outputs.
+    """
+
+    @categorical
+    class RegimeId:
+        alive: int
+        dead: int
+
+    @categorical
+    class EmploymentLastPeriod:
+        unemployed: int
+        employed: int
+
+    @categorical
+    class EmploymentStatus:
+        not_employed: int
+        employed: int
+
+    def next_regime(age: float, model_end_age: int) -> ScalarInt:
+        return jnp.where(age == model_end_age, RegimeId.dead, RegimeId.alive)
+
+    def model_end_age(value: int) -> int:
+        return value
+
+    def utility(
+        consumption_q: ContinuousAction, lagged_employment: DiscreteState
+    ) -> FloatND:
+        return jnp.log(consumption_q + lagged_employment * 0.001)
+
+    def dead_utility() -> float:
+        return 0.0
+
+    def next_assets(
+        assets: ContinuousState, consumption_q: ContinuousAction
+    ) -> ContinuousState:
+        return assets - consumption_q
+
+    def next_lagged_employment(employment: DiscreteState) -> DiscreteState:
+        return jnp.where(
+            employment == EmploymentStatus.employed,
+            EmploymentLastPeriod.employed,
+            EmploymentLastPeriod.unemployed,
+        )
+
+    # This constraint depends on transition output - used to work, now fails
+    def borrowing_constraint(next_assets: ContinuousState) -> BoolND:
+        return next_assets >= 0.0
+
+    alive_regime = Regime(
+        utility=utility,
+        constraints={"borrowing_constraint": borrowing_constraint},
+        transitions={
+            "next_regime": next_regime,
+            "next_assets": next_assets,
+            "next_lagged_employment": next_lagged_employment,
+        },
+        functions={"model_end_age": model_end_age},
+        actions={
+            "consumption_q": LinSpacedGrid(start=1, stop=10, n_points=5),
+            "employment": DiscreteGrid(EmploymentStatus),
+        },
+        states={
+            "assets": LinSpacedGrid(start=10, stop=100, n_points=5),
+            "lagged_employment": DiscreteGrid(EmploymentLastPeriod),
+        },
+    )
+
+    dead_regime = Regime(
+        utility=dead_utility,
+        terminal=True,
+    )
+
+    # This should work but currently raises ValueError
+    Model(
+        regimes={"alive": alive_regime, "dead": dead_regime},
+        ages=AgeGrid(start=59, stop=61, step="Y"),
+        regime_id_class=RegimeId,
+    )
+
+
+def test_state_only_used_in_transitions():
+    """Test that states can be used only in transitions, not in utility/constraints.
+
+    Previously this worked, but now fails with:
+    ValueError: list.index(x): x not in list
+
+    The state 'assets' is only used in the next_assets transition, not directly
+    in utility or constraints.
+    """
+
+    @categorical
+    class RegimeId:
+        alive: int
+        dead: int
+
+    @categorical
+    class EmploymentLastPeriod:
+        unemployed: int
+        employed: int
+
+    @categorical
+    class EmploymentStatus:
+        not_employed: int
+        employed: int
+
+    def next_regime(age: float, model_end_age: int) -> ScalarInt:
+        return jnp.where(age == model_end_age, RegimeId.dead, RegimeId.alive)
+
+    def model_end_age(value: int) -> int:
+        return value
+
+    # Utility does NOT use assets directly
+    def utility(
+        consumption_q: ContinuousAction, lagged_employment: DiscreteState
+    ) -> FloatND:
+        return jnp.log(consumption_q + lagged_employment * 0.001)
+
+    def dead_utility() -> float:
+        return 0.0
+
+    # Assets is used in transition but not in utility
+    def next_assets(
+        assets: ContinuousState, consumption_q: ContinuousAction
+    ) -> ContinuousState:
+        return assets - consumption_q
+
+    def next_lagged_employment(employment: DiscreteState) -> DiscreteState:
+        return jnp.where(
+            employment == EmploymentStatus.employed,
+            EmploymentLastPeriod.employed,
+            EmploymentLastPeriod.unemployed,
+        )
+
+    alive_regime = Regime(
+        utility=utility,
+        transitions={
+            "next_regime": next_regime,
+            "next_assets": next_assets,
+            "next_lagged_employment": next_lagged_employment,
+        },
+        functions={"model_end_age": model_end_age},
+        actions={
+            "consumption_q": LinSpacedGrid(start=1, stop=10, n_points=5),
+            "employment": DiscreteGrid(EmploymentStatus),
+        },
+        states={
+            "assets": LinSpacedGrid(start=10, stop=100, n_points=5),
+            "lagged_employment": DiscreteGrid(EmploymentLastPeriod),
+        },
+    )
+
+    dead_regime = Regime(
+        utility=dead_utility,
+        terminal=True,
+    )
+
+    # This should work but currently raises ValueError
+    Model(
+        regimes={"alive": alive_regime, "dead": dead_regime},
+        ages=AgeGrid(start=59, stop=61, step="Y"),
+        regime_id_class=RegimeId,
     )

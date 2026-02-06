@@ -33,7 +33,7 @@ def test_get_solve_discrete_problem_illustrative():
     max_Qc_over_d = get_max_Qc_over_d(
         random_utility_shock_type=ShockType.NONE,
         variable_info=variable_info,
-        is_last_period=False,
+        is_terminal=False,
     )
 
     Qc_arr = jnp.array(

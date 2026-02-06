@@ -1,4 +1,3 @@
-import functools
 from collections.abc import Callable
 from types import MappingProxyType
 
@@ -82,6 +81,7 @@ def get_max_Q_over_a(
 def get_argmax_and_max_Q_over_a(
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
     actions_names: tuple[str, ...],
+    states_names: tuple[str, ...],
 ) -> ArgmaxQOverAFunction:
     r"""Get the function returning the arguments maximizing Q over all actions.
 
@@ -107,6 +107,7 @@ def get_argmax_and_max_Q_over_a(
             value of that combination and whether the state-action combination is
             feasible.
         actions_names: Tuple of action variable names.
+        states_names: Tuple of state names.
 
     Returns:
         Function that calculates the argument maximizing Q over the feasible continuous
@@ -120,7 +121,15 @@ def get_argmax_and_max_Q_over_a(
         variables=actions_names,
     )
 
-    @functools.wraps(Q_and_F)
+    @with_signature(
+        args=[
+            "next_V_arr",
+            "internal_regime_params",
+            *actions_names,
+            *states_names,
+        ],
+        return_annotation="tuple[IntND, FloatND]",
+    )
     def argmax_and_max_Q_over_a(
         next_V_arr: MappingProxyType[RegimeName, FloatND],
         internal_regime_params: InternalRegimeParams,

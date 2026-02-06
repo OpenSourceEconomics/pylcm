@@ -16,6 +16,14 @@ from lcm.simulation.simulate import (
     _lookup_values_from_indices,
     simulate,
 )
+from tests.test_models.deterministic.regression import (
+    START_AGE,
+    RegimeId,
+    dead,
+    get_model,
+    get_params,
+    working,
+)
 
 # ======================================================================================
 # Test simulate using raw inputs
@@ -24,11 +32,6 @@ from lcm.simulation.simulate import (
 
 @pytest.fixture
 def simulate_inputs():
-    from tests.test_models.deterministic.regression import (  # noqa: PLC0415
-        dead,
-        working,
-    )
-
     ages = AgeGrid(start=0, stop=1, step="Y")
     final_age_alive = 0
     updated_working = working.replace(
@@ -97,14 +100,6 @@ def test_simulate_using_raw_inputs(simulate_inputs):
 
 @pytest.fixture
 def iskhakov_et_al_2017_stripped_down_model_solution():
-    from tests.test_models.deterministic.regression import (  # noqa: PLC0415
-        START_AGE,
-        RegimeId,
-        dead,
-        get_params,
-        working,
-    )
-
     def _model_solution(n_periods):
         # remove wage function so that wage becomes a parameter
         updated_functions = {
@@ -225,11 +220,6 @@ def test_simulate_with_only_discrete_actions():
 
 
 def test_effect_of_discount_factor_on_last_period():
-    from tests.test_models.deterministic.regression import (  # noqa: PLC0415
-        get_model,
-        get_params,
-    )
-
     n_periods = 6
     model = get_model(n_periods=n_periods)
 
@@ -287,11 +277,6 @@ def test_effect_of_discount_factor_on_last_period():
 
 
 def test_effect_of_disutility_of_work():
-    from tests.test_models.deterministic.regression import (  # noqa: PLC0415
-        get_model,
-        get_params,
-    )
-
     n_periods = 6
     model = get_model(n_periods=n_periods)
 
@@ -362,10 +347,6 @@ def test_effect_of_disutility_of_work():
 
 def test_to_dataframe_use_labels_parameter():
     """Test that use_labels=True/False controls discrete column dtypes."""
-    from tests.test_models.deterministic.regression import (  # noqa: PLC0415
-        get_model,
-        get_params,
-    )
 
     model = get_model(n_periods=3)
     params = get_params(n_periods=3)
@@ -395,10 +376,6 @@ def test_to_dataframe_use_labels_parameter():
 @pytest.fixture
 def regression_simulation_result():
     """Shared fixture for available_targets tests."""
-    from tests.test_models.deterministic.regression import (  # noqa: PLC0415
-        get_model,
-        get_params,
-    )
 
     model = get_model(n_periods=3)
     params = get_params(n_periods=3)
@@ -484,10 +461,6 @@ def test_retrieve_actions():
 
 def test_simulation_result_pickle_roundtrip(tmp_path: Path):
     """Test that SimulationResult can be pickled and unpickled."""
-    from tests.test_models.deterministic.regression import (  # noqa: PLC0415
-        get_model,
-        get_params,
-    )
 
     # Create a SimulationResult
     model = get_model(n_periods=3)

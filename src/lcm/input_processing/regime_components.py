@@ -27,7 +27,6 @@ from lcm.Q_and_F import get_Q_and_F, get_Q_and_F_terminal
 from lcm.regime import Regime
 from lcm.state_action_space import (
     create_state_action_space,
-    create_state_space_info,
 )
 from lcm.typing import (
     ArgmaxQOverAFunction,
@@ -43,13 +42,6 @@ from lcm.typing import (
     VmappedRegimeTransitionFunction,
 )
 from lcm.utils import flatten_regime_namespace
-
-
-def build_state_space_info(regime: Regime) -> StateSpaceInfo:
-    return create_state_space_info(
-        regime=regime,
-        is_last_period=False,
-    )
 
 
 def build_state_action_space(
@@ -155,6 +147,7 @@ def _build_argmax_and_max_Q_over_a_function(
     argmax_and_max_Q_over_a = get_argmax_and_max_Q_over_a(
         Q_and_F=Q_and_F,
         actions_names=state_action_space.actions_names,
+        states_names=state_action_space.states_names,
     )
 
     if enable_jit:
