@@ -764,7 +764,7 @@ if __name__ == "__main__":
     simulation_result = MAHLER_YUM_MODEL.solve_and_simulate(
         params={
             "alive": params,
-            "dead": {"discount_factor": params["discount_factor"]},
+            "dead": {},
         },
         initial_states=initial_states,
         initial_regimes=initial_regimes,

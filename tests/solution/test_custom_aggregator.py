@@ -141,9 +141,7 @@ def test_custom_ces_aggregator_differs_from_default():
             "utility": {"disutility_of_work": 0.5},
             "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
         },
-        "dead": {
-            "H": {"discount_factor": 0.95},
-        },
+        "dead": {},
     }
 
     V_default = model_default.solve(params_default)
@@ -164,13 +162,23 @@ def test_custom_ces_aggregator_differs_from_default():
     )
 
 
-def test_default_H_injected_automatically():
-    """The default H function should be in Regime.functions after construction."""
+def test_default_H_injected_for_non_terminal():
+    """The default H function should be in non-terminal Regime.functions."""
+    r = Regime(
+        utility=lambda: 0.0,
+        transitions={"next_regime": lambda: {"a": 1.0}},
+        active=lambda age: age < 1,
+    )
+    assert "H" in r.functions
+
+
+def test_default_H_not_injected_for_terminal():
+    """Terminal regimes should not have H injected."""
     r = Regime(
         terminal=True,
         utility=lambda: 0.0,
     )
-    assert "H" in r.functions
+    assert "H" not in r.functions
 
 
 def test_custom_H_not_overwritten():
@@ -180,8 +188,9 @@ def test_custom_H_not_overwritten():
         return utility + continuation_value
 
     r = Regime(
-        terminal=True,
         utility=lambda: 0.0,
+        transitions={"next_regime": lambda: {"a": 1.0}},
+        active=lambda age: age < 1,
         functions={"H": my_H},
     )
     assert r.functions["H"] is my_H
@@ -223,9 +232,7 @@ def test_terminal_regime_value_unchanged_by_H():
             "utility": {"disutility_of_work": 0.5},
             "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
         },
-        "dead": {
-            "H": {"discount_factor": 0.95},
-        },
+        "dead": {},
     }
 
     V_default = model_default.solve(params_default)

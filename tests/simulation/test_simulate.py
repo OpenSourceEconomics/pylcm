@@ -72,7 +72,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
                     "next_regime__final_age_alive": 0,
                 }
             ),
-            "dead": MappingProxyType({"H__discount_factor": 1.0}),
+            "dead": MappingProxyType({}),
         }
     )
 

@@ -290,8 +290,8 @@ def test_passing_same_params_to_regimes_with_different_templates():
     2. A terminal regime (e.g., 'dead') has only a simple utility function
     3. The user attempts to pass the same params dict to both regimes
 
-    The terminal regime's params_template only contains {"discount_factor": float}
-    because terminal regimes have no transitions, constraints, or auxiliary functions.
+    The terminal regime's params_template is empty because terminal regimes have no
+    transitions, constraints, auxiliary functions, or H.
 
     When the user does: params={"alive": shared_params, "dead": shared_params}
 
@@ -301,7 +301,7 @@ def test_passing_same_params_to_regimes_with_different_templates():
     WORKAROUND: Users should pass only the parameters needed by each regime:
         params = {
             "alive": shared_params,
-            "dead": {"discount_factor": 1.0},
+            "dead": {},
         }
     """
     # Template for a non-terminal regime with functions that have parameters
@@ -312,10 +312,8 @@ def test_passing_same_params_to_regimes_with_different_templates():
         "next_health": {"health_transition": float},
     }
 
-    # Template for a terminal regime - only has discount_factor
-    dead_template = {
-        "discount_factor": float,
-    }
+    # Template for a terminal regime - empty (no H, no transitions)
+    dead_template: dict[str, type] = {}
 
     params_template = {
         "alive": alive_template,

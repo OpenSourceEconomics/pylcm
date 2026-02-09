@@ -65,8 +65,9 @@ class Regime:
             value = ensure_containers_are_immutable(getattr(self, name))
             object.__setattr__(self, name, value)
 
-        # Inject default aggregation function H if not provided by user
-        if "H" not in self.functions:
+        # Inject default aggregation function H if not provided by user.
+        # Terminal regimes don't need H since Q = U directly (no continuation value).
+        if not self.terminal and "H" not in self.functions:
             object.__setattr__(self, "functions", {**self.functions, "H": _default_H})
         make_immutable("functions")
         make_immutable("states")
