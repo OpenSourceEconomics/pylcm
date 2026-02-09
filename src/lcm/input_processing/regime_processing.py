@@ -9,7 +9,6 @@ from jax import Array
 from jax import numpy as jnp
 
 from lcm.ages import AgeGrid
-from lcm.exceptions import InvalidNameError
 from lcm.grid_helpers import get_irreg_coordinate
 from lcm.grids import Grid, ShockGrid
 from lcm.input_processing.create_regime_params_template import (
@@ -155,21 +154,6 @@ def process_regimes(
     internal_regimes = {}
     for name, regime in regimes.items():
         params_template = create_regime_params_template(regime)
-
-        # Validate: flat param names must not collide with state/action names
-        state_action_names = set(variable_info[name].index)
-        flat_param_names = {
-            f"{fn_name}{REGIME_SEPARATOR}{param_name}"
-            for fn_name, fn_params in params_template.items()
-            for param_name in fn_params
-        }
-        collisions = state_action_names & flat_param_names
-        if collisions:
-            raise InvalidNameError(
-                f"Regime {name!r}: flat parameter names collide with "
-                f"state/action names: {sorted(collisions)}. Rename the "
-                f"state/action or the function parameter to avoid ambiguity."
-            )
 
         internal_functions = _get_internal_functions(
             regime,
