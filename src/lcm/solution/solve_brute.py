@@ -5,10 +5,13 @@ import jax.numpy as jnp
 
 from lcm.ages import AgeGrid
 from lcm.error_handling import validate_value_function_array
+from lcm.grids import Grid, IrregSpacedGrid, ShockGrid
 from lcm.interfaces import (
     InternalRegime,
+    StateActionSpace,
 )
-from lcm.typing import FloatND, InternalParams, RegimeName
+from lcm.shocks import SHOCK_GRIDPOINT_FUNCTIONS
+from lcm.typing import FloatND, InternalParams, InternalRegimeParams, RegimeName
 
 
 def solve(
@@ -48,7 +51,11 @@ def solve(
         }
 
         for name, internal_regime in active_regimes.items():
-            state_action_space = internal_regime.state_action_space
+            state_action_space = _replace_dynamic_states(
+                internal_regime.state_action_space,
+                internal_params[name],
+                internal_regime.gridspecs,
+            )
             max_Q_over_a = internal_regime.max_Q_over_a_functions[period]
 
             # evaluate Q-function on states and actions, and maximize over actions
@@ -67,3 +74,50 @@ def solve(
         logger.info("Age: %s", ages.values[period])
 
     return MappingProxyType(solution)
+
+
+def _replace_dynamic_states(
+    state_action_space: StateActionSpace,
+    params: InternalRegimeParams,
+    gridspecs: MappingProxyType[str, Grid],
+) -> StateActionSpace:
+    """Replace placeholder states with dynamic grid values from params.
+
+    For dynamic IrregSpacedGrid, the grid points come from params as
+    ``{state_name}__points``. For dynamic ShockGrid, the grid points are computed
+    from shock params in the params dict.
+
+    If dynamic params were already partialled via fixed_params (and thus not in
+    ``params``), the grid is not replaced — it was already handled by the partialled
+    compiled functions.
+
+    """
+    replacements: dict[str, object] = {}
+    for state_name, spec in gridspecs.items():
+        if state_name not in state_action_space.states:
+            continue
+        if isinstance(spec, IrregSpacedGrid) and spec.is_dynamic:
+            points_key = f"{state_name}__points"
+            if points_key not in params:
+                continue
+            replacements[state_name] = params[points_key]
+        elif isinstance(spec, ShockGrid) and spec.dynamic_shock_params:
+            # Check if all dynamic params are present (they might have been
+            # partialled out via fixed_params)
+            all_present = all(
+                f"{state_name}__{p}" in params for p in spec.dynamic_shock_params
+            )
+            if not all_present:
+                continue
+            shock_kw = dict(spec.shock_params)
+            for p in spec.dynamic_shock_params:
+                shock_kw[p] = params[f"{state_name}__{p}"]
+            replacements[state_name] = SHOCK_GRIDPOINT_FUNCTIONS[
+                spec.distribution_type
+            ](spec.n_points, **shock_kw)
+
+    if not replacements:
+        return state_action_space
+
+    new_states = dict(state_action_space.states) | replacements
+    return state_action_space.replace(states=MappingProxyType(new_states))

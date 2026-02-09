@@ -22,11 +22,15 @@ class InternalRegimeMock:
     - state_action_spaces: StateActionSpace object
     - max_Q_over_a_functions: dict mapping period to max_Q_over_a function
     - active: list of periods the regime is active
+    - gridspecs: grid specifications (needed by _replace_dynamic_states)
     """
 
     state_action_space: StateActionSpace
     max_Q_over_a_functions: dict[int, MaxQOverAFunction]
     active_periods: list[int]
+    gridspecs: MappingProxyType = dataclasses.field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
 
 def test_solve_brute():

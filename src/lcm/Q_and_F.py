@@ -1,3 +1,4 @@
+import inspect
 from collections.abc import Callable
 from types import MappingProxyType
 from typing import Any, cast
@@ -100,11 +101,28 @@ def get_Q_and_F(
             ),
         )
 
+    # Precompute which extra kwargs (e.g. dynamic grid params like wealth__points)
+    # each next_V function needs beyond next_* states and next_V_arr.
+    next_V_extra_kwargs: dict[str, tuple[str, ...]] = {}
+    for target_regime_name, vfunc in next_V.items():
+        sig = inspect.signature(vfunc)
+        extra = tuple(
+            name
+            for name in sig.parameters
+            if not name.startswith("next_") and name != "next_V_arr"
+        )
+        next_V_extra_kwargs[target_regime_name] = extra
+
     # ----------------------------------------------------------------------------------
     # Create the state-action value and feasibility function
     # ----------------------------------------------------------------------------------
     H_fn = internal_functions.functions["H"]
     H_prefix = "H" + REGIME_SEPARATOR
+
+    # Collect all extra params needed by next_V functions (e.g. wealth__points)
+    next_V_extra_param_names: set[str] = set()
+    for extra in next_V_extra_kwargs.values():
+        next_V_extra_param_names.update(extra)
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         [
@@ -113,7 +131,7 @@ def get_Q_and_F(
             *list(state_transitions.values()),
             *list(next_stochastic_states_weights.values()),
         ],
-        include={"next_V_arr"} | flat_params_names,
+        include={"next_V_arr"} | flat_params_names | next_V_extra_param_names,
         exclude={"period", "age"},
     )
 
@@ -172,9 +190,11 @@ def get_Q_and_F(
             # As we productmap'd the value function over the stochastic variables, the
             # resulting next value function gets a new dimension for each stochastic
             # variable.
+            extra_kw = {k: kwargs[k] for k in next_V_extra_kwargs[target_regime_name]}
             next_V_at_stochastic_states_arr = next_V[target_regime_name](
                 **next_states,
                 next_V_arr=next_V_arr[target_regime_name],
+                **extra_kw,
             )
 
             # We then take the weighted average of the next value function at the

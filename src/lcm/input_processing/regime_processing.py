@@ -30,6 +30,7 @@ from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
 from lcm.mark import stochastic
 from lcm.ndimage import map_coordinates
 from lcm.regime import Regime
+from lcm.shocks import SHOCK_GRIDPOINT_FUNCTIONS, SHOCK_TRANSITION_PROBABILITY_FUNCTIONS
 from lcm.state_action_space import create_state_action_space, create_state_space_info
 from lcm.typing import (
     Float1D,
@@ -449,7 +450,41 @@ def _get_stochastic_next_function_for_shock(name: str, grid: Float1D) -> UserFun
 def _get_weights_fn_for_shock(
     name: str, flat_grid: Float1D, gridspec: Grid
 ) -> UserFunction:
-    """Get function that uses linear interpolation to calculate the shock weights."""
+    """Get function that uses linear interpolation to calculate the shock weights.
+
+    For dynamic shocks (where some shock_params are not yet specified), the grid points
+    and transition probabilities are computed inside JIT from the dynamic params.
+
+    """
+    if isinstance(gridspec, ShockGrid) and gridspec.dynamic_shock_params:
+        n_points = gridspec.n_points
+        dist_type = gridspec.distribution_type
+        static_params = dict(gridspec.shock_params)
+        dynamic_names = {
+            f"{name}{REGIME_SEPARATOR}{p}": p for p in gridspec.dynamic_shock_params
+        }
+        args = {name: "ContinuousState", **dict.fromkeys(dynamic_names, "float")}
+
+        @with_signature(args=args, return_annotation="FloatND", enforce=False)
+        def weights_func_dynamic(*a: Array, **kwargs: Array) -> Float1D:  # noqa: ARG001
+            shock_kw = {**static_params}
+            for qn, raw in dynamic_names.items():
+                shock_kw[raw] = kwargs[qn]
+            grid_points = SHOCK_GRIDPOINT_FUNCTIONS[dist_type](n_points, **shock_kw)
+            transition_probs = SHOCK_TRANSITION_PROBABILITY_FUNCTIONS[dist_type](
+                n_points, **shock_kw
+            )
+            coord = get_irreg_coordinate(kwargs[name], grid_points)
+            return map_coordinates(
+                input=transition_probs,
+                coordinates=[
+                    jnp.full(n_points, fill_value=coord),
+                    jnp.arange(n_points),
+                ],
+            )
+
+        return weights_func_dynamic
+
     transition_probs = gridspec.shock.get_transition_probs()  # ty: ignore[unresolved-attribute]
 
     @with_signature(
@@ -530,7 +565,12 @@ def _init_shock_gridspecs(
     gridspecs: MappingProxyType[str, Grid],
     internal_fixed_params: InternalRegimeParams,
 ) -> MappingProxyType[str, Grid]:
-    """Initialize ShockGrid instances with their fixed parameters."""
+    """Initialize ShockGrid instances with their fixed parameters.
+
+    Dynamic shocks (those with missing required params) are skipped — they will get
+    their params at solve time via the params dict.
+
+    """
     result: dict[str, Grid] = {}
     for name, spec in gridspecs.items():
         if isinstance(spec, ShockGrid) and name in internal_fixed_params:
