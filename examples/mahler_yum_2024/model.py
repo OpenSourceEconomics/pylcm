@@ -90,12 +90,6 @@ Effort = make_dataclass(
 
 
 @categorical
-class DiscountFactor:
-    low: int
-    high: int
-
-
-@categorical
 class HealthStatus:
     bad: int
     good: int
@@ -137,21 +131,12 @@ class RegimeId:
 # Utility function
 # --------------------------------------------------------------------------------------
 def utility(
-    period: Period,
-    wealth: ContinuousState,  # noqa: ARG001
-    health_type: DiscreteState,  # noqa: ARG001
-    education: DiscreteState,  # noqa: ARG001
     scaled_adjustment_cost: FloatND,
     fcost: FloatND,
     disutil: FloatND,
     cons_util: FloatND,
-    stochastic_discount_factor: DiscreteState,
-    beta_mean: float,
-    beta_std: float,
 ) -> FloatND:
-    beta = beta_mean + jnp.where(stochastic_discount_factor, beta_std, -beta_std)
-    f = cons_util - disutil - fcost - scaled_adjustment_cost
-    return f * (beta**period)
+    return cons_util - disutil - fcost - scaled_adjustment_cost
 
 
 def disutil(
@@ -270,12 +255,6 @@ def next_wealth(saving: ContinuousAction) -> ContinuousState:
     return saving
 
 
-def next_stochastic_discount_factor(
-    stochastic_discount_factor: DiscreteState,
-) -> DiscreteState:
-    return stochastic_discount_factor
-
-
 @lcm.mark.stochastic
 def next_health(
     period: Period,
@@ -391,7 +370,6 @@ ALIVE_REGIME = Regime(
         "effort_t_1": DiscreteGrid(Effort),
         "adjustment_cost": ShockGrid(n_points=5, distribution_type="uniform"),
         "education": DiscreteGrid(EducationStatus),
-        "stochastic_discount_factor": DiscreteGrid(DiscountFactor),
         "productivity": DiscreteGrid(ProductivityType),
         "health_type": DiscreteGrid(HealthType),
     },
@@ -403,7 +381,6 @@ ALIVE_REGIME = Regime(
         "next_wealth": next_wealth,
         "next_health": next_health,
         "next_productivity_shock": next_productivity_shock,
-        "next_stochastic_discount_factor": next_stochastic_discount_factor,
         "next_adjustment_cost": next_adjustment_cost,
         "next_effort_t_1": next_effort_t_1,
         "next_health_type": next_health_type,
@@ -665,7 +642,7 @@ def create_inputs(
     penre: float,
     beta: dict[str, float],
     sigma: int,
-) -> tuple[dict[RegimeName, Any], dict[RegimeName, Any], list[RegimeName]]:
+) -> tuple[dict[str, dict], dict[str, Any], list[RegimeName], Any]:
     # Create variable grids from supplied parameters
     income_grid = create_income_grid(income_process)  # ty: ignore[invalid-argument-type]
     chimax_grid = create_chimaxgrid(chi)
@@ -676,13 +653,15 @@ def create_inputs(
 
     regime_transition = create_regime_transition_grid()
 
-    # Create parameters
-    params = {
-        "discount_factor": 1,
+    # Compute discount factors (betas) for the two types
+    beta_low = beta["mean"] - beta["std"]
+    beta_high = beta["mean"] + beta["std"]
+
+    # Create base parameters (shared across discount factor types)
+    base_params = {
         "disutil": {"phigrid": phi_grid},
         "fcost": {"psi": psi, "xigrid": xi_grid},
         "cons_util": {"sigma": sigma, "bb": bb, "kappa": conp},
-        "utility": {"beta_mean": beta["mean"], "beta_std": beta["std"]},
         "income": {"income_grid": income_grid},
         "pension": {"income_grid": income_grid, "penre": penre},
         "scaled_adjustment_cost": {"chimaxgrid": chimax_grid},
@@ -690,10 +669,14 @@ def create_inputs(
         "next_health": {"health_transition": tr2yp_grid},
         "next_regime": {"regime_transition": regime_transition},
     }
+    params_by_beta = {
+        "low": {**base_params, "discount_factor": beta_low},
+        "high": {**base_params, "discount_factor": beta_high},
+    }
 
     # Create initial states for the simulation
 
-    discount = jnp.zeros((16), dtype=jnp.int8)
+    discount_factor = jnp.zeros((16), dtype=jnp.int8)
     prod = jnp.zeros((16), dtype=jnp.int8)
     ht = jnp.zeros((16), dtype=jnp.int8)
     ed = jnp.zeros((16), dtype=jnp.int8)
@@ -701,10 +684,10 @@ def create_inputs(
         for j in range(1, 3):
             for k in range(1, 3):
                 index = (i - 1) * 2 * 2 + (j - 1) * 2 + k - 1
-                discount = discount.at[index].set(i - 1)
+                discount_factor = discount_factor.at[index].set(i - 1)
                 prod = prod.at[index].set(j - 1)
                 ht = ht.at[index].set(1 - (k - 1))
-                discount = discount.at[index + 8].set(i - 1)
+                discount_factor = discount_factor.at[index + 8].set(i - 1)
                 prod = prod.at[index + 8].set(j - 1)
                 ht = ht.at[index + 8].set(1 - (k - 1))
                 ed = ed.at[index + 8].set(1)
@@ -723,7 +706,7 @@ def create_inputs(
     initial_health_type = 1 - ht[types]
     initial_education = ed[types]
     initial_productivity = prod[types]
-    initial_discount = discount[types]
+    initial_discount_factor = discount_factor[types]
     initial_effort = jnp.searchsorted(eff_grid, init_distr_2b2t2h[:, 2][types])
     initial_adjustment_cost = random.uniform(new_keys[1], (n_simulation_subjects,))
     prod_dist = jax.lax.fori_loop(
@@ -744,10 +727,9 @@ def create_inputs(
         "adjustment_cost": initial_adjustment_cost,
         "education": initial_education,
         "productivity": initial_productivity,
-        "stochastic_discount_factor": initial_discount,
     }
     initial_regimes = ["alive"] * n_simulation_subjects
-    return params, initial_states, initial_regimes
+    return params_by_beta, initial_states, initial_regimes, initial_discount_factor
 
 
 # ======================================================================================
@@ -755,18 +737,24 @@ def create_inputs(
 # ======================================================================================
 
 if __name__ == "__main__":
-    params, initial_states, initial_regimes = create_inputs(
-        seed=7235,
-        n_simulation_subjects=1_000,
-        **START_PARAMS,  # ty: ignore[invalid-argument-type]
+    params_by_beta, initial_states, initial_regimes, initial_discount_factor = (
+        create_inputs(
+            seed=7235,
+            n_simulation_subjects=1_000,
+            **START_PARAMS,  # ty: ignore[invalid-argument-type]
+        )
     )
 
-    simulation_result = MAHLER_YUM_MODEL.solve_and_simulate(
-        params={
-            "alive": params,
-            "dead": {},
-        },
-        initial_states=initial_states,
-        initial_regimes=initial_regimes,
-        seed=8295,
-    )
+    # Solve and simulate separately for each discount factor type
+    results = {}
+    for beta_type in ("low", "high"):
+        mask = initial_discount_factor == (0 if beta_type == "low" else 1)
+        subset_states = {k: v[mask] for k, v in initial_states.items()}
+        subset_regimes = [r for r, m in zip(initial_regimes, mask, strict=True) if m]
+
+        results[beta_type] = MAHLER_YUM_MODEL.solve_and_simulate(
+            params={"alive": params_by_beta[beta_type], "dead": {}},
+            initial_states=subset_states,
+            initial_regimes=subset_regimes,
+            seed=8295,
+        )
