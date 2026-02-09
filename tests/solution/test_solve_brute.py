@@ -72,9 +72,7 @@ def test_solve_brute():
     # create the Q_and_F functions
     # ==================================================================================
 
-    def _Q_and_F(
-        consumption, lazy, wealth, working, next_V_arr, internal_regime_params
-    ):
+    def _Q_and_F(consumption, lazy, wealth, working, next_V_arr, discount_factor=0.9):
         next_wealth = wealth + working - consumption
         next_lazy = lazy
 
@@ -92,7 +90,7 @@ def test_solve_brute():
         U_arr = consumption - 0.2 * lazy * working
         F_arr = next_wealth >= 0
 
-        Q_arr = U_arr + internal_regime_params["discount_factor"] * expected_V
+        Q_arr = U_arr + discount_factor * expected_V
 
         return Q_arr, F_arr
 
@@ -145,7 +143,7 @@ def test_solve_brute_single_period_Qc_arr():
         states_and_discrete_actions_names=("a", "b", "c"),
     )
 
-    def _Q_and_F(a, c, b, d, next_V_arr, internal_regime_params):  # noqa: ARG001
+    def _Q_and_F(a, c, b, d, next_V_arr):  # noqa: ARG001
         # next_V_arr is now a dict but not used in this test
         util = d
         feasib = d <= a + b + c

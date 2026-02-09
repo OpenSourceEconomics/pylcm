@@ -4,10 +4,14 @@ from lcm.regime import Regime
 from lcm.typing import RegimeParamsTemplate
 from lcm.utils import ensure_containers_are_immutable
 
+# The namespace for aggregation (Bellman equation) parameters like discount_factor.
+# Matches the mathematical notation H(U, v) = U + β·v used in the docstrings.
+AGGREGATION_FUNCTION_NAME = "_H"
+
 
 def create_regime_params_template(
     regime: Regime,
-    default_params: dict[str, type] = {"discount_factor": float},  # noqa: B006
+    aggregation_params: dict[str, type] = {"discount_factor": float},  # noqa: B006
 ) -> RegimeParamsTemplate:
     """Create parameter template from a regime specification.
 
@@ -18,7 +22,7 @@ def create_regime_params_template(
 
     Args:
         regime: The regime as provided by the user.
-        default_params: A dictionary of default parameters with their type annotations.
+        aggregation_params: Parameters for the Bellman aggregation function H(U, v).
             Default is {"discount_factor": float}. For other lifetime reward objectives,
             additional parameters may be required, for example
             {"discount_factor": float, "short_run_discount_factor": float} for
@@ -26,8 +30,8 @@ def create_regime_params_template(
 
     Returns:
         The regime parameter template with type annotations as values. Contains
-        default_params at the top level, plus a dictionary for each regime function
-        containing the parameters required by that function.
+        aggregation_params under the "_H" namespace, plus a dictionary for each
+        regime function containing the parameters required by that function.
 
     """
     # Collect all regime variables: actions, states, special variables (period, age),
@@ -48,4 +52,5 @@ def create_regime_params_template(
         params = {k: v for k, v in sorted(tree.items()) if k not in variables}
         function_params[name] = params
 
-    return ensure_containers_are_immutable(default_params | function_params)
+    base = {AGGREGATION_FUNCTION_NAME: aggregation_params} if aggregation_params else {}
+    return ensure_containers_are_immutable(base | function_params)

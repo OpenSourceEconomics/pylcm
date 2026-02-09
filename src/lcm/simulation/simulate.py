@@ -216,7 +216,7 @@ def _simulate_regime_in_period(
         **state_action_space.discrete_actions,
         **state_action_space.continuous_actions,
         next_V_arr=next_V_arr,
-        internal_regime_params=internal_params[regime_name],
+        **internal_params[regime_name],
     )
     validate_value_function_array(V_arr, age=age)
 
@@ -256,7 +256,7 @@ def _simulate_regime_in_period(
             optimal_actions=optimal_actions,
             period=period,
             age=age,
-            internal_regime_params=internal_params[regime_name],
+            flat_params=internal_params[regime_name],
             states=states,
             state_action_space=state_action_space,
             key=next_states_key,
@@ -268,7 +268,7 @@ def _simulate_regime_in_period(
             optimal_actions=optimal_actions,
             period=period,
             age=age,
-            internal_regime_params=internal_params[regime_name],
+            flat_params=internal_params[regime_name],
             state_action_space=state_action_space,
             new_subject_regime_ids=new_subject_regime_ids,
             regime_names_to_ids=regime_names_to_ids,

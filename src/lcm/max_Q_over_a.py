@@ -1,3 +1,4 @@
+import inspect
 from collections.abc import Callable
 from types import MappingProxyType
 
@@ -11,7 +12,6 @@ from lcm.typing import (
     ArgmaxQOverAFunction,
     BoolND,
     FloatND,
-    InternalRegimeParams,
     IntND,
     MaxQOverAFunction,
     RegimeName,
@@ -54,24 +54,26 @@ def get_max_Q_over_a(
         feasible actions.
 
     """
+    # Extract extra param names from Q_and_F's signature (flat regime params)
+    extra_param_names = _get_extra_param_names(Q_and_F, actions_names, states_names)
+
     Q_and_F = productmap(
         func=Q_and_F,
         variables=actions_names,
     )
 
     @with_signature(
-        args=["next_V_arr", "internal_regime_params", *actions_names, *states_names],
+        args=["next_V_arr", *actions_names, *states_names, *extra_param_names],
         return_annotation="FloatND",
+        enforce=False,
     )
     def max_Q_over_a(
         next_V_arr: MappingProxyType[RegimeName, FloatND],
-        internal_regime_params: InternalRegimeParams,
-        **states_and_actions: Array,
+        **kwargs: Array,
     ) -> FloatND:
         Q_arr, F_arr = Q_and_F(
-            internal_regime_params=internal_regime_params,
             next_V_arr=next_V_arr,
-            **states_and_actions,
+            **kwargs,
         )
         return Q_arr.max(where=F_arr, initial=-jnp.inf)
 
@@ -116,6 +118,9 @@ def get_argmax_and_max_Q_over_a(
         actions. The maximum corresponds to the Qc-function.
 
     """
+    # Extract extra param names from Q_and_F's signature (flat regime params)
+    extra_param_names = _get_extra_param_names(Q_and_F, actions_names, states_names)
+
     Q_and_F = productmap(
         func=Q_and_F,
         variables=actions_names,
@@ -124,22 +129,38 @@ def get_argmax_and_max_Q_over_a(
     @with_signature(
         args=[
             "next_V_arr",
-            "internal_regime_params",
             *actions_names,
             *states_names,
+            *extra_param_names,
         ],
         return_annotation="tuple[IntND, FloatND]",
+        enforce=False,
     )
     def argmax_and_max_Q_over_a(
         next_V_arr: MappingProxyType[RegimeName, FloatND],
-        internal_regime_params: InternalRegimeParams,
-        **states_and_actions: Array,
+        **kwargs: Array,
     ) -> tuple[IntND, FloatND]:
         Q_arr, F_arr = Q_and_F(
-            internal_regime_params=internal_regime_params,
             next_V_arr=next_V_arr,
-            **states_and_actions,
+            **kwargs,
         )
         return argmax_and_max(Q_arr, where=F_arr, initial=-jnp.inf)
 
     return argmax_and_max_Q_over_a
+
+
+def _get_extra_param_names(
+    Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    actions_names: tuple[str, ...],
+    states_names: tuple[str, ...],
+) -> list[str]:
+    """Get param names from Q_and_F that are not actions, states, or next_V_arr."""
+    sig = inspect.signature(Q_and_F)
+    known_names = {"next_V_arr", *actions_names, *states_names}
+    return sorted(
+        name
+        for name, param in sig.parameters.items()
+        if name not in known_names
+        and param.kind
+        not in {inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL}
+    )

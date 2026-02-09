@@ -43,21 +43,18 @@ type UserParams = Mapping[
     | Mapping[str, bool | float | Array | Mapping[str, bool | float | Array]],
 ]
 
-# Internal regime parameters: A pytree with two levels:
-# - Top-level keys are almost always function names, except for discount_factor etc.
-# - Second-level keys are argument names
-# - Leaves are values to be passed to the functions.
-type InternalRegimeParams = MappingProxyType[
-    str, bool | float | Array | MappingProxyType[str, bool | float | Array]
-]
+# Internal regime parameters: A flat dict with function-qualified names.
+# Keys are always function-qualified (e.g., "utility__risk_aversion",
+# "_H__discount_factor"). Values are scalars or arrays.
+type InternalRegimeParams = MappingProxyType[str, bool | float | Array]
 type InternalParams = MappingProxyType[RegimeName, InternalRegimeParams]
 
 # Immutable templates, used internally
-type RegimeParamsTemplate = MappingProxyType[str, type | MappingProxyType[str, type]]
+type RegimeParamsTemplate = MappingProxyType[str, MappingProxyType[str, type]]
 type ParamsTemplate = MappingProxyType[RegimeName, RegimeParamsTemplate]
 
 # Dictionary-templates; returned to users.
-type MutableRegimeParamsTemplate = dict[str, type | dict[str, type]]
+type MutableRegimeParamsTemplate = dict[str, dict[str, type]]
 type MutableParamsTemplate = dict[RegimeName, MutableRegimeParamsTemplate]
 
 # Type aliases for value function arrays
@@ -84,7 +81,6 @@ class InternalUserFunction(Protocol):
     def __call__(
         self,
         *args: Array | float,
-        internal_regime_params: InternalRegimeParams,
         **kwargs: Array | float,
     ) -> Array: ...
 
@@ -101,7 +97,6 @@ class RegimeTransitionFunction(Protocol):
     def __call__(
         self,
         *args: Array | float,
-        internal_regime_params: InternalRegimeParams,
         **kwargs: Array | float,
     ) -> Float1D: ...
 
@@ -118,7 +113,6 @@ class VmappedRegimeTransitionFunction(Protocol):
     def __call__(
         self,
         *args: Array | float,
-        internal_regime_params: InternalRegimeParams,
         **kwargs: Array | float,
     ) -> FloatND: ...
 
@@ -136,8 +130,7 @@ class QAndFFunction(Protocol):
     def __call__(
         self,
         next_V_arr: FloatND,
-        internal_regime_params: InternalRegimeParams,
-        **states_and_actions: Array,
+        **kwargs: Any,  # noqa: ANN401
     ) -> tuple[FloatND, BoolND]: ...
 
 
@@ -154,7 +147,6 @@ class MaxQOverCFunction(Protocol):
     def __call__(
         self,
         next_V_arr: MappingProxyType[RegimeName, Array],
-        internal_regime_params: InternalRegimeParams,
         period: Period,
         **kwargs: Array,
     ) -> Array: ...
@@ -173,7 +165,6 @@ class ArgmaxQOverCFunction(Protocol):
     def __call__(
         self,
         next_V_arr: MappingProxyType[RegimeName, Array],
-        internal_regime_params: InternalRegimeParams,
         period: Period,
         **kwargs: Array,
     ) -> tuple[Array, Array]: ...
@@ -192,8 +183,7 @@ class MaxQOverAFunction(Protocol):
     def __call__(
         self,
         next_V_arr: MappingProxyType[RegimeName, Array],
-        internal_regime_params: InternalRegimeParams,
-        **states_and_actions: Array,
+        **kwargs: Any,  # noqa: ANN401
     ) -> Array: ...
 
 
@@ -210,8 +200,7 @@ class ArgmaxQOverAFunction(Protocol):
     def __call__(
         self,
         next_V_arr: MappingProxyType[RegimeName, Array],
-        internal_regime_params: InternalRegimeParams,
-        **states_and_actions: Array,
+        **kwargs: Any,  # noqa: ANN401
     ) -> tuple[Array, Array]: ...
 
 
@@ -226,9 +215,7 @@ class MaxQcOverDFunction(Protocol):
 
     """
 
-    def __call__(
-        self, Qc_arr: Array, internal_regime_params: InternalRegimeParams
-    ) -> Array: ...
+    def __call__(self, Qc_arr: Array, **kwargs: Array) -> Array: ...
 
 
 class ArgmaxQcOverDFunction(Protocol):
@@ -242,9 +229,7 @@ class ArgmaxQcOverDFunction(Protocol):
 
     """
 
-    def __call__(
-        self, Qc_arr: Array, internal_regime_params: InternalRegimeParams
-    ) -> tuple[Array, Array]: ...
+    def __call__(self, Qc_arr: Array, **kwargs: Array) -> tuple[Array, Array]: ...
 
 
 class StochasticNextFunction(Protocol):
@@ -266,7 +251,7 @@ class NextStateSimulationFunction(Protocol):
 
     def __call__(
         self,
-        **kwargs: Array | Period | Age | InternalRegimeParams,
+        **kwargs: Array | Period | Age,
     ) -> MappingProxyType[str, DiscreteState | ContinuousState]: ...
 
 
