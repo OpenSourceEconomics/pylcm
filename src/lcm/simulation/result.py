@@ -352,10 +352,9 @@ def _collect_all_available_targets(
 def _get_available_targets_for_regime(regime: InternalRegime) -> set[str]:
     """Get available target names for a single regime."""
     stochastic_weight_names = _get_stochastic_weight_function_names(regime)
+    excluded = stochastic_weight_names | {"H"}
     targets = {"utility"}
-    targets.update(
-        name for name in regime.functions if name not in stochastic_weight_names
-    )
+    targets.update(name for name in regime.functions if name not in excluded)
     targets.update(regime.constraints.keys())
     return targets
 
@@ -640,7 +639,7 @@ def _compute_targets(
 def _build_functions_pool(internal_regime: InternalRegime) -> dict[str, Any]:
     """Build pool of available functions for target computation."""
     pool: dict[str, Any] = {
-        **internal_regime.functions,
+        **{k: v for k, v in internal_regime.functions.items() if k != "H"},
         **internal_regime.constraints,
         "utility": internal_regime.utility,
     }

@@ -10,7 +10,6 @@ from jax import Array
 from lcm.dispatchers import productmap
 from lcm.function_representation import get_value_function_representation
 from lcm.functools import get_union_of_arguments
-from lcm.input_processing.create_regime_params_template import AGGREGATION_FUNCTION_NAME
 from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import InternalFunctions, StateSpaceInfo
 from lcm.next_state import (
@@ -26,8 +25,6 @@ from lcm.typing import (
     RegimeName,
 )
 from lcm.utils import REGIME_SEPARATOR, normalize_regime_transition_probs
-
-_DISCOUNT_FACTOR_KEY = f"{AGGREGATION_FUNCTION_NAME}{REGIME_SEPARATOR}discount_factor"
 
 
 def get_Q_and_F(
@@ -106,6 +103,9 @@ def get_Q_and_F(
     # ----------------------------------------------------------------------------------
     # Create the state-action value and feasibility function
     # ----------------------------------------------------------------------------------
+    H_fn = internal_functions.functions["H"]
+    H_prefix = "H" + REGIME_SEPARATOR
+
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         [
             U_and_F,
@@ -146,12 +146,12 @@ def get_Q_and_F(
             period=period,
             age=age,
         )
-        Q_arr = U_arr
         # Normalize probabilities over active regimes
         normalized_regime_transition_prob = normalize_regime_transition_probs(
             regime_transition_prob, active_target_regimes
         )
 
+        continuation_value = jnp.zeros_like(U_arr)
         for target_regime_name in active_target_regimes:
             next_states = state_transitions[target_regime_name](
                 **kwargs,
@@ -183,12 +183,14 @@ def get_Q_and_F(
                 next_V_at_stochastic_states_arr,
                 weights=joint_next_stochastic_states_weights,
             )
-            Q_arr = (
-                Q_arr
-                + kwargs[_DISCOUNT_FACTOR_KEY]
-                * normalized_regime_transition_prob[target_regime_name]
+            continuation_value = (
+                continuation_value
+                + normalized_regime_transition_prob[target_regime_name]
                 * next_V_expected_arr
             )
+
+        H_kwargs = {k: kwargs[k] for k in kwargs if k.startswith(H_prefix)}
+        Q_arr = H_fn(utility=U_arr, continuation_value=continuation_value, **H_kwargs)
 
         # Handle cases when there is only one state.
         # In that case, Q_arr and F_arr are scalars, but we require arrays as output.
@@ -333,7 +335,7 @@ def _get_U_and_F(
     functions = {
         "feasibility": _get_feasibility(internal_functions),
         "utility": internal_functions.utility,
-        **internal_functions.functions,
+        **{k: v for k, v in internal_functions.functions.items() if k != "H"},
     }
     return concatenate_functions(
         functions=functions,

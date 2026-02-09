@@ -16,6 +16,12 @@ from lcm.utils import (
 )
 
 
+def _default_H(
+    utility: float, continuation_value: float, discount_factor: float
+) -> float:
+    return utility + discount_factor * continuation_value
+
+
 @dataclass(frozen=True)
 class Regime:
     """A user regime which can be processed into an internal regime.
@@ -54,20 +60,19 @@ class Regime:
     def __post_init__(self) -> None:
         _validate_attribute_types(self)
         _validate_logical_consistency(self)
-        # Wrap mutable dicts in MappingProxyType to prevent accidental mutation
-        object.__setattr__(self, "states", ensure_containers_are_immutable(self.states))
-        object.__setattr__(
-            self, "actions", ensure_containers_are_immutable(self.actions)
-        )
-        object.__setattr__(
-            self, "constraints", ensure_containers_are_immutable(self.constraints)
-        )
-        object.__setattr__(
-            self, "transitions", ensure_containers_are_immutable(self.transitions)
-        )
-        object.__setattr__(
-            self, "functions", ensure_containers_are_immutable(self.functions)
-        )
+
+        def make_immutable(name: str) -> None:
+            value = ensure_containers_are_immutable(getattr(self, name))
+            object.__setattr__(self, name, value)
+
+        # Inject default aggregation function H if not provided by user
+        if "H" not in self.functions:
+            object.__setattr__(self, "functions", {**self.functions, "H": _default_H})
+        make_immutable("functions")
+        make_immutable("states")
+        make_immutable("actions")
+        make_immutable("constraints")
+        make_immutable("transitions")
 
     def get_all_functions(self) -> MappingProxyType[str, UserFunction]:
         """Get all regime functions including utility, constraints, and transitions.

@@ -43,9 +43,9 @@ type UserParams = Mapping[
     | Mapping[str, bool | float | Array | Mapping[str, bool | float | Array]],
 ]
 
-# Internal regime parameters: A flat dict with function-qualified names.
+# Internal regime parameters: A flat mapping with function-qualified names.
 # Keys are always function-qualified (e.g., "utility__risk_aversion",
-# "_H__discount_factor"). Values are scalars or arrays.
+# "H__discount_factor"). Values are scalars or arrays.
 type InternalRegimeParams = MappingProxyType[str, bool | float | Array]
 type InternalParams = MappingProxyType[RegimeName, InternalRegimeParams]
 

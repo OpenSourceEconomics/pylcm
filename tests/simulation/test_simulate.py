@@ -66,13 +66,13 @@ def test_simulate_using_raw_inputs(simulate_inputs):
         {
             "working": MappingProxyType(
                 {
-                    "_H__discount_factor": 1.0,
+                    "H__discount_factor": 1.0,
                     "utility__disutility_of_work": 1.0,
                     "next_wealth__interest_rate": 0.05,
                     "next_regime__final_age_alive": 0,
                 }
             ),
-            "dead": MappingProxyType({"_H__discount_factor": 1.0}),
+            "dead": MappingProxyType({"H__discount_factor": 1.0}),
         }
     )
 
