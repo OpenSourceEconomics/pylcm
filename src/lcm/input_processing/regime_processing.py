@@ -111,7 +111,7 @@ def process_regimes(
     variable_info = MappingProxyType(
         {n: get_variable_info(r) for n, r in regimes.items()}
     )
-    internal_fixed_params = {
+    flat_regime_fixed_params = {
         n: _extract_regime_fixed_params(
             regime=r, regime_name=n, fixed_params=fixed_params
         )
@@ -121,7 +121,7 @@ def process_regimes(
         {
             n: _init_shock_gridspecs(
                 gridspecs=get_gridspecs(r),
-                internal_fixed_params=internal_fixed_params[n],
+                flat_regime_fixed_params=flat_regime_fixed_params[n],
             )
             for n, r in regimes.items()
         }
@@ -210,7 +210,7 @@ def process_regimes(
             active_periods=tuple(regimes_to_active_periods[name]),
             regime_transition_probs=internal_functions.regime_transition_probs,
             internal_functions=internal_functions,
-            internal_fixed_params=internal_fixed_params[name],
+            flat_regime_fixed_params=flat_regime_fixed_params[name],
             transitions=internal_functions.transitions,
             regime_params_template=regime_params_template,
             state_action_space=state_action_spaces[name],
@@ -528,14 +528,14 @@ def _extract_regime_fixed_params(
 
 def _init_shock_gridspecs(
     gridspecs: MappingProxyType[str, Grid],
-    internal_fixed_params: FlatRegimeParams,
+    flat_regime_fixed_params: FlatRegimeParams,
 ) -> MappingProxyType[str, Grid]:
     """Initialize ShockGrid instances with their fixed parameters."""
     result: dict[str, Grid] = {}
     for name, spec in gridspecs.items():
-        if isinstance(spec, ShockGrid) and name in internal_fixed_params:
+        if isinstance(spec, ShockGrid) and name in flat_regime_fixed_params:
             result[name] = spec.init_params(
-                cast("MappingProxyType[str, float]", internal_fixed_params[name])
+                cast("MappingProxyType[str, float]", flat_regime_fixed_params[name])
             )
         else:
             result[name] = spec

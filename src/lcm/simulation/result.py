@@ -4,6 +4,7 @@ import contextlib
 import inspect
 import pickle
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -666,7 +667,7 @@ def _create_target_function(
 
 
 def _get_function_variables(
-    func: Any,  # noqa: ANN401
+    func: Callable[..., Any],
     param_names: frozenset[str],
 ) -> tuple[str, ...]:
     """Get variable names from signature, excluding flat param names."""
