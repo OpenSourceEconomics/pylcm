@@ -300,24 +300,24 @@ def _get_internal_functions(
     for fn_name, fn in deterministic_functions.items():
         functions[fn_name] = _rename_params_to_qnames(
             fn=fn,
+            fn_key=fn_name,
             regime_params_template=regime_params_template,
-            param_key=fn_name,
         )
 
     for fn_name, fn in deterministic_transition_functions.items():
         # For transition functions with prefixed names like "work__next_wealth",
         # extract the flat param key "next_wealth" to look up in regime_params_template
         if fn_name == "next_regime":
-            param_key = fn_name
+            fn_key = fn_name
         elif QNAME_DELIMITER in fn_name:
             # "work__next_wealth" -> "next_wealth"
-            param_key = fn_name.split(QNAME_DELIMITER, 1)[1]
+            fn_key = fn_name.split(QNAME_DELIMITER, 1)[1]
         else:
-            param_key = fn_name
+            fn_key = fn_name
         functions[fn_name] = _rename_params_to_qnames(
             fn=fn,
+            fn_key=fn_key,
             regime_params_template=regime_params_template,
-            param_key=param_key,
         )
 
     for fn_name, fn in stochastic_transition_functions.items():
@@ -325,15 +325,15 @@ def _get_internal_functions(
         # stochastic transition. For the solution, we must also define a next function
         # that returns the whole grid of possible values.
         # For prefixed names, extract the flat param key
-        param_key = (
+        fn_key = (
             fn_name.split(QNAME_DELIMITER, 1)[1]
             if QNAME_DELIMITER in fn_name
             else fn_name
         )
         functions[f"weight_{fn_name}"] = _rename_params_to_qnames(
             fn=fn,
+            fn_key=fn_key,
             regime_params_template=regime_params_template,
-            param_key=param_key,
         )
         functions[fn_name] = _get_stochastic_next_function(
             fn=fn,
@@ -401,8 +401,8 @@ def _get_internal_functions(
 
 def _rename_params_to_qnames(
     fn: UserFunction,
+    fn_key: str,
     regime_params_template: RegimeParamsTemplate,
-    param_key: str,
 ) -> InternalUserFunction:
     """Rename function params to qualified names using dags.signature.rename_arguments.
 
@@ -410,17 +410,17 @@ def _rename_params_to_qnames(
 
     Args:
         fn: The user function.
+        fn_key: The key to look up in regime_params_template (e.g., "utility").
         regime_params_template: The parameter template for the regime.
-        param_key: The key to look up in regime_params_template (e.g., "utility").
 
     Returns:
         The function with renamed parameters.
 
     """
-    param_names = list(regime_params_template[param_key])  # ty: ignore[invalid-argument-type]
+    param_names = list(regime_params_template[fn_key])  # ty: ignore[invalid-argument-type]
     if not param_names:
         return cast("InternalUserFunction", fn)
-    mapper = {p: f"{param_key}{QNAME_DELIMITER}{p}" for p in param_names}
+    mapper = {p: f"{fn_key}{QNAME_DELIMITER}{p}" for p in param_names}
     return cast("InternalUserFunction", rename_arguments(fn, mapper=mapper))
 
 
