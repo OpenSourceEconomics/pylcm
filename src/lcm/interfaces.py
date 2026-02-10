@@ -184,7 +184,7 @@ class InternalRegime:
     )
     internal_functions: InternalFunctions
     internal_fixed_params: FlatRegimeParams
-    params_template: RegimeParamsTemplate
+    regime_params_template: RegimeParamsTemplate
     state_action_space: StateActionSpace
     state_space_info: StateSpaceInfo
     max_Q_over_a_functions: MappingProxyType[int, MaxQOverAFunction]

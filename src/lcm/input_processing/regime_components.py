@@ -66,9 +66,9 @@ def build_Q_and_F_functions(
     internal_functions: InternalFunctions,
     state_space_infos: MappingProxyType[RegimeName, StateSpaceInfo],
     ages: AgeGrid,
-    params_template: RegimeParamsTemplate,
+    regime_params_template: RegimeParamsTemplate,
 ) -> MappingProxyType[int, QAndFFunction]:
-    flat_params_names = frozenset(get_flat_param_names(params_template))
+    flat_params_names = frozenset(get_flat_param_names(regime_params_template))
 
     Q_and_F_functions = {}
     for period, age in enumerate(ages.values):
@@ -170,7 +170,7 @@ def build_next_state_simulation_functions(
     grids: GridsDict,
     gridspecs: MappingProxyType[str, Grid],
     variable_info: pd.DataFrame,
-    params_template: RegimeParamsTemplate,
+    regime_params_template: RegimeParamsTemplate,
     *,
     enable_jit: bool,
 ) -> NextStateSimulationFunction:
@@ -184,7 +184,7 @@ def build_next_state_simulation_functions(
     signature = inspect.signature(next_state)
     parameters = list(signature.parameters)
 
-    non_vmap_params = get_non_vmap_params(params_template)
+    non_vmap_params = get_non_vmap_params(regime_params_template)
 
     next_state_vmapped = vmap_1d(
         func=next_state,
@@ -205,7 +205,7 @@ def build_regime_transition_probs_functions(
     regime_transition_probs: InternalUserFunction,
     grids: MappingProxyType[str, Array],
     regime_names_to_ids: RegimeNamesToIds,
-    params_template: RegimeParamsTemplate,
+    regime_params_template: RegimeParamsTemplate,
     *,
     is_stochastic: bool,
     enable_jit: bool,
@@ -247,7 +247,7 @@ def build_regime_transition_probs_functions(
     signature = inspect.signature(next_regime_accepting_all)
     parameters = list(signature.parameters)
 
-    non_vmap_params = get_non_vmap_params(params_template)
+    non_vmap_params = get_non_vmap_params(regime_params_template)
 
     next_regime_vmapped = vmap_1d(
         func=next_regime_accepting_all,

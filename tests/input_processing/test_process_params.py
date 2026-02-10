@@ -185,15 +185,15 @@ def test_ambiguous_model_regime_level(params_template):
 
 
 class MockRegime:
-    """Mock regime with params_template for testing create_params_template."""
+    """Mock regime with regime_params_template for testing create_params_template."""
 
-    def __init__(self, params_template: dict) -> None:
-        self._params_template = params_template
+    def __init__(self, regime_params_template: dict) -> None:
+        self._regime_params_template = regime_params_template
 
     @property
-    def params_template(self) -> MappingProxyType:
-        """Return params_template as MappingProxyType."""
-        return MappingProxyType(self._params_template)
+    def regime_params_template(self) -> MappingProxyType:
+        """Return regime_params_template as MappingProxyType."""
+        return MappingProxyType(self._regime_params_template)
 
 
 def test_function_params_no_qname_separator():
@@ -290,8 +290,9 @@ def test_passing_same_params_to_regimes_with_different_templates():
     2. A terminal regime (e.g., 'dead') has only a simple utility function
     3. The user attempts to pass the same params dict to both regimes
 
-    The terminal regime's params_template only contains {"discount_factor": float}
-    because terminal regimes have no transitions, constraints, or auxiliary functions.
+    The terminal regime's regime_params_template only contains
+    {"discount_factor": float} because terminal regimes have no transitions,
+    constraints, or auxiliary functions.
 
     When the user does: params={"alive": shared_params, "dead": shared_params}
 

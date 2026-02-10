@@ -153,14 +153,14 @@ def process_regimes(
     # ----------------------------------------------------------------------------------
     internal_regimes = {}
     for name, regime in regimes.items():
-        params_template = create_regime_params_template(regime)
+        regime_params_template = create_regime_params_template(regime)
 
         internal_functions = _get_internal_functions(
             regime,
             regime_name=name,
             nested_transitions=nested_transitions[name],
             grids=grids,
-            params_template=params_template,
+            regime_params_template=regime_params_template,
             regime_names_to_ids=regime_names_to_ids,
             gridspecs=gridspecs[name],
             variable_info=variable_info[name],
@@ -174,7 +174,7 @@ def process_regimes(
             internal_functions=internal_functions,
             state_space_infos=state_space_infos,
             ages=ages,
-            params_template=params_template,
+            regime_params_template=regime_params_template,
         )
         max_Q_over_a_functions = build_max_Q_over_a_functions(
             state_action_space=state_action_spaces[name],
@@ -191,7 +191,7 @@ def process_regimes(
             grids=grids,
             gridspecs=gridspecs[name],
             variable_info=variable_info[name],
-            params_template=params_template,
+            regime_params_template=regime_params_template,
             enable_jit=enable_jit,
         )
 
@@ -212,7 +212,7 @@ def process_regimes(
             internal_functions=internal_functions,
             internal_fixed_params=internal_fixed_params[name],
             transitions=internal_functions.transitions,
-            params_template=params_template,
+            regime_params_template=regime_params_template,
             state_action_space=state_action_spaces[name],
             state_space_info=state_space_infos[name],
             max_Q_over_a_functions=MappingProxyType(max_Q_over_a_functions),
@@ -232,7 +232,7 @@ def _get_internal_functions(
     regime_name: str,
     nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
     grids: MappingProxyType[RegimeName, MappingProxyType[str, Array]],
-    params_template: RegimeParamsTemplate,
+    regime_params_template: RegimeParamsTemplate,
     regime_names_to_ids: RegimeNamesToIds,
     gridspecs: MappingProxyType[str, Grid],
     variable_info: pd.DataFrame,
@@ -247,7 +247,7 @@ def _get_internal_functions(
         nested_transitions: Nested transitions dict for internal processing.
             Format: {"regime_name": {"next_state": fn, ...}, "next_regime": fn}
         grids: Dict containing the state grids for each regime.
-        params_template: The regime's parameter template.
+        regime_params_template: The regime's parameter template.
         regime_names_to_ids: Mapping from regime names to integer indices.
         gridspecs: The specifications of the current regimes grids.
         variable_info: Variable info of the regime.
@@ -301,12 +301,12 @@ def _get_internal_functions(
         functions[fn_name] = _rename_fn_params(
             fn=fn,
             fn_name=fn_name,
-            params_template=params_template,
+            regime_params_template=regime_params_template,
         )
 
     for fn_name, fn in deterministic_transition_functions.items():
         # For transition functions with prefixed names like "work__next_wealth",
-        # extract the flat param key "next_wealth" to look up in params_template
+        # extract the flat param key "next_wealth" to look up in regime_params_template
         if fn_name == "next_regime":
             param_key = fn_name
         elif REGIME_SEPARATOR in fn_name:
@@ -318,7 +318,7 @@ def _get_internal_functions(
             fn=fn,
             fn_name=fn_name,
             param_key=param_key,
-            params_template=params_template,
+            regime_params_template=regime_params_template,
         )
 
     for fn_name, fn in stochastic_transition_functions.items():
@@ -335,7 +335,7 @@ def _get_internal_functions(
             fn=fn,
             fn_name=fn_name,
             param_key=param_key,
-            params_template=params_template,
+            regime_params_template=regime_params_template,
         )
         functions[fn_name] = _get_stochastic_next_function(
             fn=fn,
@@ -388,7 +388,7 @@ def _get_internal_functions(
             regime_transition_probs=functions["next_regime"],
             grids=grids[regime_name],
             regime_names_to_ids=regime_names_to_ids,
-            params_template=params_template,
+            regime_params_template=regime_params_template,
             is_stochastic=is_stochastic_regime_transition,
             enable_jit=enable_jit,
         )
@@ -403,7 +403,7 @@ def _get_internal_functions(
 
 def _rename_params_to_qualified_names(
     fn: UserFunction,
-    params_template: RegimeParamsTemplate,
+    regime_params_template: RegimeParamsTemplate,
     param_key: str,
 ) -> InternalUserFunction:
     """Rename function params to qualified names using dags.signature.rename_arguments.
@@ -412,14 +412,14 @@ def _rename_params_to_qualified_names(
 
     Args:
         fn: The user function.
-        params_template: The parameter template for the regime.
-        param_key: The key to look up in params_template (e.g., "utility").
+        regime_params_template: The parameter template for the regime.
+        param_key: The key to look up in regime_params_template (e.g., "utility").
 
     Returns:
         The function with renamed parameters.
 
     """
-    param_names = list(params_template[param_key])  # ty: ignore[invalid-argument-type]
+    param_names = list(regime_params_template[param_key])  # ty: ignore[invalid-argument-type]
     if not param_names:
         return cast("InternalUserFunction", fn)
     mapper = {p: f"{param_key}{REGIME_SEPARATOR}{p}" for p in param_names}
@@ -473,7 +473,7 @@ def _get_weights_fn_for_shock(
 def _rename_fn_params(
     fn: UserFunction,
     fn_name: str,
-    params_template: RegimeParamsTemplate,
+    regime_params_template: RegimeParamsTemplate,
     param_key: str | None = None,
 ) -> InternalUserFunction:
     """Rename function parameters to qualified names if needed.
@@ -481,8 +481,8 @@ def _rename_fn_params(
     Args:
         fn: The user function.
         fn_name: The name of the function (unused, kept for API compat).
-        params_template: The parameter template for the regime.
-        param_key: The key to look up in params_template. If None, uses fn_name.
+        regime_params_template: The parameter template for the regime.
+        param_key: The key to look up in regime_params_template. If None, uses fn_name.
 
     Returns:
         The function with renamed parameters (or unchanged if no params).
@@ -491,7 +491,7 @@ def _rename_fn_params(
     key = param_key if param_key is not None else fn_name
     return _rename_params_to_qualified_names(
         fn=fn,
-        params_template=params_template,
+        regime_params_template=regime_params_template,
         param_key=key,
     )
 

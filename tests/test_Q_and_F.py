@@ -56,9 +56,9 @@ def test_get_Q_and_F_function():
     params_template = create_params_template(internal_regimes)
     internal_params = process_params(raw_params, params_template)
 
-    # Compute flat param names for the working regime's params_template
+    # Compute flat param names for the working regime's regime_params_template
     flat_params_names = frozenset(
-        get_flat_param_names(internal_regimes["working"].params_template)
+        get_flat_param_names(internal_regimes["working"].regime_params_template)
     )
 
     # Test terminal period Q_and_F where Q = U (no continuation value)

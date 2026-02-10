@@ -134,7 +134,7 @@ def create_params_template(  # noqa: C901
 
     for name, regime in internal_regimes.items():
         regime_names.add(name)
-        regime_template = dict(regime.params_template)
+        regime_template = dict(regime.regime_params_template)
         template[name] = regime_template
 
         for key, val in regime_template.items():
@@ -212,7 +212,7 @@ def _split_flat_by_regime(
     return result
 
 
-def get_flat_param_names(params_template: RegimeParamsTemplate) -> set[str]:
+def get_flat_param_names(regime_params_template: RegimeParamsTemplate) -> set[str]:
     """Get all flat parameter names from a regime params template.
 
     Converts nested template entries like {"utility": {"risk_aversion": type}} to
@@ -221,7 +221,7 @@ def get_flat_param_names(params_template: RegimeParamsTemplate) -> set[str]:
 
     """
     result = set()
-    for key, value in params_template.items():
+    for key, value in regime_params_template.items():
         if isinstance(value, Mapping):
             for param_name in value:
                 result.add(f"{key}{REGIME_SEPARATOR}{param_name}")
@@ -231,6 +231,6 @@ def get_flat_param_names(params_template: RegimeParamsTemplate) -> set[str]:
     return result
 
 
-def get_non_vmap_params(params_template: RegimeParamsTemplate) -> set[str]:
+def get_non_vmap_params(regime_params_template: RegimeParamsTemplate) -> set[str]:
     """Get parameter names that should not be vmapped (period, age, flat params)."""
-    return {"period", "age"} | get_flat_param_names(params_template)
+    return {"period", "age"} | get_flat_param_names(regime_params_template)
