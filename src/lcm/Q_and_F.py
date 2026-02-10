@@ -1,3 +1,4 @@
+import inspect
 from collections.abc import Callable
 from types import MappingProxyType
 from typing import Any, cast
@@ -5,6 +6,7 @@ from typing import Any, cast
 import jax.numpy as jnp
 from dags import concatenate_functions
 from dags.signature import with_signature
+from dags.tree import QNAME_DELIMITER
 from jax import Array
 
 from lcm.dispatchers import productmap
@@ -100,9 +102,26 @@ def get_Q_and_F(
             ),
         )
 
+    # Precompute which extra kwargs (e.g. dynamic grid params like wealth__points)
+    # each next_V function needs beyond next_* states and next_V_arr.
+    next_V_extra_kwargs: dict[str, tuple[str, ...]] = {}
+    for target_regime_name, vfunc in next_V.items():
+        extra = tuple(
+            name
+            for name in inspect.signature(vfunc).parameters
+            if not name.startswith("next_") and name != "next_V_arr"
+        )
+        next_V_extra_kwargs[target_regime_name] = extra
+
     # ----------------------------------------------------------------------------------
     # Create the state-action value and feasibility function
     # ----------------------------------------------------------------------------------
+
+    # Collect all extra params needed by next_V functions (e.g. wealth__points)
+    next_V_extra_param_names = {
+        p for extra in next_V_extra_kwargs.values() for p in extra
+    }
+
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         [
             U_and_F,
@@ -110,7 +129,7 @@ def get_Q_and_F(
             *list(state_transitions.values()),
             *list(next_stochastic_states_weights.values()),
         ],
-        include={"next_V_arr"} | flat_params_names,
+        include={"next_V_arr"} | flat_params_names | next_V_extra_param_names,
         exclude={"period", "age"},
     )
 
@@ -143,12 +162,12 @@ def get_Q_and_F(
             period=period,
             age=age,
         )
-        Q_arr = U_arr
         # Normalize probabilities over active regimes
         normalized_regime_transition_prob = normalize_regime_transition_probs(
             regime_transition_prob, active_target_regimes
         )
 
+        continuation_value = jnp.zeros_like(U_arr)
         for target_regime_name in active_target_regimes:
             next_states = state_transitions[target_regime_name](
                 **kwargs,
@@ -169,9 +188,11 @@ def get_Q_and_F(
             # As we productmap'd the value function over the stochastic variables, the
             # resulting next value function gets a new dimension for each stochastic
             # variable.
+            extra_kw = {k: kwargs[k] for k in next_V_extra_kwargs[target_regime_name]}
             next_V_at_stochastic_states_arr = next_V[target_regime_name](
                 **next_states,
                 next_V_arr=next_V_arr[target_regime_name],
+                **extra_kw,
             )
 
             # We then take the weighted average of the next value function at the
@@ -180,12 +201,18 @@ def get_Q_and_F(
                 next_V_at_stochastic_states_arr,
                 weights=joint_next_stochastic_states_weights,
             )
-            Q_arr = (
-                Q_arr
-                + kwargs["discount_factor"]
-                * normalized_regime_transition_prob[target_regime_name]
+            continuation_value = (
+                continuation_value
+                + normalized_regime_transition_prob[target_regime_name]
                 * next_V_expected_arr
             )
+
+        H_kwargs = {
+            k: v for k, v in kwargs.items() if k.startswith(f"H{QNAME_DELIMITER}")
+        }
+        Q_arr = internal_functions.functions["H"](
+            utility=U_arr, continuation_value=continuation_value, **H_kwargs
+        )
 
         # Handle cases when there is only one state.
         # In that case, Q_arr and F_arr are scalars, but we require arrays as output.
@@ -330,7 +357,7 @@ def _get_U_and_F(
     functions = {
         "feasibility": _get_feasibility(internal_functions),
         "utility": internal_functions.utility,
-        **internal_functions.functions,
+        **{k: v for k, v in internal_functions.functions.items() if k != "H"},
     }
     return concatenate_functions(
         functions=functions,

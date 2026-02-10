@@ -417,7 +417,7 @@ def _rename_params_to_qnames(
         The function with renamed parameters.
 
     """
-    param_names = list(regime_params_template[fn_key])  # ty: ignore[invalid-argument-type]
+    param_names = list(regime_params_template[fn_key])
     if not param_names:
         return cast("InternalUserFunction", fn)
     mapper = {p: f"{fn_key}{QNAME_DELIMITER}{p}" for p in param_names}

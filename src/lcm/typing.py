@@ -43,20 +43,18 @@ type UserParams = Mapping[
     | Mapping[str, bool | float | Array | Mapping[str, bool | float | Array]],
 ]
 
-# Flat regime parameters: function-qualified names mapped to values.
-# Keys are like "utility__risk_aversion", "discount_factor". Values are scalars or
-# arrays.
-type FlatRegimeParams = MappingProxyType[
-    str, bool | float | Array | MappingProxyType[str, bool | float | Array]
-]
+# Internal regime parameters: A flat mapping with function-qualified names.
+# Keys are always function-qualified (e.g., "utility__risk_aversion",
+# "H__discount_factor"). Values are scalars or arrays.
+type FlatRegimeParams = MappingProxyType[str, bool | float | Array]
 type InternalParams = MappingProxyType[RegimeName, FlatRegimeParams]
 
 # Immutable templates, used internally
-type RegimeParamsTemplate = MappingProxyType[str, type | MappingProxyType[str, type]]
+type RegimeParamsTemplate = MappingProxyType[str, MappingProxyType[str, type]]
 type ParamsTemplate = MappingProxyType[RegimeName, RegimeParamsTemplate]
 
 # Dictionary-templates; returned to users.
-type MutableRegimeParamsTemplate = dict[str, type | dict[str, type]]
+type MutableRegimeParamsTemplate = dict[str, dict[str, type]]
 type MutableParamsTemplate = dict[RegimeName, MutableRegimeParamsTemplate]
 
 # Type aliases for value function arrays

@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+from lcm.regime import _default_H
 from lcm.typing import UserFunction
 
 
@@ -21,6 +22,11 @@ class RegimeMock:
     constraints: dict[str, UserFunction] = field(default_factory=dict)
     transitions: dict[str, UserFunction] = field(default_factory=dict)
     functions: dict[str, UserFunction] = field(default_factory=dict)
+    terminal: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.terminal and "H" not in self.functions:
+            self.functions = {**self.functions, "H": _default_H}
 
     def get_all_functions(self) -> dict[str, UserFunction | None]:
         """Get all regime functions including utility, constraints, and transitions."""

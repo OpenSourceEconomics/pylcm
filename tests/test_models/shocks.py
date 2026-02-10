@@ -111,7 +111,5 @@ def get_params():
             "discount_factor": 1,
             "next_health": {"health_transition": jnp.full((2, 2), fill_value=0.5)},
         },
-        "test_regime_term": {
-            "discount_factor": 1,
-        },
+        "test_regime_term": {},
     }
