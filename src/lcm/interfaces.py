@@ -162,11 +162,7 @@ class PhaseVariantContainer[S, T]:
 
 @dataclasses.dataclass(frozen=True)
 class InternalRegime:
-    """Internal representation of a user regime.
-
-    MUST BE UPDATED.
-
-    """
+    """Internal representation of a user regime."""
 
     name: str
     terminal: bool

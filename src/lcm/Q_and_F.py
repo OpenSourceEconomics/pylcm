@@ -47,6 +47,7 @@ def get_Q_and_F(
         age: The age corresponding to the current period.
         next_state_space_infos: The state space information of the next period.
         internal_functions: Internal functions instance.
+        flat_params_names: Frozenset of flat parameter names for the regime.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -233,6 +234,7 @@ def get_Q_and_F_terminal(
         internal_functions: Internal functions instance.
         period: The current period.
         age: The age corresponding to the current period.
+        flat_params_names: Frozenset of flat parameter names for the regime.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -285,8 +287,8 @@ def get_Q_and_F_terminal(
 
 def _get_arg_names_of_Q_and_F(
     deps: list[Callable[..., Any]],
-    include: set[str] = set(),  # noqa: B006
-    exclude: set[str] = set(),  # noqa: B006
+    include: set[str] | None = None,
+    exclude: set[str] | None = None,
 ) -> list[str]:
     """Get the argument names of the dependencies.
 
@@ -301,7 +303,9 @@ def _get_arg_names_of_Q_and_F(
 
     """
     deps_arg_names = get_union_of_arguments(deps)
-    return list(include | deps_arg_names - exclude)
+    result = deps_arg_names | (include or set())
+    result -= exclude or set()
+    return list(result)
 
 
 def _get_joint_weights_function(

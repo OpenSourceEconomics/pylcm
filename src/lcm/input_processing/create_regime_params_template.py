@@ -13,8 +13,8 @@ def create_regime_params_template(
 
     Uses dags.tree.create_tree_with_input_types() to discover parameters and their
     type annotations from function signatures. Parameters are identified as function
-    arguments that are not states, actions, auxiliary functions, or special variables
-    (period, age, utility, continuation_value).
+    arguments that are not states, actions, other regime functions, or special variables
+    (period, age, continuation_value).
 
     Args:
         regime: The regime as provided by the user.
@@ -43,7 +43,9 @@ def create_regime_params_template(
         params = {k: v for k, v in sorted(tree.items()) if k not in excl}
         function_params[name] = params
 
-    # Validate that no discovered H parameter shadows a state or action name.
+    # Validate that no discovered parameter shadows a state or action name.
+    # In practice, only H can trigger this since other functions already exclude
+    # states/actions from their parameter discovery.
     state_action_names = set(regime.states) | set(regime.actions)
     for func_name, params in function_params.items():
         shadows = set(params) & state_action_names

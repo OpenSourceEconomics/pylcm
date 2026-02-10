@@ -352,12 +352,10 @@ def _collect_all_available_targets(
 
 def _get_available_targets_for_regime(regime: InternalRegime) -> set[str]:
     """Get available target names for a single regime."""
-    stochastic_weight_names = _get_stochastic_weight_function_names(regime)
-    excluded = stochastic_weight_names | {"H"}
-    targets: set[str] = set()
-    targets.update(name for name in regime.functions if name not in excluded)
-    targets.update(regime.constraints.keys())
-    return targets
+    excluded = {"H"} | _get_stochastic_weight_function_names(regime)
+    return {
+        name for name in regime.functions if name not in excluded
+    } | regime.constraints.keys()
 
 
 def _get_stochastic_weight_function_names(regime: InternalRegime) -> set[str]:

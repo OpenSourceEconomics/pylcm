@@ -303,15 +303,7 @@ def _get_internal_functions(
         )
 
     for fn_name, fn in deterministic_transition_functions.items():
-        # For transition functions with prefixed names like "work__next_wealth",
-        # extract the flat param key "next_wealth" to look up in regime_params_template
-        if fn_name == "next_regime":
-            fn_key = fn_name
-        elif QNAME_DELIMITER in fn_name:
-            # "work__next_wealth" -> "next_wealth"
-            fn_key = fn_name.split(QNAME_DELIMITER, 1)[1]
-        else:
-            fn_key = fn_name
+        fn_key = _extract_param_key(fn_name)
         functions[fn_name] = _rename_params_to_qnames(
             fn=fn,
             fn_key=fn_key,
@@ -322,12 +314,7 @@ def _get_internal_functions(
         # The user-specified next function is the weighting function for the
         # stochastic transition. For the solution, we must also define a next function
         # that returns the whole grid of possible values.
-        # For prefixed names, extract the flat param key
-        fn_key = (
-            fn_name.split(QNAME_DELIMITER, 1)[1]
-            if QNAME_DELIMITER in fn_name
-            else fn_name
-        )
+        fn_key = _extract_param_key(fn_name)
         functions[f"weight_{fn_name}"] = _rename_params_to_qnames(
             fn=fn,
             fn_key=fn_key,
@@ -356,13 +343,12 @@ def _get_internal_functions(
     internal_constraints = MappingProxyType(
         {fn_name: functions[fn_name] for fn_name in regime.constraints}
     )
+    excluded_from_functions = set(flat_nested_transitions) | set(regime.constraints)
     internal_functions = MappingProxyType(
         {
             fn_name: functions[fn_name]
             for fn_name in functions
-            if fn_name not in flat_nested_transitions
-            and fn_name not in regime.constraints
-            and fn_name != "next_regime"
+            if fn_name not in excluded_from_functions
         }
     )
     # Determine if next_regime is stochastic (decorated with @lcm.mark.stochastic)
@@ -393,6 +379,18 @@ def _get_internal_functions(
         transitions=_wrap_transitions(unflatten_regime_namespace(internal_transition)),
         regime_transition_probs=internal_regime_transition_probs,
     )
+
+
+def _extract_param_key(fn_name: str) -> str:
+    """Extract the param template key from a possibly prefixed function name.
+
+    For prefixed names like "work__next_wealth", returns "next_wealth".
+    For unprefixed names like "next_regime", returns the name unchanged.
+
+    """
+    if QNAME_DELIMITER in fn_name:
+        return fn_name.split(QNAME_DELIMITER, 1)[1]
+    return fn_name
 
 
 def _rename_params_to_qnames(

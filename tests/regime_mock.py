@@ -14,7 +14,6 @@ class RegimeMock:
 
     """
 
-    name: str = "mock"
     n_periods: int | None = None
     actions: dict[str, Any] | None = None
     states: dict[str, Any] | None = None
