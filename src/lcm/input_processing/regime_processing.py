@@ -31,6 +31,7 @@ from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
 from lcm.mark import stochastic
 from lcm.ndimage import map_coordinates
 from lcm.regime import Regime
+from lcm.shocks import SHOCK_GRIDPOINT_FUNCTIONS, SHOCK_TRANSITION_PROBABILITY_FUNCTIONS
 from lcm.state_action_space import create_state_action_space, create_state_space_info
 from lcm.typing import (
     FlatRegimeParams,
@@ -111,17 +112,15 @@ def process_regimes(
     variable_info = MappingProxyType(
         {n: get_variable_info(r) for n, r in regimes.items()}
     )
-    flat_regime_fixed_params = {
-        n: _extract_regime_fixed_params(
-            regime=r, regime_name=n, fixed_params=fixed_params
-        )
+    shock_init_params = {
+        n: _extract_shock_params(regime=r, regime_name=n, fixed_params=fixed_params)
         for n, r in regimes.items()
     }
     gridspecs = MappingProxyType(
         {
             n: _init_shock_gridspecs(
                 gridspecs=get_gridspecs(r),
-                flat_regime_fixed_params=flat_regime_fixed_params[n],
+                shock_init_params=shock_init_params[n],
             )
             for n, r in regimes.items()
         }
@@ -209,7 +208,7 @@ def process_regimes(
             active_periods=tuple(regimes_to_active_periods[name]),
             regime_transition_probs=internal_functions.regime_transition_probs,
             internal_functions=internal_functions,
-            flat_regime_fixed_params=flat_regime_fixed_params[name],
+            shock_init_params=shock_init_params[name],
             transitions=internal_functions.transitions,
             regime_params_template=regime_params_template,
             state_action_space=state_action_spaces[name],
@@ -298,27 +297,27 @@ def _get_internal_functions(
     for fn_name, fn in deterministic_functions.items():
         functions[fn_name] = _rename_params_to_qnames(
             fn=fn,
-            fn_key=fn_name,
             regime_params_template=regime_params_template,
+            param_key=fn_name,
         )
 
     for fn_name, fn in deterministic_transition_functions.items():
-        fn_key = _extract_param_key(fn_name)
+        param_key = _extract_param_key(fn_name)
         functions[fn_name] = _rename_params_to_qnames(
             fn=fn,
-            fn_key=fn_key,
             regime_params_template=regime_params_template,
+            param_key=param_key,
         )
 
     for fn_name, fn in stochastic_transition_functions.items():
         # The user-specified next function is the weighting function for the
         # stochastic transition. For the solution, we must also define a next function
         # that returns the whole grid of possible values.
-        fn_key = _extract_param_key(fn_name)
+        param_key = _extract_param_key(fn_name)
         functions[f"weight_{fn_name}"] = _rename_params_to_qnames(
             fn=fn,
-            fn_key=fn_key,
             regime_params_template=regime_params_template,
+            param_key=param_key,
         )
         functions[fn_name] = _get_stochastic_next_function(
             fn=fn,
@@ -395,8 +394,8 @@ def _extract_param_key(fn_name: str) -> str:
 
 def _rename_params_to_qnames(
     fn: UserFunction,
-    fn_key: str,
     regime_params_template: RegimeParamsTemplate,
+    param_key: str,
 ) -> InternalUserFunction:
     """Rename function params to qualified names using dags.signature.rename_arguments.
 
@@ -404,17 +403,17 @@ def _rename_params_to_qnames(
 
     Args:
         fn: The user function.
-        fn_key: The key to look up in regime_params_template (e.g., "utility").
         regime_params_template: The parameter template for the regime.
+        param_key: The key to look up in regime_params_template (e.g., "utility").
 
     Returns:
         The function with renamed parameters.
 
     """
-    param_names = list(regime_params_template[fn_key])
+    param_names = list(regime_params_template[param_key])
     if not param_names:
         return cast("InternalUserFunction", fn)
-    mapper = {p: f"{fn_key}{QNAME_DELIMITER}{p}" for p in param_names}
+    mapper = {p: f"{param_key}{QNAME_DELIMITER}{p}" for p in param_names}
     return cast("InternalUserFunction", rename_arguments(fn, mapper=mapper))
 
 
@@ -441,7 +440,41 @@ def _get_stochastic_next_function_for_shock(name: str, grid: Float1D) -> UserFun
 def _get_weights_fn_for_shock(
     name: str, flat_grid: Float1D, gridspec: Grid
 ) -> UserFunction:
-    """Get function that uses linear interpolation to calculate the shock weights."""
+    """Get function that uses linear interpolation to calculate the shock weights.
+
+    For dynamic shocks (where some shock_params are not yet specified), the grid points
+    and transition probabilities are computed inside JIT from the dynamic params.
+
+    """
+    if isinstance(gridspec, ShockGrid) and gridspec.dynamic_shock_params:
+        n_points = gridspec.n_points
+        dist_type = gridspec.distribution_type
+        static_params = dict(gridspec.shock_params)
+        dynamic_names = {
+            f"{name}{QNAME_DELIMITER}{p}": p for p in gridspec.dynamic_shock_params
+        }
+        args = {name: "ContinuousState", **dict.fromkeys(dynamic_names, "float")}
+
+        @with_signature(args=args, return_annotation="FloatND", enforce=False)
+        def weights_func_dynamic(*a: Array, **kwargs: Array) -> Float1D:  # noqa: ARG001
+            shock_kw = {**static_params}
+            for qn, raw in dynamic_names.items():
+                shock_kw[raw] = kwargs[qn]
+            grid_points = SHOCK_GRIDPOINT_FUNCTIONS[dist_type](n_points, **shock_kw)
+            transition_probs = SHOCK_TRANSITION_PROBABILITY_FUNCTIONS[dist_type](
+                n_points, **shock_kw
+            )
+            coord = get_irreg_coordinate(kwargs[name], grid_points)
+            return map_coordinates(
+                input=transition_probs,
+                coordinates=[
+                    jnp.full(n_points, fill_value=coord),
+                    jnp.arange(n_points),
+                ],
+            )
+
+        return weights_func_dynamic
+
     transition_probs = gridspec.shock.get_transition_probs()  # ty: ignore[unresolved-attribute]
 
     @with_signature(
@@ -462,46 +495,59 @@ def _get_weights_fn_for_shock(
     return weights_func
 
 
-def _extract_regime_fixed_params(
+def _extract_shock_params(
     regime: Regime, regime_name: str, fixed_params: UserParams
 ) -> FlatRegimeParams:
-    """Extract and process fixed params relevant to a regime's shocks.
+    """Extract ShockGrid initialization params from fixed_params for one regime.
 
-    Fixed params can be provided at two levels:
-    - Model level: {"state_name": {...}} - applies to all regimes
-    - Regime level: {"regime_name": {"state_name": {...}}} - applies to specific regime
+    Returns a mapping ``{state_name: {shock_param: value, ...}}`` for every
+    ShockGrid state that has initialization params in *fixed_params*.
 
-    Regime-level params take precedence over model-level params.
+    Lookup order (first match wins):
+
+    1. Regime-level, keyed by state name:  ``{regime: {state: ...}}``
+    2. Regime-level, keyed by transition:  ``{regime: {next_state: ...}}``
+    3. Model-level, keyed by state name:   ``{state: ...}``
+    4. Model-level, keyed by transition:   ``{next_state: ...}``
 
     """
     result: dict[str, Any] = {}
 
-    # Get regime-specific fixed_params if provided
     regime_fixed_params = fixed_params.get(regime_name, {})
     if not isinstance(regime_fixed_params, Mapping):
         regime_fixed_params = {}
 
     for state_name, state in regime.states.items():
-        if isinstance(state, ShockGrid):
-            # Check regime-level first, then model-level
-            if state_name in regime_fixed_params:
-                result[state_name] = regime_fixed_params[state_name]
-            elif state_name in fixed_params:
-                result[state_name] = fixed_params[state_name]
+        if not isinstance(state, ShockGrid):
+            continue
+
+        next_name = f"next_{state_name}"
+        for source in (regime_fixed_params, fixed_params):
+            if state_name in source:
+                result[state_name] = source[state_name]
+                break
+            if next_name in source:
+                result[state_name] = source[next_name]
+                break
 
     return ensure_containers_are_immutable(result)
 
 
 def _init_shock_gridspecs(
     gridspecs: MappingProxyType[str, Grid],
-    flat_regime_fixed_params: FlatRegimeParams,
+    shock_init_params: FlatRegimeParams,
 ) -> MappingProxyType[str, Grid]:
-    """Initialize ShockGrid instances with their fixed parameters."""
+    """Initialize ShockGrid instances with their fixed parameters.
+
+    Dynamic shocks (those with missing required params) are skipped — they will get
+    their params at solve time via the params dict.
+
+    """
     result: dict[str, Grid] = {}
     for name, spec in gridspecs.items():
-        if isinstance(spec, ShockGrid) and name in flat_regime_fixed_params:
+        if isinstance(spec, ShockGrid) and name in shock_init_params:
             result[name] = spec.init_params(
-                cast("MappingProxyType[str, float]", flat_regime_fixed_params[name])
+                cast("MappingProxyType[str, float]", shock_init_params[name])
             )
         else:
             result[name] = spec

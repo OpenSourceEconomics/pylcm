@@ -69,6 +69,7 @@ def get_Q_and_F(
         for target_name in target_regimes
         if period + 1 in regimes_to_active_periods[target_name]
     )
+    next_V_extra_param_names: dict[str, frozenset[str]] = {}
 
     for target_regime in active_target_regimes:
         # Transitions from the current regime to the target regime
@@ -92,6 +93,11 @@ def get_Q_and_F(
         )
         _scalar_next_V = get_value_function_representation(
             next_state_space_infos[target_regime]
+        )
+        # Determine extra kwargs needed by next_V beyond next_states and next_V_arr
+        # (e.g. wealth__points for dynamic IrregSpacedGrid).
+        next_V_extra_param_names[target_regime] = frozenset(
+            get_union_of_arguments([_scalar_next_V]) - set(transitions) - {"next_V_arr"}
         )
         next_V[target_regime] = productmap(
             _scalar_next_V,
@@ -172,9 +178,13 @@ def get_Q_and_F(
             # As we productmap'd the value function over the stochastic variables, the
             # resulting next value function gets a new dimension for each stochastic
             # variable.
+            extra_kw = {
+                k: kwargs[k] for k in next_V_extra_param_names[target_regime_name]
+            }
             next_V_at_stochastic_states_arr = next_V[target_regime_name](
                 **next_states,
                 next_V_arr=next_V_arr[target_regime_name],
+                **extra_kw,
             )
 
             # We then take the weighted average of the next value function at the

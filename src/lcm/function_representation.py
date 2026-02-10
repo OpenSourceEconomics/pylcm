@@ -3,10 +3,12 @@ from collections.abc import Callable
 import jax.numpy as jnp
 from dags import concatenate_functions
 from dags.signature import with_signature
+from dags.tree import QNAME_DELIMITER
 from jax import Array
 
 from lcm.functools import all_as_kwargs
-from lcm.grids import ContinuousGrid
+from lcm.grid_helpers import get_irreg_coordinate
+from lcm.grids import ContinuousGrid, IrregSpacedGrid
 from lcm.interfaces import StateSpaceInfo
 from lcm.ndimage import map_coordinates
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
@@ -193,6 +195,9 @@ def _get_coordinate_finder(
     The resulting coordinates can be used to do linear interpolation via
     jax.scipy.ndimage.map_coordinates.
 
+    For dynamic IrregSpacedGrid, the coordinate finder accepts the grid points as an
+    additional keyword argument (e.g. ``wealth__points``).
+
     Args:
         in_name: Name via which the value to be translated into coordinates will be
             passed into the resulting function.
@@ -204,6 +209,19 @@ def _get_coordinate_finder(
         coordinates on a grid.
 
     """
+    if isinstance(grid, IrregSpacedGrid) and grid.is_dynamic:
+        state_name = in_name.removeprefix("next_")
+        points_param = f"{state_name}{QNAME_DELIMITER}points"
+        arg_names = [in_name, points_param]
+
+        @with_signature(
+            args=dict.fromkeys(arg_names, "Array"), return_annotation="Array"
+        )
+        def find_coordinate_dynamic(*args: Array, **kwargs: Array) -> ScalarFloat:
+            kwargs = all_as_kwargs(args, kwargs, arg_names=arg_names)
+            return get_irreg_coordinate(kwargs[in_name], kwargs[points_param])
+
+        return find_coordinate_dynamic
 
     @with_signature(args=dict.fromkeys([in_name], "Array"), return_annotation="Array")
     def find_coordinate(*args: Array, **kwargs: Array) -> Array:

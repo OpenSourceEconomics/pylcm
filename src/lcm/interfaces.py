@@ -178,7 +178,7 @@ class InternalRegime:
         | None
     )
     internal_functions: InternalFunctions
-    flat_regime_fixed_params: FlatRegimeParams
+    shock_init_params: FlatRegimeParams
     regime_params_template: RegimeParamsTemplate
     state_action_space: StateActionSpace
     state_space_info: StateSpaceInfo

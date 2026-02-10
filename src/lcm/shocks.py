@@ -65,7 +65,7 @@ def _discretized_uniform_distribution_gridpoints(
     return jnp.linspace(start=start, stop=stop, num=n_points)
 
 
-def _discretized_uniform_distribution_probs(n_points: int) -> FloatND:
+def _discretized_uniform_distribution_probs(n_points: int, **_kwargs: float) -> FloatND:
     """Calculate the transition probabilities for a discretized uniform distribution.
 
     Args:

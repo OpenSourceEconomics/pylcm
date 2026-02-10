@@ -1,6 +1,8 @@
 import dags.tree as dt
+from jax import Array
 
 from lcm.exceptions import InvalidNameError
+from lcm.grids import IrregSpacedGrid, ShockGrid
 from lcm.regime import Regime
 from lcm.typing import RegimeParamsTemplate
 from lcm.utils import ensure_containers_are_immutable
@@ -15,6 +17,9 @@ def create_regime_params_template(
     type annotations from function signatures. Parameters are identified as function
     arguments that are not states, actions, other regime functions, or special variables
     (period, age, continuation_value).
+
+    Dynamic grids (IrregSpacedGrid without points, ShockGrid without full shock_params)
+    add entries to the template under pseudo-function keys matching the state name.
 
     Args:
         regime: The regime as provided by the user.
@@ -34,7 +39,7 @@ def create_regime_params_template(
         *regime.states,
     }
 
-    function_params = {}
+    function_params: dict[str, dict[str, type]] = {}
     # Use dags.tree to discover parameters and their type annotations for each function.
     for name, func in regime.get_all_functions().items():
         tree = dt.create_tree_with_input_types({name: func})
@@ -56,4 +61,23 @@ def create_regime_params_template(
                 f"the parameter(s) or the state(s)/action(s) to avoid ambiguity."
             )
 
-    return ensure_containers_are_immutable(function_params)
+    # Add dynamic grid entries to the template
+    for state_name, grid in regime.states.items():
+        if isinstance(grid, IrregSpacedGrid) and grid.is_dynamic:
+            if state_name in function_params:
+                raise InvalidNameError(
+                    f"Dynamic IrregSpacedGrid state '{state_name}' conflicts with "
+                    f"a function of the same name in the regime."
+                )
+            function_params[state_name] = {"points": Array}
+        elif isinstance(grid, ShockGrid) and grid.dynamic_shock_params:
+            if state_name in function_params:
+                raise InvalidNameError(
+                    f"Dynamic ShockGrid state '{state_name}' conflicts with "
+                    f"a function of the same name in the regime."
+                )
+            function_params[state_name] = dict.fromkeys(
+                grid.dynamic_shock_params, float
+            )
+
+    return ensure_containers_are_immutable(function_params)  # ty: ignore[invalid-return-type]

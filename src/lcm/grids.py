@@ -1,4 +1,5 @@
 import dataclasses
+import inspect
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, is_dataclass
@@ -9,7 +10,7 @@ import portion
 
 from lcm import grid_helpers
 from lcm.exceptions import GridInitializationError, format_messages
-from lcm.shocks import Shock
+from lcm.shocks import SHOCK_GRIDPOINT_FUNCTIONS, Shock
 from lcm.typing import Float1D, Int1D, MappingProxyType, ScalarFloat
 from lcm.utils import find_duplicates, get_field_names_and_values
 
@@ -217,34 +218,65 @@ class IrregSpacedGrid(ContinuousGrid):
     """A grid of continuous values at irregular (user-specified) points.
 
     This grid type is useful for representing non-uniformly spaced points such as
-    Gauss-Hermite quadrature nodes.
+    Gauss-Hermite quadrature nodes. When ``points`` is omitted and only ``n_points``
+    is given, the grid becomes *dynamic*: point values are supplied at solve time
+    via the params dict.
 
     Example:
     --------
-    Gauss-Hermite quadrature nodes: `IrregSpacedGrid(points=[-1.73, -0.58, 0.58, 1.73])`
+    Static grid: ``IrregSpacedGrid(points=[-1.73, -0.58, 0.58, 1.73])``
+    Dynamic grid: ``IrregSpacedGrid(n_points=4)``
 
     Attributes:
         points: The grid points. Must be a sequence of floats in ascending order.
-            Can be any sequence that is convertible to a JAX array.
+            Can be any sequence that is convertible to a JAX array. Optional for
+            dynamic grids.
+        n_points: Number of points. Derived from ``len(points)`` when points are
+            given; must be specified explicitly for dynamic grids.
 
     """
 
-    points: Sequence[float] | Float1D
+    points: Sequence[float] | Float1D | None = None
+    n_points: int | None = None
 
     def __post_init__(self) -> None:
-        _validate_irreg_spaced_grid(self.points)
+        if self.points is not None:
+            _validate_irreg_spaced_grid(self.points)
+            # Derive n_points from points if not explicitly set
+            if self.n_points is None:
+                object.__setattr__(self, "n_points", len(self.points))
+            elif self.n_points != len(self.points):
+                raise GridInitializationError(
+                    f"n_points ({self.n_points}) does not match "
+                    f"len(points) ({len(self.points)})"
+                )
+        elif self.n_points is None:
+            raise GridInitializationError(
+                "Either points or n_points must be specified for IrregSpacedGrid."
+            )
+        elif self.n_points < 2:  # noqa: PLR2004
+            raise GridInitializationError(
+                f"n_points must be at least 2, got {self.n_points}"
+            )
 
     @property
-    def n_points(self) -> int:
-        """Return the number of points in the grid."""
-        return len(self.points)
+    def is_dynamic(self) -> bool:
+        """Whether this grid's points are supplied at solve time via params."""
+        return self.points is None
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
+        if self.points is None:
+            return jnp.zeros(self.n_points)
         return jnp.asarray(self.points)
 
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
         """Return the generalized coordinate of a value in the grid."""
+        if self.points is None:
+            raise GridInitializationError(
+                "Cannot compute coordinate for a dynamic IrregSpacedGrid without "
+                "points. Use the dynamic coordinate finder instead."
+            )
         return grid_helpers.get_irreg_coordinate(value, self.to_jax())
 
 
@@ -252,15 +284,19 @@ class IrregSpacedGrid(ContinuousGrid):
 class ShockGrid(ContinuousGrid):
     """An empty grid for discretized continuous shocks.
 
-    The actual values will be calculated once the prameters for the shock are
+    The actual values will be calculated once the parameters for the shock are
     available during the solution or simulation.
+
+    When ``shock_params`` is incomplete (missing params that the distribution function
+    needs), the missing params become *dynamic* and appear in the params template.
+    Grid values and transition probabilities are then computed inside JIT at solve time.
 
     Attributes:
         distribution_type: Type of the shock.
         n_points: The number of points for the discretization of the shock.
         shock_params: Fixed parameters that are needed for the discretization function
             of the specified shock type. Can be supplied directly or via the model fixed
-            parameters.
+            parameters, or left incomplete for dynamic shock params.
     """
 
     distribution_type: Literal["uniform", "normal", "tauchen", "rouwenhorst"]
@@ -270,8 +306,34 @@ class ShockGrid(ContinuousGrid):
     )
 
     @property
+    def dynamic_shock_params(self) -> tuple[str, ...]:
+        """Return names of shock params not yet specified.
+
+        Inspects the gridpoint function's signature to determine required params,
+        then returns those not already present in ``shock_params``.
+
+        """
+        fn = SHOCK_GRIDPOINT_FUNCTIONS[self.distribution_type]
+        sig = inspect.signature(fn)
+        required = []
+        for name, param in sig.parameters.items():
+            if name == "n_points":
+                continue
+            if (
+                name not in self.shock_params
+                and param.default is inspect.Parameter.empty
+            ):
+                required.append(name)
+        return tuple(required)
+
+    @property
+    def is_fully_specified(self) -> bool:
+        """Whether all required shock params are present."""
+        return len(self.dynamic_shock_params) == 0
+
+    @property
     def shock(self) -> Shock:
-        """Return the number of points in the grid."""
+        """Return the Shock instance for this grid."""
         return Shock(
             n_points=self.n_points,
             distribution_type=self.distribution_type,
@@ -280,10 +342,17 @@ class ShockGrid(ContinuousGrid):
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
+        if not self.is_fully_specified:
+            return jnp.zeros(self.n_points)
         return self.shock.get_gridpoints()
 
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
         """Return the generalized coordinate of a value in the grid."""
+        if not self.is_fully_specified:
+            raise GridInitializationError(
+                "Cannot compute coordinate for a dynamic ShockGrid without all "
+                "shock params. Use the dynamic weights function instead."
+            )
         return grid_helpers.get_irreg_coordinate(value, self.to_jax())
 
     def init_params(self, params: Mapping[str, float]) -> ShockGrid:
