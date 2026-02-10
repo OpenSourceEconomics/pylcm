@@ -145,7 +145,7 @@ tests-with-cov = "pytest tests --cov-report=xml --cov=./"
 ty = "ty check"
 
 [tool.pixi.pypi-dependencies]
-dags = { git = "https://github.com/OpenSourceEconomics/dags.git", branch = "main" }
+dags = { git = "https://github.com/OpenSourceEconomics/dags.git", branch = "typing-allow-sequence-instead-of-list-only" }
 pdbp = "*"
 pylcm = { path = ".", editable = true }
 

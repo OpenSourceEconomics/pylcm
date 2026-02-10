@@ -14,10 +14,7 @@ from jax import Array
 from lcm.ages import AgeGrid
 from lcm.dispatchers import simulation_spacemap, vmap_1d
 from lcm.grids import Grid
-from lcm.input_processing.params_processing import (
-    get_flat_param_names,
-    get_non_vmap_params,
-)
+from lcm.input_processing.params_processing import get_flat_param_names
 from lcm.input_processing.util import get_grids, get_variable_info
 from lcm.interfaces import (
     InternalFunctions,
@@ -181,20 +178,17 @@ def build_next_state_simulation_functions(
         grids=grids,
         gridspecs=gridspecs,
     )
-    signature = inspect.signature(next_state)
-    parameters = list(signature.parameters)
-
-    non_vmap_params = get_non_vmap_params(regime_params_template)
+    params = tuple(inspect.signature(next_state).parameters)
 
     next_state_vmapped = vmap_1d(
         func=next_state,
         variables=tuple(
-            parameter for parameter in parameters if parameter not in non_vmap_params
+            p for p in params if p not in _get_non_vmap_params(regime_params_template)
         ),
     )
 
     next_state_vmapped = with_signature(
-        next_state_vmapped, kwargs=parameters, enforce=False
+        next_state_vmapped, kwargs=params, enforce=False
     )
 
     return jax.jit(next_state_vmapped) if enable_jit else next_state_vmapped
@@ -234,25 +228,21 @@ def build_regime_transition_probs_functions(
         enforce_signature=False,
         set_annotations=True,
     )
-    signature = inspect.signature(next_regime)
-    parameters = list(signature.parameters)
+    params = list(inspect.signature(next_regime).parameters)
 
     # We do this because a transition function without any parameters will throw
     # an error with vmap
     next_regime_accepting_all = with_signature(
         next_regime,
-        args=parameters + [state for state in grids if state not in parameters],
+        args=params + [state for state in grids if state not in params],
     )
 
-    signature = inspect.signature(next_regime_accepting_all)
-    parameters = list(signature.parameters)
-
-    non_vmap_params = get_non_vmap_params(regime_params_template)
+    params = tuple(inspect.signature(next_regime_accepting_all).parameters)
 
     next_regime_vmapped = vmap_1d(
         func=next_regime_accepting_all,
         variables=tuple(
-            parameter for parameter in parameters if parameter not in non_vmap_params
+            p for p in params if p not in _get_non_vmap_params(regime_params_template)
         ),
     )
 
@@ -260,6 +250,11 @@ def build_regime_transition_probs_functions(
         solve=jax.jit(next_regime) if enable_jit else next_regime,
         simulate=jax.jit(next_regime_vmapped) if enable_jit else next_regime_vmapped,
     )
+
+
+def _get_non_vmap_params(regime_params_template: RegimeParamsTemplate) -> set[str]:
+    """Get parameter names that should not be vmapped (period, age, flat params)."""
+    return {"period", "age"} | get_flat_param_names(regime_params_template)
 
 
 def _wrap_regime_transition_probs(
@@ -273,7 +268,7 @@ def _wrap_regime_transition_probs(
     processing.
 
     Args:
-        fn: The user's next_regime function (with renamed params).
+        fn: The user's next_regime function (with qname parameters).
         regime_names_to_ids: Mapping from regime names to integer indices.
 
     Returns:
@@ -287,13 +282,11 @@ def _wrap_regime_transition_probs(
     )
     regime_names = [name for _, name in regime_names_by_id]
 
-    # Preserve original annotations
     annotations = get_annotations(fn)
-    annotations_copy = annotations.copy()
-    return_annotation = annotations_copy.pop("return", "dict[str, Any]")
+    return_annotation = annotations.pop("return", "dict[str, Any]")
 
     @with_signature(
-        args=annotations_copy,
+        args=annotations,
         return_annotation=return_annotation,
     )
     @functools.wraps(fn)
@@ -331,11 +324,9 @@ def _wrap_deterministic_regime_transition(
     n_regimes = len(regime_names_to_ids)
 
     # Preserve original annotations but update return type
-    annotations = get_annotations(fn)
-    annotations_copy = annotations.copy()
-    annotations_copy.pop("return", None)
+    annotations = {k: v for k, v in get_annotations(fn).items() if k != "return"}
 
-    @with_signature(args=annotations_copy, return_annotation="Array")
+    @with_signature(args=annotations, return_annotation="Array")
     @functools.wraps(fn)
     def wrapped(
         *args: Array | int,

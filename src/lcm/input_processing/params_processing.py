@@ -4,6 +4,8 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, cast
 
+from dags.tree import QNAME_DELIMITER
+
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.interfaces import InternalRegime
 from lcm.typing import (
@@ -14,7 +16,6 @@ from lcm.typing import (
     UserParams,
 )
 from lcm.utils import (
-    REGIME_SEPARATOR,
     ensure_containers_are_immutable,
     flatten_regime_namespace,
 )
@@ -56,7 +57,7 @@ def process_params(  # noqa: C901
     used_keys: set[str] = set()
 
     for key in template_flat:
-        parts = key.split(REGIME_SEPARATOR)
+        parts = key.split(QNAME_DELIMITER)
         param_name = parts[-1]
 
         candidates = []
@@ -69,7 +70,7 @@ def process_params(  # noqa: C901
         # We want to check for regime__param
         if len(parts) == _NUM_PARTS_FUNCTION_PARAM:
             regime = parts[0]
-            regime_level_key = f"{regime}{REGIME_SEPARATOR}{param_name}"
+            regime_level_key = f"{regime}{QNAME_DELIMITER}{param_name}"
             # Check if this regime-level key was provided in params
             if regime_level_key in params_flat:
                 candidates.append(regime_level_key)
@@ -142,10 +143,10 @@ def create_params_template(  # noqa: C901
                 function_names.add(key)
                 for arg_name in val:
                     # Check for separator in argument names
-                    if REGIME_SEPARATOR in arg_name:
+                    if QNAME_DELIMITER in arg_name:
                         raise InvalidNameError(
                             f"Argument name {arg_name!r} in function {key!r} "
-                            f"cannot contain the separator '{REGIME_SEPARATOR}'"
+                            f"cannot contain the separator '{QNAME_DELIMITER}'"
                         )
                     argument_names.add(arg_name)
             else:
@@ -154,18 +155,17 @@ def create_params_template(  # noqa: C901
 
     # Check for separator in regime names
     for name in regime_names:
-        if REGIME_SEPARATOR in name:
+        if QNAME_DELIMITER in name:
             raise InvalidNameError(
-                f"Regime name {name!r} cannot contain the separator "
-                f"'{REGIME_SEPARATOR}'"
+                f"Regime name {name!r} cannot contain the separator '{QNAME_DELIMITER}'"
             )
 
     # Check for separator in function names
     for name in function_names:
-        if REGIME_SEPARATOR in name:
+        if QNAME_DELIMITER in name:
             raise InvalidNameError(
                 f"Function name {name!r} cannot contain the separator "
-                f"'{REGIME_SEPARATOR}'"
+                f"'{QNAME_DELIMITER}'"
             )
 
     # Check that names are disjoint
@@ -205,7 +205,7 @@ def _split_flat_by_regime(
     result: dict[str, dict[str, Any]] = {}
     for key, value in flat.items():
         # Key format: "regime__function__param" or "regime__param"
-        regime_name, remainder = key.split(REGIME_SEPARATOR, 1)
+        regime_name, remainder = key.split(QNAME_DELIMITER, 1)
         if regime_name not in result:
             result[regime_name] = {}
         result[regime_name][remainder] = value
@@ -224,13 +224,8 @@ def get_flat_param_names(regime_params_template: RegimeParamsTemplate) -> set[st
     for key, value in regime_params_template.items():
         if isinstance(value, Mapping):
             for param_name in value:
-                result.add(f"{key}{REGIME_SEPARATOR}{param_name}")
+                result.add(f"{key}{QNAME_DELIMITER}{param_name}")
         else:
             # Top-level param (e.g., "discount_factor": float)
             result.add(key)
     return result
-
-
-def get_non_vmap_params(regime_params_template: RegimeParamsTemplate) -> set[str]:
-    """Get parameter names that should not be vmapped (period, age, flat params)."""
-    return {"period", "age"} | get_flat_param_names(regime_params_template)

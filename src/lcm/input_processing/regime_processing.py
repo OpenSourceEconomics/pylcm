@@ -5,6 +5,7 @@ from typing import Any, cast
 
 import pandas as pd
 from dags.signature import rename_arguments, with_signature
+from dags.tree import QNAME_DELIMITER
 from jax import Array
 from jax import numpy as jnp
 
@@ -44,7 +45,6 @@ from lcm.typing import (
     UserParams,
 )
 from lcm.utils import (
-    REGIME_SEPARATOR,
     ensure_containers_are_immutable,
     flatten_regime_namespace,
     unflatten_regime_namespace,
@@ -309,9 +309,9 @@ def _get_internal_functions(
         # extract the flat param key "next_wealth" to look up in regime_params_template
         if fn_name == "next_regime":
             param_key = fn_name
-        elif REGIME_SEPARATOR in fn_name:
+        elif QNAME_DELIMITER in fn_name:
             # "work__next_wealth" -> "next_wealth"
-            param_key = fn_name.split(REGIME_SEPARATOR, 1)[1]
+            param_key = fn_name.split(QNAME_DELIMITER, 1)[1]
         else:
             param_key = fn_name
         functions[fn_name] = _rename_fn_params(
@@ -327,8 +327,8 @@ def _get_internal_functions(
         # that returns the whole grid of possible values.
         # For prefixed names, extract the flat param key
         param_key = (
-            fn_name.split(REGIME_SEPARATOR, 1)[1]
-            if REGIME_SEPARATOR in fn_name
+            fn_name.split(QNAME_DELIMITER, 1)[1]
+            if QNAME_DELIMITER in fn_name
             else fn_name
         )
         functions[f"weight_{fn_name}"] = _rename_fn_params(
@@ -401,7 +401,7 @@ def _get_internal_functions(
     )
 
 
-def _rename_params_to_qualified_names(
+def _rename_params_to_qnames(
     fn: UserFunction,
     regime_params_template: RegimeParamsTemplate,
     param_key: str,
@@ -422,7 +422,7 @@ def _rename_params_to_qualified_names(
     param_names = list(regime_params_template[param_key])  # ty: ignore[invalid-argument-type]
     if not param_names:
         return cast("InternalUserFunction", fn)
-    mapper = {p: f"{param_key}{REGIME_SEPARATOR}{p}" for p in param_names}
+    mapper = {p: f"{param_key}{QNAME_DELIMITER}{p}" for p in param_names}
     return cast("InternalUserFunction", rename_arguments(fn, mapper=mapper))
 
 
@@ -489,7 +489,7 @@ def _rename_fn_params(
 
     """
     key = param_key if param_key is not None else fn_name
-    return _rename_params_to_qualified_names(
+    return _rename_params_to_qnames(
         fn=fn,
         regime_params_template=regime_params_template,
         param_key=key,

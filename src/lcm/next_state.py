@@ -7,6 +7,7 @@ import jax
 import pandas as pd
 from dags import concatenate_functions
 from dags.signature import with_signature
+from dags.tree import QNAME_DELIMITER
 from jax import Array
 
 from lcm.grids import Grid
@@ -21,7 +22,7 @@ from lcm.typing import (
     RegimeName,
     StochasticNextFunction,
 )
-from lcm.utils import REGIME_SEPARATOR, flatten_regime_namespace
+from lcm.utils import flatten_regime_namespace
 
 
 def get_next_state_function_for_solution(
@@ -150,13 +151,13 @@ def _extend_transitions_for_simulation(
         fn_name
         for fn_name, fn in transitions.items()
         if is_stochastic_transition(fn)
-        and fn_name.split(REGIME_SEPARATOR)[-1].replace("next_", "") not in shock_names
+        and fn_name.split(QNAME_DELIMITER)[-1].replace("next_", "") not in shock_names
     ]
     continuous_stochastic_targets = [
         (fn_name, fn)
         for fn_name, fn in transitions.items()
         if is_stochastic_transition(fn)
-        and fn_name.split(REGIME_SEPARATOR)[-1].replace("next_", "") in shock_names
+        and fn_name.split(QNAME_DELIMITER)[-1].replace("next_", "") in shock_names
     ]
     # Handle stochastic next states functions
     # ----------------------------------------------------------------------------------
