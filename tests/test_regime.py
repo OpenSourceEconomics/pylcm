@@ -29,14 +29,14 @@ def test_regime_name_does_not_contain_separator():
         dead: int
 
     working = Regime(
-        utility=utility,
+        functions={"utility": utility},
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
         transitions={"next_wealth": next_wealth, "next_regime": lambda: 0},
         active=lambda age: age < 5,
     )
     dead = Regime(
-        utility=lambda: 0,
+        functions={"utility": lambda: 0},
         terminal=True,
         active=lambda age: age >= 5,
     )
@@ -54,11 +54,10 @@ def test_regime_name_does_not_contain_separator():
 def test_function_name_does_not_contain_separator():
     with pytest.raises(RegimeInitializationError, match=QNAME_DELIMITER):
         Regime(
-            utility=utility,
             states={"wealth": WEALTH_GRID},
             actions={f"consumption{QNAME_DELIMITER}action": CONSUMPTION_GRID},
             transitions={"next_wealth": next_wealth},
-            functions={f"helper{QNAME_DELIMITER}func": lambda: 1},
+            functions={"utility": utility, f"helper{QNAME_DELIMITER}func": lambda: 1},
             active=lambda age: age < 5,
         )
 
@@ -66,7 +65,7 @@ def test_function_name_does_not_contain_separator():
 def test_state_name_does_not_contain_separator():
     with pytest.raises(RegimeInitializationError, match=QNAME_DELIMITER):
         Regime(
-            utility=utility,
+            functions={"utility": utility},
             states={f"my{QNAME_DELIMITER}wealth": WEALTH_GRID},
             actions={"consumption": CONSUMPTION_GRID},
             transitions={f"next_my{QNAME_DELIMITER}wealth": next_wealth},
@@ -82,7 +81,7 @@ def test_state_name_does_not_contain_separator():
 def test_terminal_regime_creation():
     """Terminal regime can be created with states and utility."""
     regime = Regime(
-        utility=lambda wealth: wealth * 0.5,
+        functions={"utility": lambda wealth: wealth * 0.5},
         states={"wealth": WEALTH_GRID},
         terminal=True,
         active=lambda age: age >= 5,
@@ -94,7 +93,7 @@ def test_terminal_regime_creation():
 def test_terminal_regime_with_actions():
     """Terminal regime can have actions for final decisions."""
     regime = Regime(
-        utility=lambda wealth, bequest_share: wealth * bequest_share,
+        functions={"utility": lambda wealth, bequest_share: wealth * bequest_share},
         states={"wealth": WEALTH_GRID},
         actions={"bequest_share": LinSpacedGrid(start=0, stop=1, n_points=11)},
         terminal=True,
@@ -108,7 +107,7 @@ def test_terminal_regime_cannot_have_transitions():
     """Terminal regime cannot have transitions."""
     with pytest.raises(RegimeInitializationError, match="cannot have transitions"):
         Regime(
-            utility=lambda wealth: wealth,
+            functions={"utility": lambda wealth: wealth},
             states={"wealth": WEALTH_GRID},
             transitions={"next_wealth": lambda wealth: wealth},
             terminal=True,
@@ -119,7 +118,7 @@ def test_terminal_regime_cannot_have_transitions():
 def test_terminal_regime_can_be_created_without_states():
     """Terminal regime can be created without states (e.g., death state)."""
     regime = Regime(
-        utility=lambda: 0,
+        functions={"utility": lambda: 0},
         states={},
         terminal=True,
         active=lambda age: age >= 5,
@@ -136,7 +135,7 @@ def test_terminal_regime_can_be_created_without_states():
 def test_regime_with_active_callable():
     """Regime can specify active periods with a callable."""
     regime = Regime(
-        utility=utility,
+        functions={"utility": utility},
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
         transitions={"next_wealth": next_wealth},
@@ -147,11 +146,21 @@ def test_regime_with_active_callable():
     assert regime.active(5) is False
 
 
+def test_regime_requires_utility_in_functions():
+    """Regime must have 'utility' in the functions dict."""
+    with pytest.raises(RegimeInitializationError, match=r"utility.*must be provided"):
+        Regime(
+            functions={"helper": lambda: 1},
+            states={"wealth": WEALTH_GRID},
+            terminal=True,
+        )
+
+
 def test_active_validation_rejects_non_callable():
     """Active attribute must be a callable."""
     with pytest.raises(RegimeInitializationError, match="must be a callable"):
         Regime(
-            utility=utility,
+            functions={"utility": utility},
             states={"wealth": WEALTH_GRID},
             actions={"consumption": CONSUMPTION_GRID},
             transitions={"next_wealth": next_wealth},

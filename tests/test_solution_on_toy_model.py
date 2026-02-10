@@ -84,7 +84,7 @@ alive_deterministic = Regime(
             n_points=1,
         ),
     },
-    utility=utility,
+    functions={"utility": utility},
     constraints={
         "borrowing_constraint": borrowing_constraint,
     },
@@ -97,7 +97,7 @@ alive_deterministic = Regime(
 
 dead = Regime(
     terminal=True,
-    utility=lambda: 0.0,
+    functions={"utility": lambda: 0.0},
     active=lambda age: age >= 1,  # n_periods=2, so active in period 1
 )
 

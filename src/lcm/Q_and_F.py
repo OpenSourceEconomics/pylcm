@@ -356,7 +356,6 @@ def _get_U_and_F(
     """
     functions = {
         "feasibility": _get_feasibility(internal_functions),
-        "utility": internal_functions.utility,
         **{k: v for k, v in internal_functions.functions.items() if k != "H"},
     }
     return concatenate_functions(

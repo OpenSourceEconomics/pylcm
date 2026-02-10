@@ -365,8 +365,8 @@ prod_shock_grid = ShockGrid(
 )
 
 ALIVE_REGIME = Regime(
-    utility=utility,
     functions={
+        "utility": utility,
         "disutil": disutil,
         "fcost": fcost,
         "cons_util": cons_util,
@@ -416,7 +416,7 @@ ALIVE_REGIME = Regime(
 
 DEAD_REGIME = Regime(
     terminal=True,
-    utility=lambda: 0.0,
+    functions={"utility": lambda: 0.0},
     active=partial(dead_is_active, initial_age=ages.values[0]),
 )
 

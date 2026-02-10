@@ -43,7 +43,7 @@ def model() -> Model:
     ages = AgeGrid(start=0, stop=n_periods, step="Y")
 
     alive = Regime(
-        utility=utility,
+        functions={"utility": utility},
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
             "health": DiscreteGrid(HealthStatus),
@@ -58,7 +58,7 @@ def model() -> Model:
 
     dead = Regime(
         terminal=True,
-        utility=lambda: 0.0,
+        functions={"utility": lambda: 0.0},
         active=lambda age: age >= n_periods - 1,
     )
 

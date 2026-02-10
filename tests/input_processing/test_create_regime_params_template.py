@@ -17,7 +17,7 @@ def test_create_params_without_shocks(binary_category_class):
             "b": DiscreteGrid(binary_category_class),
         },
         n_periods=None,
-        utility=lambda a, b, c: None,  # noqa: ARG005
+        functions={"utility": lambda a, b, c: None},  # noqa: ARG005
         transitions={
             "next_b": lambda b: b,
         },
@@ -43,8 +43,7 @@ def test_create_params_with_custom_H_no_extra_params():
         states={
             "b": None,
         },
-        utility=lambda a, b, c: None,  # noqa: ARG005
-        functions={"H": custom_H},
+        functions={"utility": lambda a, b, c: None, "H": custom_H},  # noqa: ARG005
     )
     got = create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
     assert got == {"H": {}, "utility": {"c": "no_annotation_found"}}
@@ -55,7 +54,7 @@ def test_default_H_with_state_named_discount_factor_raises():
     regime = RegimeMock(
         actions={"a": None},
         states={"discount_factor": None},
-        utility=lambda a, discount_factor: None,  # noqa: ARG005
+        functions={"utility": lambda a, discount_factor: None},  # noqa: ARG005
         transitions={"next_discount_factor": lambda discount_factor: discount_factor},
     )
     with pytest.raises(InvalidNameError, match="shadow state/action"):
@@ -71,8 +70,7 @@ def test_custom_function_shadowing_state_raises():
     regime = RegimeMock(
         actions={"a": None},
         states={"wealth": None},
-        utility=lambda a, wealth: None,  # noqa: ARG005
-        functions={"H": custom_H},
+        functions={"utility": lambda a, wealth: None, "H": custom_H},  # noqa: ARG005
     )
     with pytest.raises(InvalidNameError, match="shadow state/action"):
         create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
@@ -87,7 +85,7 @@ def test_regular_function_taking_state_as_argument_no_error(binary_category_clas
         states={
             "wealth": DiscreteGrid(binary_category_class),
         },
-        utility=lambda a, wealth, risk_aversion: None,  # noqa: ARG005
+        functions={"utility": lambda a, wealth, risk_aversion: None},  # noqa: ARG005
         transitions={"next_wealth": lambda wealth: wealth},
     )
     got = create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]

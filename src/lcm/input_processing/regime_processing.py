@@ -205,7 +205,6 @@ def process_regimes(
             gridspecs=gridspecs[name],
             variable_info=variable_info[name],
             functions=MappingProxyType(internal_functions.functions),
-            utility=internal_functions.utility,
             constraints=MappingProxyType(internal_functions.constraints),
             active_periods=tuple(regimes_to_active_periods[name]),
             regime_transition_probs=internal_functions.regime_transition_probs,
@@ -269,7 +268,6 @@ def _get_internal_functions(
 
     # Build all_functions using nested_transitions (to get prefixed names)
     all_functions = {
-        "utility": regime.utility,
         **regime.functions,
         **regime.constraints,
         **flat_nested_transitions,
@@ -355,7 +353,6 @@ def _get_internal_functions(
         for fn_name in flat_nested_transitions
         if fn_name != "next_regime"
     }
-    internal_utility = functions["utility"]
     internal_constraints = MappingProxyType(
         {fn_name: functions[fn_name] for fn_name in regime.constraints}
     )
@@ -365,7 +362,7 @@ def _get_internal_functions(
             for fn_name in functions
             if fn_name not in flat_nested_transitions
             and fn_name not in regime.constraints
-            and fn_name not in {"utility", "next_regime"}
+            and fn_name != "next_regime"
         }
     )
     # Determine if next_regime is stochastic (decorated with @lcm.mark.stochastic)
@@ -392,7 +389,6 @@ def _get_internal_functions(
         )
     return InternalFunctions(
         functions=internal_functions,
-        utility=internal_utility,
         constraints=internal_constraints,
         transitions=_wrap_transitions(unflatten_regime_namespace(internal_transition)),
         regime_transition_probs=internal_regime_transition_probs,

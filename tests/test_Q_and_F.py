@@ -133,10 +133,9 @@ def internal_functions_illustrative():
     mock_transition_solve = lambda *args, **kwargs: {"mock": 1.0}
     mock_transition_simulate = lambda *args, **kwargs: {"mock": jnp.array([1.0])}
     return InternalFunctions(
-        utility=lambda: 0,  # ty: ignore[invalid-argument-type]
         transitions=MappingProxyType({}),
         constraints=constraints,  # ty: ignore[invalid-argument-type]
-        functions=functions,  # ty: ignore[invalid-argument-type]
+        functions=MappingProxyType({"utility": lambda: 0, **functions}),
         regime_transition_probs=PhaseVariantContainer(
             solve=mock_transition_solve, simulate=mock_transition_simulate
         ),
@@ -208,10 +207,9 @@ def test_get_combined_constraint():
     mock_transition_solve = lambda *args, **kwargs: {"mock": 1.0}
     mock_transition_simulate = lambda *args, **kwargs: {"mock": jnp.array([1.0])}
     internal_functions = InternalFunctions(
-        utility=lambda: 0,  # ty: ignore[invalid-argument-type]
         constraints={"f": f, "g": g},  # ty: ignore[invalid-argument-type]
         transitions=MappingProxyType({}),
-        functions={"h": h},  # ty: ignore[invalid-argument-type]
+        functions=MappingProxyType({"utility": lambda: 0, "h": h}),
         regime_transition_probs=PhaseVariantContainer(
             solve=mock_transition_solve, simulate=mock_transition_simulate
         ),
@@ -258,7 +256,6 @@ def test_get_U_and_F_with_annotated_constraints():
     mock_transition_simulate = lambda *args, **kwargs: {"mock": jnp.array([1.0])}
 
     internal_functions = InternalFunctions(
-        utility=utility_func,  # ty: ignore[invalid-argument-type]
         constraints=MappingProxyType(
             {
                 "budget_constraint": budget_constraint,
@@ -266,7 +263,7 @@ def test_get_U_and_F_with_annotated_constraints():
             }
         ),
         transitions=MappingProxyType({}),
-        functions=MappingProxyType({}),
+        functions=MappingProxyType({"utility": utility_func}),
         regime_transition_probs=PhaseVariantContainer(
             solve=mock_transition_solve, simulate=mock_transition_simulate
         ),

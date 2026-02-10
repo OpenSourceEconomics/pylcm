@@ -29,10 +29,9 @@ class Regime:
 
     Attributes:
         active: Callable that takes age (float) and returns True if regime is active.
-        utility: Utility function for this regime.
         constraints: Dictionary of constraint functions.
         transitions: Dictionary of transition functions (keys must start with 'next_').
-        functions: Dictionary of auxiliary functions.
+        functions: Dictionary of functions, must include a 'utility' function.
         actions: Dictionary of action grids.
         states: Dictionary of state grids.
         absorbing: Whether this is an absorbing regime.
@@ -41,7 +40,6 @@ class Regime:
 
     """
 
-    utility: UserFunction
     active: ActiveFunction = lambda _age: True
     constraints: Mapping[str, UserFunction] = field(
         default_factory=lambda: MappingProxyType({})
@@ -84,10 +82,7 @@ class Regime:
 
         """
         return MappingProxyType(
-            {"utility": self.utility}
-            | dict(self.functions)
-            | dict(self.constraints)
-            | dict(self.transitions)
+            dict(self.functions) | dict(self.constraints) | dict(self.transitions)
         )
 
     def replace(self, **kwargs: Any) -> Regime:  # noqa: ANN401
@@ -149,9 +144,6 @@ def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
                 "callables."
             )
 
-    if not callable(regime.utility):
-        error_messages.append("utility must be a callable.")
-
     if error_messages:
         msg = format_messages(error_messages)
         raise RegimeInitializationError(msg)
@@ -189,10 +181,9 @@ def _validate_logical_consistency(regime: Regime) -> None:
             f"{invalid_variable_names}.",
         )
 
-    if "utility" in regime.functions:
+    if "utility" not in regime.functions:
         error_messages.append(
-            "The function name 'utility' is reserved and cannot be used in the "
-            "functions dictionary. Please use the utility attribute instead.",
+            "A 'utility' function must be provided in the functions dictionary.",
         )
 
     error_messages.extend(_validate_terminal_or_transitions(regime))

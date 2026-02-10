@@ -74,7 +74,7 @@ def regimes_and_ages(n_periods: int) -> tuple[dict[str, Regime], AgeGrid]:
                 n_points=3,
             ),
         },
-        utility=utility,
+        functions={"utility": utility},
         constraints={
             "borrowing_constraint": borrowing_constraint,
         },
@@ -88,7 +88,7 @@ def regimes_and_ages(n_periods: int) -> tuple[dict[str, Regime], AgeGrid]:
 
     terminal = Regime(
         terminal=True,
-        utility=lambda: 0.0,
+        functions={"utility": lambda: 0.0},
         active=lambda age, n=n_periods: age >= n - 1,
     )
 
@@ -115,7 +115,9 @@ def nan_value_model(
         )
         return jnp.log(consumption) + nan_term
 
-    invalid_regime = regimes["non_terminal"].replace(utility=invalid_utility)
+    invalid_regime = regimes["non_terminal"].replace(
+        functions={**regimes["non_terminal"].functions, "utility": invalid_utility},
+    )
     return Model(
         regimes={
             "non_terminal": invalid_regime,
@@ -144,7 +146,9 @@ def inf_value_model(
         )
         return jnp.log(consumption) + inf_term
 
-    inf_regime = regimes["non_terminal"].replace(utility=invalid_utility)
+    inf_regime = regimes["non_terminal"].replace(
+        functions={**regimes["non_terminal"].functions, "utility": invalid_utility},
+    )
     return Model(
         regimes={
             "non_terminal": inf_regime,

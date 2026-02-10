@@ -86,6 +86,7 @@ FINAL_AGE_ALIVE = START_AGE + N_PERIODS - 2  # = 2
 def _make_model(custom_H=None):
     """Create a simple model, optionally with a custom H."""
     functions = {
+        "utility": utility,
         "labor_income": labor_income,
         "is_working": is_working,
     }
@@ -100,7 +101,6 @@ def _make_model(custom_H=None):
         states={
             "wealth": LinSpacedGrid(start=0.5, stop=10, n_points=30),
         },
-        utility=utility,
         constraints={"borrowing_constraint": borrowing_constraint},
         transitions={
             "next_wealth": next_wealth,
@@ -112,7 +112,7 @@ def _make_model(custom_H=None):
 
     dead_regime = Regime(
         terminal=True,
-        utility=lambda: 0.0,
+        functions={"utility": lambda: 0.0},
         active=lambda age: age > FINAL_AGE_ALIVE,
     )
 
@@ -165,7 +165,7 @@ def test_custom_ces_aggregator_differs_from_default():
 def test_default_H_injected_for_non_terminal():
     """The default H function should be in non-terminal Regime.functions."""
     r = Regime(
-        utility=lambda: 0.0,
+        functions={"utility": lambda: 0.0},
         transitions={"next_regime": lambda: {"a": 1.0}},
         active=lambda age: age < 1,
     )
@@ -176,7 +176,7 @@ def test_default_H_not_injected_for_terminal():
     """Terminal regimes should not have H injected."""
     r = Regime(
         terminal=True,
-        utility=lambda: 0.0,
+        functions={"utility": lambda: 0.0},
     )
     assert "H" not in r.functions
 
@@ -188,10 +188,9 @@ def test_custom_H_not_overwritten():
         return utility + continuation_value
 
     r = Regime(
-        utility=lambda: 0.0,
         transitions={"next_regime": lambda: {"a": 1.0}},
         active=lambda age: age < 1,
-        functions={"H": my_H},
+        functions={"utility": lambda: 0.0, "H": my_H},
     )
     assert r.functions["H"] is my_H
 

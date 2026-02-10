@@ -27,7 +27,7 @@ def create_regime_params_template(
     """
     # Collect all variables that H may receive: regime functions, special variables
     # (period, age) and continuation_value.
-    H_variables = {*regime.functions, "period", "age", "utility", "continuation_value"}
+    H_variables = {*regime.functions, "period", "age", "continuation_value"}
     # Other functions may receive states/actions, too.
     variables = H_variables | {
         *regime.actions,
