@@ -34,7 +34,7 @@ def get_Q_and_F(
     age: float,
     next_state_space_infos: MappingProxyType[RegimeName, StateSpaceInfo],
     internal_functions: InternalFunctions,
-    flat_params_names: frozenset[str] = frozenset(),
+    flat_params_names: frozenset[str],
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
@@ -198,7 +198,7 @@ def get_Q_and_F_terminal(
     internal_functions: InternalFunctions,
     period: int,
     age: float,
-    flat_params_names: frozenset[str] = frozenset(),
+    flat_params_names: frozenset[str],
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for the terminal period.
 
