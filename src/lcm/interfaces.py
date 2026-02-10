@@ -187,6 +187,8 @@ class InternalRegime:
     next_state_simulation_function: NextStateSimulationFunction
     # Not properly processed yet
     random_utility_shocks: ShockType
+    # Resolved fixed params (flat) for this regime, used by to_dataframe targets
+    resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
 
 
 @dataclasses.dataclass(frozen=True)

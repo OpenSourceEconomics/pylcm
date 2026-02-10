@@ -638,18 +638,38 @@ def _partial_fixed_params_into_regimes(
             regime.next_state_simulation_function, **regime_fixed
         )
 
-        # Partial into regime transition probs (solve and simulate)
+        # Partial into regime transition probs — only include params that the
+        # function actually accepts to avoid signature mismatches during
+        # inspect.signature (used by dags.concatenate_functions in to_dataframe).
         if regime.regime_transition_probs is not None:
+            tp_solve_fixed = _filter_kwargs_for_func(
+                regime.regime_transition_probs.solve, regime_fixed
+            )
+            tp_sim_fixed = _filter_kwargs_for_func(
+                regime.regime_transition_probs.simulate, regime_fixed
+            )
             new_regime_tp = PhaseVariantContainer(
                 solve=functools.partial(
-                    regime.regime_transition_probs.solve, **regime_fixed
-                ),
+                    regime.regime_transition_probs.solve, **tp_solve_fixed
+                )
+                if tp_solve_fixed
+                else regime.regime_transition_probs.solve,
                 simulate=functools.partial(
-                    regime.regime_transition_probs.simulate, **regime_fixed
-                ),
+                    regime.regime_transition_probs.simulate, **tp_sim_fixed
+                )
+                if tp_sim_fixed
+                else regime.regime_transition_probs.simulate,
             )
         else:
             new_regime_tp = None
+
+        # Also update the nested internal_functions so simulation code
+        # (which reads from internal_functions.regime_transition_probs) sees
+        # the partialled version.
+        new_internal_functions = dataclasses.replace(
+            regime.internal_functions,
+            regime_transition_probs=new_regime_tp,
+        )
 
         result[name] = dataclasses.replace(
             regime,
@@ -657,5 +677,23 @@ def _partial_fixed_params_into_regimes(
             argmax_and_max_Q_over_a_functions=MappingProxyType(new_argmax_max_Q),
             next_state_simulation_function=new_next_state,
             regime_transition_probs=new_regime_tp,
+            internal_functions=new_internal_functions,
+            resolved_fixed_params=MappingProxyType(regime_fixed),
         )
     return MappingProxyType(result)
+
+
+def _filter_kwargs_for_func(func: object, kwargs: dict[str, object]) -> dict[str, object]:
+    """Filter kwargs to only those accepted by func's signature."""
+    import inspect  # noqa: PLC0415
+
+    try:
+        sig = inspect.signature(func)
+    except (ValueError, TypeError):
+        # If we can't inspect the signature, pass all kwargs through
+        return kwargs
+    params = sig.parameters
+    # If the function accepts **kwargs, pass everything
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return kwargs
+    return {k: v for k, v in kwargs.items() if k in params}
