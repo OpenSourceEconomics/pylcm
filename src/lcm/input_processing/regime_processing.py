@@ -112,17 +112,15 @@ def process_regimes(
     variable_info = MappingProxyType(
         {n: get_variable_info(r) for n, r in regimes.items()}
     )
-    internal_fixed_params = {
-        n: _extract_regime_fixed_params(
-            regime=r, regime_name=n, fixed_params=fixed_params
-        )
+    shock_init_params = {
+        n: _extract_shock_params(regime=r, regime_name=n, fixed_params=fixed_params)
         for n, r in regimes.items()
     }
     gridspecs = MappingProxyType(
         {
             n: _init_shock_gridspecs(
                 gridspecs=get_gridspecs(r),
-                internal_fixed_params=internal_fixed_params[n],
+                shock_init_params=shock_init_params[n],
             )
             for n, r in regimes.items()
         }
@@ -211,7 +209,7 @@ def process_regimes(
             active_periods=tuple(regimes_to_active_periods[name]),
             regime_transition_probs=internal_functions.regime_transition_probs,
             internal_functions=internal_functions,
-            internal_fixed_params=internal_fixed_params[name],
+            shock_init_params=shock_init_params[name],
             transitions=internal_functions.transitions,
             params_template=params_template,
             state_action_space=state_action_spaces[name],
@@ -531,39 +529,47 @@ def _rename_fn_params(
     )
 
 
-def _extract_regime_fixed_params(
+def _extract_shock_params(
     regime: Regime, regime_name: str, fixed_params: UserParams
 ) -> InternalRegimeParams:
-    """Extract and process fixed params relevant to a regime's shocks.
+    """Extract ShockGrid initialization params from fixed_params for one regime.
 
-    Fixed params can be provided at two levels:
-    - Model level: {"state_name": {...}} - applies to all regimes
-    - Regime level: {"regime_name": {"state_name": {...}}} - applies to specific regime
+    Returns a mapping ``{state_name: {shock_param: value, ...}}`` for every
+    ShockGrid state that has initialization params in *fixed_params*.
 
-    Regime-level params take precedence over model-level params.
+    Lookup order (first match wins):
+
+    1. Regime-level, keyed by state name:  ``{regime: {state: ...}}``
+    2. Regime-level, keyed by transition:  ``{regime: {next_state: ...}}``
+    3. Model-level, keyed by state name:   ``{state: ...}``
+    4. Model-level, keyed by transition:   ``{next_state: ...}``
 
     """
     result: dict[str, Any] = {}
 
-    # Get regime-specific fixed_params if provided
     regime_fixed_params = fixed_params.get(regime_name, {})
     if not isinstance(regime_fixed_params, Mapping):
         regime_fixed_params = {}
 
     for state_name, state in regime.states.items():
-        if isinstance(state, ShockGrid):
-            # Check regime-level first, then model-level
-            if state_name in regime_fixed_params:
-                result[state_name] = regime_fixed_params[state_name]
-            elif state_name in fixed_params:
-                result[state_name] = fixed_params[state_name]
+        if not isinstance(state, ShockGrid):
+            continue
+
+        next_name = f"next_{state_name}"
+        for source in (regime_fixed_params, fixed_params):
+            if state_name in source:
+                result[state_name] = source[state_name]
+                break
+            if next_name in source:
+                result[state_name] = source[next_name]
+                break
 
     return ensure_containers_are_immutable(result)
 
 
 def _init_shock_gridspecs(
     gridspecs: MappingProxyType[str, Grid],
-    internal_fixed_params: InternalRegimeParams,
+    shock_init_params: InternalRegimeParams,
 ) -> MappingProxyType[str, Grid]:
     """Initialize ShockGrid instances with their fixed parameters.
 
@@ -573,9 +579,9 @@ def _init_shock_gridspecs(
     """
     result: dict[str, Grid] = {}
     for name, spec in gridspecs.items():
-        if isinstance(spec, ShockGrid) and name in internal_fixed_params:
+        if isinstance(spec, ShockGrid) and name in shock_init_params:
             result[name] = spec.init_params(
-                cast("MappingProxyType[str, float]", internal_fixed_params[name])
+                cast("MappingProxyType[str, float]", shock_init_params[name])
             )
         else:
             result[name] = spec

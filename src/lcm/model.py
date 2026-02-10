@@ -459,7 +459,12 @@ def _validate_fixed_params_present(
         else:
             available_params = set(fixed_params)
 
-        missing_params = fixed_params_needed - available_params
+        # Keys can be state_name or next_{state_name}
+        missing_params = {
+            s
+            for s in fixed_params_needed
+            if s not in available_params and f"next_{s}" not in available_params
+        }
         if missing_params:
             error_messages.append(
                 f"Regime {regime_name} is missing fixed params:\n{missing_params}"
@@ -482,25 +487,22 @@ def _filter_out_shock_params(
     fixed params and partialled into compiled functions.
 
     """
-    static_shock_state_names: set[str] = set()
+    static_shock_keys: set[str] = set()
     for regime in regimes.values():
         for state_name, state in regime.states.items():
             if isinstance(state, ShockGrid) and not state.dynamic_shock_params:
-                static_shock_state_names.add(state_name)
+                static_shock_keys.add(state_name)
+                static_shock_keys.add(f"next_{state_name}")
 
-    if not static_shock_state_names:
+    if not static_shock_keys:
         return dict(fixed_params)
 
     result: dict[str, object] = {}
     for k, v in fixed_params.items():
-        if k in static_shock_state_names:
-            # Model-level static shock param like {"income": {"rho": 0.975}} — skip
+        if k in static_shock_keys:
             continue
         if k in regimes and isinstance(v, Mapping):
-            # Regime-level entry — filter out static shock state sub-keys
-            filtered = {
-                sk: sv for sk, sv in v.items() if sk not in static_shock_state_names
-            }
+            filtered = {sk: sv for sk, sv in v.items() if sk not in static_shock_keys}
             if filtered:
                 result[k] = filtered
         else:
