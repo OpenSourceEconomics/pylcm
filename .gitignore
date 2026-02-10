@@ -125,3 +125,4 @@ venv.bak/
 .pytask.sqlite3
 src/lcm/_version.py
 .pixi
+.claude

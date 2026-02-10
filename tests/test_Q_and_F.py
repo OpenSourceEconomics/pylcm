@@ -8,6 +8,11 @@ from numpy.testing import assert_array_equal
 import lcm
 from lcm import AgeGrid
 from lcm.input_processing import process_regimes
+from lcm.input_processing.params_processing import (
+    create_params_template,
+    get_flat_param_names,
+    process_params,
+)
 from lcm.interfaces import InternalFunctions, PhaseVariantContainer
 from lcm.Q_and_F import (
     _get_feasibility,
@@ -20,7 +25,6 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     Int1D,
-    InternalRegimeParams,
     Period,
 )
 from tests.test_models.deterministic.regression import (
@@ -47,13 +51,22 @@ def test_get_Q_and_F_function():
         fixed_params={},
     )
 
-    internal_regime_params = MappingProxyType(get_params(n_periods=4))
+    raw_params = get_params(n_periods=4)
+
+    params_template = create_params_template(internal_regimes)
+    internal_params = process_params(raw_params, params_template)
+
+    # Compute flat param names for the working regime's params_template
+    flat_params_names = frozenset(
+        get_flat_param_names(internal_regimes["working"].params_template)
+    )
 
     # Test terminal period Q_and_F where Q = U (no continuation value)
     Q_and_F = get_Q_and_F_terminal(
         internal_functions=internal_regimes["working"].internal_functions,
         period=3,
         age=ages.period_to_age(3),
+        flat_params_names=flat_params_names,
     )
 
     consumption = jnp.array([10, 20, 30])
@@ -64,7 +77,7 @@ def test_get_Q_and_F_function():
         consumption=consumption,
         labor_supply=labor_supply,
         wealth=wealth,
-        internal_regime_params=internal_regime_params["working"],
+        **internal_params["working"],
         next_V_arr=jnp.empty(0),  # Terminal period doesn't use continuation value
     )
 
@@ -87,7 +100,6 @@ def internal_functions_illustrative():
     def mandatory_retirement_constraint(
         retirement: DiscreteAction,
         age: int | Int1D,
-        internal_regime_params: InternalRegimeParams,
     ) -> BoolND:
         # Individuals must be retired from age 65 onwards
         return jnp.logical_or(retirement == 1, age < 65)
@@ -95,7 +107,6 @@ def internal_functions_illustrative():
     def mandatory_lagged_retirement_constraint(
         lagged_retirement: DiscreteState,
         age: int | Int1D,
-        internal_regime_params: InternalRegimeParams,
     ) -> BoolND:
         # Individuals must have been retired last year from age 66 onwards
         return jnp.logical_or(lagged_retirement == 1, age < 66)
@@ -103,7 +114,6 @@ def internal_functions_illustrative():
     def absorbing_retirement_constraint(
         retirement: DiscreteAction,
         lagged_retirement: DiscreteState,
-        internal_regime_params: InternalRegimeParams,
     ) -> BoolND:
         # If an individual was retired last year, it must be retired this year
         return jnp.logical_or(retirement == 1, lagged_retirement == 0)
@@ -120,12 +130,8 @@ def internal_functions_illustrative():
 
     # create an internal regime instance where some attributes are set to None
     # because they are not needed to create the feasibilty mask
-    mock_transition_solve = lambda *args, internal_regime_params, **kwargs: {
-        "mock": 1.0
-    }
-    mock_transition_simulate = lambda *args, internal_regime_params, **kwargs: {
-        "mock": jnp.array([1.0])
-    }
+    mock_transition_solve = lambda *args, **kwargs: {"mock": 1.0}
+    mock_transition_simulate = lambda *args, **kwargs: {"mock": jnp.array([1.0])}
     return InternalFunctions(
         utility=lambda: 0,  # ty: ignore[invalid-argument-type]
         transitions=MappingProxyType({}),
@@ -162,7 +168,6 @@ def test_get_combined_constraint_illustrative(internal_functions_illustrative):
         period=period,
         retirement=retirement,
         lagged_retirement=lagged_retirement,
-        internal_regime_params=MappingProxyType({}),
     )
     assert_array_equal(got, exp)
 
@@ -191,21 +196,17 @@ def test_get_multiply_weights():
 
 
 def test_get_combined_constraint():
-    def f(internal_regime_params):
+    def f():
         return True
 
-    def g(internal_regime_params):
+    def g():
         return False
 
-    def h(internal_regime_params):
+    def h():
         return None
 
-    mock_transition_solve = lambda *args, internal_regime_params, **kwargs: {
-        "mock": 1.0
-    }
-    mock_transition_simulate = lambda *args, internal_regime_params, **kwargs: {
-        "mock": jnp.array([1.0])
-    }
+    mock_transition_solve = lambda *args, **kwargs: {"mock": 1.0}
+    mock_transition_simulate = lambda *args, **kwargs: {"mock": jnp.array([1.0])}
     internal_functions = InternalFunctions(
         utility=lambda: 0,  # ty: ignore[invalid-argument-type]
         constraints={"f": f, "g": g},  # ty: ignore[invalid-argument-type]
@@ -216,9 +217,7 @@ def test_get_combined_constraint():
         ),
     )
     combined_constraint = _get_feasibility(internal_functions)
-    feasibility: BoolND = combined_constraint(
-        internal_regime_params=MappingProxyType({})
-    )
+    feasibility: BoolND = combined_constraint()
     assert feasibility.item() is False
 
 
@@ -240,30 +239,23 @@ def test_get_U_and_F_with_annotated_constraints():
     def budget_constraint(
         consumption: float,
         wealth: float,
-        internal_regime_params: InternalRegimeParams,
     ) -> bool:
         return consumption <= wealth
 
     # Another constraint with type annotations
     def positive_consumption_constraint(
         consumption: float,
-        internal_regime_params: InternalRegimeParams,
     ) -> bool:
         return consumption >= 0
 
     # Utility function with type annotations for the same arguments
     def utility_func(
         consumption: float,
-        internal_regime_params: InternalRegimeParams,
     ) -> jax.Array:
         return jnp.log(consumption + 1)
 
-    mock_transition_solve = lambda *args, internal_regime_params, **kwargs: {
-        "mock": 1.0
-    }
-    mock_transition_simulate = lambda *args, internal_regime_params, **kwargs: {
-        "mock": jnp.array([1.0])
-    }
+    mock_transition_solve = lambda *args, **kwargs: {"mock": 1.0}
+    mock_transition_simulate = lambda *args, **kwargs: {"mock": jnp.array([1.0])}
 
     internal_functions = InternalFunctions(
         utility=utility_func,  # ty: ignore[invalid-argument-type]
@@ -284,14 +276,10 @@ def test_get_U_and_F_with_annotated_constraints():
     U_and_F = _get_U_and_F(internal_functions)
 
     # Verify it works correctly
-    U, F = U_and_F(
-        consumption=5.0, wealth=10.0, internal_regime_params=MappingProxyType({})
-    )
+    U, F = U_and_F(consumption=5.0, wealth=10.0)
     assert jnp.isclose(U, jnp.log(6.0))
     assert F.item() is True
 
     # Test infeasible case
-    U, F = U_and_F(
-        consumption=15.0, wealth=10.0, internal_regime_params=MappingProxyType({})
-    )
+    U, F = U_and_F(consumption=15.0, wealth=10.0)
     assert F.item() is False

@@ -45,16 +45,15 @@ def test_params_at_function_level(params_template):
     }
     internal_params = process_params(params, params_template)
 
-    # Check skeleton matches template
+    # Check that output has regime-level keys
     assert set(internal_params.keys()) == set(params_template.keys())
+    # Check that output is flat per regime (function__param format)
     for regime in params_template:
-        assert set(internal_params[regime].keys()) == set(
-            params_template[regime].keys()
-        )
-        for func in params_template[regime]:
-            func_to_args = internal_params[regime][func]
-            assert isinstance(func_to_args, MappingProxyType)
-            assert set(func_to_args.keys()) == set(params_template[regime][func].keys())
+        expected_flat_keys = set()
+        for func, func_params in params_template[regime].items():
+            for arg in func_params:
+                expected_flat_keys.add(f"{func}__{arg}")
+        assert set(internal_params[regime].keys()) == expected_flat_keys
 
 
 def test_params_at_regime_level(params_template):
@@ -68,12 +67,14 @@ def test_params_at_regime_level(params_template):
     }
     internal_params = process_params(params, params_template)
 
-    # Check skeleton matches template
+    # Check that output has regime-level keys with flat format
     assert set(internal_params.keys()) == set(params_template.keys())
     for regime in params_template:
-        assert set(internal_params[regime].keys()) == set(
-            params_template[regime].keys()
-        )
+        expected_flat_keys = set()
+        for func, func_params in params_template[regime].items():
+            for arg in func_params:
+                expected_flat_keys.add(f"{func}__{arg}")
+        assert set(internal_params[regime].keys()) == expected_flat_keys
 
 
 def test_params_mixed_regime_function_level(params_template):
@@ -91,12 +92,14 @@ def test_params_mixed_regime_function_level(params_template):
     }
     internal_params = process_params(params, params_template)
 
-    # Check skeleton matches template
+    # Check that output has regime-level keys with flat format
     assert set(internal_params.keys()) == set(params_template.keys())
     for regime in params_template:
-        assert set(internal_params[regime].keys()) == set(
-            params_template[regime].keys()
-        )
+        expected_flat_keys = set()
+        for func, func_params in params_template[regime].items():
+            for arg in func_params:
+                expected_flat_keys.add(f"{func}__{arg}")
+        assert set(internal_params[regime].keys()) == expected_flat_keys
 
 
 def test_params_at_model_level(params_template):
@@ -104,12 +107,14 @@ def test_params_at_model_level(params_template):
     params = {"arg_0": 0.0, "arg_1": 1.0}
     internal_params = process_params(params, params_template)
 
-    # Check skeleton matches template
+    # Check that output has regime-level keys with flat format
     assert set(internal_params.keys()) == set(params_template.keys())
     for regime in params_template:
-        assert set(internal_params[regime].keys()) == set(
-            params_template[regime].keys()
-        )
+        expected_flat_keys = set()
+        for func, func_params in params_template[regime].items():
+            for arg in func_params:
+                expected_flat_keys.add(f"{func}__{arg}")
+        assert set(internal_params[regime].keys()) == expected_flat_keys
 
 
 # ======================================================================================

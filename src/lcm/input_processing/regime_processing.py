@@ -4,8 +4,7 @@ from types import MappingProxyType
 from typing import Any, cast
 
 import pandas as pd
-from dags import get_annotations
-from dags.signature import with_signature
+from dags.signature import rename_arguments, with_signature
 from jax import Array
 from jax import numpy as jnp
 
@@ -175,6 +174,7 @@ def process_regimes(
             internal_functions=internal_functions,
             state_space_infos=state_space_infos,
             ages=ages,
+            params_template=params_template,
         )
         max_Q_over_a_functions = build_max_Q_over_a_functions(
             state_action_space=state_action_spaces[name],
@@ -191,6 +191,7 @@ def process_regimes(
             grids=grids,
             gridspecs=gridspecs[name],
             variable_info=variable_info[name],
+            params_template=params_template,
             enable_jit=enable_jit,
         )
 
@@ -261,10 +262,10 @@ def _get_internal_functions(
     flat_nested_transitions = flatten_regime_namespace(nested_transitions)
 
     # ==================================================================================
-    # Add 'internal_regime_params' argument to functions
+    # Rename function parameters to qualified names
     # ==================================================================================
-    # We wrap the user functions such that they can be called with the
-    # 'internal_regime_params' argument instead of the individual parameters.
+    # We rename user function parameters to qualified names (e.g.,
+    # risk_aversion -> utility__risk_aversion) so they can be matched with flat params.
 
     # Build all_functions using nested_transitions (to get prefixed names)
     all_functions = {
@@ -297,7 +298,7 @@ def _get_internal_functions(
     functions: dict[str, InternalUserFunction] = {}
 
     for fn_name, fn in deterministic_functions.items():
-        functions[fn_name] = _ensure_fn_only_depends_on_internal_regime_params(
+        functions[fn_name] = _rename_fn_params(
             fn=fn,
             fn_name=fn_name,
             params_template=params_template,
@@ -305,7 +306,7 @@ def _get_internal_functions(
 
     for fn_name, fn in deterministic_transition_functions.items():
         # For transition functions with prefixed names like "work__next_wealth",
-        # extract the flat param key "next_wealth" to look up in internal_regime_params
+        # extract the flat param key "next_wealth" to look up in params_template
         if fn_name == "next_regime":
             param_key = fn_name
         elif REGIME_SEPARATOR in fn_name:
@@ -313,7 +314,7 @@ def _get_internal_functions(
             param_key = fn_name.split(REGIME_SEPARATOR, 1)[1]
         else:
             param_key = fn_name
-        functions[fn_name] = _ensure_fn_only_depends_on_internal_regime_params(
+        functions[fn_name] = _rename_fn_params(
             fn=fn,
             fn_name=fn_name,
             param_key=param_key,
@@ -330,13 +331,11 @@ def _get_internal_functions(
             if REGIME_SEPARATOR in fn_name
             else fn_name
         )
-        functions[f"weight_{fn_name}"] = (
-            _ensure_fn_only_depends_on_internal_regime_params(
-                fn=fn,
-                fn_name=fn_name,
-                param_key=param_key,
-                params_template=params_template,
-            )
+        functions[f"weight_{fn_name}"] = _rename_fn_params(
+            fn=fn,
+            fn_name=fn_name,
+            param_key=param_key,
+            params_template=params_template,
         )
         functions[fn_name] = _get_stochastic_next_function(
             fn=fn,
@@ -389,6 +388,7 @@ def _get_internal_functions(
             regime_transition_probs=functions["next_regime"],
             grids=grids[regime_name],
             regime_names_to_ids=regime_names_to_ids,
+            params_template=params_template,
             is_stochastic=is_stochastic_regime_transition,
             enable_jit=enable_jit,
         )
@@ -401,63 +401,29 @@ def _get_internal_functions(
     )
 
 
-def _replace_func_parameters_by_internal_regime_params(
+def _rename_params_to_qualified_names(
     fn: UserFunction,
     params_template: RegimeParamsTemplate,
     param_key: str,
 ) -> InternalUserFunction:
-    """Wrap a function to get its parameters from the internal_regime_params dict.
+    """Rename function params to qualified names using dags.signature.rename_arguments.
+
+    E.g., risk_aversion -> utility__risk_aversion.
 
     Args:
-        fn: The user function to wrap.
+        fn: The user function.
         params_template: The parameter template for the regime.
-        param_key: The key to look up in params_template (e.g., "next_wealth").
+        param_key: The key to look up in params_template (e.g., "utility").
 
     Returns:
-        A wrapped function that accepts the internal_regime_params pytree and extracts
-        its parameters.
+        The function with renamed parameters.
+
     """
-    annotations = {
-        k: v
-        for k, v in get_annotations(fn).items()
-        if k not in params_template[param_key]  # ty: ignore[unsupported-operator]
-    }
-    annotations_with_internal_regime_params = annotations | {
-        "internal_regime_params": "InternalRegimeParams"
-    }
-    return_annotation = annotations_with_internal_regime_params.pop("return")
-
-    @with_signature(
-        args=annotations_with_internal_regime_params,
-        return_annotation=return_annotation,
-    )
-    @functools.wraps(fn)
-    def processed_func(
-        *args: Array, internal_regime_params: InternalRegimeParams, **kwargs: Array
-    ) -> Array:
-        return fn(*args, **kwargs, **internal_regime_params[param_key])  # ty: ignore[invalid-argument-type]
-
-    return cast("InternalUserFunction", processed_func)
-
-
-def _add_dummy_internal_regime_params_argument(
-    fn: UserFunction,
-) -> InternalUserFunction:
-    annotations = get_annotations(fn) | {
-        "internal_regime_params": "InternalRegimeParams"
-    }
-    return_annotation = annotations.pop("return")
-
-    @with_signature(args=annotations, return_annotation=return_annotation)
-    @functools.wraps(fn)
-    def processed_func(
-        *args: Array,
-        internal_regime_params: InternalRegimeParams,  # noqa: ARG001
-        **kwargs: Array,
-    ) -> Array:
-        return fn(*args, **kwargs)
-
-    return cast("InternalUserFunction", processed_func)
+    param_names = list(params_template[param_key])  # ty: ignore[invalid-argument-type]
+    if not param_names:
+        return cast("InternalUserFunction", fn)
+    mapper = {p: f"{param_key}{REGIME_SEPARATOR}{p}" for p in param_names}
+    return cast("InternalUserFunction", rename_arguments(fn, mapper=mapper))
 
 
 def _get_stochastic_next_function(fn: UserFunction, grid: Int1D) -> UserFunction:
@@ -504,24 +470,30 @@ def _get_weights_fn_for_shock(
     return weights_func
 
 
-def _ensure_fn_only_depends_on_internal_regime_params(
+def _rename_fn_params(
     fn: UserFunction,
     fn_name: str,
     params_template: RegimeParamsTemplate,
     param_key: str | None = None,
 ) -> InternalUserFunction:
-    # param_key is the key to look up in internal_regime_params (may differ from
-    # fn_name).
+    """Rename function parameters to qualified names if needed.
+
+    Args:
+        fn: The user function.
+        fn_name: The name of the function (unused, kept for API compat).
+        params_template: The parameter template for the regime.
+        param_key: The key to look up in params_template. If None, uses fn_name.
+
+    Returns:
+        The function with renamed parameters (or unchanged if no params).
+
+    """
     key = param_key if param_key is not None else fn_name
-    # internal_regime_params[key] contains the dictionary of parameters used by the
-    # function, which is empty if the function does not depend on any regime parameters.
-    if params_template[key]:
-        return _replace_func_parameters_by_internal_regime_params(
-            fn=fn,
-            params_template=params_template,
-            param_key=key,
-        )
-    return _add_dummy_internal_regime_params_argument(fn)
+    return _rename_params_to_qualified_names(
+        fn=fn,
+        params_template=params_template,
+        param_key=key,
+    )
 
 
 def _extract_regime_fixed_params(

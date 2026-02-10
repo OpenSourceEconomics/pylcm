@@ -37,7 +37,7 @@ def get_next_state_function_for_solution(
 
     Returns:
         Function that computes the next states. Depends on states and actions of the
-        current period, and the regime parameters ("internal_regime_params"). If target
+        current period, and the regime parameters (as flat kwargs). If target
         is "simulate", the function also depends on the dictionary of random keys
         ("keys"), which corresponds to the names of stochastic next functions.
 
@@ -236,7 +236,6 @@ def _create_continuous_stochastic_next_func(
     """
     prev_state_name = name.split("next_")[1]
     args = {
-        "internal_regime_params": "InternalRegimeParams",
         f"key_{name}": "dict[str, Array]",
         prev_state_name: "Array",
     }

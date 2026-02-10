@@ -52,7 +52,7 @@ def calculate_next_states(
     optimal_actions: MappingProxyType[str, Array],
     period: int,
     age: float,
-    internal_regime_params: InternalRegimeParams,
+    flat_params: InternalRegimeParams,
     states: MappingProxyType[str, Array],
     state_action_space: StateActionSpace,
     key: Array,
@@ -66,7 +66,7 @@ def calculate_next_states(
         optimal_actions: Optimal actions computed for these subjects.
         period: Current period.
         age: Age corresponding to current period.
-        internal_regime_params: Model parameters for the regime.
+        flat_params: Flat regime parameters.
         states: Current states for all subjects (all regimes).
         state_action_space: State-action space for subjects in this regime.
         key: JAX random key.
@@ -106,7 +106,7 @@ def calculate_next_states(
         **stochastic_variables_keys,
         period=period,
         age=age,
-        internal_regime_params=internal_regime_params,
+        **flat_params,  # ty: ignore[invalid-argument-type]
     )
 
     # Update global states array with computed next states for subjects in regime
@@ -126,7 +126,7 @@ def calculate_next_regime_membership(
     optimal_actions: MappingProxyType[str, Array],
     period: int,
     age: float,
-    internal_regime_params: InternalRegimeParams,
+    flat_params: InternalRegimeParams,
     regime_names_to_ids: MappingProxyType[RegimeName, int],
     new_subject_regime_ids: Int1D,
     active_regimes_next_period: tuple[RegimeName, ...],
@@ -144,7 +144,7 @@ def calculate_next_regime_membership(
         optimal_actions: Optimal actions computed for these subjects.
         period: Current period.
         age: Age corresponding to current period.
-        internal_regime_params: Model parameters for the regime.
+        flat_params: Flat regime parameters.
         regime_names_to_ids: Mapping from regime names to integer IDs.
         new_subject_regime_ids: Array to update with next regime assignments.
         active_regimes_next_period: List of active regimes in the next period.
@@ -166,7 +166,7 @@ def calculate_next_regime_membership(
             **optimal_actions,
             period=period,
             age=age,
-            internal_regime_params=internal_regime_params,
+            **flat_params,  # ty: ignore[invalid-argument-type]
         )
     )
     normalized_regime_transition_probs = normalize_regime_transition_probs(

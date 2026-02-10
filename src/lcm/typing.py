@@ -84,7 +84,6 @@ class InternalUserFunction(Protocol):
     def __call__(
         self,
         *args: Array | float,
-        internal_regime_params: InternalRegimeParams,
         **kwargs: Array | float,
     ) -> Array: ...
 
@@ -101,7 +100,6 @@ class RegimeTransitionFunction(Protocol):
     def __call__(
         self,
         *args: Array | float,
-        internal_regime_params: InternalRegimeParams,
         **kwargs: Array | float,
     ) -> Float1D: ...
 
@@ -118,7 +116,6 @@ class VmappedRegimeTransitionFunction(Protocol):
     def __call__(
         self,
         *args: Array | float,
-        internal_regime_params: InternalRegimeParams,
         **kwargs: Array | float,
     ) -> FloatND: ...
 
@@ -136,8 +133,7 @@ class QAndFFunction(Protocol):
     def __call__(
         self,
         next_V_arr: FloatND,
-        internal_regime_params: InternalRegimeParams,
-        **states_and_actions: Array,
+        **kwargs: Any,  # noqa: ANN401
     ) -> tuple[FloatND, BoolND]: ...
 
 
@@ -154,7 +150,6 @@ class MaxQOverCFunction(Protocol):
     def __call__(
         self,
         next_V_arr: MappingProxyType[RegimeName, Array],
-        internal_regime_params: InternalRegimeParams,
         period: Period,
         **kwargs: Array,
     ) -> Array: ...
@@ -173,7 +168,6 @@ class ArgmaxQOverCFunction(Protocol):
     def __call__(
         self,
         next_V_arr: MappingProxyType[RegimeName, Array],
-        internal_regime_params: InternalRegimeParams,
         period: Period,
         **kwargs: Array,
     ) -> tuple[Array, Array]: ...
@@ -192,8 +186,7 @@ class MaxQOverAFunction(Protocol):
     def __call__(
         self,
         next_V_arr: MappingProxyType[RegimeName, Array],
-        internal_regime_params: InternalRegimeParams,
-        **states_and_actions: Array,
+        **kwargs: Any,  # noqa: ANN401
     ) -> Array: ...
 
 
@@ -210,8 +203,7 @@ class ArgmaxQOverAFunction(Protocol):
     def __call__(
         self,
         next_V_arr: MappingProxyType[RegimeName, Array],
-        internal_regime_params: InternalRegimeParams,
-        **states_and_actions: Array,
+        **kwargs: Any,  # noqa: ANN401
     ) -> tuple[Array, Array]: ...
 
 
@@ -226,9 +218,7 @@ class MaxQcOverDFunction(Protocol):
 
     """
 
-    def __call__(
-        self, Qc_arr: Array, internal_regime_params: InternalRegimeParams
-    ) -> Array: ...
+    def __call__(self, Qc_arr: Array, **kwargs: Array) -> Array: ...
 
 
 class ArgmaxQcOverDFunction(Protocol):
@@ -242,9 +232,7 @@ class ArgmaxQcOverDFunction(Protocol):
 
     """
 
-    def __call__(
-        self, Qc_arr: Array, internal_regime_params: InternalRegimeParams
-    ) -> tuple[Array, Array]: ...
+    def __call__(self, Qc_arr: Array, **kwargs: Array) -> tuple[Array, Array]: ...
 
 
 class StochasticNextFunction(Protocol):
@@ -266,7 +254,7 @@ class NextStateSimulationFunction(Protocol):
 
     def __call__(
         self,
-        **kwargs: Array | Period | Age | InternalRegimeParams,
+        **kwargs: Array | Period | Age,
     ) -> MappingProxyType[str, DiscreteState | ContinuousState]: ...
 
 

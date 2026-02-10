@@ -14,6 +14,10 @@ from jax import Array
 from lcm.ages import AgeGrid
 from lcm.dispatchers import simulation_spacemap, vmap_1d
 from lcm.grids import Grid
+from lcm.input_processing.params_processing import (
+    get_flat_param_names,
+    get_non_vmap_params,
+)
 from lcm.input_processing.util import get_grids, get_variable_info
 from lcm.interfaces import (
     InternalFunctions,
@@ -31,13 +35,13 @@ from lcm.state_action_space import (
 from lcm.typing import (
     ArgmaxQOverAFunction,
     GridsDict,
-    InternalRegimeParams,
     InternalUserFunction,
     MaxQOverAFunction,
     NextStateSimulationFunction,
     QAndFFunction,
     RegimeName,
     RegimeNamesToIds,
+    RegimeParamsTemplate,
     RegimeTransitionFunction,
     VmappedRegimeTransitionFunction,
 )
@@ -62,7 +66,10 @@ def build_Q_and_F_functions(
     internal_functions: InternalFunctions,
     state_space_infos: MappingProxyType[RegimeName, StateSpaceInfo],
     ages: AgeGrid,
+    params_template: RegimeParamsTemplate,
 ) -> MappingProxyType[int, QAndFFunction]:
+    flat_params_names = frozenset(get_flat_param_names(params_template))
+
     Q_and_F_functions = {}
     for period, age in enumerate(ages.values):
         if regime.terminal:
@@ -70,6 +77,7 @@ def build_Q_and_F_functions(
                 internal_functions=internal_functions,
                 period=period,
                 age=age,
+                flat_params_names=flat_params_names,
             )
         else:
             Q_and_F = get_Q_and_F(
@@ -79,6 +87,7 @@ def build_Q_and_F_functions(
                 age=age,
                 next_state_space_infos=state_space_infos,
                 internal_functions=internal_functions,
+                flat_params_names=flat_params_names,
             )
         Q_and_F_functions[period] = Q_and_F
 
@@ -161,6 +170,7 @@ def build_next_state_simulation_functions(
     grids: GridsDict,
     gridspecs: MappingProxyType[str, Grid],
     variable_info: pd.DataFrame,
+    params_template: RegimeParamsTemplate,
     *,
     enable_jit: bool,
 ) -> NextStateSimulationFunction:
@@ -174,12 +184,12 @@ def build_next_state_simulation_functions(
     signature = inspect.signature(next_state)
     parameters = list(signature.parameters)
 
+    non_vmap_params = get_non_vmap_params(params_template)
+
     next_state_vmapped = vmap_1d(
         func=next_state,
         variables=tuple(
-            parameter
-            for parameter in parameters
-            if parameter not in ("period", "age", "internal_regime_params")
+            parameter for parameter in parameters if parameter not in non_vmap_params
         ),
     )
 
@@ -195,6 +205,7 @@ def build_regime_transition_probs_functions(
     regime_transition_probs: InternalUserFunction,
     grids: MappingProxyType[str, Array],
     regime_names_to_ids: RegimeNamesToIds,
+    params_template: RegimeParamsTemplate,
     *,
     is_stochastic: bool,
     enable_jit: bool,
@@ -236,12 +247,12 @@ def build_regime_transition_probs_functions(
     signature = inspect.signature(next_regime_accepting_all)
     parameters = list(signature.parameters)
 
+    non_vmap_params = get_non_vmap_params(params_template)
+
     next_regime_vmapped = vmap_1d(
         func=next_regime_accepting_all,
         variables=tuple(
-            parameter
-            for parameter in parameters
-            if parameter not in ("period", "age", "internal_regime_params")
+            parameter for parameter in parameters if parameter not in non_vmap_params
         ),
     )
 
@@ -262,8 +273,7 @@ def _wrap_regime_transition_probs(
     processing.
 
     Args:
-        fn: The user's next_regime function (already wrapped with
-            internal_regime_params).
+        fn: The user's next_regime function (with renamed params).
         regime_names_to_ids: Mapping from regime names to integer indices.
 
     Returns:
@@ -279,22 +289,19 @@ def _wrap_regime_transition_probs(
 
     # Preserve original annotations
     annotations = get_annotations(fn)
-    annotations_with_internal_regime_params = annotations.copy()
-    return_annotation = annotations_with_internal_regime_params.pop(
-        "return", "dict[str, Any]"
-    )
+    annotations_copy = annotations.copy()
+    return_annotation = annotations_copy.pop("return", "dict[str, Any]")
 
     @with_signature(
-        args=annotations_with_internal_regime_params,
+        args=annotations_copy,
         return_annotation=return_annotation,
     )
     @functools.wraps(fn)
     def wrapped(
         *args: Array | int,
-        internal_regime_params: InternalRegimeParams,
         **kwargs: Array | int,
     ) -> MappingProxyType[str, Any]:
-        result = fn(*args, internal_regime_params=internal_regime_params, **kwargs)
+        result = fn(*args, **kwargs)
         # Convert array to dict using ordering by regime id
         return MappingProxyType(
             {name: result[idx] for idx, name in enumerate(regime_names)}
@@ -325,19 +332,16 @@ def _wrap_deterministic_regime_transition(
 
     # Preserve original annotations but update return type
     annotations = get_annotations(fn)
-    annotations_with_internal_regime_params = annotations.copy()
-    annotations_with_internal_regime_params.pop("return", None)
+    annotations_copy = annotations.copy()
+    annotations_copy.pop("return", None)
 
-    @with_signature(
-        args=annotations_with_internal_regime_params, return_annotation="Array"
-    )
+    @with_signature(args=annotations_copy, return_annotation="Array")
     @functools.wraps(fn)
     def wrapped(
         *args: Array | int,
-        internal_regime_params: InternalRegimeParams,
         **kwargs: Array | int,
     ) -> Array:
-        regime_idx = fn(*args, internal_regime_params=internal_regime_params, **kwargs)
+        regime_idx = fn(*args, **kwargs)
         return jax.nn.one_hot(regime_idx, n_regimes)
 
     return wrapped

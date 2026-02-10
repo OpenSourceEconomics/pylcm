@@ -2,16 +2,21 @@
 
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.interfaces import InternalRegime
-from lcm.typing import InternalParams, ParamsTemplate, RegimeName, UserParams
+from lcm.typing import (
+    InternalParams,
+    ParamsTemplate,
+    RegimeName,
+    RegimeParamsTemplate,
+    UserParams,
+)
 from lcm.utils import (
     REGIME_SEPARATOR,
     ensure_containers_are_immutable,
     flatten_regime_namespace,
-    unflatten_regime_namespace,
 )
 
 _NUM_PARTS_FUNCTION_PARAM = 3
@@ -93,7 +98,7 @@ def process_params(  # noqa: C901
     if unknown_keys:
         raise InvalidParamsError(f"Unknown keys: {sorted(unknown_keys)}")
 
-    result = unflatten_regime_namespace(result_flat)
+    result = _split_flat_by_regime(result_flat)
 
     # Ensure all regimes from the template are present in the result
     # (even if they have no parameters)
@@ -101,7 +106,7 @@ def process_params(  # noqa: C901
         if regime_name not in result:
             result[regime_name] = {}
 
-    return ensure_containers_are_immutable(result)
+    return cast("InternalParams", ensure_containers_are_immutable(result))
 
 
 def create_params_template(  # noqa: C901
@@ -144,7 +149,7 @@ def create_params_template(  # noqa: C901
                         )
                     argument_names.add(arg_name)
             else:
-                # Top-level param like discount_factor
+                # Scalar param (currently unused - all params are under namespaces)
                 argument_names.add(key)
 
     # Check for separator in regime names
@@ -183,3 +188,49 @@ def create_params_template(  # noqa: C901
     # E.g., labor_income is a function in 'working' but a param in 'retired'.
 
     return ensure_containers_are_immutable(template)
+
+
+def _split_flat_by_regime(
+    flat: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Split a flat params dict into per-regime dicts with function-qualified keys.
+
+    Converts "working__utility__risk_aversion" into
+    {"working": {"utility__risk_aversion": value}}.
+
+    Top-level regime params like "working__discount_factor" become
+    {"working": {"discount_factor": value}}.
+
+    """
+    result: dict[str, dict[str, Any]] = {}
+    for key, value in flat.items():
+        # Key format: "regime__function__param" or "regime__param"
+        regime_name, remainder = key.split(REGIME_SEPARATOR, 1)
+        if regime_name not in result:
+            result[regime_name] = {}
+        result[regime_name][remainder] = value
+    return result
+
+
+def get_flat_param_names(params_template: RegimeParamsTemplate) -> set[str]:
+    """Get all flat parameter names from a regime params template.
+
+    Converts nested template entries like {"utility": {"risk_aversion": type}} to
+    flat names like "utility__risk_aversion". Top-level params like
+    {"discount_factor": float} are included as-is.
+
+    """
+    result = set()
+    for key, value in params_template.items():
+        if isinstance(value, Mapping):
+            for param_name in value:
+                result.add(f"{key}{REGIME_SEPARATOR}{param_name}")
+        else:
+            # Top-level param (e.g., "discount_factor": float)
+            result.add(key)
+    return result
+
+
+def get_non_vmap_params(params_template: RegimeParamsTemplate) -> set[str]:
+    """Get parameter names that should not be vmapped (period, age, flat params)."""
+    return {"period", "age"} | get_flat_param_names(params_template)

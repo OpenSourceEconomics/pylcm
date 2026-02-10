@@ -16,7 +16,6 @@ from lcm.next_state import (
 from lcm.typing import (
     ContinuousState,
     FloatND,
-    InternalRegimeParams,
     InternalUserFunction,
 )
 from tests.test_models.deterministic.regression import dead, working
@@ -43,15 +42,11 @@ def test_get_next_state_function_with_solve_target():
         functions=internal_working.functions,
     )
 
-    internal_regime_params = MappingProxyType(
-        {
-            "discount_factor": 1.0,
-            "utility": {"disutility_of_work": 1.0},
-            "next_wealth": {
-                "interest_rate": 0.05,
-            },
-        }
-    )
+    flat_params = {
+        "discount_factor": 1.0,
+        "utility__disutility_of_work": 1.0,
+        "next_wealth__interest_rate": 0.05,
+    }
     action = {"labor_supply": 1, "consumption": 10}
     state = {"wealth": 20}
 
@@ -60,36 +55,26 @@ def test_get_next_state_function_with_solve_target():
         **state,
         period=1,
         age=1.0,
-        internal_regime_params=internal_regime_params,
+        **flat_params,
     )
     assert got == {"next_wealth": 1.05 * (20 - 10)}
 
 
 def test_get_next_state_function_with_simulate_target():
-    def f_a(
-        state: ContinuousState, internal_regime_params: InternalRegimeParams
-    ) -> ContinuousState:
+    def f_a(state: ContinuousState) -> ContinuousState:
         return state[0]
 
-    def f_b(
-        state: ContinuousState, internal_regime_params: InternalRegimeParams
-    ) -> ContinuousState:
+    def f_b(state: ContinuousState) -> ContinuousState:
         return None  # ty: ignore[invalid-return-type]
 
-    def f_weight_b(
-        state: ContinuousState, internal_regime_params: InternalRegimeParams
-    ) -> FloatND:
+    def f_weight_b(state: ContinuousState) -> FloatND:
         return jnp.array([0.0, 1.0])
 
     grids = MappingProxyType({"mock": MappingProxyType({"b": jnp.arange(2)})})
     gridspecs = MappingProxyType({})
     variable_info = pd.DataFrame({"is_shock": [False], "distribution_type": ["none"]})
-    mock_transition_solve = lambda *args, internal_regime_params, **kwargs: {
-        "mock": 1.0
-    }
-    mock_transition_simulate = lambda *args, internal_regime_params, **kwargs: {
-        "mock": jnp.array([1.0])
-    }
+    mock_transition_solve = lambda *args, **kwargs: {"mock": 1.0}
+    mock_transition_simulate = lambda *args, **kwargs: {"mock": jnp.array([1.0])}
     internal_functions = InternalFunctions(
         utility=lambda: 0,  # ty: ignore[invalid-argument-type]
         constraints=MappingProxyType({}),
@@ -111,9 +96,7 @@ def test_get_next_state_function_with_simulate_target():
     )
 
     key = jnp.arange(2, dtype="uint32")
-    got = got_func(
-        state=jnp.arange(2), key_b=key, internal_regime_params=MappingProxyType({})
-    )
+    got = got_func(state=jnp.arange(2), key_b=key)
 
     expected = {"a": jnp.array([0]), "b": jnp.array([1])}
     assert tree_equal(expected, got)
