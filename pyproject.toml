@@ -1,33 +1,12 @@
-# ======================================================================================
-# Project metadata
-# ======================================================================================
+[build-system]
+build-backend = "hatchling.build"
+requires = [ "hatch-vcs", "hatchling" ]
 
 [project]
-authors = [
-  { name = "Tim Mensinger", email = "mensingertim@gmail.com" },
-  { name = "Janos Gabler" },
-]
-classifiers = [
-  "Development Status :: 3 - Alpha",
-  "Intended Audience :: Science/Research",
-  "License :: OSI Approved :: Apache Software License",
-  "Operating System :: MacOS :: MacOS X",
-  "Operating System :: Microsoft :: Windows",
-  "Operating System :: POSIX",
-  "Operating System :: Unix",
-  "Programming Language :: Python :: 3.14",
-  "Topic :: Scientific/Engineering",
-  "Typing :: Typed",
-]
-dependencies = [
-  # "dags>=0.5.0",
-  "jax>=0.8",
-  "jaxtyping>=0.3.2",
-  "pandas",
-  "portion>=2.6",
-]
+name = "pylcm"
 description = "Specification, solution, and simulation of finite-horizon dynamic choice models."
-dynamic = [ "version" ]
+readme.content-type = "text/markdown"
+readme.file = "README.md"
 keywords = [
   "Dynamic programming",
   "Econometrics",
@@ -36,32 +15,41 @@ keywords = [
   "Life cycle models",
   "Statistics",
 ]
+license.file = "LICENSE"
 maintainers = [
-  { name = "Tim Mensinger", email = "mensingertim@gmail.com" },
   { name = "Hans-Martin von Gaudecker", email = "hmgaudecker@uni-bonn.de" },
+  { name = "Tim Mensinger", email = "mensingertim@gmail.com" },
 ]
-name = "pylcm"
-requires-python = ">= 3.14"
+authors = [
+  { name = "Janos Gabler" },
+  { name = "Tim Mensinger", email = "mensingertim@gmail.com" },
+]
+requires-python = ">=3.14"
 
-[project.license]
-file = "LICENSE"
-
-[project.readme]
-file = "README.md"
-content-type = "text/markdown"
-
-[project.urls]
-Github = "https://github.com/opensourceeconomics/pylcm"
-Repository = "https://github.com/opensourceeconomics/pylcm"
-Tracker = "https://github.com/opensourceeconomics/pylcm/issues"
-
-# ======================================================================================
-# Build system configuration
-# ======================================================================================
-
-[build-system]
-build-backend = "hatchling.build"
-requires = [ "hatchling", "hatch-vcs" ]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: MacOS :: MacOS X",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX",
+  "Operating System :: Unix",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering",
+  "Typing :: Typed",
+]
+dynamic = [ "version" ]
+dependencies = [
+  # "dags>=0.5.0",
+  "jax>=0.8",
+  "jaxtyping>=0.3.2",
+  "pandas",
+  "portion>=2.6",
+]
+urls.Github = "https://github.com/opensourceeconomics/pylcm"
+urls.Repository = "https://github.com/opensourceeconomics/pylcm"
+urls.Tracker = "https://github.com/opensourceeconomics/pylcm/issues"
 
 [tool.hatch.build.hooks.vcs]
 version-file = "src/lcm/_version.py"
@@ -79,6 +67,104 @@ allow-direct-references = true
 [tool.hatch.version]
 source = "vcs"
 
+[tool.ruff]
+target-version = "py314"
+exclude = [ "src/lcm/sandbox" ]
+fix = true
+unsafe-fixes = false
+
+lint.select = [ "ALL" ]
+lint.extend-ignore = [
+  "COM812",  # Conflicts with ruff-format
+  "D",       # Docstrings
+  "EM101",   # Exception must not use a string literal
+  "EM102",   # Exception must not use an f-string literal
+  "FIX002",  # Line contains TODO
+  "ISC001",  # Conflicts with ruff-format
+  "N802",    # Function name should be lowercase
+  "N803",    # Argument name should be lowercase
+  "N806",    # Variable in function should be lowercase
+  "N815",    # Variable in class scope should not be mixedCase
+  "PLR0913", # Too many arguments in function definition
+  "TC001",   # Move application import into a type-checking block
+  "TC002",   # Move third-party import into a type-checking block
+  "TC003",   # Move standard library import into a type-checking block
+  "TRY003",  # Long messages outside exception class
+  "UP047",   # Generic function should use type parameters
+]
+lint.per-file-ignores."examples/*" = [
+  "E402",   # Module level import not at top of file
+  "INP001", # Implicit namespace package
+]
+lint.per-file-ignores."explanations/*" = [
+  "ANN",    # Annotations
+  "E402",   # Module level import not at top of file
+  "INP001", # Implicit namespace package
+  "T201",   # print found
+  "T203",   # pprint found
+]
+lint.per-file-ignores."src/lcm/functools.py" = [
+  "ANN401", # Dynamically typed expressions (Any)
+]
+lint.per-file-ignores."src/lcm/max_*" = [
+  "N999", # Module name mixing uppercase and lowercase
+]
+lint.per-file-ignores."src/lcm/Q_and_F.py" = [
+  "N999", # Module name mixing uppercase and lowercase
+]
+lint.per-file-ignores."tests/*" = [
+  "ANN",     # Annotations
+  "D",       # Docstrings
+  "INP001",  # Implicit namespace package
+  "N999",    # Module name mixing uppercase and lowercase
+  "PLR2004", # Magic values in comparison
+  "S101",    # Use of assert
+  "S301",    # Use of pickle
+]
+lint.per-file-ignores."tests/test_next_state.py" = [
+  "ARG001", # Unused function argument
+  "ARG005", # Unused lambda argument
+  "E731",   # Do not assign a `lambda` expression, use a `def`
+]
+lint.per-file-ignores."tests/test_Q_and_F.py" = [
+  "ARG001", # Unused function argument
+  "ARG005", # Unused lambda argument
+  "E731",   # Do not assign a `lambda` expression, use a `def`
+]
+lint.pydocstyle.convention = "google"
+
+[tool.pytest.ini_options]
+addopts = [ "--pdbcls=pdbp:Pdb" ]
+filterwarnings = [  ]
+markers = [
+  "wip: Tests that are work-in-progress.",
+  "slow: Tests that take a long time to run and are skipped in continuous integration.",
+  "illustrative: Tests are designed for illustrative purposes",
+]
+norecursedirs = [ "docs", ".envs" ]
+
+[tool.ty.rules]
+ambiguous-protocol-member = "error"
+deprecated = "error"
+division-by-zero = "error"
+ignore-comment-unknown-rule = "error"
+invalid-argument-type = "error"
+invalid-ignore-comment = "error"
+invalid-return-type = "error"
+possibly-missing-attribute = "error"
+possibly-missing-implicit-call = "error"
+possibly-missing-import = "error"
+possibly-unresolved-reference = "error"
+redundant-cast = "error"
+undefined-reveal = "error"
+unresolved-global = "error"
+unsupported-base = "error"
+unused-ignore-comment = "error"
+useless-overload-body = "error"
+
+[tool.ty.src]
+include = [ "src/", "tests/", "examples/" ]
+
 [tool.pixi.dependencies]
 cloudpickle = ">=3.1.2,<4"
 jupyterlab = "*"
@@ -91,22 +177,12 @@ pybaum = "*"
 scipy = ">=1.16"
 snakeviz = "*"
 
-# Environments
-# --------------------------------------------------------------------------------------
-
 [tool.pixi.environments]
 cuda12 = { features = [ "cuda12" ], solve-group = "cuda12" }
 cuda13 = { features = [ "cuda13" ], solve-group = "cuda13" }
 tests-cpu = { features = [ "tests" ], solve-group = "default" }
 tests-cuda12 = { features = [ "tests", "cuda12" ], solve-group = "cuda12" }
 tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
-
-# ======================================================================================
-# Ruff configuration
-# ======================================================================================
-
-# Features and Tasks
-# --------------------------------------------------------------------------------------
 
 [tool.pixi.feature.cuda12]
 platforms = [ "linux-64" ]
@@ -149,131 +225,9 @@ dags = { git = "https://github.com/OpenSourceEconomics/dags.git", branch = "typi
 pdbp = "*"
 pylcm = { path = ".", editable = true }
 
-# ======================================================================================
-# Pixi configuration
-# ======================================================================================
-
 [tool.pixi.workspace]
 channels = [ "conda-forge" ]
 platforms = [ "linux-64", "osx-arm64", "win-64" ]
-
-# Development Dependencies (conda and pypi)
-# --------------------------------------------------------------------------------------
-
-# ======================================================================================
-# pytest configuration
-# ======================================================================================
-
-[tool.pytest.ini_options]
-addopts = [ "--pdbcls=pdbp:Pdb" ]
-filterwarnings = [  ]
-markers = [
-  "wip: Tests that are work-in-progress.",
-  "slow: Tests that take a long time to run and are skipped in continuous integration.",
-  "illustrative: Tests are designed for illustrative purposes",
-]
-norecursedirs = [ "docs", ".envs" ]
-
-# ======================================================================================
-# yamlfix configuration
-# ======================================================================================
-
-[tool.ruff]
-exclude = [ "src/lcm/sandbox" ]
-fix = true
-target-version = "py314"
-unsafe-fixes = false
-
-[tool.ruff.lint]
-extend-ignore = [
-  "COM812",  # Conflicts with ruff-format
-  "D",       # Docstrings
-  "EM101",   # Exception must not use a string literal
-  "EM102",   # Exception must not use an f-string literal
-  "FIX002",  # Line contains TODO
-  "ISC001",  # Conflicts with ruff-format
-  "N802",    # Function name should be lowercase
-  "N803",    # Argument name should be lowercase
-  "N806",    # Variable in function should be lowercase
-  "N815",    # Variable in class scope should not be mixedCase
-  "PLR0913", # Too many arguments in function definition
-  "TC001",   # Move application import into a type-checking block
-  "TC002",   # Move third-party import into a type-checking block
-  "TC003",   # Move standard library import into a type-checking block
-  "TRY003",  # Long messages outside exception class
-  "UP047",   # Generic function should use type parameters
-]
-select = [ "ALL" ]
-
-[tool.ruff.lint.per-file-ignores]
-"examples/*" = [
-  "E402",   # Module level import not at top of file
-  "INP001", # Implicit namespace package
-]
-"explanations/*" = [
-  "ANN",    # Annotations
-  "E402",   # Module level import not at top of file
-  "T201",   # print found
-  "T203",   # pprint found
-  "INP001", # Implicit namespace package
-]
-"src/lcm/functools.py" = [
-  "ANN401", # Dynamically typed expressions (Any)
-]
-"src/lcm/max_*" = [
-  "N999", # Module name mixing uppercase and lowercase
-]
-"src/lcm/Q_and_F.py" = [
-  "N999", # Module name mixing uppercase and lowercase
-]
-"tests/*" = [
-  "ANN",     # Annotations
-  "D",       # Docstrings
-  "INP001",  # Implicit namespace package
-  "N999",    # Module name mixing uppercase and lowercase
-  "PLR2004", # Magic values in comparison
-  "S101",    # Use of assert
-  "S301",    # Use of pickle
-]
-"tests/test_next_state.py" = [
-  "ARG001", # Unused function argument
-  "ARG005", # Unused lambda argument
-  "E731",   # Do not assign a `lambda` expression, use a `def`
-]
-"tests/test_Q_and_F.py" = [
-  "ARG001", # Unused function argument
-  "ARG005", # Unused lambda argument
-  "E731",   # Do not assign a `lambda` expression, use a `def`
-]
-
-[tool.ruff.lint.pydocstyle]
-convention = "google"
-
-# ======================================================================================
-# ty configuration
-# ======================================================================================
-
-[tool.ty.rules]
-ambiguous-protocol-member = "error"
-deprecated = "error"
-division-by-zero = "error"
-ignore-comment-unknown-rule = "error"
-invalid-argument-type = "error"
-invalid-ignore-comment = "error"
-invalid-return-type = "error"
-possibly-missing-attribute = "error"
-possibly-missing-implicit-call = "error"
-possibly-missing-import = "error"
-possibly-unresolved-reference = "error"
-redundant-cast = "error"
-undefined-reveal = "error"
-unresolved-global = "error"
-unsupported-base = "error"
-unused-ignore-comment = "error"
-useless-overload-body = "error"
-
-[tool.ty.src]
-include = [ "src/", "tests/", "examples/" ]
 
 [tool.yamlfix]
 line_length = 88
