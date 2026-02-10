@@ -298,10 +298,10 @@ def _get_internal_functions(
     functions: dict[str, InternalUserFunction] = {}
 
     for fn_name, fn in deterministic_functions.items():
-        functions[fn_name] = _rename_fn_params(
+        functions[fn_name] = _rename_params_to_qnames(
             fn=fn,
-            fn_name=fn_name,
             regime_params_template=regime_params_template,
+            param_key=fn_name,
         )
 
     for fn_name, fn in deterministic_transition_functions.items():
@@ -314,11 +314,10 @@ def _get_internal_functions(
             param_key = fn_name.split(QNAME_DELIMITER, 1)[1]
         else:
             param_key = fn_name
-        functions[fn_name] = _rename_fn_params(
+        functions[fn_name] = _rename_params_to_qnames(
             fn=fn,
-            fn_name=fn_name,
-            param_key=param_key,
             regime_params_template=regime_params_template,
+            param_key=param_key,
         )
 
     for fn_name, fn in stochastic_transition_functions.items():
@@ -331,11 +330,10 @@ def _get_internal_functions(
             if QNAME_DELIMITER in fn_name
             else fn_name
         )
-        functions[f"weight_{fn_name}"] = _rename_fn_params(
+        functions[f"weight_{fn_name}"] = _rename_params_to_qnames(
             fn=fn,
-            fn_name=fn_name,
-            param_key=param_key,
             regime_params_template=regime_params_template,
+            param_key=param_key,
         )
         functions[fn_name] = _get_stochastic_next_function(
             fn=fn,
@@ -468,32 +466,6 @@ def _get_weights_fn_for_shock(
         )
 
     return weights_func
-
-
-def _rename_fn_params(
-    fn: UserFunction,
-    fn_name: str,
-    regime_params_template: RegimeParamsTemplate,
-    param_key: str | None = None,
-) -> InternalUserFunction:
-    """Rename function parameters to qualified names if needed.
-
-    Args:
-        fn: The user function.
-        fn_name: The name of the function (unused, kept for API compat).
-        regime_params_template: The parameter template for the regime.
-        param_key: The key to look up in regime_params_template. If None, uses fn_name.
-
-    Returns:
-        The function with renamed parameters (or unchanged if no params).
-
-    """
-    key = param_key if param_key is not None else fn_name
-    return _rename_params_to_qnames(
-        fn=fn,
-        regime_params_template=regime_params_template,
-        param_key=key,
-    )
 
 
 def _extract_regime_fixed_params(
