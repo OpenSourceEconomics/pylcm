@@ -1,4 +1,3 @@
-import inspect
 from collections.abc import Callable
 from types import MappingProxyType
 from typing import Any, cast
@@ -103,25 +102,9 @@ def get_Q_and_F(
             ),
         )
 
-    # Precompute which extra kwargs (e.g. dynamic grid params like wealth__points)
-    # each next_V function needs beyond next_* states and next_V_arr.
-    next_V_extra_kwargs: dict[str, tuple[str, ...]] = {}
-    for target_regime_name, vfunc in next_V.items():
-        extra = tuple(
-            name
-            for name in inspect.signature(vfunc).parameters
-            if not name.startswith("next_") and name != "next_V_arr"
-        )
-        next_V_extra_kwargs[target_regime_name] = extra
-
     # ----------------------------------------------------------------------------------
     # Create the state-action value and feasibility function
     # ----------------------------------------------------------------------------------
-
-    # Collect all extra params needed by next_V functions (e.g. wealth__points)
-    next_V_extra_param_names = {
-        p for extra in next_V_extra_kwargs.values() for p in extra
-    }
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         [
@@ -130,8 +113,8 @@ def get_Q_and_F(
             *list(state_transitions.values()),
             *list(next_stochastic_states_weights.values()),
         ],
-        include={"next_V_arr"} | flat_params_names | next_V_extra_param_names,
-        exclude={"period", "age"},
+        include=frozenset({"next_V_arr"} | flat_params_names),
+        exclude=frozenset({"period", "age"}),
     )
 
     @with_signature(
@@ -189,11 +172,9 @@ def get_Q_and_F(
             # As we productmap'd the value function over the stochastic variables, the
             # resulting next value function gets a new dimension for each stochastic
             # variable.
-            extra_kw = {k: kwargs[k] for k in next_V_extra_kwargs[target_regime_name]}
             next_V_at_stochastic_states_arr = next_V[target_regime_name](
                 **next_states,
                 next_V_arr=next_V_arr[target_regime_name],
-                **extra_kw,
             )
 
             # We then take the weighted average of the next value function at the
@@ -248,8 +229,8 @@ def get_Q_and_F_terminal(
         # While the terminal period does not depend on the value function array, we
         # include it in the signature, such that we can treat all periods uniformly
         # during the solution and simulation.
-        include={"next_V_arr"} | flat_params_names,
-        exclude={"period", "age"},
+        include=frozenset({"next_V_arr"} | flat_params_names),
+        exclude=frozenset({"period", "age"}),
     )
 
     @with_signature(
@@ -287,9 +268,9 @@ def get_Q_and_F_terminal(
 
 def _get_arg_names_of_Q_and_F(
     deps: list[Callable[..., Any]],
-    include: set[str] | None = None,
-    exclude: set[str] | None = None,
-) -> list[str]:
+    include: frozenset[str] = frozenset(),
+    exclude: frozenset[str] = frozenset(),
+) -> tuple[str, ...]:
     """Get the argument names of the dependencies.
 
     Args:
@@ -302,10 +283,7 @@ def _get_arg_names_of_Q_and_F(
         exclude.
 
     """
-    deps_arg_names = get_union_of_arguments(deps)
-    result = deps_arg_names | (include or set())
-    result -= exclude or set()
-    return list(result)
+    return tuple((get_union_of_arguments(deps) | include) - exclude)
 
 
 def _get_joint_weights_function(
