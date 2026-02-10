@@ -145,11 +145,11 @@ def utility(
     fcost: FloatND,
     disutil: FloatND,
     cons_util: FloatND,
-    discount_factor: DiscreteState,
+    stochastic_discount_factor: DiscreteState,
     beta_mean: float,
     beta_std: float,
 ) -> FloatND:
-    beta = beta_mean + jnp.where(discount_factor, beta_std, -beta_std)
+    beta = beta_mean + jnp.where(stochastic_discount_factor, beta_std, -beta_std)
     f = cons_util - disutil - fcost - scaled_adjustment_cost
     return f * (beta**period)
 
@@ -270,8 +270,10 @@ def next_wealth(saving: ContinuousAction) -> ContinuousState:
     return saving
 
 
-def next_discount_factor(discount_factor: DiscreteState) -> DiscreteState:
-    return discount_factor
+def next_stochastic_discount_factor(
+    stochastic_discount_factor: DiscreteState,
+) -> DiscreteState:
+    return stochastic_discount_factor
 
 
 @lcm.mark.stochastic
@@ -389,7 +391,7 @@ ALIVE_REGIME = Regime(
         "effort_t_1": DiscreteGrid(Effort),
         "adjustment_cost": ShockGrid(n_points=5, distribution_type="uniform"),
         "education": DiscreteGrid(EducationStatus),
-        "discount_factor": DiscreteGrid(DiscountFactor),
+        "stochastic_discount_factor": DiscreteGrid(DiscountFactor),
         "productivity": DiscreteGrid(ProductivityType),
         "health_type": DiscreteGrid(HealthType),
     },
@@ -401,7 +403,7 @@ ALIVE_REGIME = Regime(
         "next_wealth": next_wealth,
         "next_health": next_health,
         "next_productivity_shock": next_productivity_shock,
-        "next_discount_factor": next_discount_factor,
+        "next_stochastic_discount_factor": next_stochastic_discount_factor,
         "next_adjustment_cost": next_adjustment_cost,
         "next_effort_t_1": next_effort_t_1,
         "next_health_type": next_health_type,
@@ -742,7 +744,7 @@ def create_inputs(
         "adjustment_cost": initial_adjustment_cost,
         "education": initial_education,
         "productivity": initial_productivity,
-        "discount_factor": initial_discount,
+        "stochastic_discount_factor": initial_discount,
     }
     initial_regimes = ["alive"] * n_simulation_subjects
     return params, initial_states, initial_regimes
