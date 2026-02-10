@@ -32,9 +32,9 @@ from lcm.ndimage import map_coordinates
 from lcm.regime import Regime
 from lcm.state_action_space import create_state_action_space, create_state_space_info
 from lcm.typing import (
+    FlatRegimeParams,
     Float1D,
     Int1D,
-    InternalRegimeParams,
     InternalUserFunction,
     RegimeName,
     RegimeNamesToIds,
@@ -498,7 +498,7 @@ def _rename_fn_params(
 
 def _extract_regime_fixed_params(
     regime: Regime, regime_name: str, fixed_params: UserParams
-) -> InternalRegimeParams:
+) -> FlatRegimeParams:
     """Extract and process fixed params relevant to a regime's shocks.
 
     Fixed params can be provided at two levels:
@@ -528,7 +528,7 @@ def _extract_regime_fixed_params(
 
 def _init_shock_gridspecs(
     gridspecs: MappingProxyType[str, Grid],
-    internal_fixed_params: InternalRegimeParams,
+    internal_fixed_params: FlatRegimeParams,
 ) -> MappingProxyType[str, Grid]:
     """Initialize ShockGrid instances with their fixed parameters."""
     result: dict[str, Grid] = {}

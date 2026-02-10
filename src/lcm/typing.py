@@ -43,14 +43,13 @@ type UserParams = Mapping[
     | Mapping[str, bool | float | Array | Mapping[str, bool | float | Array]],
 ]
 
-# Internal regime parameters: A pytree with two levels:
-# - Top-level keys are almost always function names, except for discount_factor etc.
-# - Second-level keys are argument names
-# - Leaves are values to be passed to the functions.
-type InternalRegimeParams = MappingProxyType[
+# Flat regime parameters: function-qualified names mapped to values.
+# Keys are like "utility__risk_aversion", "discount_factor". Values are scalars or
+# arrays.
+type FlatRegimeParams = MappingProxyType[
     str, bool | float | Array | MappingProxyType[str, bool | float | Array]
 ]
-type InternalParams = MappingProxyType[RegimeName, InternalRegimeParams]
+type InternalParams = MappingProxyType[RegimeName, FlatRegimeParams]
 
 # Immutable templates, used internally
 type RegimeParamsTemplate = MappingProxyType[str, type | MappingProxyType[str, type]]
