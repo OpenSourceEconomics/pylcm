@@ -166,7 +166,7 @@ def test_productmap_with_some_arguments_mapped():
         "c": jnp.linspace(1, 5, 5),
     }
 
-    helper = jnp.array(list(itertools.product(grids["a"], [grids["b"]], grids["c"]))).T  # ty: ignore[no-matching-overload]
+    helper = jnp.array(list(itertools.product(grids["a"], [grids["b"]], grids["c"]))).T
 
     expected = allow_args(f)(*helper).reshape(10, 5)
 
