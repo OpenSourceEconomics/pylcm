@@ -59,7 +59,8 @@ exclude = [ "tests" ]
 only-packages = true
 
 [tool.hatch.build.targets.wheel]
-packages = [ "src/lcm" ]
+only-include = [ "src" ]
+sources = [ "src" ]
 
 [tool.hatch.metadata]
 allow-direct-references = true
@@ -137,11 +138,9 @@ lint.pydocstyle.convention = "google"
 addopts = [ "--pdbcls=pdbp:Pdb" ]
 filterwarnings = [  ]
 markers = [
-  "wip: Tests that are work-in-progress.",
-  "slow: Tests that take a long time to run and are skipped in continuous integration.",
   "illustrative: Tests are designed for illustrative purposes",
 ]
-norecursedirs = [ "docs", ".envs" ]
+norecursedirs = [ "docs" ]
 
 [tool.ty.rules]
 ambiguous-protocol-member = "error"
@@ -166,6 +165,7 @@ useless-overload-body = "error"
 include = [ "src/", "tests/", "examples/" ]
 
 [tool.pixi.dependencies]
+python = "~=3.14.0"
 cloudpickle = ">=3.1.2,<4"
 jupyterlab = "*"
 memory_profiler = "*"
@@ -221,7 +221,7 @@ tests-with-cov = "pytest tests --cov-report=xml --cov=./"
 ty = "ty check"
 
 [tool.pixi.pypi-dependencies]
-dags = { git = "https://github.com/OpenSourceEconomics/dags.git", branch = "typing-allow-sequence-instead-of-list-only" }
+dags = { git = "https://github.com/OpenSourceEconomics/dags.git", branch = "main" }
 pdbp = "*"
 pylcm = { path = ".", editable = true }
 
