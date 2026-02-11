@@ -2,7 +2,8 @@
 
 import dataclasses
 import functools
-from collections.abc import Mapping
+import inspect
+from collections.abc import Callable, Mapping
 from itertools import chain
 from types import MappingProxyType
 
@@ -684,10 +685,9 @@ def _partial_fixed_params_into_regimes(
 
 
 def _filter_kwargs_for_func(
-    func: object, kwargs: dict[str, object]
-) -> dict[str, object]:
+    func: Callable, kwargs: Mapping[str, object]
+) -> Mapping[str, object]:
     """Filter kwargs to only those accepted by func's signature."""
-    import inspect  # noqa: PLC0415
 
     try:
         sig = inspect.signature(func)
