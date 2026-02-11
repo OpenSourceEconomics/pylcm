@@ -683,7 +683,9 @@ def _partial_fixed_params_into_regimes(
     return MappingProxyType(result)
 
 
-def _filter_kwargs_for_func(func: object, kwargs: dict[str, object]) -> dict[str, object]:
+def _filter_kwargs_for_func(
+    func: object, kwargs: dict[str, object]
+) -> dict[str, object]:
     """Filter kwargs to only those accepted by func's signature."""
     import inspect  # noqa: PLC0415
 

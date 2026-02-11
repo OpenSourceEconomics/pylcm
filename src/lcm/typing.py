@@ -5,6 +5,8 @@ from typing import Any, Protocol
 from jax import Array
 from jaxtyping import Bool, Float, Int, Scalar
 
+from lcm.nested_mapping_params import NestedMappingParams
+
 type ContinuousState = Float[Array, "..."]
 type ContinuousAction = Float[Array, "..."]
 type DiscreteState = Int[Array, "..."]
@@ -40,7 +42,15 @@ type UserParams = Mapping[
     bool
     | float
     | Array
-    | Mapping[str, bool | float | Array | Mapping[str, bool | float | Array]],
+    | NestedMappingParams
+    | Mapping[
+        str,
+        bool
+        | float
+        | Array
+        | NestedMappingParams
+        | Mapping[str, bool | float | Array | NestedMappingParams],
+    ],
 ]
 
 # Internal regime parameters: A flat mapping with function-qualified names.

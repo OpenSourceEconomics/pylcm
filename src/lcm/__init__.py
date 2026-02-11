@@ -20,6 +20,7 @@ from lcm.grids import (
     categorical,
 )
 from lcm.model import Model
+from lcm.nested_mapping_params import NestedMappingParams
 from lcm.regime import Regime
 from lcm.simulation.result import SimulationResult
 
@@ -38,6 +39,7 @@ __all__ = [
     "LinSpacedGrid",
     "LogSpacedGrid",
     "Model",
+    "NestedMappingParams",
     "Piece",
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",
