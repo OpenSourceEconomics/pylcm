@@ -256,7 +256,7 @@ def _get_vmap_params(
     """Get parameter names that should be vmapped (states and actions)."""
     non_vmap = {"period", "age"} | get_flat_param_names(regime_params_template)
     # Filter for states and actions
-    return tuple(s_a for s_a in all_args if s_a not in non_vmap)
+    return tuple(arg for arg in all_args if arg not in non_vmap)
 
 
 def _wrap_regime_transition_probs(
