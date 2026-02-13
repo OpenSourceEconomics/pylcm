@@ -18,8 +18,9 @@ def create_regime_params_template(
     arguments that are not states, actions, other regime functions, or special variables
     (period, age, continuation_value).
 
-    Dynamic grids (IrregSpacedGrid without points, ShockGrid without full shock_params)
-    add entries to the template under pseudo-function keys matching the state name.
+    Grids with runtime-supplied values (IrregSpacedGrid without points, ShockGrid
+    without full shock_params) add entries to the template under pseudo-function keys
+    matching the state name.
 
     Args:
         regime: The regime as provided by the user.
@@ -39,7 +40,7 @@ def create_regime_params_template(
         *regime.states,
     }
 
-    function_params: dict[str, dict[str, type]] = {}
+    function_params = {}
     # Use dags.tree to discover parameters and their type annotations for each function.
     for name, func in regime.get_all_functions().items():
         tree = dt.create_tree_with_input_types({name: func})
@@ -61,23 +62,23 @@ def create_regime_params_template(
                 f"the parameter(s) or the state(s)/action(s) to avoid ambiguity."
             )
 
-    # Add dynamic grid entries to the template
+    # Add entries for grids whose points/params are supplied at runtime
     for state_name, grid in regime.states.items():
-        if isinstance(grid, IrregSpacedGrid) and grid.is_dynamic:
+        if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:
             if state_name in function_params:
                 raise InvalidNameError(
-                    f"Dynamic IrregSpacedGrid state '{state_name}' conflicts with "
-                    f"a function of the same name in the regime."
+                    f"IrregSpacedGrid state '{state_name}' (with runtime-supplied "
+                    f"points) conflicts with a function of the same name in the regime."
                 )
             function_params[state_name] = {"points": Array}
-        elif isinstance(grid, ShockGrid) and grid.dynamic_shock_params:
+        elif isinstance(grid, ShockGrid) and grid.params_to_pass_at_runtime:
             if state_name in function_params:
                 raise InvalidNameError(
-                    f"Dynamic ShockGrid state '{state_name}' conflicts with "
-                    f"a function of the same name in the regime."
+                    f"ShockGrid state '{state_name}' (with runtime-supplied params) "
+                    f"conflicts with a function of the same name in the regime."
                 )
             function_params[state_name] = dict.fromkeys(
-                grid.dynamic_shock_params, float
+                grid.params_to_pass_at_runtime, float
             )
 
-    return ensure_containers_are_immutable(function_params)  # ty: ignore[invalid-return-type]
+    return ensure_containers_are_immutable(function_params)

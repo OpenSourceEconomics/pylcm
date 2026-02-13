@@ -1,3 +1,4 @@
+import inspect
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
@@ -29,17 +30,42 @@ class Shock:
     n_points: int
     shock_params: MappingProxyType[str, float]
 
+    @property
+    def is_fully_specified(self) -> bool:
+        """Whether all params needed by the discretization function are present."""
+        sig = inspect.signature(SHOCK_GRIDPOINT_FUNCTIONS[self.distribution_type])
+        return all(
+            name == "n_points" or name in self.shock_params for name in sig.parameters
+        )
+
     def get_gridpoints(self) -> Float1D:
-        """Get the gridpoints used for discretization."""
+        """Get the gridpoints used for discretization.
+
+        Returns zeros of the correct shape when required params are missing
+        (they will be filled at runtime).
+
+        """
+        if not self.is_fully_specified:
+            return jnp.zeros(self.n_points)
         return SHOCK_GRIDPOINT_FUNCTIONS[self.distribution_type](
             self.n_points, **self.shock_params
         )
 
     def get_transition_probs(self) -> FloatND:
-        """Get the transition probabilities at the gridpoints."""
-        return SHOCK_TRANSITION_PROBABILITY_FUNCTIONS[self.distribution_type](
-            self.n_points, **self.shock_params
-        )
+        """Get the transition probabilities at the gridpoints.
+
+        Returns uniform probabilities of the correct shape when required params
+        are missing (they will be filled at runtime).
+
+        """
+        if not self.is_fully_specified:
+            return jnp.full(
+                (self.n_points, self.n_points), fill_value=1 / self.n_points
+            )
+        func = SHOCK_TRANSITION_PROBABILITY_FUNCTIONS[self.distribution_type]
+        accepted = inspect.signature(func).parameters
+        kwargs = {k: v for k, v in self.shock_params.items() if k in accepted}
+        return func(self.n_points, **kwargs)
 
     def draw_shock(self, key: FloatND, prev_value: Float1D) -> Float1D:
         """Draw a shock from its distribution."""
@@ -49,7 +75,7 @@ class Shock:
 
 
 def _discretized_uniform_distribution_gridpoints(
-    n_points: int, start: float = 0, stop: float = 1
+    n_points: int, start: float, stop: float
 ) -> FloatND:
     """Calculate the gridpoints for a discretized uniform distribution.
 
@@ -81,7 +107,7 @@ def _discretized_uniform_distribution_probs(n_points: int, **_kwargs: float) -> 
 
 
 def _discretized_normal_distribution_gridpoints(
-    n_points: int, mu_eps: float = 0.0, sigma_eps: float = 1.0, n_std: float = 3
+    n_points: int, mu_eps: float, sigma_eps: float, n_std: float
 ) -> FloatND:
     """Calculate the gridpoints for a discretized uniform distribution.
 
@@ -102,7 +128,7 @@ def _discretized_normal_distribution_gridpoints(
 
 
 def _discretized_normal_distribution_probs(
-    n_points: int, mu_eps: float = 0.0, sigma_eps: float = 1.0, n_std: float = 3
+    n_points: int, mu_eps: float, sigma_eps: float, n_std: float
 ) -> FloatND:
     """Calculate the transition probabilities for a discretized normal distribution.
 
@@ -131,9 +157,9 @@ def _discretized_normal_distribution_probs(
 def _tauchen_gridpoints(
     n_points: int,
     rho: float,
-    sigma_eps: float = 1.0,
-    mu_eps: float = 0.0,
-    n_std: int = 2,
+    sigma_eps: float,
+    mu_eps: float,
+    n_std: float,
 ) -> FloatND:
     r"""Calculate the gridpoints for an AR1 process with the 'Tauchen'-method.
 
@@ -172,9 +198,9 @@ def _tauchen_gridpoints(
 def _tauchen_probs(
     n_points: int,
     rho: float,
-    sigma_eps: float = 1.0,
-    mu_eps: float = 0.0,
-    n_std: int = 2,
+    sigma_eps: float,
+    mu_eps: float,
+    n_std: float,
 ) -> FloatND:
     r"""Calculate the transition probs for an AR1 process with the 'Tauchen'-method.
 
@@ -227,7 +253,7 @@ def _tauchen_probs(
 
 
 def _rouwenhorst_gridpoints(
-    n_points: int, rho: float, sigma_eps: float = 1.0, mu_eps: float = 0.0
+    n_points: int, rho: float, sigma_eps: float, mu_eps: float
 ) -> FloatND:
     r"""Calculate the gridpoints for the AR1 process with the 'Rouwenhorst'-method.
 

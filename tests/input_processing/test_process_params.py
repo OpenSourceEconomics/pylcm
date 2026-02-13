@@ -11,6 +11,14 @@ from lcm.input_processing.params_processing import (
 )
 
 
+def _expected_flat_keys(params_template, regime):
+    return {
+        f"{func}__{arg}"
+        for func, func_params in params_template[regime].items()
+        for arg in func_params
+    }
+
+
 @pytest.fixture
 def params_template():
     """Fixture providing a params_template with two regimes and two functions each."""
@@ -49,11 +57,9 @@ def test_params_at_function_level(params_template):
     assert set(internal_params.keys()) == set(params_template.keys())
     # Check that output is flat per regime (function__param format)
     for regime in params_template:
-        expected_flat_keys = set()
-        for func, func_params in params_template[regime].items():
-            for arg in func_params:
-                expected_flat_keys.add(f"{func}__{arg}")
-        assert set(internal_params[regime].keys()) == expected_flat_keys
+        assert set(internal_params[regime].keys()) == _expected_flat_keys(
+            params_template, regime
+        )
 
 
 def test_params_at_regime_level(params_template):
@@ -70,11 +76,9 @@ def test_params_at_regime_level(params_template):
     # Check that output has regime-level keys with flat format
     assert set(internal_params.keys()) == set(params_template.keys())
     for regime in params_template:
-        expected_flat_keys = set()
-        for func, func_params in params_template[regime].items():
-            for arg in func_params:
-                expected_flat_keys.add(f"{func}__{arg}")
-        assert set(internal_params[regime].keys()) == expected_flat_keys
+        assert set(internal_params[regime].keys()) == _expected_flat_keys(
+            params_template, regime
+        )
 
 
 def test_params_mixed_regime_function_level(params_template):
@@ -95,11 +99,9 @@ def test_params_mixed_regime_function_level(params_template):
     # Check that output has regime-level keys with flat format
     assert set(internal_params.keys()) == set(params_template.keys())
     for regime in params_template:
-        expected_flat_keys = set()
-        for func, func_params in params_template[regime].items():
-            for arg in func_params:
-                expected_flat_keys.add(f"{func}__{arg}")
-        assert set(internal_params[regime].keys()) == expected_flat_keys
+        assert set(internal_params[regime].keys()) == _expected_flat_keys(
+            params_template, regime
+        )
 
 
 def test_params_at_model_level(params_template):
@@ -110,11 +112,9 @@ def test_params_at_model_level(params_template):
     # Check that output has regime-level keys with flat format
     assert set(internal_params.keys()) == set(params_template.keys())
     for regime in params_template:
-        expected_flat_keys = set()
-        for func, func_params in params_template[regime].items():
-            for arg in func_params:
-                expected_flat_keys.add(f"{func}__{arg}")
-        assert set(internal_params[regime].keys()) == expected_flat_keys
+        assert set(internal_params[regime].keys()) == _expected_flat_keys(
+            params_template, regime
+        )
 
 
 # ======================================================================================

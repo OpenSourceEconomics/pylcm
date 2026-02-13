@@ -6,7 +6,6 @@ Wealth-Health Gaps in Germany" by Lukas Mahler and Minchul Yum (Econometrica, 20
 
 from dataclasses import make_dataclass
 from functools import partial
-from types import MappingProxyType
 from typing import Any
 
 import jax
@@ -358,11 +357,7 @@ def dead_is_active(age: float, initial_age: float) -> bool:
     return age > initial_age
 
 
-prod_shock_grid = ShockGrid(
-    distribution_type="rouwenhorst",
-    n_points=5,
-    shock_params=MappingProxyType({"rho": rho}),
-)
+prod_shock_grid = ShockGrid(distribution_type="rouwenhorst", n_points=5)
 
 ALIVE_REGIME = Regime(
     functions={
@@ -426,8 +421,8 @@ MAHLER_YUM_MODEL = Model(
     regime_id_class=RegimeId,
     fixed_params={
         "alive": {
-            "productivity_shock": {"rho": rho},
-            "next_adjustment_cost": {"start": 0, "stop": 1},
+            "productivity_shock": {"rho": rho, "mu_eps": 0, "sigma_eps": 1},
+            "adjustment_cost": {"start": 0, "stop": 1},
         }
     },
 )
@@ -761,9 +756,10 @@ if __name__ == "__main__":
         **START_PARAMS,  # ty: ignore[invalid-argument-type]
     )
 
-    simulation_result = MAHLER_YUM_MODEL.solve_and_simulate(
-        params={"alive": params},
-        initial_states=initial_states,
-        initial_regimes=initial_regimes,
-        seed=8295,
-    )
+    for _ in range(3):
+        simulation_result = MAHLER_YUM_MODEL.solve_and_simulate(
+            params={"alive": params},
+            initial_states=initial_states,
+            initial_regimes=initial_regimes,
+            seed=8295,
+        )
