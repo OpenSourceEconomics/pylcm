@@ -34,7 +34,6 @@ from lcm.regime import Regime
 from lcm.shocks import SHOCK_GRIDPOINT_FUNCTIONS, SHOCK_TRANSITION_PROBABILITY_FUNCTIONS
 from lcm.state_action_space import create_state_action_space, create_state_space_info
 from lcm.typing import (
-    FlatRegimeParams,
     Float1D,
     Int1D,
     InternalUserFunction,
@@ -43,7 +42,6 @@ from lcm.typing import (
     RegimeParamsTemplate,
     TransitionFunctionsMapping,
     UserFunction,
-    UserParams,
 )
 from lcm.utils import (
     ensure_containers_are_immutable,
@@ -66,7 +64,6 @@ def process_regimes(
     ages: AgeGrid,
     regime_names_to_ids: RegimeNamesToIds,
     *,
-    fixed_params: UserParams,
     enable_jit: bool,
 ) -> MappingProxyType[RegimeName, InternalRegime]:
     """Process the user regime.
@@ -81,7 +78,6 @@ def process_regimes(
         regimes: Mapping of regime names to Regime instances.
         ages: The AgeGrid for the model.
         regime_names_to_ids: Immutable mapping from regime names to integer indices.
-        fixed_params: Parameters that can be fixed at model initialization.
         enable_jit: Whether to jit the functions of the internal regime.
 
     Returns:
@@ -112,19 +108,7 @@ def process_regimes(
     variable_info = MappingProxyType(
         {n: get_variable_info(r) for n, r in regimes.items()}
     )
-    shock_init_params = {
-        n: _extract_shock_params(regime=r, regime_name=n, fixed_params=fixed_params)
-        for n, r in regimes.items()
-    }
-    gridspecs = MappingProxyType(
-        {
-            n: _init_shock_gridspecs(
-                gridspecs=get_gridspecs(r),
-                shock_init_params=shock_init_params[n],
-            )
-            for n, r in regimes.items()
-        }
-    )
+    gridspecs = MappingProxyType({n: get_gridspecs(r) for n, r in regimes.items()})
     grids = MappingProxyType(
         {
             n: MappingProxyType(
@@ -208,7 +192,6 @@ def process_regimes(
             active_periods=tuple(regimes_to_active_periods[name]),
             regime_transition_probs=internal_functions.regime_transition_probs,
             internal_functions=internal_functions,
-            shock_init_params=shock_init_params[name],
             transitions=internal_functions.transitions,
             regime_params_template=regime_params_template,
             state_action_space=state_action_spaces[name],
@@ -493,65 +476,6 @@ def _get_weights_fn_for_shock(
         )
 
     return weights_func
-
-
-def _extract_shock_params(
-    regime: Regime, regime_name: str, fixed_params: UserParams
-) -> FlatRegimeParams:
-    """Extract ShockGrid initialization params from fixed_params for one regime.
-
-    Returns a mapping ``{state_name: {shock_param: value, ...}}`` for every
-    ShockGrid state that has initialization params in *fixed_params*.
-
-    Lookup order (first match wins):
-
-    1. Regime-level, keyed by state name:  ``{regime: {state: ...}}``
-    2. Regime-level, keyed by transition:  ``{regime: {next_state: ...}}``
-    3. Model-level, keyed by state name:   ``{state: ...}``
-    4. Model-level, keyed by transition:   ``{next_state: ...}``
-
-    """
-    result: dict[str, Any] = {}
-
-    regime_fixed_params = fixed_params.get(regime_name, {})
-    if not isinstance(regime_fixed_params, Mapping):
-        regime_fixed_params = {}
-
-    for state_name, state in regime.states.items():
-        if not isinstance(state, ShockGrid):
-            continue
-
-        next_name = f"next_{state_name}"
-        for source in (regime_fixed_params, fixed_params):
-            if state_name in source:
-                result[state_name] = source[state_name]
-                break
-            if next_name in source:
-                result[state_name] = source[next_name]
-                break
-
-    return ensure_containers_are_immutable(result)
-
-
-def _init_shock_gridspecs(
-    gridspecs: MappingProxyType[str, Grid],
-    shock_init_params: FlatRegimeParams,
-) -> MappingProxyType[str, Grid]:
-    """Initialize ShockGrid instances with their fixed parameters.
-
-    Shocks with runtime-supplied params (those with missing required params) are
-    skipped — they will get their params at solve time via the params dict.
-
-    """
-    result: dict[str, Grid] = {}
-    for name, spec in gridspecs.items():
-        if isinstance(spec, ShockGrid) and name in shock_init_params:
-            result[name] = spec.init_params(
-                cast("MappingProxyType[str, float]", shock_init_params[name])
-            )
-        else:
-            result[name] = spec
-    return MappingProxyType(result)
 
 
 def _convert_flat_to_nested_transitions(

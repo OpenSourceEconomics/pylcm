@@ -12,7 +12,6 @@ from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, format_messages
-from lcm.grids import ShockGrid
 from lcm.input_processing.params_processing import (
     create_params_template,
     process_params,
@@ -95,13 +94,12 @@ class Model:
         self.description = description
         self.ages = ages
         self.n_periods = ages.n_periods
-        self.fixed_params = fixed_params
+        self.fixed_params = ensure_containers_are_immutable(fixed_params)
 
         _validate_model_inputs(
             n_periods=self.n_periods,
             regimes=regimes,
             regime_id_class=regime_id_class,
-            fixed_params=self.fixed_params,
         )
         self.regime_names_to_ids = MappingProxyType(
             dict(
@@ -116,16 +114,16 @@ class Model:
             regimes=regimes,
             ages=self.ages,
             regime_names_to_ids=self.regime_names_to_ids,
-            fixed_params=self.fixed_params,
             enable_jit=enable_jit,
         )
         self.enable_jit = enable_jit
         self.params_template = create_params_template(self.internal_regimes)
 
         # Partial fixed_params into compiled functions and remove from template
-        general_fixed = _filter_out_shock_params(fixed_params, regimes)
-        if general_fixed:
-            fixed_internal = _resolve_fixed_params(general_fixed, self.params_template)
+        if fixed_params:
+            fixed_internal = _resolve_fixed_params(
+                dict(fixed_params), self.params_template
+            )
             if any(v for v in fixed_internal.values()):
                 self.internal_regimes = _partial_fixed_params_into_regimes(
                     self.internal_regimes, fixed_internal
@@ -275,7 +273,6 @@ def _validate_model_inputs(  # noqa: C901
     n_periods: int,
     regimes: Mapping[str, Regime],
     regime_id_class: type,
-    fixed_params: UserParams,
 ) -> None:
     # Early exit if regimes are not lcm.Regime instances
     if not all(isinstance(regime, Regime) for regime in regimes.values()):
@@ -335,7 +332,6 @@ def _validate_model_inputs(  # noqa: C901
         )
     error_messages.extend(_validate_transition_completeness(regimes))
     error_messages.extend(_validate_all_variables_used(regimes))
-    error_messages.extend(_validate_fixed_params_present(regimes, fixed_params))
 
     if error_messages:
         msg = format_messages(error_messages)
@@ -425,90 +421,6 @@ def _validate_all_variables_used(regimes: Mapping[str, Regime]) -> list[str]:
             )
 
     return error_messages
-
-
-def _validate_fixed_params_present(
-    regimes: Mapping[str, Regime], fixed_params: UserParams
-) -> list[str]:
-    """Return error messages if params for shocks are missing.
-
-    Shocks whose params are supplied at runtime (i.e. missing required params that will
-    be passed at solve time) do NOT need fixed_params. Only shocks that are fully
-    specified (all required params in shock_params) but still need initialization
-    via fixed_params are validated here.
-
-    Fixed params can be provided at two levels:
-    - Model level: {"state_name": {...}} - applies to all regimes
-    - Regime level: {"regime_name": {"state_name": {...}}} - applies to specific regime
-
-    """
-    error_messages = []
-    for regime_name, regime in regimes.items():
-        fixed_params_needed = set()
-        for state_name, state in regime.states.items():
-            if (
-                isinstance(state, ShockGrid)
-                and state.distribution_type in ("tauchen", "rouwenhorst")
-                and not state.params_to_pass_at_runtime
-            ):
-                fixed_params_needed.add(state_name)
-
-        # Check both model-level and regime-level fixed_params
-        regime_fixed_params = fixed_params.get(regime_name, {})
-        if isinstance(regime_fixed_params, Mapping):
-            available_params = set(fixed_params) | set(regime_fixed_params)
-        else:
-            available_params = set(fixed_params)
-
-        # Keys can be state_name or next_{state_name}
-        missing_params = {
-            s
-            for s in fixed_params_needed
-            if s not in available_params and f"next_{s}" not in available_params
-        }
-        if missing_params:
-            error_messages.append(
-                f"Regime {regime_name} is missing fixed params:\n{missing_params}"
-            )
-    return error_messages
-
-
-def _filter_out_shock_params(
-    fixed_params: UserParams,
-    regimes: Mapping[str, Regime],
-) -> dict[str, object]:
-    """Remove fully-specified ShockGrid entries from fixed_params.
-
-    Fully-specified ShockGrid params are keyed by state name (e.g.
-    {"income": {"rho": 0.975}}) and are consumed by process_regimes for grid
-    initialization. They don't match any params_template key, so we filter them out.
-
-    Shocks with runtime-supplied params DO have entries in params_template, so their
-    fixed_params should NOT be filtered — they will be processed as general fixed params
-    and partialled into compiled functions.
-
-    """
-    fixed_shock_keys: set[str] = set()
-    for regime in regimes.values():
-        for state_name, state in regime.states.items():
-            if isinstance(state, ShockGrid) and not state.params_to_pass_at_runtime:
-                fixed_shock_keys.add(state_name)
-                fixed_shock_keys.add(f"next_{state_name}")
-
-    if not fixed_shock_keys:
-        return dict(fixed_params)
-
-    result: dict[str, object] = {}
-    for k, v in fixed_params.items():
-        if k in fixed_shock_keys:
-            continue
-        if k in regimes and isinstance(v, Mapping):
-            filtered = {sk: sv for sk, sv in v.items() if sk not in fixed_shock_keys}
-            if filtered:
-                result[k] = filtered
-        else:
-            result[k] = v
-    return result
 
 
 def _find_candidates(

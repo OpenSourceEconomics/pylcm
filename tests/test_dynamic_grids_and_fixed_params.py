@@ -317,9 +317,7 @@ def _make_shock_model(*, runtime_rho=True, fixed_rho=False):
     )
 
     fixed_params: dict = {}
-    if not runtime_rho:
-        fixed_params = {"income": {"rho": 0.9}}
-    elif fixed_rho:
+    if fixed_rho:
         fixed_params = {"rho": 0.9}
 
     return Model(

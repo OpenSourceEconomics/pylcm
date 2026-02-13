@@ -1,12 +1,9 @@
-from types import MappingProxyType
-
 import jax.numpy as jnp
 import pytest
 
 import lcm
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.grids import ShockGrid
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -503,88 +500,6 @@ def test_missing_transition_for_other_regime_state_raises_error():
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=RegimeId,
         )
-
-
-def test_fixed_params_validation():
-    """Model validates that fixed params exist when shocks are fully specified.
-
-    When a ShockGrid has all required shock_params already specified, it still needs
-    fixed_params at model level or regime level for grid initialization. When the
-    shock has params supplied at runtime (missing required params), no fixed_params
-    are needed — the missing params appear in params_template instead.
-
-    """
-
-    @categorical
-    class RegimeId:
-        alive: int
-        dead: int
-
-    # ShockGrid with rho already in shock_params — fully specified, needs fixed_params
-    alive_fixed = Regime(
-        states={
-            "health": ShockGrid(
-                distribution_type="tauchen",
-                n_points=2,
-                shock_params=MappingProxyType({"rho": 0.9}),
-            )
-        },
-        functions={"utility": lambda health: health},
-        transitions={
-            "next_health": lambda health: health,
-            "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
-        },
-        active=lambda age: age < 1,
-    )
-    dead = Regime(
-        functions={"utility": lambda: 0},
-        terminal=True,
-        active=lambda age: age >= 1,
-    )
-
-    # Fully specified ShockGrid still needs fixed_params
-    with pytest.raises(ModelInitializationError, match="is missing fixed params"):
-        Model(
-            regimes={"alive": alive_fixed, "dead": dead},
-            ages=AgeGrid(start=0, stop=2, step="Y"),
-            regime_id_class=RegimeId,
-            fixed_params={},
-        )
-
-    # Model-level fixed_params should work
-    Model(
-        regimes={"alive": alive_fixed, "dead": dead},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
-        regime_id_class=RegimeId,
-        fixed_params={"health": {"rho": 0.9}},
-    )
-
-    # Regime-level fixed_params should also work
-    Model(
-        regimes={"alive": alive_fixed, "dead": dead},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
-        regime_id_class=RegimeId,
-        fixed_params={"alive": {"health": {"rho": 0.9}}},
-    )
-
-    # ShockGrid with runtime-supplied rho (not in shock_params) — no fixed_params needed
-    alive_runtime = Regime(
-        states={"health": ShockGrid(distribution_type="tauchen", n_points=2)},
-        functions={"utility": lambda health: health},
-        transitions={
-            "next_health": lambda health: health,
-            "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
-        },
-        active=lambda age: age < 1,
-    )
-    model = Model(
-        regimes={"alive": alive_runtime, "dead": dead},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
-        regime_id_class=RegimeId,
-        fixed_params={},
-    )
-    # Runtime-supplied shock param 'rho' appears in params_template
-    assert "rho" in model.params_template["alive"].get("health", {})
 
 
 # ======================================================================================

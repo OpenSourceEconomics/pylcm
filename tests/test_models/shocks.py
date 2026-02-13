@@ -99,9 +99,6 @@ def get_model(
         regimes={"test_regime": test_regime, "test_regime_term": test_regime_term},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=0, stop=n_periods, step="Y"),
-        fixed_params={"income": {"rho": 0.975}}
-        if distribution_type in ["rouwenhorst", "tauchen"]
-        else {},
     )
 
 

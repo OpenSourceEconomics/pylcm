@@ -1,7 +1,7 @@
 import dataclasses
 import inspect
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field, is_dataclass
 from typing import Literal
 
@@ -357,10 +357,6 @@ class ShockGrid(ContinuousGrid):
                 "Cannot compute coordinate for a ShockGrid without all shock params."
             )
         return grid_helpers.get_irreg_coordinate(value, self.to_jax())
-
-    def init_params(self, params: Mapping[str, float]) -> ShockGrid:
-        """Augment the grid with fixed params from model initialization."""
-        return dataclasses.replace(self, shock_params=MappingProxyType(params))
 
 
 @dataclass(frozen=True, kw_only=True)
