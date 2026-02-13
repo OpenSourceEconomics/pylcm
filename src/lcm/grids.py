@@ -312,22 +312,16 @@ class ShockGrid(ContinuousGrid):
     def params_to_pass_at_runtime(self) -> tuple[str, ...]:
         """Return names of shock params not yet specified.
 
-        Inspects the gridpoint function's signature to determine required params,
-        then returns those not already present in `shock_params`.
+        Any parameter of the discretization function that is not present in
+        ``shock_params`` will be added to the params template and must be
+        supplied at solve/simulate time (or via ``fixed_params``).
 
         """
-
         sig = inspect.signature(SHOCK_GRIDPOINT_FUNCTIONS[self.distribution_type])
-
-        def _is_required(name: str, param: inspect.Parameter) -> bool:
-            return (
-                name != "n_points"
-                and name not in self.shock_params
-                and param.default is inspect.Parameter.empty
-            )
-
         return tuple(
-            name for name, param in sig.parameters.items() if _is_required(name, param)
+            name
+            for name in sig.parameters
+            if name != "n_points" and name not in self.shock_params
         )
 
     @property

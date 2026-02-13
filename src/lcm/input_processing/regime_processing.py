@@ -1,4 +1,5 @@
 import functools
+import inspect
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, cast
@@ -438,14 +439,23 @@ def _get_weights_fn_for_shock(
         }
         args = {name: "ContinuousState", **dict.fromkeys(runtime_param_names, "float")}
 
+        # Pre-compute which params the probs function accepts (may differ from
+        # the gridpoints function, e.g. _rouwenhorst_probs only takes rho).
+        _probs_params = set(
+            inspect.signature(
+                SHOCK_TRANSITION_PROBABILITY_FUNCTIONS[dist_type]
+            ).parameters
+        ) - {"n_points"}
+
         @with_signature(args=args, return_annotation="FloatND", enforce=False)
         def weights_func_runtime(*a: Array, **kwargs: Array) -> Float1D:  # noqa: ARG001
             shock_kw = {**fixed_params}
             for qn, raw in runtime_param_names.items():
                 shock_kw[raw] = kwargs[qn]
             grid_points = SHOCK_GRIDPOINT_FUNCTIONS[dist_type](n_points, **shock_kw)
+            probs_kw = {k: v for k, v in shock_kw.items() if k in _probs_params}
             transition_probs = SHOCK_TRANSITION_PROBABILITY_FUNCTIONS[dist_type](
-                n_points, **shock_kw
+                n_points, **probs_kw
             )
             coord = get_irreg_coordinate(kwargs[name], grid_points)
             return map_coordinates(
