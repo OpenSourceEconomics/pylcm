@@ -195,9 +195,6 @@ def _get_coordinate_finder(
     The resulting coordinates can be used to do linear interpolation via
     jax.scipy.ndimage.map_coordinates.
 
-    For IrregSpacedGrid whose points are supplied at runtime, the coordinate finder
-    accepts the grid points as an additional keyword argument (e.g. ``wealth__points``).
-
     Args:
         in_name: Name via which the value to be translated into coordinates will be
             passed into the resulting function.
@@ -209,24 +206,37 @@ def _get_coordinate_finder(
         coordinates on a grid.
 
     """
-    if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:
-        state_name = in_name.removeprefix("next_")
-        points_param = f"{state_name}{QNAME_DELIMITER}points"
-        arg_names = [in_name, points_param]
+    if isinstance(grid, IrregSpacedGrid):
+        if grid.pass_points_at_runtime:
+            state_name = in_name.removeprefix("next_")
+            points_param = f"{state_name}{QNAME_DELIMITER}points"
+            arg_names = [in_name, points_param]
+
+            @with_signature(
+                args=dict.fromkeys(arg_names, "Array"), return_annotation="Array"
+            )
+            def find_coordinate_irreg(*args: Array, **kwargs: Array) -> Array:
+                kwargs = all_as_kwargs(args, kwargs, arg_names=arg_names)
+                return get_irreg_coordinate(kwargs[in_name], kwargs[points_param])  # ty: ignore[invalid-return-type]
+
+            return find_coordinate_irreg
+
+        # Fixed points — capture in closure
+        points_jax = grid.to_jax()
 
         @with_signature(
-            args=dict.fromkeys(arg_names, "Array"), return_annotation="Array"
+            args=dict.fromkeys([in_name], "Array"), return_annotation="Array"
         )
-        def find_coordinate_runtime(*args: Array, **kwargs: Array) -> Array:
-            kwargs = all_as_kwargs(args, kwargs, arg_names=arg_names)
-            return get_irreg_coordinate(kwargs[in_name], kwargs[points_param])  # ty: ignore[invalid-return-type]
+        def find_coordinate_irreg(*args: Array, **kwargs: Array) -> Array:
+            kwargs = all_as_kwargs(args, kwargs, arg_names=[in_name])
+            return get_irreg_coordinate(kwargs[in_name], points_jax)  # ty: ignore[invalid-return-type]
 
-        return find_coordinate_runtime
+        return find_coordinate_irreg
 
+    # All other grid types (LinSpaced, LogSpaced, Piecewise*, ShockGrid)
     @with_signature(args=dict.fromkeys([in_name], "Array"), return_annotation="Array")
     def find_coordinate(*args: Array, **kwargs: Array) -> Array:
         kwargs = all_as_kwargs(args, kwargs, arg_names=[in_name])
-
         return grid.get_coordinate(kwargs[in_name])  # ty: ignore[invalid-return-type]
 
     return find_coordinate

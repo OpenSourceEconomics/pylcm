@@ -276,8 +276,9 @@ class IrregSpacedGrid(ContinuousGrid):
         """Return the generalized coordinate of a value in the grid."""
         if self.points is None:
             raise GridInitializationError(
-                "Cannot compute coordinate for an IrregSpacedGrid whose points are "
-                "supplied at runtime. Use the runtime coordinate finder instead."
+                "Cannot compute coordinate without points. Pass points at "
+                "initialization or use IrregSpacedGrid(n_points=...) and "
+                "supply points at runtime via params."
             )
         return grid_helpers.get_irreg_coordinate(value, self.to_jax())
 
@@ -315,18 +316,19 @@ class ShockGrid(ContinuousGrid):
         then returns those not already present in `shock_params`.
 
         """
-        fn = SHOCK_GRIDPOINT_FUNCTIONS[self.distribution_type]
-        sig = inspect.signature(fn)
-        required = []
-        for name, param in sig.parameters.items():
-            if name == "n_points":
-                continue
-            if (
-                name not in self.shock_params
+
+        sig = inspect.signature(SHOCK_GRIDPOINT_FUNCTIONS[self.distribution_type])
+
+        def _is_required(name: str, param: inspect.Parameter) -> bool:
+            return (
+                name != "n_points"
+                and name not in self.shock_params
                 and param.default is inspect.Parameter.empty
-            ):
-                required.append(name)
-        return tuple(required)
+            )
+
+        return tuple(
+            name for name, param in sig.parameters.items() if _is_required(name, param)
+        )
 
     @property
     def is_fully_specified(self) -> bool:

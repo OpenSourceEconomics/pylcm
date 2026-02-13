@@ -81,7 +81,7 @@ def _replace_runtime_states(
     params: FlatRegimeParams,
     gridspecs: MappingProxyType[str, Grid],
 ) -> StateActionSpace:
-    """Replace placeholder states with grid values supplied at runtime via params.
+    """Complete state grids whose values are supplied at runtime via params.
 
     For IrregSpacedGrid with runtime-supplied points, the grid points come from
     params as ``{state_name}__points``. For ShockGrid with runtime-supplied params,
