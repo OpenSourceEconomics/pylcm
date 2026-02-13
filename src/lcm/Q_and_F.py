@@ -128,13 +128,13 @@ def get_Q_and_F(
     )
     def Q_and_F(
         next_V_arr: FloatND,
-        **kwargs: Array,
+        **states_actions_params: Array,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action value and feasibility for a non-terminal period.
 
         Args:
             next_V_arr: The next period's value function array.
-            **kwargs: States, actions, and flat regime params.
+            **states_actions_params: States, actions, and flat regime params.
 
         Returns:
             A tuple containing the arrays with state-action values and feasibilities.
@@ -142,13 +142,13 @@ def get_Q_and_F(
         """
         regime_transition_prob: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
             regime_transition_prob_func(
-                **kwargs,
+                **states_actions_params,
                 period=period,
                 age=age,
             )
         )
         U_arr, F_arr = U_and_F(
-            **kwargs,
+            **states_actions_params,
             period=period,
             age=age,
         )
@@ -160,14 +160,14 @@ def get_Q_and_F(
         continuation_value = jnp.zeros_like(U_arr)
         for target_regime_name in active_target_regimes:
             next_states = state_transitions[target_regime_name](
-                **kwargs,
+                **states_actions_params,
                 period=period,
                 age=age,
             )
             marginal_next_stochastic_states_weights = next_stochastic_states_weights[
                 target_regime_name
             ](
-                **kwargs,
+                **states_actions_params,
                 period=period,
                 age=age,
             )
@@ -179,7 +179,8 @@ def get_Q_and_F(
             # resulting next value function gets a new dimension for each stochastic
             # variable.
             extra_kw = {
-                k: kwargs[k] for k in next_V_extra_param_names[target_regime_name]
+                k: states_actions_params[k]
+                for k in next_V_extra_param_names[target_regime_name]
             }
             next_V_at_stochastic_states_arr = next_V[target_regime_name](
                 **next_states,
@@ -200,7 +201,9 @@ def get_Q_and_F(
             )
 
         H_kwargs = {
-            k: v for k, v in kwargs.items() if k.startswith(f"H{QNAME_DELIMITER}")
+            k: v
+            for k, v in states_actions_params.items()
+            if k.startswith(f"H{QNAME_DELIMITER}")
         }
         Q_arr = internal_functions.functions["H"](
             utility=U_arr, continuation_value=continuation_value, **H_kwargs
@@ -248,20 +251,20 @@ def get_Q_and_F_terminal(
     )
     def Q_and_F(
         next_V_arr: FloatND,  # noqa: ARG001
-        **kwargs: Array,
+        **states_actions_params: Array,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action values and feasibilities for the terminal period.
 
         Args:
             next_V_arr: The next period's value function array (unused here).
-            **kwargs: States, actions, and flat regime params.
+            **states_actions_params: States, actions, and flat regime params.
 
         Returns:
             A tuple containing the arrays with state-action values and feasibilities.
 
         """
         U_arr, F_arr = U_and_F(
-            **kwargs,
+            **states_actions_params,
             period=period,
             age=age,
         )

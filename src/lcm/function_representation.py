@@ -217,9 +217,9 @@ def _get_coordinate_finder(
         @with_signature(
             args=dict.fromkeys(arg_names, "Array"), return_annotation="Array"
         )
-        def find_coordinate_dynamic(*args: Array, **kwargs: Array) -> ScalarFloat:
+        def find_coordinate_dynamic(*args: Array, **kwargs: Array) -> Array:
             kwargs = all_as_kwargs(args, kwargs, arg_names=arg_names)
-            return get_irreg_coordinate(kwargs[in_name], kwargs[points_param])
+            return get_irreg_coordinate(kwargs[in_name], kwargs[points_param])  # ty: ignore[invalid-return-type]
 
         return find_coordinate_dynamic
 

@@ -23,7 +23,7 @@ from lcm.utils import (
 _NUM_PARTS_FUNCTION_PARAM = 3
 
 
-def process_params(  # noqa: C901
+def process_params(
     params: UserParams,
     params_template: ParamsTemplate,
 ) -> InternalParams:
@@ -99,13 +99,11 @@ def process_params(  # noqa: C901
     if unknown_keys:
         raise InvalidParamsError(f"Unknown keys: {sorted(unknown_keys)}")
 
-    result = _split_flat_by_regime(result_flat)
-
-    # Ensure all regimes from the template are present in the result
-    # (even if they have no parameters)
-    for regime_name in params_template:
-        if regime_name not in result:
-            result[regime_name] = {}
+    # Split flat keys into per-regime dicts and ensure all regimes are present
+    result = {name: {} for name in params_template}
+    for key, value in result_flat.items():
+        regime_name, remainder = key.split(QNAME_DELIMITER, 1)
+        result[regime_name][remainder] = value
 
     return cast("InternalParams", ensure_containers_are_immutable(result))
 
@@ -150,8 +148,10 @@ def create_params_template(  # noqa: C901
                         )
                     argument_names.add(arg_name)
             else:
-                # Scalar param (currently unused - all params are under namespaces)
-                argument_names.add(key)
+                raise InvalidNameError(
+                    f"Parameter {key!r} in regime {name!r} must be nested under "
+                    f"a function name, e.g., {{'function_name': {{'{key}': type}}}}"
+                )
 
     # Check for separator in regime names
     for name in regime_names:
@@ -190,28 +190,6 @@ def create_params_template(  # noqa: C901
     return ensure_containers_are_immutable(template)
 
 
-def _split_flat_by_regime(
-    flat: dict[str, Any],
-) -> dict[str, dict[str, Any]]:
-    """Split a flat params dict into per-regime dicts with function-qualified keys.
-
-    Converts "working__utility__risk_aversion" into
-    {"working": {"utility__risk_aversion": value}}.
-
-    Top-level regime params like "working__discount_factor" become
-    {"working": {"discount_factor": value}}.
-
-    """
-    result: dict[str, dict[str, Any]] = {}
-    for key, value in flat.items():
-        # Key format: "regime__function__param" or "regime__param"
-        regime_name, remainder = key.split(QNAME_DELIMITER, 1)
-        if regime_name not in result:
-            result[regime_name] = {}
-        result[regime_name][remainder] = value
-    return result
-
-
 def get_flat_param_names(regime_params_template: RegimeParamsTemplate) -> set[str]:
     """Get all flat parameter names from a regime params template.
 
@@ -225,7 +203,4 @@ def get_flat_param_names(regime_params_template: RegimeParamsTemplate) -> set[st
         if isinstance(value, Mapping):
             for param_name in value:
                 result.add(f"{key}{QNAME_DELIMITER}{param_name}")
-        else:
-            # Top-level param (e.g., "discount_factor": float)
-            result.add(key)
     return result

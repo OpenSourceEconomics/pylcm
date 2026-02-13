@@ -691,7 +691,7 @@ def _filter_kwargs_for_func(
 
     try:
         sig = inspect.signature(func)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         # If we can't inspect the signature, pass all kwargs through
         return kwargs
     params = sig.parameters
