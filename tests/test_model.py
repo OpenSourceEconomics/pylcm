@@ -385,8 +385,9 @@ def test_unused_state_raises_error():
     # Define a regime where 'unused_state' is not used in any function
     working = Regime(
         functions={
-            "utility": lambda wealth, consumption: jnp.log(consumption)
-            + wealth * 0.001,
+            "utility": lambda wealth, consumption: (
+                jnp.log(consumption) + wealth * 0.001
+            ),
         },
         states={
             "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
@@ -435,8 +436,9 @@ def test_unused_action_raises_error():
 
     working = Regime(
         functions={
-            "utility": lambda wealth, consumption: jnp.log(consumption)
-            + wealth * 0.001,
+            "utility": lambda wealth, consumption: (
+                jnp.log(consumption) + wealth * 0.001
+            ),
         },
         states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
         actions={
