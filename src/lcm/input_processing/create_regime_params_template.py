@@ -39,7 +39,7 @@ def create_regime_params_template(
         *regime.states,
     }
 
-    function_params: dict[str, dict[str, type]] = {}
+    function_params = {}
     # Use dags.tree to discover parameters and their type annotations for each function.
     for name, func in regime.get_all_functions().items():
         tree = dt.create_tree_with_input_types({name: func})
@@ -80,4 +80,4 @@ def create_regime_params_template(
                 grid.dynamic_shock_params, float
             )
 
-    return ensure_containers_are_immutable(function_params)  # ty: ignore[invalid-return-type]
+    return ensure_containers_are_immutable(function_params)
