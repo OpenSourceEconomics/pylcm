@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import jax.numpy as jnp
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
