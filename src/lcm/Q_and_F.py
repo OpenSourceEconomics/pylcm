@@ -5,6 +5,7 @@ from typing import Any, cast
 import jax.numpy as jnp
 from dags import concatenate_functions
 from dags.signature import with_signature
+from dags.tree import QNAME_DELIMITER
 from jax import Array
 
 from lcm.dispatchers import productmap
@@ -45,6 +46,7 @@ def get_Q_and_F(
         age: The age corresponding to the current period.
         next_state_space_infos: The state space information of the next period.
         internal_functions: Internal functions instance.
+        flat_params_names: Frozenset of flat parameter names for the regime.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -103,6 +105,7 @@ def get_Q_and_F(
     # ----------------------------------------------------------------------------------
     # Create the state-action value and feasibility function
     # ----------------------------------------------------------------------------------
+
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         [
             U_and_F,
@@ -110,8 +113,8 @@ def get_Q_and_F(
             *list(state_transitions.values()),
             *list(next_stochastic_states_weights.values()),
         ],
-        include={"next_V_arr"} | flat_params_names,
-        exclude={"period", "age"},
+        include=frozenset({"next_V_arr"} | flat_params_names),
+        exclude=frozenset({"period", "age"}),
     )
 
     @with_signature(
@@ -143,12 +146,12 @@ def get_Q_and_F(
             period=period,
             age=age,
         )
-        Q_arr = U_arr
         # Normalize probabilities over active regimes
         normalized_regime_transition_prob = normalize_regime_transition_probs(
             regime_transition_prob, active_target_regimes
         )
 
+        continuation_value = jnp.zeros_like(U_arr)
         for target_regime_name in active_target_regimes:
             next_states = state_transitions[target_regime_name](
                 **kwargs,
@@ -180,12 +183,18 @@ def get_Q_and_F(
                 next_V_at_stochastic_states_arr,
                 weights=joint_next_stochastic_states_weights,
             )
-            Q_arr = (
-                Q_arr
-                + kwargs["discount_factor"]
-                * normalized_regime_transition_prob[target_regime_name]
+            continuation_value = (
+                continuation_value
+                + normalized_regime_transition_prob[target_regime_name]
                 * next_V_expected_arr
             )
+
+        H_kwargs = {
+            k: v for k, v in kwargs.items() if k.startswith(f"H{QNAME_DELIMITER}")
+        }
+        Q_arr = internal_functions.functions["H"](
+            utility=U_arr, continuation_value=continuation_value, **H_kwargs
+        )
 
         # Handle cases when there is only one state.
         # In that case, Q_arr and F_arr are scalars, but we require arrays as output.
@@ -206,6 +215,7 @@ def get_Q_and_F_terminal(
         internal_functions: Internal functions instance.
         period: The current period.
         age: The age corresponding to the current period.
+        flat_params_names: Frozenset of flat parameter names for the regime.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -219,8 +229,8 @@ def get_Q_and_F_terminal(
         # While the terminal period does not depend on the value function array, we
         # include it in the signature, such that we can treat all periods uniformly
         # during the solution and simulation.
-        include={"next_V_arr"} | flat_params_names,
-        exclude={"period", "age"},
+        include=frozenset({"next_V_arr"} | flat_params_names),
+        exclude=frozenset({"period", "age"}),
     )
 
     @with_signature(
@@ -258,9 +268,9 @@ def get_Q_and_F_terminal(
 
 def _get_arg_names_of_Q_and_F(
     deps: list[Callable[..., Any]],
-    include: set[str] = set(),  # noqa: B006
-    exclude: set[str] = set(),  # noqa: B006
-) -> list[str]:
+    include: frozenset[str] = frozenset(),
+    exclude: frozenset[str] = frozenset(),
+) -> tuple[str, ...]:
     """Get the argument names of the dependencies.
 
     Args:
@@ -273,8 +283,7 @@ def _get_arg_names_of_Q_and_F(
         exclude.
 
     """
-    deps_arg_names = get_union_of_arguments(deps)
-    return list(include | deps_arg_names - exclude)
+    return tuple((get_union_of_arguments(deps) | include) - exclude)
 
 
 def _get_joint_weights_function(
@@ -329,8 +338,7 @@ def _get_U_and_F(
     """
     functions = {
         "feasibility": _get_feasibility(internal_functions),
-        "utility": internal_functions.utility,
-        **internal_functions.functions,
+        **{k: v for k, v in internal_functions.functions.items() if k != "H"},
     }
     return concatenate_functions(
         functions=functions,

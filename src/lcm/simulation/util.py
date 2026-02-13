@@ -106,7 +106,7 @@ def calculate_next_states(
         **stochastic_variables_keys,
         period=period,
         age=age,
-        **flat_regime_params,  # ty: ignore[invalid-argument-type]
+        **flat_regime_params,
     )
 
     # Update global states array with computed next states for subjects in regime
@@ -166,7 +166,7 @@ def calculate_next_regime_membership(
             **optimal_actions,
             period=period,
             age=age,
-            **flat_regime_params,  # ty: ignore[invalid-argument-type]
+            **flat_regime_params,
         )
     )
     normalized_regime_transition_probs = normalize_regime_transition_probs(

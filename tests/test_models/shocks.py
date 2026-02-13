@@ -81,7 +81,6 @@ def get_model(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
         },
-        utility=utility,
         transitions={
             "next_wealth": next_wealth,
             "next_income": next_income,
@@ -89,11 +88,12 @@ def get_model(
             "next_regime": next_regime,
         },
         constraints={"wealth_constraint": wealth_constraint},
+        functions={"utility": utility},
     )
     test_regime_term = Regime(
         terminal=True,
         active=test_term_active,
-        utility=lambda: 0.0,
+        functions={"utility": lambda: 0.0},
     )
     return Model(
         regimes={"test_regime": test_regime, "test_regime_term": test_regime_term},
@@ -111,7 +111,5 @@ def get_params():
             "discount_factor": 1,
             "next_health": {"health_transition": jnp.full((2, 2), fill_value=0.5)},
         },
-        "test_regime_term": {
-            "discount_factor": 1,
-        },
+        "test_regime_term": {},
     }

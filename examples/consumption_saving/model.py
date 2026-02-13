@@ -124,8 +124,8 @@ def retired_is_active(age: float) -> bool:
 
 
 working = Regime(
-    utility=utility,
     functions={
+        "utility": utility,
         "labor_income": labor_income,
         "wage": wage,
     },
@@ -166,7 +166,7 @@ working = Regime(
 
 retired = Regime(
     terminal=True,
-    utility=utility_retired,
+    functions={"utility": utility_retired},
     states={
         "wealth": LinSpacedGrid(
             start=1,

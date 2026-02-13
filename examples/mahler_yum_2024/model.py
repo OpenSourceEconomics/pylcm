@@ -365,8 +365,8 @@ prod_shock_grid = ShockGrid(
 )
 
 ALIVE_REGIME = Regime(
-    utility=utility,
     functions={
+        "utility": utility,
         "disutil": disutil,
         "fcost": fcost,
         "cons_util": cons_util,
@@ -416,7 +416,7 @@ ALIVE_REGIME = Regime(
 
 DEAD_REGIME = Regime(
     terminal=True,
-    utility=lambda: 0.0,
+    functions={"utility": lambda: 0.0},
     active=partial(dead_is_active, initial_age=ages.values[0]),
 )
 
@@ -762,10 +762,7 @@ if __name__ == "__main__":
     )
 
     simulation_result = MAHLER_YUM_MODEL.solve_and_simulate(
-        params={
-            "alive": params,
-            "dead": {"discount_factor": params["discount_factor"]},
-        },
+        params={"alive": params},
         initial_states=initial_states,
         initial_regimes=initial_regimes,
         seed=8295,

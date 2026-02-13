@@ -120,14 +120,16 @@ the key in the `regimes` dict passed to `Model`:
 
 ```python
 Regime(
-    utility=utility_function,                    # Required: utility function
     active=lambda age: 25 <= age < 65,           # Optional: age-based predicate (default: always True)
     constraints={"name": constraint_fn, ...},    # Optional: constraint functions
     transitions={                                # Required for non-terminal regimes
         "next_state1": transition_fn,
         "next_regime": lambda: {"regime_name": 1.0},
     },
-    functions={"name": helper_fn, ...},          # Optional: auxiliary functions
+    functions={                                  # Must include "utility"; other functions optional
+        "utility": utility_function,
+        "name": helper_fn, ...
+    },
     actions={"action_name": Grid, ...},          # Action grids (can be empty)
     states={"state_name": Grid, ...},            # State grids (can be empty)
     absorbing=False,                             # Optional: absorbing regime flag
@@ -138,6 +140,7 @@ Regime(
 **Regime Requirements:**
 
 - `active` is optional; defaults to `lambda _age: True` (always active)
+- `functions` must contain a `"utility"` entry (the utility function)
 - All transition function names must start with `next_`
 - Non-terminal regimes must have transitions for ALL states across ALL regimes
 - Non-terminal regimes must include a `next_regime` function returning

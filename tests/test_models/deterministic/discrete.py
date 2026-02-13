@@ -108,7 +108,6 @@ working = Regime(
     states={
         "wealth": DiscreteGrid(WealthStatus),
     },
-    utility=utility_discrete,
     constraints={
         "borrowing_constraint": borrowing_constraint,
     },
@@ -117,6 +116,7 @@ working = Regime(
         "next_regime": next_regime,
     },
     functions={
+        "utility": utility_discrete,
         "labor_income": labor_income,
         "is_working": is_working,
     },
@@ -126,7 +126,7 @@ working = Regime(
 
 dead = Regime(
     terminal=True,
-    utility=lambda: 0.0,
+    functions={"utility": lambda: 0.0},
     active=lambda _age: True,  # Placeholder, will be replaced by get_model()
 )
 

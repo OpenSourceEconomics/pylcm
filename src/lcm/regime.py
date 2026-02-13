@@ -17,16 +17,21 @@ from lcm.utils import (
 )
 
 
+def _default_H(
+    utility: float, continuation_value: float, discount_factor: float
+) -> float:
+    return utility + discount_factor * continuation_value
+
+
 @dataclass(frozen=True)
 class Regime:
     """A user regime which can be processed into an internal regime.
 
     Attributes:
         active: Callable that takes age (float) and returns True if regime is active.
-        utility: Utility function for this regime.
         constraints: Dictionary of constraint functions.
         transitions: Dictionary of transition functions (keys must start with 'next_').
-        functions: Dictionary of auxiliary functions.
+        functions: Dictionary of functions, must include a 'utility' function.
         actions: Dictionary of action grids.
         states: Dictionary of state grids.
         absorbing: Whether this is an absorbing regime.
@@ -35,7 +40,6 @@ class Regime:
 
     """
 
-    utility: UserFunction
     active: ActiveFunction = lambda _age: True
     constraints: Mapping[str, UserFunction] = field(
         default_factory=lambda: MappingProxyType({})
@@ -55,20 +59,20 @@ class Regime:
     def __post_init__(self) -> None:
         _validate_attribute_types(self)
         _validate_logical_consistency(self)
-        # Wrap mutable dicts in MappingProxyType to prevent accidental mutation
-        object.__setattr__(self, "states", ensure_containers_are_immutable(self.states))
-        object.__setattr__(
-            self, "actions", ensure_containers_are_immutable(self.actions)
-        )
-        object.__setattr__(
-            self, "constraints", ensure_containers_are_immutable(self.constraints)
-        )
-        object.__setattr__(
-            self, "transitions", ensure_containers_are_immutable(self.transitions)
-        )
-        object.__setattr__(
-            self, "functions", ensure_containers_are_immutable(self.functions)
-        )
+
+        def make_immutable(name: str) -> None:
+            value = ensure_containers_are_immutable(getattr(self, name))
+            object.__setattr__(self, name, value)
+
+        # Inject default aggregation function H if not provided by user.
+        # Terminal regimes don't need H since Q = U directly (no continuation value).
+        if not self.terminal and "H" not in self.functions:
+            object.__setattr__(self, "functions", {**self.functions, "H": _default_H})
+        make_immutable("functions")
+        make_immutable("states")
+        make_immutable("actions")
+        make_immutable("constraints")
+        make_immutable("transitions")
 
     def get_all_functions(self) -> MappingProxyType[str, UserFunction]:
         """Get all regime functions including utility, constraints, and transitions.
@@ -78,10 +82,7 @@ class Regime:
 
         """
         return MappingProxyType(
-            {"utility": self.utility}
-            | dict(self.functions)
-            | dict(self.constraints)
-            | dict(self.transitions)
+            dict(self.functions) | dict(self.constraints) | dict(self.transitions)
         )
 
     def replace(self, **kwargs: Any) -> Regime:  # noqa: ANN401
@@ -143,9 +144,6 @@ def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
                 "callables."
             )
 
-    if not callable(regime.utility):
-        error_messages.append("utility must be a callable.")
-
     if error_messages:
         msg = format_messages(error_messages)
         raise RegimeInitializationError(msg)
@@ -183,10 +181,9 @@ def _validate_logical_consistency(regime: Regime) -> None:
             f"{invalid_variable_names}.",
         )
 
-    if "utility" in regime.functions:
+    if "utility" not in regime.functions:
         error_messages.append(
-            "The function name 'utility' is reserved and cannot be used in the "
-            "functions dictionary. Please use the utility attribute instead.",
+            "A 'utility' function must be provided in the functions dictionary.",
         )
 
     error_messages.extend(_validate_terminal_or_transitions(regime))

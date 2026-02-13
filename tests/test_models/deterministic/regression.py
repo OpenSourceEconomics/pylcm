@@ -98,13 +98,13 @@ working = Regime(
     states={
         "wealth": DEFAULT_WEALTH_GRID,  # placeholder, will be replaced by get_model()
     },
-    utility=utility,
     constraints={"borrowing_constraint": borrowing_constraint},
     transitions={
         "next_wealth": next_wealth,
         "next_regime": next_regime,
     },
     functions={
+        "utility": utility,
         "labor_income": labor_income,
         "is_working": is_working,
         "wage": wage,
@@ -115,7 +115,7 @@ working = Regime(
 
 dead = Regime(
     terminal=True,
-    utility=lambda: 0.0,
+    functions={"utility": lambda: 0.0},
     active=lambda _age: True,  # placeholder, will be replaced by get_model()
 )
 

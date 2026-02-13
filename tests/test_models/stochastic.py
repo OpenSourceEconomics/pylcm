@@ -190,7 +190,6 @@ working = Regime(
             n_points=100,
         ),
     },
-    utility=utility_working,
     constraints={
         "borrowing_constraint": borrowing_constraint,
     },
@@ -201,6 +200,7 @@ working = Regime(
         "next_regime": next_regime_from_working,
     },
     functions={
+        "utility": utility_working,
         "labor_income": labor_income,
         "is_working": is_working,
     },
@@ -219,7 +219,6 @@ retired = Regime(
             n_points=100,
         ),
     },
-    utility=utility_retired,
     constraints={
         "borrowing_constraint": borrowing_constraint,
     },
@@ -229,13 +228,16 @@ retired = Regime(
         "next_partner": next_partner,
         "next_regime": next_regime_from_retired,
     },
+    functions={
+        "utility": utility_retired,
+    },
     active=lambda _age: True,  # Placeholder, overridden at model creation
 )
 
 
 dead = Regime(
     terminal=True,
-    utility=lambda: 0.0,
+    functions={"utility": lambda: 0.0},
     active=lambda _age: True,  # Placeholder, overridden at model creation
 )
 

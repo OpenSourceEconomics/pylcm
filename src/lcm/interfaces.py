@@ -162,18 +162,13 @@ class PhaseVariantContainer[S, T]:
 
 @dataclasses.dataclass(frozen=True)
 class InternalRegime:
-    """Internal representation of a user regime.
-
-    MUST BE UPDATED.
-
-    """
+    """Internal representation of a user regime."""
 
     name: str
     terminal: bool
     grids: MappingProxyType[str, Array]
     gridspecs: MappingProxyType[str, Grid]
     variable_info: pd.DataFrame
-    utility: InternalUserFunction
     constraints: MappingProxyType[str, InternalUserFunction]
     transitions: TransitionFunctionsMapping
     functions: MappingProxyType[str, InternalUserFunction]
@@ -227,7 +222,6 @@ class InternalFunctions:
     """All functions that are used in the regime."""
 
     functions: MappingProxyType[str, InternalUserFunction]
-    utility: InternalUserFunction
     constraints: MappingProxyType[str, InternalUserFunction]
     transitions: TransitionFunctionsMapping
     regime_transition_probs: (
@@ -243,7 +237,6 @@ class InternalFunctions:
 
         """
         functions_pool = {
-            "utility": self.utility,
             **self.functions,
             **self.constraints,
             **self.transitions,

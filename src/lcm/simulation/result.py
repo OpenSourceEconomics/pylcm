@@ -352,13 +352,10 @@ def _collect_all_available_targets(
 
 def _get_available_targets_for_regime(regime: InternalRegime) -> set[str]:
     """Get available target names for a single regime."""
-    stochastic_weight_names = _get_stochastic_weight_function_names(regime)
-    targets = {"utility"}
-    targets.update(
-        name for name in regime.functions if name not in stochastic_weight_names
-    )
-    targets.update(regime.constraints.keys())
-    return targets
+    excluded = {"H"} | _get_stochastic_weight_function_names(regime)
+    return {
+        name for name in regime.functions if name not in excluded
+    } | regime.constraints.keys()
 
 
 def _get_stochastic_weight_function_names(regime: InternalRegime) -> set[str]:
@@ -629,9 +626,8 @@ def _compute_targets(
     """Compute additional targets for a regime."""
     functions_pool = _build_functions_pool(internal_regime)
     target_func = _create_target_function(functions_pool, targets)
-    variables = _get_function_variables(
-        func=target_func, param_names=frozenset(flat_regime_params)
-    )
+    flat_param_names = frozenset(flat_regime_params.keys())
+    variables = _get_function_variables(target_func, flat_param_names)
     vectorized_func = vmap_1d(target_func, variables=variables)
     kwargs = {k: jnp.asarray(v) for k, v in data.items() if k in variables}
     result = vectorized_func(**flat_regime_params, **kwargs)
@@ -642,9 +638,8 @@ def _compute_targets(
 def _build_functions_pool(internal_regime: InternalRegime) -> dict[str, Any]:
     """Build pool of available functions for target computation."""
     pool: dict[str, Any] = {
-        **internal_regime.functions,
+        **{k: v for k, v in internal_regime.functions.items() if k != "H"},
         **internal_regime.constraints,
-        "utility": internal_regime.utility,
     }
     if internal_regime.regime_transition_probs is not None:
         pool["regime_transition_probs"] = (

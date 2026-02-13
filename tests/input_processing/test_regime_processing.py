@@ -159,7 +159,7 @@ def regime_mock(binary_category_class):
         states={
             "c": DiscreteGrid(binary_category_class),
         },
-        utility=utility,
+        functions={"utility": utility},
         transitions={"next_c": next_c},
     )
 
@@ -261,7 +261,7 @@ def test_process_regimes():
     # Functions
     assert internal_working_regime.transitions is not None
     assert internal_working_regime.constraints is not None
-    assert internal_working_regime.utility is not None
+    assert "utility" in internal_working_regime.functions
 
 
 def test_variable_info_with_continuous_constraint_has_unique_index():
