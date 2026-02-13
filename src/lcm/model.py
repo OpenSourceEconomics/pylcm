@@ -110,27 +110,14 @@ class Model:
             )
         )
         self.regimes = MappingProxyType(dict(regimes))
-        self.internal_regimes = process_regimes(
+        self.internal_regimes, self.params_template = _build_regimes_and_template(
             regimes=regimes,
             ages=self.ages,
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=enable_jit,
+            fixed_params=self.fixed_params,
         )
         self.enable_jit = enable_jit
-        self.params_template = create_params_template(self.internal_regimes)
-
-        # Partial fixed_params into compiled functions and remove from template
-        if fixed_params:
-            fixed_internal = _resolve_fixed_params(
-                dict(fixed_params), self.params_template
-            )
-            if any(v for v in fixed_internal.values()):
-                self.internal_regimes = _partial_fixed_params_into_regimes(
-                    self.internal_regimes, fixed_internal
-                )
-                self.params_template = _remove_fixed_from_template(
-                    self.params_template, fixed_internal
-                )
 
     def get_params_template(self) -> MutableParamsTemplate:
         """Get a mutable copy of the params template.
@@ -267,6 +254,41 @@ class Model:
             seed=seed,
             debug_mode=debug_mode,
         )
+
+
+def _build_regimes_and_template(
+    regimes: Mapping[str, Regime],
+    ages: AgeGrid,
+    regime_names_to_ids: RegimeNamesToIds,
+    *,
+    enable_jit: bool,
+    fixed_params: UserParams,
+) -> tuple[MappingProxyType[RegimeName, InternalRegime], ParamsTemplate]:
+    """Build internal regimes and params template in a single pass.
+
+    Composes regime processing, template creation, and optional fixed-param partialling
+    so that each result is computed exactly once.
+
+    """
+    internal_regimes = process_regimes(
+        regimes=regimes,
+        ages=ages,
+        regime_names_to_ids=regime_names_to_ids,
+        enable_jit=enable_jit,
+    )
+    params_template = create_params_template(internal_regimes)
+
+    if fixed_params:
+        fixed_internal = _resolve_fixed_params(dict(fixed_params), params_template)
+        if any(v for v in fixed_internal.values()):
+            internal_regimes = _partial_fixed_params_into_regimes(
+                internal_regimes, fixed_internal
+            )
+            params_template = _remove_fixed_from_template(
+                params_template, fixed_internal
+            )
+
+    return internal_regimes, params_template
 
 
 def _validate_model_inputs(  # noqa: C901
