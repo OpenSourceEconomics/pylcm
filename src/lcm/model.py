@@ -432,8 +432,8 @@ def _validate_fixed_params_present(
 ) -> list[str]:
     """Return error messages if params for shocks are missing.
 
-    Shocks that have dynamic_shock_params (i.e. missing required params that will be
-    supplied at solve time) do NOT need fixed_params. Only shocks that are fully
+    Shocks whose params are supplied at runtime (i.e. missing required params that will
+    be passed at solve time) do NOT need fixed_params. Only shocks that are fully
     specified (all required params in shock_params) but still need initialization
     via fixed_params are validated here.
 
@@ -449,7 +449,7 @@ def _validate_fixed_params_present(
             if (
                 isinstance(state, ShockGrid)
                 and state.distribution_type in ("tauchen", "rouwenhorst")
-                and not state.dynamic_shock_params
+                and not state.params_to_pass_at_runtime
             ):
                 fixed_params_needed.add(state_name)
 
@@ -483,27 +483,27 @@ def _filter_out_shock_params(
     {"income": {"rho": 0.975}}) and are consumed by process_regimes for grid
     initialization. They don't match any params_template key, so we filter them out.
 
-    Dynamic shocks (with missing required params) DO have entries in params_template,
-    so their fixed_params should NOT be filtered — they will be processed as general
-    fixed params and partialled into compiled functions.
+    Shocks with runtime-supplied params DO have entries in params_template, so their
+    fixed_params should NOT be filtered — they will be processed as general fixed params
+    and partialled into compiled functions.
 
     """
-    static_shock_keys: set[str] = set()
+    fixed_shock_keys: set[str] = set()
     for regime in regimes.values():
         for state_name, state in regime.states.items():
-            if isinstance(state, ShockGrid) and not state.dynamic_shock_params:
-                static_shock_keys.add(state_name)
-                static_shock_keys.add(f"next_{state_name}")
+            if isinstance(state, ShockGrid) and not state.params_to_pass_at_runtime:
+                fixed_shock_keys.add(state_name)
+                fixed_shock_keys.add(f"next_{state_name}")
 
-    if not static_shock_keys:
+    if not fixed_shock_keys:
         return dict(fixed_params)
 
     result: dict[str, object] = {}
     for k, v in fixed_params.items():
-        if k in static_shock_keys:
+        if k in fixed_shock_keys:
             continue
         if k in regimes and isinstance(v, Mapping):
-            filtered = {sk: sv for sk, sv in v.items() if sk not in static_shock_keys}
+            filtered = {sk: sv for sk, sv in v.items() if sk not in fixed_shock_keys}
             if filtered:
                 result[k] = filtered
         else:

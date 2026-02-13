@@ -195,8 +195,8 @@ def _get_coordinate_finder(
     The resulting coordinates can be used to do linear interpolation via
     jax.scipy.ndimage.map_coordinates.
 
-    For dynamic IrregSpacedGrid, the coordinate finder accepts the grid points as an
-    additional keyword argument (e.g. ``wealth__points``).
+    For IrregSpacedGrid whose points are supplied at runtime, the coordinate finder
+    accepts the grid points as an additional keyword argument (e.g. ``wealth__points``).
 
     Args:
         in_name: Name via which the value to be translated into coordinates will be
@@ -209,7 +209,7 @@ def _get_coordinate_finder(
         coordinates on a grid.
 
     """
-    if isinstance(grid, IrregSpacedGrid) and grid.is_dynamic:
+    if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:
         state_name = in_name.removeprefix("next_")
         points_param = f"{state_name}{QNAME_DELIMITER}points"
         arg_names = [in_name, points_param]
@@ -217,11 +217,11 @@ def _get_coordinate_finder(
         @with_signature(
             args=dict.fromkeys(arg_names, "Array"), return_annotation="Array"
         )
-        def find_coordinate_dynamic(*args: Array, **kwargs: Array) -> Array:
+        def find_coordinate_runtime(*args: Array, **kwargs: Array) -> Array:
             kwargs = all_as_kwargs(args, kwargs, arg_names=arg_names)
             return get_irreg_coordinate(kwargs[in_name], kwargs[points_param])  # ty: ignore[invalid-return-type]
 
-        return find_coordinate_dynamic
+        return find_coordinate_runtime
 
     @with_signature(args=dict.fromkeys([in_name], "Array"), return_annotation="Array")
     def find_coordinate(*args: Array, **kwargs: Array) -> Array:

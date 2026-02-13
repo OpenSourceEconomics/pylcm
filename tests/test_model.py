@@ -510,8 +510,8 @@ def test_fixed_params_validation():
 
     When a ShockGrid has all required shock_params already specified, it still needs
     fixed_params at model level or regime level for grid initialization. When the
-    shock is dynamic (missing required params), no fixed_params are needed — the
-    missing params appear in params_template instead.
+    shock has params supplied at runtime (missing required params), no fixed_params
+    are needed — the missing params appear in params_template instead.
 
     """
 
@@ -521,7 +521,7 @@ def test_fixed_params_validation():
         dead: int
 
     # ShockGrid with rho already in shock_params — fully specified, needs fixed_params
-    alive_static = Regime(
+    alive_fixed = Regime(
         states={
             "health": ShockGrid(
                 distribution_type="tauchen",
@@ -545,7 +545,7 @@ def test_fixed_params_validation():
     # Fully specified ShockGrid still needs fixed_params
     with pytest.raises(ModelInitializationError, match="is missing fixed params"):
         Model(
-            regimes={"alive": alive_static, "dead": dead},
+            regimes={"alive": alive_fixed, "dead": dead},
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=RegimeId,
             fixed_params={},
@@ -553,7 +553,7 @@ def test_fixed_params_validation():
 
     # Model-level fixed_params should work
     Model(
-        regimes={"alive": alive_static, "dead": dead},
+        regimes={"alive": alive_fixed, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
         fixed_params={"health": {"rho": 0.9}},
@@ -561,14 +561,14 @@ def test_fixed_params_validation():
 
     # Regime-level fixed_params should also work
     Model(
-        regimes={"alive": alive_static, "dead": dead},
+        regimes={"alive": alive_fixed, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
         fixed_params={"alive": {"health": {"rho": 0.9}}},
     )
 
-    # Dynamic ShockGrid (no rho in shock_params) does NOT need fixed_params
-    alive_dynamic = Regime(
+    # ShockGrid with runtime-supplied rho (not in shock_params) — no fixed_params needed
+    alive_runtime = Regime(
         states={"health": ShockGrid(distribution_type="tauchen", n_points=2)},
         functions={"utility": lambda health: health},
         transitions={
@@ -578,12 +578,12 @@ def test_fixed_params_validation():
         active=lambda age: age < 1,
     )
     model = Model(
-        regimes={"alive": alive_dynamic, "dead": dead},
+        regimes={"alive": alive_runtime, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
         fixed_params={},
     )
-    # Dynamic shock param 'rho' appears in params_template
+    # Runtime-supplied shock param 'rho' appears in params_template
     assert "rho" in model.params_template["alive"].get("health", {})
 
 

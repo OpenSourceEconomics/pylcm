@@ -194,8 +194,7 @@ def get_flat_param_names(regime_params_template: RegimeParamsTemplate) -> set[st
     """Get all flat parameter names from a regime params template.
 
     Converts nested template entries like {"utility": {"risk_aversion": type}} to
-    flat names like "utility__risk_aversion". Top-level params like
-    {"discount_factor": float} are included as-is.
+    flat names like "utility__risk_aversion".
 
     """
     result = set()

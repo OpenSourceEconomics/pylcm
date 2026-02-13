@@ -95,7 +95,7 @@ def get_Q_and_F(
             next_state_space_infos[target_regime]
         )
         # Determine extra kwargs needed by next_V beyond next_states and next_V_arr
-        # (e.g. wealth__points for dynamic IrregSpacedGrid).
+        # (e.g. wealth__points for IrregSpacedGrid with runtime-supplied points).
         next_V_extra_param_names[target_regime] = frozenset(
             get_union_of_arguments([_scalar_next_V]) - set(transitions) - {"next_V_arr"}
         )

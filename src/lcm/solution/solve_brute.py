@@ -51,7 +51,7 @@ def solve(
         }
 
         for name, internal_regime in active_regimes.items():
-            state_action_space = _replace_dynamic_states(
+            state_action_space = _replace_runtime_states(
                 internal_regime.state_action_space,
                 internal_params[name],
                 internal_regime.gridspecs,
@@ -76,18 +76,18 @@ def solve(
     return MappingProxyType(solution)
 
 
-def _replace_dynamic_states(
+def _replace_runtime_states(
     state_action_space: StateActionSpace,
     params: FlatRegimeParams,
     gridspecs: MappingProxyType[str, Grid],
 ) -> StateActionSpace:
-    """Replace placeholder states with dynamic grid values from params.
+    """Replace placeholder states with grid values supplied at runtime via params.
 
-    For dynamic IrregSpacedGrid, the grid points come from params as
-    ``{state_name}__points``. For dynamic ShockGrid, the grid points are computed
-    from shock params in the params dict.
+    For IrregSpacedGrid with runtime-supplied points, the grid points come from
+    params as ``{state_name}__points``. For ShockGrid with runtime-supplied params,
+    the grid points are computed from shock params in the params dict.
 
-    If dynamic params were already partialled via fixed_params (and thus not in
+    If runtime params were already partialled via fixed_params (and thus not in
     ``params``), the grid is not replaced — it was already handled by the partialled
     compiled functions.
 
@@ -96,21 +96,21 @@ def _replace_dynamic_states(
     for state_name, spec in gridspecs.items():
         if state_name not in state_action_space.states:
             continue
-        if isinstance(spec, IrregSpacedGrid) and spec.is_dynamic:
+        if isinstance(spec, IrregSpacedGrid) and spec.pass_points_at_runtime:
             points_key = f"{state_name}__points"
             if points_key not in params:
                 continue
             replacements[state_name] = params[points_key]
-        elif isinstance(spec, ShockGrid) and spec.dynamic_shock_params:
-            # Check if all dynamic params are present (they might have been
+        elif isinstance(spec, ShockGrid) and spec.params_to_pass_at_runtime:
+            # Check if all runtime params are present (they might have been
             # partialled out via fixed_params)
             all_present = all(
-                f"{state_name}__{p}" in params for p in spec.dynamic_shock_params
+                f"{state_name}__{p}" in params for p in spec.params_to_pass_at_runtime
             )
             if not all_present:
                 continue
             shock_kw = dict(spec.shock_params)
-            for p in spec.dynamic_shock_params:
+            for p in spec.params_to_pass_at_runtime:
                 shock_kw[p] = params[f"{state_name}__{p}"]
             replacements[state_name] = SHOCK_GRIDPOINT_FUNCTIONS[
                 spec.distribution_type

@@ -1,4 +1,4 @@
-"""Tests for fixed_params partialling and dynamic IrregSpacedGrid / ShockGrid."""
+"""Tests for fixed_params partialling and runtime-supplied grid points/shock params."""
 
 from types import MappingProxyType
 
@@ -167,36 +167,36 @@ class TestFixedParamsPartialling:
 
 
 # ======================================================================================
-# Feature 2: Dynamic IrregSpacedGrid
+# Feature 2: IrregSpacedGrid with runtime-supplied points
 # ======================================================================================
 
 
-class TestDynamicIrregSpacedGrid:
-    def test_dynamic_grid_creation(self):
-        """Dynamic IrregSpacedGrid without points, only n_points."""
+class TestRuntimeIrregSpacedGrid:
+    def test_runtime_grid_creation(self):
+        """IrregSpacedGrid without points, only n_points."""
         grid = IrregSpacedGrid(n_points=5)
-        assert grid.is_dynamic
+        assert grid.pass_points_at_runtime
         assert grid.n_points == 5
         assert grid.to_jax().shape == (5,)  # placeholder zeros
 
-    def test_static_grid_not_dynamic(self):
-        """Static IrregSpacedGrid with points should not be dynamic."""
+    def test_fixed_grid_not_runtime(self):
+        """IrregSpacedGrid with fixed points should not need runtime points."""
         grid = IrregSpacedGrid(points=[1.0, 2.0, 3.0])
-        assert not grid.is_dynamic
+        assert not grid.pass_points_at_runtime
         assert grid.n_points == 3
 
-    def test_dynamic_grid_validation(self):
-        """Dynamic grid requires n_points >= 2."""
+    def test_runtime_grid_validation(self):
+        """Grid with runtime-supplied points requires n_points >= 2."""
         with pytest.raises(Exception, match="at least 2"):
             IrregSpacedGrid(n_points=1)
 
-    def test_dynamic_grid_requires_points_or_n_points(self):
+    def test_runtime_grid_requires_points_or_n_points(self):
         """Must specify either points or n_points."""
         with pytest.raises(Exception, match="Either points or n_points"):
             IrregSpacedGrid()
 
-    def test_dynamic_grid_in_params_template(self):
-        """Dynamic IrregSpacedGrid adds 'points' entry to params_template."""
+    def test_runtime_grid_in_params_template(self):
+        """IrregSpacedGrid with runtime-supplied points adds 'points' to template."""
         model = _simple_model(
             wealth_grid=IrregSpacedGrid(n_points=5),
         )
@@ -204,7 +204,7 @@ class TestDynamicIrregSpacedGrid:
         assert "wealth" in alive_template
         assert "points" in alive_template["wealth"]
 
-    def test_solve_with_dynamic_grid(self):
+    def test_solve_with_runtime_grid(self):
         """Solve should work when grid points are provided via params."""
         model = _simple_model(
             wealth_grid=IrregSpacedGrid(n_points=5),
@@ -217,36 +217,36 @@ class TestDynamicIrregSpacedGrid:
         V_arr_dict = model.solve(params, debug_mode=False)
         assert len(V_arr_dict) > 0
 
-    def test_dynamic_grid_matches_static(self):
-        """Dynamic grid with same points should give same results as static."""
+    def test_runtime_grid_matches_fixed(self):
+        """Runtime-supplied grid with same points should give same results as fixed."""
         points = jnp.linspace(1, 10, 5)
 
-        # Static model
-        model_static = _simple_model(
+        # Fixed-points model
+        model_fixed = _simple_model(
             wealth_grid=IrregSpacedGrid(points=list(points.tolist())),
         )
-        params_static = {"discount_factor": 0.95, "interest_rate": 0.05}
-        V_static = model_static.solve(params_static, debug_mode=False)
+        params_fixed = {"discount_factor": 0.95, "interest_rate": 0.05}
+        V_fixed = model_fixed.solve(params_fixed, debug_mode=False)
 
-        # Dynamic model
-        model_dynamic = _simple_model(
+        # Runtime-points model
+        model_runtime = _simple_model(
             wealth_grid=IrregSpacedGrid(n_points=5),
         )
-        params_dynamic = {
+        params_runtime = {
             "discount_factor": 0.95,
             "interest_rate": 0.05,
             "alive": {"wealth": {"points": points}},
         }
-        V_dynamic = model_dynamic.solve(params_dynamic, debug_mode=False)
+        V_runtime = model_runtime.solve(params_runtime, debug_mode=False)
 
         # V_arr for period 0, regime "alive" should match
-        for period in V_static:
-            if "alive" in V_static[period] and "alive" in V_dynamic[period]:
-                aaae(V_static[period]["alive"], V_dynamic[period]["alive"])
+        for period in V_fixed:
+            if "alive" in V_fixed[period] and "alive" in V_runtime[period]:
+                aaae(V_fixed[period]["alive"], V_runtime[period]["alive"])
 
 
 # ======================================================================================
-# Feature 3: Dynamic ShockGrid params
+# Feature 3: ShockGrid with runtime-supplied params
 # ======================================================================================
 
 
@@ -282,9 +282,9 @@ def _shock_constraint(
     return consumption <= wealth
 
 
-def _make_shock_model(*, dynamic=True, fixed_rho=False):
-    """Create a shock model, optionally with dynamic rho."""
-    if dynamic:
+def _make_shock_model(*, runtime_rho=True, fixed_rho=False):
+    """Create a shock model, optionally with rho supplied at runtime."""
+    if runtime_rho:
         income_grid = ShockGrid(distribution_type="tauchen", n_points=3)
     else:
         income_grid = ShockGrid(
@@ -317,7 +317,7 @@ def _make_shock_model(*, dynamic=True, fixed_rho=False):
     )
 
     fixed_params: dict = {}
-    if not dynamic:
+    if not runtime_rho:
         fixed_params = {"income": {"rho": 0.9}}
     elif fixed_rho:
         fixed_params = {"rho": 0.9}
@@ -330,39 +330,39 @@ def _make_shock_model(*, dynamic=True, fixed_rho=False):
     )
 
 
-class TestDynamicShockGrid:
-    def test_dynamic_shock_params_property(self):
-        """ShockGrid without rho should report rho as dynamic."""
+class TestRuntimeShockGrid:
+    def test_runtime_shock_params_property(self):
+        """ShockGrid without rho should report rho as runtime-supplied."""
         grid = ShockGrid(distribution_type="tauchen", n_points=5)
-        assert "rho" in grid.dynamic_shock_params
+        assert "rho" in grid.params_to_pass_at_runtime
         assert not grid.is_fully_specified
 
     def test_fully_specified_shock(self):
-        """ShockGrid with all params should have no dynamic params."""
+        """ShockGrid with all params should have no runtime-supplied params."""
         grid = ShockGrid(
             distribution_type="tauchen",
             n_points=5,
             shock_params=MappingProxyType({"rho": 0.9}),
         )
-        assert grid.dynamic_shock_params == ()
+        assert grid.params_to_pass_at_runtime == ()
         assert grid.is_fully_specified
 
-    def test_uniform_shock_no_dynamic(self):
-        """Uniform shock has no required params, so no dynamic params."""
+    def test_uniform_shock_fully_specified(self):
+        """Uniform shock has no required params, so none are runtime-supplied."""
         grid = ShockGrid(distribution_type="uniform", n_points=5)
-        assert grid.dynamic_shock_params == ()
+        assert grid.params_to_pass_at_runtime == ()
         assert grid.is_fully_specified
 
-    def test_dynamic_shock_in_params_template(self):
-        """Dynamic ShockGrid params appear in params_template."""
-        model = _make_shock_model(dynamic=True)
+    def test_runtime_shock_in_params_template(self):
+        """Runtime-supplied ShockGrid params appear in params_template."""
+        model = _make_shock_model(runtime_rho=True)
         alive_template = model.params_template["alive"]
         assert "income" in alive_template
         assert "rho" in alive_template["income"]
 
-    def test_solve_with_dynamic_shock(self):
-        """Solve should work with dynamic shock params provided at solve time."""
-        model = _make_shock_model(dynamic=True)
+    def test_solve_with_runtime_shock(self):
+        """Solve should work with runtime-supplied shock params."""
+        model = _make_shock_model(runtime_rho=True)
         params = {
             "discount_factor": 1.0,
             "rho": 0.9,
@@ -370,9 +370,9 @@ class TestDynamicShockGrid:
         V_arr_dict = model.solve(params, debug_mode=False)
         assert len(V_arr_dict) > 0
 
-    def test_dynamic_shock_with_fixed_rho(self):
-        """Dynamic shock with rho provided via fixed_params at model init."""
-        model = _make_shock_model(dynamic=True, fixed_rho=True)
+    def test_runtime_shock_with_fixed_rho(self):
+        """Runtime-supplied shock with rho provided via fixed_params at model init."""
+        model = _make_shock_model(runtime_rho=True, fixed_rho=True)
 
         # rho should be removed from template since it's fixed
         alive_template = model.params_template.get("alive", {})

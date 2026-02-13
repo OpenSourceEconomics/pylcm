@@ -442,23 +442,23 @@ def _get_weights_fn_for_shock(
 ) -> UserFunction:
     """Get function that uses linear interpolation to calculate the shock weights.
 
-    For dynamic shocks (where some shock_params are not yet specified), the grid points
-    and transition probabilities are computed inside JIT from the dynamic params.
+    For shocks whose params are supplied at runtime, the grid points and transition
+    probabilities are computed inside JIT from those runtime params.
 
     """
-    if isinstance(gridspec, ShockGrid) and gridspec.dynamic_shock_params:
+    if isinstance(gridspec, ShockGrid) and gridspec.params_to_pass_at_runtime:
         n_points = gridspec.n_points
         dist_type = gridspec.distribution_type
-        static_params = dict(gridspec.shock_params)
-        dynamic_names = {
-            f"{name}{QNAME_DELIMITER}{p}": p for p in gridspec.dynamic_shock_params
+        fixed_params = dict(gridspec.shock_params)
+        runtime_param_names = {
+            f"{name}{QNAME_DELIMITER}{p}": p for p in gridspec.params_to_pass_at_runtime
         }
-        args = {name: "ContinuousState", **dict.fromkeys(dynamic_names, "float")}
+        args = {name: "ContinuousState", **dict.fromkeys(runtime_param_names, "float")}
 
         @with_signature(args=args, return_annotation="FloatND", enforce=False)
-        def weights_func_dynamic(*a: Array, **kwargs: Array) -> Float1D:  # noqa: ARG001
-            shock_kw = {**static_params}
-            for qn, raw in dynamic_names.items():
+        def weights_func_runtime(*a: Array, **kwargs: Array) -> Float1D:  # noqa: ARG001
+            shock_kw = {**fixed_params}
+            for qn, raw in runtime_param_names.items():
                 shock_kw[raw] = kwargs[qn]
             grid_points = SHOCK_GRIDPOINT_FUNCTIONS[dist_type](n_points, **shock_kw)
             transition_probs = SHOCK_TRANSITION_PROBABILITY_FUNCTIONS[dist_type](
@@ -473,7 +473,7 @@ def _get_weights_fn_for_shock(
                 ],
             )
 
-        return weights_func_dynamic
+        return weights_func_runtime
 
     transition_probs = gridspec.shock.get_transition_probs()  # ty: ignore[unresolved-attribute]
 
@@ -539,8 +539,8 @@ def _init_shock_gridspecs(
 ) -> MappingProxyType[str, Grid]:
     """Initialize ShockGrid instances with their fixed parameters.
 
-    Dynamic shocks (those with missing required params) are skipped — they will get
-    their params at solve time via the params dict.
+    Shocks with runtime-supplied params (those with missing required params) are
+    skipped — they will get their params at solve time via the params dict.
 
     """
     result: dict[str, Grid] = {}
