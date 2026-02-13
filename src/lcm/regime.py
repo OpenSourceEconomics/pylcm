@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
+from dags.tree import QNAME_DELIMITER
+
 from lcm.exceptions import RegimeInitializationError, format_messages
 from lcm.grids import Grid
 from lcm.typing import (
@@ -11,7 +13,6 @@ from lcm.typing import (
     UserFunction,
 )
 from lcm.utils import (
-    REGIME_SEPARATOR,
     ensure_containers_are_immutable,
 )
 
@@ -161,24 +162,24 @@ def _validate_logical_consistency(regime: Regime) -> None:
         + list(regime.functions.keys())
     )
     invalid_function_names = [
-        name for name in all_function_names if REGIME_SEPARATOR in name
+        name for name in all_function_names if QNAME_DELIMITER in name
     ]
     if invalid_function_names:
         error_messages.append(
             f"Function names cannot contain the reserved separator "
-            f"'{REGIME_SEPARATOR}'. The following names are invalid: "
+            f"'{QNAME_DELIMITER}'. The following names are invalid: "
             f"{invalid_function_names}.",
         )
 
     # Validate state and action names do not contain the separator
     all_variable_names = list(regime.states.keys()) + list(regime.actions.keys())
     invalid_variable_names = [
-        name for name in all_variable_names if REGIME_SEPARATOR in name
+        name for name in all_variable_names if QNAME_DELIMITER in name
     ]
     if invalid_variable_names:
         error_messages.append(
             f"State and action names cannot contain the reserved separator "
-            f"'{REGIME_SEPARATOR}'. The following names are invalid: "
+            f"'{QNAME_DELIMITER}'. The following names are invalid: "
             f"{invalid_variable_names}.",
         )
 

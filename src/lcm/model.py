@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from itertools import chain
 from types import MappingProxyType
 
+from dags.tree import QNAME_DELIMITER
 from jax import Array
 
 from lcm.ages import AgeGrid
@@ -29,7 +30,6 @@ from lcm.typing import (
     UserParams,
 )
 from lcm.utils import (
-    REGIME_SEPARATOR,
     ensure_containers_are_mutable,
     get_field_names_and_values,
 )
@@ -277,11 +277,11 @@ def _validate_model_inputs(  # noqa: C901
         )
 
     # Validate regime names don't contain separator
-    invalid_names = [name for name in regimes if REGIME_SEPARATOR in name]
+    invalid_names = [name for name in regimes if QNAME_DELIMITER in name]
     if invalid_names:
         error_messages.append(
             f"Regime names cannot contain the separator character "
-            f"'{REGIME_SEPARATOR}'. The following names are invalid: {invalid_names}."
+            f"'{QNAME_DELIMITER}'. The following names are invalid: {invalid_names}."
         )
 
     # Assume all items in regimes are lcm.Regime instances beyond this point

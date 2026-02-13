@@ -7,6 +7,7 @@ import jax
 import pandas as pd
 from dags import concatenate_functions
 from dags.signature import with_signature
+from dags.tree import QNAME_DELIMITER
 from jax import Array
 
 from lcm.grids import Grid
@@ -21,7 +22,7 @@ from lcm.typing import (
     RegimeName,
     StochasticNextFunction,
 )
-from lcm.utils import REGIME_SEPARATOR, flatten_regime_namespace
+from lcm.utils import flatten_regime_namespace
 
 
 def get_next_state_function_for_solution(
@@ -37,7 +38,7 @@ def get_next_state_function_for_solution(
 
     Returns:
         Function that computes the next states. Depends on states and actions of the
-        current period, and the regime parameters ("internal_regime_params"). If target
+        current period, and the regime parameters (as flat kwargs). If target
         is "simulate", the function also depends on the dictionary of random keys
         ("keys"), which corresponds to the names of stochastic next functions.
 
@@ -150,13 +151,13 @@ def _extend_transitions_for_simulation(
         fn_name
         for fn_name, fn in transitions.items()
         if is_stochastic_transition(fn)
-        and fn_name.split(REGIME_SEPARATOR)[-1].replace("next_", "") not in shock_names
+        and fn_name.split(QNAME_DELIMITER)[-1].replace("next_", "") not in shock_names
     ]
     continuous_stochastic_targets = [
         (fn_name, fn)
         for fn_name, fn in transitions.items()
         if is_stochastic_transition(fn)
-        and fn_name.split(REGIME_SEPARATOR)[-1].replace("next_", "") in shock_names
+        and fn_name.split(QNAME_DELIMITER)[-1].replace("next_", "") in shock_names
     ]
     # Handle stochastic next states functions
     # ----------------------------------------------------------------------------------
@@ -236,7 +237,6 @@ def _create_continuous_stochastic_next_func(
     """
     prev_state_name = name.split("next_")[1]
     args = {
-        "internal_regime_params": "InternalRegimeParams",
         f"key_{name}": "dict[str, Array]",
         prev_state_name: "Array",
     }

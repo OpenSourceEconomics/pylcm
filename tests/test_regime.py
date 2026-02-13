@@ -1,11 +1,11 @@
 """Test Regime class validation."""
 
 import pytest
+from dags.tree import QNAME_DELIMITER
 
 from lcm import LinSpacedGrid, Model, Regime, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.utils import REGIME_SEPARATOR
 
 
 def utility(consumption):
@@ -43,33 +43,33 @@ def test_regime_name_does_not_contain_separator():
     ages = AgeGrid(start=0, stop=5, step="Y")
 
     # Regime name containing separator should raise at Model creation
-    with pytest.raises(ModelInitializationError, match=REGIME_SEPARATOR):
+    with pytest.raises(ModelInitializationError, match=QNAME_DELIMITER):
         Model(
-            regimes={f"work{REGIME_SEPARATOR}test": working, "dead": dead},
+            regimes={f"work{QNAME_DELIMITER}test": working, "dead": dead},
             ages=ages,
             regime_id_class=RegimeId,
         )
 
 
 def test_function_name_does_not_contain_separator():
-    with pytest.raises(RegimeInitializationError, match=REGIME_SEPARATOR):
+    with pytest.raises(RegimeInitializationError, match=QNAME_DELIMITER):
         Regime(
             utility=utility,
             states={"wealth": WEALTH_GRID},
-            actions={f"consumption{REGIME_SEPARATOR}action": CONSUMPTION_GRID},
+            actions={f"consumption{QNAME_DELIMITER}action": CONSUMPTION_GRID},
             transitions={"next_wealth": next_wealth},
-            functions={f"helper{REGIME_SEPARATOR}func": lambda: 1},
+            functions={f"helper{QNAME_DELIMITER}func": lambda: 1},
             active=lambda age: age < 5,
         )
 
 
 def test_state_name_does_not_contain_separator():
-    with pytest.raises(RegimeInitializationError, match=REGIME_SEPARATOR):
+    with pytest.raises(RegimeInitializationError, match=QNAME_DELIMITER):
         Regime(
             utility=utility,
-            states={f"my{REGIME_SEPARATOR}wealth": WEALTH_GRID},
+            states={f"my{QNAME_DELIMITER}wealth": WEALTH_GRID},
             actions={"consumption": CONSUMPTION_GRID},
-            transitions={f"next_my{REGIME_SEPARATOR}wealth": next_wealth},
+            transitions={f"next_my{QNAME_DELIMITER}wealth": next_wealth},
             active=lambda age: age < 5,
         )
 

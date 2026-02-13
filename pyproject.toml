@@ -1,33 +1,10 @@
-# ======================================================================================
-# Project metadata
-# ======================================================================================
+[build-system]
+build-backend = "hatchling.build"
+requires = [ "hatch-vcs", "hatchling" ]
 
 [project]
-authors = [
-  { name = "Tim Mensinger", email = "mensingertim@gmail.com" },
-  { name = "Janos Gabler" },
-]
-classifiers = [
-  "Development Status :: 3 - Alpha",
-  "Intended Audience :: Science/Research",
-  "License :: OSI Approved :: Apache Software License",
-  "Operating System :: MacOS :: MacOS X",
-  "Operating System :: Microsoft :: Windows",
-  "Operating System :: POSIX",
-  "Operating System :: Unix",
-  "Programming Language :: Python :: 3.14",
-  "Topic :: Scientific/Engineering",
-  "Typing :: Typed",
-]
-dependencies = [
-  # "dags>=0.5.0",
-  "jax>=0.8",
-  "jaxtyping>=0.3.2",
-  "pandas",
-  "portion>=2.6",
-]
+name = "pylcm"
 description = "Specification, solution, and simulation of finite-horizon dynamic choice models."
-dynamic = [ "version" ]
 keywords = [
   "Dynamic programming",
   "Econometrics",
@@ -36,154 +13,65 @@ keywords = [
   "Life cycle models",
   "Statistics",
 ]
-maintainers = [
-  { name = "Tim Mensinger", email = "mensingertim@gmail.com" },
-  { name = "Hans-Martin von Gaudecker", email = "hmgaudecker@uni-bonn.de" },
+requires-python = ">=3.14"
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: MacOS :: MacOS X",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX",
+  "Operating System :: Unix",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering",
+  "Typing :: Typed",
 ]
-name = "pylcm"
-requires-python = ">= 3.14"
-
+dynamic = [ "version" ]
+dependencies = [
+  # "dags>=0.5.0",
+  "jax>=0.8",
+  "jaxtyping>=0.3.2",
+  "pandas",
+  "portion>=2.6",
+]
+[[project.authors]]
+name = "Janos Gabler"
+[[project.authors]]
+name = "Tim Mensinger"
+email = "mensingertim@gmail.com"
 [project.license]
 file = "LICENSE"
-
+[[project.maintainers]]
+name = "Hans-Martin von Gaudecker"
+email = "hmgaudecker@uni-bonn.de"
+[[project.maintainers]]
+name = "Tim Mensinger"
+email = "mensingertim@gmail.com"
 [project.readme]
-file = "README.md"
 content-type = "text/markdown"
-
+file = "README.md"
 [project.urls]
 Github = "https://github.com/opensourceeconomics/pylcm"
 Repository = "https://github.com/opensourceeconomics/pylcm"
 Tracker = "https://github.com/opensourceeconomics/pylcm/issues"
 
-# ======================================================================================
-# Build system configuration
-# ======================================================================================
-
-[build-system]
-build-backend = "hatchling.build"
-requires = [ "hatchling", "hatch-vcs" ]
-
-[tool.hatch.build.hooks.vcs]
-version-file = "src/lcm/_version.py"
-
-[tool.hatch.build.targets.sdist]
-exclude = [ "tests" ]
-only-packages = true
-
-[tool.hatch.build.targets.wheel]
-packages = [ "src/lcm" ]
-
-[tool.hatch.metadata]
-allow-direct-references = true
-
-[tool.hatch.version]
-source = "vcs"
-
-[tool.pixi.dependencies]
-cloudpickle = ">=3.1.2,<4"
-jupyterlab = "*"
-memory_profiler = "*"
-numpy = ">=2.4"
-plotly = ">=6.5"
-prek = "*"
-pybaum = "*"
-scipy = ">=1.16"
-snakeviz = "*"
-
-# Environments
-# --------------------------------------------------------------------------------------
-
-[tool.pixi.environments]
-cuda12 = { features = [ "cuda12" ], solve-group = "cuda12" }
-cuda13 = { features = [ "cuda13" ], solve-group = "cuda13" }
-tests-cpu = { features = [ "tests" ], solve-group = "default" }
-tests-cuda12 = { features = [ "tests", "cuda12" ], solve-group = "cuda12" }
-tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
-
-# ======================================================================================
-# Ruff configuration
-# ======================================================================================
-
-# Features and Tasks
-# --------------------------------------------------------------------------------------
-
-[tool.pixi.feature.cuda12]
-platforms = [ "linux-64" ]
-system-requirements = { cuda = "12" }
-
-[tool.pixi.feature.cuda12.target.linux-64.dependencies]
-cuda-nvcc = "~=12.0"
-
-[tool.pixi.feature.cuda12.target.linux-64.pypi-dependencies]
-jax = { version = ">=0.8", extras = [ "cuda12" ] }
-
-[tool.pixi.feature.cuda13]
-platforms = [ "linux-64" ]
-system-requirements = { cuda = "13" }
-
-[tool.pixi.feature.cuda13.target.linux-64.dependencies]
-cuda-nvcc = "~=13.0"
-
-[tool.pixi.feature.cuda13.target.linux-64.pypi-dependencies]
-jax = { version = ">=0.8", extras = [ "cuda13" ] }
-
-[tool.pixi.feature.tests.dependencies]
-matplotlib = "*"   # required because of pandas
-pandas-stubs = "*"
-pytest = "*"
-pytest-cov = "*"
-pytest-xdist = "*"
-scipy-stubs = "*"
-ty = "*"
-
-[tool.pixi.feature.tests.tasks]
-explanation-notebooks = "jupyter execute explanations/*.ipynb"
-tests = "pytest tests"
-tests-32bit = "pytest tests --precision=32"
-tests-with-cov = "pytest tests --cov-report=xml --cov=./"
-ty = "ty check"
-
-[tool.pixi.pypi-dependencies]
-dags = { git = "https://github.com/OpenSourceEconomics/dags.git", branch = "main" }
-pdbp = "*"
-pylcm = { path = ".", editable = true }
-
-# ======================================================================================
-# Pixi configuration
-# ======================================================================================
-
-[tool.pixi.workspace]
-channels = [ "conda-forge" ]
-platforms = [ "linux-64", "osx-arm64", "win-64" ]
-
-# Development Dependencies (conda and pypi)
-# --------------------------------------------------------------------------------------
-
-# ======================================================================================
-# pytest configuration
-# ======================================================================================
-
-[tool.pytest.ini_options]
-addopts = [ "--pdbcls=pdbp:Pdb" ]
-filterwarnings = [  ]
-markers = [
-  "wip: Tests that are work-in-progress.",
-  "slow: Tests that take a long time to run and are skipped in continuous integration.",
-  "illustrative: Tests are designed for illustrative purposes",
-]
-norecursedirs = [ "docs", ".envs" ]
-
-# ======================================================================================
-# yamlfix configuration
-# ======================================================================================
+[tool.hatch]
+build.hooks.vcs.version-file = "src/lcm/_version.py"
+build.targets.sdist.exclude = [ "tests" ]
+build.targets.sdist.only-packages = true
+build.targets.wheel.only-include = [ "src" ]
+build.targets.wheel.sources = [ "src" ]
+metadata.allow-direct-references = true
+version.source = "vcs"
 
 [tool.ruff]
+target-version = "py314"
 exclude = [ "src/lcm/sandbox" ]
 fix = true
-target-version = "py314"
 unsafe-fixes = false
-
 [tool.ruff.lint]
+select = [ "ALL" ]
 extend-ignore = [
   "COM812",  # Conflicts with ruff-format
   "D",       # Docstrings
@@ -202,30 +90,27 @@ extend-ignore = [
   "TRY003",  # Long messages outside exception class
   "UP047",   # Generic function should use type parameters
 ]
-select = [ "ALL" ]
-
-[tool.ruff.lint.per-file-ignores]
-"examples/*" = [
+per-file-ignores."examples/*" = [
   "E402",   # Module level import not at top of file
   "INP001", # Implicit namespace package
 ]
-"explanations/*" = [
+per-file-ignores."explanations/*" = [
   "ANN",    # Annotations
   "E402",   # Module level import not at top of file
+  "INP001", # Implicit namespace package
   "T201",   # print found
   "T203",   # pprint found
-  "INP001", # Implicit namespace package
 ]
-"src/lcm/functools.py" = [
+per-file-ignores."src/lcm/functools.py" = [
   "ANN401", # Dynamically typed expressions (Any)
 ]
-"src/lcm/max_*" = [
+per-file-ignores."src/lcm/max_*" = [
   "N999", # Module name mixing uppercase and lowercase
 ]
-"src/lcm/Q_and_F.py" = [
+per-file-ignores."src/lcm/Q_and_F.py" = [
   "N999", # Module name mixing uppercase and lowercase
 ]
-"tests/*" = [
+per-file-ignores."tests/*" = [
   "ANN",     # Annotations
   "D",       # Docstrings
   "INP001",  # Implicit namespace package
@@ -234,23 +119,31 @@ select = [ "ALL" ]
   "S101",    # Use of assert
   "S301",    # Use of pickle
 ]
-"tests/test_next_state.py" = [
+per-file-ignores."tests/test_next_state.py" = [
   "ARG001", # Unused function argument
   "ARG005", # Unused lambda argument
   "E731",   # Do not assign a `lambda` expression, use a `def`
 ]
-"tests/test_Q_and_F.py" = [
+per-file-ignores."tests/test_Q_and_F.py" = [
   "ARG001", # Unused function argument
   "ARG005", # Unused lambda argument
   "E731",   # Do not assign a `lambda` expression, use a `def`
 ]
+pydocstyle.convention = "google"
 
-[tool.ruff.lint.pydocstyle]
-convention = "google"
+[tool.pyproject-fmt]
+column_width = 88
+max_supported_python = "3.14"
+table_format = "long"
+collapse_tables = [ "tool.hatch" ]
 
-# ======================================================================================
-# ty configuration
-# ======================================================================================
+[tool.pytest.ini_options]
+addopts = [ "--pdbcls=pdbp:Pdb" ]
+filterwarnings = []
+markers = [
+  "illustrative: Tests are designed for illustrative purposes",
+]
+norecursedirs = [ "docs" ]
 
 [tool.ty.rules]
 ambiguous-protocol-member = "error"
@@ -270,9 +163,62 @@ unresolved-global = "error"
 unsupported-base = "error"
 unused-ignore-comment = "error"
 useless-overload-body = "error"
-
 [tool.ty.src]
 include = [ "src/", "tests/", "examples/" ]
+
+[tool.pixi.dependencies]
+python = "~=3.14.0"
+cloudpickle = ">=3.1.2,<4"
+jupyterlab = "*"
+memory_profiler = "*"
+numpy = ">=2.4"
+plotly = ">=6.5"
+prek = "*"
+pyarrow = "*"
+pybaum = "*"
+scipy = ">=1.16"
+snakeviz = "*"
+[tool.pixi.environments]
+cuda12 = { features = [ "cuda12" ], solve-group = "cuda12" }
+cuda13 = { features = [ "cuda13" ], solve-group = "cuda13" }
+tests-cpu = { features = [ "tests" ], solve-group = "default" }
+tests-cuda12 = { features = [ "tests", "cuda12" ], solve-group = "cuda12" }
+tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
+[tool.pixi.feature.cuda12]
+platforms = [ "linux-64" ]
+system-requirements = { cuda = "12" }
+[tool.pixi.feature.cuda12.target.linux-64.dependencies]
+cuda-nvcc = "~=12.0"
+[tool.pixi.feature.cuda12.target.linux-64.pypi-dependencies]
+jax = { version = ">=0.8", extras = [ "cuda12" ] }
+[tool.pixi.feature.cuda13]
+platforms = [ "linux-64" ]
+system-requirements = { cuda = "13" }
+[tool.pixi.feature.cuda13.target.linux-64.dependencies]
+cuda-nvcc = "~=13.0"
+[tool.pixi.feature.cuda13.target.linux-64.pypi-dependencies]
+jax = { version = ">=0.8", extras = [ "cuda13" ] }
+[tool.pixi.feature.tests.dependencies]
+matplotlib = "*"  # required because of pandas
+pandas-stubs = "*"
+pytest = "*"
+pytest-cov = "*"
+pytest-xdist = "*"
+scipy-stubs = "*"
+ty = "*"
+[tool.pixi.feature.tests.tasks]
+explanation-notebooks = "jupyter execute explanations/*.ipynb"
+tests = "pytest tests"
+tests-32bit = "pytest tests --precision=32"
+tests-with-cov = "pytest tests --cov-report=xml --cov=./"
+ty = "ty check"
+[tool.pixi.pypi-dependencies]
+dags = { git = "https://github.com/OpenSourceEconomics/dags.git", branch = "main" }
+pdbp = "*"
+pylcm = { path = ".", editable = true }
+[tool.pixi.workspace]
+channels = [ "conda-forge" ]
+platforms = [ "linux-64", "osx-arm64", "win-64" ]
 
 [tool.yamlfix]
 line_length = 88

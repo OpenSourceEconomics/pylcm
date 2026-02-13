@@ -64,13 +64,15 @@ def simulate_inputs():
 def test_simulate_using_raw_inputs(simulate_inputs):
     internal_params = MappingProxyType(
         {
-            "working": {
-                "discount_factor": 1.0,
-                "utility": {"disutility_of_work": 1.0},
-                "next_wealth": {"interest_rate": 0.05},
-                "next_regime": {"final_age_alive": 0},
-            },
-            "dead": {"discount_factor": 1.0},
+            "working": MappingProxyType(
+                {
+                    "discount_factor": 1.0,
+                    "utility__disutility_of_work": 1.0,
+                    "next_wealth__interest_rate": 0.05,
+                    "next_regime__final_age_alive": 0,
+                }
+            ),
+            "dead": MappingProxyType({"discount_factor": 1.0}),
         }
     )
 

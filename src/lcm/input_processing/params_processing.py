@@ -2,16 +2,22 @@
 
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
+
+from dags.tree import QNAME_DELIMITER
 
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.interfaces import InternalRegime
-from lcm.typing import InternalParams, ParamsTemplate, RegimeName, UserParams
+from lcm.typing import (
+    InternalParams,
+    ParamsTemplate,
+    RegimeName,
+    RegimeParamsTemplate,
+    UserParams,
+)
 from lcm.utils import (
-    REGIME_SEPARATOR,
     ensure_containers_are_immutable,
     flatten_regime_namespace,
-    unflatten_regime_namespace,
 )
 
 _NUM_PARTS_FUNCTION_PARAM = 3
@@ -51,7 +57,7 @@ def process_params(  # noqa: C901
     used_keys: set[str] = set()
 
     for key in template_flat:
-        parts = key.split(REGIME_SEPARATOR)
+        parts = key.split(QNAME_DELIMITER)
         param_name = parts[-1]
 
         candidates = []
@@ -64,7 +70,7 @@ def process_params(  # noqa: C901
         # We want to check for regime__param
         if len(parts) == _NUM_PARTS_FUNCTION_PARAM:
             regime = parts[0]
-            regime_level_key = f"{regime}{REGIME_SEPARATOR}{param_name}"
+            regime_level_key = f"{regime}{QNAME_DELIMITER}{param_name}"
             # Check if this regime-level key was provided in params
             if regime_level_key in params_flat:
                 candidates.append(regime_level_key)
@@ -93,7 +99,7 @@ def process_params(  # noqa: C901
     if unknown_keys:
         raise InvalidParamsError(f"Unknown keys: {sorted(unknown_keys)}")
 
-    result = unflatten_regime_namespace(result_flat)
+    result = _split_flat_by_regime(result_flat)
 
     # Ensure all regimes from the template are present in the result
     # (even if they have no parameters)
@@ -101,7 +107,7 @@ def process_params(  # noqa: C901
         if regime_name not in result:
             result[regime_name] = {}
 
-    return ensure_containers_are_immutable(result)
+    return cast("InternalParams", ensure_containers_are_immutable(result))
 
 
 def create_params_template(  # noqa: C901
@@ -129,7 +135,7 @@ def create_params_template(  # noqa: C901
 
     for name, regime in internal_regimes.items():
         regime_names.add(name)
-        regime_template = dict(regime.params_template)
+        regime_template = dict(regime.regime_params_template)
         template[name] = regime_template
 
         for key, val in regime_template.items():
@@ -137,30 +143,29 @@ def create_params_template(  # noqa: C901
                 function_names.add(key)
                 for arg_name in val:
                     # Check for separator in argument names
-                    if REGIME_SEPARATOR in arg_name:
+                    if QNAME_DELIMITER in arg_name:
                         raise InvalidNameError(
                             f"Argument name {arg_name!r} in function {key!r} "
-                            f"cannot contain the separator '{REGIME_SEPARATOR}'"
+                            f"cannot contain the separator '{QNAME_DELIMITER}'"
                         )
                     argument_names.add(arg_name)
             else:
-                # Top-level param like discount_factor
+                # Scalar param (currently unused - all params are under namespaces)
                 argument_names.add(key)
 
     # Check for separator in regime names
     for name in regime_names:
-        if REGIME_SEPARATOR in name:
+        if QNAME_DELIMITER in name:
             raise InvalidNameError(
-                f"Regime name {name!r} cannot contain the separator "
-                f"'{REGIME_SEPARATOR}'"
+                f"Regime name {name!r} cannot contain the separator '{QNAME_DELIMITER}'"
             )
 
     # Check for separator in function names
     for name in function_names:
-        if REGIME_SEPARATOR in name:
+        if QNAME_DELIMITER in name:
             raise InvalidNameError(
                 f"Function name {name!r} cannot contain the separator "
-                f"'{REGIME_SEPARATOR}'"
+                f"'{QNAME_DELIMITER}'"
             )
 
     # Check that names are disjoint
@@ -183,3 +188,44 @@ def create_params_template(  # noqa: C901
     # E.g., labor_income is a function in 'working' but a param in 'retired'.
 
     return ensure_containers_are_immutable(template)
+
+
+def _split_flat_by_regime(
+    flat: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Split a flat params dict into per-regime dicts with function-qualified keys.
+
+    Converts "working__utility__risk_aversion" into
+    {"working": {"utility__risk_aversion": value}}.
+
+    Top-level regime params like "working__discount_factor" become
+    {"working": {"discount_factor": value}}.
+
+    """
+    result: dict[str, dict[str, Any]] = {}
+    for key, value in flat.items():
+        # Key format: "regime__function__param" or "regime__param"
+        regime_name, remainder = key.split(QNAME_DELIMITER, 1)
+        if regime_name not in result:
+            result[regime_name] = {}
+        result[regime_name][remainder] = value
+    return result
+
+
+def get_flat_param_names(regime_params_template: RegimeParamsTemplate) -> set[str]:
+    """Get all flat parameter names from a regime params template.
+
+    Converts nested template entries like {"utility": {"risk_aversion": type}} to
+    flat names like "utility__risk_aversion". Top-level params like
+    {"discount_factor": float} are included as-is.
+
+    """
+    result = set()
+    for key, value in regime_params_template.items():
+        if isinstance(value, Mapping):
+            for param_name in value:
+                result.add(f"{key}{QNAME_DELIMITER}{param_name}")
+        else:
+            # Top-level param (e.g., "discount_factor": float)
+            result.add(key)
+    return result

@@ -45,16 +45,15 @@ def test_params_at_function_level(params_template):
     }
     internal_params = process_params(params, params_template)
 
-    # Check skeleton matches template
+    # Check that output has regime-level keys
     assert set(internal_params.keys()) == set(params_template.keys())
+    # Check that output is flat per regime (function__param format)
     for regime in params_template:
-        assert set(internal_params[regime].keys()) == set(
-            params_template[regime].keys()
-        )
-        for func in params_template[regime]:
-            func_to_args = internal_params[regime][func]
-            assert isinstance(func_to_args, MappingProxyType)
-            assert set(func_to_args.keys()) == set(params_template[regime][func].keys())
+        expected_flat_keys = set()
+        for func, func_params in params_template[regime].items():
+            for arg in func_params:
+                expected_flat_keys.add(f"{func}__{arg}")
+        assert set(internal_params[regime].keys()) == expected_flat_keys
 
 
 def test_params_at_regime_level(params_template):
@@ -68,12 +67,14 @@ def test_params_at_regime_level(params_template):
     }
     internal_params = process_params(params, params_template)
 
-    # Check skeleton matches template
+    # Check that output has regime-level keys with flat format
     assert set(internal_params.keys()) == set(params_template.keys())
     for regime in params_template:
-        assert set(internal_params[regime].keys()) == set(
-            params_template[regime].keys()
-        )
+        expected_flat_keys = set()
+        for func, func_params in params_template[regime].items():
+            for arg in func_params:
+                expected_flat_keys.add(f"{func}__{arg}")
+        assert set(internal_params[regime].keys()) == expected_flat_keys
 
 
 def test_params_mixed_regime_function_level(params_template):
@@ -91,12 +92,14 @@ def test_params_mixed_regime_function_level(params_template):
     }
     internal_params = process_params(params, params_template)
 
-    # Check skeleton matches template
+    # Check that output has regime-level keys with flat format
     assert set(internal_params.keys()) == set(params_template.keys())
     for regime in params_template:
-        assert set(internal_params[regime].keys()) == set(
-            params_template[regime].keys()
-        )
+        expected_flat_keys = set()
+        for func, func_params in params_template[regime].items():
+            for arg in func_params:
+                expected_flat_keys.add(f"{func}__{arg}")
+        assert set(internal_params[regime].keys()) == expected_flat_keys
 
 
 def test_params_at_model_level(params_template):
@@ -104,12 +107,14 @@ def test_params_at_model_level(params_template):
     params = {"arg_0": 0.0, "arg_1": 1.0}
     internal_params = process_params(params, params_template)
 
-    # Check skeleton matches template
+    # Check that output has regime-level keys with flat format
     assert set(internal_params.keys()) == set(params_template.keys())
     for regime in params_template:
-        assert set(internal_params[regime].keys()) == set(
-            params_template[regime].keys()
-        )
+        expected_flat_keys = set()
+        for func, func_params in params_template[regime].items():
+            for arg in func_params:
+                expected_flat_keys.add(f"{func}__{arg}")
+        assert set(internal_params[regime].keys()) == expected_flat_keys
 
 
 # ======================================================================================
@@ -180,15 +185,15 @@ def test_ambiguous_model_regime_level(params_template):
 
 
 class MockRegime:
-    """Mock regime with params_template for testing create_params_template."""
+    """Mock regime with regime_params_template for testing create_params_template."""
 
-    def __init__(self, params_template: dict) -> None:
-        self._params_template = params_template
+    def __init__(self, regime_params_template: dict) -> None:
+        self._regime_params_template = regime_params_template
 
     @property
-    def params_template(self) -> MappingProxyType:
-        """Return params_template as MappingProxyType."""
-        return MappingProxyType(self._params_template)
+    def regime_params_template(self) -> MappingProxyType:
+        """Return regime_params_template as MappingProxyType."""
+        return MappingProxyType(self._regime_params_template)
 
 
 def test_function_params_no_qname_separator():
@@ -285,8 +290,9 @@ def test_passing_same_params_to_regimes_with_different_templates():
     2. A terminal regime (e.g., 'dead') has only a simple utility function
     3. The user attempts to pass the same params dict to both regimes
 
-    The terminal regime's params_template only contains {"discount_factor": float}
-    because terminal regimes have no transitions, constraints, or auxiliary functions.
+    The terminal regime's regime_params_template only contains
+    {"discount_factor": float} because terminal regimes have no transitions,
+    constraints, or auxiliary functions.
 
     When the user does: params={"alive": shared_params, "dead": shared_params}
 
