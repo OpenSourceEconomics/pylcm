@@ -761,9 +761,10 @@ if __name__ == "__main__":
         **START_PARAMS,  # ty: ignore[invalid-argument-type]
     )
 
-    simulation_result = MAHLER_YUM_MODEL.solve_and_simulate(
-        params={"alive": params},
-        initial_states=initial_states,
-        initial_regimes=initial_regimes,
-        seed=8295,
-    )
+    for _ in range(3):
+        simulation_result = MAHLER_YUM_MODEL.solve_and_simulate(
+            params={"alive": params},
+            initial_states=initial_states,
+            initial_regimes=initial_regimes,
+            seed=8295,
+        )
