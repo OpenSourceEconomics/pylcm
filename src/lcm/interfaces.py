@@ -6,7 +6,8 @@ from types import MappingProxyType
 import pandas as pd
 from jax import Array
 
-from lcm.grids import ContinuousGrid, DiscreteGrid, Grid, ShockGrid
+from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
+from lcm.shock_grids import ShockGrid
 from lcm.typing import (
     ArgmaxQOverAFunction,
     Bool1D,

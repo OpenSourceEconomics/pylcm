@@ -1,5 +1,4 @@
 import functools
-import inspect
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, cast
@@ -12,7 +11,7 @@ from jax import numpy as jnp
 
 from lcm.ages import AgeGrid
 from lcm.grid_helpers import get_irreg_coordinate
-from lcm.grids import Grid, ShockGrid
+from lcm.grids import Grid
 from lcm.input_processing.create_regime_params_template import (
     create_regime_params_template,
 )
@@ -32,7 +31,7 @@ from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
 from lcm.mark import stochastic
 from lcm.ndimage import map_coordinates
 from lcm.regime import Regime
-from lcm.shocks import SHOCK_GRIDPOINT_FUNCTIONS, SHOCK_TRANSITION_PROBABILITY_FUNCTIONS
+from lcm.shock_grids import ShockGrid
 from lcm.state_action_space import create_state_action_space, create_state_space_info
 from lcm.typing import (
     Float1D,
@@ -432,31 +431,22 @@ def _get_weights_fn_for_shock(
     """
     if isinstance(gridspec, ShockGrid) and gridspec.params_to_pass_at_runtime:
         n_points = gridspec.n_points
-        dist_type = gridspec.distribution_type
-        fixed_params = dict(gridspec.shock_params)
+        fixed_params = dict(gridspec.params)
         runtime_param_names = {
             f"{name}{QNAME_DELIMITER}{p}": p for p in gridspec.params_to_pass_at_runtime
         }
         args = {name: "ContinuousState", **dict.fromkeys(runtime_param_names, "float")}
 
-        # Pre-compute which params the probs function accepts (may differ from
-        # the gridpoints function, e.g. _rouwenhorst_probs only takes rho).
-        _probs_params = set(
-            inspect.signature(
-                SHOCK_TRANSITION_PROBABILITY_FUNCTIONS[dist_type]
-            ).parameters
-        ) - {"n_points"}
+        _compute_gridpoints = gridspec.compute_gridpoints
+        _compute_transition_probs = gridspec.compute_transition_probs
 
         @with_signature(args=args, return_annotation="FloatND", enforce=False)
         def weights_func_runtime(*a: Array, **kwargs: Array) -> Float1D:  # noqa: ARG001
             shock_kw = {**fixed_params}
             for qn, raw in runtime_param_names.items():
                 shock_kw[raw] = kwargs[qn]
-            grid_points = SHOCK_GRIDPOINT_FUNCTIONS[dist_type](n_points, **shock_kw)
-            probs_kw = {k: v for k, v in shock_kw.items() if k in _probs_params}
-            transition_probs = SHOCK_TRANSITION_PROBABILITY_FUNCTIONS[dist_type](
-                n_points, **probs_kw
-            )
+            grid_points = _compute_gridpoints(n_points, **shock_kw)
+            transition_probs = _compute_transition_probs(n_points, **shock_kw)
             coord = get_irreg_coordinate(kwargs[name], grid_points)
             return map_coordinates(
                 input=transition_probs,
@@ -468,7 +458,7 @@ def _get_weights_fn_for_shock(
 
         return weights_func_runtime
 
-    transition_probs = gridspec.shock.get_transition_probs()  # ty: ignore[unresolved-attribute]
+    transition_probs = gridspec.get_transition_probs()  # ty: ignore[unresolved-attribute]
 
     @with_signature(
         args={f"{name}": "ContinuousState"},

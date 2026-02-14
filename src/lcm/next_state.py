@@ -10,9 +10,9 @@ from dags.signature import with_signature
 from dags.tree import QNAME_DELIMITER
 from jax import Array
 
-from lcm.grids import Grid, ShockGrid
+from lcm.grids import Grid
 from lcm.input_processing.util import is_stochastic_transition
-from lcm.shocks import SHOCK_CALCULATION_FUNCTIONS
+from lcm.shock_grids import ShockGrid, ShockGridAR1, ShockGridIID
 from lcm.typing import (
     ContinuousState,
     DiscreteState,
@@ -34,8 +34,8 @@ def get_next_state_function_for_solution(
     """Get function that computes the next states during the solution.
 
     Args:
-        transitions: Transitions to the next states of a regime. functions: Dict of
-        auxiliary functions of a regime.
+        transitions: Transitions to the next states of a regime.
+        functions: Dict of auxiliary functions of a regime.
 
     Returns:
         Function that computes the next states. Depends on states and actions of the
@@ -63,7 +63,7 @@ def get_next_state_function_for_simulation(
     transitions: MappingProxyType[str, InternalUserFunction],
     functions: MappingProxyType[str, InternalUserFunction],
 ) -> NextStateSimulationFunction:
-    """Get function that computes the next states during the simultion.
+    """Get function that computes the next states during the simulation.
 
     Args:
         grids: Grids of a regime.
@@ -236,16 +236,28 @@ def _create_continuous_stochastic_next_func(
 
     """
     prev_state_name = name.split("next_")[1]
-    gridspec = gridspecs[prev_state_name]
+    gridspec: ShockGrid = gridspecs[prev_state_name]  # ty: ignore [invalid-assignment]
 
+    if isinstance(gridspec, ShockGridAR1):
+        return _create_ar1_next_func(name, prev_state_name, gridspec)
+    if isinstance(gridspec, ShockGridIID):
+        return _create_iid_next_func(name, prev_state_name, gridspec)
+
+    msg = f"Expected ShockGridIID or ShockGridAR1, got {type(gridspec)}"
+    raise TypeError(msg)
+
+
+def _create_ar1_next_func(
+    name: str, prev_state_name: str, gridspec: ShockGridAR1
+) -> StochasticNextFunction:
     args: dict[str, str] = {
         f"key_{name}": "dict[str, Array]",
         prev_state_name: "Array",
     }
 
-    if isinstance(gridspec, ShockGrid) and gridspec.params_to_pass_at_runtime:
-        dist_type = gridspec.distribution_type
-        fixed_params = dict(gridspec.shock_params)
+    if gridspec.params_to_pass_at_runtime:
+        fixed_params = dict(gridspec.params)
+        _draw_shock = gridspec.draw_shock
         runtime_param_names = {
             f"{prev_state_name}{QNAME_DELIMITER}{p}": p
             for p in gridspec.params_to_pass_at_runtime
@@ -257,19 +269,58 @@ def _create_continuous_stochastic_next_func(
             shock_kw = {**fixed_params}
             for qn, raw in runtime_param_names.items():
                 shock_kw[raw] = kwargs[qn]
-            return SHOCK_CALCULATION_FUNCTIONS[dist_type](
+            return _draw_shock(
                 params=MappingProxyType(shock_kw),
                 key=kwargs[f"key_{name}"],
-                prev_value=kwargs[prev_state_name],
+                current_value=kwargs[prev_state_name],
             )
 
         return next_stochastic_state_runtime
 
     @with_signature(args=args, return_annotation="ContinuousState")
     def next_stochastic_state(**kwargs: FloatND) -> ContinuousState:
-        return gridspec.shock.draw_shock(  # ty: ignore[unresolved-attribute]
+        return gridspec.draw_shock(
+            params=gridspec.params,
             key=kwargs[f"key_{name}"],
-            prev_value=kwargs[prev_state_name],
+            current_value=kwargs[prev_state_name],
+        )
+
+    return next_stochastic_state
+
+
+def _create_iid_next_func(
+    name: str, prev_state_name: str, gridspec: ShockGridIID
+) -> StochasticNextFunction:
+    args: dict[str, str] = {
+        f"key_{name}": "dict[str, Array]",
+    }
+
+    if gridspec.params_to_pass_at_runtime:
+        fixed_params = dict(gridspec.params)
+        _draw_shock = gridspec.draw_shock
+        runtime_param_names = {
+            f"{prev_state_name}{QNAME_DELIMITER}{p}": p
+            for p in gridspec.params_to_pass_at_runtime
+        }
+        args.update(dict.fromkeys(runtime_param_names, "float"))
+
+        @with_signature(args=args, return_annotation="ContinuousState")
+        def next_stochastic_state_runtime(**kwargs: FloatND) -> ContinuousState:
+            shock_kw = {**fixed_params}
+            for qn, raw in runtime_param_names.items():
+                shock_kw[raw] = kwargs[qn]
+            return _draw_shock(
+                params=MappingProxyType(shock_kw),
+                key=kwargs[f"key_{name}"],
+            )
+
+        return next_stochastic_state_runtime
+
+    @with_signature(args=args, return_annotation="ContinuousState")
+    def next_stochastic_state(**kwargs: FloatND) -> ContinuousState:
+        return gridspec.draw_shock(
+            params=gridspec.params,
+            key=kwargs[f"key_{name}"],
         )
 
     return next_stochastic_state

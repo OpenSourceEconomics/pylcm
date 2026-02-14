@@ -3,10 +3,11 @@ from types import MappingProxyType
 import pandas as pd
 from jax import Array
 
-from lcm.grids import ContinuousGrid, DiscreteGrid, ShockGrid
+from lcm.grids import ContinuousGrid, DiscreteGrid
 from lcm.input_processing.util import get_gridspecs, get_variable_info
 from lcm.interfaces import StateActionSpace, StateSpaceInfo
 from lcm.regime import Regime
+from lcm.shock_grids import ShockGrid
 
 
 def create_state_action_space(

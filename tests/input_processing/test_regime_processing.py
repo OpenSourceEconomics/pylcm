@@ -170,7 +170,6 @@ def test_get_variable_info(regime_mock):
         {
             "is_state": [False, True],
             "is_shock": [False, False],
-            "distribution_type": ["none", "none"],
             "is_action": [True, False],
             "is_continuous": [False, False],
             "is_discrete": [True, True],

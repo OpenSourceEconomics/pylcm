@@ -31,6 +31,9 @@ class InternalRegimeMock:
     gridspecs: MappingProxyType = dataclasses.field(
         default_factory=lambda: MappingProxyType({})
     )
+    resolved_fixed_params: MappingProxyType = dataclasses.field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
 
 def test_solve_brute():
