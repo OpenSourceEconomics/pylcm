@@ -69,11 +69,11 @@ def get_max_Q_over_a(
     )
     def max_Q_over_a(
         next_V_arr: MappingProxyType[RegimeName, FloatND],
-        **kwargs: Array,
+        **states_actions_params: Array,
     ) -> FloatND:
         Q_arr, F_arr = Q_and_F(
             next_V_arr=next_V_arr,
-            **kwargs,
+            **states_actions_params,
         )
         return Q_arr.max(where=F_arr, initial=-jnp.inf)
 
@@ -138,11 +138,11 @@ def get_argmax_and_max_Q_over_a(
     )
     def argmax_and_max_Q_over_a(
         next_V_arr: MappingProxyType[RegimeName, FloatND],
-        **kwargs: Array,
+        **states_actions_params: Array,
     ) -> tuple[IntND, FloatND]:
         Q_arr, F_arr = Q_and_F(
             next_V_arr=next_V_arr,
-            **kwargs,
+            **states_actions_params,
         )
         return argmax_and_max(Q_arr, where=F_arr, initial=-jnp.inf)
 

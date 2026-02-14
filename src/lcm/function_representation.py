@@ -3,10 +3,12 @@ from collections.abc import Callable
 import jax.numpy as jnp
 from dags import concatenate_functions
 from dags.signature import with_signature
+from dags.tree import QNAME_DELIMITER
 from jax import Array
 
 from lcm.functools import all_as_kwargs
-from lcm.grids import ContinuousGrid
+from lcm.grid_helpers import get_irreg_coordinate
+from lcm.grids import ContinuousGrid, IrregSpacedGrid
 from lcm.interfaces import StateSpaceInfo
 from lcm.ndimage import map_coordinates
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
@@ -204,11 +206,37 @@ def _get_coordinate_finder(
         coordinates on a grid.
 
     """
+    if isinstance(grid, IrregSpacedGrid):
+        if grid.pass_points_at_runtime:
+            state_name = in_name.removeprefix("next_")
+            points_param = f"{state_name}{QNAME_DELIMITER}points"
+            arg_names = [in_name, points_param]
 
+            @with_signature(
+                args=dict.fromkeys(arg_names, "Array"), return_annotation="Array"
+            )
+            def find_coordinate_irreg(*args: Array, **kwargs: Array) -> Array:
+                kwargs = all_as_kwargs(args, kwargs, arg_names=arg_names)
+                return get_irreg_coordinate(kwargs[in_name], kwargs[points_param])  # ty: ignore[invalid-return-type]
+
+            return find_coordinate_irreg
+
+        # Fixed points — capture in closure
+        points_jax = grid.to_jax()
+
+        @with_signature(
+            args=dict.fromkeys([in_name], "Array"), return_annotation="Array"
+        )
+        def find_coordinate_irreg(*args: Array, **kwargs: Array) -> Array:
+            kwargs = all_as_kwargs(args, kwargs, arg_names=[in_name])
+            return get_irreg_coordinate(kwargs[in_name], points_jax)  # ty: ignore[invalid-return-type]
+
+        return find_coordinate_irreg
+
+    # All other grid types (LinSpaced, LogSpaced, Piecewise*, ShockGrid)
     @with_signature(args=dict.fromkeys([in_name], "Array"), return_annotation="Array")
     def find_coordinate(*args: Array, **kwargs: Array) -> Array:
         kwargs = all_as_kwargs(args, kwargs, arg_names=[in_name])
-
         return grid.get_coordinate(kwargs[in_name])  # ty: ignore[invalid-return-type]
 
     return find_coordinate

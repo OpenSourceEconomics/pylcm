@@ -6,8 +6,9 @@ import pandas as pd
 from dags import get_ancestors
 from jax import Array
 
-from lcm.grids import ContinuousGrid, Grid, ShockGrid
+from lcm.grids import ContinuousGrid, Grid
 from lcm.regime import Regime
+from lcm.shock_grids import ShockGrid
 from lcm.utils import flatten_regime_namespace
 
 
@@ -34,10 +35,6 @@ def get_variable_info(regime: Regime) -> pd.DataFrame:
 
     info["is_state"] = info.index.isin(regime.states)
     info["is_shock"] = [isinstance(spec, ShockGrid) for spec in variables.values()]
-    info["distribution_type"] = [
-        spec.distribution_type if isinstance(spec, ShockGrid) else "none"
-        for spec in variables.values()
-    ]
     info["is_action"] = ~info["is_state"]
 
     info["is_continuous"] = [

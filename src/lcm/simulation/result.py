@@ -626,11 +626,14 @@ def _compute_targets(
     """Compute additional targets for a regime."""
     functions_pool = _build_functions_pool(internal_regime)
     target_func = _create_target_function(functions_pool, targets)
-    flat_param_names = frozenset(flat_regime_params.keys())
+    # Merge resolved fixed params with runtime params so that the target
+    # function (built from raw user functions) receives all needed arguments.
+    all_params = {**internal_regime.resolved_fixed_params, **flat_regime_params}
+    flat_param_names = frozenset(all_params.keys())
     variables = _get_function_variables(target_func, flat_param_names)
     vectorized_func = vmap_1d(target_func, variables=variables)
     kwargs = {k: jnp.asarray(v) for k, v in data.items() if k in variables}
-    result = vectorized_func(**flat_regime_params, **kwargs)
+    result = vectorized_func(**all_params, **kwargs)
     # Squeeze any (n, 1) shaped arrays to (n,)
     return {k: jnp.squeeze(v) for k, v in result.items()}
 

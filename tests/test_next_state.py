@@ -32,7 +32,6 @@ def test_get_next_state_function_with_solve_target():
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
-        fixed_params={},
     )
 
     internal_working = internal_regimes["working"]
@@ -72,7 +71,7 @@ def test_get_next_state_function_with_simulate_target():
 
     grids = MappingProxyType({"mock": MappingProxyType({"b": jnp.arange(2)})})
     gridspecs = MappingProxyType({})
-    variable_info = pd.DataFrame({"is_shock": [False], "distribution_type": ["none"]})
+    variable_info = pd.DataFrame({"is_shock": [False]})
     mock_transition_solve = lambda *args, **kwargs: {"mock": 1.0}
     mock_transition_simulate = lambda *args, **kwargs: {"mock": jnp.array([1.0])}
     internal_functions = InternalFunctions(

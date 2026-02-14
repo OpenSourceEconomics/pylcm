@@ -6,7 +6,8 @@ from types import MappingProxyType
 import pandas as pd
 from jax import Array
 
-from lcm.grids import ContinuousGrid, DiscreteGrid, Grid, ShockGrid
+from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
+from lcm.shock_grids import ShockGrid
 from lcm.typing import (
     ArgmaxQOverAFunction,
     Bool1D,
@@ -178,7 +179,6 @@ class InternalRegime:
         | None
     )
     internal_functions: InternalFunctions
-    flat_regime_fixed_params: FlatRegimeParams
     regime_params_template: RegimeParamsTemplate
     state_action_space: StateActionSpace
     state_space_info: StateSpaceInfo
@@ -187,6 +187,8 @@ class InternalRegime:
     next_state_simulation_function: NextStateSimulationFunction
     # Not properly processed yet
     random_utility_shocks: ShockType
+    # Resolved fixed params (flat) for this regime, used by to_dataframe targets
+    resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
 
 
 @dataclasses.dataclass(frozen=True)

@@ -16,11 +16,19 @@ from lcm.grids import (
     Piece,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
-    ShockGrid,
     categorical,
 )
 from lcm.model import Model
 from lcm.regime import Regime
+from lcm.shock_grids import (
+    ShockGrid,
+    ShockGridAR1,
+    ShockGridAR1Rouwenhorst,
+    ShockGridAR1Tauchen,
+    ShockGridIID,
+    ShockGridIIDNormal,
+    ShockGridIIDUniform,
+)
 from lcm.simulation.result import SimulationResult
 
 # Register MappingProxyType as a JAX pytree so it can be used in JIT-traced functions.
@@ -43,6 +51,12 @@ __all__ = [
     "PiecewiseLogSpacedGrid",
     "Regime",
     "ShockGrid",
+    "ShockGridAR1",
+    "ShockGridAR1Rouwenhorst",
+    "ShockGridAR1Tauchen",
+    "ShockGridIID",
+    "ShockGridIIDNormal",
+    "ShockGridIIDUniform",
     "SimulationResult",
     "categorical",
     "mark",

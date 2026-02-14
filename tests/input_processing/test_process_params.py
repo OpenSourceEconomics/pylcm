@@ -11,6 +11,14 @@ from lcm.input_processing.params_processing import (
 )
 
 
+def _expected_flat_keys(params_template, regime):
+    return {
+        f"{func}__{arg}"
+        for func, func_params in params_template[regime].items()
+        for arg in func_params
+    }
+
+
 @pytest.fixture
 def params_template():
     """Fixture providing a params_template with two regimes and two functions each."""
@@ -49,11 +57,9 @@ def test_params_at_function_level(params_template):
     assert set(internal_params.keys()) == set(params_template.keys())
     # Check that output is flat per regime (function__param format)
     for regime in params_template:
-        expected_flat_keys = set()
-        for func, func_params in params_template[regime].items():
-            for arg in func_params:
-                expected_flat_keys.add(f"{func}__{arg}")
-        assert set(internal_params[regime].keys()) == expected_flat_keys
+        assert set(internal_params[regime].keys()) == _expected_flat_keys(
+            params_template, regime
+        )
 
 
 def test_params_at_regime_level(params_template):
@@ -70,11 +76,9 @@ def test_params_at_regime_level(params_template):
     # Check that output has regime-level keys with flat format
     assert set(internal_params.keys()) == set(params_template.keys())
     for regime in params_template:
-        expected_flat_keys = set()
-        for func, func_params in params_template[regime].items():
-            for arg in func_params:
-                expected_flat_keys.add(f"{func}__{arg}")
-        assert set(internal_params[regime].keys()) == expected_flat_keys
+        assert set(internal_params[regime].keys()) == _expected_flat_keys(
+            params_template, regime
+        )
 
 
 def test_params_mixed_regime_function_level(params_template):
@@ -95,11 +99,9 @@ def test_params_mixed_regime_function_level(params_template):
     # Check that output has regime-level keys with flat format
     assert set(internal_params.keys()) == set(params_template.keys())
     for regime in params_template:
-        expected_flat_keys = set()
-        for func, func_params in params_template[regime].items():
-            for arg in func_params:
-                expected_flat_keys.add(f"{func}__{arg}")
-        assert set(internal_params[regime].keys()) == expected_flat_keys
+        assert set(internal_params[regime].keys()) == _expected_flat_keys(
+            params_template, regime
+        )
 
 
 def test_params_at_model_level(params_template):
@@ -110,11 +112,9 @@ def test_params_at_model_level(params_template):
     # Check that output has regime-level keys with flat format
     assert set(internal_params.keys()) == set(params_template.keys())
     for regime in params_template:
-        expected_flat_keys = set()
-        for func, func_params in params_template[regime].items():
-            for arg in func_params:
-                expected_flat_keys.add(f"{func}__{arg}")
-        assert set(internal_params[regime].keys()) == expected_flat_keys
+        assert set(internal_params[regime].keys()) == _expected_flat_keys(
+            params_template, regime
+        )
 
 
 # ======================================================================================
@@ -336,57 +336,32 @@ def test_passing_same_params_to_regimes_with_different_templates():
         process_params(params, params_template)  # ty: ignore[invalid-argument-type]
 
 
-@pytest.mark.xfail(
-    reason=(
-        "ShockGrid params should be passable via regular params, not just via "
-        "fixed_params or shock_params. The params_template should include "
-        "ShockGrid discretization parameters for the corresponding transition."
-    ),
-    strict=True,
-)
 def test_shock_params_via_regular_params():
     """Test that ShockGrid params can be passed via regular params.
 
-    Currently, when a regime has a ShockGrid state (e.g., adjustment_cost with
-    uniform distribution), the transition function signature is:
-        def next_adjustment_cost(adjustment_cost): ...
-    which has no start/stop parameters.
-
-    The params_template is built from function signatures, so next_adjustment_cost
-    gets an empty dict {} in the template. Passing {"start": 0, "stop": 1} via
-    regular params fails with "Unknown keys".
-
-    DESIRED BEHAVIOR: The params_template should include ShockGrid discretization
-    parameters, allowing users to pass them via regular params just like any other
-    function parameter.
-
-    CURRENT WORKAROUND: Pass ShockGrid params via:
-    1. fixed_params on Model: Model(..., fixed_params={"adjustment_cost": {"start": 0}})
-    2. shock_params on ShockGrid: ShockGrid(..., shock_params={"start": 0, "stop": 1})
+    ShockGrid discretization parameters now appear in the params_template under the
+    state name (e.g., "adjustment_cost"), so users can pass them via regular params.
     """
-    # Template where next_adjustment_cost has no parameters (empty dict)
-    # because the transition function signature is: def next_adjustment_cost(x): ...
+    # Template includes ShockGrid params under the state name
     params_template = {
         "working": {
             "discount_factor": float,
             "utility": {"param": float},
-            "next_adjustment_cost": {},  # Empty - function has no param arguments
+            "adjustment_cost": {"start": float, "stop": float},
         },
     }
 
-    # User tries to pass ShockGrid params via regular params
     params = {
         "working": {
             "discount_factor": 1.0,
             "utility": {"param": 0.5},
-            "next_adjustment_cost": {
+            "adjustment_cost": {
                 "start": 0,
                 "stop": 1,
-            },  # These are ShockGrid params
+            },
         },
     }
 
-    # This should succeed - ShockGrid params should be accepted via regular params
     result = process_params(params, params_template)  # ty: ignore[invalid-argument-type]
-    assert result["working"]["next_adjustment_cost"]["start"] == 0  # ty: ignore[not-subscriptable]
-    assert result["working"]["next_adjustment_cost"]["stop"] == 1  # ty: ignore[not-subscriptable]
+    assert result["working"]["adjustment_cost__start"] == 0
+    assert result["working"]["adjustment_cost__stop"] == 1
