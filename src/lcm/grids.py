@@ -1,17 +1,14 @@
 import dataclasses
-import inspect
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from dataclasses import dataclass, field, is_dataclass
-from typing import Literal
+from dataclasses import dataclass, is_dataclass
 
 import jax.numpy as jnp
 import portion
 
 from lcm import grid_helpers
 from lcm.exceptions import GridInitializationError, format_messages
-from lcm.shocks import SHOCK_GRIDPOINT_FUNCTIONS, Shock
-from lcm.typing import Float1D, Int1D, MappingProxyType, ScalarFloat
+from lcm.typing import Float1D, Int1D, ScalarFloat
 from lcm.utils import find_duplicates, get_field_names_and_values
 
 
@@ -279,76 +276,6 @@ class IrregSpacedGrid(ContinuousGrid):
                 "Cannot compute coordinate without points. Pass points at "
                 "initialization or use IrregSpacedGrid(n_points=...) and "
                 "supply points at runtime via params."
-            )
-        return grid_helpers.get_irreg_coordinate(value, self.to_jax())
-
-
-@dataclass(frozen=True, kw_only=True)
-class ShockGrid(ContinuousGrid):
-    """An empty grid for discretized continuous shocks.
-
-    The actual values will be calculated once the parameters for the shock are
-    available during the solution or simulation.
-
-    When `shock_params` is incomplete (missing params that the distribution function
-    needs), the missing params appear in the params template and must be supplied at
-    solve time. Grid values and transition probabilities are then computed inside JIT.
-
-    Attributes:
-        distribution_type: Type of the shock.
-        n_points: The number of points for the discretization of the shock.
-        shock_params: Fixed parameters that are needed for the discretization function
-            of the specified shock type. Can be supplied directly or via the model fixed
-            parameters, or left incomplete so they are supplied at runtime.
-    """
-
-    distribution_type: Literal["uniform", "normal", "tauchen", "rouwenhorst"]
-    n_points: int
-    shock_params: MappingProxyType[str, float] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
-
-    @property
-    def params_to_pass_at_runtime(self) -> tuple[str, ...]:
-        """Return names of shock params not yet specified.
-
-        Any parameter of the discretization function that is not present in
-        ``shock_params`` will be added to the params template and must be
-        supplied at solve/simulate time (or via ``fixed_params``).
-
-        """
-        sig = inspect.signature(SHOCK_GRIDPOINT_FUNCTIONS[self.distribution_type])
-        return tuple(
-            name
-            for name in sig.parameters
-            if name != "n_points" and name not in self.shock_params
-        )
-
-    @property
-    def is_fully_specified(self) -> bool:
-        """Whether all required shock params are present."""
-        return len(self.params_to_pass_at_runtime) == 0
-
-    @property
-    def shock(self) -> Shock:
-        """Return the Shock instance for this grid."""
-        return Shock(
-            n_points=self.n_points,
-            distribution_type=self.distribution_type,
-            shock_params=self.shock_params,
-        )
-
-    def to_jax(self) -> Float1D:
-        """Convert the grid to a Jax array."""
-        if not self.is_fully_specified:
-            return jnp.zeros(self.n_points)
-        return self.shock.get_gridpoints()
-
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
-        """Return the generalized coordinate of a value in the grid."""
-        if not self.is_fully_specified:
-            raise GridInitializationError(
-                "Cannot compute coordinate for a ShockGrid without all shock params."
             )
         return grid_helpers.get_irreg_coordinate(value, self.to_jax())
 

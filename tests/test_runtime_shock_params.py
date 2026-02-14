@@ -1,12 +1,19 @@
 """Tests for runtime-supplied ShockGrid parameters."""
 
-from types import MappingProxyType
-
 import jax.numpy as jnp
 import pytest
 
 import lcm
-from lcm import AgeGrid, LinSpacedGrid, Model, Regime, ShockGrid, categorical
+from lcm import (
+    AgeGrid,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    ShockGridAR1Tauchen,
+    ShockGridIIDNormal,
+    ShockGridIIDUniform,
+    categorical,
+)
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
 
 # ======================================================================================
@@ -46,7 +53,7 @@ def _shock_constraint(
     return consumption <= wealth
 
 
-_TAUCHEN_PARAMS = {"rho": 0.9, "sigma_eps": 1.0, "mu_eps": 0.0, "n_std": 2}
+_TAUCHEN_PARAMS = {"ar1_coeff": 0.9, "std": 1.0, "mean": 0.0, "n_std": 2}
 
 
 def _make_shock_model(*, fixed_params=None):
@@ -54,7 +61,7 @@ def _make_shock_model(*, fixed_params=None):
     alive = Regime(
         states={
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=5),
-            "income": ShockGrid(distribution_type="tauchen", n_points=3),
+            "income": ShockGridAR1Tauchen(n_points=3),
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4)},
         functions={"utility": _shock_utility},
@@ -88,30 +95,26 @@ def _make_shock_model(*, fixed_params=None):
 
 
 def test_runtime_shock_params_property():
-    """ShockGrid without shock_params reports all params as runtime-supplied."""
-    grid = ShockGrid(distribution_type="tauchen", n_points=5)
-    for name in ("rho", "sigma_eps", "mu_eps", "n_std"):
+    """ShockGridAR1Tauchen without params reports all params as runtime-supplied."""
+    grid = ShockGridAR1Tauchen(n_points=5)
+    for name in ("ar1_coeff", "std", "mean", "n_std"):
         assert name in grid.params_to_pass_at_runtime
     assert not grid.is_fully_specified
 
 
 def test_fully_specified_shock():
-    """ShockGrid with all params should have no runtime-supplied params."""
-    grid = ShockGrid(
-        distribution_type="tauchen",
-        n_points=5,
-        shock_params=MappingProxyType(_TAUCHEN_PARAMS),
-    )
+    """ShockGridAR1Tauchen with all params should have no runtime-supplied params."""
+    grid = ShockGridAR1Tauchen(n_points=5, **_TAUCHEN_PARAMS)
     assert grid.params_to_pass_at_runtime == ()
     assert grid.is_fully_specified
 
 
-@pytest.mark.parametrize("distribution_type", ["uniform", "normal"])
-def test_shock_without_params_is_not_fully_specified(distribution_type):
+@pytest.mark.parametrize("grid_cls", [ShockGridIIDUniform, ShockGridIIDNormal])
+def test_shock_without_params_is_not_fully_specified(grid_cls):
     """All distributions require explicit params — nothing is defaulted."""
-    grid = ShockGrid(distribution_type=distribution_type, n_points=5)
+    grid = grid_cls(n_points=5)
     assert not grid.is_fully_specified
-    assert len(grid.params_to_pass_at_runtime) > 0
+    assert grid.params_to_pass_at_runtime
 
 
 def test_runtime_shock_in_params_template():
@@ -119,7 +122,7 @@ def test_runtime_shock_in_params_template():
     model = _make_shock_model()
     alive_template = model.params_template["alive"]
     assert "income" in alive_template
-    for name in ("rho", "sigma_eps", "mu_eps", "n_std"):
+    for name in ("ar1_coeff", "std", "mean", "n_std"):
         assert name in alive_template["income"]
 
 

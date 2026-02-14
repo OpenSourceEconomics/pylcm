@@ -2,8 +2,9 @@ import dags.tree as dt
 from jax import Array
 
 from lcm.exceptions import InvalidNameError
-from lcm.grids import IrregSpacedGrid, ShockGrid
+from lcm.grids import IrregSpacedGrid
 from lcm.regime import Regime
+from lcm.shock_grids import ShockGrid
 from lcm.typing import RegimeParamsTemplate
 from lcm.utils import ensure_containers_are_immutable
 

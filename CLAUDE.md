@@ -277,6 +277,11 @@ initial_regimes = ["working", "working", "retired"]
 - All functions require type annotations
 - Pre-commit hooks ensure code quality
 
+### Testing Style
+
+- Use plain pytest functions, never test classes (`class TestFoo`)
+- Use `@pytest.mark.parametrize` for test variations
+
 ### Key Dependencies
 
 - **jax**: Numerical computation
