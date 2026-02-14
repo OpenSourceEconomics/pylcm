@@ -9,6 +9,7 @@ import jax.numpy as jnp
 from dags.tree import flatten_to_qnames, unflatten_from_qnames
 from jax import Array
 
+from lcm.nested_mapping_params import NestedMappingParams
 from lcm.typing import RegimeName
 
 T = TypeVar("T")
@@ -16,6 +17,10 @@ T = TypeVar("T")
 
 def _make_immutable(value: Any) -> Any:  # noqa: ANN401
     """Recursively convert a value to its immutable equivalent."""
+    if isinstance(value, NestedMappingParams):
+        return NestedMappingParams(
+            MappingProxyType({k: _make_immutable(v) for k, v in value.data.items()})
+        )
     if isinstance(value, (MappingProxyType, tuple, frozenset)):
         return value
     if isinstance(value, Mapping):
@@ -53,6 +58,8 @@ def ensure_containers_are_immutable[K, V](
 
 def _make_mutable(value: Any) -> Any:  # noqa: ANN401
     """Recursively convert a value to its mutable equivalent."""
+    if isinstance(value, NestedMappingParams):
+        return NestedMappingParams({k: _make_mutable(v) for k, v in value.data.items()})
     if isinstance(value, (set, list)):
         return value
     if isinstance(value, (MappingProxyType, Mapping)):
