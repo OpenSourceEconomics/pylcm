@@ -53,7 +53,7 @@ def _shock_constraint(
     return consumption <= wealth
 
 
-_TAUCHEN_PARAMS = {"ar1_coeff": 0.9, "std": 1.0, "mean": 0.0, "n_std": 2}
+_TAUCHEN_PARAMS = {"rho": 0.9, "sigma": 1.0, "mu": 0.0, "n_std": 2}
 
 
 def _make_shock_model(*, fixed_params=None):
@@ -97,7 +97,7 @@ def _make_shock_model(*, fixed_params=None):
 def test_runtime_shock_params_property():
     """ShockGridAR1Tauchen without params reports all params as runtime-supplied."""
     grid = ShockGridAR1Tauchen(n_points=5)
-    for name in ("ar1_coeff", "std", "mean", "n_std"):
+    for name in ("rho", "sigma", "mu", "n_std"):
         assert name in grid.params_to_pass_at_runtime
     assert not grid.is_fully_specified
 
@@ -122,7 +122,7 @@ def test_runtime_shock_in_params_template():
     model = _make_shock_model()
     alive_template = model.params_template["alive"]
     assert "income" in alive_template
-    for name in ("ar1_coeff", "std", "mean", "n_std"):
+    for name in ("rho", "sigma", "mu", "n_std"):
         assert name in alive_template["income"]
 
 

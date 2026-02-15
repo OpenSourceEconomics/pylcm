@@ -110,9 +110,9 @@ def get_model(
 
 _SHOCK_PARAMS: dict[str, dict[str, float]] = {
     "uniform": {"start": 0.0, "stop": 1.0},
-    "normal": {"mean": 0.0, "std": 1.0, "n_std": 3.0},
-    "tauchen": {"ar1_coeff": 0.975, "std": 1.0, "mean": 0.0, "n_std": 2},
-    "rouwenhorst": {"ar1_coeff": 0.975, "std": 1.0, "mean": 0.0},
+    "normal": {"mu": 0.0, "sigma": 1.0, "n_std": 3.0},
+    "tauchen": {"rho": 0.975, "sigma": 1.0, "mu": 0.0, "n_std": 2},
+    "rouwenhorst": {"rho": 0.975, "sigma": 1.0, "mu": 0.0},
 }
 
 

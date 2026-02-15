@@ -357,7 +357,7 @@ def dead_is_active(age: float, initial_age: float) -> bool:
     return age > initial_age
 
 
-prod_shock_grid = ShockGridAR1Rouwenhorst(n_points=5, ar1_coeff=rho, mean=0, std=1)
+prod_shock_grid = ShockGridAR1Rouwenhorst(n_points=5, rho=rho, mu=0, sigma=1)
 
 ALIVE_REGIME = Regime(
     functions={

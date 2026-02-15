@@ -168,39 +168,39 @@ class ShockGridIIDNormal(ShockGridIID):
     points spanning :math:`\mu_\varepsilon \pm n_\text{std} \cdot \sigma_\varepsilon`.
 
     Attributes:
-        mean: Mean of the shock distribution.
-        std: Standard deviation of the shock distribution.
+        mu: Mean of the shock distribution.
+        sigma: Standard deviation of the shock distribution.
         n_std: Number of standard deviations from the mean to the grid boundary.
 
     """
 
-    mean: float | None = None
-    std: float | None = None
+    mu: float | None = None
+    sigma: float | None = None
     n_std: float | None = None
 
     def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
-        mean, std, n_std = (
-            kwargs["mean"],
-            kwargs["std"],
+        mu, sigma, n_std = (
+            kwargs["mu"],
+            kwargs["sigma"],
             kwargs["n_std"],
         )
-        x_min = mean - n_std * std
-        x_max = mean + n_std * std
+        x_min = mu - n_std * sigma
+        x_max = mu + n_std * sigma
         return jnp.linspace(start=x_min, stop=x_max, num=n_points)
 
     def compute_transition_probs(self, n_points: int, **kwargs: float) -> FloatND:
-        mean, std, n_std = (
-            kwargs["mean"],
-            kwargs["std"],
+        mu, sigma, n_std = (
+            kwargs["mu"],
+            kwargs["sigma"],
             kwargs["n_std"],
         )
-        x_min = mean - n_std * std
-        x_max = mean + n_std * std
+        x_min = mu - n_std * sigma
+        x_max = mu + n_std * sigma
         x, stepsize = jnp.linspace(start=x_min, stop=x_max, num=n_points, retstep=True)
         P = jnp.zeros(n_points)
-        P = P.at[1:].set(jnp.diff(cdf(x + 0.5 * stepsize, loc=mean, scale=std)))
-        P = P.at[0].set(cdf(x_min + 0.5 * stepsize, loc=mean, scale=std))
-        P = P.at[-1].set(1 - cdf(x_max - 0.5 * stepsize, loc=mean, scale=std))
+        P = P.at[1:].set(jnp.diff(cdf(x + 0.5 * stepsize, loc=mu, scale=sigma)))
+        P = P.at[0].set(cdf(x_min + 0.5 * stepsize, loc=mu, scale=sigma))
+        P = P.at[-1].set(1 - cdf(x_max - 0.5 * stepsize, loc=mu, scale=sigma))
         return jnp.full((n_points, n_points), fill_value=P)
 
     def draw_shock(
@@ -208,7 +208,7 @@ class ShockGridIIDNormal(ShockGridIID):
         params: MappingProxyType[str, float],
         key: FloatND,
     ) -> Float1D:
-        return params["mean"] + params["std"] * jax.random.normal(key=key)
+        return params["mu"] + params["sigma"] * jax.random.normal(key=key)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -216,48 +216,48 @@ class ShockGridAR1Tauchen(ShockGridAR1):
     r"""AR(1) shock discretized via Tauchen (1986).
 
     The process is
-    :math:`y_t = \mu_\varepsilon + \rho \, (y_{t-1} - \mu_\varepsilon) + \varepsilon_t`,
+    :math:`y_t = \mu + \rho \, y_{t-1} + \varepsilon_t`,
     where :math:`\varepsilon_t \sim N(0, \sigma_\varepsilon^2)`.
 
     Attributes:
-        ar1_coeff: Persistence parameter of the AR(1) process.
-        std: Standard deviation of the innovation.
-        mean: Unconditional (long-run) mean shift.
+        rho: Persistence parameter of the AR(1) process.
+        sigma: Standard deviation of the innovation.
+        mu: Intercept (drift) of the AR(1) process.
         n_std: Number of standard deviations for the grid boundary.
 
     """
 
-    ar1_coeff: float | None = None
-    std: float | None = None
-    mean: float | None = None
+    rho: float | None = None
+    sigma: float | None = None
+    mu: float | None = None
     n_std: float | None = None
 
     def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
-        ar1_coeff, std = kwargs["ar1_coeff"], kwargs["std"]
-        mean, n_std = kwargs["mean"], kwargs["n_std"]
-        std_y = jnp.sqrt(std**2 / (1 - ar1_coeff**2))
+        rho, sigma = kwargs["rho"], kwargs["sigma"]
+        mu, n_std = kwargs["mu"], kwargs["n_std"]
+        std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
         x_max = n_std * std_y
         x = jnp.linspace(-x_max, x_max, n_points)
-        return x + mean / (1 - ar1_coeff)
+        return x + mu / (1 - rho)
 
     def compute_transition_probs(self, n_points: int, **kwargs: float) -> FloatND:
-        ar1_coeff, std = kwargs["ar1_coeff"], kwargs["std"]
+        rho, sigma = kwargs["rho"], kwargs["sigma"]
         n_std = kwargs["n_std"]
-        std_y = jnp.sqrt(std**2 / (1 - ar1_coeff**2))
+        std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
         x_max = n_std * std_y
         x = jnp.linspace(-x_max, x_max, n_points)
         step = (2 * x_max) / (n_points - 1)
         half_step = 0.5 * step
         P = jnp.empty((n_points, n_points))
         for i in range(n_points):
-            P = P.at[i, 0].set(cdf((x[0] - ar1_coeff * x[i] + half_step) / std))
+            P = P.at[i, 0].set(cdf((x[0] - rho * x[i] + half_step) / sigma))
             P = P.at[i, -1].set(
-                1 - cdf((x[n_points - 1] - ar1_coeff * x[i] - half_step) / std)
+                1 - cdf((x[n_points - 1] - rho * x[i] - half_step) / sigma)
             )
             for j in range(1, n_points - 1):
-                z = x[j] - ar1_coeff * x[i]
+                z = x[j] - rho * x[i]
                 P = P.at[i, j].set(
-                    cdf((z + half_step) / std) - cdf((z - half_step) / std)
+                    cdf((z + half_step) / sigma) - cdf((z - half_step) / sigma)
                 )
         return P
 
@@ -267,11 +267,10 @@ class ShockGridAR1Tauchen(ShockGridAR1):
         key: FloatND,
         current_value: Float1D,
     ) -> Float1D:
-        mu = params["mean"]
         return (
-            mu
-            + params["ar1_coeff"] * (current_value - mu)
-            + params["std"] * jax.random.normal(key=key)
+            params["mu"]
+            + params["rho"] * current_value
+            + params["sigma"] * jax.random.normal(key=key)
         )
 
 
@@ -280,29 +279,29 @@ class ShockGridAR1Rouwenhorst(ShockGridAR1):
     r"""AR(1) shock discretized via Rouwenhorst (1995).
 
     The process is
-    :math:`y_t = \mu_\varepsilon + \rho \, (y_{t-1} - \mu_\varepsilon) + \varepsilon_t`,
+    :math:`y_t = \mu + \rho \, y_{t-1} + \varepsilon_t`,
     where :math:`\varepsilon_t \sim N(0, \sigma_\varepsilon^2)`.
 
     Attributes:
-        ar1_coeff: Persistence parameter of the AR(1) process.
-        std: Standard deviation of the innovation.
-        mean: Unconditional (long-run) mean shift.
+        rho: Persistence parameter of the AR(1) process.
+        sigma: Standard deviation of the innovation.
+        mu: Intercept (drift) of the AR(1) process.
 
     """
 
-    ar1_coeff: float | None = None
-    std: float | None = None
-    mean: float | None = None
+    rho: float | None = None
+    sigma: float | None = None
+    mu: float | None = None
 
     def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
-        ar1_coeff, std, mean = kwargs["ar1_coeff"], kwargs["std"], kwargs["mean"]
-        nu = jnp.sqrt((n_points - 1) / (1 - ar1_coeff**2)) * std
-        long_run_mean = mean / (1.0 - ar1_coeff)
+        rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
+        nu = jnp.sqrt((n_points - 1) / (1 - rho**2)) * sigma
+        long_run_mean = mu / (1.0 - rho)
         return jnp.linspace(long_run_mean - nu, long_run_mean + nu, n_points)
 
     def compute_transition_probs(self, n_points: int, **kwargs: float) -> FloatND:
-        ar1_coeff = kwargs["ar1_coeff"]
-        q = (ar1_coeff + 1) / 2
+        rho = kwargs["rho"]
+        q = (rho + 1) / 2
         P = jnp.zeros((n_points, n_points))
         P = P.at[0, 0].set(q)
         P = P.at[0, 1].set(1 - q)
@@ -329,9 +328,8 @@ class ShockGridAR1Rouwenhorst(ShockGridAR1):
         key: FloatND,
         current_value: Float1D,
     ) -> Float1D:
-        mu = params["mean"]
         return (
-            mu
-            + params["ar1_coeff"] * (current_value - mu)
-            + params["std"] * jax.random.normal(key=key)
+            params["mu"]
+            + params["rho"] * current_value
+            + params["sigma"] * jax.random.normal(key=key)
         )
