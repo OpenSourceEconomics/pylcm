@@ -14,7 +14,7 @@ from lcm import (
     ShockGridIIDUniform,
 )
 from lcm._config import TEST_DATA
-from tests.conftest import X64_ENABLED
+from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 from tests.test_models.shocks import get_model, get_params
 
 
@@ -208,7 +208,7 @@ def test_ar1_transition_probs_rows_sum_to_one(grid_cls):
     grid = grid_cls(n_points=7, **kwargs)
     P = grid.get_transition_probs()
     row_sums = P.sum(axis=1)
-    aaae(row_sums, jnp.ones(7), decimal=10)
+    aaae(row_sums, jnp.ones(7), decimal=DECIMAL_PRECISION)
 
 
 @pytest.mark.parametrize("grid_cls", _AR1_GRID_CLASSES)

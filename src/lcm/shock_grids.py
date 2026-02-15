@@ -314,8 +314,7 @@ class ShockGridAR1Rouwenhorst(ShockGridAR1):
             * q ** (n_points - 1 - i - j + 2 * k_s)
             * (1 - q) ** (i + j - 2 * k_s)
         )
-        P = jnp.where(valid, terms, 0.0).sum(axis=-1)
-        return P / P.sum(axis=1, keepdims=True)
+        return jnp.where(valid, terms, 0.0).sum(axis=-1)
 
     def draw_shock(
         self,
