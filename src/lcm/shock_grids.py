@@ -180,21 +180,13 @@ class ShockGridIIDNormal(ShockGridIID):
     n_std: float | None = None
 
     def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
-        mu, sigma, n_std = (
-            kwargs["mu"],
-            kwargs["sigma"],
-            kwargs["n_std"],
-        )
+        mu, sigma, n_std = kwargs["mu"], kwargs["sigma"], kwargs["n_std"]
         x_min = mu - n_std * sigma
         x_max = mu + n_std * sigma
         return jnp.linspace(start=x_min, stop=x_max, num=n_points)
 
     def compute_transition_probs(self, n_points: int, **kwargs: float) -> FloatND:
-        mu, sigma, n_std = (
-            kwargs["mu"],
-            kwargs["sigma"],
-            kwargs["n_std"],
-        )
+        mu, sigma, n_std = kwargs["mu"], kwargs["sigma"], kwargs["n_std"]
         x_min = mu - n_std * sigma
         x_max = mu + n_std * sigma
         x, stepsize = jnp.linspace(start=x_min, stop=x_max, num=n_points, retstep=True)
