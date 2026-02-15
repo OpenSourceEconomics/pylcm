@@ -1,5 +1,6 @@
 from abc import abstractmethod
 from dataclasses import dataclass, fields
+from math import comb
 from types import MappingProxyType
 
 import jax
@@ -302,25 +303,26 @@ class ShockGridAR1Rouwenhorst(ShockGridAR1):
     def compute_transition_probs(self, n_points: int, **kwargs: float) -> FloatND:
         rho = kwargs["rho"]
         q = (rho + 1) / 2
-        P = jnp.zeros((n_points, n_points))
-        P = P.at[0, 0].set(q)
-        P = P.at[0, 1].set(1 - q)
-        P = P.at[1, 0].set(1 - q)
-        P = P.at[1, 1].set(q)
-        for i in range(2, n_points):
-            P11 = jnp.zeros((i + 1, i + 1))
-            P12 = jnp.zeros((i + 1, i + 1))
-            P21 = jnp.zeros((i + 1, i + 1))
-            P22 = jnp.zeros((i + 1, i + 1))
-            P11 = P11.at[0:i, 0:i].set(P[0:i, 0:i])
-            P12 = P12.at[0:i, 1 : i + 1].set(P[0:i, 0:i])
-            P21 = P21.at[1 : i + 1, 0:i].set(P[0:i, 0:i])
-            P22 = P22.at[1 : i + 1, 1 : i + 1].set(P[0:i, 0:i])
-            P = P.at[0 : i + 1, 0 : i + 1].set(
-                q * P11 + (1 - q) * P12 + (1 - q) * P21 + q * P22
-            )
-            P = P.at[1:i, :].set(P[1:i, :] / 2)
-        return P
+
+        # Binomial coefficient lookup table
+        C = jnp.array([[comb(n, k) for k in range(n_points)] for n in range(n_points)])
+
+        i = jnp.arange(n_points)[:, None, None]
+        j = jnp.arange(n_points)[None, :, None]
+        k = jnp.arange(n_points)[None, None, :]
+
+        # P[i,j] = sum_k C(i,k) C(n-1-i,j-k) q^(n-1-i-j+2k) (1-q)^(i+j-2k)
+        valid = (k >= jnp.maximum(0, i + j - n_points + 1)) & (k <= jnp.minimum(i, j))
+        k_s = jnp.where(valid, k, 0)
+        jmk = jnp.where(valid, j - k, 0)
+
+        terms = (
+            C[i, k_s]
+            * C[n_points - 1 - i, jmk]
+            * q ** (n_points - 1 - i - j + 2 * k_s)
+            * (1 - q) ** (i + j - 2 * k_s)
+        )
+        return jnp.where(valid, terms, 0.0).sum(axis=-1)
 
     def draw_shock(
         self,
