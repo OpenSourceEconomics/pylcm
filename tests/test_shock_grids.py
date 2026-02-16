@@ -78,6 +78,8 @@ def test_shock_grid_correct_shape_without_params(grid_cls):
     assert grid.params_to_pass_at_runtime
     assert grid.get_gridpoints().shape == (3,)
     assert grid.get_transition_probs().shape == (3, 3)
+    assert jnp.all(jnp.isnan(grid.get_gridpoints()))
+    assert jnp.all(jnp.isnan(grid.get_transition_probs()))
 
 
 @pytest.mark.parametrize(

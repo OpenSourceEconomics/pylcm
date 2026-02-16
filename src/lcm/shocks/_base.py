@@ -61,7 +61,8 @@ class _ShockGrid(ContinuousGrid):
     def get_gridpoints(self) -> Float1D:
         """Get the gridpoints used for discretization.
 
-        Returns NaN of the correct shape when required params are missing.
+        Returns NaN of the correct shape when required params are missing (i.e., will
+        only be passed at runtime).
 
         """
         if not self.is_fully_specified:
@@ -71,13 +72,12 @@ class _ShockGrid(ContinuousGrid):
     def get_transition_probs(self) -> FloatND:
         """Get the transition probabilities at the gridpoints.
 
-        Returns uniform probabilities when required params are missing.
+        Returns NaN of the correct shape when required params are missing (i.e., will
+        only be passed at runtime).
 
         """
         if not self.is_fully_specified:
-            return jnp.full(
-                (self.n_points, self.n_points), fill_value=1 / self.n_points
-            )
+            return jnp.full((self.n_points, self.n_points), jnp.nan)
         return self.compute_transition_probs(self.n_points, **self.params)
 
     def to_jax(self) -> Float1D:

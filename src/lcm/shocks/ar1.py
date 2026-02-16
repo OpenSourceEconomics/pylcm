@@ -38,6 +38,9 @@ class Tauchen(_ShockGridAR1):
         mu: Intercept (drift) of the AR(1) process.
         n_std: Number of standard deviations for the grid boundary.
 
+    Original implementation follows `QuantEcon
+    <https://quanteconpy.readthedocs.io/en/latest/markov/approximation.html#quantecon.markov.approximation.tauchen>`_.
+
     """
 
     rho: float | None = None
@@ -99,6 +102,9 @@ class Rouwenhorst(_ShockGridAR1):
         rho: Persistence parameter of the AR(1) process.
         sigma: Standard deviation of the innovation.
         mu: Intercept (drift) of the AR(1) process.
+
+    Original implementation follows `QuantEcon
+    <https://quanteconpy.readthedocs.io/en/latest/markov/approximation.html#quantecon.markov.approximation.rouwenhorst>`_.
 
     """
 
