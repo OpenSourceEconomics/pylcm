@@ -19,7 +19,6 @@ from lcm.grids import (
     categorical,
 )
 from lcm.model import Model
-from lcm.params import MappingLeaf
 from lcm.regime import Regime
 from lcm.simulation.result import SimulationResult
 
@@ -37,7 +36,6 @@ __all__ = [
     "IrregSpacedGrid",
     "LinSpacedGrid",
     "LogSpacedGrid",
-    "MappingLeaf",
     "Model",
     "Piece",
     "PiecewiseLinSpacedGrid",
