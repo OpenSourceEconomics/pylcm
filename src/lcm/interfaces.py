@@ -8,6 +8,7 @@ from jax import Array
 
 from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
 from lcm.shocks import _ShockGrid
+from lcm.state_action_space import create_state_action_space
 from lcm.typing import (
     ArgmaxQOverAFunction,
     Bool1D,
@@ -180,7 +181,6 @@ class InternalRegime:
     )
     internal_functions: InternalFunctions
     regime_params_template: RegimeParamsTemplate
-    state_action_space: StateActionSpace
     state_space_info: StateSpaceInfo
     max_Q_over_a_functions: MappingProxyType[int, MaxQOverAFunction]
     argmax_and_max_Q_over_a_functions: MappingProxyType[int, ArgmaxQOverAFunction]
@@ -189,6 +189,13 @@ class InternalRegime:
     random_utility_shocks: ShockType
     # Resolved fixed params (flat) for this regime, used by to_dataframe targets
     resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
+
+    @property
+    def state_action_space(self) -> StateActionSpace:
+
+        return create_state_action_space(
+            variable_info=self.variable_info, grids=self.grids
+        )
 
 
 @dataclasses.dataclass(frozen=True)
