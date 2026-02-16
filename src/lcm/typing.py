@@ -5,7 +5,7 @@ from typing import Any, Protocol
 from jax import Array
 from jaxtyping import Bool, Float, Int, Scalar
 
-from lcm.nested_mapping_params import NestedMappingParams
+from lcm.params import MappingLeaf
 
 type ContinuousState = Float[Array, "..."]
 type ContinuousAction = Float[Array, "..."]
@@ -42,14 +42,14 @@ type UserParams = Mapping[
     bool
     | float
     | Array
-    | NestedMappingParams
+    | MappingLeaf
     | Mapping[
         str,
         bool
         | float
         | Array
-        | NestedMappingParams
-        | Mapping[str, bool | float | Array | NestedMappingParams],
+        | MappingLeaf
+        | Mapping[str, bool | float | Array | MappingLeaf],
     ],
 ]
 

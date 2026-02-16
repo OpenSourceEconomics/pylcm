@@ -8,7 +8,7 @@ from typing import Any
 import jax
 
 
-class NestedMappingParams:
+class MappingLeaf:
     """A Mapping wrapper that is a JAX pytree but not itself a Mapping.
 
     Prevents flatten_regime_namespace from recursing into contents while
@@ -21,24 +21,24 @@ class NestedMappingParams:
         self.data = data
 
     def __repr__(self) -> str:
-        return f"NestedMappingParams({self.data!r})"
+        return f"MappingLeaf({self.data!r})"
 
-    __hash__ = None  # type: ignore[assignment]  # mutable data makes hashing unsound
+    __hash__ = None  # mutable data makes hashing unsound
 
     def __eq__(self, other: object) -> bool:
-        if not isinstance(other, NestedMappingParams):
+        if not isinstance(other, MappingLeaf):
             return NotImplemented
         return self.data == other.data
 
 
-def _flatten(nmp: NestedMappingParams) -> tuple[list[Any], tuple[str, ...]]:
+def _flatten(nmp: MappingLeaf) -> tuple[list[Any], tuple[str, ...]]:
     keys = tuple(sorted(nmp.data.keys()))
     values = [nmp.data[k] for k in keys]
     return values, keys
 
 
-def _unflatten(keys: tuple[str, ...], values: list[Any]) -> NestedMappingParams:
-    return NestedMappingParams(dict(zip(keys, values, strict=True)))
+def _unflatten(keys: tuple[str, ...], values: list[Any]) -> MappingLeaf:
+    return MappingLeaf(dict(zip(keys, values, strict=True)))
 
 
-jax.tree_util.register_pytree_node(NestedMappingParams, _flatten, _unflatten)
+jax.tree_util.register_pytree_node(MappingLeaf, _flatten, _unflatten)
