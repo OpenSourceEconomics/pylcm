@@ -442,8 +442,8 @@ def _get_weights_fn_for_shock(name: str, gridspec: _ShockGrid) -> UserFunction:
                 **fixed_params,
                 **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
             }
-            grid_points = _compute_gridpoints(n_points, **shock_kw)
-            transition_probs = _compute_transition_probs(n_points, **shock_kw)
+            grid_points = _compute_gridpoints(n_points, **shock_kw)  # ty: ignore[invalid-argument-type]
+            transition_probs = _compute_transition_probs(n_points, **shock_kw)  # ty: ignore[invalid-argument-type]
             coord = get_irreg_coordinate(kwargs[name], grid_points)
             return map_coordinates(
                 input=transition_probs,
