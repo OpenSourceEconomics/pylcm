@@ -24,14 +24,10 @@ class ShockGrid(ContinuousGrid):
     Subclasses define distribution-specific parameters as dataclass fields.
     Parameters set to ``None`` must be supplied at runtime via ``params``.
 
-    The class *is* the distribution type — no ``distribution_type`` string needed.
-
-    Attributes:
-        n_points: The number of points for the discretization of the shock.
-
     """
 
     n_points: int
+    """The number of points for the discretization of the shock."""
 
     @property
     def _param_field_names(self) -> tuple[str, ...]:

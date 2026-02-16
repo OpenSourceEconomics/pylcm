@@ -27,7 +27,7 @@ class RegimeIdShock:
     dead: int
 
 
-def _shock_utility(
+def _utility(
     wealth: ContinuousState,
     income: ContinuousState,
     consumption: ContinuousAction,
@@ -35,7 +35,7 @@ def _shock_utility(
     return jnp.log(consumption) + 0.01 * (wealth + jnp.exp(income))
 
 
-def _shock_next_wealth(
+def _next_wealth(
     wealth: ContinuousState,
     consumption: ContinuousAction,
 ) -> ContinuousState:
@@ -43,20 +43,18 @@ def _shock_next_wealth(
 
 
 @lcm.mark.stochastic
-def _shock_next_income() -> None:
+def _next_income() -> None:
     pass
 
 
-def _shock_constraint(
-    consumption: ContinuousAction, wealth: ContinuousState
-) -> FloatND:
+def _constraint(consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
     return consumption <= wealth
 
 
 _TAUCHEN_PARAMS = {"rho": 0.9, "sigma": 1.0, "mu": 0.0, "n_std": 2}
 
 
-def _make_shock_model(*, fixed_params=None):
+def _make_model(*, fixed_params=None):
     """Create a shock model with all shock params supplied at runtime."""
     alive = Regime(
         states={
@@ -64,11 +62,11 @@ def _make_shock_model(*, fixed_params=None):
             "income": ShockGridAR1Tauchen(n_points=3),
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4)},
-        functions={"utility": _shock_utility},
-        constraints={"borrowing": _shock_constraint},
+        functions={"utility": _utility},
+        constraints={"borrowing": _constraint},
         transitions={
-            "next_wealth": _shock_next_wealth,
-            "next_income": _shock_next_income,
+            "next_wealth": _next_wealth,
+            "next_income": _next_income,
             "next_regime": lambda period: jnp.where(
                 period >= 1, RegimeIdShock.dead, RegimeIdShock.alive
             ),
@@ -119,7 +117,7 @@ def test_shock_without_params_is_not_fully_specified(grid_cls):
 
 def test_runtime_shock_in_params_template():
     """Runtime-supplied ShockGrid params appear in params_template."""
-    model = _make_shock_model()
+    model = _make_model()
     alive_template = model.params_template["alive"]
     assert "income" in alive_template
     for name in ("rho", "sigma", "mu", "n_std"):
@@ -128,7 +126,7 @@ def test_runtime_shock_in_params_template():
 
 def test_solve_with_runtime_shock():
     """Solve should work with runtime-supplied shock params."""
-    model = _make_shock_model()
+    model = _make_model()
     params = {"discount_factor": 1.0, **_TAUCHEN_PARAMS}
     V_arr_dict = model.solve(params, debug_mode=False)
     assert len(V_arr_dict) > 0
@@ -136,7 +134,7 @@ def test_solve_with_runtime_shock():
 
 def test_runtime_shock_with_fixed_params():
     """Shock params provided via fixed_params are removed from template."""
-    model = _make_shock_model(fixed_params=_TAUCHEN_PARAMS)
+    model = _make_model(fixed_params=_TAUCHEN_PARAMS)
 
     alive_template = model.params_template.get("alive", {})
     income_params = alive_template.get("income", {})
