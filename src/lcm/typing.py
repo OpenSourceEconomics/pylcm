@@ -6,6 +6,7 @@ from jax import Array
 from jaxtyping import Bool, Float, Int, Scalar
 
 from lcm.params import MappingLeaf
+from lcm.params.sequence_leaf import SequenceLeaf
 
 type ContinuousState = Float[Array, "..."]
 type ContinuousAction = Float[Array, "..."]
@@ -43,13 +44,15 @@ type UserParams = Mapping[
     | float
     | Array
     | MappingLeaf
+    | SequenceLeaf
     | Mapping[
         str,
         bool
         | float
         | Array
         | MappingLeaf
-        | Mapping[str, bool | float | Array | MappingLeaf],
+        | SequenceLeaf
+        | Mapping[str, bool | float | Array | MappingLeaf | SequenceLeaf],
     ],
 ]
 

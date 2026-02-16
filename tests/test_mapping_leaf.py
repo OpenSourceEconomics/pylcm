@@ -3,8 +3,9 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
+import pytest
 
-from lcm.params import MappingLeaf
+from lcm.params import MappingLeaf, SequenceLeaf, as_leaf
 from lcm.utils import (
     ensure_containers_are_immutable,
     ensure_containers_are_mutable,
@@ -18,12 +19,24 @@ from lcm.utils import (
 
 def test_construction_from_dict():
     leaf = MappingLeaf({"a": 1, "b": 2})
+    assert isinstance(leaf.data, MappingProxyType)
     assert leaf.data == {"a": 1, "b": 2}
 
 
 def test_construction_from_mapping_proxy_type():
     leaf = MappingLeaf(MappingProxyType({"a": 1}))
+    assert isinstance(leaf.data, MappingProxyType)
     assert leaf.data == {"a": 1}
+
+
+def test_construction_freezes_nested_dicts():
+    leaf = MappingLeaf({"outer": {"inner": 1}})
+    assert isinstance(leaf.data["outer"], MappingProxyType)
+
+
+def test_construction_freezes_nested_lists():
+    leaf = MappingLeaf({"items": [1, 2, 3]})
+    assert isinstance(leaf.data["items"], tuple)
 
 
 # ======================================================================================
@@ -76,11 +89,11 @@ def test_jax_tree_map_roundtrip():
 
 
 # ======================================================================================
-# ensure_containers_are_immutable
+# ensure_containers_are_immutable (no-op for leaf data)
 # ======================================================================================
 
 
-def test_immutable_dict_inside_mapping_leaf():
+def test_immutable_mapping_leaf_already_frozen():
     leaf = MappingLeaf({"a": 1})
     result = ensure_containers_are_immutable({"leaf": leaf})
     inner = result["leaf"]
@@ -97,14 +110,6 @@ def test_immutable_nested_dicts_inside_mapping_leaf():
     assert isinstance(inner.data["outer"], MappingProxyType)
 
 
-def test_immutable_already_immutable_mapping_leaf():
-    leaf = MappingLeaf(MappingProxyType({"a": 1}))
-    result = ensure_containers_are_immutable({"leaf": leaf})
-    inner = result["leaf"]
-    assert isinstance(inner, MappingLeaf)
-    assert isinstance(inner.data, MappingProxyType)
-
-
 def test_immutable_mapping_leaf_nested_inside_larger_dict():
     data = {
         "regime": {
@@ -119,33 +124,15 @@ def test_immutable_mapping_leaf_nested_inside_larger_dict():
 
 
 # ======================================================================================
-# ensure_containers_are_mutable
+# ensure_containers_are_mutable (unwraps leaf to plain dict)
 # ======================================================================================
 
 
-def test_mutable_mapping_proxy_inside_mapping_leaf():
-    leaf = MappingLeaf(MappingProxyType({"a": 1}))
-    result = ensure_containers_are_mutable({"leaf": leaf})
-    inner = result["leaf"]
-    assert isinstance(inner, MappingLeaf)
-    assert isinstance(inner.data, dict)
-
-
-def test_mutable_nested_mapping_proxy_inside_mapping_leaf():
-    leaf = MappingLeaf(MappingProxyType({"outer": MappingProxyType({"inner": 1})}))
-    result = ensure_containers_are_mutable({"leaf": leaf})
-    inner = result["leaf"]
-    assert isinstance(inner, MappingLeaf)
-    assert isinstance(inner.data, dict)
-    assert isinstance(inner.data["outer"], dict)
-
-
-def test_mutable_already_mutable_mapping_leaf():
+def test_mutable_unwraps_mapping_leaf_to_dict():
     leaf = MappingLeaf({"a": 1})
     result = ensure_containers_are_mutable({"leaf": leaf})
-    inner = result["leaf"]
-    assert isinstance(inner, MappingLeaf)
-    assert isinstance(inner.data, dict)
+    assert isinstance(result["leaf"], dict)
+    assert result["leaf"] == {"a": 1}
 
 
 def test_mutable_mapping_leaf_nested_inside_mapping_proxy():
@@ -153,16 +140,15 @@ def test_mutable_mapping_leaf_nested_inside_mapping_proxy():
         {
             "regime": MappingProxyType(
                 {
-                    "param": MappingLeaf(MappingProxyType({"x": 1})),
+                    "param": MappingLeaf({"x": 1}),
                 }
             ),
         }
     )
     result = ensure_containers_are_mutable(data)
     assert isinstance(result["regime"], dict)
-    inner = result["regime"]["param"]
-    assert isinstance(inner, MappingLeaf)
-    assert isinstance(inner.data, dict)
+    assert isinstance(result["regime"]["param"], dict)
+    assert result["regime"]["param"] == {"x": 1}
 
 
 # ======================================================================================
@@ -170,29 +156,15 @@ def test_mutable_mapping_leaf_nested_inside_mapping_proxy():
 # ======================================================================================
 
 
-def test_roundtrip_mutable_immutable_mutable():
+def test_roundtrip_immutable_to_mutable():
     original = {"leaf": MappingLeaf({"a": 1, "b": {"c": 2}})}
     immutable = ensure_containers_are_immutable(original)
     mutable = ensure_containers_are_mutable(immutable)
-    leaf = mutable["leaf"]
-    assert isinstance(leaf, MappingLeaf)
-    assert isinstance(leaf.data, dict)
-    assert isinstance(leaf.data["b"], dict)
-    assert leaf.data["a"] == 1
-    assert leaf.data["b"]["c"] == 2
-
-
-def test_roundtrip_immutable_mutable_immutable():
-    original = MappingProxyType(
-        {
-            "leaf": MappingLeaf(MappingProxyType({"a": 1})),
-        }
-    )
-    mutable = ensure_containers_are_mutable(original)
-    immutable = ensure_containers_are_immutable(mutable)
-    leaf = immutable["leaf"]
-    assert isinstance(leaf, MappingLeaf)
-    assert isinstance(leaf.data, MappingProxyType)
+    inner = mutable["leaf"]
+    assert isinstance(inner, dict)
+    assert isinstance(inner["b"], dict)
+    assert inner["a"] == 1
+    assert inner["b"]["c"] == 2
 
 
 # ======================================================================================
@@ -216,3 +188,36 @@ def test_flatten_regime_namespace_treats_mapping_leaf_as_leaf():
     result = flatten_regime_namespace(data)
     assert result["regime__param"] is leaf
     assert result["regime__scalar"] == 3.0
+
+
+# ======================================================================================
+# as_leaf
+# ======================================================================================
+
+
+def test_as_leaf_mapping():
+    result = as_leaf({"a": 1})
+    assert isinstance(result, MappingLeaf)
+    assert result.data == {"a": 1}
+
+
+def test_as_leaf_mapping_proxy():
+    result = as_leaf(MappingProxyType({"a": 1}))
+    assert isinstance(result, MappingLeaf)
+
+
+def test_as_leaf_list():
+    result = as_leaf([1, 2, 3])
+    assert isinstance(result, SequenceLeaf)
+    assert result.data == (1, 2, 3)
+
+
+def test_as_leaf_tuple():
+    result = as_leaf((1, 2))
+    assert isinstance(result, SequenceLeaf)
+    assert result.data == (1, 2)
+
+
+def test_as_leaf_rejects_int():
+    with pytest.raises(TypeError, match="as_leaf"):
+        as_leaf(42)  # ty: ignore[no-matching-overload]

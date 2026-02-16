@@ -1,7 +1,5 @@
 """A Mapping wrapper that is a JAX pytree but not itself a Mapping."""
 
-from __future__ import annotations
-
 from collections.abc import Mapping
 from typing import Any
 
@@ -13,17 +11,21 @@ class MappingLeaf:
 
     Prevents flatten_regime_namespace from recursing into contents while
     allowing JAX to trace through array values.
+
+    Data is frozen to immutable containers on construction.
     """
 
     __slots__ = ("data",)
 
     def __init__(self, data: Mapping[str, Any]) -> None:
-        self.data = data
+        from lcm.utils import ensure_containers_are_immutable  # noqa: PLC0415
+
+        self.data = ensure_containers_are_immutable(data)
 
     def __repr__(self) -> str:
-        return f"MappingLeaf({self.data!r})"
+        return f"MappingLeaf({dict(self.data)!r})"
 
-    __hash__ = None  # mutable data makes hashing unsound
+    __hash__ = None  # MappingProxyType is not hashable
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, MappingLeaf):
