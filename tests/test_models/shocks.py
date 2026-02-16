@@ -7,12 +7,8 @@ from lcm.ages import AgeGrid
 from lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
 from lcm.model import Model
 from lcm.regime import Regime
-from lcm.shock_grids import (
-    ShockGridAR1Rouwenhorst,
-    ShockGridAR1Tauchen,
-    ShockGridIIDNormal,
-    ShockGridIIDUniform,
-)
+from lcm.shocks.ar1 import Rouwenhorst, Tauchen
+from lcm.shocks.iid import Normal, Uniform
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -22,10 +18,10 @@ from lcm.typing import (
 )
 
 _SHOCK_GRID_CLASSES = {
-    "uniform": ShockGridIIDUniform,
-    "normal": ShockGridIIDNormal,
-    "tauchen": ShockGridAR1Tauchen,
-    "rouwenhorst": ShockGridAR1Rouwenhorst,
+    "uniform": Uniform,
+    "normal": Normal,
+    "tauchen": Tauchen,
+    "rouwenhorst": Rouwenhorst,
 }
 
 
@@ -110,9 +106,9 @@ def get_model(
 
 _SHOCK_PARAMS: dict[str, dict[str, float]] = {
     "uniform": {"start": 0.0, "stop": 1.0},
-    "normal": {"mean": 0.0, "std": 1.0, "n_std": 3.0},
-    "tauchen": {"ar1_coeff": 0.975, "std": 1.0, "mean": 0.0, "n_std": 2},
-    "rouwenhorst": {"ar1_coeff": 0.975, "std": 1.0, "mean": 0.0},
+    "normal": {"mu": 0.0, "sigma": 1.0, "n_std": 3.0},
+    "tauchen": {"rho": 0.975, "sigma": 1.0, "mu": 0.0, "n_std": 2},
+    "rouwenhorst": {"rho": 0.975, "sigma": 1.0, "mu": 0.0},
 }
 
 

@@ -8,7 +8,7 @@ from jax import Array
 
 from lcm.grids import ContinuousGrid, Grid
 from lcm.regime import Regime
-from lcm.shock_grids import ShockGrid
+from lcm.shocks import _ShockGrid
 from lcm.utils import flatten_regime_namespace
 
 
@@ -34,11 +34,11 @@ def get_variable_info(regime: Regime) -> pd.DataFrame:
     info = pd.DataFrame(index=pd.Index(list(variables)))
 
     info["is_state"] = info.index.isin(regime.states)
-    info["is_shock"] = [isinstance(spec, ShockGrid) for spec in variables.values()]
+    info["is_shock"] = [isinstance(spec, _ShockGrid) for spec in variables.values()]
     info["is_action"] = ~info["is_state"]
 
     info["is_continuous"] = [
-        isinstance(spec, ContinuousGrid) and not isinstance(spec, ShockGrid)
+        isinstance(spec, ContinuousGrid) and not isinstance(spec, _ShockGrid)
         for spec in variables.values()
     ]
     info["is_discrete"] = ~info["is_continuous"]

@@ -10,7 +10,7 @@ from lcm.interfaces import (
     InternalRegime,
     StateActionSpace,
 )
-from lcm.shock_grids import ShockGrid
+from lcm.shocks import _ShockGrid
 from lcm.typing import FlatRegimeParams, FloatND, InternalParams, RegimeName
 
 
@@ -86,7 +86,7 @@ def _replace_runtime_states(
     """Complete state grids whose values are supplied at runtime via params.
 
     For IrregSpacedGrid with runtime-supplied points, the grid points come from
-    params as ``{state_name}__points``. For ShockGrid with runtime-supplied params,
+    params as ``{state_name}__points``. For _ShockGrid with runtime-supplied params,
     the grid points are computed from shock params in the params dict or
     fixed_params.
 
@@ -101,7 +101,7 @@ def _replace_runtime_states(
             if points_key not in all_params:
                 continue
             replacements[state_name] = all_params[points_key]
-        elif isinstance(spec, ShockGrid) and spec.params_to_pass_at_runtime:
+        elif isinstance(spec, _ShockGrid) and spec.params_to_pass_at_runtime:
             all_present = all(
                 f"{state_name}__{p}" in all_params
                 for p in spec.params_to_pass_at_runtime

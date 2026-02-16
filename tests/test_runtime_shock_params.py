@@ -9,11 +9,10 @@ from lcm import (
     LinSpacedGrid,
     Model,
     Regime,
-    ShockGridAR1Tauchen,
-    ShockGridIIDNormal,
-    ShockGridIIDUniform,
     categorical,
 )
+from lcm.shocks.ar1 import Tauchen
+from lcm.shocks.iid import Normal, Uniform
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
 
 # ======================================================================================
@@ -27,7 +26,7 @@ class RegimeIdShock:
     dead: int
 
 
-def _shock_utility(
+def _utility(
     wealth: ContinuousState,
     income: ContinuousState,
     consumption: ContinuousAction,
@@ -35,7 +34,7 @@ def _shock_utility(
     return jnp.log(consumption) + 0.01 * (wealth + jnp.exp(income))
 
 
-def _shock_next_wealth(
+def _next_wealth(
     wealth: ContinuousState,
     consumption: ContinuousAction,
 ) -> ContinuousState:
@@ -43,32 +42,30 @@ def _shock_next_wealth(
 
 
 @lcm.mark.stochastic
-def _shock_next_income() -> None:
+def _next_income() -> None:
     pass
 
 
-def _shock_constraint(
-    consumption: ContinuousAction, wealth: ContinuousState
-) -> FloatND:
+def _constraint(consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
     return consumption <= wealth
 
 
-_TAUCHEN_PARAMS = {"ar1_coeff": 0.9, "std": 1.0, "mean": 0.0, "n_std": 2}
+_TAUCHEN_PARAMS = {"rho": 0.9, "sigma": 1.0, "mu": 0.0, "n_std": 2}
 
 
-def _make_shock_model(*, fixed_params=None):
+def _make_model(*, fixed_params=None):
     """Create a shock model with all shock params supplied at runtime."""
     alive = Regime(
         states={
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=5),
-            "income": ShockGridAR1Tauchen(n_points=3),
+            "income": Tauchen(n_points=3),
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4)},
-        functions={"utility": _shock_utility},
-        constraints={"borrowing": _shock_constraint},
+        functions={"utility": _utility},
+        constraints={"borrowing": _constraint},
         transitions={
-            "next_wealth": _shock_next_wealth,
-            "next_income": _shock_next_income,
+            "next_wealth": _next_wealth,
+            "next_income": _next_income,
             "next_regime": lambda period: jnp.where(
                 period >= 1, RegimeIdShock.dead, RegimeIdShock.alive
             ),
@@ -95,21 +92,21 @@ def _make_shock_model(*, fixed_params=None):
 
 
 def test_runtime_shock_params_property():
-    """ShockGridAR1Tauchen without params reports all params as runtime-supplied."""
-    grid = ShockGridAR1Tauchen(n_points=5)
-    for name in ("ar1_coeff", "std", "mean", "n_std"):
+    """Tauchen without params reports all params as runtime-supplied."""
+    grid = Tauchen(n_points=5)
+    for name in ("rho", "sigma", "mu", "n_std"):
         assert name in grid.params_to_pass_at_runtime
     assert not grid.is_fully_specified
 
 
 def test_fully_specified_shock():
-    """ShockGridAR1Tauchen with all params should have no runtime-supplied params."""
-    grid = ShockGridAR1Tauchen(n_points=5, **_TAUCHEN_PARAMS)
+    """Tauchen with all params should have no runtime-supplied params."""
+    grid = Tauchen(n_points=5, **_TAUCHEN_PARAMS)
     assert grid.params_to_pass_at_runtime == ()
     assert grid.is_fully_specified
 
 
-@pytest.mark.parametrize("grid_cls", [ShockGridIIDUniform, ShockGridIIDNormal])
+@pytest.mark.parametrize("grid_cls", [Uniform, Normal])
 def test_shock_without_params_is_not_fully_specified(grid_cls):
     """All distributions require explicit params — nothing is defaulted."""
     grid = grid_cls(n_points=5)
@@ -119,16 +116,16 @@ def test_shock_without_params_is_not_fully_specified(grid_cls):
 
 def test_runtime_shock_in_params_template():
     """Runtime-supplied ShockGrid params appear in params_template."""
-    model = _make_shock_model()
+    model = _make_model()
     alive_template = model.params_template["alive"]
     assert "income" in alive_template
-    for name in ("ar1_coeff", "std", "mean", "n_std"):
+    for name in ("rho", "sigma", "mu", "n_std"):
         assert name in alive_template["income"]
 
 
 def test_solve_with_runtime_shock():
     """Solve should work with runtime-supplied shock params."""
-    model = _make_shock_model()
+    model = _make_model()
     params = {"discount_factor": 1.0, **_TAUCHEN_PARAMS}
     V_arr_dict = model.solve(params, debug_mode=False)
     assert len(V_arr_dict) > 0
@@ -136,7 +133,7 @@ def test_solve_with_runtime_shock():
 
 def test_runtime_shock_with_fixed_params():
     """Shock params provided via fixed_params are removed from template."""
-    model = _make_shock_model(fixed_params=_TAUCHEN_PARAMS)
+    model = _make_model(fixed_params=_TAUCHEN_PARAMS)
 
     alive_template = model.params_template.get("alive", {})
     income_params = alive_template.get("income", {})

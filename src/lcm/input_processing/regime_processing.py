@@ -31,7 +31,7 @@ from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
 from lcm.mark import stochastic
 from lcm.ndimage import map_coordinates
 from lcm.regime import Regime
-from lcm.shock_grids import ShockGrid
+from lcm.shocks import _ShockGrid
 from lcm.state_action_space import create_state_action_space, create_state_space_info
 from lcm.typing import (
     Float1D,
@@ -194,7 +194,6 @@ def process_regimes(
             internal_functions=internal_functions,
             transitions=internal_functions.transitions,
             regime_params_template=regime_params_template,
-            state_action_space=state_action_spaces[name],
             state_space_info=state_space_infos[name],
             max_Q_over_a_functions=MappingProxyType(max_Q_over_a_functions),
             argmax_and_max_Q_over_a_functions=MappingProxyType(
@@ -310,8 +309,7 @@ def _get_internal_functions(
         relative_name = f"{regime_name}__next_{shock_name}"
         functions[f"weight_{relative_name}"] = _get_weights_fn_for_shock(
             name=shock_name,
-            flat_grid=flat_grids[relative_name.replace("next_", "")],
-            gridspec=gridspecs[shock_name],
+            gridspec=cast("_ShockGrid", gridspecs[shock_name]),
         )
         functions[relative_name] = _get_stochastic_next_function_for_shock(
             name=shock_name,
@@ -420,16 +418,14 @@ def _get_stochastic_next_function_for_shock(name: str, grid: Float1D) -> UserFun
     return next_func
 
 
-def _get_weights_fn_for_shock(
-    name: str, flat_grid: Float1D, gridspec: Grid
-) -> UserFunction:
+def _get_weights_fn_for_shock(name: str, gridspec: _ShockGrid) -> UserFunction:
     """Get function that uses linear interpolation to calculate the shock weights.
 
     For shocks whose params are supplied at runtime, the grid points and transition
     probabilities are computed inside JIT from those runtime params.
 
     """
-    if isinstance(gridspec, ShockGrid) and gridspec.params_to_pass_at_runtime:
+    if gridspec.params_to_pass_at_runtime:
         n_points = gridspec.n_points
         fixed_params = dict(gridspec.params)
         runtime_param_names = {
@@ -442,11 +438,12 @@ def _get_weights_fn_for_shock(
 
         @with_signature(args=args, return_annotation="FloatND", enforce=False)
         def weights_func_runtime(*a: Array, **kwargs: Array) -> Float1D:  # noqa: ARG001
-            shock_kw = {**fixed_params}
-            for qn, raw in runtime_param_names.items():
-                shock_kw[raw] = kwargs[qn]
-            grid_points = _compute_gridpoints(n_points, **shock_kw)
-            transition_probs = _compute_transition_probs(n_points, **shock_kw)
+            shock_kw = {
+                **fixed_params,
+                **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
+            }
+            grid_points = _compute_gridpoints(n_points, **shock_kw)  # ty: ignore[invalid-argument-type]
+            transition_probs = _compute_transition_probs(n_points, **shock_kw)  # ty: ignore[invalid-argument-type]
             coord = get_irreg_coordinate(kwargs[name], grid_points)
             return map_coordinates(
                 input=transition_probs,
@@ -458,7 +455,8 @@ def _get_weights_fn_for_shock(
 
         return weights_func_runtime
 
-    transition_probs = gridspec.get_transition_probs()  # ty: ignore[unresolved-attribute]
+    grid_points = gridspec.get_gridpoints()
+    transition_probs = gridspec.get_transition_probs()
 
     @with_signature(
         args={f"{name}": "ContinuousState"},
@@ -466,12 +464,12 @@ def _get_weights_fn_for_shock(
         enforce=False,
     )
     def weights_func(*args: Array, **kwargs: Array) -> Float1D:  # noqa: ARG001
-        coordinate = get_irreg_coordinate(kwargs[f"{name}"], flat_grid)
+        coordinate = get_irreg_coordinate(kwargs[f"{name}"], grid_points)
         return map_coordinates(
             input=transition_probs,
             coordinates=[
-                jnp.full(gridspec.n_points, fill_value=coordinate),  # ty: ignore[unresolved-attribute]
-                jnp.arange(gridspec.n_points),  # ty: ignore[unresolved-attribute]
+                jnp.full(gridspec.n_points, fill_value=coordinate),
+                jnp.arange(gridspec.n_points),
             ],
         )
 
