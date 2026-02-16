@@ -8,7 +8,6 @@ from jax import Array
 
 from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
 from lcm.shocks import _ShockGrid
-from lcm.state_action_space import create_state_action_space
 from lcm.typing import (
     ArgmaxQOverAFunction,
     Bool1D,
@@ -192,6 +191,8 @@ class InternalRegime:
 
     @property
     def state_action_space(self) -> StateActionSpace:
+        # Avoid circular import.
+        from lcm.state_action_space import create_state_action_space  # noqa: PLC0415
 
         return create_state_action_space(
             variable_info=self.variable_info, grids=self.grids

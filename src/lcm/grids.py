@@ -266,7 +266,7 @@ class IrregSpacedGrid(ContinuousGrid):
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
         if self.points is None:
-            return jnp.zeros(self.n_points)
+            return jnp.full(self.n_points, jnp.nan)
         return jnp.asarray(self.points)
 
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
