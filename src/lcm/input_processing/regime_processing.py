@@ -202,6 +202,7 @@ def process_regimes(
             next_state_simulation_function=next_state_simulation_function,
             # currently no additive utility shocks are supported
             random_utility_shocks=ShockType.NONE,
+            _base_state_action_space=state_action_spaces[name],
         )
 
     return ensure_containers_are_immutable(internal_regimes)

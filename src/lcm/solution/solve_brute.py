@@ -5,13 +5,8 @@ import jax.numpy as jnp
 
 from lcm.ages import AgeGrid
 from lcm.error_handling import validate_value_function_array
-from lcm.grids import Grid, IrregSpacedGrid
-from lcm.interfaces import (
-    InternalRegime,
-    StateActionSpace,
-)
-from lcm.shocks import _ShockGrid
-from lcm.typing import FlatRegimeParams, FloatND, InternalParams, RegimeName
+from lcm.interfaces import InternalRegime
+from lcm.typing import FloatND, InternalParams, RegimeName
 
 
 def solve(
@@ -51,11 +46,8 @@ def solve(
         }
 
         for name, internal_regime in active_regimes.items():
-            state_action_space = _replace_runtime_states(
-                internal_regime.state_action_space,
-                internal_params[name],
-                internal_regime.gridspecs,
-                internal_regime.resolved_fixed_params,
+            state_action_space = internal_regime.state_action_space(
+                flat_regime_params=internal_params[name],
             )
             max_Q_over_a = internal_regime.max_Q_over_a_functions[period]
 
@@ -75,48 +67,3 @@ def solve(
         logger.info("Age: %s", ages.values[period])
 
     return MappingProxyType(solution)
-
-
-def _replace_runtime_states(
-    state_action_space: StateActionSpace,
-    params: FlatRegimeParams,
-    gridspecs: MappingProxyType[str, Grid],
-    fixed_params: FlatRegimeParams = MappingProxyType({}),
-) -> StateActionSpace:
-    """Complete state grids whose values are supplied at runtime via params.
-
-    For IrregSpacedGrid with runtime-supplied points, the grid points come from
-    params as ``{state_name}__points``. For _ShockGrid with runtime-supplied params,
-    the grid points are computed from shock params in the params dict or
-    fixed_params.
-
-    """
-    all_params = {**fixed_params, **params}
-    replacements: dict[str, object] = {}
-    for state_name, spec in gridspecs.items():
-        if state_name not in state_action_space.states:
-            continue
-        if isinstance(spec, IrregSpacedGrid) and spec.pass_points_at_runtime:
-            points_key = f"{state_name}__points"
-            if points_key not in all_params:
-                continue
-            replacements[state_name] = all_params[points_key]
-        elif isinstance(spec, _ShockGrid) and spec.params_to_pass_at_runtime:
-            all_present = all(
-                f"{state_name}__{p}" in all_params
-                for p in spec.params_to_pass_at_runtime
-            )
-            if not all_present:
-                continue
-            shock_kw = dict(spec.params)
-            for p in spec.params_to_pass_at_runtime:
-                shock_kw[p] = all_params[f"{state_name}__{p}"]
-            replacements[state_name] = spec.compute_gridpoints(
-                spec.n_points, **shock_kw
-            )
-
-    if not replacements:
-        return state_action_space
-
-    new_states = dict(state_action_space.states) | replacements
-    return state_action_space.replace(states=MappingProxyType(new_states))
