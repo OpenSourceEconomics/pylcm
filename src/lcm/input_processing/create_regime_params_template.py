@@ -4,7 +4,7 @@ from jax import Array
 from lcm.exceptions import InvalidNameError
 from lcm.grids import IrregSpacedGrid
 from lcm.regime import Regime
-from lcm.shock_grids import ShockGrid
+from lcm.shocks import _ShockGrid
 from lcm.typing import RegimeParamsTemplate
 from lcm.utils import ensure_containers_are_immutable
 
@@ -19,7 +19,7 @@ def create_regime_params_template(
     arguments that are not states, actions, other regime functions, or special variables
     (period, age, continuation_value).
 
-    Grids with runtime-supplied values (IrregSpacedGrid without points, ShockGrid
+    Grids with runtime-supplied values (IrregSpacedGrid without points, _ShockGrid
     without full shock_params) add entries to the template under pseudo-function keys
     matching the state name.
 
@@ -72,10 +72,10 @@ def create_regime_params_template(
                     f"points) conflicts with a function of the same name in the regime."
                 )
             function_params[state_name] = {"points": Array}
-        elif isinstance(grid, ShockGrid) and grid.params_to_pass_at_runtime:
+        elif isinstance(grid, _ShockGrid) and grid.params_to_pass_at_runtime:
             if state_name in function_params:
                 raise InvalidNameError(
-                    f"ShockGrid state '{state_name}' (with runtime-supplied params) "
+                    f"_ShockGrid state '{state_name}' (with runtime-supplied params) "
                     f"conflicts with a function of the same name in the regime."
                 )
             function_params[state_name] = dict.fromkeys(

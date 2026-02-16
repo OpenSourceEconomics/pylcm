@@ -22,7 +22,7 @@ class InternalRegimeMock:
     - state_action_spaces: StateActionSpace object
     - max_Q_over_a_functions: dict mapping period to max_Q_over_a function
     - active: list of periods the regime is active
-    - gridspecs: grid specifications (needed by _replace_dynamic_states)
+    - gridspecs: grid specifications (needed by _replace_runtime_states)
     """
 
     state_action_space: StateActionSpace

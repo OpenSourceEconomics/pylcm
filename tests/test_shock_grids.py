@@ -7,13 +7,9 @@ from jax import numpy as jnp
 from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
-from lcm import (
-    ShockGridAR1Rouwenhorst,
-    ShockGridAR1Tauchen,
-    ShockGridIIDNormal,
-    ShockGridIIDUniform,
-)
 from lcm._config import TEST_DATA
+from lcm.shocks.ar1 import Rouwenhorst, Tauchen
+from lcm.shocks.iid import Normal, Uniform
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 from tests.test_models.shocks import get_model, get_params
 
@@ -67,10 +63,10 @@ def test_model_with_shock(distribution_type):
 
 
 _GRID_CLASSES = [
-    ShockGridIIDUniform,
-    ShockGridIIDNormal,
-    ShockGridAR1Tauchen,
-    ShockGridAR1Rouwenhorst,
+    Uniform,
+    Normal,
+    Tauchen,
+    Rouwenhorst,
 ]
 
 
@@ -87,10 +83,10 @@ def test_shock_grid_correct_shape_without_params(grid_cls):
 @pytest.mark.parametrize(
     ("grid_cls", "kwargs"),
     [
-        (ShockGridIIDUniform, {"start": 0.0, "stop": 1.0}),
-        (ShockGridIIDNormal, {"mu": 0.0, "sigma": 1.0, "n_std": 3.0}),
-        (ShockGridAR1Tauchen, {"rho": 0.9, "sigma": 1.0, "mu": 0.0, "n_std": 2}),
-        (ShockGridAR1Rouwenhorst, {"rho": 0.9, "sigma": 1.0, "mu": 0.0}),
+        (Uniform, {"start": 0.0, "stop": 1.0}),
+        (Normal, {"mu": 0.0, "sigma": 1.0, "n_std": 3.0}),
+        (Tauchen, {"rho": 0.9, "sigma": 1.0, "mu": 0.0, "n_std": 2}),
+        (Rouwenhorst, {"rho": 0.9, "sigma": 1.0, "mu": 0.0}),
     ],
 )
 def test_shock_grid_fully_specified_with_all_params(grid_cls, kwargs):
@@ -119,13 +115,13 @@ def _draw_many(grid, params, key_seed=0, current_value=None):
 
 @pytest.mark.parametrize("params_at_init", [True, False])
 def test_draw_shock_uniform(params_at_init):
-    """ShockGridIIDUniform.draw_shock uses start/stop params."""
+    """Uniform.draw_shock uses start/stop params."""
     kwargs = {"start": 2.0, "stop": 4.0}
     if params_at_init:
-        grid = ShockGridIIDUniform(n_points=5, **kwargs)
+        grid = Uniform(n_points=5, **kwargs)
         params = grid.params
     else:
-        grid = ShockGridIIDUniform(n_points=5)
+        grid = Uniform(n_points=5)
         params = MappingProxyType(kwargs)
     draws = _draw_many(grid, params)
     assert jnp.all(draws >= 2.0)
@@ -135,13 +131,13 @@ def test_draw_shock_uniform(params_at_init):
 
 @pytest.mark.parametrize("params_at_init", [True, False])
 def test_draw_shock_normal(params_at_init):
-    """ShockGridIIDNormal.draw_shock uses mu/sigma params."""
+    """Normal.draw_shock uses mu/sigma params."""
     kwargs = {"mu": 5.0, "sigma": 0.1, "n_std": 3.0}
     if params_at_init:
-        grid = ShockGridIIDNormal(n_points=5, **kwargs)
+        grid = Normal(n_points=5, **kwargs)
         params = grid.params
     else:
-        grid = ShockGridIIDNormal(n_points=5)
+        grid = Normal(n_points=5)
         params = MappingProxyType(kwargs)
     draws = _draw_many(grid, params)
     aaae(draws.mean(), 5.0, decimal=1)
@@ -150,13 +146,13 @@ def test_draw_shock_normal(params_at_init):
 
 @pytest.mark.parametrize("params_at_init", [True, False])
 def test_draw_shock_tauchen(params_at_init):
-    """ShockGridAR1Tauchen.draw_shock uses mu/sigma/rho params."""
+    """Tauchen.draw_shock uses mu/sigma/rho params."""
     kwargs = {"rho": 0.5, "sigma": 0.1, "mu": 2.0, "n_std": 3.0}
     if params_at_init:
-        grid = ShockGridAR1Tauchen(n_points=5, **kwargs)
+        grid = Tauchen(n_points=5, **kwargs)
         params = grid.params
     else:
-        grid = ShockGridAR1Tauchen(n_points=5)
+        grid = Tauchen(n_points=5)
         params = MappingProxyType(kwargs)
     draws = _draw_many(grid, params, current_value=3.0)
     aaae(draws.mean(), 3.5, decimal=1)
@@ -165,13 +161,13 @@ def test_draw_shock_tauchen(params_at_init):
 
 @pytest.mark.parametrize("params_at_init", [True, False])
 def test_draw_shock_rouwenhorst(params_at_init):
-    """ShockGridAR1Rouwenhorst.draw_shock uses mu/sigma/rho params."""
+    """Rouwenhorst.draw_shock uses mu/sigma/rho params."""
     kwargs = {"rho": 0.5, "sigma": 0.1, "mu": 2.0}
     if params_at_init:
-        grid = ShockGridAR1Rouwenhorst(n_points=5, **kwargs)
+        grid = Rouwenhorst(n_points=5, **kwargs)
         params = grid.params
     else:
-        grid = ShockGridAR1Rouwenhorst(n_points=5)
+        grid = Rouwenhorst(n_points=5)
         params = MappingProxyType(kwargs)
     draws = _draw_many(grid, params, current_value=3.0)
     aaae(draws.mean(), 3.5, decimal=1)
@@ -182,7 +178,7 @@ def test_draw_shock_rouwenhorst(params_at_init):
 # AR(1) grid property tests
 # ======================================================================================
 
-_AR1_GRID_CLASSES = [ShockGridAR1Tauchen, ShockGridAR1Rouwenhorst]
+_AR1_GRID_CLASSES = [Tauchen, Rouwenhorst]
 
 
 @pytest.mark.parametrize("grid_cls", _AR1_GRID_CLASSES)
@@ -190,7 +186,7 @@ def test_ar1_grid_centers_on_unconditional_mean(grid_cls):
     """Midpoint of AR(1) gridpoints is approximately mu / (1 - rho)."""
     mu, rho = 2.0, 0.8
     kwargs = {"rho": rho, "sigma": 0.5, "mu": mu}
-    if grid_cls is ShockGridAR1Tauchen:
+    if grid_cls is Tauchen:
         kwargs["n_std"] = 3.0
     grid = grid_cls(n_points=11, **kwargs)
     points = grid.get_gridpoints()
@@ -203,7 +199,7 @@ def test_ar1_grid_centers_on_unconditional_mean(grid_cls):
 def test_ar1_transition_probs_rows_sum_to_one(grid_cls):
     """Each row of the transition matrix sums to 1."""
     kwargs = {"rho": 0.9, "sigma": 0.5, "mu": 1.0}
-    if grid_cls is ShockGridAR1Tauchen:
+    if grid_cls is Tauchen:
         kwargs["n_std"] = 3.0
     grid = grid_cls(n_points=7, **kwargs)
     P = grid.get_transition_probs()
@@ -216,7 +212,7 @@ def test_ar1_draw_shock_unconditional_moments(grid_cls):
     """Long-run simulated moments match AR(1) unconditional moments."""
     mu, rho, sigma = 0.5, 0.7, 0.3
     kwargs = {"rho": rho, "sigma": sigma, "mu": mu}
-    if grid_cls is ShockGridAR1Tauchen:
+    if grid_cls is Tauchen:
         kwargs["n_std"] = 3.0
     grid = grid_cls(n_points=11, **kwargs)
     params = grid.params

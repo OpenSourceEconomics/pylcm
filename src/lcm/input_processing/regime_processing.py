@@ -31,7 +31,7 @@ from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
 from lcm.mark import stochastic
 from lcm.ndimage import map_coordinates
 from lcm.regime import Regime
-from lcm.shock_grids import ShockGrid
+from lcm.shocks import _ShockGrid
 from lcm.state_action_space import create_state_action_space, create_state_space_info
 from lcm.typing import (
     Float1D,
@@ -429,7 +429,7 @@ def _get_weights_fn_for_shock(
     probabilities are computed inside JIT from those runtime params.
 
     """
-    if isinstance(gridspec, ShockGrid) and gridspec.params_to_pass_at_runtime:
+    if isinstance(gridspec, _ShockGrid) and gridspec.params_to_pass_at_runtime:
         n_points = gridspec.n_points
         fixed_params = dict(gridspec.params)
         runtime_param_names = {

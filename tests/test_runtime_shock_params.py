@@ -9,11 +9,10 @@ from lcm import (
     LinSpacedGrid,
     Model,
     Regime,
-    ShockGridAR1Tauchen,
-    ShockGridIIDNormal,
-    ShockGridIIDUniform,
     categorical,
 )
+from lcm.shocks.ar1 import Tauchen
+from lcm.shocks.iid import Normal, Uniform
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
 
 # ======================================================================================
@@ -59,7 +58,7 @@ def _make_model(*, fixed_params=None):
     alive = Regime(
         states={
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=5),
-            "income": ShockGridAR1Tauchen(n_points=3),
+            "income": Tauchen(n_points=3),
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4)},
         functions={"utility": _utility},
@@ -93,21 +92,21 @@ def _make_model(*, fixed_params=None):
 
 
 def test_runtime_shock_params_property():
-    """ShockGridAR1Tauchen without params reports all params as runtime-supplied."""
-    grid = ShockGridAR1Tauchen(n_points=5)
+    """Tauchen without params reports all params as runtime-supplied."""
+    grid = Tauchen(n_points=5)
     for name in ("rho", "sigma", "mu", "n_std"):
         assert name in grid.params_to_pass_at_runtime
     assert not grid.is_fully_specified
 
 
 def test_fully_specified_shock():
-    """ShockGridAR1Tauchen with all params should have no runtime-supplied params."""
-    grid = ShockGridAR1Tauchen(n_points=5, **_TAUCHEN_PARAMS)
+    """Tauchen with all params should have no runtime-supplied params."""
+    grid = Tauchen(n_points=5, **_TAUCHEN_PARAMS)
     assert grid.params_to_pass_at_runtime == ()
     assert grid.is_fully_specified
 
 
-@pytest.mark.parametrize("grid_cls", [ShockGridIIDUniform, ShockGridIIDNormal])
+@pytest.mark.parametrize("grid_cls", [Uniform, Normal])
 def test_shock_without_params_is_not_fully_specified(grid_cls):
     """All distributions require explicit params — nothing is defaulted."""
     grid = grid_cls(n_points=5)

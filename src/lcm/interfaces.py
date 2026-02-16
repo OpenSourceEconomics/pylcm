@@ -7,7 +7,7 @@ import pandas as pd
 from jax import Array
 
 from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
-from lcm.shock_grids import ShockGrid
+from lcm.shocks import _ShockGrid
 from lcm.typing import (
     ArgmaxQOverAFunction,
     Bool1D,
@@ -134,7 +134,7 @@ class StateSpaceInfo:
     """
 
     states_names: tuple[str, ...]
-    discrete_states: MappingProxyType[str, DiscreteGrid | ShockGrid]
+    discrete_states: MappingProxyType[str, DiscreteGrid | _ShockGrid]
     continuous_states: MappingProxyType[str, ContinuousGrid]
 
 

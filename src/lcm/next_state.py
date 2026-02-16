@@ -12,7 +12,9 @@ from jax import Array
 
 from lcm.grids import Grid
 from lcm.input_processing.util import is_stochastic_transition
-from lcm.shock_grids import ShockGrid, ShockGridAR1, ShockGridIID
+from lcm.shocks import _ShockGrid
+from lcm.shocks.ar1 import _ShockGridAR1
+from lcm.shocks.iid import _ShockGridIID
 from lcm.typing import (
     ContinuousState,
     DiscreteState,
@@ -236,19 +238,19 @@ def _create_continuous_stochastic_next_func(
 
     """
     prev_state_name = name.split("next_")[1]
-    gridspec: ShockGrid = gridspecs[prev_state_name]  # ty: ignore [invalid-assignment]
+    gridspec: _ShockGrid = gridspecs[prev_state_name]  # ty: ignore [invalid-assignment]
 
-    if isinstance(gridspec, ShockGridAR1):
+    if isinstance(gridspec, _ShockGridAR1):
         return _create_ar1_next_func(name, prev_state_name, gridspec)
-    if isinstance(gridspec, ShockGridIID):
+    if isinstance(gridspec, _ShockGridIID):
         return _create_iid_next_func(name, prev_state_name, gridspec)
 
-    msg = f"Expected ShockGridIID or ShockGridAR1, got {type(gridspec)}"
+    msg = f"Expected _ShockGridIID or _ShockGridAR1, got {type(gridspec)}"
     raise TypeError(msg)
 
 
 def _create_ar1_next_func(
-    name: str, prev_state_name: str, gridspec: ShockGridAR1
+    name: str, prev_state_name: str, gridspec: _ShockGridAR1
 ) -> StochasticNextFunction:
     args: dict[str, str] = {
         f"key_{name}": "dict[str, Array]",
@@ -289,7 +291,7 @@ def _create_ar1_next_func(
 
 
 def _create_iid_next_func(
-    name: str, prev_state_name: str, gridspec: ShockGridIID
+    name: str, prev_state_name: str, gridspec: _ShockGridIID
 ) -> StochasticNextFunction:
     args: dict[str, str] = {
         f"key_{name}": "dict[str, Array]",

@@ -7,12 +7,8 @@ from lcm.ages import AgeGrid
 from lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
 from lcm.model import Model
 from lcm.regime import Regime
-from lcm.shock_grids import (
-    ShockGridAR1Rouwenhorst,
-    ShockGridAR1Tauchen,
-    ShockGridIIDNormal,
-    ShockGridIIDUniform,
-)
+from lcm.shocks.ar1 import Rouwenhorst, Tauchen
+from lcm.shocks.iid import Normal, Uniform
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -22,10 +18,10 @@ from lcm.typing import (
 )
 
 _SHOCK_GRID_CLASSES = {
-    "uniform": ShockGridIIDUniform,
-    "normal": ShockGridIIDNormal,
-    "tauchen": ShockGridAR1Tauchen,
-    "rouwenhorst": ShockGridAR1Rouwenhorst,
+    "uniform": Uniform,
+    "normal": Normal,
+    "tauchen": Tauchen,
+    "rouwenhorst": Rouwenhorst,
 }
 
 

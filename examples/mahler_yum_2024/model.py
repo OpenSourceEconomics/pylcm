@@ -20,7 +20,8 @@ from scipy.interpolate import interp1d
 import lcm
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.dispatchers import _base_productmap
-from lcm.shock_grids import ShockGridAR1Rouwenhorst, ShockGridIIDUniform
+from lcm.shocks.ar1 import Rouwenhorst
+from lcm.shocks.iid import Uniform
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -357,7 +358,7 @@ def dead_is_active(age: float, initial_age: float) -> bool:
     return age > initial_age
 
 
-prod_shock_grid = ShockGridAR1Rouwenhorst(n_points=5, rho=rho, mu=0, sigma=1)
+prod_shock_grid = Rouwenhorst(n_points=5, rho=rho, mu=0, sigma=1)
 
 ALIVE_REGIME = Regime(
     functions={
@@ -384,7 +385,7 @@ ALIVE_REGIME = Regime(
         "health": DiscreteGrid(HealthStatus),
         "productivity_shock": prod_shock_grid,
         "effort_t_1": DiscreteGrid(Effort),
-        "adjustment_cost": ShockGridIIDUniform(n_points=5, start=0, stop=1),
+        "adjustment_cost": Uniform(n_points=5, start=0, stop=1),
         "education": DiscreteGrid(EducationStatus),
         "stochastic_discount_factor": DiscreteGrid(DiscountFactor),
         "productivity": DiscreteGrid(ProductivityType),
