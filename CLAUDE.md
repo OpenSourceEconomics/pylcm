@@ -26,16 +26,13 @@ automation. Python 3.14+ is required.
 ### Code Quality
 
 - `pixi run ty` - Type checking with ty
-- `ruff check .` - Linting (automatically runs with pre-commit)
-- `ruff format .` - Code formatting (automatically runs with pre-commit)
-- `pre-commit run --all-files` - Run all pre-commit hooks
+- `prek run --all-files` - Run all pre-commit hooks
 
 ### Environment Setup
 
 - `pixi install` - Install dependencies
 - `pixi run explanation-notebooks` - Execute explanation notebooks
-- `pre-commit install` - Install pre-commit hooks (after
-  `pixi global install pre-commit`)
+- `prek install` - Install pre-commit hooks (after `pixi global install prek`)
 
 ## Code Architecture
 
@@ -134,7 +131,7 @@ the key in the `regimes` dict passed to `Model`:
 ```python
 # Non-terminal regime
 Regime(
-    transition=next_regime_fn,                   # Required: regime transition function (None → terminal)
+    transition=next_regime_func,                  # Required: regime transition function (None → terminal)
     active=lambda age: 25 <= age < 65,           # Optional: age-based predicate (default: always True)
     states={                                     # State grids with optional transitions
         "wealth": LinSpacedGrid(..., transition=next_wealth),  # Time-varying state
@@ -143,9 +140,9 @@ Regime(
     actions={"action_name": Grid, ...},          # Action grids (can be empty)
     functions={                                  # Must include "utility"; other functions optional
         "utility": utility_function,
-        "name": helper_fn, ...
+        "name": helper_func, ...
     },
-    constraints={"name": constraint_fn, ...},    # Optional: constraint functions
+    constraints={"name": constraint_func, ...},  # Optional: constraint functions
 )
 
 # Terminal regime (transition=None)

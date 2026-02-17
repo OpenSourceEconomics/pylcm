@@ -299,12 +299,19 @@ class InternalFunctions:
     """All functions that are used in the regime."""
 
     functions: MappingProxyType[str, InternalUserFunction]
+    """Immutable mapping of function names to internal user functions."""
+
     constraints: MappingProxyType[str, InternalUserFunction]
+    """Immutable mapping of constraint names to internal user functions."""
+
     transitions: TransitionFunctionsMapping
+    """Immutable mapping of transition names to transition functions."""
+
     regime_transition_probs: (
         PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]
         | None
     )
+    """Regime transition probability functions, or None for terminal regimes."""
 
     def get_all_functions(self) -> MappingProxyType[str, InternalUserFunction]:
         """Get all regime functions including utility, constraints, and transitions.

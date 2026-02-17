@@ -82,8 +82,8 @@ def test_fixed_param_removed_from_template():
     # interest_rate should NOT be in the template
     alive_template = model.params_template.get("alive", {})
     all_param_names = set()
-    for fn_params in alive_template.values():
-        all_param_names.update(fn_params.keys())
+    for func_params in alive_template.values():
+        all_param_names.update(func_params.keys())
     assert "interest_rate" not in all_param_names
     # discount_factor should still be there
     assert "discount_factor" in all_param_names
@@ -139,8 +139,8 @@ def test_regime_level_fixed_param():
     # interest_rate should be removed from alive's template
     alive_template = model.params_template.get("alive", {})
     all_param_names = set()
-    for fn_params in alive_template.values():
-        all_param_names.update(fn_params.keys())
+    for func_params in alive_template.values():
+        all_param_names.update(func_params.keys())
     assert "interest_rate" not in all_param_names
 
     params = {"discount_factor": 0.95}

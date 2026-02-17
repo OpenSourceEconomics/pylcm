@@ -68,7 +68,7 @@ class Regime:
     """A user regime which can be processed into an internal regime.
 
     State transitions are attached directly to state grids via their `transition`
-    parameter. A state with `transition=some_fn` is time-varying; a state with
+    parameter. A state with `transition=some_func` is time-varying; a state with
     `transition=None` (the default) is fixed and carried forward unchanged.
     ShockGrids have intrinsic transitions and do not need a `transition` parameter.
 

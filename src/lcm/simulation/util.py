@@ -75,7 +75,7 @@ def calculate_next_states(
 
     Returns:
         Updated states dictionary with next period states for subjects in this regime.
-        The returned dict contains states for all subjects, with updates only for
+        Immutable mapping of updated states for all subjects, with updates only for
         those in the current regime.
 
     """

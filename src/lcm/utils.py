@@ -107,7 +107,7 @@ def get_field_names_and_values(dc: type) -> MappingProxyType[str, Any]:
         dc: The dataclass to get the fields of.
 
     Returns:
-        An immutable dictionary with the field names as keys and the field values as
+        An immutable mapping with the field names as keys and the field values as
         values. If no value is provided for a field, the value is set to None.
 
     """

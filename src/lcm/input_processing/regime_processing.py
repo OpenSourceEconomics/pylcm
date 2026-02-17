@@ -223,7 +223,7 @@ def _get_internal_functions(
         regime: The regime as provided by the user.
         regime_name: The name of the regime.
         nested_transitions: Nested transitions dict for internal processing.
-            Format: {"regime_name": {"next_state": fn, ...}, "next_regime": fn}
+            Format: {"regime_name": {"next_state": func, ...}, "next_regime": func}
         grids: Immutable mapping of regime names to grid arrays.
         regime_params_template: The regime's parameter template.
         regime_names_to_ids: Mapping from regime names to integer indices.
@@ -305,7 +305,7 @@ def _get_internal_functions(
         )
     for shock_name in variable_info.query("is_shock").index.tolist():
         relative_name = f"{regime_name}__next_{shock_name}"
-        functions[f"weight_{relative_name}"] = _get_weights_fn_for_shock(
+        functions[f"weight_{relative_name}"] = _get_weights_func_for_shock(
             name=shock_name,
             gridspec=cast("_ShockGrid", gridspecs[shock_name]),
         )
@@ -475,7 +475,7 @@ def _get_stochastic_next_function_for_shock(
     return next_func
 
 
-def _get_weights_fn_for_shock(*, name: str, gridspec: _ShockGrid) -> UserFunction:
+def _get_weights_func_for_shock(*, name: str, gridspec: _ShockGrid) -> UserFunction:
     """Get function that uses linear interpolation to calculate the shock weights.
 
     For shocks whose params are supplied at runtime, the grid points and transition
