@@ -3,8 +3,6 @@ from typing import Literal
 from jax import numpy as jnp
 
 import lcm
-import lcm.shocks.ar1
-import lcm.shocks.iid
 from lcm.ages import AgeGrid
 from lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
 from lcm.model import Model

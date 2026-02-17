@@ -7,8 +7,7 @@ from jax import numpy as jnp
 from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
-import lcm.shocks.ar1
-import lcm.shocks.iid
+import lcm
 from lcm._config import TEST_DATA
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 from tests.test_models.shocks import get_model, get_params

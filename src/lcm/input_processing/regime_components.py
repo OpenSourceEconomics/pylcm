@@ -15,7 +15,6 @@ from lcm.ages import AgeGrid
 from lcm.dispatchers import simulation_spacemap, vmap_1d
 from lcm.grids import Grid
 from lcm.input_processing.params_processing import get_flat_param_names
-from lcm.input_processing.util import get_grids, get_variable_info
 from lcm.interfaces import (
     InternalFunctions,
     PhaseVariantContainer,
@@ -26,9 +25,6 @@ from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a, get_max_Q_over_a
 from lcm.next_state import get_next_state_function_for_simulation
 from lcm.Q_and_F import get_Q_and_F, get_Q_and_F_terminal
 from lcm.regime import Regime
-from lcm.state_action_space import (
-    create_state_action_space,
-)
 from lcm.typing import (
     ArgmaxQOverAFunction,
     GridsDict,
@@ -43,17 +39,6 @@ from lcm.typing import (
     VmappedRegimeTransitionFunction,
 )
 from lcm.utils import flatten_regime_namespace
-
-
-def build_state_action_space(
-    regime: Regime,
-) -> StateActionSpace:
-    variable_info = get_variable_info(regime)
-    grids = get_grids(regime)
-    return create_state_action_space(
-        variable_info=variable_info,
-        grids=grids,
-    )
 
 
 def build_Q_and_F_functions(

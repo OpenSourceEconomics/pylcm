@@ -3,8 +3,7 @@
 import jax.numpy as jnp
 import pytest
 
-import lcm.shocks.ar1
-import lcm.shocks.iid
+import lcm
 from lcm import (
     AgeGrid,
     LinSpacedGrid,

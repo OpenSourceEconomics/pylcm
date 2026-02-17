@@ -18,8 +18,6 @@ from jax import random
 from scipy.interpolate import interp1d
 
 import lcm
-import lcm.shocks.ar1
-import lcm.shocks.iid
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.dispatchers import _base_productmap
 from lcm.typing import (
@@ -601,7 +599,6 @@ def create_inputs(
     bb: float,
     conp: float,
     penre: float,
-    beta: dict[str, float],
     sigma: int,
 ) -> tuple[dict[RegimeName, Any], dict[RegimeName, Any], list[RegimeName]]:
     # Create variable grids from supplied parameters
@@ -614,13 +611,7 @@ def create_inputs(
 
     regime_transition = create_regime_transition_grid()
 
-    # Discounting is now handled natively via lcm's discount_factor parameter.
-    # Solve separate models for each discount factor type.
-    discount_factor = beta["mean"]
-
-    # Create parameters
     params = {
-        "discount_factor": discount_factor,
         "disutil": {"phigrid": phi_grid},
         "fcost": {"psi": psi, "xigrid": xi_grid},
         "cons_util": {"sigma": sigma, "bb": bb, "kappa": conp},
@@ -706,23 +697,22 @@ if __name__ == "__main__":
         "high": beta_mean + beta_std,
     }
 
-    # Pre-build inputs for each discount factor type.
-    inputs_per_type = {}
-    for df_type, df_value in discount_factors.items():
-        modified_params = {**START_PARAMS, "beta": {"mean": df_value, "std": 0.0}}
-        inputs_per_type[df_type] = create_inputs(
-            seed=7235,
-            n_simulation_subjects=1_000,
-            **modified_params,  # ty: ignore[invalid-argument-type]
-        )
+    # Build common inputs (everything except discount_factor).
+    start_params_without_beta = {k: v for k, v in START_PARAMS.items() if k != "beta"}
+    common_params, initial_states, initial_regimes = create_inputs(
+        seed=7235,
+        n_simulation_subjects=1_000,
+        **start_params_without_beta,  # ty: ignore[invalid-argument-type]
+    )
 
     timings: list[float] = []
     for i in range(3):
         t0 = time.perf_counter()
-        for df_type in discount_factors:
-            params, initial_states, initial_regimes = inputs_per_type[df_type]
+        for beta_value in discount_factors.values():
             simulation_result = MAHLER_YUM_MODEL.solve_and_simulate(
-                params={"alive": params},
+                params={
+                    "alive": {"discount_factor": beta_value, **common_params},
+                },
                 initial_states=initial_states,
                 initial_regimes=initial_regimes,
                 seed=8295,

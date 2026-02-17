@@ -79,7 +79,8 @@ class DiscreteGrid(Grid):
     Args:
         category_class (type): The category class representing the grid categories. Must
             be a dataclass with fields that have unique int values.
-        transition: Optional transition function for this state variable. When provided,
+        transition: Optional transition function in case of state variables.
+            When provided,
             the state is time-varying. When ``None`` (default), the state is fixed and
             an identity transition is auto-generated during model processing.
 
@@ -104,7 +105,7 @@ class DiscreteGrid(Grid):
         Args:
             category_class (type): The category class representing the grid categories.
                 Must be a dataclass with fields that have unique int values.
-            transition: Optional transition function for this state variable.
+            transition: Optional transition function in case of state variables.
 
         """
         _validate_discrete_grid(category_class)
@@ -143,7 +144,8 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
         start: The start value of the grid.
         stop: The stop value of the grid.
         n_points: The number of points in the grid.
-        transition: Optional transition function for this state variable. When provided,
+        transition: Optional transition function in case of state variables.
+            When provided,
             the state is time-varying. When ``None`` (default), the state is fixed and
             an identity transition is auto-generated during model processing.
 
@@ -259,7 +261,8 @@ class IrregSpacedGrid(ContinuousGrid):
         n_points: Number of points. Derived from `len(points)` when points are
             given upon initialization; must be specified explicitly when the `points`
             will only be passed at runtime.
-        transition: Optional transition function for this state variable. When provided,
+        transition: Optional transition function in case of state variables.
+            When provided,
             the state is time-varying. When ``None`` (default), the state is fixed and
             an identity transition is auto-generated during model processing.
 
@@ -345,7 +348,8 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
     Attributes:
         pieces: A tuple of Piece objects defining each segment. Pieces must be
             adjacent (no gaps or overlaps).
-        transition: Optional transition function for this state variable. When provided,
+        transition: Optional transition function in case of state variables.
+            When provided,
             the state is time-varying. When ``None`` (default), the state is fixed and
             an identity transition is auto-generated during model processing.
 
@@ -415,7 +419,8 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
     Attributes:
         pieces: A tuple of Piece objects defining each segment. Pieces must be
             adjacent (no gaps or overlaps). All boundary values must be positive.
-        transition: Optional transition function for this state variable. When provided,
+        transition: Optional transition function in case of state variables.
+            When provided,
             the state is time-varying. When ``None`` (default), the state is fixed and
             an identity transition is auto-generated during model processing.
 

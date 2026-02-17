@@ -72,9 +72,9 @@ class Regime:
     ``transition=None`` (the default) is fixed and carried forward unchanged.
     ShockGrids have intrinsic transitions and do not need a ``transition`` parameter.
 
-    The ``transition`` field on the regime itself is the *regime* transition function
-    (what was previously ``next_regime``). A regime with ``transition=None`` is
-    terminal — no separate ``terminal`` flag is needed.
+    The ``transition`` field on the regime itself is the *regime* transition function.
+    A regime with ``transition=None`` is terminal — no separate ``terminal`` flag is
+    needed.
 
     Attributes:
         transition: Regime transition function, or ``None`` for terminal regimes.
