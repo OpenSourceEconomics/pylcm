@@ -33,30 +33,32 @@ def create_state_action_space(
         appear in the variable info table.
 
     """
-    vi = variable_info.copy()
-
     if states is None:
-        _states = {sn: grids[sn] for sn in vi.query("is_state").index}
+        _states = {sn: grids[sn] for sn in variable_info.query("is_state").index}
     else:
         _validate_all_states_present(
             provided_states=states,
-            required_states_names=set(vi.query("is_state").index),
+            required_states_names=set(variable_info.query("is_state").index),
         )
         _states = states
 
     discrete_actions = {
-        name: grids[name] for name in vi.query("is_action & is_discrete").index
+        name: grids[name]
+        for name in variable_info.query("is_action & is_discrete").index
     }
     continuous_actions = {
-        name: grids[name] for name in vi.query("is_action & is_continuous").index
+        name: grids[name]
+        for name in variable_info.query("is_action & is_continuous").index
     }
-    ordered_var_names = tuple(vi.query("is_state | is_discrete").index)
+    states_and_discrete_actions_names = tuple(
+        variable_info.query("is_state | is_discrete").index
+    )
 
     return StateActionSpace(
         states=MappingProxyType(_states),
         discrete_actions=MappingProxyType(discrete_actions),
         continuous_actions=MappingProxyType(continuous_actions),
-        states_and_discrete_actions_names=ordered_var_names,
+        states_and_discrete_actions_names=states_and_discrete_actions_names,
     )
 
 
