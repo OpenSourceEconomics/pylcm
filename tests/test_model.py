@@ -131,7 +131,7 @@ def test_regime_overlapping_states_actions(binary_category_class):
         match=r"States and actions cannot have overlapping names.",
     ):
         Regime(
-            states={"health": DiscreteGrid(binary_category_class)},
+            states={"health": DiscreteGrid(binary_category_class, transition=None)},
             actions={"health": DiscreteGrid(binary_category_class)},
             functions={"utility": lambda: 0},
             transition=lambda: 0,
@@ -189,7 +189,7 @@ def test_model_requires_non_terminal_regime(binary_category_class):
 
     dead = Regime(
         transition=None,
-        states={"health": DiscreteGrid(binary_category_class)},
+        states={"health": DiscreteGrid(binary_category_class, transition=None)},
         functions={"utility": lambda health: health * 0},
         active=lambda age: age >= 1,
     )
@@ -229,13 +229,13 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
     )
     dead1 = Regime(
         transition=None,
-        states={"health": DiscreteGrid(binary_category_class)},
+        states={"health": DiscreteGrid(binary_category_class, transition=None)},
         functions={"utility": lambda health: health * 0},
         active=lambda age: age >= 1,
     )
     dead2 = Regime(
         transition=None,
-        states={"health": DiscreteGrid(binary_category_class)},
+        states={"health": DiscreteGrid(binary_category_class, transition=None)},
         functions={"utility": lambda health: health * 0},
         active=lambda age: age >= 1,
     )
@@ -268,7 +268,7 @@ def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):
     )
     dead = Regime(
         transition=None,
-        states={"health": DiscreteGrid(binary_category_class)},
+        states={"health": DiscreteGrid(binary_category_class, transition=None)},
         functions={"utility": lambda health: health * 0},
         active=lambda age: age >= 1,
     )
@@ -302,7 +302,7 @@ def test_model_regime_name_validation(binary_category_class):
     )
     dead = Regime(
         transition=None,
-        states={"health": DiscreteGrid(binary_category_class)},
+        states={"health": DiscreteGrid(binary_category_class, transition=None)},
         functions={"utility": lambda health: health * 0},
         active=lambda age: age >= 1,
     )
@@ -343,7 +343,7 @@ def test_unused_state_raises_error():
                 n_points=10,
                 transition=lambda wealth, consumption: wealth - consumption,
             ),
-            "unused_state": DiscreteGrid(UnusedState),  # Not used anywhere!
+            "unused_state": DiscreteGrid(UnusedState, transition=None),
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
         transition=lcm.mark.stochastic(lambda: jnp.array([0.9, 0.1])),
@@ -354,8 +354,8 @@ def test_unused_state_raises_error():
         transition=None,
         functions={"utility": lambda wealth: wealth * 0.5},
         states={
-            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
-            "unused_state": DiscreteGrid(UnusedState),
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10, transition=None),
+            "unused_state": DiscreteGrid(UnusedState, transition=None),
         },
         active=lambda age: age >= 5,
     )
@@ -407,7 +407,9 @@ def test_unused_action_raises_error():
     retired = Regime(
         transition=None,
         functions={"utility": lambda wealth: wealth * 0.5},
-        states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
+        states={
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10, transition=None)
+        },
         active=lambda age: age >= 5,
     )
 
@@ -642,7 +644,7 @@ def test_state_only_in_transitions_with_terminal_regime():
             "wealth": LinSpacedGrid(
                 start=1, stop=100, n_points=10, transition=next_wealth
             ),
-            "type_var": DiscreteGrid(TypeVar),  # Fixed state (no transition)
+            "type_var": DiscreteGrid(TypeVar, transition=None),
         },
         actions={
             "consumption": LinSpacedGrid(start=1, stop=50, n_points=10),

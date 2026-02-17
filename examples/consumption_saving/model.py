@@ -164,20 +164,22 @@ working = Regime(
 
 retired = Regime(
     transition=None,
-    functions={"utility": utility_retired},
+    active=retired_is_active,
     states={
         "wealth": LinSpacedGrid(
             start=1,
             stop=100,
             n_points=100,
+            transition=None,
         ),
         "health": LinSpacedGrid(
             start=0,
             stop=1,
             n_points=100,
+            transition=None,
         ),
     },
-    active=retired_is_active,
+    functions={"utility": utility_retired},
 )
 
 

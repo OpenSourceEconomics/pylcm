@@ -21,7 +21,7 @@ def next_wealth(wealth, consumption):
     return wealth - consumption
 
 
-WEALTH_GRID = LinSpacedGrid(start=1, stop=10, n_points=5)
+WEALTH_GRID = LinSpacedGrid(start=1, stop=10, n_points=5, transition=None)
 CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=5, n_points=5)
 
 
@@ -232,7 +232,7 @@ def test_get_all_functions_includes_identity_for_fixed_discrete_state():
     regime = Regime(
         transition=lambda: 0,
         functions={"utility": lambda education: education},
-        states={"education": DiscreteGrid(Edu)},
+        states={"education": DiscreteGrid(Edu, transition=None)},
     )
     all_fns = regime.get_all_functions()
     identity_fn = all_fns["next_education"]
@@ -246,7 +246,7 @@ def test_get_all_functions_includes_identity_for_fixed_continuous_state():
     regime = Regime(
         transition=lambda: 0,
         functions={"utility": lambda wealth: wealth},
-        states={"wealth": LinSpacedGrid(start=0, stop=10, n_points=5)},
+        states={"wealth": LinSpacedGrid(start=0, stop=10, n_points=5, transition=None)},
     )
     all_fns = regime.get_all_functions()
     identity_fn = all_fns["next_wealth"]

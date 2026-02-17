@@ -7,9 +7,9 @@ from jax import numpy as jnp
 from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
+import lcm.shocks.ar1
+import lcm.shocks.iid
 from lcm._config import TEST_DATA
-from lcm.shocks.ar1 import Rouwenhorst, Tauchen
-from lcm.shocks.iid import Normal, Uniform
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 from tests.test_models.shocks import get_model, get_params
 
@@ -63,10 +63,10 @@ def test_model_with_shock(distribution_type):
 
 
 _GRID_CLASSES = [
-    Uniform,
-    Normal,
-    Tauchen,
-    Rouwenhorst,
+    lcm.shocks.iid.Uniform,
+    lcm.shocks.iid.Normal,
+    lcm.shocks.ar1.Tauchen,
+    lcm.shocks.ar1.Rouwenhorst,
 ]
 
 
@@ -85,10 +85,10 @@ def test_shock_grid_correct_shape_without_params(grid_cls):
 @pytest.mark.parametrize(
     ("grid_cls", "kwargs"),
     [
-        (Uniform, {"start": 0.0, "stop": 1.0}),
-        (Normal, {"mu": 0.0, "sigma": 1.0, "n_std": 3.0}),
-        (Tauchen, {"rho": 0.9, "sigma": 1.0, "mu": 0.0, "n_std": 2}),
-        (Rouwenhorst, {"rho": 0.9, "sigma": 1.0, "mu": 0.0}),
+        (lcm.shocks.iid.Uniform, {"start": 0.0, "stop": 1.0}),
+        (lcm.shocks.iid.Normal, {"mu": 0.0, "sigma": 1.0, "n_std": 3.0}),
+        (lcm.shocks.ar1.Tauchen, {"rho": 0.9, "sigma": 1.0, "mu": 0.0, "n_std": 2}),
+        (lcm.shocks.ar1.Rouwenhorst, {"rho": 0.9, "sigma": 1.0, "mu": 0.0}),
     ],
 )
 def test_shock_grid_fully_specified_with_all_params(grid_cls, kwargs):
@@ -120,10 +120,10 @@ def test_draw_shock_uniform(params_at_init):
     """Uniform.draw_shock uses start/stop params."""
     kwargs = {"start": 2.0, "stop": 4.0}
     if params_at_init:
-        grid = Uniform(n_points=5, **kwargs)
+        grid = lcm.shocks.iid.Uniform(n_points=5, **kwargs)
         params = grid.params
     else:
-        grid = Uniform(n_points=5)
+        grid = lcm.shocks.iid.Uniform(n_points=5)
         params = MappingProxyType(kwargs)
     draws = _draw_many(grid, params)
     assert jnp.all(draws >= 2.0)
@@ -136,10 +136,10 @@ def test_draw_shock_normal(params_at_init):
     """Normal.draw_shock uses mu/sigma params."""
     kwargs = {"mu": 5.0, "sigma": 0.1, "n_std": 3.0}
     if params_at_init:
-        grid = Normal(n_points=5, **kwargs)
+        grid = lcm.shocks.iid.Normal(n_points=5, **kwargs)
         params = grid.params
     else:
-        grid = Normal(n_points=5)
+        grid = lcm.shocks.iid.Normal(n_points=5)
         params = MappingProxyType(kwargs)
     draws = _draw_many(grid, params)
     aaae(draws.mean(), 5.0, decimal=1)
@@ -151,10 +151,10 @@ def test_draw_shock_tauchen(params_at_init):
     """Tauchen.draw_shock uses mu/sigma/rho params."""
     kwargs = {"rho": 0.5, "sigma": 0.1, "mu": 2.0, "n_std": 3.0}
     if params_at_init:
-        grid = Tauchen(n_points=5, **kwargs)
+        grid = lcm.shocks.ar1.Tauchen(n_points=5, **kwargs)
         params = grid.params
     else:
-        grid = Tauchen(n_points=5)
+        grid = lcm.shocks.ar1.Tauchen(n_points=5)
         params = MappingProxyType(kwargs)
     draws = _draw_many(grid, params, current_value=3.0)
     aaae(draws.mean(), 3.5, decimal=1)
@@ -166,10 +166,10 @@ def test_draw_shock_rouwenhorst(params_at_init):
     """Rouwenhorst.draw_shock uses mu/sigma/rho params."""
     kwargs = {"rho": 0.5, "sigma": 0.1, "mu": 2.0}
     if params_at_init:
-        grid = Rouwenhorst(n_points=5, **kwargs)
+        grid = lcm.shocks.ar1.Rouwenhorst(n_points=5, **kwargs)
         params = grid.params
     else:
-        grid = Rouwenhorst(n_points=5)
+        grid = lcm.shocks.ar1.Rouwenhorst(n_points=5)
         params = MappingProxyType(kwargs)
     draws = _draw_many(grid, params, current_value=3.0)
     aaae(draws.mean(), 3.5, decimal=1)
@@ -180,7 +180,7 @@ def test_draw_shock_rouwenhorst(params_at_init):
 # AR(1) grid property tests
 # ======================================================================================
 
-_AR1_GRID_CLASSES = [Tauchen, Rouwenhorst]
+_AR1_GRID_CLASSES = [lcm.shocks.ar1.Tauchen, lcm.shocks.ar1.Rouwenhorst]
 
 
 @pytest.mark.parametrize("grid_cls", _AR1_GRID_CLASSES)
@@ -188,7 +188,7 @@ def test_ar1_grid_centers_on_unconditional_mean(grid_cls):
     """Midpoint of AR(1) gridpoints is approximately mu / (1 - rho)."""
     mu, rho = 2.0, 0.8
     kwargs = {"rho": rho, "sigma": 0.5, "mu": mu}
-    if grid_cls is Tauchen:
+    if grid_cls is lcm.shocks.ar1.Tauchen:
         kwargs["n_std"] = 3.0
     grid = grid_cls(n_points=11, **kwargs)
     points = grid.get_gridpoints()
@@ -201,7 +201,7 @@ def test_ar1_grid_centers_on_unconditional_mean(grid_cls):
 def test_ar1_transition_probs_rows_sum_to_one(grid_cls):
     """Each row of the transition matrix sums to 1."""
     kwargs = {"rho": 0.9, "sigma": 0.5, "mu": 1.0}
-    if grid_cls is Tauchen:
+    if grid_cls is lcm.shocks.ar1.Tauchen:
         kwargs["n_std"] = 3.0
     grid = grid_cls(n_points=7, **kwargs)
     P = grid.get_transition_probs()
@@ -214,7 +214,7 @@ def test_ar1_draw_shock_unconditional_moments(grid_cls):
     """Long-run simulated moments match AR(1) unconditional moments."""
     mu, rho, sigma = 0.5, 0.7, 0.3
     kwargs = {"rho": rho, "sigma": sigma, "mu": mu}
-    if grid_cls is Tauchen:
+    if grid_cls is lcm.shocks.ar1.Tauchen:
         kwargs["n_std"] = 3.0
     grid = grid_cls(n_points=11, **kwargs)
     params = grid.params

@@ -83,7 +83,9 @@ automation. Python 3.14+ is required.
 - `@categorical`: Decorator for creating categorical classes with auto-assigned integer
   codes
 - **ShockGrids** (in `src/lcm/shocks/`): `Rouwenhorst`, `Tauchen`, `Normal`, `Uniform`.
-  These have intrinsic transitions — do NOT accept a `transition` parameter.
+  These have intrinsic transitions — do NOT accept a `transition` parameter. Import as
+  modules (`import lcm.shocks.iid`) and use qualified access
+  (`lcm.shocks.iid.Uniform(...)`), never `from lcm.shocks.iid import Uniform`.
 
 Grid class hierarchy: `Grid` is the base class. `ContinuousGrid(Grid)` is the base for
 continuous grids with `get_coordinate` method. `UniformContinuousGrid(ContinuousGrid)`
@@ -136,7 +138,7 @@ Regime(
     active=lambda age: 25 <= age < 65,           # Optional: age-based predicate (default: always True)
     states={                                     # State grids with optional transitions
         "wealth": LinSpacedGrid(..., transition=next_wealth),  # Time-varying state
-        "education": DiscreteGrid(EduStatus),                  # Fixed state (no transition)
+        "education": DiscreteGrid(EduStatus, transition=None),   # Fixed state
     },
     actions={"action_name": Grid, ...},          # Action grids (can be empty)
     functions={                                  # Must include "utility"; other functions optional
@@ -163,6 +165,8 @@ Regime(
 - State transitions live on grids via the `transition` parameter. States without a
   `transition` are fixed (time-invariant) — an identity transition is auto-generated.
 - ShockGrids have intrinsic transitions and do not need a `transition` parameter.
+- Fixed states (no transition) must always pass `transition=None` explicitly — never
+  rely on the default.
 - Regime names (dict keys) cannot contain the reserved separator `__`
 
 ### Model Creation

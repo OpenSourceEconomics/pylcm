@@ -3,12 +3,12 @@ from typing import Literal
 from jax import numpy as jnp
 
 import lcm
+import lcm.shocks.ar1
+import lcm.shocks.iid
 from lcm.ages import AgeGrid
 from lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
 from lcm.model import Model
 from lcm.regime import Regime
-from lcm.shocks.ar1 import Rouwenhorst, Tauchen
-from lcm.shocks.iid import Normal, Uniform
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -18,10 +18,10 @@ from lcm.typing import (
 )
 
 _SHOCK_GRID_CLASSES = {
-    "uniform": Uniform,
-    "normal": Normal,
-    "tauchen": Tauchen,
-    "rouwenhorst": Rouwenhorst,
+    "uniform": lcm.shocks.iid.Uniform,
+    "normal": lcm.shocks.iid.Normal,
+    "tauchen": lcm.shocks.ar1.Tauchen,
+    "rouwenhorst": lcm.shocks.ar1.Rouwenhorst,
 }
 
 
