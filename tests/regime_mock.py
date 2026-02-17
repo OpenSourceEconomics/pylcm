@@ -1,10 +1,11 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+from lcm.grids import DiscreteGrid
 from lcm.mark import stochastic
 from lcm.regime import _default_H, _make_identity_fn
 from lcm.shocks._base import _ShockGrid
-from lcm.typing import UserFunction
+from lcm.typing import ContinuousState, DiscreteState, UserFunction
 
 
 @dataclass
@@ -46,7 +47,12 @@ class RegimeMock:
                 if grid_transition is not None:
                     result[f"next_{name}"] = grid_transition
                 else:
-                    result[f"next_{name}"] = _make_identity_fn(name)
+                    ann = (
+                        DiscreteState
+                        if isinstance(grid, DiscreteGrid)
+                        else ContinuousState
+                    )
+                    result[f"next_{name}"] = _make_identity_fn(name, annotation=ann)
         # Add regime transition
         if self.transition is not None:
             result["next_regime"] = self.transition

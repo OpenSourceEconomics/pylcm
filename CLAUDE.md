@@ -285,6 +285,7 @@ initial_regimes = ["working", "working", "retired"]
 
 - Extensive use of typing with custom types in `src/lcm/typing.py`
 - Type checking with ty (pixi run ty)
+- Use `# ty: ignore[error-code]` for type suppression, never `# type: ignore`
 - JAX typing integration via jaxtyping
 
 ### Code Standards
@@ -294,11 +295,6 @@ initial_regimes = ["working", "working", "retired"]
 - All functions require type annotations
 - Pre-commit hooks ensure code quality
 - Never use `from __future__ import annotations` — this project requires Python 3.14+
-
-### Testing Style
-
-- Use plain pytest functions, never test classes (`class TestFoo`)
-- Use `@pytest.mark.parametrize` for test variations
 
 ### Testing Style
 

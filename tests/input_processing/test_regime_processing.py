@@ -61,7 +61,7 @@ def test_get_gridspecs(binary_category_class):
         states={
             "c": DiscreteGrid(binary_category_class, transition=next_c),
         },
-        functions={"utility": lambda c: None},
+        functions={"utility": lambda _c: None},
     )
 
     got = get_gridspecs(regime_mock)  # ty: ignore[invalid-argument-type]
@@ -85,7 +85,7 @@ def test_get_grids(binary_category_class):
         states={
             "c": DiscreteGrid(binary_category_class, transition=next_c),
         },
-        functions={"utility": lambda c: None},
+        functions={"utility": lambda _c: None},
     )
 
     got = get_grids(regime_mock)  # ty: ignore[invalid-argument-type]

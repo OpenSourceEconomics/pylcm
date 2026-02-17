@@ -1,11 +1,16 @@
 """Test Regime class validation."""
 
+import inspect
+
+import jax.numpy as jnp
 import pytest
 from dags.tree import QNAME_DELIMITER
 
-from lcm import LinSpacedGrid, Model, Regime, categorical
+from lcm import DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.regime import _IdentityTransition
+from lcm.typing import ContinuousState, DiscreteState
 
 
 def utility(consumption):
@@ -165,3 +170,86 @@ def test_active_validation_rejects_non_callable():
             actions={"consumption": CONSUMPTION_GRID},
             active=[0, 1, 2],  # ty: ignore[invalid-argument-type]  # Not a callable
         )
+
+
+# ======================================================================================
+# _IdentityTransition Tests
+# ======================================================================================
+
+
+def test_identity_transition_call():
+    """Identity transition returns the state value unchanged."""
+    identity = _IdentityTransition("wealth", annotation=ContinuousState)
+    result = identity(wealth=jnp.array(42.0))
+    assert result == jnp.array(42.0)
+
+
+def test_identity_transition_discrete():
+    """Identity transition works for discrete states."""
+    identity = _IdentityTransition("education", annotation=DiscreteState)
+    result = identity(education=jnp.array(1))
+    assert result == jnp.array(1)
+
+
+def test_identity_transition_name():
+    """Identity transition has the correct __name__."""
+    identity = _IdentityTransition("wealth", annotation=ContinuousState)
+    assert identity.__name__ == "next_wealth"
+
+
+def test_identity_transition_signature():
+    """Identity transition has a proper signature with annotation."""
+    identity = _IdentityTransition("wealth", annotation=ContinuousState)
+    sig = inspect.signature(identity)
+    assert list(sig.parameters) == ["wealth"]
+    assert sig.parameters["wealth"].annotation is ContinuousState
+    assert sig.return_annotation is ContinuousState
+
+
+def test_identity_transition_annotations():
+    """Identity transition exposes __annotations__ for dags discovery."""
+    identity = _IdentityTransition("education", annotation=DiscreteState)
+    assert identity.__annotations__ == {
+        "education": DiscreteState,
+        "return": DiscreteState,
+    }
+
+
+def test_identity_transition_is_auto_identity():
+    """Identity transition is flagged as auto-generated."""
+    identity = _IdentityTransition("x", annotation=ContinuousState)
+    assert identity._is_auto_identity is True  # noqa: SLF001
+
+
+def test_get_all_functions_includes_identity_for_fixed_discrete_state():
+    """Fixed discrete states get identity transitions with DiscreteState annotation."""
+
+    @categorical
+    class Edu:
+        low: int
+        high: int
+
+    regime = Regime(
+        transition=lambda: 0,
+        functions={"utility": lambda education: education},
+        states={"education": DiscreteGrid(Edu)},
+    )
+    all_fns = regime.get_all_functions()
+    identity_fn = all_fns["next_education"]
+    assert isinstance(identity_fn, _IdentityTransition)
+    assert identity_fn.__annotations__["education"] is DiscreteState
+    assert identity_fn.__annotations__["return"] is DiscreteState
+
+
+def test_get_all_functions_includes_identity_for_fixed_continuous_state():
+    """Fixed continuous states get identity transitions with correct annotation."""
+    regime = Regime(
+        transition=lambda: 0,
+        functions={"utility": lambda wealth: wealth},
+        states={"wealth": LinSpacedGrid(start=0, stop=10, n_points=5)},
+    )
+    all_fns = regime.get_all_functions()
+    identity_fn = all_fns["next_wealth"]
+    assert isinstance(identity_fn, _IdentityTransition)
+    assert identity_fn.__annotations__["wealth"] is ContinuousState
+    assert identity_fn.__annotations__["return"] is ContinuousState

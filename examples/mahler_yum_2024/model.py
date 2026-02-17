@@ -615,7 +615,7 @@ def create_inputs(
     regime_transition = create_regime_transition_grid()
 
     # Discounting is now handled natively via lcm's discount_factor parameter.
-    # Solve separate models for each discount factor type (beta["mean"] +/- beta["std"]).
+    # Solve separate models for each discount factor type.
     discount_factor = beta["mean"]
 
     # Create parameters

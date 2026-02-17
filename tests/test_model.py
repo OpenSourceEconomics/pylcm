@@ -627,7 +627,7 @@ def test_state_only_in_transitions_with_terminal_regime():
     def dead_utility():
         return 0.0
 
-    def next_wealth(wealth, consumption, type_var):
+    def next_wealth(wealth, consumption, type_var: DiscreteState):
         """type_var affects wealth transition but does NOT appear in utility."""
         return (1 + 0.05 * type_var) * (wealth - consumption)
 

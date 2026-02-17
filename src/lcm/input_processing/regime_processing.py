@@ -11,7 +11,7 @@ from jax import numpy as jnp
 
 from lcm.ages import AgeGrid
 from lcm.grid_helpers import get_irreg_coordinate
-from lcm.grids import Grid
+from lcm.grids import DiscreteGrid, Grid
 from lcm.input_processing.create_regime_params_template import (
     create_regime_params_template,
 )
@@ -34,6 +34,8 @@ from lcm.regime import Regime, _make_identity_fn
 from lcm.shocks import _ShockGrid
 from lcm.state_action_space import create_state_action_space, create_state_space_info
 from lcm.typing import (
+    ContinuousState,
+    DiscreteState,
     Float1D,
     Int1D,
     InternalUserFunction,
@@ -390,7 +392,10 @@ def _extract_transitions_from_regime(
             state_transitions[f"next_{state_name}"] = grid_transition
         else:
             # Fixed state: auto-generate identity transition
-            state_transitions[f"next_{state_name}"] = _make_identity_fn(state_name)
+            ann = DiscreteState if isinstance(grid, DiscreteGrid) else ContinuousState
+            state_transitions[f"next_{state_name}"] = _make_identity_fn(
+                state_name, annotation=ann
+            )
 
     # Build nested format
     transitioned_state_names = {
@@ -398,8 +403,8 @@ def _extract_transitions_from_regime(
     }
 
     nested: dict[str, dict[str, UserFunction] | UserFunction] = {}
-    assert regime.transition is not None  # guaranteed: terminal regimes return early
-    nested["next_regime"] = regime.transition
+    # Guaranteed non-None: terminal regimes return early in the caller.
+    nested["next_regime"] = regime.transition  # ty: ignore[invalid-assignment]
     for target_regime_name, target_regime_state_names in states_per_regime.items():
         if target_regime_state_names <= transitioned_state_names:
             nested[target_regime_name] = {

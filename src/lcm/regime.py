@@ -3,12 +3,12 @@ import inspect
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, overload
+from typing import Any, TypeAliasType, overload
 
 from dags.tree import QNAME_DELIMITER
 
 from lcm.exceptions import RegimeInitializationError, format_messages
-from lcm.grids import Grid
+from lcm.grids import DiscreteGrid, Grid
 from lcm.mark import stochastic
 from lcm.shocks._base import _ShockGrid
 from lcm.typing import (
@@ -39,12 +39,19 @@ class _IdentityTransition:
 
     _is_auto_identity: bool = True
 
-    def __init__(self, state_name: str) -> None:
+    def __init__(self, state_name: str, *, annotation: TypeAliasType) -> None:
         self._state_name = state_name
         self.__name__ = f"next_{state_name}"
-        self.__signature__ = inspect.Signature(
-            [inspect.Parameter(state_name, inspect.Parameter.POSITIONAL_OR_KEYWORD)]
+        param = inspect.Parameter(
+            state_name,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            annotation=annotation,
         )
+        self.__signature__ = inspect.Signature(
+            [param],
+            return_annotation=annotation,
+        )
+        self.__annotations__ = {state_name: annotation, "return": annotation}
 
     @overload
     def __call__(self, **kwargs: DiscreteState) -> DiscreteState: ...
@@ -140,7 +147,10 @@ class Regime:
                 result[f"next_{name}"] = grid_transition
             else:
                 # Fixed state: identity transition for params template discovery
-                result[f"next_{name}"] = _IdentityTransition(name)
+                ann = (
+                    DiscreteState if isinstance(grid, DiscreteGrid) else ContinuousState
+                )
+                result[f"next_{name}"] = _IdentityTransition(name, annotation=ann)
         # Add regime transition
         if self.transition is not None:
             result["next_regime"] = self.transition
@@ -269,10 +279,12 @@ def _validate_active(active: ActiveFunction) -> list[str]:
     return []
 
 
-def _make_identity_fn(state_name: str) -> _IdentityTransition:
+def _make_identity_fn(
+    state_name: str, *, annotation: TypeAliasType
+) -> _IdentityTransition:
     """Create an identity transition for a fixed state.
 
     Convenience wrapper around ``_IdentityTransition``.
 
     """
-    return _IdentityTransition(state_name)
+    return _IdentityTransition(state_name, annotation=annotation)
