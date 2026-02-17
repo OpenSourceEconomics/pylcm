@@ -1,7 +1,8 @@
 import dataclasses
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, is_dataclass
+from typing import Any
 
 import jax.numpy as jnp
 import portion
@@ -78,10 +79,14 @@ class DiscreteGrid(Grid):
     Args:
         category_class (type): The category class representing the grid categories. Must
             be a dataclass with fields that have unique int values.
+        transition: Optional transition function for this state variable. When provided,
+            the state is time-varying. When ``None`` (default), the state is fixed and
+            an identity transition is auto-generated during model processing.
 
     Attributes:
         categories: The list of category names.
         codes: The list of category codes.
+        transition: The transition function, or ``None`` for fixed states.
 
     Raises:
         GridInitializationError: If the `category_class` is not a dataclass with int
@@ -89,12 +94,17 @@ class DiscreteGrid(Grid):
 
     """
 
-    def __init__(self, category_class: type) -> None:
+    def __init__(
+        self,
+        category_class: type,
+        transition: Callable[..., Any] | None = None,
+    ) -> None:
         """Initialize the DiscreteGrid.
 
         Args:
             category_class (type): The category class representing the grid categories.
                 Must be a dataclass with fields that have unique int values.
+            transition: Optional transition function for this state variable.
 
         """
         _validate_discrete_grid(category_class)
@@ -103,6 +113,7 @@ class DiscreteGrid(Grid):
 
         self.__categories = tuple(names_and_values.keys())
         self.__codes = tuple(names_and_values.values())
+        self.__transition = transition
 
     @property
     def categories(self) -> tuple[str, ...]:
@@ -114,6 +125,11 @@ class DiscreteGrid(Grid):
         """Return the list of category codes."""
         return self.__codes
 
+    @property
+    def transition(self) -> Callable[..., Any] | None:
+        """Return the transition function, or ``None`` for fixed states."""
+        return self.__transition
+
     def to_jax(self) -> Int1D:
         """Convert the grid to a Jax array."""
         return jnp.array(self.codes)
@@ -121,11 +137,22 @@ class DiscreteGrid(Grid):
 
 @dataclass(frozen=True, kw_only=True)
 class UniformContinuousGrid(ContinuousGrid, ABC):
-    """Grid with start/stop/n_points for linearly or logarithmically spaced values."""
+    """Grid with start/stop/n_points for linearly or logarithmically spaced values.
+
+    Attributes:
+        start: The start value of the grid.
+        stop: The stop value of the grid.
+        n_points: The number of points in the grid.
+        transition: Optional transition function for this state variable. When provided,
+            the state is time-varying. When ``None`` (default), the state is fixed and
+            an identity transition is auto-generated during model processing.
+
+    """
 
     start: int | float
     stop: int | float
     n_points: int
+    transition: Callable[..., Any] | None = None
 
     def __post_init__(self) -> None:
         _validate_continuous_grid(
@@ -232,11 +259,15 @@ class IrregSpacedGrid(ContinuousGrid):
         n_points: Number of points. Derived from `len(points)` when points are
             given upon initialization; must be specified explicitly when the `points`
             will only be passed at runtime.
+        transition: Optional transition function for this state variable. When provided,
+            the state is time-varying. When ``None`` (default), the state is fixed and
+            an identity transition is auto-generated during model processing.
 
     """
 
     points: Sequence[float] | Float1D | None = None
     n_points: int | None = None
+    transition: Callable[..., Any] | None = None
 
     def __post_init__(self) -> None:
         if self.points is not None:
@@ -314,6 +345,9 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
     Attributes:
         pieces: A tuple of Piece objects defining each segment. Pieces must be
             adjacent (no gaps or overlaps).
+        transition: Optional transition function for this state variable. When provided,
+            the state is time-varying. When ``None`` (default), the state is fixed and
+            an identity transition is auto-generated during model processing.
 
     Notes:
         - Open boundaries (e.g., `4)` in `[1, 4)`) exclude that exact point from
@@ -324,6 +358,7 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
     """
 
     pieces: tuple[Piece, ...]
+    transition: Callable[..., Any] | None = None
 
     # Cached JAX arrays for efficient coordinate computation (set in __post_init__)
     _breakpoints: Float1D = dataclasses.field(init=False, repr=False)
@@ -380,6 +415,9 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
     Attributes:
         pieces: A tuple of Piece objects defining each segment. Pieces must be
             adjacent (no gaps or overlaps). All boundary values must be positive.
+        transition: Optional transition function for this state variable. When provided,
+            the state is time-varying. When ``None`` (default), the state is fixed and
+            an identity transition is auto-generated during model processing.
 
     Notes:
         - All boundary values must be positive (required for logarithmic spacing).
@@ -390,6 +428,7 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
     """
 
     pieces: tuple[Piece, ...]
+    transition: Callable[..., Any] | None = None
 
     # Cached JAX arrays for efficient coordinate computation (set in __post_init__)
     _breakpoints: Float1D = dataclasses.field(init=False, repr=False)

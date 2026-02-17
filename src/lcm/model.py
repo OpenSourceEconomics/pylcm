@@ -4,7 +4,6 @@ import dataclasses
 import functools
 import inspect
 from collections.abc import Callable, Mapping
-from itertools import chain
 from types import MappingProxyType
 
 from dags.tree import QNAME_DELIMITER
@@ -291,7 +290,7 @@ def _build_regimes_and_template(
     return internal_regimes, params_template
 
 
-def _validate_model_inputs(  # noqa: C901
+def _validate_model_inputs(
     n_periods: int,
     regimes: Mapping[str, Regime],
     regime_id_class: type,
@@ -330,17 +329,6 @@ def _validate_model_inputs(  # noqa: C901
     non_terminal_regimes = {name: r for name, r in regimes.items() if not r.terminal}
     if len(non_terminal_regimes) < 1:
         error_messages.append("lcm.Model must have at least one non-terminal regime.")
-    else:
-        non_terminal_regimes_without_next_regime = [
-            name
-            for name, r in non_terminal_regimes.items()
-            if "next_regime" not in r.transitions
-        ]
-        if non_terminal_regimes_without_next_regime:
-            error_messages.append(
-                "The following regimes are missing 'next_regime' in their transitions: "
-                f"{non_terminal_regimes_without_next_regime}."
-            )
 
     regime_id_fields = sorted(get_field_names_and_values(regime_id_class).keys())
     regime_names = sorted(regimes.keys())
@@ -352,47 +340,11 @@ def _validate_model_inputs(  # noqa: C901
             "regime names:\n"
             f"    {regime_names}."
         )
-    error_messages.extend(_validate_transition_completeness(regimes))
     error_messages.extend(_validate_all_variables_used(regimes))
 
     if error_messages:
         msg = format_messages(error_messages)
         raise ModelInitializationError(msg)
-
-
-def _validate_transition_completeness(regimes: Mapping[str, Regime]) -> list[str]:
-    """Validate that non-terminal regimes have complete transitions.
-
-    Non-terminal regimes must have transition functions for ALL states across ALL
-    regimes, since they can potentially transition to any other regime.
-
-    Args:
-        regimes: Mapping of regime names to regimes to validate.
-
-    Returns:
-        A list of error messages. Empty list if validation passes.
-
-    """
-    all_states = set(chain.from_iterable(r.states.keys() for r in regimes.values()))
-    non_terminal_regimes = {n: r for n, r in regimes.items() if not r.terminal}
-
-    missing_transitions: dict[str, set[str]] = {}
-    for name, regime in non_terminal_regimes.items():
-        states_from_transitions = {
-            fn_key.removeprefix("next_") for fn_key in regime.transitions
-        }
-        missing = all_states - states_from_transitions
-        if missing:
-            missing_transitions[name] = missing
-
-    if missing_transitions:
-        error = "Non-terminal regimes have missing transitions: "
-        for regime_name, missing in sorted(missing_transitions.items()):
-            missing_list = ", ".join(f"next_{s}" for s in sorted(missing))
-            error += f"'{regime_name}': {missing_list}, "
-        return [error]
-
-    return []
 
 
 def _validate_all_variables_used(regimes: Mapping[str, Regime]) -> list[str]:

@@ -33,10 +33,6 @@ def get_model(
     def next_health(health: DiscreteState, health_transition: FloatND) -> FloatND:
         return health_transition[health]
 
-    @lcm.mark.stochastic
-    def next_income() -> None:
-        pass
-
     def next_wealth(consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
         return wealth - consumption
 
@@ -76,24 +72,21 @@ def get_model(
     test_regime = Regime(
         active=test_active,
         states={
-            "wealth": LinSpacedGrid(start=1, stop=5, n_points=5),
+            "wealth": LinSpacedGrid(
+                start=1, stop=5, n_points=5, transition=next_wealth
+            ),
             "income": _SHOCK_GRID_CLASSES[distribution_type](n_points=5),
-            "health": DiscreteGrid(Health),
+            "health": DiscreteGrid(Health, transition=next_health),
         },
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
         },
-        transitions={
-            "next_wealth": next_wealth,
-            "next_income": next_income,
-            "next_health": next_health,
-            "next_regime": next_regime,
-        },
+        transition=next_regime,
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
     test_regime_term = Regime(
-        terminal=True,
+        transition=None,
         active=test_term_active,
         functions={"utility": lambda: 0.0},
     )

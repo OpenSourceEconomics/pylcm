@@ -106,15 +106,12 @@ working = Regime(
         "consumption": DiscreteGrid(ConsumptionChoice),
     },
     states={
-        "wealth": DiscreteGrid(WealthStatus),
+        "wealth": DiscreteGrid(WealthStatus, transition=next_wealth_discrete),
     },
     constraints={
         "borrowing_constraint": borrowing_constraint,
     },
-    transitions={
-        "next_wealth": next_wealth_discrete,
-        "next_regime": next_regime,
-    },
+    transition=next_regime,
     functions={
         "utility": utility_discrete,
         "labor_income": labor_income,
@@ -125,7 +122,7 @@ working = Regime(
 
 
 dead = Regime(
-    terminal=True,
+    transition=None,
     functions={"utility": lambda: 0.0},
     active=lambda _age: True,  # Placeholder, will be replaced by get_model()
 )

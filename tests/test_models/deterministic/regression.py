@@ -1,7 +1,19 @@
+import dataclasses
+
 import jax.numpy as jnp
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
-from lcm.grids import ContinuousGrid
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    IrregSpacedGrid,
+    LinSpacedGrid,
+    Model,
+    PiecewiseLinSpacedGrid,
+    PiecewiseLogSpacedGrid,
+    Regime,
+    categorical,
+)
+from lcm.grids import UniformContinuousGrid
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -87,7 +99,9 @@ def borrowing_constraint(
 # ======================================================================================
 
 START_AGE = 18
-DEFAULT_WEALTH_GRID = LinSpacedGrid(start=1, stop=400, n_points=100)
+DEFAULT_WEALTH_GRID = LinSpacedGrid(
+    start=1, stop=400, n_points=100, transition=next_wealth
+)
 DEFAULT_CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 
 working = Regime(
@@ -99,10 +113,7 @@ working = Regime(
         "wealth": DEFAULT_WEALTH_GRID,  # placeholder, will be replaced by get_model()
     },
     constraints={"borrowing_constraint": borrowing_constraint},
-    transitions={
-        "next_wealth": next_wealth,
-        "next_regime": next_regime,
-    },
+    transition=next_regime,
     functions={
         "utility": utility,
         "labor_income": labor_income,
@@ -114,7 +125,7 @@ working = Regime(
 
 
 dead = Regime(
-    terminal=True,
+    transition=None,
     functions={"utility": lambda: 0.0},
     active=lambda _age: True,  # placeholder, will be replaced by get_model()
 )
@@ -122,15 +133,22 @@ dead = Regime(
 
 def get_model(
     n_periods: int,
-    wealth_grid: ContinuousGrid = DEFAULT_WEALTH_GRID,
-    consumption_grid: ContinuousGrid = DEFAULT_CONSUMPTION_GRID,
+    wealth_grid: UniformContinuousGrid
+    | IrregSpacedGrid
+    | PiecewiseLinSpacedGrid
+    | PiecewiseLogSpacedGrid = DEFAULT_WEALTH_GRID,
+    consumption_grid: UniformContinuousGrid
+    | IrregSpacedGrid
+    | PiecewiseLinSpacedGrid
+    | PiecewiseLogSpacedGrid = DEFAULT_CONSUMPTION_GRID,
 ) -> Model:
     final_age_alive = START_AGE + n_periods - 2
+    _wealth_grid = dataclasses.replace(wealth_grid, transition=next_wealth)
     return Model(
         regimes={
             "working": working.replace(
                 active=lambda age: age <= final_age_alive,
-                states={"wealth": wealth_grid},
+                states={"wealth": _wealth_grid},
                 actions={
                     "labor_supply": DiscreteGrid(LaborSupply),
                     "consumption": consumption_grid,

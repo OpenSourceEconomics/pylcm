@@ -3,7 +3,6 @@
 import jax.numpy as jnp
 import pytest
 
-import lcm
 from lcm import (
     AgeGrid,
     LinSpacedGrid,
@@ -41,11 +40,6 @@ def _next_wealth(
     return wealth - consumption
 
 
-@lcm.mark.stochastic
-def _next_income() -> None:
-    pass
-
-
 def _constraint(consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
     return consumption <= wealth
 
@@ -57,24 +51,22 @@ def _make_model(*, fixed_params=None):
     """Create a shock model with all shock params supplied at runtime."""
     alive = Regime(
         states={
-            "wealth": LinSpacedGrid(start=1, stop=10, n_points=5),
+            "wealth": LinSpacedGrid(
+                start=1, stop=10, n_points=5, transition=_next_wealth
+            ),
             "income": Tauchen(n_points=3),
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4)},
         functions={"utility": _utility},
         constraints={"borrowing": _constraint},
-        transitions={
-            "next_wealth": _next_wealth,
-            "next_income": _next_income,
-            "next_regime": lambda period: jnp.where(
-                period >= 1, RegimeIdShock.dead, RegimeIdShock.alive
-            ),
-        },
+        transition=lambda period: jnp.where(
+            period >= 1, RegimeIdShock.dead, RegimeIdShock.alive
+        ),
         active=lambda age: age < 2,
     )
     dead = Regime(
+        transition=None,
         functions={"utility": lambda: 0.0},
-        terminal=True,
         active=lambda age: age >= 2,
     )
 

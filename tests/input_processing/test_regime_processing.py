@@ -3,14 +3,12 @@ from types import MappingProxyType
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
-import pytest
 from numpy.testing import assert_array_equal
 from pandas.testing import assert_frame_equal
 
-from lcm import DiscreteGrid, LinSpacedGrid, grid_helpers
+from lcm import DiscreteGrid
 from lcm.ages import AgeGrid
 from lcm.input_processing.regime_processing import (
-    _convert_flat_to_nested_transitions,
     process_regimes,
 )
 from lcm.input_processing.util import get_grids, get_gridspecs, get_variable_info
@@ -18,154 +16,24 @@ from tests.regime_mock import RegimeMock
 from tests.test_models.deterministic.base import dead, working
 
 
-def test_convert_flat_to_nested_transitions():
-    def next_wealth():
-        pass
-
-    def next_regime():
-        pass
-
-    flat_transitions = {
-        "next_wealth": next_wealth,
-        "next_regime": next_regime,
-    }
-
-    result = _convert_flat_to_nested_transitions(
-        flat_transitions=flat_transitions,
-        states_per_regime={"alive": {"wealth"}},
-    )
-
-    expected = {
-        "alive": {
-            "next_wealth": next_wealth,
-        },
-        "next_regime": next_regime,
-    }
-
-    assert result == expected
-
-
-def test_convert_flat_to_nested_only_next_regime():
-    """Regime with only next_regime (like dead regime with no state transitions)."""
-
-    def next_regime():
-        pass
-
-    flat_transitions = {
-        "next_regime": next_regime,
-    }
-
-    result = _convert_flat_to_nested_transitions(
-        flat_transitions=flat_transitions,
-        states_per_regime={"dead": set()},
-    )
-
-    # Empty regimes (no states) get complete transitions by definition
-    expected = {
-        "dead": {},
-        "next_regime": next_regime,
-    }
-
-    assert result == expected
-
-
-def test_convert_flat_to_nested_multi_regime():
-    def next_wealth():
-        pass
-
-    def next_education():
-        pass
-
-    def next_pension():
-        pass
-
-    def next_regime():
-        pass
-
-    flat_transitions = {
-        "next_wealth": next_wealth,
-        "next_education": next_education,
-        "next_pension": next_pension,
-        "next_regime": next_regime,
-    }
-
-    result = _convert_flat_to_nested_transitions(
-        flat_transitions=flat_transitions,
-        states_per_regime={
-            "young": {"wealth", "education"},
-            "old": {"wealth", "pension"},
-        },
-    )
-
-    # Both regimes have complete transitions
-    expected = {
-        "young": {
-            "next_wealth": next_wealth,
-            "next_education": next_education,
-        },
-        "old": {
-            "next_wealth": next_wealth,
-            "next_pension": next_pension,
-        },
-        "next_regime": next_regime,
-    }
-
-    assert result == expected
-
-
-def test_convert_flat_to_nested_terminal_multi_regime():
-    def next_wealth():
-        pass
-
-    def next_regime():
-        pass
-
-    flat_transitions_dead = {
-        "next_wealth": next_wealth,
-        "next_regime": next_regime,
-    }
-
-    result = _convert_flat_to_nested_transitions(
-        flat_transitions=flat_transitions_dead,
-        states_per_regime={
-            "alive": {"wealth", "retired"},
-            "dead": {"wealth"},
-        },
-    )
-
-    # Since "next_retired" is missing, "alive" is not included in the nested structure
-    expected = {
-        "dead": {
-            "next_wealth": next_wealth,
-        },
-        "next_regime": next_regime,
-    }
-
-    assert result == expected
-
-
-@pytest.fixture
-def regime_mock(binary_category_class):
+def test_get_variable_info(binary_category_class):
     def utility(c):
         pass
 
     def next_c(a, b):
         pass
 
-    return RegimeMock(
+    regime_mock = RegimeMock(
         actions={
             "a": DiscreteGrid(binary_category_class),
         },
         states={
-            "c": DiscreteGrid(binary_category_class),
+            "c": DiscreteGrid(binary_category_class, transition=next_c),
         },
         functions={"utility": utility},
-        transitions={"next_c": next_c},
     )
 
-
-def test_get_variable_info(regime_mock):
-    got = get_variable_info(regime_mock)
+    got = get_variable_info(regime_mock)  # ty: ignore[invalid-argument-type]
     exp = pd.DataFrame(
         {
             "is_state": [False, True],
@@ -182,8 +50,21 @@ def test_get_variable_info(regime_mock):
     assert_frame_equal(got.loc[exp.index], exp)  # we don't care about the id order here
 
 
-def test_get_gridspecs(regime_mock):
-    got = get_gridspecs(regime_mock)
+def test_get_gridspecs(binary_category_class):
+    def next_c(a, b):
+        pass
+
+    regime_mock = RegimeMock(
+        actions={
+            "a": DiscreteGrid(binary_category_class),
+        },
+        states={
+            "c": DiscreteGrid(binary_category_class, transition=next_c),
+        },
+        functions={"utility": lambda c: None},
+    )
+
+    got = get_gridspecs(regime_mock)  # ty: ignore[invalid-argument-type]
     assert isinstance(got["a"], DiscreteGrid)
     assert got["a"].categories == ("cat0", "cat1")
     assert got["a"].codes == (0, 1)
@@ -193,8 +74,21 @@ def test_get_gridspecs(regime_mock):
     assert got["c"].codes == (0, 1)
 
 
-def test_get_grids(regime_mock):
-    got = get_grids(regime_mock)
+def test_get_grids(binary_category_class):
+    def next_c(a, b):
+        pass
+
+    regime_mock = RegimeMock(
+        actions={
+            "a": DiscreteGrid(binary_category_class),
+        },
+        states={
+            "c": DiscreteGrid(binary_category_class, transition=next_c),
+        },
+        functions={"utility": lambda c: None},
+    )
+
+    got = get_grids(regime_mock)  # ty: ignore[invalid-argument-type]
     assert_array_equal(got["a"], jnp.array([0, 1]))
     assert_array_equal(got["c"], jnp.array([0, 1]))
 
@@ -224,21 +118,12 @@ def test_process_regimes():
         == np.array([False, True, True])
     ).all()
 
-    # Gridspecs
-    wealth_grid = LinSpacedGrid(
-        start=1,
-        stop=400,
-        n_points=working.states["wealth"].n_points,  # ty: ignore[unresolved-attribute]
+    # Gridspecs — compare the grid objects (which now include transition attributes)
+    assert internal_working_regime.gridspecs["wealth"] == working.states["wealth"]
+    assert (
+        internal_working_regime.gridspecs["consumption"]
+        == working.actions["consumption"]
     )
-
-    assert internal_working_regime.gridspecs["wealth"] == wealth_grid
-
-    consumption_grid = LinSpacedGrid(
-        start=1,
-        stop=400,
-        n_points=working.actions["consumption"].n_points,  # ty: ignore[unresolved-attribute]
-    )
-    assert internal_working_regime.gridspecs["consumption"] == consumption_grid
 
     assert isinstance(internal_working_regime.gridspecs["labor_supply"], DiscreteGrid)
     assert internal_working_regime.gridspecs["labor_supply"].categories == (
@@ -248,11 +133,14 @@ def test_process_regimes():
     assert internal_working_regime.gridspecs["labor_supply"].codes == (0, 1)
 
     # Grids
-    expected = grid_helpers.linspace(**working.actions["consumption"].__dict__)
-    assert_array_equal(internal_working_regime.grids["consumption"], expected)
-
-    expected = grid_helpers.linspace(**working.states["wealth"].__dict__)
-    assert_array_equal(internal_working_regime.grids["wealth"], expected)
+    assert_array_equal(
+        internal_working_regime.grids["consumption"],
+        working.actions["consumption"].to_jax(),
+    )
+    assert_array_equal(
+        internal_working_regime.grids["wealth"],
+        working.states["wealth"].to_jax(),
+    )
 
     assert (internal_working_regime.grids["labor_supply"] == jnp.array([0, 1])).all()
 

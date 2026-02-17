@@ -53,7 +53,7 @@ def utility(
     wealth: ContinuousState,  # noqa: ARG001
     health: DiscreteState,
 ) -> FloatND:
-    return jnp.log(1 + health * consumption) - 0.5 * working
+    return jnp.log(1.0 + health * consumption) - 0.5 * working
 
 
 def next_wealth(
@@ -82,21 +82,19 @@ alive_deterministic = Regime(
             start=0,
             stop=2,
             n_points=1,
+            transition=next_wealth,
         ),
     },
     functions={"utility": utility},
     constraints={
         "borrowing_constraint": borrowing_constraint,
     },
-    transitions={
-        "next_wealth": next_wealth,
-        "next_regime": next_regime,
-    },
+    transition=next_regime,
     active=lambda age: age < 1,  # n_periods=2, so active in period 0
 )
 
 dead = Regime(
-    terminal=True,
+    transition=None,
     functions={"utility": lambda: 0.0},
     active=lambda age: age >= 1,  # n_periods=2, so active in period 1
 )
@@ -108,8 +106,8 @@ def next_health(health: DiscreteState, health_transition: FloatND) -> FloatND:
 
 
 alive_stochastic = alive_deterministic.replace(
-    transitions=dict(alive_deterministic.transitions) | {"next_health": next_health},
-    states=dict(alive_deterministic.states) | {"health": DiscreteGrid(HealthStatus)},
+    states=dict(alive_deterministic.states)
+    | {"health": DiscreteGrid(HealthStatus, transition=next_health)},
 )
 
 model_deterministic = Model(

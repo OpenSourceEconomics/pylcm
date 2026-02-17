@@ -1,5 +1,7 @@
 """Tests for runtime-supplied grid points (IrregSpacedGrid)."""
 
+import dataclasses
+
 import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
@@ -48,18 +50,15 @@ def _make_model(*, wealth_grid=None):
 
     alive = Regime(
         functions={"utility": _utility},
-        states={"wealth": wealth_grid},
+        states={"wealth": dataclasses.replace(wealth_grid, transition=_next_wealth)},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        transitions={
-            "next_wealth": _next_wealth,
-            "next_regime": _next_regime,
-        },
+        transition=_next_regime,
         active=lambda age: age < 2,
     )
     dead = Regime(
+        transition=None,
         functions={"utility": lambda: 0.0},
-        terminal=True,
         active=lambda age: age >= 2,
     )
 

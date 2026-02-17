@@ -67,27 +67,25 @@ def regimes_and_ages(n_periods: int) -> tuple[dict[str, Regime], AgeGrid]:
                 start=1,
                 stop=2,
                 n_points=3,
+                transition=next_wealth,
             ),
             "health": LinSpacedGrid(
                 start=0,
                 stop=1,
                 n_points=3,
+                transition=next_health,
             ),
         },
         functions={"utility": utility},
         constraints={
             "borrowing_constraint": borrowing_constraint,
         },
-        transitions={
-            "next_wealth": next_wealth,
-            "next_health": next_health,
-            "next_regime": next_regime,
-        },
+        transition=next_regime,
         active=lambda age, n=n_periods: age < n - 1,
     )
 
     terminal = Regime(
-        terminal=True,
+        transition=None,
         functions={"utility": lambda: 0.0},
         active=lambda age, n=n_periods: age >= n - 1,
     )
