@@ -1,16 +1,14 @@
 import dataclasses
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field, is_dataclass
-from typing import Literal
+from collections.abc import Sequence
+from dataclasses import dataclass, is_dataclass
 
 import jax.numpy as jnp
 import portion
 
 from lcm import grid_helpers
 from lcm.exceptions import GridInitializationError, format_messages
-from lcm.shocks import Shock
-from lcm.typing import Float1D, Int1D, MappingProxyType, ScalarFloat
+from lcm.typing import Float1D, Int1D, ScalarFloat
 from lcm.utils import find_duplicates, get_field_names_and_values
 
 
@@ -219,76 +217,67 @@ class IrregSpacedGrid(ContinuousGrid):
     This grid type is useful for representing non-uniformly spaced points such as
     Gauss-Hermite quadrature nodes.
 
+    When `points` is omitted and only `n_points` is given, the `points` must be
+    supplied at runtime via the params.
+
     Example:
     --------
-    Gauss-Hermite quadrature nodes: `IrregSpacedGrid(points=[-1.73, -0.58, 0.58, 1.73])`
+    Fixed grid: `IrregSpacedGrid(points=[-1.73, -0.58, 0.58, 1.73])` Grid that is only
+    completed at runtime via params: `IrregSpacedGrid(n_points=4)`
 
     Attributes:
         points: The grid points. Must be a sequence of floats in ascending order.
-            Can be any sequence that is convertible to a JAX array.
+            Can be any sequence that is convertible to a JAX array. Implies that the
+            grid points are fixed at initialization.
+        n_points: Number of points. Derived from `len(points)` when points are
+            given upon initialization; must be specified explicitly when the `points`
+            will only be passed at runtime.
 
     """
 
-    points: Sequence[float] | Float1D
+    points: Sequence[float] | Float1D | None = None
+    n_points: int | None = None
 
     def __post_init__(self) -> None:
-        _validate_irreg_spaced_grid(self.points)
+        if self.points is not None:
+            _validate_irreg_spaced_grid(self.points)
+            # Derive n_points from points if not explicitly set
+            if self.n_points is None:
+                object.__setattr__(self, "n_points", len(self.points))
+            elif self.n_points != len(self.points):
+                raise GridInitializationError(
+                    f"n_points ({self.n_points}) does not match "
+                    f"len(points) ({len(self.points)})"
+                )
+        elif self.n_points is None:
+            raise GridInitializationError(
+                "Either points or n_points must be specified for IrregSpacedGrid."
+            )
+        elif self.n_points < 2:  # noqa: PLR2004
+            raise GridInitializationError(
+                f"n_points must be at least 2, got {self.n_points}"
+            )
 
     @property
-    def n_points(self) -> int:
-        """Return the number of points in the grid."""
-        return len(self.points)
+    def pass_points_at_runtime(self) -> bool:
+        """Whether this grid's points are supplied at runtime via params."""
+        return self.points is None
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
+        if self.points is None:
+            return jnp.full(self.n_points, jnp.nan)
         return jnp.asarray(self.points)
 
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
         """Return the generalized coordinate of a value in the grid."""
+        if self.points is None:
+            raise GridInitializationError(
+                "Cannot compute coordinate without points. Pass points at "
+                "initialization or use IrregSpacedGrid(n_points=...) and "
+                "supply points at runtime via params."
+            )
         return grid_helpers.get_irreg_coordinate(value, self.to_jax())
-
-
-@dataclass(frozen=True, kw_only=True)
-class ShockGrid(ContinuousGrid):
-    """An empty grid for discretized continuous shocks.
-
-    The actual values will be calculated once the prameters for the shock are
-    available during the solution or simulation.
-
-    Attributes:
-        distribution_type: Type of the shock.
-        n_points: The number of points for the discretization of the shock.
-        shock_params: Fixed parameters that are needed for the discretization function
-            of the specified shock type. Can be supplied directly or via the model fixed
-            parameters.
-    """
-
-    distribution_type: Literal["uniform", "normal", "tauchen", "rouwenhorst"]
-    n_points: int
-    shock_params: MappingProxyType[str, float] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
-
-    @property
-    def shock(self) -> Shock:
-        """Return the number of points in the grid."""
-        return Shock(
-            n_points=self.n_points,
-            distribution_type=self.distribution_type,
-            shock_params=self.shock_params,
-        )
-
-    def to_jax(self) -> Float1D:
-        """Convert the grid to a Jax array."""
-        return self.shock.get_gridpoints()
-
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
-        """Return the generalized coordinate of a value in the grid."""
-        return grid_helpers.get_irreg_coordinate(value, self.to_jax())
-
-    def init_params(self, params: Mapping[str, float]) -> ShockGrid:
-        """Augment the grid with fixed params from model initialization."""
-        return dataclasses.replace(self, shock_params=MappingProxyType(params))
 
 
 @dataclass(frozen=True, kw_only=True)

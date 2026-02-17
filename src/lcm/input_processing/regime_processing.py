@@ -11,7 +11,7 @@ from jax import numpy as jnp
 
 from lcm.ages import AgeGrid
 from lcm.grid_helpers import get_irreg_coordinate
-from lcm.grids import Grid, ShockGrid
+from lcm.grids import Grid
 from lcm.input_processing.create_regime_params_template import (
     create_regime_params_template,
 )
@@ -31,9 +31,9 @@ from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
 from lcm.mark import stochastic
 from lcm.ndimage import map_coordinates
 from lcm.regime import Regime
+from lcm.shocks import _ShockGrid
 from lcm.state_action_space import create_state_action_space, create_state_space_info
 from lcm.typing import (
-    FlatRegimeParams,
     Float1D,
     Int1D,
     InternalUserFunction,
@@ -42,7 +42,6 @@ from lcm.typing import (
     RegimeParamsTemplate,
     TransitionFunctionsMapping,
     UserFunction,
-    UserParams,
 )
 from lcm.utils import (
     ensure_containers_are_immutable,
@@ -65,7 +64,6 @@ def process_regimes(
     ages: AgeGrid,
     regime_names_to_ids: RegimeNamesToIds,
     *,
-    fixed_params: UserParams,
     enable_jit: bool,
 ) -> MappingProxyType[RegimeName, InternalRegime]:
     """Process the user regime.
@@ -80,7 +78,6 @@ def process_regimes(
         regimes: Mapping of regime names to Regime instances.
         ages: The AgeGrid for the model.
         regime_names_to_ids: Immutable mapping from regime names to integer indices.
-        fixed_params: Parameters that can be fixed at model initialization.
         enable_jit: Whether to jit the functions of the internal regime.
 
     Returns:
@@ -111,21 +108,7 @@ def process_regimes(
     variable_info = MappingProxyType(
         {n: get_variable_info(r) for n, r in regimes.items()}
     )
-    flat_regime_fixed_params = {
-        n: _extract_regime_fixed_params(
-            regime=r, regime_name=n, fixed_params=fixed_params
-        )
-        for n, r in regimes.items()
-    }
-    gridspecs = MappingProxyType(
-        {
-            n: _init_shock_gridspecs(
-                gridspecs=get_gridspecs(r),
-                flat_regime_fixed_params=flat_regime_fixed_params[n],
-            )
-            for n, r in regimes.items()
-        }
-    )
+    gridspecs = MappingProxyType({n: get_gridspecs(r) for n, r in regimes.items()})
     grids = MappingProxyType(
         {
             n: MappingProxyType(
@@ -209,10 +192,8 @@ def process_regimes(
             active_periods=tuple(regimes_to_active_periods[name]),
             regime_transition_probs=internal_functions.regime_transition_probs,
             internal_functions=internal_functions,
-            flat_regime_fixed_params=flat_regime_fixed_params[name],
             transitions=internal_functions.transitions,
             regime_params_template=regime_params_template,
-            state_action_space=state_action_spaces[name],
             state_space_info=state_space_infos[name],
             max_Q_over_a_functions=MappingProxyType(max_Q_over_a_functions),
             argmax_and_max_Q_over_a_functions=MappingProxyType(
@@ -221,6 +202,7 @@ def process_regimes(
             next_state_simulation_function=next_state_simulation_function,
             # currently no additive utility shocks are supported
             random_utility_shocks=ShockType.NONE,
+            _base_state_action_space=state_action_spaces[name],
         )
 
     return ensure_containers_are_immutable(internal_regimes)
@@ -298,27 +280,27 @@ def _get_internal_functions(
     for fn_name, fn in deterministic_functions.items():
         functions[fn_name] = _rename_params_to_qnames(
             fn=fn,
-            fn_key=fn_name,
             regime_params_template=regime_params_template,
+            param_key=fn_name,
         )
 
     for fn_name, fn in deterministic_transition_functions.items():
-        fn_key = _extract_param_key(fn_name)
+        param_key = _extract_param_key(fn_name)
         functions[fn_name] = _rename_params_to_qnames(
             fn=fn,
-            fn_key=fn_key,
             regime_params_template=regime_params_template,
+            param_key=param_key,
         )
 
     for fn_name, fn in stochastic_transition_functions.items():
         # The user-specified next function is the weighting function for the
         # stochastic transition. For the solution, we must also define a next function
         # that returns the whole grid of possible values.
-        fn_key = _extract_param_key(fn_name)
+        param_key = _extract_param_key(fn_name)
         functions[f"weight_{fn_name}"] = _rename_params_to_qnames(
             fn=fn,
-            fn_key=fn_key,
             regime_params_template=regime_params_template,
+            param_key=param_key,
         )
         functions[fn_name] = _get_stochastic_next_function(
             fn=fn,
@@ -328,8 +310,7 @@ def _get_internal_functions(
         relative_name = f"{regime_name}__next_{shock_name}"
         functions[f"weight_{relative_name}"] = _get_weights_fn_for_shock(
             name=shock_name,
-            flat_grid=flat_grids[relative_name.replace("next_", "")],
-            gridspec=gridspecs[shock_name],
+            gridspec=cast("_ShockGrid", gridspecs[shock_name]),
         )
         functions[relative_name] = _get_stochastic_next_function_for_shock(
             name=shock_name,
@@ -395,8 +376,8 @@ def _extract_param_key(fn_name: str) -> str:
 
 def _rename_params_to_qnames(
     fn: UserFunction,
-    fn_key: str,
     regime_params_template: RegimeParamsTemplate,
+    param_key: str,
 ) -> InternalUserFunction:
     """Rename function params to qualified names using dags.signature.rename_arguments.
 
@@ -404,17 +385,17 @@ def _rename_params_to_qnames(
 
     Args:
         fn: The user function.
-        fn_key: The key to look up in regime_params_template (e.g., "utility").
         regime_params_template: The parameter template for the regime.
+        param_key: The key to look up in regime_params_template (e.g., "utility").
 
     Returns:
         The function with renamed parameters.
 
     """
-    param_names = list(regime_params_template[fn_key])
+    param_names = list(regime_params_template[param_key])
     if not param_names:
         return cast("InternalUserFunction", fn)
-    mapper = {p: f"{fn_key}{QNAME_DELIMITER}{p}" for p in param_names}
+    mapper = {p: f"{param_key}{QNAME_DELIMITER}{p}" for p in param_names}
     return cast("InternalUserFunction", rename_arguments(fn, mapper=mapper))
 
 
@@ -438,11 +419,45 @@ def _get_stochastic_next_function_for_shock(name: str, grid: Float1D) -> UserFun
     return next_func
 
 
-def _get_weights_fn_for_shock(
-    name: str, flat_grid: Float1D, gridspec: Grid
-) -> UserFunction:
-    """Get function that uses linear interpolation to calculate the shock weights."""
-    transition_probs = gridspec.shock.get_transition_probs()  # ty: ignore[unresolved-attribute]
+def _get_weights_fn_for_shock(name: str, gridspec: _ShockGrid) -> UserFunction:
+    """Get function that uses linear interpolation to calculate the shock weights.
+
+    For shocks whose params are supplied at runtime, the grid points and transition
+    probabilities are computed inside JIT from those runtime params.
+
+    """
+    if gridspec.params_to_pass_at_runtime:
+        n_points = gridspec.n_points
+        fixed_params = dict(gridspec.params)
+        runtime_param_names = {
+            f"{name}{QNAME_DELIMITER}{p}": p for p in gridspec.params_to_pass_at_runtime
+        }
+        args = {name: "ContinuousState", **dict.fromkeys(runtime_param_names, "float")}
+
+        _compute_gridpoints = gridspec.compute_gridpoints
+        _compute_transition_probs = gridspec.compute_transition_probs
+
+        @with_signature(args=args, return_annotation="FloatND", enforce=False)
+        def weights_func_runtime(*a: Array, **kwargs: Array) -> Float1D:  # noqa: ARG001
+            shock_kw = {
+                **fixed_params,
+                **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
+            }
+            grid_points = _compute_gridpoints(n_points, **shock_kw)  # ty: ignore[invalid-argument-type]
+            transition_probs = _compute_transition_probs(n_points, **shock_kw)  # ty: ignore[invalid-argument-type]
+            coord = get_irreg_coordinate(kwargs[name], grid_points)
+            return map_coordinates(
+                input=transition_probs,
+                coordinates=[
+                    jnp.full(n_points, fill_value=coord),
+                    jnp.arange(n_points),
+                ],
+            )
+
+        return weights_func_runtime
+
+    grid_points = gridspec.get_gridpoints()
+    transition_probs = gridspec.get_transition_probs()
 
     @with_signature(
         args={f"{name}": "ContinuousState"},
@@ -450,62 +465,16 @@ def _get_weights_fn_for_shock(
         enforce=False,
     )
     def weights_func(*args: Array, **kwargs: Array) -> Float1D:  # noqa: ARG001
-        coordinate = get_irreg_coordinate(kwargs[f"{name}"], flat_grid)
+        coordinate = get_irreg_coordinate(kwargs[f"{name}"], grid_points)
         return map_coordinates(
             input=transition_probs,
             coordinates=[
-                jnp.full(gridspec.n_points, fill_value=coordinate),  # ty: ignore[unresolved-attribute]
-                jnp.arange(gridspec.n_points),  # ty: ignore[unresolved-attribute]
+                jnp.full(gridspec.n_points, fill_value=coordinate),
+                jnp.arange(gridspec.n_points),
             ],
         )
 
     return weights_func
-
-
-def _extract_regime_fixed_params(
-    regime: Regime, regime_name: str, fixed_params: UserParams
-) -> FlatRegimeParams:
-    """Extract and process fixed params relevant to a regime's shocks.
-
-    Fixed params can be provided at two levels:
-    - Model level: {"state_name": {...}} - applies to all regimes
-    - Regime level: {"regime_name": {"state_name": {...}}} - applies to specific regime
-
-    Regime-level params take precedence over model-level params.
-
-    """
-    result: dict[str, Any] = {}
-
-    # Get regime-specific fixed_params if provided
-    regime_fixed_params = fixed_params.get(regime_name, {})
-    if not isinstance(regime_fixed_params, Mapping):
-        regime_fixed_params = {}
-
-    for state_name, state in regime.states.items():
-        if isinstance(state, ShockGrid):
-            # Check regime-level first, then model-level
-            if state_name in regime_fixed_params:
-                result[state_name] = regime_fixed_params[state_name]
-            elif state_name in fixed_params:
-                result[state_name] = fixed_params[state_name]
-
-    return ensure_containers_are_immutable(result)
-
-
-def _init_shock_gridspecs(
-    gridspecs: MappingProxyType[str, Grid],
-    flat_regime_fixed_params: FlatRegimeParams,
-) -> MappingProxyType[str, Grid]:
-    """Initialize ShockGrid instances with their fixed parameters."""
-    result: dict[str, Grid] = {}
-    for name, spec in gridspecs.items():
-        if isinstance(spec, ShockGrid) and name in flat_regime_fixed_params:
-            result[name] = spec.init_params(
-                cast("MappingProxyType[str, float]", flat_regime_fixed_params[name])
-            )
-        else:
-            result[name] = spec
-    return MappingProxyType(result)
 
 
 def _convert_flat_to_nested_transitions(

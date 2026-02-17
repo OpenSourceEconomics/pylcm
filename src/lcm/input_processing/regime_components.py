@@ -178,17 +178,15 @@ def build_next_state_simulation_functions(
         grids=grids,
         gridspecs=gridspecs,
     )
-    params = tuple(inspect.signature(next_state).parameters)
+    sig_args = tuple(inspect.signature(next_state).parameters)
 
     next_state_vmapped = vmap_1d(
         func=next_state,
-        variables=tuple(
-            p for p in params if p not in _get_non_vmap_params(regime_params_template)
-        ),
+        variables=_get_vmap_params(sig_args, regime_params_template),
     )
 
     next_state_vmapped = with_signature(
-        next_state_vmapped, kwargs=params, enforce=False
+        next_state_vmapped, kwargs=sig_args, enforce=False
     )
 
     return jax.jit(next_state_vmapped) if enable_jit else next_state_vmapped
@@ -228,21 +226,20 @@ def build_regime_transition_probs_functions(
         enforce_signature=False,
         set_annotations=True,
     )
-    params = list(inspect.signature(next_regime).parameters)
+    sig_args = list(inspect.signature(next_regime).parameters)
 
     # We do this because a transition function without any parameters will throw
     # an error with vmap
     next_regime_accepting_all = with_signature(
         next_regime,
-        args=params + [state for state in grids if state not in params],
+        args=sig_args + [state for state in grids if state not in sig_args],
     )
-
-    params = tuple(inspect.signature(next_regime_accepting_all).parameters)
 
     next_regime_vmapped = vmap_1d(
         func=next_regime_accepting_all,
-        variables=tuple(
-            p for p in params if p not in _get_non_vmap_params(regime_params_template)
+        variables=_get_vmap_params(
+            tuple(inspect.signature(next_regime_accepting_all).parameters),
+            regime_params_template,
         ),
     )
 
@@ -252,9 +249,14 @@ def build_regime_transition_probs_functions(
     )
 
 
-def _get_non_vmap_params(regime_params_template: RegimeParamsTemplate) -> set[str]:
-    """Get parameter names that should not be vmapped (period, age, flat params)."""
-    return {"period", "age"} | get_flat_param_names(regime_params_template)
+def _get_vmap_params(
+    all_args: tuple[str, ...],
+    regime_params_template: RegimeParamsTemplate,
+) -> tuple[str, ...]:
+    """Get parameter names that should be vmapped (states and actions)."""
+    non_vmap = {"period", "age"} | get_flat_param_names(regime_params_template)
+    # Filter for states and actions
+    return tuple(arg for arg in all_args if arg not in non_vmap)
 
 
 def _wrap_regime_transition_probs(

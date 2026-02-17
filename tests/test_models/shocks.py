@@ -1,13 +1,14 @@
-from types import MappingProxyType
 from typing import Literal
 
 from jax import numpy as jnp
 
 import lcm
 from lcm.ages import AgeGrid
-from lcm.grids import DiscreteGrid, LinSpacedGrid, ShockGrid, categorical
+from lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
 from lcm.model import Model
 from lcm.regime import Regime
+from lcm.shocks.ar1 import Rouwenhorst, Tauchen
+from lcm.shocks.iid import Normal, Uniform
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -15,6 +16,13 @@ from lcm.typing import (
     FloatND,
     ScalarInt,
 )
+
+_SHOCK_GRID_CLASSES = {
+    "uniform": Uniform,
+    "normal": Normal,
+    "tauchen": Tauchen,
+    "rouwenhorst": Rouwenhorst,
+}
 
 
 def get_model(
@@ -69,13 +77,7 @@ def get_model(
         active=test_active,
         states={
             "wealth": LinSpacedGrid(start=1, stop=5, n_points=5),
-            "income": ShockGrid(
-                n_points=5,
-                distribution_type=distribution_type,
-                shock_params=MappingProxyType({"rho": 0.975})
-                if distribution_type in ["rouwenhorst", "tauchen"]
-                else MappingProxyType({}),
-            ),
+            "income": _SHOCK_GRID_CLASSES[distribution_type](n_points=5),
             "health": DiscreteGrid(Health),
         },
         actions={
@@ -99,17 +101,27 @@ def get_model(
         regimes={"test_regime": test_regime, "test_regime_term": test_regime_term},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=0, stop=n_periods, step="Y"),
-        fixed_params={"income": {"rho": 0.975}}
-        if distribution_type in ["rouwenhorst", "tauchen"]
-        else {},
     )
 
 
-def get_params():
+_SHOCK_PARAMS: dict[str, dict[str, float]] = {
+    "uniform": {"start": 0.0, "stop": 1.0},
+    "normal": {"mu": 0.0, "sigma": 1.0, "n_std": 3.0},
+    "tauchen": {"rho": 0.975, "sigma": 1.0, "mu": 0.0, "n_std": 2},
+    "rouwenhorst": {"rho": 0.975, "sigma": 1.0, "mu": 0.0},
+}
+
+
+def get_params(
+    distribution_type: Literal[
+        "uniform", "normal", "tauchen", "rouwenhorst"
+    ] = "tauchen",
+):
     return {
         "test_regime": {
             "discount_factor": 1,
             "next_health": {"health_transition": jnp.full((2, 2), fill_value=0.5)},
+            "income": _SHOCK_PARAMS[distribution_type],
         },
         "test_regime_term": {},
     }

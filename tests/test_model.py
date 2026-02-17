@@ -4,7 +4,6 @@ import pytest
 import lcm
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
-from lcm.grids import ShockGrid
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -501,55 +500,6 @@ def test_missing_transition_for_other_regime_state_raises_error():
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=RegimeId,
         )
-
-
-def test_fixed_params_validation():
-    """Model validates that fixed params exist when are shocks used."""
-
-    @categorical
-    class RegimeId:
-        alive: int
-        dead: int
-
-    alive = Regime(
-        states={"health": ShockGrid(distribution_type="tauchen", n_points=2)},
-        functions={"utility": lambda health: health},
-        transitions={
-            "next_health": lambda health: health,
-            "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
-        },
-        active=lambda age: age < 1,
-    )
-    dead = Regime(
-        functions={"utility": lambda: 0},
-        terminal=True,
-        active=lambda age: age >= 1,
-    )
-
-    # Missing fixed params should raise error
-    with pytest.raises(ModelInitializationError, match="is missing fixed params"):
-        Model(
-            regimes={"alive": alive, "dead": dead},
-            ages=AgeGrid(start=0, stop=2, step="Y"),
-            regime_id_class=RegimeId,
-            fixed_params={},
-        )
-
-    # Model-level fixed_params should work
-    Model(
-        regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
-        regime_id_class=RegimeId,
-        fixed_params={"health": {"rho": 0.9}},
-    )
-
-    # Regime-level fixed_params should also work
-    Model(
-        regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
-        regime_id_class=RegimeId,
-        fixed_params={"alive": {"health": {"rho": 0.9}}},
-    )
 
 
 # ======================================================================================

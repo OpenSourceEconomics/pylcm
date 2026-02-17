@@ -3,10 +3,11 @@ from types import MappingProxyType
 import pandas as pd
 from jax import Array
 
-from lcm.grids import ContinuousGrid, DiscreteGrid, ShockGrid
+from lcm.grids import ContinuousGrid, DiscreteGrid
 from lcm.input_processing.util import get_gridspecs, get_variable_info
 from lcm.interfaces import StateActionSpace, StateSpaceInfo
 from lcm.regime import Regime
+from lcm.shocks import _ShockGrid
 
 
 def create_state_action_space(
@@ -83,7 +84,7 @@ def create_state_space_info(regime: Regime) -> StateSpaceInfo:
         name: grid_spec
         for name, grid_spec in gridspecs.items()
         if (name in state_names and isinstance(grid_spec, DiscreteGrid))
-        or isinstance(grid_spec, ShockGrid)
+        or isinstance(grid_spec, _ShockGrid)
     }
 
     continuous_states = {
@@ -91,7 +92,7 @@ def create_state_space_info(regime: Regime) -> StateSpaceInfo:
         for name, grid_spec in gridspecs.items()
         if name in state_names
         and isinstance(grid_spec, ContinuousGrid)
-        and not isinstance(grid_spec, ShockGrid)
+        and not isinstance(grid_spec, _ShockGrid)
     }
 
     return StateSpaceInfo(

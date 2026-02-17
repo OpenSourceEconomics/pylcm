@@ -6,7 +6,7 @@ import jax
 with contextlib.suppress(ImportError):
     import pdbp  # noqa: F401
 
-from lcm import mark
+from lcm import mark, shocks
 from lcm.ages import AgeGrid
 from lcm.grids import (
     DiscreteGrid,
@@ -16,7 +16,6 @@ from lcm.grids import (
     Piece,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
-    ShockGrid,
     categorical,
 )
 from lcm.model import Model
@@ -42,8 +41,8 @@ __all__ = [
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",
     "Regime",
-    "ShockGrid",
     "SimulationResult",
     "categorical",
     "mark",
+    "shocks",
 ]

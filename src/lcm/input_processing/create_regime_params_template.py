@@ -1,7 +1,10 @@
 import dags.tree as dt
+from jax import Array
 
 from lcm.exceptions import InvalidNameError
+from lcm.grids import IrregSpacedGrid
 from lcm.regime import Regime
+from lcm.shocks import _ShockGrid
 from lcm.typing import RegimeParamsTemplate
 from lcm.utils import ensure_containers_are_immutable
 
@@ -15,6 +18,10 @@ def create_regime_params_template(
     type annotations from function signatures. Parameters are identified as function
     arguments that are not states, actions, other regime functions, or special variables
     (period, age, continuation_value).
+
+    Grids with runtime-supplied values (IrregSpacedGrid without points, _ShockGrid
+    without full shock_params) add entries to the template under pseudo-function keys
+    matching the state name.
 
     Args:
         regime: The regime as provided by the user.
@@ -54,6 +61,25 @@ def create_regime_params_template(
                 f"Function '{func_name}' has parameter(s) {sorted(shadows)} that "
                 f"shadow state/action variable(s) with the same name. Please rename "
                 f"the parameter(s) or the state(s)/action(s) to avoid ambiguity."
+            )
+
+    # Add entries for grids whose points/params are supplied at runtime
+    for state_name, grid in regime.states.items():
+        if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:
+            if state_name in function_params:
+                raise InvalidNameError(
+                    f"IrregSpacedGrid state '{state_name}' (with runtime-supplied "
+                    f"points) conflicts with a function of the same name in the regime."
+                )
+            function_params[state_name] = {"points": Array}
+        elif isinstance(grid, _ShockGrid) and grid.params_to_pass_at_runtime:
+            if state_name in function_params:
+                raise InvalidNameError(
+                    f"_ShockGrid state '{state_name}' (with runtime-supplied params) "
+                    f"conflicts with a function of the same name in the regime."
+                )
+            function_params[state_name] = dict.fromkeys(
+                grid.params_to_pass_at_runtime, float
             )
 
     return ensure_containers_are_immutable(function_params)

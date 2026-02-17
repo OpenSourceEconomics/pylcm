@@ -51,7 +51,6 @@ def simulate_inputs():
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
-        fixed_params={},
     )
 
     return {

@@ -6,7 +6,6 @@ Wealth-Health Gaps in Germany" by Lukas Mahler and Minchul Yum (Econometrica, 20
 
 from dataclasses import make_dataclass
 from functools import partial
-from types import MappingProxyType
 from typing import Any
 
 import jax
@@ -21,7 +20,8 @@ from scipy.interpolate import interp1d
 import lcm
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.dispatchers import _base_productmap
-from lcm.grids import ShockGrid
+from lcm.shocks.ar1 import Rouwenhorst
+from lcm.shocks.iid import Uniform
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -358,11 +358,7 @@ def dead_is_active(age: float, initial_age: float) -> bool:
     return age > initial_age
 
 
-prod_shock_grid = ShockGrid(
-    distribution_type="rouwenhorst",
-    n_points=5,
-    shock_params=MappingProxyType({"rho": rho}),
-)
+prod_shock_grid = Rouwenhorst(n_points=5, rho=rho, mu=0, sigma=1)
 
 ALIVE_REGIME = Regime(
     functions={
@@ -389,7 +385,7 @@ ALIVE_REGIME = Regime(
         "health": DiscreteGrid(HealthStatus),
         "productivity_shock": prod_shock_grid,
         "effort_t_1": DiscreteGrid(Effort),
-        "adjustment_cost": ShockGrid(n_points=5, distribution_type="uniform"),
+        "adjustment_cost": Uniform(n_points=5, start=0, stop=1),
         "education": DiscreteGrid(EducationStatus),
         "stochastic_discount_factor": DiscreteGrid(DiscountFactor),
         "productivity": DiscreteGrid(ProductivityType),
@@ -424,12 +420,6 @@ MAHLER_YUM_MODEL = Model(
     regimes={"alive": ALIVE_REGIME, "dead": DEAD_REGIME},
     ages=ages,
     regime_id_class=RegimeId,
-    fixed_params={
-        "alive": {
-            "productivity_shock": {"rho": rho},
-            "next_adjustment_cost": {"start": 0, "stop": 1},
-        }
-    },
 )
 
 
@@ -669,8 +659,8 @@ def create_inputs(
     # Create variable grids from supplied parameters
     income_grid = create_income_grid(income_process)  # ty: ignore[invalid-argument-type]
     chimax_grid = create_chimaxgrid(chi)
-    xvalues = prod_shock_grid.shock.get_gridpoints()
-    xtrans = prod_shock_grid.shock.get_transition_probs()
+    xvalues = prod_shock_grid.get_gridpoints()
+    xtrans = prod_shock_grid.get_transition_probs()
     xi_grid = create_xigrid(xi)
     phi_grid = create_phigrid(nu)
 
@@ -755,15 +745,31 @@ def create_inputs(
 # ======================================================================================
 
 if __name__ == "__main__":
+    import logging
+    import time
+
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger("lcm")
+
     params, initial_states, initial_regimes = create_inputs(
         seed=7235,
         n_simulation_subjects=1_000,
         **START_PARAMS,  # ty: ignore[invalid-argument-type]
     )
 
-    simulation_result = MAHLER_YUM_MODEL.solve_and_simulate(
-        params={"alive": params},
-        initial_states=initial_states,
-        initial_regimes=initial_regimes,
-        seed=8295,
-    )
+    timings: list[float] = []
+    for i in range(3):
+        t0 = time.perf_counter()
+        simulation_result = MAHLER_YUM_MODEL.solve_and_simulate(
+            params={"alive": params},
+            initial_states=initial_states,
+            initial_regimes=initial_regimes,
+            seed=8295,
+        )
+        elapsed = time.perf_counter() - t0
+        timings.append(elapsed)
+        logger.info("Run %d: %.3fs", i + 1, elapsed)
+
+    logger.info("--- Timing summary ---")
+    for i, t in enumerate(timings):
+        logger.info("  Run %d: %.3fs", i + 1, t)

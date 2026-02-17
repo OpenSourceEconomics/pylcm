@@ -6,7 +6,8 @@ from types import MappingProxyType
 import pandas as pd
 from jax import Array
 
-from lcm.grids import ContinuousGrid, DiscreteGrid, Grid, ShockGrid
+from lcm.grids import ContinuousGrid, DiscreteGrid, Grid, IrregSpacedGrid
+from lcm.shocks import _ShockGrid
 from lcm.typing import (
     ArgmaxQOverAFunction,
     Bool1D,
@@ -133,7 +134,7 @@ class StateSpaceInfo:
     """
 
     states_names: tuple[str, ...]
-    discrete_states: MappingProxyType[str, DiscreteGrid | ShockGrid]
+    discrete_states: MappingProxyType[str, DiscreteGrid | _ShockGrid]
     continuous_states: MappingProxyType[str, ContinuousGrid]
 
 
@@ -178,15 +179,65 @@ class InternalRegime:
         | None
     )
     internal_functions: InternalFunctions
-    flat_regime_fixed_params: FlatRegimeParams
     regime_params_template: RegimeParamsTemplate
-    state_action_space: StateActionSpace
     state_space_info: StateSpaceInfo
     max_Q_over_a_functions: MappingProxyType[int, MaxQOverAFunction]
     argmax_and_max_Q_over_a_functions: MappingProxyType[int, ArgmaxQOverAFunction]
     next_state_simulation_function: NextStateSimulationFunction
     # Not properly processed yet
     random_utility_shocks: ShockType
+    _base_state_action_space: StateActionSpace = dataclasses.field(repr=False)
+    # Resolved fixed params (flat) for this regime, used by to_dataframe targets
+    resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
+
+    def state_action_space(
+        self, flat_regime_params: FlatRegimeParams
+    ) -> StateActionSpace:
+        """Return the state-action space with runtime state grids filled in.
+
+        For IrregSpacedGrid with runtime-supplied points, the grid points come from
+        params as ``{state_name}__points``. For _ShockGrid with runtime-supplied params,
+        the grid points are computed from shock params in the params dict or
+        resolved_fixed_params.
+
+        Args:
+            flat_regime_params: Flat regime parameters supplied at runtime.
+
+        Returns:
+            Completed state-action space.
+
+        """
+        all_params = {**self.resolved_fixed_params, **flat_regime_params}
+        replacements: dict[str, object] = {}
+        for state_name, spec in self.gridspecs.items():
+            if state_name not in self._base_state_action_space.states:
+                continue
+            if isinstance(spec, IrregSpacedGrid) and spec.pass_points_at_runtime:
+                points_key = f"{state_name}__points"
+                if points_key not in all_params:
+                    continue
+                replacements[state_name] = all_params[points_key]
+            elif isinstance(spec, _ShockGrid) and spec.params_to_pass_at_runtime:
+                all_present = all(
+                    f"{state_name}__{p}" in all_params
+                    for p in spec.params_to_pass_at_runtime
+                )
+                if not all_present:
+                    continue
+                shock_kw = dict(spec.params)
+                for p in spec.params_to_pass_at_runtime:
+                    shock_kw[p] = all_params[f"{state_name}__{p}"]
+                replacements[state_name] = spec.compute_gridpoints(
+                    spec.n_points, **shock_kw
+                )
+
+        if not replacements:
+            return self._base_state_action_space
+
+        new_states = dict(self._base_state_action_space.states) | replacements
+        return self._base_state_action_space.replace(
+            states=MappingProxyType(new_states)
+        )
 
 
 @dataclasses.dataclass(frozen=True)

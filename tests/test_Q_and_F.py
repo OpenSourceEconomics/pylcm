@@ -48,7 +48,6 @@ def test_get_Q_and_F_function():
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
-        fixed_params={},
     )
 
     raw_params = get_params(n_periods=4)

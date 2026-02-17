@@ -19,14 +19,18 @@ class InternalRegimeMock:
     """Mock InternalRegime with only the attributes required by solve().
 
     The solve() function only accesses:
-    - state_action_spaces: StateActionSpace object
+    - _base_state_action_space: StateActionSpace object
+    - state_action_space(): method returning the state-action space
     - max_Q_over_a_functions: dict mapping period to max_Q_over_a function
-    - active: list of periods the regime is active
+    - active_periods: list of periods the regime is active
     """
 
-    state_action_space: StateActionSpace
+    _base_state_action_space: StateActionSpace
     max_Q_over_a_functions: dict[int, MaxQOverAFunction]
     active_periods: list[int]
+
+    def state_action_space(self, flat_regime_params):  # noqa: ARG002
+        return self._base_state_action_space
 
 
 def test_solve_brute():
@@ -105,7 +109,7 @@ def test_solve_brute():
     # ==================================================================================
 
     internal_regime = InternalRegimeMock(
-        state_action_space=state_action_space,
+        _base_state_action_space=state_action_space,
         max_Q_over_a_functions={0: max_Q_over_a, 1: max_Q_over_a},
         active_periods=[0, 1],
     )
@@ -161,7 +165,7 @@ def test_solve_brute_single_period_Qc_arr():
     # is correctly applied to the state_action_space
 
     internal_regime = InternalRegimeMock(
-        state_action_space=state_action_space,
+        _base_state_action_space=state_action_space,
         max_Q_over_a_functions={0: max_Q_over_a, 1: max_Q_over_a},
         active_periods=[0, 1],
     )

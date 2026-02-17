@@ -5,9 +5,7 @@ import jax.numpy as jnp
 
 from lcm.ages import AgeGrid
 from lcm.error_handling import validate_value_function_array
-from lcm.interfaces import (
-    InternalRegime,
-)
+from lcm.interfaces import InternalRegime
 from lcm.typing import FloatND, InternalParams, RegimeName
 
 
@@ -48,7 +46,9 @@ def solve(
         }
 
         for name, internal_regime in active_regimes.items():
-            state_action_space = internal_regime.state_action_space
+            state_action_space = internal_regime.state_action_space(
+                flat_regime_params=internal_params[name],
+            )
             max_Q_over_a = internal_regime.max_Q_over_a_functions[period]
 
             # evaluate Q-function on states and actions, and maximize over actions
