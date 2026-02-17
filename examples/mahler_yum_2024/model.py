@@ -321,6 +321,23 @@ def dead_is_active(age: float, initial_age: float) -> bool:
 prod_shock_grid = Rouwenhorst(n_points=5, rho=rho, mu=0, sigma=1)
 
 ALIVE_REGIME = Regime(
+    transition=next_regime,
+    active=partial(alive_is_active, final_age_alive=ages.values[-2]),
+    states={
+        "wealth": LinSpacedGrid(start=0, stop=49, n_points=50, transition=next_wealth),
+        "health": DiscreteGrid(HealthStatus, transition=next_health),
+        "productivity_shock": prod_shock_grid,
+        "effort_t_1": DiscreteGrid(Effort, transition=next_effort_t_1),
+        "adjustment_cost": Uniform(n_points=5, start=0, stop=1),
+        "education": DiscreteGrid(EducationStatus),  # Fixed state
+        "productivity": DiscreteGrid(ProductivityType),  # Fixed state
+        "health_type": DiscreteGrid(HealthType),  # Fixed state
+    },
+    actions={
+        "working": DiscreteGrid(WorkingStatus),
+        "saving": LinSpacedGrid(start=0, stop=49, n_points=50),
+        "effort": DiscreteGrid(Effort),
+    },
     functions={
         "utility": utility,
         "disutil": disutil,
@@ -335,33 +352,16 @@ ALIVE_REGIME = Regime(
         "pension": pension,
         "scaled_productivity_shock": scaled_productivity_shock,
     },
-    actions={
-        "working": DiscreteGrid(WorkingStatus),
-        "saving": LinSpacedGrid(start=0, stop=49, n_points=50),
-        "effort": DiscreteGrid(Effort),
-    },
-    states={
-        "wealth": LinSpacedGrid(start=0, stop=49, n_points=50, transition=next_wealth),
-        "health": DiscreteGrid(HealthStatus, transition=next_health),
-        "productivity_shock": prod_shock_grid,
-        "effort_t_1": DiscreteGrid(Effort, transition=next_effort_t_1),
-        "adjustment_cost": Uniform(n_points=5, start=0, stop=1),
-        "education": DiscreteGrid(EducationStatus),  # Fixed state
-        "productivity": DiscreteGrid(ProductivityType),  # Fixed state
-        "health_type": DiscreteGrid(HealthType),  # Fixed state
-    },
     constraints={
         "retirement_constraint": retirement_constraint,
         "savings_constraint": savings_constraint,
     },
-    transition=next_regime,
-    active=partial(alive_is_active, final_age_alive=ages.values[-2]),
 )
 
 DEAD_REGIME = Regime(
     transition=None,
-    functions={"utility": lambda: 0.0},
     active=partial(dead_is_active, initial_age=ages.values[0]),
+    functions={"utility": lambda: 0.0},
 )
 
 MAHLER_YUM_MODEL = Model(
@@ -706,29 +706,31 @@ if __name__ == "__main__":
         "high": beta_mean + beta_std,
     }
 
+    # Pre-build inputs for each discount factor type.
+    inputs_per_type = {}
     for df_type, df_value in discount_factors.items():
-        logger.info("--- Discount factor type: %s (beta=%.4f) ---", df_type, df_value)
-
         modified_params = {**START_PARAMS, "beta": {"mean": df_value, "std": 0.0}}
-        params, initial_states, initial_regimes = create_inputs(
+        inputs_per_type[df_type] = create_inputs(
             seed=7235,
             n_simulation_subjects=1_000,
             **modified_params,  # ty: ignore[invalid-argument-type]
         )
 
-        timings: list[float] = []
-        for i in range(3):
-            t0 = time.perf_counter()
+    timings: list[float] = []
+    for i in range(3):
+        t0 = time.perf_counter()
+        for df_type in discount_factors:
+            params, initial_states, initial_regimes = inputs_per_type[df_type]
             simulation_result = MAHLER_YUM_MODEL.solve_and_simulate(
                 params={"alive": params},
                 initial_states=initial_states,
                 initial_regimes=initial_regimes,
                 seed=8295,
             )
-            elapsed = time.perf_counter() - t0
-            timings.append(elapsed)
-            logger.info("  Run %d: %.3fs", i + 1, elapsed)
+        elapsed = time.perf_counter() - t0
+        timings.append(elapsed)
+        logger.info("Run %d: %.3fs", i + 1, elapsed)
 
-        logger.info("  Timing summary:")
-        for i, t in enumerate(timings):
-            logger.info("    Run %d: %.3fs", i + 1, t)
+    logger.info("Timing summary:")
+    for i, t in enumerate(timings):
+        logger.info("  Run %d: %.3fs", i + 1, t)
