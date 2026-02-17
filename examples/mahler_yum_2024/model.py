@@ -129,9 +129,6 @@ class RegimeId:
 # Utility function
 # --------------------------------------------------------------------------------------
 def utility(
-    wealth: ContinuousState,  # noqa: ARG001
-    health_type: DiscreteState,  # noqa: ARG001
-    education: DiscreteState,  # noqa: ARG001
     scaled_adjustment_cost: FloatND,
     fcost: FloatND,
     disutil: FloatND,
