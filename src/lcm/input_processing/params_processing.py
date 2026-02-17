@@ -24,6 +24,7 @@ _NUM_PARTS_FUNCTION_PARAM = 3
 
 
 def process_params(
+    *,
     params: UserParams,
     params_template: ParamsTemplate,
 ) -> InternalParams:

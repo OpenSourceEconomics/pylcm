@@ -102,14 +102,18 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
     working_deterministic = working.replace(
         states={
             **working.states,
-            "health": DiscreteGrid(HealthStatus, transition=next_health_deterministic),
+            "health": DiscreteGrid(
+                category_class=HealthStatus, transition=next_health_deterministic
+            ),
         },
         active=lambda age: age < n_periods - 1,
     )
     retired_deterministic = retired.replace(
         states={
             **retired.states,
-            "health": DiscreteGrid(HealthStatus, transition=next_health_deterministic),
+            "health": DiscreteGrid(
+                category_class=HealthStatus, transition=next_health_deterministic
+            ),
         },
         active=lambda age: age < n_periods - 1,
     )
@@ -118,14 +122,18 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
     working_stochastic = working.replace(
         states={
             **working.states,
-            "health": DiscreteGrid(HealthStatus, transition=next_health_stochastic),
+            "health": DiscreteGrid(
+                category_class=HealthStatus, transition=next_health_stochastic
+            ),
         },
         active=lambda age: age < n_periods - 1,
     )
     retired_stochastic = retired.replace(
         states={
             **retired.states,
-            "health": DiscreteGrid(HealthStatus, transition=next_health_stochastic),
+            "health": DiscreteGrid(
+                category_class=HealthStatus, transition=next_health_stochastic
+            ),
         },
         active=lambda age: age < n_periods - 1,
     )

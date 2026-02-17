@@ -131,7 +131,11 @@ def test_regime_overlapping_states_actions(binary_category_class):
         match=r"States and actions cannot have overlapping names.",
     ):
         Regime(
-            states={"health": DiscreteGrid(binary_category_class, transition=None)},
+            states={
+                "health": DiscreteGrid(
+                    category_class=binary_category_class, transition=None
+                )
+            },
             actions={"health": DiscreteGrid(binary_category_class)},
             functions={"utility": lambda: 0},
             transition=lambda: 0,
@@ -164,7 +168,7 @@ def test_model_requires_terminal_regime(binary_category_class):
     regime = Regime(
         states={
             "health": DiscreteGrid(
-                binary_category_class, transition=lambda health: health
+                category_class=binary_category_class, transition=lambda health: health
             ),
         },
         actions={},
@@ -189,7 +193,11 @@ def test_model_requires_non_terminal_regime(binary_category_class):
 
     dead = Regime(
         transition=None,
-        states={"health": DiscreteGrid(binary_category_class, transition=None)},
+        states={
+            "health": DiscreteGrid(
+                category_class=binary_category_class, transition=None
+            )
+        },
         functions={"utility": lambda health: health * 0},
         active=lambda age: age >= 1,
     )
@@ -220,7 +228,7 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
     alive = Regime(
         states={
             "health": DiscreteGrid(
-                binary_category_class, transition=lambda health: health
+                category_class=binary_category_class, transition=lambda health: health
             ),
         },
         functions={"utility": lambda health: health},
@@ -229,13 +237,21 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
     )
     dead1 = Regime(
         transition=None,
-        states={"health": DiscreteGrid(binary_category_class, transition=None)},
+        states={
+            "health": DiscreteGrid(
+                category_class=binary_category_class, transition=None
+            )
+        },
         functions={"utility": lambda health: health * 0},
         active=lambda age: age >= 1,
     )
     dead2 = Regime(
         transition=None,
-        states={"health": DiscreteGrid(binary_category_class, transition=None)},
+        states={
+            "health": DiscreteGrid(
+                category_class=binary_category_class, transition=None
+            )
+        },
         functions={"utility": lambda health: health * 0},
         active=lambda age: age >= 1,
     )
@@ -259,7 +275,7 @@ def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):
     alive = Regime(
         states={
             "health": DiscreteGrid(
-                binary_category_class, transition=lambda health: health
+                category_class=binary_category_class, transition=lambda health: health
             ),
         },
         functions={"utility": lambda health: health},
@@ -268,7 +284,11 @@ def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):
     )
     dead = Regime(
         transition=None,
-        states={"health": DiscreteGrid(binary_category_class, transition=None)},
+        states={
+            "health": DiscreteGrid(
+                category_class=binary_category_class, transition=None
+            )
+        },
         functions={"utility": lambda health: health * 0},
         active=lambda age: age >= 1,
     )
@@ -293,7 +313,7 @@ def test_model_regime_name_validation(binary_category_class):
     alive = Regime(
         states={
             "health": DiscreteGrid(
-                binary_category_class, transition=lambda health: health
+                category_class=binary_category_class, transition=lambda health: health
             ),
         },
         functions={"utility": lambda health: health},
@@ -302,7 +322,11 @@ def test_model_regime_name_validation(binary_category_class):
     )
     dead = Regime(
         transition=None,
-        states={"health": DiscreteGrid(binary_category_class, transition=None)},
+        states={
+            "health": DiscreteGrid(
+                category_class=binary_category_class, transition=None
+            )
+        },
         functions={"utility": lambda health: health * 0},
         active=lambda age: age >= 1,
     )
@@ -398,7 +422,9 @@ def test_unused_action_raises_error():
         },
         actions={
             "consumption": LinSpacedGrid(start=1, stop=50, n_points=10),
-            "unused_action": DiscreteGrid(UnusedAction),  # Not used anywhere!
+            "unused_action": DiscreteGrid(
+                category_class=UnusedAction
+            ),  # Not used anywhere!
         },
         transition=lcm.mark.stochastic(lambda: jnp.array([0.9, 0.1])),
         active=lambda age: age < 5,
@@ -495,7 +521,7 @@ def test_constraint_depending_on_transition_output():
                 start=10, stop=100, n_points=5, transition=next_assets
             ),
             "lagged_employment": DiscreteGrid(
-                EmploymentLastPeriod, transition=next_lagged_employment
+                category_class=EmploymentLastPeriod, transition=next_lagged_employment
             ),
         },
     )
@@ -578,7 +604,7 @@ def test_state_only_used_in_transitions():
                 start=10, stop=100, n_points=5, transition=next_assets
             ),
             "lagged_employment": DiscreteGrid(
-                EmploymentLastPeriod, transition=next_lagged_employment
+                category_class=EmploymentLastPeriod, transition=next_lagged_employment
             ),
         },
     )

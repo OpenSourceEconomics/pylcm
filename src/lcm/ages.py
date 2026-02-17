@@ -75,7 +75,9 @@ class AgeGrid:
         step: str | None = None,
         precise_values: Iterable[int | Fraction] | None = None,
     ) -> None:
-        _validate_age_grid(start, stop, step, precise_values)
+        _validate_age_grid(
+            start=start, stop=stop, step=step, precise_values=precise_values
+        )
 
         if precise_values is not None:
             self._precise_values = tuple(precise_values)
@@ -172,6 +174,7 @@ class AgeGrid:
 
 
 def _validate_age_grid(
+    *,
     start: int | Fraction | None,
     stop: int | Fraction | None,
     step: str | None,
@@ -192,7 +195,7 @@ def _validate_age_grid(
                 "When using range, all of 'start', 'stop', 'step' must be provided."
             )
         else:
-            error_messages.extend(_validate_range(start, stop, step))
+            error_messages.extend(_validate_range(start=start, stop=stop, step=step))
     else:
         error_messages.append("Must specify 'values' or 'start/stop/step'.")
 
@@ -201,7 +204,7 @@ def _validate_age_grid(
 
 
 def _validate_range(
-    start: int | Fraction, stop: int | Fraction, step: str
+    *, start: int | Fraction, stop: int | Fraction, step: str
 ) -> list[str]:
     errors: list[str] = []
 

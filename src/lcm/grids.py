@@ -2,10 +2,11 @@ import dataclasses
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, is_dataclass
-from typing import Any
+from typing import Any, overload
 
 import jax.numpy as jnp
 import portion
+from jax import Array
 
 from lcm import grid_helpers
 from lcm.exceptions import GridInitializationError, format_messages
@@ -68,8 +69,12 @@ class ContinuousGrid(Grid):
 
     """
 
+    @overload
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
+    @overload
+    def get_coordinate(self, value: Array) -> Array: ...
     @abstractmethod
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
+    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
 
 
@@ -98,6 +103,7 @@ class DiscreteGrid(Grid):
     def __init__(
         self,
         category_class: type,
+        *,
         transition: Callable[..., Any] | None = None,
     ) -> None:
         """Initialize the DiscreteGrid.
@@ -167,8 +173,12 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
 
+    @overload
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
+    @overload
+    def get_coordinate(self, value: Array) -> Array: ...
     @abstractmethod
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
+    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
 
     def replace(self, **kwargs: float) -> UniformContinuousGrid:
@@ -205,12 +215,18 @@ class LinSpacedGrid(UniformContinuousGrid):
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
-        return grid_helpers.linspace(self.start, self.stop, self.n_points)
+        return grid_helpers.linspace(
+            start=self.start, stop=self.stop, n_points=self.n_points
+        )
 
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
+    @overload
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
+    @overload
+    def get_coordinate(self, value: Array) -> Array: ...
+    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
         return grid_helpers.get_linspace_coordinate(
-            value, self.start, self.stop, self.n_points
+            value=value, start=self.start, stop=self.stop, n_points=self.n_points
         )
 
 
@@ -230,12 +246,18 @@ class LogSpacedGrid(UniformContinuousGrid):
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
-        return grid_helpers.logspace(self.start, self.stop, self.n_points)
+        return grid_helpers.logspace(
+            start=self.start, stop=self.stop, n_points=self.n_points
+        )
 
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
+    @overload
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
+    @overload
+    def get_coordinate(self, value: Array) -> Array: ...
+    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
         return grid_helpers.get_logspace_coordinate(
-            value, self.start, self.stop, self.n_points
+            value=value, start=self.start, stop=self.stop, n_points=self.n_points
         )
 
 
@@ -303,7 +325,11 @@ class IrregSpacedGrid(ContinuousGrid):
             return jnp.full(self.n_points, jnp.nan)
         return jnp.asarray(self.points)
 
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
+    @overload
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
+    @overload
+    def get_coordinate(self, value: Array) -> Array: ...
+    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
         if self.points is None:
             raise GridInitializationError(
@@ -311,7 +337,7 @@ class IrregSpacedGrid(ContinuousGrid):
                 "initialization or use IrregSpacedGrid(n_points=...) and "
                 "supply points at runtime via params."
             )
-        return grid_helpers.get_irreg_coordinate(value, self.to_jax())
+        return grid_helpers.get_irreg_coordinate(value=value, points=self.to_jax())
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -388,14 +414,18 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
         ]
         return jnp.concatenate(piece_arrays)
 
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
+    @overload
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
+    @overload
+    def get_coordinate(self, value: Array) -> Array: ...
+    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
         piece_idx = jnp.searchsorted(self._breakpoints, value, side="right")
         local_coord = grid_helpers.get_linspace_coordinate(
-            value,
-            self._piece_starts[piece_idx],
-            self._piece_stops[piece_idx],
-            self._piece_n_points[piece_idx],
+            value=value,
+            start=self._piece_starts[piece_idx],
+            stop=self._piece_stops[piece_idx],
+            n_points=self._piece_n_points[piece_idx],
         )
         return self._cumulative_offsets[piece_idx] + local_coord
 
@@ -455,20 +485,26 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
         """Convert the grid to a Jax array."""
         piece_arrays = [
             grid_helpers.logspace(
-                self._piece_starts[i], self._piece_stops[i], p.n_points
+                start=self._piece_starts[i],
+                stop=self._piece_stops[i],
+                n_points=p.n_points,
             )
             for i, p in enumerate(self.pieces)
         ]
         return jnp.concatenate(piece_arrays)
 
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
+    @overload
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
+    @overload
+    def get_coordinate(self, value: Array) -> Array: ...
+    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
         piece_idx = jnp.searchsorted(self._breakpoints, value, side="right")
         local_coord = grid_helpers.get_logspace_coordinate(
-            value,
-            self._piece_starts[piece_idx],
-            self._piece_stops[piece_idx],
-            self._piece_n_points[piece_idx],
+            value=value,
+            start=self._piece_starts[piece_idx],
+            stop=self._piece_stops[piece_idx],
+            n_points=self._piece_n_points[piece_idx],
         )
         return self._cumulative_offsets[piece_idx] + local_coord
 
@@ -621,6 +657,7 @@ def validate_category_class(category_class: type) -> list[str]:
 
 
 def _validate_continuous_grid(
+    *,
     start: float,
     stop: float,
     n_points: int,

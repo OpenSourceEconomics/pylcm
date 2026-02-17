@@ -300,6 +300,30 @@ initial_regimes = ["working", "working", "retired"]
 - Pre-commit hooks ensure code quality
 - Never use `from __future__ import annotations` — this project requires Python 3.14+
 
+### Naming and Docstring Conventions
+
+- **No unnecessary parameter aliases.** When a function has a single (or very few) call
+  site(s), the parameter name should match the variable name being passed. Don't shorten
+  parameter names just for brevity — e.g., use
+  `regime_transition_probs=regime_transition_probs` not `probs=regime_transition_probs`.
+- **Docstrings must match type annotations.** Use the type name from the annotation:
+  - `Mapping[...]` → "Mapping of ..." in docstrings
+  - `MappingProxyType[...]` → "Immutable mapping of ..." in docstrings
+  - `tuple[...]` → "Tuple of ..." in docstrings
+  - `list[...]` → "List of ..." in docstrings
+  - Never write "Dict" when the annotation is `Mapping` or `MappingProxyType`
+- **Consistent naming across a file.** When multiple functions in the same file use the
+  same concept (e.g., `arg_names`), use the same parameter name everywhere — don't
+  introduce synonyms like `parameters`.
+- **Helper function names follow `{verb}_{qualifier}_noun` patterns.** E.g.,
+  `get_irreg_coordinate`, `find_irreg_coordinate`, `get_linspace_coordinate` — not
+  `get_coordinate_irreg`.
+- **Use `@overload` when a function accepts both scalar and array inputs.** When a
+  function works with both `ScalarFloat` and `Array`, add overload declarations so the
+  type checker can track `(ScalarFloat) -> ScalarFloat` and `(Array) -> Array`
+  separately. Concrete subclass methods need their own overloads too (not just the
+  abstract base).
+
 ### Testing Style
 
 - Use plain pytest functions, never test classes (`class TestFoo`)

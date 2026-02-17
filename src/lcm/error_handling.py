@@ -5,7 +5,7 @@ from lcm.exceptions import InvalidValueFunctionError
 from lcm.typing import ScalarFloat
 
 
-def validate_value_function_array(V_arr: Array, age: ScalarFloat) -> None:
+def validate_value_function_array(*, V_arr: Array, age: ScalarFloat) -> None:
     """Validate the value function array for NaN values.
 
     This function checks the value function array for any NaN values. If any such values

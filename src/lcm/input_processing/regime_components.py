@@ -42,6 +42,7 @@ from lcm.utils import flatten_regime_namespace
 
 
 def build_Q_and_F_functions(
+    *,
     regime_name: str,
     regime: Regime,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
@@ -77,9 +78,9 @@ def build_Q_and_F_functions(
 
 
 def build_max_Q_over_a_functions(
+    *,
     state_action_space: StateActionSpace,
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
-    *,
     enable_jit: bool,
 ) -> MappingProxyType[int, MaxQOverAFunction]:
     max_Q_over_a_functions = {}
@@ -93,9 +94,10 @@ def build_max_Q_over_a_functions(
 
 
 def _build_max_Q_over_a_function(
+    *,
     state_action_space: StateActionSpace,
     Q_and_F: QAndFFunction,
-    enable_jit: bool,  # noqa: FBT001
+    enable_jit: bool,
 ) -> MaxQOverAFunction:
     max_Q_over_a = get_max_Q_over_a(
         Q_and_F=Q_and_F,
@@ -110,9 +112,9 @@ def _build_max_Q_over_a_function(
 
 
 def build_argmax_and_max_Q_over_a_functions(
+    *,
     state_action_space: StateActionSpace,
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
-    *,
     enable_jit: bool,
 ) -> MappingProxyType[int, ArgmaxQOverAFunction]:
     argmax_and_max_Q_over_a_functions = {}
@@ -123,7 +125,7 @@ def build_argmax_and_max_Q_over_a_functions(
             enable_jit=enable_jit,
         )
         argmax_and_max_Q_over_a_functions[period] = simulation_spacemap(
-            fn,
+            func=fn,
             actions_names=(),
             states_names=tuple(state_action_space.states),
         )
@@ -131,9 +133,10 @@ def build_argmax_and_max_Q_over_a_functions(
 
 
 def _build_argmax_and_max_Q_over_a_function(
+    *,
     state_action_space: StateActionSpace,
     Q_and_F: QAndFFunction,
-    enable_jit: bool,  # noqa: FBT001
+    enable_jit: bool,
 ) -> ArgmaxQOverAFunction:
     argmax_and_max_Q_over_a = get_argmax_and_max_Q_over_a(
         Q_and_F=Q_and_F,
@@ -148,12 +151,12 @@ def _build_argmax_and_max_Q_over_a_function(
 
 
 def build_next_state_simulation_functions(
+    *,
     internal_functions: InternalFunctions,
     grids: GridsDict,
     gridspecs: MappingProxyType[str, Grid],
     variable_info: pd.DataFrame,
     regime_params_template: RegimeParamsTemplate,
-    *,
     enable_jit: bool,
 ) -> NextStateSimulationFunction:
     next_state = get_next_state_function_for_simulation(
@@ -167,7 +170,9 @@ def build_next_state_simulation_functions(
 
     next_state_vmapped = vmap_1d(
         func=next_state,
-        variables=_get_vmap_params(sig_args, regime_params_template),
+        variables=_get_vmap_params(
+            all_args=sig_args, regime_params_template=regime_params_template
+        ),
     )
 
     next_state_vmapped = with_signature(
@@ -178,12 +183,12 @@ def build_next_state_simulation_functions(
 
 
 def build_regime_transition_probs_functions(
+    *,
     internal_functions: MappingProxyType[str, InternalUserFunction],
     regime_transition_probs: InternalUserFunction,
     grids: MappingProxyType[str, Array],
     regime_names_to_ids: RegimeNamesToIds,
     regime_params_template: RegimeParamsTemplate,
-    *,
     is_stochastic: bool,
     enable_jit: bool,
 ) -> PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]:
@@ -192,12 +197,12 @@ def build_regime_transition_probs_functions(
         probs_fn = regime_transition_probs
     else:
         probs_fn = _wrap_deterministic_regime_transition(
-            regime_transition_probs, regime_names_to_ids
+            fn=regime_transition_probs, regime_names_to_ids=regime_names_to_ids
         )
 
     # Wrap to convert array output to dict format
     wrapped_regime_transition_probs = _wrap_regime_transition_probs(
-        probs_fn, regime_names_to_ids
+        fn=probs_fn, regime_names_to_ids=regime_names_to_ids
     )
 
     functions_pool = dict(internal_functions) | {
@@ -223,8 +228,8 @@ def build_regime_transition_probs_functions(
     next_regime_vmapped = vmap_1d(
         func=next_regime_accepting_all,
         variables=_get_vmap_params(
-            tuple(inspect.signature(next_regime_accepting_all).parameters),
-            regime_params_template,
+            all_args=tuple(inspect.signature(next_regime_accepting_all).parameters),
+            regime_params_template=regime_params_template,
         ),
     )
 
@@ -235,6 +240,7 @@ def build_regime_transition_probs_functions(
 
 
 def _get_vmap_params(
+    *,
     all_args: tuple[str, ...],
     regime_params_template: RegimeParamsTemplate,
 ) -> tuple[str, ...]:
@@ -245,6 +251,7 @@ def _get_vmap_params(
 
 
 def _wrap_regime_transition_probs(
+    *,
     fn: InternalUserFunction,
     regime_names_to_ids: RegimeNamesToIds,
 ) -> InternalUserFunction:
@@ -291,6 +298,7 @@ def _wrap_regime_transition_probs(
 
 
 def _wrap_deterministic_regime_transition(
+    *,
     fn: InternalUserFunction,
     regime_names_to_ids: RegimeNamesToIds,
 ) -> InternalUserFunction:

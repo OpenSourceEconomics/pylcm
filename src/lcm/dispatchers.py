@@ -18,6 +18,7 @@ FunctionWithArrayReturn = TypeVar(
 
 
 def simulation_spacemap(
+    *,
     func: FunctionWithArrayReturn,
     actions_names: tuple[str, ...],
     states_names: tuple[str, ...],
@@ -65,7 +66,7 @@ def simulation_spacemap(
     mappable_func = allow_args(func)
 
     vmapped = _base_productmap(mappable_func, actions_names)
-    vmapped = vmap_1d(vmapped, variables=states_names, callable_with="only_args")
+    vmapped = vmap_1d(func=vmapped, variables=states_names, callable_with="only_args")
 
     # Callables do not necessarily have a __signature__ attribute.
     vmapped.__signature__ = inspect.signature(mappable_func)  # ty: ignore[unresolved-attribute]
@@ -74,9 +75,9 @@ def simulation_spacemap(
 
 
 def vmap_1d(
+    *,
     func: FunctionWithArrayReturn,
     variables: tuple[str, ...],
-    *,
     callable_with: Literal["only_args", "only_kwargs"] = "only_kwargs",
 ) -> FunctionWithArrayReturn:
     """Apply vmap such that func is mapped over the specified variables.
@@ -144,7 +145,7 @@ def vmap_1d(
 
 
 def productmap(
-    func: FunctionWithArrayReturn, variables: tuple[str, ...]
+    *, func: FunctionWithArrayReturn, variables: tuple[str, ...]
 ) -> FunctionWithArrayReturn:
     """Apply vmap such that func is evaluated on the Cartesian product of variables.
 

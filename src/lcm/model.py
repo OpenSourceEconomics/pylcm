@@ -82,7 +82,7 @@ class Model:
         """Initialize the Model.
 
         Args:
-            regimes: Dict mapping regime names to Regime instances.
+            regimes: Mapping of regime names to Regime instances.
             ages: Age grid for the model.
             description: Description of the model.
             regime_id_class: Dataclass mapping regime names to integer indices.
@@ -155,7 +155,9 @@ class Model:
         Returns:
             Dictionary mapping period to a value function array for each regime.
         """
-        internal_params = process_params(params, self.params_template)
+        internal_params = process_params(
+            params=params, params_template=self.params_template
+        )
         return solve(
             internal_params=internal_params,
             ages=self.ages,
@@ -184,11 +186,10 @@ class Model:
                   regime_0
                 - Function level: {"regime_0": {"func": {"arg_0": 0.0}}} - direct
                   specification
-            initial_states: Dict mapping state names to arrays. All arrays must have the
+            initial_states: Mapping of state names to arrays. All arrays must have the
                 same length (number of subjects). Each state name should correspond to a
                 state variable defined in at least one regime.
-            initial_regimes: List containing the names of the regimes the subjects
-                start in.
+            initial_regimes: List of regime names the subjects start in.
             V_arr_dict: Value function arrays from solve().
             seed: Random seed.
             debug_mode: Whether to enable debug logging.
@@ -198,7 +199,9 @@ class Model:
             optionally with additional_targets.
 
         """
-        internal_params = process_params(params, self.params_template)
+        internal_params = process_params(
+            params=params, params_template=self.params_template
+        )
         return simulate(
             internal_params=internal_params,
             initial_states=initial_states,
@@ -231,11 +234,10 @@ class Model:
                   regime_0
                 - Function level: {"regime_0": {"func": {"arg_0": 0.0}}} - direct
                   specification
-            initial_states: Dict mapping state names to arrays. All arrays must have the
+            initial_states: Mapping of state names to arrays. All arrays must have the
                 same length (number of subjects). Each state name should correspond to a
                 state variable defined in at least one regime.
-            initial_regimes: List containing the names of the regimes the subjects
-                start in.
+            initial_regimes: List of regime names the subjects start in.
             seed: Random seed.
             debug_mode: Whether to enable debug logging.
 
@@ -256,10 +258,10 @@ class Model:
 
 
 def _build_regimes_and_template(
+    *,
     regimes: Mapping[str, Regime],
     ages: AgeGrid,
     regime_names_to_ids: RegimeNamesToIds,
-    *,
     enable_jit: bool,
     fixed_params: UserParams,
 ) -> tuple[MappingProxyType[RegimeName, InternalRegime], ParamsTemplate]:
@@ -278,19 +280,22 @@ def _build_regimes_and_template(
     params_template = create_params_template(internal_regimes)
 
     if fixed_params:
-        fixed_internal = _resolve_fixed_params(dict(fixed_params), params_template)
+        fixed_internal = _resolve_fixed_params(
+            fixed_params=dict(fixed_params), template=params_template
+        )
         if any(v for v in fixed_internal.values()):
             internal_regimes = _partial_fixed_params_into_regimes(
-                internal_regimes, fixed_internal
+                internal_regimes=internal_regimes, fixed_internal=fixed_internal
             )
             params_template = _remove_fixed_from_template(
-                params_template, fixed_internal
+                template=params_template, fixed_internal=fixed_internal
             )
 
     return internal_regimes, params_template
 
 
 def _validate_model_inputs(
+    *,
     n_periods: int,
     regimes: Mapping[str, Regime],
     regime_id_class: type,
@@ -398,6 +403,7 @@ def _validate_all_variables_used(regimes: Mapping[str, Regime]) -> list[str]:
 
 
 def _find_candidates(
+    *,
     key: str,
     params_flat: Mapping[str, object],
 ) -> list[str]:
@@ -421,6 +427,7 @@ def _find_candidates(
 
 
 def _resolve_fixed_params(
+    *,
     fixed_params: dict[str, object],
     template: ParamsTemplate,
 ) -> InternalParams:
@@ -437,7 +444,7 @@ def _resolve_fixed_params(
     used_keys: set[str] = set()
 
     for key in template_flat:
-        candidates = _find_candidates(key, params_flat)
+        candidates = _find_candidates(key=key, params_flat=params_flat)
 
         if len(candidates) > 1:
             raise ModelInitializationError(
@@ -467,6 +474,7 @@ def _resolve_fixed_params(
 
 
 def _remove_fixed_from_template(
+    *,
     template: ParamsTemplate,
     fixed_internal: InternalParams,
 ) -> ParamsTemplate:
@@ -497,6 +505,7 @@ def _remove_fixed_from_template(
 
 
 def _partial_fixed_params_into_regimes(
+    *,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     fixed_internal: InternalParams,
 ) -> MappingProxyType[RegimeName, InternalRegime]:
@@ -530,10 +539,10 @@ def _partial_fixed_params_into_regimes(
         # inspect.signature (used by dags.concatenate_functions in to_dataframe).
         if regime.regime_transition_probs is not None:
             tp_solve_fixed = _filter_kwargs_for_func(
-                regime.regime_transition_probs.solve, regime_fixed
+                func=regime.regime_transition_probs.solve, kwargs=regime_fixed
             )
             tp_sim_fixed = _filter_kwargs_for_func(
-                regime.regime_transition_probs.simulate, regime_fixed
+                func=regime.regime_transition_probs.simulate, kwargs=regime_fixed
             )
             new_regime_tp = PhaseVariantContainer(
                 solve=functools.partial(
@@ -571,7 +580,7 @@ def _partial_fixed_params_into_regimes(
 
 
 def _filter_kwargs_for_func(
-    func: Callable, kwargs: Mapping[str, object]
+    *, func: Callable, kwargs: Mapping[str, object]
 ) -> Mapping[str, object]:
     """Filter kwargs to only those accepted by func's signature."""
 

@@ -61,14 +61,16 @@ def allow_only_kwargs(
         kw_only_kwargs = {k: kwargs[k] for k in kw_only_parameters}
 
         # Get kwargs that must be converted to positional arguments
-        pos_kwargs = {
+        positional_kwargs = {
             k: v
             for k, v in kwargs.items()
             if (k not in kw_only_parameters) and (k in parameters)
         }
 
         # Collect all positional arguments in correct order
-        positional = convert_kwargs_to_args(pos_kwargs, list(parameters))
+        positional = convert_kwargs_to_args(
+            kwargs=positional_kwargs, arg_names=list(parameters)
+        )
 
         return func(*positional, **kw_only_kwargs)
 
@@ -130,7 +132,9 @@ def allow_args(func: Callable[..., ReturnType]) -> Callable[..., ReturnType]:
             raise ValueError(msg)
 
         # Convert all arguments to positional arguments in correct order
-        positional = list(args) + convert_kwargs_to_args(kwargs, list(parameters))
+        positional = list(args) + convert_kwargs_to_args(
+            kwargs=kwargs, arg_names=list(parameters)
+        )
 
         # Extract positional-only arguments
         positional_only = positional[:n_positional_only_parameters]
@@ -174,6 +178,7 @@ def get_union_of_arguments(list_of_functions: list[Callable[..., Any]]) -> set[s
 
 
 def all_as_kwargs(
+    *,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
     arg_names: list[str],
@@ -193,6 +198,7 @@ def all_as_kwargs(
 
 
 def all_as_args(
+    *,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
     arg_names: list[str],
@@ -208,19 +214,21 @@ def all_as_args(
         A tuple of all arguments.
 
     """
-    return args + tuple(convert_kwargs_to_args(kwargs, arg_names))
+    return args + tuple(convert_kwargs_to_args(kwargs=kwargs, arg_names=arg_names))
 
 
-def convert_kwargs_to_args(kwargs: dict[str, Any], parameters: list[str]) -> list[Any]:
-    """Convert kwargs to args in the order of parameters.
+def convert_kwargs_to_args(
+    *, kwargs: dict[str, Any], arg_names: list[str]
+) -> list[Any]:
+    """Convert kwargs to args in the order of arg_names.
 
     Args:
         kwargs: Keyword arguments.
-        parameters: List of parameter names in the order they should be.
+        arg_names: List of argument names in the order they should be.
 
     Returns:
-        List of arguments in the order of parameters.
+        List of arguments in the order of arg_names.
 
     """
-    sorted_kwargs = dict(sorted(kwargs.items(), key=lambda kw: parameters.index(kw[0])))
+    sorted_kwargs = dict(sorted(kwargs.items(), key=lambda kw: arg_names.index(kw[0])))
     return list(sorted_kwargs.values())

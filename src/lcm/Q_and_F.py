@@ -29,6 +29,7 @@ from lcm.utils import normalize_regime_transition_probs
 
 
 def get_Q_and_F(
+    *,
     regime_name: str,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     period: int,
@@ -64,14 +65,14 @@ def get_Q_and_F(
     next_V = {}
 
     target_regimes = tuple(internal_functions.transitions)
-    active_target_regimes = tuple(
+    active_regimes_next_period = tuple(
         target_name
         for target_name in target_regimes
         if period + 1 in regimes_to_active_periods[target_name]
     )
     next_V_extra_param_names: dict[str, frozenset[str]] = {}
 
-    for target_regime in active_target_regimes:
+    for target_regime in active_regimes_next_period:
         # Transitions from the current regime to the target regime
         transitions = internal_functions.transitions[target_regime]
 
@@ -100,7 +101,7 @@ def get_Q_and_F(
             get_union_of_arguments([_scalar_next_V]) - set(transitions) - {"next_V_arr"}
         )
         next_V[target_regime] = productmap(
-            _scalar_next_V,
+            func=_scalar_next_V,
             variables=tuple(
                 key
                 for key, value in transitions.items()
@@ -154,11 +155,12 @@ def get_Q_and_F(
         )
         # Normalize probabilities over active regimes
         normalized_regime_transition_prob = normalize_regime_transition_probs(
-            regime_transition_prob, active_target_regimes
+            regime_transition_probs=regime_transition_prob,
+            active_regimes_next_period=active_regimes_next_period,
         )
 
         continuation_value = jnp.zeros_like(U_arr)
-        for target_regime_name in active_target_regimes:
+        for target_regime_name in active_regimes_next_period:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,
                 period=period,
@@ -217,6 +219,7 @@ def get_Q_and_F(
 
 
 def get_Q_and_F_terminal(
+    *,
     internal_functions: InternalFunctions,
     period: int,
     age: float,
@@ -281,6 +284,7 @@ def get_Q_and_F_terminal(
 
 def _get_arg_names_of_Q_and_F(
     deps: list[Callable[..., Any]],
+    *,
     include: frozenset[str] = frozenset(),
     exclude: frozenset[str] = frozenset(),
 ) -> tuple[str, ...]:
@@ -300,6 +304,7 @@ def _get_arg_names_of_Q_and_F(
 
 
 def _get_joint_weights_function(
+    *,
     regime_name: RegimeName,
     transitions: MappingProxyType[str, InternalUserFunction],
 ) -> Callable[..., FloatND]:
@@ -329,7 +334,7 @@ def _get_joint_weights_function(
         weights = jnp.array(list(kwargs.values()))
         return jnp.prod(weights)
 
-    return productmap(_outer, variables=tuple(arg_names))
+    return productmap(func=_outer, variables=tuple(arg_names))
 
 
 def _get_U_and_F(

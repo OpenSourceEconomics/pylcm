@@ -11,9 +11,9 @@ from lcm.shocks import _ShockGrid
 
 
 def create_state_action_space(
+    *,
     variable_info: pd.DataFrame,
     grids: MappingProxyType[str, Array],
-    *,
     states: dict[str, Array] | None = None,
 ) -> StateActionSpace:
     """Create a state-action-space.
@@ -103,7 +103,7 @@ def create_state_space_info(regime: Regime) -> StateSpaceInfo:
 
 
 def _validate_all_states_present(
-    provided_states: dict[str, Array], required_states_names: set[str]
+    *, provided_states: dict[str, Array], required_states_names: set[str]
 ) -> None:
     """Check that all states are present in the provided states."""
     provided_states_names = set(provided_states)

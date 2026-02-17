@@ -64,6 +64,7 @@ def get_variable_info(regime: Regime) -> pd.DataFrame:
 
 
 def _indicator_enters_concurrent_valuation(
+    *,
     states_and_actions_names: list[str],
     regime: Regime,
 ) -> pd.Series[bool]:
@@ -93,6 +94,7 @@ def _indicator_enters_concurrent_valuation(
 
 
 def _indicator_enters_transition(
+    *,
     states_and_actions_names: list[str],
     regime: Regime,
 ) -> pd.Series[bool]:

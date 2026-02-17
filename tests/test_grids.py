@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 import portion
 import pytest
+from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm.exceptions import GridInitializationError
 from lcm.grids import (
@@ -19,7 +20,7 @@ from lcm.grids import (
     validate_category_class,
 )
 from lcm.utils import get_field_names_and_values
-from tests.conftest import X64_ENABLED
+from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 
 # ======================================================================================
 # Tests for DiscreteGrid and category class helpers
@@ -181,31 +182,31 @@ def test_discrete_grid_invalid_category_class():
 def test_validate_continuous_grid_invalid_start():
     error_msg = "start must be a scalar int or float value"
     with pytest.raises(GridInitializationError, match=error_msg):
-        _validate_continuous_grid("a", 1, 10)  # ty: ignore[invalid-argument-type]
+        _validate_continuous_grid(start="a", stop=1, n_points=10)  # ty: ignore[invalid-argument-type]
 
 
 def test_validate_continuous_grid_invalid_stop():
     error_msg = "stop must be a scalar int or float value"
     with pytest.raises(GridInitializationError, match=error_msg):
-        _validate_continuous_grid(1, "a", 10)  # ty: ignore[invalid-argument-type]
+        _validate_continuous_grid(start=1, stop="a", n_points=10)  # ty: ignore[invalid-argument-type]
 
 
 def test_validate_continuous_grid_invalid_n_points():
     error_msg = "n_points must be an int greater than 0 but is a"
     with pytest.raises(GridInitializationError, match=error_msg):
-        _validate_continuous_grid(1, 2, "a")  # ty: ignore[invalid-argument-type]
+        _validate_continuous_grid(start=1, stop=2, n_points="a")  # ty: ignore[invalid-argument-type]
 
 
 def test_validate_continuous_grid_negative_n_points():
     error_msg = "n_points must be an int greater than 0 but is -1"
     with pytest.raises(GridInitializationError, match=error_msg):
-        _validate_continuous_grid(1, 2, -1)
+        _validate_continuous_grid(start=1, stop=2, n_points=-1)
 
 
 def test_validate_continuous_grid_start_greater_than_stop():
     error_msg = "start must be less than stop"
     with pytest.raises(GridInitializationError, match=error_msg):
-        _validate_continuous_grid(2, 1, 10)
+        _validate_continuous_grid(start=2, stop=1, n_points=10)
 
 
 # --------------------------------------------------------------------------------------
@@ -695,3 +696,49 @@ def test_piecewise_single_piece():
     assert float(grid.get_coordinate(0.0)) == pytest.approx(0.0)
     assert float(grid.get_coordinate(5.0)) == pytest.approx(5.0)
     assert float(grid.get_coordinate(10.0)) == pytest.approx(10.0)
+
+
+# ======================================================================================
+# get_coordinate with Array values
+# ======================================================================================
+
+
+def test_lin_spaced_grid_get_coordinate_with_array():
+    grid = LinSpacedGrid(start=1, stop=2, n_points=6)
+    values = jnp.array([1.0, 1.2, 1.5])
+    coords = grid.get_coordinate(values)
+    expected = jnp.array([0.0, 1.0, 2.5])
+    aaae(coords, expected, decimal=DECIMAL_PRECISION)
+
+
+def test_log_spaced_grid_get_coordinate_with_array():
+    grid = LogSpacedGrid(start=1, stop=100, n_points=7)
+    points = grid.to_jax()
+    mid = (float(points[1]) + float(points[2])) / 2
+    coords = grid.get_coordinate(jnp.array([mid]))
+    aaae(coords, jnp.array([1.5]), decimal=DECIMAL_PRECISION)
+
+
+def test_irreg_spaced_grid_get_coordinate_with_array():
+    grid = IrregSpacedGrid(points=[0.0, 1.0, 3.0, 6.0])
+    values = jnp.array([0.5, 3.0, 4.5])
+    coords = grid.get_coordinate(values)
+    expected = jnp.array([0.5, 2.0, 2.5])
+    aaae(coords, expected, decimal=DECIMAL_PRECISION)
+
+
+def test_piecewise_lin_spaced_grid_get_coordinate_with_array():
+    grid = PiecewiseLinSpacedGrid(pieces=(Piece(interval="[0, 10]", n_points=11),))
+    values = jnp.array([0.0, 5.0, 10.0])
+    coords = grid.get_coordinate(values)
+    expected = jnp.array([0.0, 5.0, 10.0])
+    aaae(coords, expected, decimal=DECIMAL_PRECISION)
+
+
+def test_piecewise_log_spaced_grid_get_coordinate_with_array():
+    grid = PiecewiseLogSpacedGrid(pieces=(Piece(interval="[1, 100]", n_points=3),))
+    points = grid.to_jax()
+    values = jnp.array([float(points[0]), float(points[1]), float(points[2])])
+    coords = grid.get_coordinate(values)
+    expected = jnp.array([0.0, 1.0, 2.0])
+    aaae(coords, expected, decimal=DECIMAL_PRECISION)

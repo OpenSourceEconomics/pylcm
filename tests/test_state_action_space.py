@@ -125,7 +125,9 @@ def test_create_state_space_info():
             "wealth": LinSpacedGrid(
                 start=0, stop=100, n_points=5, transition=lambda wealth: wealth
             ),
-            "health": DiscreteGrid(HealthStatus, transition=lambda health: health),
+            "health": DiscreteGrid(
+                category_class=HealthStatus, transition=lambda health: health
+            ),
         },
         active=lambda age: age < 5,
     )

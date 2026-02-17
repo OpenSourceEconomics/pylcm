@@ -18,6 +18,7 @@ from lcm.utils import flatten_regime_namespace, normalize_regime_transition_prob
 
 
 def create_regime_state_action_space(
+    *,
     internal_regime: InternalRegime,
     states: MappingProxyType[str, Array],
 ) -> StateActionSpace:
@@ -48,11 +49,12 @@ def create_regime_state_action_space(
 
 
 def calculate_next_states(
+    *,
     internal_regime: InternalRegime,
     optimal_actions: MappingProxyType[str, Array],
     period: int,
     age: float,
-    flat_regime_params: FlatRegimeParams,
+    regime_params: FlatRegimeParams,
     states: MappingProxyType[str, Array],
     state_action_space: StateActionSpace,
     key: Array,
@@ -66,7 +68,7 @@ def calculate_next_states(
         optimal_actions: Optimal actions computed for these subjects.
         period: Current period.
         age: Age corresponding to current period.
-        flat_regime_params: Flat regime parameters.
+        regime_params: Flat regime parameters.
         states: Current states for all subjects (all regimes).
         state_action_space: State-action space for subjects in this regime.
         key: JAX random key.
@@ -106,7 +108,7 @@ def calculate_next_states(
         **stochastic_variables_keys,
         period=period,
         age=age,
-        **flat_regime_params,
+        **regime_params,
     )
 
     # Update global states array with computed next states for subjects in regime
@@ -121,12 +123,13 @@ def calculate_next_states(
 
 
 def calculate_next_regime_membership(
+    *,
     internal_regime: InternalRegime,
     state_action_space: StateActionSpace,
     optimal_actions: MappingProxyType[str, Array],
     period: int,
     age: float,
-    flat_regime_params: FlatRegimeParams,
+    regime_params: FlatRegimeParams,
     regime_names_to_ids: MappingProxyType[RegimeName, int],
     new_subject_regime_ids: Int1D,
     active_regimes_next_period: tuple[RegimeName, ...],
@@ -144,10 +147,10 @@ def calculate_next_regime_membership(
         optimal_actions: Optimal actions computed for these subjects.
         period: Current period.
         age: Age corresponding to current period.
-        flat_regime_params: Flat regime parameters.
+        regime_params: Flat regime parameters.
         regime_names_to_ids: Mapping from regime names to integer IDs.
         new_subject_regime_ids: Array to update with next regime assignments.
-        active_regimes_next_period: List of active regimes in the next period.
+        active_regimes_next_period: Tuple of active regime names in the next period.
         key: JAX random key.
         subjects_in_regime: Boolean array indicating if subject is in regime.
 
@@ -166,15 +169,16 @@ def calculate_next_regime_membership(
             **optimal_actions,
             period=period,
             age=age,
-            **flat_regime_params,
+            **regime_params,
         )
     )
     normalized_regime_transition_probs = normalize_regime_transition_probs(
-        regime_transition_probs, active_regimes_next_period
+        regime_transition_probs=regime_transition_probs,
+        active_regimes_next_period=active_regimes_next_period,
     )
 
     _validate_normalized_regime_transition_probs(
-        normalized_regime_transition_probs,
+        normalized_regime_transition_probs=normalized_regime_transition_probs,
         regime_name=internal_regime.name,
         period=period,
     )
@@ -189,8 +193,8 @@ def calculate_next_regime_membership(
 
     next_regime_ids = draw_key_from_dict(
         d=normalized_regime_transition_probs,
-        keys=regime_transition_key["key_regime_transition"],
         regime_names_to_ids=regime_names_to_ids,
+        keys=regime_transition_key["key_regime_transition"],
     )
 
     # Update global regime membership array
@@ -199,6 +203,7 @@ def calculate_next_regime_membership(
 
 
 def draw_key_from_dict(
+    *,
     d: MappingProxyType[str, Array],
     regime_names_to_ids: RegimeNamesToIds,
     keys: Array,
@@ -237,6 +242,7 @@ def draw_key_from_dict(
 
 
 def _update_states_for_subjects(
+    *,
     all_states: MappingProxyType[str, Array],
     computed_next_states: MappingProxyType[str, Array],
     subject_indices: Bool1D,
@@ -271,8 +277,9 @@ def _update_states_for_subjects(
     return MappingProxyType(updated_states)
 
 
-def validate_flat_initial_states(
-    flat_initial_states: Mapping[str, Array],
+def validate_initial_states(
+    *,
+    initial_states: Mapping[str, Array],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
 ) -> None:
     """Validate flat initial_states dict.
@@ -283,8 +290,9 @@ def validate_flat_initial_states(
     3. All arrays have the same length (same number of subjects)
 
     Args:
-        flat_initial_states: Dict mapping state names to arrays.
-        internal_regimes: Dict of internal regime instances.
+        initial_states: Mapping of state names to arrays.
+        internal_regimes: Immutable mapping of regime names to internal regime
+            instances.
 
     Raises:
         InvalidInitialStatesError: If validation fails with descriptive message.
@@ -296,7 +304,7 @@ def validate_flat_initial_states(
         regime_states = set(internal_regime.variable_info.query("is_state").index)
         required_states.update(regime_states)
 
-    provided_states = set(flat_initial_states.keys())
+    provided_states = set(initial_states.keys())
 
     # Check for missing states
     missing = required_states - provided_states
@@ -315,8 +323,8 @@ def validate_flat_initial_states(
         )
 
     # Check array lengths are consistent
-    if flat_initial_states:
-        lengths = {name: len(arr) for name, arr in flat_initial_states.items()}
+    if initial_states:
+        lengths = {name: len(arr) for name, arr in initial_states.items()}
         unique_lengths = set(lengths.values())
         if len(unique_lengths) > 1:
             raise InvalidInitialStatesError(
@@ -325,8 +333,9 @@ def validate_flat_initial_states(
             )
 
 
-def convert_flat_to_nested_initial_states(
-    flat_initial_states: Mapping[str, Array],
+def convert_initial_states_to_nested(
+    *,
+    initial_states: Mapping[str, Array],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
 ) -> dict[RegimeName, dict[str, Array]]:
     """Convert flat initial_states dict to nested format.
@@ -335,9 +344,10 @@ def convert_flat_to_nested_initial_states(
     expected by internal simulation code.
 
     Args:
-        flat_initial_states: Dict mapping state names to arrays.
+        initial_states: Mapping of state names to arrays.
             Example: {"wealth": arr, "health": arr}
-        internal_regimes: Dict of internal regime instances.
+        internal_regimes: Immutable mapping of regime names to internal regime
+            instances.
 
     Returns:
         Nested dict mapping regime names to state dicts.
@@ -349,19 +359,19 @@ def convert_flat_to_nested_initial_states(
     for regime_name, internal_regime in internal_regimes.items():
         regime_state_names = set(internal_regime.variable_info.query("is_state").index)
         nested[regime_name] = {
-            state_name: flat_initial_states[state_name]
-            for state_name in regime_state_names
+            state_name: initial_states[state_name] for state_name in regime_state_names
         }
 
     return nested
 
 
 def _validate_normalized_regime_transition_probs(
-    normalized_probs: MappingProxyType[str, Array],
+    *,
+    normalized_regime_transition_probs: MappingProxyType[str, Array],
     regime_name: str,
     period: int,
 ) -> None:
-    probs = jnp.array(list(normalized_probs.values()))
+    probs = jnp.array(list(normalized_regime_transition_probs.values()))
     sum_probs = jnp.sum(probs, axis=0)
     if not jnp.allclose(sum_probs, 1.0):
         raise InvalidRegimeTransitionProbabilitiesError(

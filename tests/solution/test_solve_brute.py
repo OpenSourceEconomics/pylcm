@@ -29,7 +29,7 @@ class InternalRegimeMock:
     max_Q_over_a_functions: dict[int, MaxQOverAFunction]
     active_periods: list[int]
 
-    def state_action_space(self, flat_regime_params):  # noqa: ARG002
+    def state_action_space(self, regime_params):  # noqa: ARG002
         return self._base_state_action_space
 
 

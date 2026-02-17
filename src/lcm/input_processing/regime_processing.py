@@ -62,10 +62,10 @@ def _wrap_transitions(
 
 
 def process_regimes(
+    *,
     regimes: Mapping[str, Regime],
     ages: AgeGrid,
     regime_names_to_ids: RegimeNamesToIds,
-    *,
     enable_jit: bool,
 ) -> MappingProxyType[RegimeName, InternalRegime]:
     """Process user regimes into internal regimes.
@@ -136,7 +136,7 @@ def process_regimes(
         regime_params_template = create_regime_params_template(regime)
 
         internal_functions = _get_internal_functions(
-            regime,
+            regime=regime,
             regime_name=name,
             nested_transitions=nested_transitions[name],
             grids=grids,
@@ -206,6 +206,7 @@ def process_regimes(
 
 
 def _get_internal_functions(
+    *,
     regime: Regime,
     regime_name: str,
     nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
@@ -214,7 +215,6 @@ def _get_internal_functions(
     regime_names_to_ids: RegimeNamesToIds,
     gridspecs: MappingProxyType[str, Grid],
     variable_info: pd.DataFrame,
-    *,
     enable_jit: bool,
 ) -> InternalFunctions:
     """Process the user provided regime functions.
@@ -224,7 +224,7 @@ def _get_internal_functions(
         regime_name: The name of the regime.
         nested_transitions: Nested transitions dict for internal processing.
             Format: {"regime_name": {"next_state": fn, ...}, "next_regime": fn}
-        grids: Dict containing the state grids for each regime.
+        grids: Immutable mapping of regime names to grid arrays.
         regime_params_template: The regime's parameter template.
         regime_names_to_ids: Mapping from regime names to integer indices.
         gridspecs: The specifications of the current regimes grids.
@@ -360,6 +360,7 @@ def _get_internal_functions(
 
 
 def _extract_transitions_from_regime(
+    *,
     regime: Regime,
     states_per_regime: Mapping[str, set[str]],
 ) -> dict[str, dict[str, UserFunction] | UserFunction]:
@@ -372,7 +373,7 @@ def _extract_transitions_from_regime(
 
     Args:
         regime: The user regime.
-        states_per_regime: Dict mapping regime names to their state names.
+        states_per_regime: Mapping of regime names to their state names.
 
     Returns:
         Nested transitions dict in the format expected by _get_internal_functions.
@@ -427,6 +428,7 @@ def _extract_param_key(fn_name: str) -> str:
 
 
 def _rename_params_to_qnames(
+    *,
     fn: UserFunction,
     regime_params_template: RegimeParamsTemplate,
     param_key: str,
@@ -451,7 +453,7 @@ def _rename_params_to_qnames(
     return cast("InternalUserFunction", rename_arguments(fn, mapper=mapper))
 
 
-def _get_stochastic_next_function(fn: UserFunction, grid: Int1D) -> UserFunction:
+def _get_stochastic_next_function(*, fn: UserFunction, grid: Int1D) -> UserFunction:
     @with_signature(args=None, return_annotation="Int1D")
     @functools.wraps(fn)
     def next_func(**kwargs: Any) -> Int1D:  # noqa: ANN401, ARG001
@@ -460,7 +462,9 @@ def _get_stochastic_next_function(fn: UserFunction, grid: Int1D) -> UserFunction
     return next_func
 
 
-def _get_stochastic_next_function_for_shock(name: str, grid: Float1D) -> UserFunction:
+def _get_stochastic_next_function_for_shock(
+    *, name: str, grid: Float1D
+) -> UserFunction:
     """Get function that returns the indices in the vf arr of the next shock states."""
 
     @with_signature(args={f"{name}": "ContinuousState"}, return_annotation="Int1D")
@@ -471,7 +475,7 @@ def _get_stochastic_next_function_for_shock(name: str, grid: Float1D) -> UserFun
     return next_func
 
 
-def _get_weights_fn_for_shock(name: str, gridspec: _ShockGrid) -> UserFunction:
+def _get_weights_fn_for_shock(*, name: str, gridspec: _ShockGrid) -> UserFunction:
     """Get function that uses linear interpolation to calculate the shock weights.
 
     For shocks whose params are supplied at runtime, the grid points and transition
@@ -497,7 +501,7 @@ def _get_weights_fn_for_shock(name: str, gridspec: _ShockGrid) -> UserFunction:
             }
             grid_points = _compute_gridpoints(n_points, **shock_kw)  # ty: ignore[invalid-argument-type]
             transition_probs = _compute_transition_probs(n_points, **shock_kw)  # ty: ignore[invalid-argument-type]
-            coord = get_irreg_coordinate(kwargs[name], grid_points)
+            coord = get_irreg_coordinate(value=kwargs[name], points=grid_points)
             return map_coordinates(
                 input=transition_probs,
                 coordinates=[
@@ -517,7 +521,7 @@ def _get_weights_fn_for_shock(name: str, gridspec: _ShockGrid) -> UserFunction:
         enforce=False,
     )
     def weights_func(*args: Array, **kwargs: Array) -> Float1D:  # noqa: ARG001
-        coordinate = get_irreg_coordinate(kwargs[f"{name}"], grid_points)
+        coordinate = get_irreg_coordinate(value=kwargs[f"{name}"], points=grid_points)
         return map_coordinates(
             input=transition_probs,
             coordinates=[

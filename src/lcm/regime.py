@@ -63,7 +63,7 @@ class _IdentityTransition:
         return kwargs[self._state_name]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class Regime:
     """A user regime which can be processed into an internal regime.
 

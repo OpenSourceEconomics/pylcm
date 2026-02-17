@@ -112,7 +112,7 @@ def test_convert_kwargs_to_args():
     kwargs = {"a": 1, "b": 2, "c": 3}
     parameters = ["c", "a", "b"]
     exp = [3, 1, 2]
-    got = convert_kwargs_to_args(kwargs, parameters)
+    got = convert_kwargs_to_args(kwargs=kwargs, arg_names=parameters)
     assert got == exp
 
 

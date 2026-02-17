@@ -19,6 +19,7 @@ from lcm.typing import (
 
 
 def get_max_Q_over_c(
+    *,
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
     continuous_actions_names: tuple[str, ...],
     states_and_discrete_actions_names: tuple[str, ...],
@@ -74,10 +75,11 @@ def get_max_Q_over_c(
         )
         return Q_arr.max(where=F_arr, initial=-jnp.inf)
 
-    return productmap(max_Q_over_c, variables=states_and_discrete_actions_names)
+    return productmap(func=max_Q_over_c, variables=states_and_discrete_actions_names)
 
 
 def get_argmax_and_max_Q_over_c(
+    *,
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
     continuous_actions_names: tuple[str, ...],
 ) -> ArgmaxQOverCFunction:

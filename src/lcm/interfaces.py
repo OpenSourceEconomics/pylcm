@@ -119,7 +119,7 @@ class StateActionSpace:
         )
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class StateSpaceInfo:
     """Information to work with the output of a function evaluated on a state space.
 
@@ -156,12 +156,12 @@ class PhaseVariantContainer[S, T]:
 
     __slots__ = ("simulate", "solve")
 
-    def __init__(self, solve: S, simulate: T) -> None:
+    def __init__(self, *, solve: S, simulate: T) -> None:
         self.solve = solve
         self.simulate = simulate
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class InternalRegime:
     """Internal representation of a user regime."""
 
@@ -190,9 +190,7 @@ class InternalRegime:
     # Resolved fixed params (flat) for this regime, used by to_dataframe targets
     resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
 
-    def state_action_space(
-        self, flat_regime_params: FlatRegimeParams
-    ) -> StateActionSpace:
+    def state_action_space(self, regime_params: FlatRegimeParams) -> StateActionSpace:
         """Return the state-action space with runtime state grids filled in.
 
         For IrregSpacedGrid with runtime-supplied points, the grid points come from
@@ -201,13 +199,13 @@ class InternalRegime:
         resolved_fixed_params.
 
         Args:
-            flat_regime_params: Flat regime parameters supplied at runtime.
+            regime_params: Flat regime parameters supplied at runtime.
 
         Returns:
             Completed state-action space.
 
         """
-        all_params = {**self.resolved_fixed_params, **flat_regime_params}
+        all_params = {**self.resolved_fixed_params, **regime_params}
         replacements: dict[str, object] = {}
         for state_name, spec in self.gridspecs.items():
             if state_name not in self._base_state_action_space.states:

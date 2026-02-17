@@ -19,6 +19,7 @@ from lcm.typing import (
 
 
 def get_max_Q_over_a(
+    *,
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
     actions_names: tuple[str, ...],
     states_names: tuple[str, ...],
@@ -55,7 +56,9 @@ def get_max_Q_over_a(
 
     """
     # Extract extra param names from Q_and_F's signature (flat regime params)
-    extra_param_names = _get_extra_param_names(Q_and_F, actions_names, states_names)
+    extra_param_names = _get_extra_param_names(
+        Q_and_F=Q_and_F, actions_names=actions_names, states_names=states_names
+    )
 
     Q_and_F = productmap(
         func=Q_and_F,
@@ -77,10 +80,11 @@ def get_max_Q_over_a(
         )
         return Q_arr.max(where=F_arr, initial=-jnp.inf)
 
-    return productmap(max_Q_over_a, variables=states_names)
+    return productmap(func=max_Q_over_a, variables=states_names)
 
 
 def get_argmax_and_max_Q_over_a(
+    *,
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
     actions_names: tuple[str, ...],
     states_names: tuple[str, ...],
@@ -119,7 +123,9 @@ def get_argmax_and_max_Q_over_a(
 
     """
     # Extract extra param names from Q_and_F's signature (flat regime params)
-    extra_param_names = _get_extra_param_names(Q_and_F, actions_names, states_names)
+    extra_param_names = _get_extra_param_names(
+        Q_and_F=Q_and_F, actions_names=actions_names, states_names=states_names
+    )
 
     Q_and_F = productmap(
         func=Q_and_F,
@@ -150,6 +156,7 @@ def get_argmax_and_max_Q_over_a(
 
 
 def _get_extra_param_names(
+    *,
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
     actions_names: tuple[str, ...],
     states_names: tuple[str, ...],
