@@ -5,6 +5,9 @@ from typing import Any, Protocol
 from jax import Array
 from jaxtyping import Bool, Float, Int, Scalar
 
+from lcm.params import MappingLeaf
+from lcm.params.sequence_leaf import SequenceLeaf
+
 type ContinuousState = Float[Array, "..."]
 type ContinuousAction = Float[Array, "..."]
 type DiscreteState = Int[Array, "..."]
@@ -40,7 +43,17 @@ type UserParams = Mapping[
     bool
     | float
     | Array
-    | Mapping[str, bool | float | Array | Mapping[str, bool | float | Array]],
+    | MappingLeaf
+    | SequenceLeaf
+    | Mapping[
+        str,
+        bool
+        | float
+        | Array
+        | MappingLeaf
+        | SequenceLeaf
+        | Mapping[str, bool | float | Array | MappingLeaf | SequenceLeaf],
+    ],
 ]
 
 # Internal regime parameters: A flat mapping with function-qualified names.

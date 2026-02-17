@@ -276,6 +276,12 @@ initial_regimes = ["working", "working", "retired"]
 - Google-style docstrings
 - All functions require type annotations
 - Pre-commit hooks ensure code quality
+- Never use `from __future__ import annotations` — this project requires Python 3.14+
+
+### Testing Style
+
+- Use plain pytest functions, never test classes (`class TestFoo`)
+- Use `@pytest.mark.parametrize` for test variations
 
 ### Testing Style
 

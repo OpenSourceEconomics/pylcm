@@ -9,6 +9,8 @@ import jax.numpy as jnp
 from dags.tree import flatten_to_qnames, unflatten_from_qnames
 from jax import Array
 
+from lcm.params import MappingLeaf
+from lcm.params.sequence_leaf import SequenceLeaf
 from lcm.typing import RegimeName
 
 T = TypeVar("T")
@@ -16,6 +18,8 @@ T = TypeVar("T")
 
 def _make_immutable(value: Any) -> Any:  # noqa: ANN401
     """Recursively convert a value to its immutable equivalent."""
+    if isinstance(value, (MappingLeaf, SequenceLeaf)):
+        return value  # already immutable by construction
     if isinstance(value, (MappingProxyType, tuple, frozenset)):
         return value
     if isinstance(value, Mapping):
@@ -51,8 +55,12 @@ def ensure_containers_are_immutable[K, V](
     return cast("MappingProxyType[K, V]", _make_immutable(value))
 
 
-def _make_mutable(value: Any) -> Any:  # noqa: ANN401
+def _make_mutable(value: Any) -> Any:  # noqa: ANN401, PLR0911
     """Recursively convert a value to its mutable equivalent."""
+    if isinstance(value, MappingLeaf):
+        return {k: _make_mutable(v) for k, v in value.data.items()}
+    if isinstance(value, SequenceLeaf):
+        return [_make_mutable(v) for v in value.data]
     if isinstance(value, (set, list)):
         return value
     if isinstance(value, (MappingProxyType, Mapping)):

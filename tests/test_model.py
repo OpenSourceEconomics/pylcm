@@ -674,3 +674,74 @@ def test_state_only_used_in_transitions():
         ages=AgeGrid(start=59, stop=61, step="Y"),
         regime_id_class=RegimeId,
     )
+
+
+# ======================================================================================
+# Reproducer for GitHub issue #236
+# ======================================================================================
+
+
+def test_state_only_in_transitions_with_terminal_regime():
+    """State used only in transitions causes ValueError at terminal-transition period.
+
+    When a state variable appears only in transition functions (not in utility or
+    constraints), and the regime transitions to a terminal regime, the Q_and_F
+    function's signature at that period does not include the state variable. But
+    simulation_spacemap still passes all regime states to vmap_1d, causing
+    ``ValueError: list.index(x): x not in list``.
+
+    See: https://github.com/OpenSourceEconomics/pylcm/issues/236
+    """
+
+    @categorical
+    class RegimeId:
+        alive: int
+        dead: int
+
+    @categorical
+    class TypeVar:
+        low: int
+        high: int
+
+    def utility(consumption, wealth):
+        return jnp.log(consumption) + 0.01 * wealth
+
+    def dead_utility():
+        return 0.0
+
+    def next_wealth(wealth, consumption, type_var):
+        """type_var affects wealth transition but does NOT appear in utility."""
+        return (1 + 0.05 * type_var) * (wealth - consumption)
+
+    def next_type_var(type_var):
+        return type_var
+
+    def next_regime(age):
+        return jnp.where(age >= 2, RegimeId.dead, RegimeId.alive)
+
+    ages = AgeGrid(start=0, stop=3, step="Y")
+
+    alive = Regime(
+        functions={"utility": utility},
+        states={
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
+            "type_var": DiscreteGrid(TypeVar),
+        },
+        actions={
+            "consumption": LinSpacedGrid(start=1, stop=50, n_points=10),
+        },
+        transitions={
+            "next_wealth": next_wealth,
+            "next_type_var": next_type_var,
+            "next_regime": next_regime,
+        },
+        active=lambda age: age <= 2,
+    )
+
+    dead = Regime(terminal=True, functions={"utility": dead_utility})
+
+    Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=ages,
+        regime_id_class=RegimeId,
+    )
