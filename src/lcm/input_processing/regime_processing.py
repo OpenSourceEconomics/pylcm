@@ -70,8 +70,8 @@ def process_regimes(
 ) -> MappingProxyType[RegimeName, InternalRegime]:
     """Process user regimes into internal regimes.
 
-    Extracts state transitions from grid ``transition`` attributes and
-    regime transitions from ``regime.transition``. For fixed states (grids
+    Extracts state transitions from grid `transition` attributes and
+    regime transitions from `regime.transition`. For fixed states (grids
     without a transition), an identity transition is auto-generated. ShockGrid
     transitions are generated from the grid's intrinsic transition logic.
 
@@ -366,7 +366,7 @@ def _extract_transitions_from_regime(
 ) -> dict[str, dict[str, UserFunction] | UserFunction]:
     """Extract transitions from grid attributes and auto-generate identity transitions.
 
-    For non-terminal regimes, collects state transitions from grid ``transition``
+    For non-terminal regimes, collects state transitions from grid `transition`
     attributes and auto-generates identity transitions for fixed states (grids
     without a transition). ShockGrid transitions are handled separately during
     internal function processing.

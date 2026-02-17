@@ -323,6 +323,16 @@ initial_regimes = ["working", "working", "retired"]
   type checker can track `(ScalarFloat) -> ScalarFloat` and `(Array) -> Array`
   separately. Concrete subclass methods need their own overloads too (not just the
   abstract base).
+- **Imperative mood for docstring summary lines.** Write "Return the value" not "Returns
+  the value". The summary line uses bare imperative: "Create", "Get", "Compute",
+  "Convert", etc.
+- **Inline field docstrings (PEP 257) for dataclass attributes.** Place a `"""..."""` on
+  the line after each field instead of listing fields in an `Attributes:` section in the
+  class docstring.
+- **MyST syntax in docstrings, not reStructuredText.** Use `` `code` `` (single
+  backticks) for inline code, `$...$` for inline math, ```` ```{math} ```` fences for
+  display math, and `[text](url)` for links. Never use rST-style ``` `` code `` ```,
+  `:math:`, `:func:`, or `` `link <url>`_ ``.
 
 ### Testing Style
 

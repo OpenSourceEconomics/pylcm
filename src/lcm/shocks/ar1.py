@@ -29,24 +29,24 @@ class Tauchen(_ShockGridAR1):
     r"""AR(1) shock discretized via Tauchen (1986).
 
     The process is
-    :math:`y_t = \mu + \rho \, y_{t-1} + \varepsilon_t`,
-    where :math:`\varepsilon_t \sim N(0, \sigma_\varepsilon^2)`.
+    $y_t = \mu + \rho \, y_{t-1} + \varepsilon_t$,
+    where $\varepsilon_t \sim N(0, \sigma_\varepsilon^2)$.
 
-    Attributes:
-        rho: Persistence parameter of the AR(1) process.
-        sigma: Standard deviation of the innovation.
-        mu: Intercept (drift) of the AR(1) process.
-        n_std: Number of standard deviations for the grid boundary.
-
-    Original implementation follows `QuantEcon
-    <https://quanteconpy.readthedocs.io/en/latest/markov/approximation.html#quantecon.markov.approximation.tauchen>`_.
+    Original implementation follows [QuantEcon](https://quanteconpy.readthedocs.io/en/latest/markov/approximation.html#quantecon.markov.approximation.tauchen).
 
     """
 
     rho: float | None = None
+    """Persistence parameter of the AR(1) process."""
+
     sigma: float | None = None
+    """Standard deviation of the innovation."""
+
     mu: float | None = None
+    """Intercept (drift) of the AR(1) process."""
+
     n_std: float | None = None
+    """Number of standard deviations for the grid boundary."""
 
     def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
         rho, sigma = kwargs["rho"], kwargs["sigma"]
@@ -95,22 +95,21 @@ class Rouwenhorst(_ShockGridAR1):
     r"""AR(1) shock discretized via Rouwenhorst (1995).
 
     The process is
-    :math:`y_t = \mu + \rho \, y_{t-1} + \varepsilon_t`,
-    where :math:`\varepsilon_t \sim N(0, \sigma_\varepsilon^2)`.
+    $y_t = \mu + \rho \, y_{t-1} + \varepsilon_t$,
+    where $\varepsilon_t \sim N(0, \sigma_\varepsilon^2)$.
 
-    Attributes:
-        rho: Persistence parameter of the AR(1) process.
-        sigma: Standard deviation of the innovation.
-        mu: Intercept (drift) of the AR(1) process.
-
-    Original implementation follows `QuantEcon
-    <https://quanteconpy.readthedocs.io/en/latest/markov/approximation.html#quantecon.markov.approximation.rouwenhorst>`_.
+    Original implementation follows [QuantEcon](https://quanteconpy.readthedocs.io/en/latest/markov/approximation.html#quantecon.markov.approximation.rouwenhorst).
 
     """
 
     rho: float | None = None
+    """Persistence parameter of the AR(1) process."""
+
     sigma: float | None = None
+    """Standard deviation of the innovation."""
+
     mu: float | None = None
+    """Intercept (drift) of the AR(1) process."""
 
     def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
         rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]

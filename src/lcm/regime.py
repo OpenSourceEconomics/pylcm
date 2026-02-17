@@ -31,8 +31,8 @@ def _default_H(
 class _IdentityTransition:
     """Identity transition function for fixed states.
 
-    Used by ``get_all_functions()`` so the params template includes fixed states.
-    The ``_is_auto_identity`` attribute lets validation distinguish auto-generated
+    Used by `get_all_functions()` so the params template includes fixed states.
+    The `_is_auto_identity` attribute lets validation distinguish auto-generated
     identities from user-provided transitions.
 
     """
@@ -67,37 +67,41 @@ class _IdentityTransition:
 class Regime:
     """A user regime which can be processed into an internal regime.
 
-    State transitions are attached directly to state grids via their ``transition``
-    parameter. A state with ``transition=some_fn`` is time-varying; a state with
-    ``transition=None`` (the default) is fixed and carried forward unchanged.
-    ShockGrids have intrinsic transitions and do not need a ``transition`` parameter.
+    State transitions are attached directly to state grids via their `transition`
+    parameter. A state with `transition=some_fn` is time-varying; a state with
+    `transition=None` (the default) is fixed and carried forward unchanged.
+    ShockGrids have intrinsic transitions and do not need a `transition` parameter.
 
-    The ``transition`` field on the regime itself is the *regime* transition function.
-    A regime with ``transition=None`` is terminal — no separate ``terminal`` flag is
+    The `transition` field on the regime itself is the *regime* transition function.
+    A regime with `transition=None` is terminal — no separate `terminal` flag is
     needed.
-
-    Attributes:
-        transition: Regime transition function, or ``None`` for terminal regimes.
-        active: Callable that takes age (float) and returns True if regime is active.
-        states: Dictionary of state grids (with transitions attached to grids).
-        actions: Dictionary of action grids.
-        functions: Dictionary of functions, must include a 'utility' function.
-        constraints: Dictionary of constraint functions.
-        description: Description of the regime.
 
     """
 
     transition: UserFunction | None
+    """Regime transition function, or `None` for terminal regimes."""
+
     active: ActiveFunction = lambda _age: True
+    """Callable that takes age (float) and returns True if regime is active."""
+
     states: Mapping[str, Grid] = field(default_factory=lambda: MappingProxyType({}))
+    """Mapping of state variable names to grid objects."""
+
     actions: Mapping[str, Grid] = field(default_factory=lambda: MappingProxyType({}))
+    """Mapping of action variable names to grid objects."""
+
     functions: Mapping[str, UserFunction] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    """Mapping of function names to callables; must include 'utility'."""
+
     constraints: Mapping[str, UserFunction] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    """Mapping of constraint names to constraint functions."""
+
     description: str = ""
+    """Description of the regime."""
 
     @property
     def terminal(self) -> bool:
@@ -125,10 +129,10 @@ class Regime:
         """Get all regime functions including utility, constraints, and transitions.
 
         Collects functions from three sources:
-        - ``self.functions`` (utility, helpers, H)
-        - ``self.constraints``
-        - State transitions from grid ``transition`` attributes
-        - The regime transition (``self.transition``, keyed as ``"next_regime"``)
+        - `self.functions` (utility, helpers, H)
+        - `self.constraints`
+        - State transitions from grid `transition` attributes
+        - The regime transition (`self.transition`, keyed as `"next_regime"`)
 
         Returns:
             Read-only mapping of all regime functions.
@@ -284,7 +288,7 @@ def _make_identity_fn(
 ) -> _IdentityTransition:
     """Create an identity transition for a fixed state.
 
-    Convenience wrapper around ``_IdentityTransition``.
+    Convenience wrapper around `_IdentityTransition`.
 
     """
     return _IdentityTransition(state_name, annotation=annotation)

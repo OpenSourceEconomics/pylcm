@@ -242,13 +242,28 @@ class SimulationMetadata:
     """Pre-computed metadata about the simulation."""
 
     regime_names: list[str]
+    """Names of all regimes in the model."""
+
     state_names: list[str]
+    """Sorted union of state variable names across all regimes."""
+
     action_names: list[str]
+    """Sorted union of action variable names across all regimes."""
+
     n_periods: int
+    """Number of periods in the simulation."""
+
     n_subjects: int
+    """Number of subjects simulated."""
+
     regime_to_states: MappingProxyType[str, tuple[str, ...]]
+    """Immutable mapping of regime names to their state variable names."""
+
     regime_to_actions: MappingProxyType[str, tuple[str, ...]]
+    """Immutable mapping of regime names to their action variable names."""
+
     discrete_categories: MappingProxyType[str, tuple[str, ...]]
+    """Immutable mapping of discrete variable names to their category labels."""
 
 
 def _compute_metadata(

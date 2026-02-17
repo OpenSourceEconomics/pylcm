@@ -17,7 +17,7 @@ class _ShockGrid(ContinuousGrid):
     """Base class for discretized continuous shock grids.
 
     Subclasses define distribution-specific parameters as dataclass fields.
-    Parameters set to ``None`` must be supplied at runtime via ``params``.
+    Parameters set to `None` must be supplied at runtime via `params`.
 
     """
 
