@@ -538,23 +538,20 @@ def _partial_fixed_params_into_regimes(
         # function actually accepts to avoid signature mismatches during
         # inspect.signature (used by dags.concatenate_functions in to_dataframe).
         if regime.regime_transition_probs is not None:
-            tp_solve_fixed = _filter_kwargs_for_func(
-                func=regime.regime_transition_probs.solve, kwargs=regime_fixed
-            )
-            tp_sim_fixed = _filter_kwargs_for_func(
-                func=regime.regime_transition_probs.simulate, kwargs=regime_fixed
-            )
             new_regime_tp = PhaseVariantContainer(
                 solve=functools.partial(
-                    regime.regime_transition_probs.solve, **tp_solve_fixed
-                )
-                if tp_solve_fixed
-                else regime.regime_transition_probs.solve,
+                    regime.regime_transition_probs.solve,
+                    **_filter_kwargs_for_func(
+                        func=regime.regime_transition_probs.solve, kwargs=regime_fixed
+                    ),
+                ),
                 simulate=functools.partial(
-                    regime.regime_transition_probs.simulate, **tp_sim_fixed
-                )
-                if tp_sim_fixed
-                else regime.regime_transition_probs.simulate,
+                    regime.regime_transition_probs.simulate,
+                    **_filter_kwargs_for_func(
+                        func=regime.regime_transition_probs.simulate,
+                        kwargs=regime_fixed,
+                    ),
+                ),
             )
         else:
             new_regime_tp = None
