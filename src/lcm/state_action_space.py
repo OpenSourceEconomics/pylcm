@@ -38,7 +38,7 @@ def create_state_action_space(
     else:
         _validate_all_states_present(
             provided_states=states,
-            required_states_names=set(variable_info.query("is_state").index),
+            required_state_names=set(variable_info.query("is_state").index),
         )
         _states = states
 
@@ -50,7 +50,7 @@ def create_state_action_space(
         name: grids[name]
         for name in variable_info.query("is_action & is_continuous").index
     }
-    states_and_discrete_actions_names = tuple(
+    state_and_discrete_action_names = tuple(
         variable_info.query("is_state | is_discrete").index
     )
 
@@ -58,7 +58,7 @@ def create_state_action_space(
         states=MappingProxyType(_states),
         discrete_actions=MappingProxyType(discrete_actions),
         continuous_actions=MappingProxyType(continuous_actions),
-        states_and_discrete_actions_names=states_and_discrete_actions_names,
+        state_and_discrete_action_names=state_and_discrete_action_names,
     )
 
 
@@ -98,21 +98,21 @@ def create_state_space_info(regime: Regime) -> StateSpaceInfo:
     }
 
     return StateSpaceInfo(
-        states_names=tuple(state_names),
+        state_names=tuple(state_names),
         discrete_states=MappingProxyType(discrete_states),
         continuous_states=MappingProxyType(continuous_states),
     )
 
 
 def _validate_all_states_present(
-    *, provided_states: dict[str, Array], required_states_names: set[str]
+    *, provided_states: dict[str, Array], required_state_names: set[str]
 ) -> None:
     """Check that all states are present in the provided states."""
-    provided_states_names = set(provided_states)
+    provided_state_names = set(provided_states)
 
-    if required_states_names != provided_states_names:
-        missing = required_states_names - provided_states_names
-        too_many = provided_states_names - required_states_names
+    if required_state_names != provided_state_names:
+        missing = required_state_names - provided_state_names
+        too_many = provided_state_names - required_state_names
         raise ValueError(
             "You need to provide an initial array for each state variable in the "
             f"regime.\n\nMissing initial states: {missing}\n",

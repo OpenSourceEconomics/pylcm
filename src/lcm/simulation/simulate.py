@@ -292,7 +292,7 @@ def _lookup_values_from_indices(
 
     Args:
         flat_indices: General indices. Represents the index of the flattened grid.
-        grids: Dictionary of grid values.
+        grids: Immutable mapping of grid values.
 
     Returns:
         Read-only mapping of values.

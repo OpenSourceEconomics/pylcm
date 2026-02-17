@@ -20,11 +20,10 @@ def stochastic(
     """Decorator to mark a function as stochastic and add information.
 
     Args:
-        func (callable): The function to be decorated.
-        distribution_type: Type of the stochastic transitions distribution.
+        func: The function to decorate.
 
     Returns:
-        The decorated function
+        The decorated function.
 
     """
     stochastic_info = StochasticInfo()

@@ -153,7 +153,7 @@ class Model:
             debug_mode: Whether to enable debug logging
 
         Returns:
-            Dictionary mapping period to a value function array for each regime.
+            Immutable mapping of period to a value function array for each regime.
         """
         internal_params = process_params(
             params=params, params_template=self.params_template
@@ -488,14 +488,14 @@ def _remove_fixed_from_template(
     for regime_name, regime_template in template.items():
         regime_fixed = fixed_internal.get(regime_name, MappingProxyType({}))
         new_regime: dict[str, dict[str, type]] = {}
-        for fn_name, fn_params in regime_template.items():
-            new_fn_params = {
+        for func_name, func_params in regime_template.items():
+            new_func_params = {
                 param_name: param_type
-                for param_name, param_type in fn_params.items()
-                if f"{fn_name}{QNAME_DELIMITER}{param_name}" not in regime_fixed
+                for param_name, param_type in func_params.items()
+                if f"{func_name}{QNAME_DELIMITER}{param_name}" not in regime_fixed
             }
-            if new_fn_params:
-                new_regime[fn_name] = new_fn_params
+            if new_func_params:
+                new_regime[func_name] = new_func_params
         if new_regime:
             result[regime_name] = new_regime
         else:
@@ -519,14 +519,14 @@ def _partial_fixed_params_into_regimes(
 
         # Partial into per-period solve functions
         new_max_Q = {
-            period: functools.partial(fn, **regime_fixed)
-            for period, fn in regime.max_Q_over_a_functions.items()
+            period: functools.partial(func, **regime_fixed)
+            for period, func in regime.max_Q_over_a_functions.items()
         }
 
         # Partial into per-period simulate functions
         new_argmax_max_Q = {
-            period: functools.partial(fn, **regime_fixed)
-            for period, fn in regime.argmax_and_max_Q_over_a_functions.items()
+            period: functools.partial(func, **regime_fixed)
+            for period, func in regime.argmax_and_max_Q_over_a_functions.items()
         }
 
         # Partial into next-state simulation function

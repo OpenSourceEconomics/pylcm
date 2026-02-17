@@ -283,7 +283,7 @@ def _validate_active(active: ActiveFunction) -> list[str]:
     return []
 
 
-def _make_identity_fn(
+def _make_identity_func(
     state_name: str, *, annotation: TypeAliasType
 ) -> _IdentityTransition:
     """Create an identity transition for a fixed state.

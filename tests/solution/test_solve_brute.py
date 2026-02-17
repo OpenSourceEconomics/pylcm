@@ -70,7 +70,7 @@ def test_solve_brute():
                 "wealth": jnp.array([0.0, 1.0, 2.0]),
             }
         ),
-        states_and_discrete_actions_names=("lazy", "working", "wealth"),
+        state_and_discrete_action_names=("lazy", "working", "wealth"),
     )
     # ==================================================================================
     # create the Q_and_F functions
@@ -100,8 +100,8 @@ def test_solve_brute():
 
     max_Q_over_a = get_max_Q_over_a(
         Q_and_F=_Q_and_F,
-        actions_names=("consumption", "working"),
-        states_names=("lazy", "wealth"),
+        action_names=("consumption", "working"),
+        state_names=("lazy", "wealth"),
     )
 
     # ==================================================================================
@@ -144,7 +144,7 @@ def test_solve_brute_single_period_Qc_arr():
             }
         ),
         states=MappingProxyType({}),
-        states_and_discrete_actions_names=("a", "b", "c"),
+        state_and_discrete_action_names=("a", "b", "c"),
     )
 
     def _Q_and_F(a, c, b, d, next_V_arr):  # noqa: ARG001
@@ -155,8 +155,8 @@ def test_solve_brute_single_period_Qc_arr():
 
     max_Q_over_a = get_max_Q_over_a(
         Q_and_F=_Q_and_F,
-        actions_names=("d",),
-        states_names=("a", "b", "c"),
+        action_names=("d",),
+        state_names=("a", "b", "c"),
     )
 
     expected = np.array([[[6.0, 7, 8], [7, 8, 9]], [[7, 8, 9], [8, 9, 10]]])

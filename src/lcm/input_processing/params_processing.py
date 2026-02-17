@@ -130,7 +130,7 @@ def create_params_template(  # noqa: C901
     template: dict[str, Any] = {}
     regime_names: set[str] = set()
     function_names: set[str] = set()
-    argument_names: set[str] = set()
+    arg_names: set[str] = set()
 
     for name, regime in internal_regimes.items():
         regime_names.add(name)
@@ -147,7 +147,7 @@ def create_params_template(  # noqa: C901
                             f"Argument name {arg_name!r} in function {key!r} "
                             f"cannot contain the separator '{QNAME_DELIMITER}'"
                         )
-                    argument_names.add(arg_name)
+                    arg_names.add(arg_name)
             else:
                 raise InvalidNameError(
                     f"Parameter {key!r} in regime {name!r} must be nested under "
@@ -177,7 +177,7 @@ def create_params_template(  # noqa: C901
             f"Overlap: {sorted(regime_func_overlap)}"
         )
 
-    regime_arg_overlap = regime_names & argument_names
+    regime_arg_overlap = regime_names & arg_names
     if regime_arg_overlap:
         raise InvalidNameError(
             f"Regime names and argument names must be disjoint. "

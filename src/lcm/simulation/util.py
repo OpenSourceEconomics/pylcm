@@ -35,10 +35,10 @@ def create_regime_state_action_space(
     """
     query = "is_state and (enters_concurrent_valuation | enters_transition)"
 
-    relevant_states_names = internal_regime.variable_info.query(query).index
+    relevant_state_names = internal_regime.variable_info.query(query).index
 
     states_for_state_action_space = {
-        sn: states[f"{internal_regime.name}__{sn}"] for sn in relevant_states_names
+        sn: states[f"{internal_regime.name}__{sn}"] for sn in relevant_state_names
     }
 
     return create_state_action_space(
@@ -82,11 +82,11 @@ def calculate_next_states(
     # Identify stochastic transitions and generate random keys
     # ---------------------------------------------------------------------------------
     stochastic_next_function_names = [
-        next_fn_name
-        for next_fn_name, next_fn in flatten_regime_namespace(
+        next_func_name
+        for next_func_name, next_func in flatten_regime_namespace(
             internal_regime.transitions
         ).items()
-        if is_stochastic_transition(next_fn)
+        if is_stochastic_transition(next_func)
     ]
     # There is a bug that sometimes changes the order of the names,
     # sorting fixes this
@@ -211,7 +211,7 @@ def draw_key_from_dict(
     """Draw a random key from a dictionary of arrays.
 
     Args:
-        d: Dictionary of arrays, all of the same length. The values in the arrays
+        d: Immutable mapping of arrays, all of the same length. The values in the arrays
             represent a probability distribution over the keys. That is, for the
             dictionary {'regime1': jnp.array([0.2, 0.5]),
             'regime2': jnp.array([0.8, 0.5])}, 0.2 + 0.8 = 1.0 and 0.5 + 0.5 = 1.0.

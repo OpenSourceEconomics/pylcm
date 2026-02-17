@@ -233,8 +233,8 @@ def test_spacemap_all_arguments_mapped(
 
     decorated = simulation_spacemap(
         func=g,
-        actions_names=tuple(product_vars),
-        states_names=tuple(combination_vars),
+        action_names=tuple(product_vars),
+        state_names=tuple(combination_vars),
     )
     calculated = decorated(**product_vars, **combination_vars)  # ty: ignore[missing-argument]
 
@@ -259,7 +259,7 @@ def test_spacemap_all_arguments_mapped(
 def test_spacemap_arguments_overlap(error_msg, product_vars, combination_vars):
     with pytest.raises(ValueError, match=error_msg):
         simulation_spacemap(
-            func=g, actions_names=product_vars, states_names=combination_vars
+            func=g, action_names=product_vars, state_names=combination_vars
         )
 
 

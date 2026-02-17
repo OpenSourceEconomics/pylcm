@@ -163,7 +163,7 @@ def allow_args(func: Callable[..., ReturnType]) -> Callable[..., ReturnType]:
     return cast("Callable[..., ReturnType]", allow_args_wrapper)
 
 
-def get_union_of_arguments(list_of_functions: list[Callable[..., Any]]) -> set[str]:
+def get_union_of_args(list_of_functions: list[Callable[..., Any]]) -> set[str]:
     """Return the union of arguments of a list of functions.
 
     Args:

@@ -39,7 +39,7 @@ def test_function_evaluator_with_one_continuous_variable():
     wealth_grid = LinSpacedGrid(start=-3, stop=3, n_points=7)
 
     state_space_info = StateSpaceInfo(
-        states_names=("wealth",),
+        state_names=("wealth",),
         discrete_states=MappingProxyType({}),
         continuous_states=MappingProxyType(
             {
@@ -66,7 +66,7 @@ def test_function_evaluator_with_one_discrete_variable(binary_discrete_grid):
     next_V_arr = jnp.array([1, 2])
 
     state_space_info = StateSpaceInfo(
-        states_names=("working",),
+        state_names=("working",),
         discrete_states=MappingProxyType({"working": binary_discrete_grid}),
         continuous_states=MappingProxyType({}),
     )
@@ -122,7 +122,7 @@ def test_function_evaluator(binary_discrete_grid):
     var_names = ("retired", "insured", "wealth", "human_capital")
 
     state_space_info = StateSpaceInfo(
-        states_names=var_names,
+        state_names=var_names,
         discrete_states=MappingProxyType(discrete_vars),
         continuous_states=MappingProxyType(continuous_vars),
     )
@@ -221,7 +221,7 @@ def test_get_function_evaluator_illustrative():
     a_grid = LinSpacedGrid(start=0, stop=1, n_points=3)
 
     state_space_info = StateSpaceInfo(
-        states_names=("a",),
+        state_names=("a",),
         discrete_states=MappingProxyType({}),
         continuous_states=MappingProxyType(
             {
@@ -295,7 +295,7 @@ def test_fail_if_interpolation_axes_are_not_last_illustrative(dummy_continuous_g
     # ==================================================================================
 
     state_space_info = StateSpaceInfo(
-        states_names=("a", "b"),
+        state_names=("a", "b"),
         continuous_states=MappingProxyType(
             {
                 "c": dummy_continuous_grid,
@@ -310,7 +310,7 @@ def test_fail_if_interpolation_axes_are_not_last_illustrative(dummy_continuous_g
     # ==================================================================================
 
     state_space_info = StateSpaceInfo(
-        states_names=("a", "b", "c"),
+        state_names=("a", "b", "c"),
         continuous_states=MappingProxyType(
             {
                 "b": dummy_continuous_grid,
@@ -327,7 +327,7 @@ def test_fail_if_interpolation_axes_are_not_last_illustrative(dummy_continuous_g
     # ==================================================================================
 
     state_space_info = StateSpaceInfo(
-        states_names=("b", "c", "a"),  # "b", "c" are not last anymore
+        state_names=("b", "c", "a"),  # "b", "c" are not last anymore
         continuous_states=MappingProxyType(
             {
                 "b": dummy_continuous_grid,
@@ -346,7 +346,7 @@ def test_function_evaluator_performs_linear_extrapolation():
     wealth_grid = LinSpacedGrid(start=0, stop=3, n_points=7)
 
     state_space_info = StateSpaceInfo(
-        states_names=("wealth",),
+        state_names=("wealth",),
         discrete_states=MappingProxyType({}),
         continuous_states=MappingProxyType(
             {

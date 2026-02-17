@@ -390,8 +390,8 @@ def _get_stochastic_weight_function_names(regime: InternalRegime) -> set[str]:
     flat_transitions = flatten_regime_namespace(regime.transitions)
     return {
         f"weight_{name}"
-        for name, fn in flat_transitions.items()
-        if is_stochastic_transition(fn)
+        for name, func in flat_transitions.items()
+        if is_stochastic_transition(func)
     }
 
 

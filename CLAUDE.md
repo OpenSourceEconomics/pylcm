@@ -323,6 +323,10 @@ initial_regimes = ["working", "working", "retired"]
   type checker can track `(ScalarFloat) -> ScalarFloat` and `(Array) -> Array`
   separately. Concrete subclass methods need their own overloads too (not just the
   abstract base).
+- **`func` for callable abbreviations** — use `func`, `func_name`, `func_params` (never
+  `fn`). Full word `function(s)` in dataclass field names and public method names.
+- **Singular `state_names` / `action_names`** — not `states_names` / `actions_names`.
+- **`arg_names`** — not `argument_names`.
 - **Imperative mood for docstring summary lines.** Write "Return the value" not "Returns
   the value". The summary line uses bare imperative: "Create", "Get", "Compute",
   "Convert", etc.

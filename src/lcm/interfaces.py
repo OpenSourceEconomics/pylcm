@@ -61,16 +61,16 @@ class StateActionSpace:
     continuous_actions: MappingProxyType[str, ContinuousAction]
     """Immutable mapping of continuous action variable names to their values."""
 
-    states_and_discrete_actions_names: tuple[str, ...]
+    state_and_discrete_action_names: tuple[str, ...]
     """Names of states and discrete actions in variable info table order."""
 
     @property
-    def states_names(self) -> tuple[str, ...]:
+    def state_names(self) -> tuple[str, ...]:
         """Tuple with names of all state variables."""
         return tuple(self.states)
 
     @property
-    def actions_names(self) -> tuple[str, ...]:
+    def action_names(self) -> tuple[str, ...]:
         """Tuple with names of all action variables."""
         return tuple(self.discrete_actions) + tuple(self.continuous_actions)
 
@@ -83,7 +83,7 @@ class StateActionSpace:
 
     @property
     def actions_grid_shapes(self) -> tuple[int, ...]:
-        """Dictionary with all action variables."""
+        """Tuple of action grid sizes."""
         return tuple(len(grid) for grid in self.actions.values())
 
     def replace(
@@ -126,7 +126,7 @@ class StateSpaceInfo:
 
     """
 
-    states_names: tuple[str, ...]
+    state_names: tuple[str, ...]
     """Tuple of state variable names."""
 
     discrete_states: MappingProxyType[str, DiscreteGrid | _ShockGrid]

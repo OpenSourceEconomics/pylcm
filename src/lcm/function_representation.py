@@ -95,7 +95,7 @@ def get_value_function_representation(
     # ==================================================================================
     # lookup is positional, so the inputs of the wrapper functions need to be the
     # outcomes of tranlating labels into positions
-    _internal_axes = [f"__{var}_pos__" for var in state_space_info.states_names]
+    _internal_axes = [f"__{var}_pos__" for var in state_space_info.state_names]
     _discrete_axes = [ax for ax in _internal_axes if ax in funcs]
 
     _out_name = "__interpolation_data__" if _need_interpolation else "__fval__"
@@ -119,7 +119,7 @@ def get_value_function_representation(
         # ==============================================================================
         _continuous_axes = [
             f"__{var}_coord__"
-            for var in state_space_info.states_names
+            for var in state_space_info.state_names
             if var in state_space_info.continuous_states
         ]
         funcs["__fval__"] = _get_interpolator(
@@ -288,12 +288,10 @@ def _fail_if_interpolation_axes_are_not_last(state_space_info: StateSpaceInfo) -
         ValueError: If the continuous variables are not the last elements in var_names.
 
     """
-    common = set(state_space_info.continuous_states) & set(
-        state_space_info.states_names
-    )
+    common = set(state_space_info.continuous_states) & set(state_space_info.state_names)
 
     if common:
         n_common = len(common)
-        if sorted(common) != sorted(state_space_info.states_names[-n_common:]):
+        if sorted(common) != sorted(state_space_info.state_names[-n_common:]):
             msg = "Continuous variables need to be the last entries in var_names."
             raise ValueError(msg)

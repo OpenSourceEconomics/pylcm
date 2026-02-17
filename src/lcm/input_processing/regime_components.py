@@ -51,7 +51,7 @@ def build_Q_and_F_functions(
     ages: AgeGrid,
     regime_params_template: RegimeParamsTemplate,
 ) -> MappingProxyType[int, QAndFFunction]:
-    flat_params_names = frozenset(get_flat_param_names(regime_params_template))
+    flat_param_names = frozenset(get_flat_param_names(regime_params_template))
 
     Q_and_F_functions = {}
     for period, age in enumerate(ages.values):
@@ -60,7 +60,7 @@ def build_Q_and_F_functions(
                 internal_functions=internal_functions,
                 period=period,
                 age=age,
-                flat_params_names=flat_params_names,
+                flat_param_names=flat_param_names,
             )
         else:
             Q_and_F = get_Q_and_F(
@@ -70,7 +70,7 @@ def build_Q_and_F_functions(
                 age=age,
                 next_state_space_infos=state_space_infos,
                 internal_functions=internal_functions,
-                flat_params_names=flat_params_names,
+                flat_param_names=flat_param_names,
             )
         Q_and_F_functions[period] = Q_and_F
 
@@ -101,8 +101,8 @@ def _build_max_Q_over_a_function(
 ) -> MaxQOverAFunction:
     max_Q_over_a = get_max_Q_over_a(
         Q_and_F=Q_and_F,
-        actions_names=state_action_space.actions_names,
-        states_names=state_action_space.states_names,
+        action_names=state_action_space.action_names,
+        state_names=state_action_space.state_names,
     )
 
     if enable_jit:
@@ -119,15 +119,15 @@ def build_argmax_and_max_Q_over_a_functions(
 ) -> MappingProxyType[int, ArgmaxQOverAFunction]:
     argmax_and_max_Q_over_a_functions = {}
     for period, Q_and_F in Q_and_F_functions.items():
-        fn = _build_argmax_and_max_Q_over_a_function(
+        func = _build_argmax_and_max_Q_over_a_function(
             state_action_space=state_action_space,
             Q_and_F=Q_and_F,
             enable_jit=enable_jit,
         )
         argmax_and_max_Q_over_a_functions[period] = simulation_spacemap(
-            func=fn,
-            actions_names=(),
-            states_names=tuple(state_action_space.states),
+            func=func,
+            action_names=(),
+            state_names=tuple(state_action_space.states),
         )
     return MappingProxyType(argmax_and_max_Q_over_a_functions)
 
@@ -140,8 +140,8 @@ def _build_argmax_and_max_Q_over_a_function(
 ) -> ArgmaxQOverAFunction:
     argmax_and_max_Q_over_a = get_argmax_and_max_Q_over_a(
         Q_and_F=Q_and_F,
-        actions_names=state_action_space.actions_names,
-        states_names=state_action_space.states_names,
+        action_names=state_action_space.action_names,
+        state_names=state_action_space.state_names,
     )
 
     if enable_jit:
@@ -194,15 +194,15 @@ def build_regime_transition_probs_functions(
 ) -> PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]:
     # Wrap deterministic next_regime to return one-hot probability array
     if is_stochastic:
-        probs_fn = regime_transition_probs
+        probs_func = regime_transition_probs
     else:
-        probs_fn = _wrap_deterministic_regime_transition(
-            fn=regime_transition_probs, regime_names_to_ids=regime_names_to_ids
+        probs_func = _wrap_deterministic_regime_transition(
+            func=regime_transition_probs, regime_names_to_ids=regime_names_to_ids
         )
 
     # Wrap to convert array output to dict format
     wrapped_regime_transition_probs = _wrap_regime_transition_probs(
-        fn=probs_fn, regime_names_to_ids=regime_names_to_ids
+        func=probs_func, regime_names_to_ids=regime_names_to_ids
     )
 
     functions_pool = dict(internal_functions) | {
@@ -252,7 +252,7 @@ def _get_vmap_params(
 
 def _wrap_regime_transition_probs(
     *,
-    fn: InternalUserFunction,
+    func: InternalUserFunction,
     regime_names_to_ids: RegimeNamesToIds,
 ) -> InternalUserFunction:
     """Wrap next_regime function to convert array output to dict format.
@@ -262,7 +262,7 @@ def _wrap_regime_transition_probs(
     processing.
 
     Args:
-        fn: The user's next_regime function (with qname parameters).
+        func: The user's next_regime function (with qname parameters).
         regime_names_to_ids: Mapping from regime names to integer indices.
 
     Returns:
@@ -276,19 +276,19 @@ def _wrap_regime_transition_probs(
     )
     regime_names = [name for _, name in regime_names_by_id]
 
-    annotations = get_annotations(fn)
+    annotations = get_annotations(func)
     return_annotation = annotations.pop("return", "dict[str, Any]")
 
     @with_signature(
         args=annotations,
         return_annotation=return_annotation,
     )
-    @functools.wraps(fn)
+    @functools.wraps(func)
     def wrapped(
         *args: Array | int,
         **kwargs: Array | int,
     ) -> MappingProxyType[str, Any]:
-        result = fn(*args, **kwargs)
+        result = func(*args, **kwargs)
         # Convert array to dict using ordering by regime id
         return MappingProxyType(
             {name: result[idx] for idx, name in enumerate(regime_names)}
@@ -299,7 +299,7 @@ def _wrap_regime_transition_probs(
 
 def _wrap_deterministic_regime_transition(
     *,
-    fn: InternalUserFunction,
+    func: InternalUserFunction,
     regime_names_to_ids: RegimeNamesToIds,
 ) -> InternalUserFunction:
     """Wrap deterministic next_regime to return one-hot probability array.
@@ -309,7 +309,7 @@ def _wrap_deterministic_regime_transition(
     the interface of stochastic regime transitions.
 
     Args:
-        fn: The user's deterministic next_regime function (returns int).
+        func: The user's deterministic next_regime function (returns int).
         regime_names_to_ids: Mapping from regime names to integer indices.
 
     Returns:
@@ -319,15 +319,15 @@ def _wrap_deterministic_regime_transition(
     n_regimes = len(regime_names_to_ids)
 
     # Preserve original annotations but update return type
-    annotations = {k: v for k, v in get_annotations(fn).items() if k != "return"}
+    annotations = {k: v for k, v in get_annotations(func).items() if k != "return"}
 
     @with_signature(args=annotations, return_annotation="Array")
-    @functools.wraps(fn)
+    @functools.wraps(func)
     def wrapped(
         *args: Array | int,
         **kwargs: Array | int,
     ) -> Array:
-        regime_idx = fn(*args, **kwargs)
+        regime_idx = func(*args, **kwargs)
         return jax.nn.one_hot(regime_idx, n_regimes)
 
     return wrapped

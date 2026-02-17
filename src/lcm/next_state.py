@@ -37,7 +37,7 @@ def get_next_state_function_for_solution(
 
     Args:
         transitions: Transitions to the next states of a regime.
-        functions: Dict of auxiliary functions of a regime.
+        functions: Immutable mapping of auxiliary functions of a regime.
 
     Returns:
         Function that computes the next states. Depends on states and actions of the
@@ -72,7 +72,7 @@ def get_next_state_function_for_simulation(
         gridspecs: The specifications of the current regimes grids.
         variable_info: Variable info of a regime.
         transitions: Transitions to the next states of a regime.
-        functions: Dict of auxiliary functions of a regime.
+        functions: Immutable mapping of auxiliary functions of a regime.
 
     Returns:
         Function that computes the next states. Depends on states and actions of the
@@ -110,7 +110,7 @@ def get_next_stochastic_weights_function(
 
     Args:
         regime_name: Name of the regime that the transitions target.
-        functions: Dict containing the auxiliary functions of the model.
+        functions: Immutable mapping of auxiliary functions of the model.
         transitions: Transitions to the target regime.
 
     Returns:
@@ -118,9 +118,9 @@ def get_next_stochastic_weights_function(
 
     """
     targets = [
-        f"weight_{regime_name}__{fn_name}"
-        for fn_name, fn in transitions.items()
-        if is_stochastic_transition(fn)
+        f"weight_{regime_name}__{func_name}"
+        for func_name, func in transitions.items()
+        if is_stochastic_transition(func)
     ]
     return concatenate_functions(
         functions=functions,
@@ -141,9 +141,9 @@ def _extend_transitions_for_simulation(
     """Extend the functions dictionary for the simulation target.
 
     Args:
-        grids: Dictionary of grids.
+        grids: Immutable mapping of grids.
         gridspecs: The specifications of the current regimes grids.
-        transitions: A dictonary of transitions to extend.
+        transitions: Immutable mapping of transitions to extend.
         variable_info: Variable info of the current regime.
 
     Returns:
@@ -153,16 +153,16 @@ def _extend_transitions_for_simulation(
     shock_names = set(variable_info.query("is_shock").index.to_list())
     flat_grids = flatten_regime_namespace(grids)
     discrete_stochastic_targets = [
-        fn_name
-        for fn_name, fn in transitions.items()
-        if is_stochastic_transition(fn)
-        and fn_name.split(QNAME_DELIMITER)[-1].replace("next_", "") not in shock_names
+        func_name
+        for func_name, func in transitions.items()
+        if is_stochastic_transition(func)
+        and func_name.split(QNAME_DELIMITER)[-1].replace("next_", "") not in shock_names
     ]
     continuous_stochastic_targets = [
-        (fn_name, fn)
-        for fn_name, fn in transitions.items()
-        if is_stochastic_transition(fn)
-        and fn_name.split(QNAME_DELIMITER)[-1].replace("next_", "") in shock_names
+        (func_name, func)
+        for func_name, func in transitions.items()
+        if is_stochastic_transition(func)
+        and func_name.split(QNAME_DELIMITER)[-1].replace("next_", "") in shock_names
     ]
     # Handle stochastic next states functions
     # ----------------------------------------------------------------------------------
@@ -181,7 +181,7 @@ def _extend_transitions_for_simulation(
     }
     continuous_stochastic_next = {
         name: _create_continuous_stochastic_next_func(name, gridspecs=gridspecs)
-        for name, fn in continuous_stochastic_targets
+        for name, func in continuous_stochastic_targets
     }
 
     # Overwrite regime transitions with generated stochastic next states functions
