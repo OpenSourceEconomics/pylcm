@@ -101,6 +101,15 @@ per-file-ignores."explanations/*" = [
   "T201",   # print found
   "T203",   # pprint found
 ]
+per-file-ignores."docs/*" = [
+  "ANN",    # Annotations
+  "E402",   # Module level import not at top of file
+  "FBT",    # Boolean arguments
+  "INP001", # Implicit namespace package
+  "SIM108", # Ternary operator
+  "T201",   # print found
+  "T203",   # pprint found
+]
 per-file-ignores."src/lcm/functools.py" = [
   "ANN401", # Dynamically typed expressions (Any)
 ]
