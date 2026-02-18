@@ -161,7 +161,7 @@ def test_solve_brute_single_period_Qc_arr():
 
     expected = np.array([[[6.0, 7, 8], [7, 8, 9]], [[7, 8, 9], [8, 9, 10]]])
 
-    # by setting max_Qc_over_d to identity, we can test that the max_Q_over_c function
+    # by setting max_Q_over_a to identity, we can test that the function
     # is correctly applied to the state_action_space
 
     internal_regime = InternalRegimeMock(

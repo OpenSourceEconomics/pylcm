@@ -104,10 +104,7 @@ per-file-ignores."explanations/*" = [
 per-file-ignores."src/lcm/functools.py" = [
   "ANN401", # Dynamically typed expressions (Any)
 ]
-per-file-ignores."src/lcm/max_*" = [
-  "N999", # Module name mixing uppercase and lowercase
-]
-per-file-ignores."src/lcm/Q_and_F.py" = [
+per-file-ignores."src/lcm/*Q_*.py" = [
   "N999", # Module name mixing uppercase and lowercase
 ]
 per-file-ignores."tests/*" = [
