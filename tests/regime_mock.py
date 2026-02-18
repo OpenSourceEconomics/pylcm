@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from lcm.grids import DiscreteGrid
+from lcm.interfaces import PhaseVariant
 from lcm.mark import stochastic
 from lcm.regime import _default_H, _make_identity_func
 from lcm.shocks._base import _ShockGrid
@@ -34,7 +35,10 @@ class RegimeMock:
 
     def get_all_functions(self) -> dict[str, UserFunction]:
         """Get all regime functions including utility, constraints, and transitions."""
-        result = dict(self.functions) | dict(self.constraints)
+        result: dict[str, UserFunction] = {}
+        for name, func in self.functions.items():
+            result[name] = func.solve if isinstance(func, PhaseVariant) else func
+        result |= dict(self.constraints)
         # Collect state transitions from grids (skip None grids used in mock tests)
         if self.states:
             for name, grid in self.states.items():
