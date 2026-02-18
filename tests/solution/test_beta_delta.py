@@ -22,7 +22,7 @@ import pytest
 from numpy.testing import assert_allclose
 
 from lcm import AgeGrid, LinSpacedGrid, Model, Regime, categorical
-from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND
+from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 
 # --------------------------------------------------------------------------------------
@@ -51,7 +51,7 @@ def next_wealth(
     return wealth - consumption
 
 
-def next_regime(age: float) -> int:
+def next_regime(age: float) -> ScalarInt:
     return jnp.where(age >= 1, RegimeId.dead, RegimeId.working)
 
 
