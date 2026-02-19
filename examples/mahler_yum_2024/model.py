@@ -691,10 +691,6 @@ if __name__ == "__main__":
     # Each type gets beta = beta_mean +/- beta_std.
     beta_mean = START_PARAMS["beta"]["mean"]
     beta_std = START_PARAMS["beta"]["std"]
-    discount_factors = {
-        "low": beta_mean - beta_std,
-        "high": beta_mean + beta_std,
-    }
 
     # Build common inputs (everything except discount_factor).
     start_params_without_beta = {k: v for k, v in START_PARAMS.items() if k != "beta"}
@@ -704,27 +700,41 @@ if __name__ == "__main__":
         **start_params_without_beta,  # ty: ignore[invalid-argument-type]
     )
 
+    selected_ids_high = jnp.flatnonzero(discount_factor_types)
+    selected_ids_low = jnp.flatnonzero(1 - discount_factor_types)
+
+    discount_factors = {
+        "low": beta_mean - beta_std,
+        "high": beta_mean + beta_std,
+    }
+
+    initial_states_split = {
+        "low": {
+            state: values[selected_ids_low] for state, values in initial_states.items()
+        },
+        "high": {
+            state: values[selected_ids_high] for state, values in initial_states.items()
+        },
+    }
+
+    initial_regimes_split = {
+        "low": ["alive" for i in range(selected_ids_low.shape[0])],
+        "high": ["alive" for i in range(selected_ids_high.shape[0])],
+    }
+
     timings: list[float] = []
     for i in range(3):
         t0 = time.perf_counter()
-        for beta_name, beta_value in discount_factors.items():
-            selected_ids = (
-                jnp.flatnonzero(discount_factor_types)
-                if beta_name == "high"
-                else jnp.flatnonzero(1 - discount_factor_types)
-            )
+        for name, beta in discount_factors.items():
             simulation_result = MAHLER_YUM_MODEL.solve_and_simulate(
                 params={
                     "alive": {
-                        "discount_factor": beta_value,
+                        "discount_factor": beta,
                         **common_params,
                     },
                 },
-                initial_states={
-                    state: values[selected_ids]
-                    for state, values in initial_states.items()
-                },
-                initial_regimes=["alive" for i in range(selected_ids.shape[0])],
+                initial_states=initial_states_split[name],
+                initial_regimes=initial_regimes_split[name],
                 seed=8295,
             )
 
