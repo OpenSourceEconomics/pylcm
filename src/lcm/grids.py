@@ -2,7 +2,7 @@ import dataclasses
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, is_dataclass
-from typing import Any, overload
+from typing import overload
 
 import jax.numpy as jnp
 import portion
@@ -10,7 +10,7 @@ from jax import Array
 
 from lcm import grid_helpers
 from lcm.exceptions import GridInitializationError, format_messages
-from lcm.typing import Float1D, Int1D, ScalarFloat
+from lcm.typing import ContinuousState, DiscreteState, Float1D, Int1D, ScalarFloat
 from lcm.utils import Unset, find_duplicates, get_field_names_and_values
 
 
@@ -98,7 +98,7 @@ class DiscreteGrid(Grid):
         self,
         category_class: type,
         *,
-        transition: Callable[..., Any] | None | Unset = Unset(),
+        transition: Callable[..., DiscreteState] | None | Unset = Unset(),
     ) -> None:
         """Initialize the DiscreteGrid.
 
@@ -128,7 +128,7 @@ class DiscreteGrid(Grid):
         return self.__codes
 
     @property
-    def transition(self) -> Callable[..., Any] | None | Unset:
+    def transition(self) -> Callable[..., DiscreteState] | None | Unset:
         """Return the transition function, ``None`` for fixed states, or ``Unset``."""
         return self.__transition
 
@@ -150,7 +150,7 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
     n_points: int
     """The number of points in the grid."""
 
-    transition: Callable[..., Any] | None | Unset = Unset()
+    transition: Callable[..., ContinuousState] | None | Unset = Unset()
     """Transition function for time-varying states, or `None` for fixed states.
 
     Must be set explicitly when this grid is used as a state in a Regime.
@@ -271,7 +271,7 @@ class IrregSpacedGrid(ContinuousGrid):
     n_points: int | None = None
     """Number of points. Derived from `len(points)` when points are given."""
 
-    transition: Callable[..., Any] | None | Unset = Unset()
+    transition: Callable[..., ContinuousState] | None | Unset = Unset()
     """Transition function for time-varying states, or `None` for fixed states.
 
     Must be set explicitly when this grid is used as a state in a Regime.
@@ -367,7 +367,7 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
     pieces: tuple[Piece, ...]
     """Tuple of Piece objects defining each segment. Pieces must be adjacent."""
 
-    transition: Callable[..., Any] | None | Unset = Unset()
+    transition: Callable[..., ContinuousState] | None | Unset = Unset()
     """Transition function for time-varying states, or `None` for fixed states.
 
     Must be set explicitly when this grid is used as a state in a Regime.
@@ -443,7 +443,7 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
     pieces: tuple[Piece, ...]
     """Tuple of Piece objects defining each segment. All boundaries must be positive."""
 
-    transition: Callable[..., Any] | None | Unset = Unset()
+    transition: Callable[..., ContinuousState] | None | Unset = Unset()
     """Transition function for time-varying states, or `None` for fixed states.
 
     Must be set explicitly when this grid is used as a state in a Regime.
@@ -565,7 +565,9 @@ def _init_piecewise_grid_cache(
 # ======================================================================================
 
 
-def _validate_transition(transition: Callable[..., Any] | None | Unset) -> None:
+def _validate_transition(
+    transition: Callable[..., ContinuousState | DiscreteState] | None | Unset,
+) -> None:
     """Validate that `transition` is callable, None, or UNSET.
 
     Raises:
