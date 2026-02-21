@@ -10,6 +10,7 @@ from lcm.typing import FloatND, InternalParams, RegimeName
 
 
 def solve(
+    *,
     internal_params: InternalParams,
     ages: AgeGrid,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
@@ -18,14 +19,14 @@ def solve(
     """Solve a model using grid search.
 
     Args:
-        internal_params: Dict of model parameters.
+        internal_params: Immutable mapping of regime names to flat parameter mappings.
         ages: Age grid for the model.
         internal_regimes: The internal regimes, that contain all necessary functions
             to solve the model.
         logger: Logger that logs to stdout.
 
     Returns:
-        Dict with one value function array per period.
+        Immutable mapping of periods to regime value function arrays.
 
     """
     solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
@@ -47,7 +48,7 @@ def solve(
 
         for name, internal_regime in active_regimes.items():
             state_action_space = internal_regime.state_action_space(
-                flat_regime_params=internal_params[name],
+                regime_params=internal_params[name],
             )
             max_Q_over_a = internal_regime.max_Q_over_a_functions[period]
 
@@ -59,7 +60,7 @@ def solve(
                 **internal_params[name],
             )
 
-            validate_value_function_array(V_arr, age=ages.values[period])
+            validate_value_function_array(V_arr=V_arr, age=ages.values[period])
             period_solution[name] = V_arr
 
         next_V_arr = MappingProxyType(period_solution)

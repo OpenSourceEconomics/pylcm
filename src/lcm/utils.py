@@ -114,7 +114,7 @@ def get_field_names_and_values(dc: type) -> MappingProxyType[str, Any]:
         dc: The dataclass to get the fields of.
 
     Returns:
-        An immutable dictionary with the field names as keys and the field values as
+        An immutable mapping with the field names as keys and the field values as
         values. If no value is provided for a field, the value is set to None.
 
     """
@@ -151,12 +151,17 @@ def unflatten_regime_namespace(d: dict[str, Any]) -> dict[RegimeName, Any]:
 
 
 def normalize_regime_transition_probs(
-    probs: MappingProxyType[str, Array],
+    *,
+    regime_transition_probs: MappingProxyType[str, Array],
     active_regimes_next_period: tuple[str, ...],
 ) -> MappingProxyType[str, Array]:
     """Normalize regime transition probabilities over active regimes only."""
     if not active_regimes_next_period:
         return MappingProxyType({})
-    active_probs = jnp.stack([probs[r] for r in active_regimes_next_period])
+    active_probs = jnp.stack(
+        [regime_transition_probs[r] for r in active_regimes_next_period]
+    )
     total = jnp.sum(active_probs, axis=0)
-    return MappingProxyType({r: probs[r] / total for r in active_regimes_next_period})
+    return MappingProxyType(
+        {r: regime_transition_probs[r] / total for r in active_regimes_next_period}
+    )

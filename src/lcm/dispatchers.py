@@ -18,9 +18,10 @@ FunctionWithArrayReturn = TypeVar(
 
 
 def simulation_spacemap(
+    *,
     func: FunctionWithArrayReturn,
-    actions_names: tuple[str, ...],
-    states_names: tuple[str, ...],
+    action_names: tuple[str, ...],
+    state_names: tuple[str, ...],
 ) -> FunctionWithArrayReturn:
     """Apply vmap such that func can be evaluated on actions and simulation states.
 
@@ -38,16 +39,16 @@ def simulation_spacemap(
 
     Args:
         func: The function to be dispatched.
-        actions_names: Names of the action variables.
-        states_names: Names of the state variables.
+        action_names: Names of the action variables.
+        state_names: Names of the state variables.
 
     Returns:
         A callable with the same arguments as func (but with an additional leading
         dimension) that returns an Array or pytree of Arrays. If `func` returns a
         scalar, the dispatched function returns an Array with k + 1 dimensions, where k
-        is the length of `actions_names` and the additional dimension corresponds to the
-        `states_names`. The order of the dimensions is determined by the order of
-        `actions_names`. If the output of `func` is a jax pytree, the usual jax behavior
+        is the length of `action_names` and the additional dimension corresponds to the
+        `state_names`. The order of the dimensions is determined by the order of
+        `action_names`. If the output of `func` is a jax pytree, the usual jax behavior
         applies, i.e. the leading dimensions of all arrays in the pytree are as
         described above but there might be additional dimensions.
 
@@ -55,7 +56,7 @@ def simulation_spacemap(
     # The model creation process ensures that in a user-created model the following
     # cannot happen. We double-check here to ensure that the post-processing does not
     # accidentally create such a situation.
-    if duplicates := find_duplicates(actions_names, states_names):
+    if duplicates := find_duplicates(action_names, state_names):
         msg = (
             "Same argument provided more than once in actions or states variables, "
             f"or is present in both: {duplicates}"
@@ -64,8 +65,8 @@ def simulation_spacemap(
 
     mappable_func = allow_args(func)
 
-    vmapped = _base_productmap(mappable_func, actions_names)
-    vmapped = vmap_1d(vmapped, variables=states_names, callable_with="only_args")
+    vmapped = _base_productmap(mappable_func, action_names)
+    vmapped = vmap_1d(func=vmapped, variables=state_names, callable_with="only_args")
 
     # Callables do not necessarily have a __signature__ attribute.
     vmapped.__signature__ = inspect.signature(mappable_func)  # ty: ignore[unresolved-attribute]
@@ -74,9 +75,9 @@ def simulation_spacemap(
 
 
 def vmap_1d(
+    *,
     func: FunctionWithArrayReturn,
     variables: tuple[str, ...],
-    *,
     callable_with: Literal["only_args", "only_kwargs"] = "only_kwargs",
 ) -> FunctionWithArrayReturn:
     """Apply vmap such that func is mapped over the specified variables.
@@ -144,7 +145,7 @@ def vmap_1d(
 
 
 def productmap(
-    func: FunctionWithArrayReturn, variables: tuple[str, ...]
+    *, func: FunctionWithArrayReturn, variables: tuple[str, ...]
 ) -> FunctionWithArrayReturn:
     """Apply vmap such that func is evaluated on the Cartesian product of variables.
 

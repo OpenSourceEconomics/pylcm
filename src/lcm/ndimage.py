@@ -29,7 +29,7 @@ def map_coordinates(
 ) -> Array:
     """Map the input array to new coordinates using linear interpolation.
 
-    Modified from JAX implementation of :func:`scipy.ndimage.map_coordinates`.
+    Modified from JAX implementation of `scipy.ndimage.map_coordinates`.
 
     Given an input array and a set of coordinates, this function returns the
     interpolated values of the input array at those coordinates. For coordinates outside

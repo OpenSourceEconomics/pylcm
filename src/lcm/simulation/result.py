@@ -4,7 +4,7 @@ import contextlib
 import inspect
 import pickle
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -21,7 +21,13 @@ from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.grids import DiscreteGrid
 from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
-from lcm.typing import FlatRegimeParams, FloatND, InternalParams, RegimeName
+from lcm.typing import (
+    FlatRegimeParams,
+    FloatND,
+    InternalParams,
+    RegimeName,
+    UserFunction,
+)
 from lcm.utils import flatten_regime_namespace
 
 CLOUDPICKLE_IMPORT_ERROR_MSG = (
@@ -40,6 +46,7 @@ class SimulationResult:
 
     def __init__(
         self,
+        *,
         raw_results: MappingProxyType[
             str, MappingProxyType[int, PeriodRegimeSimulationData]
         ],
@@ -53,7 +60,9 @@ class SimulationResult:
         self._internal_params = internal_params
         self._V_arr_dict = V_arr_dict
         self._ages = ages
-        self._metadata = _compute_metadata(internal_regimes, raw_results)
+        self._metadata = _compute_metadata(
+            internal_regimes=internal_regimes, raw_results=raw_results
+        )
         self._available_targets = sorted(
             _collect_all_available_targets(internal_regimes)
         )
@@ -148,7 +157,10 @@ class SimulationResult:
             DataFrame with simulation results.
 
         """
-        resolved_targets = _resolve_targets(additional_targets, self.available_targets)
+        resolved_targets = _resolve_targets(
+            additional_targets=additional_targets,
+            available_targets=self.available_targets,
+        )
 
         df = _create_flat_dataframe(
             raw_results=self._raw_results,
@@ -160,7 +172,7 @@ class SimulationResult:
         )
 
         if use_labels:
-            return _convert_to_categorical(df, self._metadata)
+            return _convert_to_categorical(df=df, metadata=self._metadata)
 
         return df
 
@@ -236,16 +248,32 @@ class SimulationMetadata:
     """Pre-computed metadata about the simulation."""
 
     regime_names: list[str]
+    """Names of all regimes in the model."""
+
     state_names: list[str]
+    """Sorted union of state variable names across all regimes."""
+
     action_names: list[str]
+    """Sorted union of action variable names across all regimes."""
+
     n_periods: int
+    """Number of periods in the simulation."""
+
     n_subjects: int
+    """Number of subjects simulated."""
+
     regime_to_states: MappingProxyType[str, tuple[str, ...]]
+    """Immutable mapping of regime names to their state variable names."""
+
     regime_to_actions: MappingProxyType[str, tuple[str, ...]]
+    """Immutable mapping of regime names to their action variable names."""
+
     discrete_categories: MappingProxyType[str, tuple[str, ...]]
+    """Immutable mapping of discrete variable names to their category labels."""
 
 
 def _compute_metadata(
+    *,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     raw_results: MappingProxyType[
         RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
@@ -308,6 +336,7 @@ def _get_n_subjects(
 
 
 def _resolve_targets(
+    *,
     additional_targets: list[str] | Literal["all"] | None,
     available_targets: list[str],
 ) -> list[str] | None:
@@ -367,8 +396,8 @@ def _get_stochastic_weight_function_names(regime: InternalRegime) -> set[str]:
     flat_transitions = flatten_regime_namespace(regime.transitions)
     return {
         f"weight_{name}"
-        for name, fn in flat_transitions.items()
-        if is_stochastic_transition(fn)
+        for name, func in flat_transitions.items()
+        if is_stochastic_transition(func)
     }
 
 
@@ -378,6 +407,7 @@ def _get_stochastic_weight_function_names(regime: InternalRegime) -> set[str]:
 
 
 def _create_flat_dataframe(
+    *,
     raw_results: MappingProxyType[
         str, MappingProxyType[int, PeriodRegimeSimulationData]
     ],
@@ -394,7 +424,7 @@ def _create_flat_dataframe(
             regime_results=raw_results[name],
             regime_states=metadata.regime_to_states[name],
             regime_actions=metadata.regime_to_actions[name],
-            flat_regime_params=internal_params[name],
+            regime_params=internal_params[name],
             additional_targets=additional_targets,
             ages=ages,
         )
@@ -410,23 +440,29 @@ def _create_flat_dataframe(
 
 
 def _process_regime(
+    *,
     internal_regime: InternalRegime,
     regime_results: MappingProxyType[int, PeriodRegimeSimulationData],
     regime_states: tuple[str, ...],
     regime_actions: tuple[str, ...],
-    flat_regime_params: FlatRegimeParams,
+    regime_params: FlatRegimeParams,
     additional_targets: list[str] | None,
     ages: AgeGrid,
 ) -> pd.DataFrame:
     """Process results for a single regime into a DataFrame."""
     # Build period data
     period_dicts = [
-        _extract_period_data(result, period, regime_states, regime_actions)
+        _extract_period_data(
+            result=result,
+            period=period,
+            regime_states=regime_states,
+            regime_actions=regime_actions,
+        )
         for period, result in regime_results.items()
     ]
 
     # Concatenate and filter to in-regime subjects
-    data = _concatenate_and_filter(period_dicts)
+    data: dict[str, Array | Sequence[str]] = _concatenate_and_filter(period_dicts)  # ty: ignore[invalid-assignment]
 
     # Add age column (computed from period using ages grid)
     data["age"] = ages.values[data["period"]]  # noqa: PD011
@@ -437,11 +473,14 @@ def _process_regime(
     # Compute additional targets
     if additional_targets:
         targets_for_regime = _filter_targets_for_regime(
-            additional_targets, internal_regime
+            targets=additional_targets, internal_regime=internal_regime
         )
         if targets_for_regime:
             target_values = _compute_targets(
-                data, targets_for_regime, internal_regime, flat_regime_params
+                data=data,
+                targets=targets_for_regime,
+                internal_regime=internal_regime,
+                regime_params=regime_params,
             )
             data.update(target_values)
 
@@ -449,6 +488,7 @@ def _process_regime(
 
 
 def _extract_period_data(
+    *,
     result: PeriodRegimeSimulationData,
     period: int,
     regime_states: tuple[str, ...],
@@ -473,7 +513,7 @@ def _extract_period_data(
     return data
 
 
-def _concatenate_and_filter(period_dicts: list[dict[str, Array]]) -> dict[str, Any]:
+def _concatenate_and_filter(period_dicts: list[dict[str, Array]]) -> dict[str, Array]:
     """Concatenate period data and filter to in-regime subjects."""
     keys = [k for k in period_dicts[0] if k != "_in_regime"]
 
@@ -486,6 +526,7 @@ def _concatenate_and_filter(period_dicts: list[dict[str, Array]]) -> dict[str, A
 
 
 def _filter_targets_for_regime(
+    *,
     targets: list[str],
     internal_regime: InternalRegime,
 ) -> list[str]:
@@ -495,21 +536,23 @@ def _filter_targets_for_regime(
 
 
 def _assemble_dataframe(
+    *,
     regime_dfs: list[pd.DataFrame],
     state_names: list[str],
     action_names: list[str],
 ) -> pd.DataFrame:
     """Combine regime DataFrames, add missing columns, reorder, and sort."""
     if not regime_dfs:
-        return _empty_dataframe(state_names, action_names)
+        return _empty_dataframe(state_names=state_names, action_names=action_names)
 
     df = pd.concat(regime_dfs, ignore_index=True)
-    df = _add_missing_columns(df, state_names, action_names)
-    df = _reorder_columns(df, state_names, action_names)
+    df = _add_missing_columns(df=df, state_names=state_names, action_names=action_names)
+    df = _reorder_columns(df=df, state_names=state_names, action_names=action_names)
     return df.sort_values(["subject_id", "period"]).reset_index(drop=True)
 
 
 def _empty_dataframe(
+    *,
     state_names: list[str],
     action_names: list[str],
 ) -> pd.DataFrame:
@@ -521,6 +564,7 @@ def _empty_dataframe(
 
 
 def _add_missing_columns(
+    *,
     df: pd.DataFrame,
     state_names: list[str],
     action_names: list[str],
@@ -536,6 +580,7 @@ def _add_missing_columns(
 
 
 def _reorder_columns(
+    *,
     df: pd.DataFrame,
     state_names: list[str],
     action_names: list[str],
@@ -553,6 +598,7 @@ def _reorder_columns(
 
 
 def _convert_to_categorical(
+    *,
     df: pd.DataFrame,
     metadata: SimulationMetadata,
 ) -> pd.DataFrame:
@@ -571,12 +617,15 @@ def _convert_to_categorical(
     # Convert discrete state and action columns
     for var_name, categories in metadata.discrete_categories.items():
         if var_name in df.columns:
-            df[var_name] = _codes_to_categorical(df[var_name], categories)
+            df[var_name] = _codes_to_categorical(
+                codes=df[var_name], categories=categories
+            )
 
     return df
 
 
 def _codes_to_categorical(
+    *,
     codes: pd.Series,
     categories: tuple[str, ...],
 ) -> pd.Categorical | pd.Series:
@@ -618,29 +667,32 @@ def _codes_to_categorical(
 
 
 def _compute_targets(
-    data: dict[str, Any],
+    *,
+    data: dict[str, Array | Sequence[str]],
     targets: list[str],
     internal_regime: InternalRegime,
-    flat_regime_params: FlatRegimeParams,
+    regime_params: FlatRegimeParams,
 ) -> dict[str, Array]:
     """Compute additional targets for a regime."""
     functions_pool = _build_functions_pool(internal_regime)
-    target_func = _create_target_function(functions_pool, targets)
+    target_func = _create_target_function(
+        functions_pool=functions_pool, targets=targets
+    )
     # Merge resolved fixed params with runtime params so that the target
     # function (built from raw user functions) receives all needed arguments.
-    all_params = {**internal_regime.resolved_fixed_params, **flat_regime_params}
+    all_params = {**internal_regime.resolved_fixed_params, **regime_params}
     flat_param_names = frozenset(all_params.keys())
-    variables = _get_function_variables(target_func, flat_param_names)
-    vectorized_func = vmap_1d(target_func, variables=variables)
+    variables = _get_function_variables(func=target_func, param_names=flat_param_names)
+    vectorized_func = vmap_1d(func=target_func, variables=variables)
     kwargs = {k: jnp.asarray(v) for k, v in data.items() if k in variables}
     result = vectorized_func(**all_params, **kwargs)
     # Squeeze any (n, 1) shaped arrays to (n,)
     return {k: jnp.squeeze(v) for k, v in result.items()}
 
 
-def _build_functions_pool(internal_regime: InternalRegime) -> dict[str, Any]:
+def _build_functions_pool(internal_regime: InternalRegime) -> dict[str, UserFunction]:
     """Build pool of available functions for target computation."""
-    pool: dict[str, Any] = {
+    pool: dict[str, UserFunction] = {
         **{k: v for k, v in internal_regime.functions.items() if k != "H"},
         **internal_regime.constraints,
     }
@@ -652,9 +704,10 @@ def _build_functions_pool(internal_regime: InternalRegime) -> dict[str, Any]:
 
 
 def _create_target_function(
-    functions_pool: dict[str, Any],
+    *,
+    functions_pool: dict[str, UserFunction],
     targets: list[str],
-) -> Any:  # noqa: ANN401
+) -> UserFunction:
     """Create combined function for computing targets."""
     return concatenate_functions(
         functions=functions_pool,
@@ -665,6 +718,7 @@ def _create_target_function(
 
 
 def _get_function_variables(
+    *,
     func: Callable[..., Any],
     param_names: frozenset[str],
 ) -> tuple[str, ...]:
@@ -677,11 +731,11 @@ def _get_function_variables(
 # ======================================================================================
 
 
-def _atomic_dump(obj: Any, path: str | Path, *, protocol: int) -> Path:  # noqa: ANN401
+def _atomic_dump(obj: SimulationResult, path: str | Path, *, protocol: int) -> Path:
     """Serialize `obj` to `path` in an atomic (all-or-nothing) way.
 
     Args:
-        obj: Object to serialize.
+        obj: SimulationResult to serialize.
         path: File path to save the pickle.
         protocol: Int which indicates which protocol should be used by the pickler.
             The possible values are 0, 1, 2, 3, 4, 5. See

@@ -11,9 +11,9 @@ from lcm.shocks import _ShockGrid
 
 
 def create_state_action_space(
+    *,
     variable_info: pd.DataFrame,
     grids: MappingProxyType[str, Array],
-    *,
     states: dict[str, Array] | None = None,
 ) -> StateActionSpace:
     """Create a state-action-space.
@@ -33,30 +33,32 @@ def create_state_action_space(
         appear in the variable info table.
 
     """
-    vi = variable_info.copy()
-
     if states is None:
-        _states = {sn: grids[sn] for sn in vi.query("is_state").index}
+        _states = {sn: grids[sn] for sn in variable_info.query("is_state").index}
     else:
         _validate_all_states_present(
             provided_states=states,
-            required_states_names=set(vi.query("is_state").index),
+            required_state_names=set(variable_info.query("is_state").index),
         )
         _states = states
 
     discrete_actions = {
-        name: grids[name] for name in vi.query("is_action & is_discrete").index
+        name: grids[name]
+        for name in variable_info.query("is_action & is_discrete").index
     }
     continuous_actions = {
-        name: grids[name] for name in vi.query("is_action & is_continuous").index
+        name: grids[name]
+        for name in variable_info.query("is_action & is_continuous").index
     }
-    ordered_var_names = tuple(vi.query("is_state | is_discrete").index)
+    state_and_discrete_action_names = tuple(
+        variable_info.query("is_state | is_discrete").index
+    )
 
     return StateActionSpace(
         states=MappingProxyType(_states),
         discrete_actions=MappingProxyType(discrete_actions),
         continuous_actions=MappingProxyType(continuous_actions),
-        states_and_discrete_actions_names=ordered_var_names,
+        state_and_discrete_action_names=state_and_discrete_action_names,
     )
 
 
@@ -96,21 +98,21 @@ def create_state_space_info(regime: Regime) -> StateSpaceInfo:
     }
 
     return StateSpaceInfo(
-        states_names=tuple(state_names),
+        state_names=tuple(state_names),
         discrete_states=MappingProxyType(discrete_states),
         continuous_states=MappingProxyType(continuous_states),
     )
 
 
 def _validate_all_states_present(
-    provided_states: dict[str, Array], required_states_names: set[str]
+    *, provided_states: dict[str, Array], required_state_names: set[str]
 ) -> None:
     """Check that all states are present in the provided states."""
-    provided_states_names = set(provided_states)
+    provided_state_names = set(provided_states)
 
-    if required_states_names != provided_states_names:
-        missing = required_states_names - provided_states_names
-        too_many = provided_states_names - required_states_names
+    if required_state_names != provided_state_names:
+        missing = required_state_names - provided_state_names
+        too_many = provided_state_names - required_state_names
         raise ValueError(
             "You need to provide an initial array for each state variable in the "
             f"regime.\n\nMissing initial states: {missing}\n",

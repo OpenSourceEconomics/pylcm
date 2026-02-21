@@ -18,7 +18,9 @@ def test_normalize_with_scalar_values():
         }
     )
     active_regimes = ("working", "retired")
-    got = normalize_regime_transition_probs(probs, active_regimes)
+    got = normalize_regime_transition_probs(
+        regime_transition_probs=probs, active_regimes_next_period=active_regimes
+    )
     # Should normalize over active regimes only (0.7 + 0.1 = 0.8)
     # Only active regimes are returned
     assert set(got.keys()) == {"working", "retired"}
@@ -36,7 +38,9 @@ def test_normalize_with_array_values():
         }
     )
     active_regimes = ("working", "retired")
-    got = normalize_regime_transition_probs(probs, active_regimes)
+    got = normalize_regime_transition_probs(
+        regime_transition_probs=probs, active_regimes_next_period=active_regimes
+    )
     # Should normalize over active regimes only
     # Subject 0: 0.7 + 0.1 = 0.8, Subject 1: 0.6 + 0.3 = 0.9
     # Only active regimes are returned
@@ -60,7 +64,9 @@ def test_validate_normalized_probs_passes_for_valid_probs():
     )
     # Should not raise
     _validate_normalized_regime_transition_probs(
-        normalized_probs, regime_name="working", period=0
+        normalized_regime_transition_probs=normalized_probs,
+        regime_name="working",
+        period=0,
     )
 
 
@@ -82,7 +88,9 @@ def test_validate_normalized_probs_raises_for_nan_values():
         match="do not sum to 1 after normalization",
     ):
         _validate_normalized_regime_transition_probs(
-            normalized_probs, regime_name="working", period=0
+            normalized_regime_transition_probs=normalized_probs,
+            regime_name="working",
+            period=0,
         )
 
 
@@ -102,7 +110,9 @@ def test_validate_normalized_probs_raises_for_inf_values():
         match="do not sum to 1 after normalization",
     ):
         _validate_normalized_regime_transition_probs(
-            normalized_probs, regime_name="working", period=0
+            normalized_regime_transition_probs=normalized_probs,
+            regime_name="working",
+            period=0,
         )
 
 
@@ -119,7 +129,9 @@ def test_validate_normalized_probs_raises_for_probs_not_summing_to_one():
         match="do not sum to 1 after normalization",
     ):
         _validate_normalized_regime_transition_probs(
-            normalized_probs, regime_name="working", period=0
+            normalized_regime_transition_probs=normalized_probs,
+            regime_name="working",
+            period=0,
         )
 
 
@@ -141,7 +153,9 @@ def test_normalize_produces_nan_when_all_active_probs_zero():
     )
     # But only working and retired are active
     active_regimes = ("working", "retired")
-    got = normalize_regime_transition_probs(probs, active_regimes)
+    got = normalize_regime_transition_probs(
+        regime_transition_probs=probs, active_regimes_next_period=active_regimes
+    )
 
     # Only active regimes are returned
     assert set(got.keys()) == {"working", "retired"}

@@ -235,11 +235,11 @@ def test_get_all_functions_includes_identity_for_fixed_discrete_state():
         functions={"utility": lambda education: education},
         states={"education": DiscreteGrid(Edu, transition=None)},
     )
-    all_fns = regime.get_all_functions()
-    identity_fn = all_fns["next_education"]
-    assert isinstance(identity_fn, _IdentityTransition)
-    assert identity_fn.__annotations__["education"] is DiscreteState
-    assert identity_fn.__annotations__["return"] is DiscreteState
+    all_funcs = regime.get_all_functions()
+    identity_func = all_funcs["next_education"]
+    assert isinstance(identity_func, _IdentityTransition)
+    assert identity_func.__annotations__["education"] is DiscreteState
+    assert identity_func.__annotations__["return"] is DiscreteState
 
 
 def test_get_all_functions_includes_identity_for_fixed_continuous_state():
@@ -249,11 +249,11 @@ def test_get_all_functions_includes_identity_for_fixed_continuous_state():
         functions={"utility": lambda wealth: wealth},
         states={"wealth": LinSpacedGrid(start=0, stop=10, n_points=5, transition=None)},
     )
-    all_fns = regime.get_all_functions()
-    identity_fn = all_fns["next_wealth"]
-    assert isinstance(identity_fn, _IdentityTransition)
-    assert identity_fn.__annotations__["wealth"] is ContinuousState
-    assert identity_fn.__annotations__["return"] is ContinuousState
+    all_funcs = regime.get_all_functions()
+    identity_func = all_funcs["next_wealth"]
+    assert isinstance(identity_func, _IdentityTransition)
+    assert identity_func.__annotations__["wealth"] is ContinuousState
+    assert identity_func.__annotations__["return"] is ContinuousState
 
 
 # ======================================================================================

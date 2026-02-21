@@ -147,42 +147,6 @@ class QAndFFunction(Protocol):
     ) -> tuple[FloatND, BoolND]: ...
 
 
-class MaxQOverCFunction(Protocol):
-    """The function that maximizes Q over the continuous actions.
-
-    Q is the state-action value function. The MaxQOverCFunction returns the maximum of Q
-    over the continuous actions.
-
-    Only used for type checking.
-
-    """
-
-    def __call__(
-        self,
-        next_V_arr: MappingProxyType[RegimeName, Array],
-        period: Period,
-        **kwargs: Array,
-    ) -> Array: ...
-
-
-class ArgmaxQOverCFunction(Protocol):
-    """The function that finds the argmax of Q over the continuous actions.
-
-    Q is the state-action value function. The ArgmaxQOverCFunction returns the argmax
-    and the maximum of Q over the continuous actions.
-
-    Only used for type checking.
-
-    """
-
-    def __call__(
-        self,
-        next_V_arr: MappingProxyType[RegimeName, Array],
-        period: Period,
-        **kwargs: Array,
-    ) -> tuple[Array, Array]: ...
-
-
 class MaxQOverAFunction(Protocol):
     """The function that maximizes Q over all actions.
 
@@ -215,34 +179,6 @@ class ArgmaxQOverAFunction(Protocol):
         next_V_arr: MappingProxyType[RegimeName, Array],
         **kwargs: Any,  # noqa: ANN401
     ) -> tuple[Array, Array]: ...
-
-
-class MaxQcOverDFunction(Protocol):
-    """The function that maximizes Qc over the discrete actions.
-
-    Qc is the maximum of the state-action value function (Q) over the continuous
-    actions, conditional on the discrete action. It depends on a state and the discrete
-    actions. The MaxQcFunction returns the maximum of Qc over the discrete actions.
-
-    Only used for type checking.
-
-    """
-
-    def __call__(self, Qc_arr: Array, **kwargs: Array) -> Array: ...
-
-
-class ArgmaxQcOverDFunction(Protocol):
-    """The function that finds the argmax of Qc over the discrete actions.
-
-    Qc is the maximum of the state-action value function (Q) over the continuous
-    actions, conditional on the discrete action. It depends on a state and the discrete
-    actions. The ArgmaxQcFunction returns the argmax of Qc over the discrete actions.
-
-    Only used for type checking.
-
-    """
-
-    def __call__(self, Qc_arr: Array, **kwargs: Array) -> tuple[Array, Array]: ...
 
 
 class StochasticNextFunction(Protocol):

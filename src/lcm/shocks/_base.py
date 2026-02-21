@@ -1,8 +1,10 @@
 from abc import abstractmethod
 from dataclasses import dataclass, fields
 from types import MappingProxyType
+from typing import overload
 
 import jax.numpy as jnp
+from jax import Array
 
 from lcm import grid_helpers
 from lcm.exceptions import GridInitializationError
@@ -15,7 +17,7 @@ class _ShockGrid(ContinuousGrid):
     """Base class for discretized continuous shock grids.
 
     Subclasses define distribution-specific parameters as dataclass fields.
-    Parameters set to ``None`` must be supplied at runtime via ``params``.
+    Parameters set to `None` must be supplied at runtime via `params`.
 
     """
 
@@ -84,10 +86,14 @@ class _ShockGrid(ContinuousGrid):
         """Convert the grid to a Jax array."""
         return self.get_gridpoints()
 
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
+    @overload
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
+    @overload
+    def get_coordinate(self, value: Array) -> Array: ...
+    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
         if not self.is_fully_specified:
             raise GridInitializationError(
                 "Cannot compute coordinate for a ShockGrid without all shock params."
             )
-        return grid_helpers.get_irreg_coordinate(value, self.to_jax())
+        return grid_helpers.get_irreg_coordinate(value=value, points=self.to_jax())

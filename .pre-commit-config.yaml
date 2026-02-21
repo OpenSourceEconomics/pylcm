@@ -82,6 +82,14 @@ repos:
         args:
           - --wrap
           - '88'
-        files: (CLAUDE\.md|README\.md)
+        files: README\.md
+      - id: mdformat
+        name: mdformat (CLAUDE.md)
+        additional_dependencies:
+          - mdformat-gfm
+        args:
+          - --wrap
+          - '88'
+        files: CLAUDE\.md
 ci:
   autoupdate_schedule: monthly

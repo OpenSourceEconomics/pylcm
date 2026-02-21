@@ -50,29 +50,27 @@ class StateActionSpace:
     We store discrete and continuous actions separately since these are handled during
     different stages of the solution and simulation processes.
 
-    Attributes:
-        states: Dictionary containing the values of the state variables.
-        discrete_actions: Dictionary containing the values of the discrete action
-            variables.
-        continuous_actions: Dictionary containing the values of the continuous action
-            variables.
-        states_and_discrete_actions_names: Tuple with names of states and discrete
-            action variables in the order they appear in the variable info table.
-
     """
 
     states: MappingProxyType[str, ContinuousState | DiscreteState]
+    """Immutable mapping of state variable names to their values."""
+
     discrete_actions: MappingProxyType[str, DiscreteAction]
+    """Immutable mapping of discrete action variable names to their values."""
+
     continuous_actions: MappingProxyType[str, ContinuousAction]
-    states_and_discrete_actions_names: tuple[str, ...]
+    """Immutable mapping of continuous action variable names to their values."""
+
+    state_and_discrete_action_names: tuple[str, ...]
+    """Names of states and discrete actions in variable info table order."""
 
     @property
-    def states_names(self) -> tuple[str, ...]:
+    def state_names(self) -> tuple[str, ...]:
         """Tuple with names of all state variables."""
         return tuple(self.states)
 
     @property
-    def actions_names(self) -> tuple[str, ...]:
+    def action_names(self) -> tuple[str, ...]:
         """Tuple with names of all action variables."""
         return tuple(self.discrete_actions) + tuple(self.continuous_actions)
 
@@ -85,7 +83,7 @@ class StateActionSpace:
 
     @property
     def actions_grid_shapes(self) -> tuple[int, ...]:
-        """Dictionary with all action variables."""
+        """Tuple of action grid sizes."""
         return tuple(len(grid) for grid in self.actions.values())
 
     def replace(
@@ -119,23 +117,23 @@ class StateActionSpace:
         )
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class StateSpaceInfo:
     """Information to work with the output of a function evaluated on a state space.
 
     An example is the value function array, which is the output of the value function
     evaluated on the state space.
 
-    Attributes:
-        var_names: Tuple with names of state variables.
-        discrete_vars: Dictionary with grids of discrete state variables.
-        continuous_vars: Dictionary with grids of continuous state variables.
-
     """
 
-    states_names: tuple[str, ...]
+    state_names: tuple[str, ...]
+    """Tuple of state variable names."""
+
     discrete_states: MappingProxyType[str, DiscreteGrid | _ShockGrid]
+    """Immutable mapping of discrete state names to their grids."""
+
     continuous_states: MappingProxyType[str, ContinuousGrid]
+    """Immutable mapping of continuous state names to their grids."""
 
 
 class ShockType(Enum):
@@ -146,68 +144,96 @@ class ShockType(Enum):
 
 
 class PhaseVariantContainer[S, T]:
-    """Container for objects that vary whether we are in the solve or simulate phase.
-
-    Attributes:
-        solve: Object for the solve phase.
-        simulate: Object for the simulate phase.
-
-    """
+    """Container for objects that vary whether we are in the solve or simulate phase."""
 
     __slots__ = ("simulate", "solve")
 
-    def __init__(self, solve: S, simulate: T) -> None:
+    def __init__(self, *, solve: S, simulate: T) -> None:
         self.solve = solve
         self.simulate = simulate
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class InternalRegime:
     """Internal representation of a user regime."""
 
     name: str
+    """Regime name (key in the regimes dict)."""
+
     terminal: bool
+    """Whether this is a terminal regime."""
+
     grids: MappingProxyType[str, Array]
+    """Immutable mapping of variable names to materialized JAX grid arrays."""
+
     gridspecs: MappingProxyType[str, Grid]
+    """Immutable mapping of variable names to grid specification objects."""
+
     variable_info: pd.DataFrame
+    """DataFrame with variable metadata (is_state, is_action, etc.)."""
+
     constraints: MappingProxyType[str, InternalUserFunction]
+    """Immutable mapping of constraint names to compiled constraint functions."""
+
     transitions: TransitionFunctionsMapping
+    """Immutable mapping of state transition names to compiled transition functions."""
+
     functions: MappingProxyType[str, InternalUserFunction]
+    """Immutable mapping of function names to compiled user functions."""
+
     active_periods: tuple[int, ...]
+    """Period indices during which this regime is active."""
+
     regime_transition_probs: (
         PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]
         | None
     )
+    """Regime transition probability functions for solve and simulate, or `None`."""
+
     internal_functions: InternalFunctions
+    """All compiled functions for this regime.
+
+    Includes user functions, constraints, and transitions.
+    """
+
     regime_params_template: RegimeParamsTemplate
+    """Template for the parameter structure expected by this regime."""
+
     state_space_info: StateSpaceInfo
+    """Metadata for working with function outputs on the state space."""
+
     max_Q_over_a_functions: MappingProxyType[int, MaxQOverAFunction]
+    """Immutable mapping of period to max-Q-over-actions functions for solving."""
+
     argmax_and_max_Q_over_a_functions: MappingProxyType[int, ArgmaxQOverAFunction]
+    """Immutable mapping of period to argmax-and-max-Q functions for simulation."""
+
     next_state_simulation_function: NextStateSimulationFunction
-    # Not properly processed yet
-    random_utility_shocks: ShockType
+    """Compiled function to compute next-period states during simulation."""
+
     _base_state_action_space: StateActionSpace = dataclasses.field(repr=False)
+    """Base state-action space before runtime grid substitution."""
+
     # Resolved fixed params (flat) for this regime, used by to_dataframe targets
     resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
+    """Flat resolved fixed params for this regime, used by to_dataframe targets."""
 
-    def state_action_space(
-        self, flat_regime_params: FlatRegimeParams
-    ) -> StateActionSpace:
+    def state_action_space(self, regime_params: FlatRegimeParams) -> StateActionSpace:
         """Return the state-action space with runtime state grids filled in.
 
         For IrregSpacedGrid with runtime-supplied points, the grid points come from
-        params as ``{state_name}__points``. For _ShockGrid with runtime-supplied params,
+        params as `{state_name}__points`. For _ShockGrid with runtime-supplied params,
         the grid points are computed from shock params in the params dict or
         resolved_fixed_params.
 
         Args:
-            flat_regime_params: Flat regime parameters supplied at runtime.
+            regime_params: Flat regime parameters supplied at runtime.
 
         Returns:
             Completed state-action space.
 
         """
-        all_params = {**self.resolved_fixed_params, **flat_regime_params}
+        all_params = {**self.resolved_fixed_params, **regime_params}
         replacements: dict[str, object] = {}
         for state_name, spec in self.gridspecs.items():
             if state_name not in self._base_state_action_space.states:
@@ -243,23 +269,19 @@ class InternalRegime:
 
 @dataclasses.dataclass(frozen=True)
 class PeriodRegimeSimulationData:
-    """Raw simulation data for one period in one regime.
-
-    Attributes:
-        V_arr: Value function array of a regime for all subjects at this period.
-        actions: Dict mapping action names to optimal action arrays for all subjects.
-        states: Dict mapping state names to state value arrays for all subjects.
-        in_regime: Boolean mask indicating which subjects are in this regime at this
-            period. True means the subject is in this regime; False means they are in
-            a different regime (and the corresponding values in V_arr, actions, and
-            states should be ignored for that subject).
-
-    """
+    """Raw simulation data for one period in one regime."""
 
     V_arr: Array
+    """Value function array for all subjects at this period."""
+
     actions: MappingProxyType[str, Array]
+    """Immutable mapping of action names to optimal action arrays for all subjects."""
+
     states: MappingProxyType[str, Array]
+    """Immutable mapping of state names to state value arrays for all subjects."""
+
     in_regime: Bool1D
+    """Boolean mask indicating which subjects are in this regime at this period."""
 
 
 class Target(Enum):
@@ -274,12 +296,19 @@ class InternalFunctions:
     """All functions that are used in the regime."""
 
     functions: MappingProxyType[str, InternalUserFunction]
+    """Immutable mapping of function names to internal user functions."""
+
     constraints: MappingProxyType[str, InternalUserFunction]
+    """Immutable mapping of constraint names to internal user functions."""
+
     transitions: TransitionFunctionsMapping
+    """Immutable mapping of transition names to transition functions."""
+
     regime_transition_probs: (
         PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]
         | None
     )
+    """Regime transition probability functions, or None for terminal regimes."""
 
     def get_all_functions(self) -> MappingProxyType[str, InternalUserFunction]:
         """Get all regime functions including utility, constraints, and transitions.

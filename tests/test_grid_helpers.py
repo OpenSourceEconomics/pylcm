@@ -4,6 +4,7 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm.grid_helpers import (
+    get_irreg_coordinate,
     get_linspace_coordinate,
     get_logspace_coordinate,
     linspace,
@@ -144,9 +145,40 @@ def test_map_coordinates_linear_outside_grid():
 
     # Get coordinates corresponding to values outside the grid [1, 2]
     coordinates = jnp.array(
-        [get_linspace_coordinate(grid_val, **grid_info) for grid_val in [-1, 0, 3]]
+        [
+            get_linspace_coordinate(value=grid_val, **grid_info)
+            for grid_val in [-1, 0, 3]
+        ]
     )
 
     interpolated_value = map_coordinates(values, [coordinates])
 
     aaae(interpolated_value, [-2, 0, 6], decimal=DECIMAL_PRECISION)
+
+
+# ======================================================================================
+# Array-valued coordinate functions
+# ======================================================================================
+
+
+def test_get_linspace_coordinate_with_array():
+    values = jnp.array([1.0, 1.2, 1.5])
+    coords = get_linspace_coordinate(value=values, start=1, stop=2, n_points=6)
+    expected = jnp.array([0.0, 1.0, 2.5])
+    aaae(coords, expected, decimal=DECIMAL_PRECISION)
+
+
+def test_get_logspace_coordinate_with_array():
+    grid = logspace(start=1, stop=100, n_points=7)
+    mid = (float(grid[1]) + float(grid[2])) / 2
+    values = jnp.array([mid])
+    coords = get_logspace_coordinate(value=values, start=1, stop=100, n_points=7)
+    aaae(coords, jnp.array([1.5]), decimal=DECIMAL_PRECISION)
+
+
+def test_get_irreg_coordinate_with_array():
+    points = jnp.array([0.0, 1.0, 3.0, 6.0])
+    values = jnp.array([0.5, 3.0, 4.5])
+    coords = get_irreg_coordinate(value=values, points=points)
+    expected = jnp.array([0.5, 2.0, 2.5])
+    aaae(coords, expected, decimal=DECIMAL_PRECISION)

@@ -17,9 +17,9 @@ from lcm.simulation.result import SimulationResult
 from lcm.simulation.util import (
     calculate_next_regime_membership,
     calculate_next_states,
-    convert_flat_to_nested_initial_states,
+    convert_initial_states_to_nested,
     create_regime_state_action_space,
-    validate_flat_initial_states,
+    validate_initial_states,
 )
 from lcm.typing import (
     FloatND,
@@ -33,6 +33,7 @@ from lcm.utils import flatten_regime_namespace
 
 
 def simulate(
+    *,
     internal_params: InternalParams,
     initial_states: Mapping[str, Array],
     initial_regimes: list[RegimeName],
@@ -41,22 +42,22 @@ def simulate(
     logger: logging.Logger,
     V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
     ages: AgeGrid,
-    *,
     seed: int | None = None,
 ) -> SimulationResult:
     """Simulate the model forward in time given pre-computed value function arrays.
 
     Args:
-        internal_params: Dict of model parameters.
-        initial_states: Flat dict mapping state names to arrays. All arrays must have
+        internal_params: Immutable mapping of regime names to flat parameter mappings.
+        initial_states: Flat mapping of state names to arrays. All arrays must have
             the same length (number of subjects). Each state name should correspond to
             a state variable defined in at least one regime.
             Example: {"wealth": jnp.array([10.0, 50.0]), "health": jnp.array([0, 1])}
-        internal_regimes: Dict of internal regime instances.
-        regime_names_to_ids: Mapping from regime names to integer indices.
-        initial_regimes: List containing the names of the regimes the subjects start in.
+        internal_regimes: Immutable mapping of regime names to internal regime
+            instances.
+        regime_names_to_ids: Immutable mapping of regime names to integer indices.
+        initial_regimes: List of regime names the subjects start in.
         logger: Logger that logs to stdout.
-        V_arr_dict: Dict of value function arrays of length n_periods.
+        V_arr_dict: Immutable mapping of periods to regime value function arrays.
         ages: AgeGrid for the model, used to convert periods to ages.
         seed: Random number seed; will be passed to `jax.random.key`. If not provided,
             a random seed will be generated.
@@ -72,9 +73,11 @@ def simulate(
 
     # Validate and convert flat initial_states to nested format
     # ----------------------------------------------------------------------------------
-    validate_flat_initial_states(initial_states, internal_regimes)
-    nested_initial_states = convert_flat_to_nested_initial_states(
-        initial_states, internal_regimes
+    validate_initial_states(
+        initial_states=initial_states, internal_regimes=internal_regimes
+    )
+    nested_initial_states = convert_initial_states_to_nested(
+        initial_states=initial_states, internal_regimes=internal_regimes
     )
 
     # Preparations
@@ -149,6 +152,7 @@ def simulate(
 
 
 def _simulate_regime_in_period(
+    *,
     regime_name: RegimeName,
     internal_regime: InternalRegime,
     period: int,
@@ -178,7 +182,7 @@ def _simulate_regime_in_period(
         V_arr_dict: Value function arrays for all periods and regimes.
         internal_params: Model parameters for all regimes.
         regime_names_to_ids: Mapping from regime names to integer IDs.
-        active_regimes_next_period: List of active regimes in the next period.
+        active_regimes_next_period: Tuple of active regime names in the next period.
         key: JAX random key for stochastic operations.
 
     Returns:
@@ -218,7 +222,7 @@ def _simulate_regime_in_period(
         next_V_arr=next_V_arr,
         **internal_params[regime_name],
     )
-    validate_value_function_array(V_arr, age=age)
+    validate_value_function_array(V_arr=V_arr, age=age)
 
     optimal_actions = _lookup_values_from_indices(
         flat_indices=indices_optimal_actions,
@@ -252,34 +256,35 @@ def _simulate_regime_in_period(
 
         next_states = calculate_next_states(
             internal_regime=internal_regime,
-            subjects_in_regime=subject_ids_in_regime,
             optimal_actions=optimal_actions,
             period=period,
             age=age,
-            flat_regime_params=internal_params[regime_name],
+            regime_params=internal_params[regime_name],
             states=states,
             state_action_space=state_action_space,
             key=next_states_key,
+            subjects_in_regime=subject_ids_in_regime,
         )
         states = next_states
         new_subject_regime_ids = calculate_next_regime_membership(
             internal_regime=internal_regime,
-            subjects_in_regime=subject_ids_in_regime,
+            state_action_space=state_action_space,
             optimal_actions=optimal_actions,
             period=period,
             age=age,
-            flat_regime_params=internal_params[regime_name],
-            state_action_space=state_action_space,
-            new_subject_regime_ids=new_subject_regime_ids,
+            regime_params=internal_params[regime_name],
             regime_names_to_ids=regime_names_to_ids,
+            new_subject_regime_ids=new_subject_regime_ids,
             active_regimes_next_period=active_regimes_next_period,
             key=next_regime_key,
+            subjects_in_regime=subject_ids_in_regime,
         )
 
     return simulation_result, states, new_subject_regime_ids, key
 
 
 def _lookup_values_from_indices(
+    *,
     flat_indices: IntND,
     grids: MappingProxyType[str, Array],
 ) -> MappingProxyType[str, Array]:
@@ -287,7 +292,7 @@ def _lookup_values_from_indices(
 
     Args:
         flat_indices: General indices. Represents the index of the flattened grid.
-        grids: Dictionary of grid values.
+        grids: Immutable mapping of grid values.
 
     Returns:
         Read-only mapping of values.

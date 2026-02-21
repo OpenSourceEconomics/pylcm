@@ -37,7 +37,7 @@ def get_next_state_function_for_solution(
 
     Args:
         transitions: Transitions to the next states of a regime.
-        functions: Dict of auxiliary functions of a regime.
+        functions: Immutable mapping of auxiliary functions of a regime.
 
     Returns:
         Function that computes the next states. Depends on states and actions of the
@@ -59,11 +59,11 @@ def get_next_state_function_for_solution(
 
 def get_next_state_function_for_simulation(
     *,
+    transitions: MappingProxyType[str, InternalUserFunction],
+    functions: MappingProxyType[str, InternalUserFunction],
     grids: GridsDict,
     gridspecs: MappingProxyType[str, Grid],
     variable_info: pd.DataFrame,
-    transitions: MappingProxyType[str, InternalUserFunction],
-    functions: MappingProxyType[str, InternalUserFunction],
 ) -> NextStateSimulationFunction:
     """Get function that computes the next states during the simulation.
 
@@ -72,7 +72,7 @@ def get_next_state_function_for_simulation(
         gridspecs: The specifications of the current regimes grids.
         variable_info: Variable info of a regime.
         transitions: Transitions to the next states of a regime.
-        functions: Dict of auxiliary functions of a regime.
+        functions: Immutable mapping of auxiliary functions of a regime.
 
     Returns:
         Function that computes the next states. Depends on states and actions of the
@@ -101,6 +101,7 @@ def get_next_state_function_for_simulation(
 
 
 def get_next_stochastic_weights_function(
+    *,
     regime_name: RegimeName,
     functions: MappingProxyType[str, InternalUserFunction],
     transitions: MappingProxyType[str, InternalUserFunction],
@@ -109,7 +110,7 @@ def get_next_stochastic_weights_function(
 
     Args:
         regime_name: Name of the regime that the transitions target.
-        functions: Dict containing the auxiliary functions of the model.
+        functions: Immutable mapping of auxiliary functions of the model.
         transitions: Transitions to the target regime.
 
     Returns:
@@ -117,9 +118,9 @@ def get_next_stochastic_weights_function(
 
     """
     targets = [
-        f"weight_{regime_name}__{fn_name}"
-        for fn_name, fn in transitions.items()
-        if is_stochastic_transition(fn)
+        f"weight_{regime_name}__{func_name}"
+        for func_name, func in transitions.items()
+        if is_stochastic_transition(func)
     ]
     return concatenate_functions(
         functions=functions,
@@ -131,6 +132,7 @@ def get_next_stochastic_weights_function(
 
 
 def _extend_transitions_for_simulation(
+    *,
     grids: GridsDict,
     gridspecs: MappingProxyType[str, Grid],
     transitions: MappingProxyType[str, InternalUserFunction],
@@ -139,9 +141,9 @@ def _extend_transitions_for_simulation(
     """Extend the functions dictionary for the simulation target.
 
     Args:
-        grids: Dictionary of grids.
+        grids: Immutable mapping of grids.
         gridspecs: The specifications of the current regimes grids.
-        transitions: A dictonary of transitions to extend.
+        transitions: Immutable mapping of transitions to extend.
         variable_info: Variable info of the current regime.
 
     Returns:
@@ -151,16 +153,16 @@ def _extend_transitions_for_simulation(
     shock_names = set(variable_info.query("is_shock").index.to_list())
     flat_grids = flatten_regime_namespace(grids)
     discrete_stochastic_targets = [
-        fn_name
-        for fn_name, fn in transitions.items()
-        if is_stochastic_transition(fn)
-        and fn_name.split(QNAME_DELIMITER)[-1].replace("next_", "") not in shock_names
+        func_name
+        for func_name, func in transitions.items()
+        if is_stochastic_transition(func)
+        and func_name.split(QNAME_DELIMITER)[-1].replace("next_", "") not in shock_names
     ]
     continuous_stochastic_targets = [
-        (fn_name, fn)
-        for fn_name, fn in transitions.items()
-        if is_stochastic_transition(fn)
-        and fn_name.split(QNAME_DELIMITER)[-1].replace("next_", "") in shock_names
+        (func_name, func)
+        for func_name, func in transitions.items()
+        if is_stochastic_transition(func)
+        and func_name.split(QNAME_DELIMITER)[-1].replace("next_", "") in shock_names
     ]
     # Handle stochastic next states functions
     # ----------------------------------------------------------------------------------
@@ -178,8 +180,8 @@ def _extend_transitions_for_simulation(
         for name in discrete_stochastic_targets
     }
     continuous_stochastic_next = {
-        name: _create_continuous_stochastic_next_func(name, gridspecs)
-        for name, fn in continuous_stochastic_targets
+        name: _create_continuous_stochastic_next_func(name, gridspecs=gridspecs)
+        for name, func in continuous_stochastic_targets
     }
 
     # Overwrite regime transitions with generated stochastic next states functions
@@ -188,7 +190,7 @@ def _extend_transitions_for_simulation(
 
 
 def _create_discrete_stochastic_next_func(
-    name: str, labels: DiscreteState
+    name: str, *, labels: DiscreteState
 ) -> StochasticNextFunction:
     """Get function that simulates the next state of a stochastic variable.
 
@@ -221,7 +223,7 @@ def _create_discrete_stochastic_next_func(
 
 
 def _create_continuous_stochastic_next_func(
-    name: str, gridspecs: MappingProxyType[str, Grid]
+    name: str, *, gridspecs: MappingProxyType[str, Grid]
 ) -> StochasticNextFunction:
     """Get function that simulates the next state of a stochastic variable.
 
@@ -241,16 +243,16 @@ def _create_continuous_stochastic_next_func(
     gridspec: _ShockGrid = gridspecs[prev_state_name]  # ty: ignore [invalid-assignment]
 
     if isinstance(gridspec, _ShockGridAR1):
-        return _create_ar1_next_func(name, prev_state_name, gridspec)
+        return _create_ar1_next_func(name, prev_state_name, gridspec=gridspec)
     if isinstance(gridspec, _ShockGridIID):
-        return _create_iid_next_func(name, prev_state_name, gridspec)
+        return _create_iid_next_func(name, prev_state_name, gridspec=gridspec)
 
     msg = f"Expected _ShockGridIID or _ShockGridAR1, got {type(gridspec)}"
     raise TypeError(msg)
 
 
 def _create_ar1_next_func(
-    name: str, prev_state_name: str, gridspec: _ShockGridAR1
+    name: str, prev_state_name: str, *, gridspec: _ShockGridAR1
 ) -> StochasticNextFunction:
     fixed_params = dict(gridspec.params)
     runtime_param_names = {
@@ -282,7 +284,7 @@ def _create_ar1_next_func(
 
 
 def _create_iid_next_func(
-    name: str, prev_state_name: str, gridspec: _ShockGridIID
+    name: str, prev_state_name: str, *, gridspec: _ShockGridIID
 ) -> StochasticNextFunction:
     fixed_params = dict(gridspec.params)
     runtime_param_names = {

@@ -27,7 +27,7 @@ from lcm.input_processing.util import (
     get_variable_info,
     is_stochastic_transition,
 )
-from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
+from lcm.interfaces import InternalFunctions, InternalRegime
 from lcm.mark import stochastic
 from lcm.ndimage import map_coordinates
 from lcm.regime import Regime, _collect_state_transitions
@@ -60,16 +60,16 @@ def _wrap_transitions(
 
 
 def process_regimes(
+    *,
     regimes: Mapping[str, Regime],
     ages: AgeGrid,
     regime_names_to_ids: RegimeNamesToIds,
-    *,
     enable_jit: bool,
 ) -> MappingProxyType[RegimeName, InternalRegime]:
     """Process user regimes into internal regimes.
 
-    Extracts state transitions from grid ``transition`` attributes and
-    regime transitions from ``regime.transition``. For fixed states (grids
+    Extracts state transitions from grid `transition` attributes and
+    regime transitions from `regime.transition`. For fixed states (grids
     without a transition), an identity transition is auto-generated. ShockGrid
     transitions are generated from the grid's intrinsic transition logic.
 
@@ -134,7 +134,7 @@ def process_regimes(
         regime_params_template = create_regime_params_template(regime)
 
         internal_functions = _get_internal_functions(
-            regime,
+            regime=regime,
             regime_name=name,
             nested_transitions=nested_transitions[name],
             grids=grids,
@@ -195,8 +195,6 @@ def process_regimes(
                 argmax_and_max_Q_over_a_functions
             ),
             next_state_simulation_function=next_state_simulation_function,
-            # currently no additive utility shocks are supported
-            random_utility_shocks=ShockType.NONE,
             _base_state_action_space=state_action_spaces[name],
         )
 
@@ -204,6 +202,7 @@ def process_regimes(
 
 
 def _get_internal_functions(
+    *,
     regime: Regime,
     regime_name: str,
     nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
@@ -212,7 +211,6 @@ def _get_internal_functions(
     regime_names_to_ids: RegimeNamesToIds,
     gridspecs: MappingProxyType[str, Grid],
     variable_info: pd.DataFrame,
-    *,
     enable_jit: bool,
 ) -> InternalFunctions:
     """Process the user provided regime functions.
@@ -221,8 +219,8 @@ def _get_internal_functions(
         regime: The regime as provided by the user.
         regime_name: The name of the regime.
         nested_transitions: Nested transitions dict for internal processing.
-            Format: {"regime_name": {"next_state": fn, ...}, "next_regime": fn}
-        grids: Dict containing the state grids for each regime.
+            Format: {"regime_name": {"next_state": func, ...}, "next_regime": func}
+        grids: Immutable mapping of regime names to grid arrays.
         regime_params_template: The regime's parameter template.
         regime_names_to_ids: Mapping from regime names to integer indices.
         gridspecs: The specifications of the current regimes grids.
@@ -251,59 +249,59 @@ def _get_internal_functions(
     }
 
     stochastic_transition_functions = {
-        fn_name: fn
-        for fn_name, fn in all_functions.items()
-        if is_stochastic_transition(fn) and fn_name != "next_regime"
+        func_name: func
+        for func_name, func in all_functions.items()
+        if is_stochastic_transition(func) and func_name != "next_regime"
     }
 
     deterministic_transition_functions = {
-        fn_name: fn
-        for fn_name, fn in all_functions.items()
-        if fn_name in flat_nested_transitions
-        and fn_name not in stochastic_transition_functions
+        func_name: func
+        for func_name, func in all_functions.items()
+        if func_name in flat_nested_transitions
+        and func_name not in stochastic_transition_functions
     }
 
     deterministic_functions = {
-        fn_name: fn
-        for fn_name, fn in all_functions.items()
-        if fn_name not in stochastic_transition_functions
-        and fn_name not in deterministic_transition_functions
+        func_name: func
+        for func_name, func in all_functions.items()
+        if func_name not in stochastic_transition_functions
+        and func_name not in deterministic_transition_functions
     }
 
     functions: dict[str, InternalUserFunction] = {}
 
-    for fn_name, fn in deterministic_functions.items():
-        functions[fn_name] = _rename_params_to_qnames(
-            fn=fn,
+    for func_name, func in deterministic_functions.items():
+        functions[func_name] = _rename_params_to_qnames(
+            func=func,
             regime_params_template=regime_params_template,
-            param_key=fn_name,
+            param_key=func_name,
         )
 
-    for fn_name, fn in deterministic_transition_functions.items():
-        param_key = _extract_param_key(fn_name)
-        functions[fn_name] = _rename_params_to_qnames(
-            fn=fn,
+    for func_name, func in deterministic_transition_functions.items():
+        param_key = _extract_param_key(func_name)
+        functions[func_name] = _rename_params_to_qnames(
+            func=func,
             regime_params_template=regime_params_template,
             param_key=param_key,
         )
 
-    for fn_name, fn in stochastic_transition_functions.items():
+    for func_name, func in stochastic_transition_functions.items():
         # The user-specified next function is the weighting function for the
         # stochastic transition. For the solution, we must also define a next function
         # that returns the whole grid of possible values.
-        param_key = _extract_param_key(fn_name)
-        functions[f"weight_{fn_name}"] = _rename_params_to_qnames(
-            fn=fn,
+        param_key = _extract_param_key(func_name)
+        functions[f"weight_{func_name}"] = _rename_params_to_qnames(
+            func=func,
             regime_params_template=regime_params_template,
             param_key=param_key,
         )
-        functions[fn_name] = _get_stochastic_next_function(
-            fn=fn,
-            grid=flat_grids[fn_name.replace("next_", "")],
+        functions[func_name] = _get_stochastic_next_function(
+            func=func,
+            grid=flat_grids[func_name.replace("next_", "")],
         )
     for shock_name in variable_info.query("is_shock").index.tolist():
         relative_name = f"{regime_name}__next_{shock_name}"
-        functions[f"weight_{relative_name}"] = _get_weights_fn_for_shock(
+        functions[f"weight_{relative_name}"] = _get_weights_func_for_shock(
             name=shock_name,
             gridspec=cast("_ShockGrid", gridspecs[shock_name]),
         )
@@ -312,28 +310,28 @@ def _get_internal_functions(
             grid=flat_grids[relative_name.replace("next_", "")],
         )
     internal_transition = {
-        fn_name: functions[fn_name]
-        for fn_name in flat_nested_transitions
-        if fn_name != "next_regime"
+        func_name: functions[func_name]
+        for func_name in flat_nested_transitions
+        if func_name != "next_regime"
     }
     internal_constraints = MappingProxyType(
-        {fn_name: functions[fn_name] for fn_name in regime.constraints}
+        {func_name: functions[func_name] for func_name in regime.constraints}
     )
     excluded_from_functions = set(flat_nested_transitions) | set(regime.constraints)
     internal_functions = MappingProxyType(
         {
-            fn_name: functions[fn_name]
-            for fn_name in functions
-            if fn_name not in excluded_from_functions
+            func_name: functions[func_name]
+            for func_name in functions
+            if func_name not in excluded_from_functions
         }
     )
     # Determine if next_regime is stochastic (decorated with @lcm.mark.stochastic)
     # next_regime is at top level in both flat and nested formats
-    next_regime_fn = nested_transitions.get("next_regime")
+    next_regime_func = nested_transitions.get("next_regime")
     is_stochastic_regime_transition = (
-        next_regime_fn is not None
+        next_regime_func is not None
         and is_stochastic_transition(
-            next_regime_fn  # ty: ignore[invalid-argument-type]
+            next_regime_func  # ty: ignore[invalid-argument-type]
         )
     )
 
@@ -358,19 +356,20 @@ def _get_internal_functions(
 
 
 def _extract_transitions_from_regime(
+    *,
     regime: Regime,
     states_per_regime: Mapping[str, set[str]],
 ) -> dict[str, dict[str, UserFunction] | UserFunction]:
     """Extract transitions from grid attributes and auto-generate identity transitions.
 
-    For non-terminal regimes, collects state transitions from grid ``transition``
+    For non-terminal regimes, collects state transitions from grid `transition`
     attributes and auto-generates identity transitions for fixed states (grids
     without a transition). ShockGrid transitions are handled separately during
     internal function processing.
 
     Args:
         regime: The user regime.
-        states_per_regime: Dict mapping regime names to their state names.
+        states_per_regime: Mapping of regime names to their state names.
 
     Returns:
         Nested transitions dict in the format expected by _get_internal_functions.
@@ -398,20 +397,21 @@ def _extract_transitions_from_regime(
     return nested
 
 
-def _extract_param_key(fn_name: str) -> str:
+def _extract_param_key(func_name: str) -> str:
     """Extract the param template key from a possibly prefixed function name.
 
     For prefixed names like "work__next_wealth", returns "next_wealth".
     For unprefixed names like "next_regime", returns the name unchanged.
 
     """
-    if QNAME_DELIMITER in fn_name:
-        return fn_name.split(QNAME_DELIMITER, 1)[1]
-    return fn_name
+    if QNAME_DELIMITER in func_name:
+        return func_name.split(QNAME_DELIMITER, 1)[1]
+    return func_name
 
 
 def _rename_params_to_qnames(
-    fn: UserFunction,
+    *,
+    func: UserFunction,
     regime_params_template: RegimeParamsTemplate,
     param_key: str,
 ) -> InternalUserFunction:
@@ -420,7 +420,7 @@ def _rename_params_to_qnames(
     E.g., risk_aversion -> utility__risk_aversion.
 
     Args:
-        fn: The user function.
+        func: The user function.
         regime_params_template: The parameter template for the regime.
         param_key: The key to look up in regime_params_template (e.g., "utility").
 
@@ -430,21 +430,23 @@ def _rename_params_to_qnames(
     """
     param_names = list(regime_params_template[param_key])
     if not param_names:
-        return cast("InternalUserFunction", fn)
+        return cast("InternalUserFunction", func)
     mapper = {p: f"{param_key}{QNAME_DELIMITER}{p}" for p in param_names}
-    return cast("InternalUserFunction", rename_arguments(fn, mapper=mapper))
+    return cast("InternalUserFunction", rename_arguments(func, mapper=mapper))
 
 
-def _get_stochastic_next_function(fn: UserFunction, grid: Int1D) -> UserFunction:
+def _get_stochastic_next_function(*, func: UserFunction, grid: Int1D) -> UserFunction:
     @with_signature(args=None, return_annotation="Int1D")
-    @functools.wraps(fn)
+    @functools.wraps(func)
     def next_func(**kwargs: Any) -> Int1D:  # noqa: ANN401, ARG001
         return grid
 
     return next_func
 
 
-def _get_stochastic_next_function_for_shock(name: str, grid: Float1D) -> UserFunction:
+def _get_stochastic_next_function_for_shock(
+    *, name: str, grid: Float1D
+) -> UserFunction:
     """Get function that returns the indices in the vf arr of the next shock states."""
 
     @with_signature(args={f"{name}": "ContinuousState"}, return_annotation="Int1D")
@@ -455,7 +457,7 @@ def _get_stochastic_next_function_for_shock(name: str, grid: Float1D) -> UserFun
     return next_func
 
 
-def _get_weights_fn_for_shock(name: str, gridspec: _ShockGrid) -> UserFunction:
+def _get_weights_func_for_shock(*, name: str, gridspec: _ShockGrid) -> UserFunction:
     """Get function that uses linear interpolation to calculate the shock weights.
 
     For shocks whose params are supplied at runtime, the grid points and transition
@@ -481,7 +483,7 @@ def _get_weights_fn_for_shock(name: str, gridspec: _ShockGrid) -> UserFunction:
             }
             grid_points = _compute_gridpoints(n_points, **shock_kw)  # ty: ignore[invalid-argument-type]
             transition_probs = _compute_transition_probs(n_points, **shock_kw)  # ty: ignore[invalid-argument-type]
-            coord = get_irreg_coordinate(kwargs[name], grid_points)
+            coord = get_irreg_coordinate(value=kwargs[name], points=grid_points)
             return map_coordinates(
                 input=transition_probs,
                 coordinates=[
@@ -501,7 +503,7 @@ def _get_weights_fn_for_shock(name: str, gridspec: _ShockGrid) -> UserFunction:
         enforce=False,
     )
     def weights_func(*args: Array, **kwargs: Array) -> Float1D:  # noqa: ARG001
-        coordinate = get_irreg_coordinate(kwargs[f"{name}"], grid_points)
+        coordinate = get_irreg_coordinate(value=kwargs[f"{name}"], points=grid_points)
         return map_coordinates(
             input=transition_probs,
             coordinates=[

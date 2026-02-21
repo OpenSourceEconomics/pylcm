@@ -5,7 +5,7 @@ from jax import Array
 
 
 def generate_simulation_keys(
-    key: Array, names: list[str], n_initial_states: int
+    *, key: Array, names: list[str], n_initial_states: int
 ) -> tuple[Array, dict[str, Array]]:
     """Generate pseudo-random number generator keys (PRNG keys) for simulation.
 
@@ -26,7 +26,7 @@ def generate_simulation_keys(
 
     Returns:
         - Updated random key.
-        - Dict with n=n_initial_states new random keys for each name in names.
+        - Mapping with n=n_initial_states new random keys for each name in names.
 
     """
     simulation_keys = {}

@@ -51,7 +51,7 @@ def test_params_at_function_level(params_template):
             "fun_1": {"arg_0": 0.0, "arg_1": 1.0},
         },
     }
-    internal_params = process_params(params, params_template)
+    internal_params = process_params(params=params, params_template=params_template)
 
     # Check that output has regime-level keys
     assert set(internal_params.keys()) == set(params_template.keys())
@@ -71,7 +71,7 @@ def test_params_at_regime_level(params_template):
             "fun_1": {"arg_0": 0.0, "arg_1": 1.0},
         },
     }
-    internal_params = process_params(params, params_template)
+    internal_params = process_params(params=params, params_template=params_template)
 
     # Check that output has regime-level keys with flat format
     assert set(internal_params.keys()) == set(params_template.keys())
@@ -94,7 +94,7 @@ def test_params_mixed_regime_function_level(params_template):
             "fun_1": {"arg_0": 0.0, "arg_1": 1.0},
         },
     }
-    internal_params = process_params(params, params_template)
+    internal_params = process_params(params=params, params_template=params_template)
 
     # Check that output has regime-level keys with flat format
     assert set(internal_params.keys()) == set(params_template.keys())
@@ -107,7 +107,7 @@ def test_params_mixed_regime_function_level(params_template):
 def test_params_at_model_level(params_template):
     """Test 4: Passing all parameters at the model level."""
     params = {"arg_0": 0.0, "arg_1": 1.0}
-    internal_params = process_params(params, params_template)
+    internal_params = process_params(params=params, params_template=params_template)
 
     # Check that output has regime-level keys with flat format
     assert set(internal_params.keys()) == set(params_template.keys())
@@ -136,7 +136,7 @@ def test_ambiguous_regime_function_level(params_template):
         },
     }
     with pytest.raises(InvalidNameError):
-        process_params(params, params_template)
+        process_params(params=params, params_template=params_template)
 
 
 def test_ambiguous_model_function_level(params_template):
@@ -153,7 +153,7 @@ def test_ambiguous_model_function_level(params_template):
         },
     }
     with pytest.raises(InvalidNameError):
-        process_params(params, params_template)
+        process_params(params=params, params_template=params_template)
 
 
 def test_ambiguous_model_regime_level(params_template):
@@ -171,7 +171,7 @@ def test_ambiguous_model_regime_level(params_template):
         },
     }
     with pytest.raises(InvalidNameError):
-        process_params(params, params_template)
+        process_params(params=params, params_template=params_template)
 
 
 # ======================================================================================
@@ -263,7 +263,7 @@ def test_missing_parameter_raises_error(params_template):
     # Only provide arg_0, but arg_1 is also required in the template
     params = {"arg_0": 0.0}
     with pytest.raises(InvalidParamsError, match="Missing required parameter"):
-        process_params(params, params_template)
+        process_params(params=params, params_template=params_template)
 
 
 # ======================================================================================
@@ -279,7 +279,7 @@ def test_unknown_keys_raises_error(params_template):
         "unknown_arg": 2.0,  # Not in template
     }
     with pytest.raises(InvalidParamsError, match="Unknown keys"):
-        process_params(params, params_template)
+        process_params(params=params, params_template=params_template)
 
 
 def test_passing_same_params_to_regimes_with_different_templates():
@@ -333,7 +333,7 @@ def test_passing_same_params_to_regimes_with_different_templates():
     # InvalidParamsError is raised because dead__cons_util__*, dead__utility__*,
     # etc. are not in the template
     with pytest.raises(InvalidParamsError, match="Unknown keys"):
-        process_params(params, params_template)  # ty: ignore[invalid-argument-type]
+        process_params(params=params, params_template=params_template)  # ty: ignore[invalid-argument-type]
 
 
 def test_shock_params_via_regular_params():
@@ -362,6 +362,6 @@ def test_shock_params_via_regular_params():
         },
     }
 
-    result = process_params(params, params_template)  # ty: ignore[invalid-argument-type]
+    result = process_params(params=params, params_template=params_template)  # ty: ignore[invalid-argument-type]
     assert result["working"]["adjustment_cost__start"] == 0
     assert result["working"]["adjustment_cost__stop"] == 1

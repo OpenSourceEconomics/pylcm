@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
-from typing import Any
 
+from lcm.grids import Grid
 from lcm.regime import _collect_state_transitions, _default_H
 from lcm.typing import UserFunction
 
@@ -15,8 +15,8 @@ class RegimeMock:
     """
 
     n_periods: int | None = None
-    actions: dict[str, Any] | None = None
-    states: dict[str, Any] | None = None
+    actions: dict[str, Grid | None] | None = None
+    states: dict[str, Grid | None] | None = None
     constraints: dict[str, UserFunction] = field(default_factory=dict)
     transition: UserFunction | None = None
     functions: dict[str, UserFunction] = field(default_factory=dict)

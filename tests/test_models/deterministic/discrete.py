@@ -106,7 +106,9 @@ working = Regime(
         "consumption": DiscreteGrid(ConsumptionChoice),
     },
     states={
-        "wealth": DiscreteGrid(WealthStatus, transition=next_wealth_discrete),
+        "wealth": DiscreteGrid(
+            category_class=WealthStatus, transition=next_wealth_discrete
+        ),
     },
     constraints={
         "borrowing_constraint": borrowing_constraint,

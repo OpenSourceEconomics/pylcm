@@ -12,30 +12,30 @@ from lcm.functools import (
     allow_args,
     allow_only_kwargs,
     convert_kwargs_to_args,
-    get_union_of_arguments,
+    get_union_of_args,
 )
 
 # ======================================================================================
-# get_union_of_arguments
+# get_union_of_args
 # ======================================================================================
 
 
-def test_get_union_of_arguments():
+def test_get_union_of_args():
     def f(a, b):
         pass
 
     def g(b, c):
         pass
 
-    got = get_union_of_arguments([f, g])
+    got = get_union_of_args([f, g])
     assert got == {"a", "b", "c"}
 
 
-def test_get_union_of_arguments_no_args():
+def test_get_union_of_args_no_args():
     def f():
         pass
 
-    got = get_union_of_arguments([f])
+    got = get_union_of_args([f])
     assert got == set()
 
 
@@ -112,7 +112,7 @@ def test_convert_kwargs_to_args():
     kwargs = {"a": 1, "b": 2, "c": 3}
     parameters = ["c", "a", "b"]
     exp = [3, 1, 2]
-    got = convert_kwargs_to_args(kwargs, parameters)
+    got = convert_kwargs_to_args(kwargs=kwargs, arg_names=parameters)
     assert got == exp
 
 

@@ -10,7 +10,7 @@ from jax import Array
 
 from lcm.dispatchers import productmap
 from lcm.function_representation import get_value_function_representation
-from lcm.functools import get_union_of_arguments
+from lcm.functools import get_union_of_args
 from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import InternalFunctions, StateSpaceInfo
 from lcm.next_state import (
@@ -29,13 +29,14 @@ from lcm.utils import normalize_regime_transition_probs
 
 
 def get_Q_and_F(
+    *,
     regime_name: str,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     period: int,
     age: float,
     next_state_space_infos: MappingProxyType[RegimeName, StateSpaceInfo],
     internal_functions: InternalFunctions,
-    flat_params_names: frozenset[str],
+    flat_param_names: frozenset[str],
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
@@ -46,7 +47,7 @@ def get_Q_and_F(
         age: The age corresponding to the current period.
         next_state_space_infos: The state space information of the next period.
         internal_functions: Internal functions instance.
-        flat_params_names: Frozenset of flat parameter names for the regime.
+        flat_param_names: Frozenset of flat parameter names for the regime.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -57,21 +58,21 @@ def get_Q_and_F(
     # Generate dynamic functions
     # ----------------------------------------------------------------------------------
     U_and_F = _get_U_and_F(internal_functions)
-    regime_transition_prob_func = internal_functions.regime_transition_probs.solve  # ty: ignore[unresolved-attribute]
+    regime_transition_probs_func = internal_functions.regime_transition_probs.solve  # ty: ignore[unresolved-attribute]
     state_transitions = {}
     next_stochastic_states_weights = {}
     joint_weights_from_marginals = {}
     next_V = {}
 
     target_regimes = tuple(internal_functions.transitions)
-    active_target_regimes = tuple(
+    active_regimes_next_period = tuple(
         target_name
         for target_name in target_regimes
         if period + 1 in regimes_to_active_periods[target_name]
     )
     next_V_extra_param_names: dict[str, frozenset[str]] = {}
 
-    for target_regime in active_target_regimes:
+    for target_regime in active_regimes_next_period:
         # Transitions from the current regime to the target regime
         transitions = internal_functions.transitions[target_regime]
 
@@ -97,10 +98,10 @@ def get_Q_and_F(
         # Determine extra kwargs needed by next_V beyond next_states and next_V_arr
         # (e.g. wealth__points for IrregSpacedGrid with runtime-supplied points).
         next_V_extra_param_names[target_regime] = frozenset(
-            get_union_of_arguments([_scalar_next_V]) - set(transitions) - {"next_V_arr"}
+            get_union_of_args([_scalar_next_V]) - set(transitions) - {"next_V_arr"}
         )
         next_V[target_regime] = productmap(
-            _scalar_next_V,
+            func=_scalar_next_V,
             variables=tuple(
                 key
                 for key, value in transitions.items()
@@ -115,11 +116,11 @@ def get_Q_and_F(
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         [
             U_and_F,
-            regime_transition_prob_func,
+            regime_transition_probs_func,
             *list(state_transitions.values()),
             *list(next_stochastic_states_weights.values()),
         ],
-        include=frozenset({"next_V_arr"} | flat_params_names),
+        include=frozenset({"next_V_arr"} | flat_param_names),
         exclude=frozenset({"period", "age"}),
     )
 
@@ -140,8 +141,8 @@ def get_Q_and_F(
             A tuple containing the arrays with state-action values and feasibilities.
 
         """
-        regime_transition_prob: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
-            regime_transition_prob_func(
+        regime_transition_probs: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
+            regime_transition_probs_func(
                 **states_actions_params,
                 period=period,
                 age=age,
@@ -153,12 +154,13 @@ def get_Q_and_F(
             age=age,
         )
         # Normalize probabilities over active regimes
-        normalized_regime_transition_prob = normalize_regime_transition_probs(
-            regime_transition_prob, active_target_regimes
+        normalized_regime_transition_probs = normalize_regime_transition_probs(
+            regime_transition_probs=regime_transition_probs,
+            active_regimes_next_period=active_regimes_next_period,
         )
 
         continuation_value = jnp.zeros_like(U_arr)
-        for target_regime_name in active_target_regimes:
+        for target_regime_name in active_regimes_next_period:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,
                 period=period,
@@ -196,7 +198,7 @@ def get_Q_and_F(
             )
             continuation_value = (
                 continuation_value
-                + normalized_regime_transition_prob[target_regime_name]
+                + normalized_regime_transition_probs[target_regime_name]
                 * next_V_expected_arr
             )
 
@@ -217,10 +219,11 @@ def get_Q_and_F(
 
 
 def get_Q_and_F_terminal(
+    *,
     internal_functions: InternalFunctions,
     period: int,
     age: float,
-    flat_params_names: frozenset[str],
+    flat_param_names: frozenset[str],
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for the terminal period.
 
@@ -228,7 +231,7 @@ def get_Q_and_F_terminal(
         internal_functions: Internal functions instance.
         period: The current period.
         age: The age corresponding to the current period.
-        flat_params_names: Frozenset of flat parameter names for the regime.
+        flat_param_names: Frozenset of flat parameter names for the regime.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -242,7 +245,7 @@ def get_Q_and_F_terminal(
         # While the terminal period does not depend on the value function array, we
         # include it in the signature, such that we can treat all periods uniformly
         # during the solution and simulation.
-        include=frozenset({"next_V_arr"} | flat_params_names),
+        include=frozenset({"next_V_arr"} | flat_param_names),
         exclude=frozenset({"period", "age"}),
     )
 
@@ -281,6 +284,7 @@ def get_Q_and_F_terminal(
 
 def _get_arg_names_of_Q_and_F(
     deps: list[Callable[..., Any]],
+    *,
     include: frozenset[str] = frozenset(),
     exclude: frozenset[str] = frozenset(),
 ) -> tuple[str, ...]:
@@ -296,10 +300,11 @@ def _get_arg_names_of_Q_and_F(
         exclude.
 
     """
-    return tuple((get_union_of_arguments(deps) | include) - exclude)
+    return tuple((get_union_of_args(deps) | include) - exclude)
 
 
 def _get_joint_weights_function(
+    *,
     regime_name: RegimeName,
     transitions: MappingProxyType[str, InternalUserFunction],
 ) -> Callable[..., FloatND]:
@@ -329,7 +334,7 @@ def _get_joint_weights_function(
         weights = jnp.array(list(kwargs.values()))
         return jnp.prod(weights)
 
-    return productmap(_outer, variables=tuple(arg_names))
+    return productmap(func=_outer, variables=tuple(arg_names))
 
 
 def _get_U_and_F(

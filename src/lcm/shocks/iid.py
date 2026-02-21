@@ -24,19 +24,18 @@ class _ShockGridIID(_ShockGrid):
 
 @dataclass(frozen=True, kw_only=True)
 class Uniform(_ShockGridIID):
-    r"""Discretized iid uniform shock: :math:`U(\text{start}, \text{stop})`.
+    r"""Discretized iid uniform shock: $U(\text{start}, \text{stop})$.
 
-    The continuous distribution is discretized into ``n_points`` equally spaced
-    points between ``start`` and ``stop``.
-
-    Attributes:
-        start: Lower bound of the uniform distribution.
-        stop: Upper bound of the uniform distribution.
+    The continuous distribution is discretized into `n_points` equally spaced
+    points between `start` and `stop`.
 
     """
 
     start: float | None = None
+    """Lower bound of the uniform distribution."""
+
     stop: float | None = None
+    """Upper bound of the uniform distribution."""
 
     def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
         return jnp.linspace(start=kwargs["start"], stop=kwargs["stop"], num=n_points)
@@ -56,21 +55,21 @@ class Uniform(_ShockGridIID):
 
 @dataclass(frozen=True, kw_only=True)
 class Normal(_ShockGridIID):
-    r"""Discretized iid normal shock: :math:`N(\mu_\varepsilon, \sigma_\varepsilon^2)`.
+    r"""Discretized iid normal shock: $N(\mu_\varepsilon, \sigma_\varepsilon^2)$.
 
-    The continuous distribution is discretized into ``n_points`` equally spaced
-    points spanning :math:`\mu_\varepsilon \pm n_\text{std} \cdot \sigma_\varepsilon`.
-
-    Attributes:
-        mu: Mean of the shock distribution.
-        sigma: Standard deviation of the shock distribution.
-        n_std: Number of standard deviations from the mean to the grid boundary.
+    The continuous distribution is discretized into `n_points` equally spaced
+    points spanning $\mu_\varepsilon \pm n_\text{std} \cdot \sigma_\varepsilon$.
 
     """
 
     mu: float | None = None
+    """Mean of the shock distribution."""
+
     sigma: float | None = None
+    """Standard deviation of the shock distribution."""
+
     n_std: float | None = None
+    """Number of standard deviations from the mean to the grid boundary."""
 
     def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
         mu, sigma, n_std = kwargs["mu"], kwargs["sigma"], kwargs["n_std"]

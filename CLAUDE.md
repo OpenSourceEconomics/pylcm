@@ -26,16 +26,13 @@ automation. Python 3.14+ is required.
 ### Code Quality
 
 - `pixi run ty` - Type checking with ty
-- `ruff check .` - Linting (automatically runs with pre-commit)
-- `ruff format .` - Code formatting (automatically runs with pre-commit)
-- `pre-commit run --all-files` - Run all pre-commit hooks
+- `prek run --all-files` - Run all pre-commit hooks
 
 ### Environment Setup
 
 - `pixi install` - Install dependencies
 - `pixi run explanation-notebooks` - Execute explanation notebooks
-- `pre-commit install` - Install pre-commit hooks (after
-  `pixi global install pre-commit`)
+- `prek install` - Install pre-commit hooks (after `pixi global install prek`)
 
 ## Code Architecture
 
@@ -134,7 +131,7 @@ the key in the `regimes` dict passed to `Model`:
 ```python
 # Non-terminal regime
 Regime(
-    transition=next_regime_fn,                   # Required: regime transition function (None → terminal)
+    transition=next_regime_func,                  # Required: regime transition function (None → terminal)
     active=lambda age: 25 <= age < 65,           # Optional: age-based predicate (default: always True)
     states={                                     # State grids with optional transitions
         "wealth": LinSpacedGrid(..., transition=next_wealth),  # Time-varying state
@@ -143,9 +140,9 @@ Regime(
     actions={"action_name": Grid, ...},          # Action grids (can be empty)
     functions={                                  # Must include "utility"; other functions optional
         "utility": utility_function,
-        "name": helper_fn, ...
+        "name": helper_func, ...
     },
-    constraints={"name": constraint_fn, ...},    # Optional: constraint functions
+    constraints={"name": constraint_func, ...},  # Optional: constraint functions
 )
 
 # Terminal regime (transition=None)
@@ -299,6 +296,44 @@ initial_regimes = ["working", "working", "retired"]
 - All functions require type annotations
 - Pre-commit hooks ensure code quality
 - Never use `from __future__ import annotations` — this project requires Python 3.14+
+
+### Naming and Docstring Conventions
+
+- **No unnecessary parameter aliases.** When a function has a single (or very few) call
+  site(s), the parameter name should match the variable name being passed. Don't shorten
+  parameter names just for brevity — e.g., use
+  `regime_transition_probs=regime_transition_probs` not `probs=regime_transition_probs`.
+- **Docstrings must match type annotations.** Use the type name from the annotation:
+  - `Mapping[...]` → "Mapping of ..." in docstrings
+  - `MappingProxyType[...]` → "Immutable mapping of ..." in docstrings
+  - `tuple[...]` → "Tuple of ..." in docstrings
+  - `list[...]` → "List of ..." in docstrings
+  - Never write "Dict" when the annotation is `Mapping` or `MappingProxyType`
+- **Consistent naming across a file.** When multiple functions in the same file use the
+  same concept (e.g., `arg_names`), use the same parameter name everywhere — don't
+  introduce synonyms like `parameters`.
+- **Helper function names follow `{verb}_{qualifier}_noun` patterns.** E.g.,
+  `get_irreg_coordinate`, `find_irreg_coordinate`, `get_linspace_coordinate` — not
+  `get_coordinate_irreg`.
+- **Use `@overload` when a function accepts both scalar and array inputs.** When a
+  function works with both `ScalarFloat` and `Array`, add overload declarations so the
+  type checker can track `(ScalarFloat) -> ScalarFloat` and `(Array) -> Array`
+  separately. Concrete subclass methods need their own overloads too (not just the
+  abstract base).
+- **`func` for callable abbreviations** — use `func`, `func_name`, `func_params` (never
+  `fn`). Full word `function(s)` in dataclass field names and public method names.
+- **Singular `state_names` / `action_names`** — not `states_names` / `actions_names`.
+- **`arg_names`** — not `argument_names`.
+- **Imperative mood for docstring summary lines.** Write "Return the value" not "Returns
+  the value". The summary line uses bare imperative: "Create", "Get", "Compute",
+  "Convert", etc.
+- **Inline field docstrings (PEP 257) for dataclass attributes.** Place a `"""..."""` on
+  the line after each field instead of listing fields in an `Attributes:` section in the
+  class docstring.
+- **MyST syntax in docstrings, not reStructuredText.** Use `` `code` `` (single
+  backticks) for inline code, `$...$` for inline math, ```` ```{math} ```` fences for
+  display math, and `[text](url)` for links. Never use rST-style ``` `` code `` ```,
+  `:math:`, `:func:`, or `` `link <url>`_ ``.
 
 ### Testing Style
 

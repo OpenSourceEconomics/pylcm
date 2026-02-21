@@ -95,7 +95,7 @@ def get_value_function_representation(
     # ==================================================================================
     # lookup is positional, so the inputs of the wrapper functions need to be the
     # outcomes of tranlating labels into positions
-    _internal_axes = [f"__{var}_pos__" for var in state_space_info.states_names]
+    _internal_axes = [f"__{var}_pos__" for var in state_space_info.state_names]
     _discrete_axes = [ax for ax in _internal_axes if ax in funcs]
 
     _out_name = "__interpolation_data__" if _need_interpolation else "__fval__"
@@ -119,7 +119,7 @@ def get_value_function_representation(
         # ==============================================================================
         _continuous_axes = [
             f"__{var}_coord__"
-            for var in state_space_info.states_names
+            for var in state_space_info.state_names
             if var in state_space_info.continuous_states
         ]
         funcs["__fval__"] = _get_interpolator(
@@ -154,13 +154,14 @@ def _get_label_translator(
 
     @with_signature(args=dict.fromkeys([in_name], "Array"), return_annotation="Array")
     def translate_label(*args: Array, **kwargs: Array) -> Array:
-        kwargs = all_as_kwargs(args, kwargs, arg_names=[in_name])
+        kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=[in_name])
         return kwargs[in_name]
 
     return translate_label
 
 
 def _get_lookup_function(
+    *,
     array_name: str,
     axis_names: list[str],
 ) -> Callable[..., Array]:
@@ -179,7 +180,7 @@ def _get_lookup_function(
 
     @with_signature(args=dict.fromkeys(arg_names, "Array"), return_annotation="Array")
     def lookup_wrapper(*args: Array, **kwargs: Array) -> Array:
-        kwargs = all_as_kwargs(args, kwargs, arg_names=arg_names)
+        kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=arg_names)
         positions = tuple(kwargs[var] for var in axis_names)
         return kwargs[array_name][positions]
 
@@ -187,6 +188,7 @@ def _get_lookup_function(
 
 
 def _get_coordinate_finder(
+    *,
     in_name: str,
     grid: ContinuousGrid,
 ) -> Callable[..., Array]:
@@ -215,11 +217,13 @@ def _get_coordinate_finder(
             @with_signature(
                 args=dict.fromkeys(arg_names, "Array"), return_annotation="Array"
             )
-            def find_coordinate_irreg(*args: Array, **kwargs: Array) -> Array:
-                kwargs = all_as_kwargs(args, kwargs, arg_names=arg_names)
-                return get_irreg_coordinate(kwargs[in_name], kwargs[points_param])  # ty: ignore[invalid-return-type]
+            def find_irreg_coordinate(*args: Array, **kwargs: Array) -> Array:
+                kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=arg_names)
+                return get_irreg_coordinate(
+                    value=kwargs[in_name], points=kwargs[points_param]
+                )
 
-            return find_coordinate_irreg
+            return find_irreg_coordinate
 
         # Fixed points — capture in closure
         points_jax = grid.to_jax()
@@ -227,22 +231,23 @@ def _get_coordinate_finder(
         @with_signature(
             args=dict.fromkeys([in_name], "Array"), return_annotation="Array"
         )
-        def find_coordinate_irreg(*args: Array, **kwargs: Array) -> Array:
-            kwargs = all_as_kwargs(args, kwargs, arg_names=[in_name])
-            return get_irreg_coordinate(kwargs[in_name], points_jax)  # ty: ignore[invalid-return-type]
+        def find_irreg_coordinate(*args: Array, **kwargs: Array) -> Array:
+            kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=[in_name])
+            return get_irreg_coordinate(value=kwargs[in_name], points=points_jax)
 
-        return find_coordinate_irreg
+        return find_irreg_coordinate
 
     # All other grid types (LinSpaced, LogSpaced, Piecewise*, ShockGrid)
     @with_signature(args=dict.fromkeys([in_name], "Array"), return_annotation="Array")
     def find_coordinate(*args: Array, **kwargs: Array) -> Array:
-        kwargs = all_as_kwargs(args, kwargs, arg_names=[in_name])
-        return grid.get_coordinate(kwargs[in_name])  # ty: ignore[invalid-return-type]
+        kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=[in_name])
+        return grid.get_coordinate(kwargs[in_name])
 
     return find_coordinate
 
 
 def _get_interpolator(
+    *,
     name_of_values_on_grid: str,
     axis_names: list[str],
 ) -> Callable[..., Array]:
@@ -262,7 +267,7 @@ def _get_interpolator(
 
     @with_signature(args=dict.fromkeys(arg_names, "Array"), return_annotation="Array")
     def interpolate(*args: Array, **kwargs: Array) -> Array:
-        kwargs = all_as_kwargs(args, kwargs, arg_names=arg_names)
+        kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=arg_names)
         coordinates = jnp.array([kwargs[var] for var in axis_names])
         return map_coordinates(
             input=kwargs[name_of_values_on_grid],
@@ -283,12 +288,10 @@ def _fail_if_interpolation_axes_are_not_last(state_space_info: StateSpaceInfo) -
         ValueError: If the continuous variables are not the last elements in var_names.
 
     """
-    common = set(state_space_info.continuous_states) & set(
-        state_space_info.states_names
-    )
+    common = set(state_space_info.continuous_states) & set(state_space_info.state_names)
 
     if common:
         n_common = len(common)
-        if sorted(common) != sorted(state_space_info.states_names[-n_common:]):
+        if sorted(common) != sorted(state_space_info.state_names[-n_common:]):
             msg = "Continuous variables need to be the last entries in var_names."
             raise ValueError(msg)

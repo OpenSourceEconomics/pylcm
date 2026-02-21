@@ -53,10 +53,10 @@ def test_get_Q_and_F_function():
     raw_params = get_params(n_periods=4)
 
     params_template = create_params_template(internal_regimes)
-    internal_params = process_params(raw_params, params_template)
+    internal_params = process_params(params=raw_params, params_template=params_template)
 
     # Compute flat param names for the working regime's regime_params_template
-    flat_params_names = frozenset(
+    flat_param_names = frozenset(
         get_flat_param_names(internal_regimes["working"].regime_params_template)
     )
 
@@ -65,7 +65,7 @@ def test_get_Q_and_F_function():
         internal_functions=internal_regimes["working"].internal_functions,
         period=3,
         age=ages.period_to_age(3),
-        flat_params_names=flat_params_names,
+        flat_param_names=flat_param_names,
     )
 
     consumption = jnp.array([10, 20, 30])

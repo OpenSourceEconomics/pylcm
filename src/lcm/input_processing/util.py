@@ -11,8 +11,8 @@ from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
 
 
-def is_stochastic_transition(fn: Callable[..., Any]) -> bool:
-    return hasattr(fn, "_stochastic_info")
+def is_stochastic_transition(func: Callable[..., Any]) -> bool:
+    return hasattr(func, "_stochastic_info")
 
 
 def get_variable_info(regime: Regime) -> pd.DataFrame:
@@ -43,12 +43,12 @@ def get_variable_info(regime: Regime) -> pd.DataFrame:
     info["is_discrete"] = ~info["is_continuous"]
 
     info["enters_concurrent_valuation"] = _indicator_enters_concurrent_valuation(
-        states_and_actions_names=list(variables),
+        state_and_action_names=list(variables),
         regime=regime,
     )
 
     info["enters_transition"] = _indicator_enters_transition(
-        states_and_actions_names=list(variables),
+        state_and_action_names=list(variables),
         regime=regime,
     )
 
@@ -64,7 +64,8 @@ def get_variable_info(regime: Regime) -> pd.DataFrame:
 
 
 def _indicator_enters_concurrent_valuation(
-    states_and_actions_names: list[str],
+    *,
+    state_and_action_names: list[str],
     regime: Regime,
 ) -> pd.Series[bool]:
     """Determine which states and actions enter the concurrent valuation.
@@ -76,24 +77,25 @@ def _indicator_enters_concurrent_valuation(
     Special variables such as the "period" or parameters will be ignored.
 
     """
-    enters_Q_and_F_fn_names = [
+    enters_Q_and_F_func_names = [
         "utility",
         *list(regime.constraints),
     ]
     user_functions = dict(regime.get_all_functions())
     ancestors = get_ancestors(
         user_functions,
-        targets=enters_Q_and_F_fn_names,
+        targets=enters_Q_and_F_func_names,
         include_targets=False,
     )
     return pd.Series(
-        [var in ancestors for var in states_and_actions_names],
-        index=states_and_actions_names,
+        [var in ancestors for var in state_and_action_names],
+        index=state_and_action_names,
     )
 
 
 def _indicator_enters_transition(
-    states_and_actions_names: list[str],
+    *,
+    state_and_action_names: list[str],
     regime: Regime,
 ) -> pd.Series[bool]:
     """Determine which states and actions enter the transition.
@@ -106,7 +108,7 @@ def _indicator_enters_transition(
 
     """
     user_functions = dict(regime.get_all_functions())
-    next_fn_names = [
+    next_func_names = [
         name
         for name in user_functions
         if name.startswith("next_")
@@ -114,12 +116,12 @@ def _indicator_enters_transition(
     ]
     ancestors = get_ancestors(
         user_functions,
-        targets=next_fn_names,
+        targets=next_func_names,
         include_targets=False,
     )
     return pd.Series(
-        [var in ancestors for var in states_and_actions_names],
-        index=states_and_actions_names,
+        [var in ancestors for var in state_and_action_names],
+        index=state_and_action_names,
     )
 
 

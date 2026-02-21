@@ -2,14 +2,15 @@ import dataclasses
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, is_dataclass
-from typing import Any
+from typing import overload
 
 import jax.numpy as jnp
 import portion
+from jax import Array
 
 from lcm import grid_helpers
 from lcm.exceptions import GridInitializationError, format_messages
-from lcm.typing import Float1D, Int1D, ScalarFloat
+from lcm.typing import ContinuousState, DiscreteState, Float1D, Int1D, ScalarFloat
 from lcm.utils import Unset, find_duplicates, get_field_names_and_values
 
 
@@ -68,8 +69,12 @@ class ContinuousGrid(Grid):
 
     """
 
+    @overload
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
+    @overload
+    def get_coordinate(self, value: Array) -> Array: ...
     @abstractmethod
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
+    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
 
 
@@ -83,11 +88,6 @@ class DiscreteGrid(Grid):
             states. Must be set explicitly when this grid is used as a state in a
             Regime. Must be left unset when used as an action.
 
-    Attributes:
-        categories: The list of category names.
-        codes: The list of category codes.
-        transition: The transition function, `None` for fixed states, or `Unset`.
-
     Raises:
         GridInitializationError: If the `category_class` is not a dataclass with int
             fields.
@@ -97,7 +97,8 @@ class DiscreteGrid(Grid):
     def __init__(
         self,
         category_class: type,
-        transition: Callable[..., Any] | None | Unset = Unset(),
+        *,
+        transition: Callable[..., DiscreteState] | None | Unset = Unset(),
     ) -> None:
         """Initialize the DiscreteGrid.
 
@@ -127,7 +128,7 @@ class DiscreteGrid(Grid):
         return self.__codes
 
     @property
-    def transition(self) -> Callable[..., Any] | None | Unset:
+    def transition(self) -> Callable[..., DiscreteState] | None | Unset:
         """Return the transition function, ``None`` for fixed states, or ``Unset``."""
         return self.__transition
 
@@ -138,22 +139,18 @@ class DiscreteGrid(Grid):
 
 @dataclass(frozen=True, kw_only=True)
 class UniformContinuousGrid(ContinuousGrid, ABC):
-    """Grid with start/stop/n_points for linearly or logarithmically spaced values.
-
-    Attributes:
-        start: The start value of the grid.
-        stop: The stop value of the grid.
-        n_points: The number of points in the grid.
-        transition: Transition function for time-varying states, or `None` for fixed
-            states. Must be set explicitly when used as a state; must be left unset
-            when used as an action.
-
-    """
+    """Grid with start/stop/n_points for linearly or logarithmically spaced values."""
 
     start: int | float
+    """The start value of the grid."""
+
     stop: int | float
+    """The stop value of the grid."""
+
     n_points: int
-    transition: Callable[..., Any] | None | Unset = Unset()
+    """The number of points in the grid."""
+
+    transition: Callable[..., ContinuousState] | None | Unset = Unset()
     """Transition function for time-varying states, or `None` for fixed states.
 
     Must be set explicitly when this grid is used as a state in a Regime.
@@ -173,8 +170,12 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
 
+    @overload
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
+    @overload
+    def get_coordinate(self, value: Array) -> Array: ...
     @abstractmethod
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
+    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
 
     def replace(self, **kwargs: float) -> UniformContinuousGrid:
@@ -202,21 +203,22 @@ class LinSpacedGrid(UniformContinuousGrid):
     --------
     Let `start = 1`, `stop = 100`, and `n_points = 3`. The grid is `[1, 50.5, 100]`.
 
-    Attributes:
-        start: The start value of the grid. Must be a scalar int or float value.
-        stop: The stop value of the grid. Must be a scalar int or float value.
-        n_points: The number of points in the grid. Must be an int greater than 0.
-
     """
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
-        return grid_helpers.linspace(self.start, self.stop, self.n_points)
+        return grid_helpers.linspace(
+            start=self.start, stop=self.stop, n_points=self.n_points
+        )
 
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
+    @overload
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
+    @overload
+    def get_coordinate(self, value: Array) -> Array: ...
+    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
         return grid_helpers.get_linspace_coordinate(
-            value, self.start, self.stop, self.n_points
+            value=value, start=self.start, stop=self.stop, n_points=self.n_points
         )
 
 
@@ -227,21 +229,22 @@ class LogSpacedGrid(UniformContinuousGrid):
     --------
     Let `start = 1`, `stop = 100`, and `n_points = 3`. The grid is `[1, 10, 100]`.
 
-    Attributes:
-        start: The start value of the grid. Must be a scalar int or float value.
-        stop: The stop value of the grid. Must be a scalar int or float value.
-        n_points: The number of points in the grid. Must be an int greater than 0.
-
     """
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
-        return grid_helpers.logspace(self.start, self.stop, self.n_points)
+        return grid_helpers.logspace(
+            start=self.start, stop=self.stop, n_points=self.n_points
+        )
 
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
+    @overload
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
+    @overload
+    def get_coordinate(self, value: Array) -> Array: ...
+    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
         return grid_helpers.get_logspace_coordinate(
-            value, self.start, self.stop, self.n_points
+            value=value, start=self.start, stop=self.stop, n_points=self.n_points
         )
 
 
@@ -260,22 +263,15 @@ class IrregSpacedGrid(ContinuousGrid):
     Fixed grid: `IrregSpacedGrid(points=[-1.73, -0.58, 0.58, 1.73])` Grid that is only
     completed at runtime via params: `IrregSpacedGrid(n_points=4)`
 
-    Attributes:
-        points: The grid points. Must be a sequence of floats in ascending order.
-            Can be any sequence that is convertible to a JAX array. Implies that the
-            grid points are fixed at initialization.
-        n_points: Number of points. Derived from `len(points)` when points are
-            given upon initialization; must be specified explicitly when the `points`
-            will only be passed at runtime.
-        transition: Transition function for time-varying states, or `None` for fixed
-            states. Must be set explicitly when used as a state; must be left unset
-            when used as an action.
-
     """
 
     points: Sequence[float] | Float1D | None = None
+    """The grid points in ascending order, or `None` for runtime-supplied points."""
+
     n_points: int | None = None
-    transition: Callable[..., Any] | None | Unset = Unset()
+    """Number of points. Derived from `len(points)` when points are given."""
+
+    transition: Callable[..., ContinuousState] | None | Unset = Unset()
     """Transition function for time-varying states, or `None` for fixed states.
 
     Must be set explicitly when this grid is used as a state in a Regime.
@@ -315,7 +311,11 @@ class IrregSpacedGrid(ContinuousGrid):
             return jnp.full(self.n_points, jnp.nan)
         return jnp.asarray(self.points)
 
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
+    @overload
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
+    @overload
+    def get_coordinate(self, value: Array) -> Array: ...
+    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
         if self.points is None:
             raise GridInitializationError(
@@ -323,22 +323,21 @@ class IrregSpacedGrid(ContinuousGrid):
                 "initialization or use IrregSpacedGrid(n_points=...) and "
                 "supply points at runtime via params."
             )
-        return grid_helpers.get_irreg_coordinate(value, self.to_jax())
+        return grid_helpers.get_irreg_coordinate(value=value, points=self.to_jax())
 
 
 @dataclass(frozen=True, kw_only=True)
 class Piece:
-    """A piece of a piecewise linearly spaced grid.
-
-    Attributes:
-        interval: The interval for this piece. Can be a string like "[1, 4)" or
-            a portion.Interval object.
-        n_points: The number of grid points in this piece.
-
-    """
+    """A piece of a piecewise linearly spaced grid."""
 
     interval: str | portion.Interval
+    """The interval for this piece.
+
+    Can be a string like "[1, 4)" or a `portion.Interval`.
+    """
+
     n_points: int
+    """The number of grid points in this piece."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -357,13 +356,6 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
             Piece("[4, 10]", 60),
         ))
 
-    Attributes:
-        pieces: A tuple of Piece objects defining each segment. Pieces must be
-            adjacent (no gaps or overlaps).
-        transition: Transition function for time-varying states, or `None` for fixed
-            states. Must be set explicitly when used as a state; must be left unset
-            when used as an action.
-
     Notes:
         - Open boundaries (e.g., `4)` in `[1, 4)`) exclude that exact point from
           the grid. The last point will be slightly before the boundary.
@@ -373,7 +365,9 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
     """
 
     pieces: tuple[Piece, ...]
-    transition: Callable[..., Any] | None | Unset = Unset()
+    """Tuple of Piece objects defining each segment. Pieces must be adjacent."""
+
+    transition: Callable[..., ContinuousState] | None | Unset = Unset()
     """Transition function for time-varying states, or `None` for fixed states.
 
     Must be set explicitly when this grid is used as a state in a Regime.
@@ -406,14 +400,18 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
         ]
         return jnp.concatenate(piece_arrays)
 
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
+    @overload
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
+    @overload
+    def get_coordinate(self, value: Array) -> Array: ...
+    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
         piece_idx = jnp.searchsorted(self._breakpoints, value, side="right")
         local_coord = grid_helpers.get_linspace_coordinate(
-            value,
-            self._piece_starts[piece_idx],
-            self._piece_stops[piece_idx],
-            self._piece_n_points[piece_idx],
+            value=value,
+            start=self._piece_starts[piece_idx],
+            stop=self._piece_stops[piece_idx],
+            n_points=self._piece_n_points[piece_idx],
         )
         return self._cumulative_offsets[piece_idx] + local_coord
 
@@ -434,13 +432,6 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
             Piece("[10, 1000]", 30),  # Sparser at high wealth
         ))
 
-    Attributes:
-        pieces: A tuple of Piece objects defining each segment. Pieces must be
-            adjacent (no gaps or overlaps). All boundary values must be positive.
-        transition: Transition function for time-varying states, or `None` for fixed
-            states. Must be set explicitly when used as a state; must be left unset
-            when used as an action.
-
     Notes:
         - All boundary values must be positive (required for logarithmic spacing).
         - Open boundaries exclude the exact endpoint using nextafter.
@@ -450,7 +441,9 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
     """
 
     pieces: tuple[Piece, ...]
-    transition: Callable[..., Any] | None | Unset = Unset()
+    """Tuple of Piece objects defining each segment. All boundaries must be positive."""
+
+    transition: Callable[..., ContinuousState] | None | Unset = Unset()
     """Transition function for time-varying states, or `None` for fixed states.
 
     Must be set explicitly when this grid is used as a state in a Regime.
@@ -479,20 +472,26 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
         """Convert the grid to a Jax array."""
         piece_arrays = [
             grid_helpers.logspace(
-                self._piece_starts[i], self._piece_stops[i], p.n_points
+                start=self._piece_starts[i],
+                stop=self._piece_stops[i],
+                n_points=p.n_points,
             )
             for i, p in enumerate(self.pieces)
         ]
         return jnp.concatenate(piece_arrays)
 
-    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat:
+    @overload
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
+    @overload
+    def get_coordinate(self, value: Array) -> Array: ...
+    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
         piece_idx = jnp.searchsorted(self._breakpoints, value, side="right")
         local_coord = grid_helpers.get_logspace_coordinate(
-            value,
-            self._piece_starts[piece_idx],
-            self._piece_stops[piece_idx],
-            self._piece_n_points[piece_idx],
+            value=value,
+            start=self._piece_starts[piece_idx],
+            stop=self._piece_stops[piece_idx],
+            n_points=self._piece_n_points[piece_idx],
         )
         return self._cumulative_offsets[piece_idx] + local_coord
 
@@ -566,8 +565,10 @@ def _init_piecewise_grid_cache(
 # ======================================================================================
 
 
-def _validate_transition(transition: Callable[..., Any] | None | Unset) -> None:
-    """Validate that ``transition`` is callable, None, or Unset.
+def _validate_transition(
+    transition: Callable[..., ContinuousState | DiscreteState] | None | Unset,
+) -> None:
+    """Validate that `transition` is callable, None, or UNSET.
 
     Raises:
         GridInitializationError: If ``transition`` is not callable, None, or Unset.
@@ -661,6 +662,7 @@ def validate_category_class(category_class: type) -> list[str]:
 
 
 def _validate_continuous_grid(
+    *,
     start: float,
     stop: float,
     n_points: int,

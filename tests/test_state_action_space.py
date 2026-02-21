@@ -56,7 +56,7 @@ def test_create_state_action_space_solution_discrete_action_continuous_state():
     assert_array_equal(space.states["wealth"], grids["wealth"])
     assert_array_equal(space.discrete_actions["work"], grids["work"])
     assert space.continuous_actions == {}
-    assert space.states_and_discrete_actions_names == ("work", "wealth")
+    assert space.state_and_discrete_action_names == ("work", "wealth")
 
 
 def test_create_state_action_space_solution_continuous_action():
@@ -82,7 +82,7 @@ def test_create_state_action_space_solution_continuous_action():
     assert_array_equal(space.states["wealth"], grids["wealth"])
     assert space.discrete_actions == {}
     assert_array_equal(space.continuous_actions["consumption"], grids["consumption"])
-    assert space.states_and_discrete_actions_names == ("wealth",)
+    assert space.state_and_discrete_action_names == ("wealth",)
 
 
 def test_state_action_space_replace_method():
@@ -125,7 +125,9 @@ def test_create_state_space_info():
             "wealth": LinSpacedGrid(
                 start=0, stop=100, n_points=5, transition=lambda wealth: wealth
             ),
-            "health": DiscreteGrid(HealthStatus, transition=lambda health: health),
+            "health": DiscreteGrid(
+                category_class=HealthStatus, transition=lambda health: health
+            ),
         },
         active=lambda age: age < 5,
     )
@@ -133,6 +135,6 @@ def test_create_state_space_info():
     state_space_info = create_state_space_info(regime)
 
     assert isinstance(state_space_info, StateSpaceInfo)
-    assert set(state_space_info.states_names) == {"wealth", "health"}
+    assert set(state_space_info.state_names) == {"wealth", "health"}
     assert "health" in state_space_info.discrete_states
     assert "wealth" in state_space_info.continuous_states
