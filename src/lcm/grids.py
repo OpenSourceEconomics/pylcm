@@ -13,6 +13,16 @@ from lcm.typing import Float1D, Int1D, ScalarFloat
 from lcm.utils import find_duplicates, get_field_names_and_values
 
 
+class _Unset:
+    """Sentinel for grid ``transition`` parameters that haven't been explicitly set."""
+
+    def __repr__(self) -> str:
+        return "UNSET"
+
+
+UNSET = _Unset()
+
+
 def categorical[T](cls: type[T]) -> type[T]:
     """Decorator to create a categorical class with auto-assigned integer values.
 
@@ -79,15 +89,14 @@ class DiscreteGrid(Grid):
     Args:
         category_class (type): The category class representing the grid categories. Must
             be a dataclass with fields that have unique int values.
-        transition: Optional transition function in case of state variables.
-            When provided,
-            the state is time-varying. When ``None`` (default), the state is fixed and
-            an identity transition is auto-generated during model processing.
+        transition: Transition function for time-varying states, or `None` for fixed
+            states. Must be set explicitly when this grid is used as a state in a
+            Regime. Must be left unset when used as an action.
 
     Attributes:
         categories: The list of category names.
         codes: The list of category codes.
-        transition: The transition function, or ``None`` for fixed states.
+        transition: The transition function, `None` for fixed states, or `UNSET`.
 
     Raises:
         GridInitializationError: If the `category_class` is not a dataclass with int
@@ -98,7 +107,7 @@ class DiscreteGrid(Grid):
     def __init__(
         self,
         category_class: type,
-        transition: Callable[..., Any] | None = None,
+        transition: Callable[..., Any] | None | _Unset = UNSET,
     ) -> None:
         """Initialize the DiscreteGrid.
 
@@ -109,6 +118,7 @@ class DiscreteGrid(Grid):
 
         """
         _validate_discrete_grid(category_class)
+        _validate_transition(transition)
 
         names_and_values = get_field_names_and_values(category_class)
 
@@ -127,8 +137,8 @@ class DiscreteGrid(Grid):
         return self.__codes
 
     @property
-    def transition(self) -> Callable[..., Any] | None:
-        """Return the transition function, or ``None`` for fixed states."""
+    def transition(self) -> Callable[..., Any] | None | _Unset:
+        """Return the transition function, ``None`` for fixed states, or UNSET."""
         return self.__transition
 
     def to_jax(self) -> Int1D:
@@ -144,17 +154,22 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
         start: The start value of the grid.
         stop: The stop value of the grid.
         n_points: The number of points in the grid.
-        transition: Optional transition function in case of state variables.
-            When provided,
-            the state is time-varying. When ``None`` (default), the state is fixed and
-            an identity transition is auto-generated during model processing.
+        transition: Transition function for time-varying states, or `None` for fixed
+            states. Must be set explicitly when used as a state; must be left unset
+            when used as an action.
 
     """
 
     start: int | float
     stop: int | float
     n_points: int
-    transition: Callable[..., Any] | None = None
+    transition: Callable[..., Any] | None | _Unset = UNSET
+    """Transition function for time-varying states, or `None` for fixed states.
+
+    Must be set explicitly when this grid is used as a state in a Regime.
+    Must be left unset (no `transition` argument) when used as an action.
+    Non-callable values other than `None` raise GridInitializationError.
+    """
 
     def __post_init__(self) -> None:
         _validate_continuous_grid(
@@ -162,6 +177,7 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
             stop=self.stop,
             n_points=self.n_points,
         )
+        _validate_transition(self.transition)
 
     @abstractmethod
     def to_jax(self) -> Float1D:
@@ -261,18 +277,24 @@ class IrregSpacedGrid(ContinuousGrid):
         n_points: Number of points. Derived from `len(points)` when points are
             given upon initialization; must be specified explicitly when the `points`
             will only be passed at runtime.
-        transition: Optional transition function in case of state variables.
-            When provided,
-            the state is time-varying. When ``None`` (default), the state is fixed and
-            an identity transition is auto-generated during model processing.
+        transition: Transition function for time-varying states, or `None` for fixed
+            states. Must be set explicitly when used as a state; must be left unset
+            when used as an action.
 
     """
 
     points: Sequence[float] | Float1D | None = None
     n_points: int | None = None
-    transition: Callable[..., Any] | None = None
+    transition: Callable[..., Any] | None | _Unset = UNSET
+    """Transition function for time-varying states, or `None` for fixed states.
+
+    Must be set explicitly when this grid is used as a state in a Regime.
+    Must be left unset (no `transition` argument) when used as an action.
+    Non-callable values other than `None` raise GridInitializationError.
+    """
 
     def __post_init__(self) -> None:
+        _validate_transition(self.transition)
         if self.points is not None:
             _validate_irreg_spaced_grid(self.points)
             # Derive n_points from points if not explicitly set
@@ -348,10 +370,9 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
     Attributes:
         pieces: A tuple of Piece objects defining each segment. Pieces must be
             adjacent (no gaps or overlaps).
-        transition: Optional transition function in case of state variables.
-            When provided,
-            the state is time-varying. When ``None`` (default), the state is fixed and
-            an identity transition is auto-generated during model processing.
+        transition: Transition function for time-varying states, or `None` for fixed
+            states. Must be set explicitly when used as a state; must be left unset
+            when used as an action.
 
     Notes:
         - Open boundaries (e.g., `4)` in `[1, 4)`) exclude that exact point from
@@ -362,7 +383,13 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
     """
 
     pieces: tuple[Piece, ...]
-    transition: Callable[..., Any] | None = None
+    transition: Callable[..., Any] | None | _Unset = UNSET
+    """Transition function for time-varying states, or `None` for fixed states.
+
+    Must be set explicitly when this grid is used as a state in a Regime.
+    Must be left unset (no `transition` argument) when used as an action.
+    Non-callable values other than `None` raise GridInitializationError.
+    """
 
     # Cached JAX arrays for efficient coordinate computation (set in __post_init__)
     _breakpoints: Float1D = dataclasses.field(init=False, repr=False)
@@ -373,6 +400,7 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
 
     def __post_init__(self) -> None:
         _validate_piecewise_lin_spaced_grid(self.pieces)
+        _validate_transition(self.transition)
         _init_piecewise_grid_cache(self)
 
     @property
@@ -419,10 +447,9 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
     Attributes:
         pieces: A tuple of Piece objects defining each segment. Pieces must be
             adjacent (no gaps or overlaps). All boundary values must be positive.
-        transition: Optional transition function in case of state variables.
-            When provided,
-            the state is time-varying. When ``None`` (default), the state is fixed and
-            an identity transition is auto-generated during model processing.
+        transition: Transition function for time-varying states, or `None` for fixed
+            states. Must be set explicitly when used as a state; must be left unset
+            when used as an action.
 
     Notes:
         - All boundary values must be positive (required for logarithmic spacing).
@@ -433,7 +460,13 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
     """
 
     pieces: tuple[Piece, ...]
-    transition: Callable[..., Any] | None = None
+    transition: Callable[..., Any] | None | _Unset = UNSET
+    """Transition function for time-varying states, or `None` for fixed states.
+
+    Must be set explicitly when this grid is used as a state in a Regime.
+    Must be left unset (no `transition` argument) when used as an action.
+    Non-callable values other than `None` raise GridInitializationError.
+    """
 
     # Cached JAX arrays for efficient coordinate computation (set in __post_init__)
     _breakpoints: Float1D = dataclasses.field(init=False, repr=False)
@@ -444,6 +477,7 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
 
     def __post_init__(self) -> None:
         _validate_piecewise_log_spaced_grid(self.pieces)
+        _validate_transition(self.transition)
         _init_piecewise_grid_cache(self)
 
     @property
@@ -540,6 +574,22 @@ def _init_piecewise_grid_cache(
 # ======================================================================================
 # Validate user input
 # ======================================================================================
+
+
+def _validate_transition(transition: Callable[..., Any] | None | _Unset) -> None:
+    """Validate that ``transition`` is callable, None, or UNSET.
+
+    Raises:
+        GridInitializationError: If ``transition`` is not callable, None, or UNSET.
+
+    """
+    if not (
+        isinstance(transition, _Unset) or transition is None or callable(transition)
+    ):
+        raise GridInitializationError(
+            f"transition must be a callable or None, "
+            f"but got {type(transition).__name__}: {transition!r}"
+        )
 
 
 def _validate_discrete_grid(category_class: type) -> None:

@@ -8,7 +8,7 @@ from typing import Any, TypeAliasType, overload
 from dags.tree import QNAME_DELIMITER
 
 from lcm.exceptions import RegimeInitializationError, format_messages
-from lcm.grids import DiscreteGrid, Grid
+from lcm.grids import UNSET, DiscreteGrid, Grid, _Unset
 from lcm.mark import stochastic
 from lcm.shocks._base import _ShockGrid
 from lcm.typing import (
@@ -247,6 +247,7 @@ def _validate_logical_consistency(regime: Regime) -> None:
         )
 
     error_messages.extend(_validate_active(regime.active))
+    error_messages.extend(_validate_state_and_action_transitions(regime))
 
     states_and_actions_overlap = set(regime.states) & set(regime.actions)
     if states_and_actions_overlap:
@@ -265,6 +266,32 @@ def _validate_active(active: ActiveFunction) -> list[str]:
     if not callable(active):
         return ["active must be a callable that takes age (float) and returns bool."]
     return []
+
+
+def _validate_state_and_action_transitions(regime: Regime) -> list[str]:
+    """Validate transition attributes on state and action grids."""
+    error_messages: list[str] = []
+
+    # State grids must have explicit transition
+    for name, grid in regime.states.items():
+        if not isinstance(grid, _ShockGrid):
+            transition = getattr(grid, "transition", None)
+            if isinstance(transition, _Unset):
+                error_messages.append(
+                    f"State '{name}' must explicitly pass transition=<fn> or "
+                    f"transition=None.",
+                )
+
+    # Action grids must not carry transitions
+    for name, grid in regime.actions.items():
+        transition = getattr(grid, "transition", UNSET)
+        if not isinstance(transition, _Unset):
+            error_messages.append(
+                f"Action '{name}' must not have a transition (got "
+                f"transition={transition!r}).",
+            )
+
+    return error_messages
 
 
 def _make_identity_fn(
@@ -293,7 +320,7 @@ def _collect_state_transitions(
     for name, grid in states.items():
         if isinstance(grid, _ShockGrid):
             transitions[f"next_{name}"] = stochastic(lambda: None)
-        elif (grid_transition := getattr(grid, "transition", None)) is not None:
+        elif callable(grid_transition := getattr(grid, "transition", None)):
             transitions[f"next_{name}"] = grid_transition
         else:
             ann = DiscreteState if isinstance(grid, DiscreteGrid) else ContinuousState
