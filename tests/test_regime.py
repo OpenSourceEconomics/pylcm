@@ -9,6 +9,7 @@ from dags.tree import QNAME_DELIMITER
 from lcm import DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
+from lcm.grids import IrregSpacedGrid
 from lcm.regime import _IdentityTransition
 from lcm.typing import ContinuousState, DiscreteState
 
@@ -253,3 +254,107 @@ def test_get_all_functions_includes_identity_for_fixed_continuous_state():
     assert isinstance(identity_func, _IdentityTransition)
     assert identity_func.__annotations__["wealth"] is ContinuousState
     assert identity_func.__annotations__["return"] is ContinuousState
+
+
+# ======================================================================================
+# Grid Transition Validation Tests
+# ======================================================================================
+
+
+def test_state_grid_without_explicit_transition_raises():
+    """State grid with UNSET transition (no transition= arg) is rejected."""
+    with pytest.raises(RegimeInitializationError, match="must explicitly pass"):
+        Regime(
+            transition=lambda: 0,
+            functions={"utility": utility},
+            states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
+            actions={"consumption": CONSUMPTION_GRID},
+        )
+
+
+def test_state_grid_with_transition_none_is_accepted():
+    """State grid with transition=None (fixed state) is valid."""
+    regime = Regime(
+        transition=lambda: 0,
+        functions={"utility": utility},
+        states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5, transition=None)},
+        actions={"consumption": CONSUMPTION_GRID},
+    )
+    assert "wealth" in regime.states
+
+
+def test_state_grid_with_transition_callable_is_accepted():
+    """State grid with a transition function is valid."""
+    regime = Regime(
+        transition=lambda: 0,
+        functions={"utility": utility},
+        states={
+            "wealth": LinSpacedGrid(
+                start=1, stop=10, n_points=5, transition=next_wealth
+            ),
+        },
+        actions={"consumption": CONSUMPTION_GRID},
+    )
+    assert "wealth" in regime.states
+
+
+def test_action_grid_with_explicit_transition_raises():
+    """Action grid with an explicit transition= argument is rejected."""
+    with pytest.raises(RegimeInitializationError, match="must not have a transition"):
+        Regime(
+            transition=lambda: 0,
+            functions={"utility": utility},
+            states={"wealth": WEALTH_GRID},
+            actions={
+                "consumption": LinSpacedGrid(
+                    start=1, stop=5, n_points=5, transition=None
+                ),
+            },
+        )
+
+
+def test_action_grid_without_transition_is_accepted():
+    """Action grid with default UNSET transition is valid."""
+    regime = Regime(
+        transition=lambda: 0,
+        functions={"utility": utility},
+        states={"wealth": WEALTH_GRID},
+        actions={"consumption": CONSUMPTION_GRID},
+    )
+    assert "consumption" in regime.actions
+
+
+@pytest.mark.parametrize(
+    "grid_cls",
+    [LinSpacedGrid, IrregSpacedGrid],
+    ids=["LinSpacedGrid", "IrregSpacedGrid"],
+)
+def test_state_grid_unset_error_with_different_grid_types(grid_cls):
+    """UNSET transition error works for various grid types."""
+    if grid_cls is LinSpacedGrid:
+        grid = LinSpacedGrid(start=1, stop=10, n_points=5)
+    else:
+        grid = IrregSpacedGrid(points=(1.0, 5.0, 10.0))
+
+    with pytest.raises(RegimeInitializationError, match="must explicitly pass"):
+        Regime(
+            transition=lambda: 0,
+            functions={"utility": utility},
+            states={"wealth": grid},
+        )
+
+
+def test_discrete_state_grid_without_explicit_transition_raises():
+    """Discrete state grid with UNSET transition is rejected."""
+
+    @categorical
+    class Status:
+        low: int
+        high: int
+
+    with pytest.raises(RegimeInitializationError, match="must explicitly pass"):
+        Regime(
+            transition=lambda: 0,
+            functions={"utility": lambda status: status},
+            states={"status": DiscreteGrid(Status)},
+        )

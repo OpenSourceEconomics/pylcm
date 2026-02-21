@@ -1,11 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-from lcm.grids import DiscreteGrid
-from lcm.mark import stochastic
-from lcm.regime import _default_H, _make_identity_func
-from lcm.shocks._base import _ShockGrid
-from lcm.typing import ContinuousState, DiscreteState, UserFunction
+from lcm.regime import _collect_state_transitions, _default_H
+from lcm.typing import UserFunction
 
 
 @dataclass
@@ -35,25 +32,10 @@ class RegimeMock:
     def get_all_functions(self) -> dict[str, UserFunction]:
         """Get all regime functions including utility, constraints, and transitions."""
         result = dict(self.functions) | dict(self.constraints)
-        # Collect state transitions from grids (skip None grids used in mock tests)
         if self.states:
-            for name, grid in self.states.items():
-                if grid is None:
-                    continue
-                if isinstance(grid, _ShockGrid):
-                    result[f"next_{name}"] = stochastic(lambda: None)
-                    continue
-                grid_transition = getattr(grid, "transition", None)
-                if grid_transition is not None:
-                    result[f"next_{name}"] = grid_transition
-                else:
-                    ann = (
-                        DiscreteState
-                        if isinstance(grid, DiscreteGrid)
-                        else ContinuousState
-                    )
-                    result[f"next_{name}"] = _make_identity_func(name, annotation=ann)
-        # Add regime transition
-        if self.transition is not None:
+            result |= _collect_state_transitions(
+                {k: v for k, v in self.states.items() if v is not None},
+            )
+        if self.transition:
             result["next_regime"] = self.transition
         return result

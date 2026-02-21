@@ -11,7 +11,7 @@ from jax import numpy as jnp
 
 from lcm.ages import AgeGrid
 from lcm.grid_helpers import get_irreg_coordinate
-from lcm.grids import DiscreteGrid, Grid
+from lcm.grids import Grid
 from lcm.input_processing.create_regime_params_template import (
     create_regime_params_template,
 )
@@ -30,12 +30,10 @@ from lcm.input_processing.util import (
 from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
 from lcm.mark import stochastic
 from lcm.ndimage import map_coordinates
-from lcm.regime import Regime, _make_identity_func
+from lcm.regime import Regime, _collect_state_transitions
 from lcm.shocks import _ShockGrid
 from lcm.state_action_space import create_state_action_space, create_state_space_info
 from lcm.typing import (
-    ContinuousState,
-    DiscreteState,
     Float1D,
     Int1D,
     InternalUserFunction,
@@ -382,21 +380,7 @@ def _extract_transitions_from_regime(
     if regime.terminal:
         return {}
 
-    # Collect state transitions from grids
-    state_transitions: dict[str, UserFunction] = {}
-    for state_name, grid in regime.states.items():
-        if isinstance(grid, _ShockGrid):
-            # ShockGrids need an entry so they appear in internal transitions.
-            # The actual transition function is generated during internal processing.
-            state_transitions[f"next_{state_name}"] = stochastic(lambda: None)
-        elif (grid_transition := getattr(grid, "transition", None)) is not None:
-            state_transitions[f"next_{state_name}"] = grid_transition
-        else:
-            # Fixed state: auto-generate identity transition
-            ann = DiscreteState if isinstance(grid, DiscreteGrid) else ContinuousState
-            state_transitions[f"next_{state_name}"] = _make_identity_func(
-                state_name, annotation=ann
-            )
+    state_transitions = _collect_state_transitions(regime.states)
 
     # Build nested format
     transitioned_state_names = {
