@@ -28,6 +28,11 @@ automation. Python 3.14+ is required.
 - `pixi run ty` - Type checking with ty
 - `prek run --all-files` - Run all pre-commit hooks
 
+### Documentation
+
+- `pixi run -e docs docs` - Build documentation
+- `pixi run -e docs view-docs` - Live preview documentation
+
 ### Environment Setup
 
 - `pixi install` - Install dependencies
