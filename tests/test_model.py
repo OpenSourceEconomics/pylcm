@@ -634,7 +634,7 @@ def test_state_only_in_transitions_with_terminal_regime():
     constraints), and the regime transitions to a terminal regime, the Q_and_F
     function's signature at that period does not include the state variable. But
     simulation_spacemap still passes all regime states to vmap_1d, causing
-    ``ValueError: list.index(x): x not in list``.
+    `ValueError: list.index(x): x not in list`.
 
     See: https://github.com/OpenSourceEconomics/pylcm/issues/236
     """

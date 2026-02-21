@@ -314,9 +314,9 @@ def _collect_state_transitions(
 ) -> dict[str, UserFunction]:
     """Collect state transition functions from grid objects.
 
-    For each state grid, produces an entry ``f"next_{name}"`` mapped to:
-    - A stochastic stub for ``ShockGrid`` types,
-    - The grid's ``transition`` attribute if present, or
+    For each state grid, produces an entry `f"next_{name}"` mapped to:
+    - A stochastic stub for `ShockGrid` types,
+    - The grid's `transition` attribute if present, or
     - An auto-generated identity transition for fixed states.
 
     """

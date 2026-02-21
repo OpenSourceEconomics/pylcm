@@ -15,7 +15,7 @@ from lcm.utils import find_duplicates, get_field_names_and_values
 
 
 class _Unset:
-    """Sentinel for grid ``transition`` parameters that haven't been explicitly set."""
+    """Sentinel for grid `transition` parameters that haven't been explicitly set."""
 
     def __repr__(self) -> str:
         return "UNSET"
@@ -576,10 +576,10 @@ def _init_piecewise_grid_cache(
 
 
 def _validate_transition(transition: Callable[..., Any] | None | _Unset) -> None:
-    """Validate that ``transition`` is callable, None, or UNSET.
+    """Validate that `transition` is callable, None, or UNSET.
 
     Raises:
-        GridInitializationError: If ``transition`` is not callable, None, or UNSET.
+        GridInitializationError: If `transition` is not callable, None, or UNSET.
 
     """
     if not (
