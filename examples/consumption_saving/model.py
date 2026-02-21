@@ -124,12 +124,22 @@ def retired_is_active(age: float) -> bool:
 
 
 working = Regime(
-    functions={
-        "utility": utility,
-        "labor_income": labor_income,
-        "wage": wage,
+    transition=next_regime,
+    active=working_is_active,
+    states={
+        "wealth": LinSpacedGrid(
+            start=1,
+            stop=100,
+            n_points=100,
+            transition=next_wealth,
+        ),
+        "health": LinSpacedGrid(
+            start=0,
+            stop=1,
+            n_points=100,
+            transition=next_health,
+        ),
     },
-    constraints={"borrowing_constraint": borrowing_constraint},
     actions={
         "working": DiscreteGrid(WorkingStatus),
         "consumption": LinSpacedGrid(
@@ -143,43 +153,33 @@ working = Regime(
             n_points=200,
         ),
     },
-    states={
-        "wealth": LinSpacedGrid(
-            start=1,
-            stop=100,
-            n_points=100,
-        ),
-        "health": LinSpacedGrid(
-            start=0,
-            stop=1,
-            n_points=100,
-        ),
+    functions={
+        "utility": utility,
+        "labor_income": labor_income,
+        "wage": wage,
     },
-    transitions={
-        "next_wealth": next_wealth,
-        "next_health": next_health,
-        "next_regime": next_regime,
-    },
-    active=working_is_active,
+    constraints={"borrowing_constraint": borrowing_constraint},
 )
 
 
 retired = Regime(
-    terminal=True,
-    functions={"utility": utility_retired},
+    transition=None,
+    active=retired_is_active,
     states={
         "wealth": LinSpacedGrid(
             start=1,
             stop=100,
             n_points=100,
+            transition=None,
         ),
         "health": LinSpacedGrid(
             start=0,
             stop=1,
             n_points=100,
+            transition=None,
         ),
     },
-    active=retired_is_active,
+    functions={"utility": utility_retired},
 )
 
 

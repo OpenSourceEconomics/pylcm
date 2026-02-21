@@ -16,24 +16,24 @@ from lcm.typing import (
 
 def test_regime_invalid_states():
     """Regime rejects non-dict states argument."""
-    with pytest.raises(RegimeInitializationError, match="states must be a dictionary"):
+    with pytest.raises(RegimeInitializationError, match="states must be a mapping"):
         Regime(
+            transition=lambda: 0,
             states="health",  # ty: ignore[invalid-argument-type]
             actions={},
             functions={"utility": lambda: 0},
-            transitions={"next_health": lambda: 0},
             active=lambda age: age < 5,
         )
 
 
 def test_regime_invalid_actions():
     """Regime rejects non-dict actions argument."""
-    with pytest.raises(RegimeInitializationError, match="actions must be a dictionary"):
+    with pytest.raises(RegimeInitializationError, match="actions must be a mapping"):
         Regime(
+            transition=lambda: 0,
             states={},
             actions="exercise",  # ty: ignore[invalid-argument-type]
             functions={"utility": lambda: 0},
-            transitions={"next_health": lambda: 0},
             active=lambda age: age < 5,
         )
 
@@ -41,12 +41,12 @@ def test_regime_invalid_actions():
 def test_regime_invalid_functions():
     """Regime rejects non-dict functions argument."""
     with pytest.raises(
-        RegimeInitializationError, match="functions must each be a dictionary"
+        RegimeInitializationError, match="functions must each be a mapping"
     ):
         Regime(
+            transition=lambda: 0,
             states={},
             actions={},
-            transitions={"next_health": lambda: 0},
             functions="utility",  # ty: ignore[invalid-argument-type]
             active=lambda age: age < 5,
         )
@@ -61,7 +61,7 @@ def test_regime_invalid_functions_values():
         Regime(
             states={},
             actions={},
-            transitions={"next_health": lambda: 0},
+            transition=lambda: 0,
             functions={"utility": lambda: 0, "function": 0},  # ty: ignore[invalid-argument-type]
             active=lambda age: age < 5,
         )
@@ -75,7 +75,7 @@ def test_regime_invalid_functions_keys():
         Regime(
             states={},
             actions={},
-            transitions={"next_health": lambda: 0},
+            transition=lambda: 0,
             functions={"utility": lambda: 0, 0: lambda: 0},  # ty: ignore[invalid-argument-type]
             active=lambda age: age < 5,
         )
@@ -90,7 +90,7 @@ def test_regime_invalid_actions_values():
             states={},
             actions={"exercise": 0},  # ty: ignore[invalid-argument-type]
             functions={"utility": lambda: 0},
-            transitions={"next_health": lambda: 0},
+            transition=lambda: 0,
             active=lambda age: age < 5,
         )
 
@@ -104,25 +104,7 @@ def test_regime_invalid_states_values():
             states={"health": 0},  # ty: ignore[invalid-argument-type]
             actions={},
             functions={"utility": lambda: 0},
-            transitions={"next_health": lambda: 0},
-            active=lambda age: age < 5,
-        )
-
-
-def test_regime_missing_next_func(binary_category_class):
-    """Regime rejects states without corresponding transition functions."""
-    with pytest.raises(
-        RegimeInitializationError,
-        match=r"Each state must have a corresponding transition function.",
-    ):
-        Regime(
-            states={
-                "health": DiscreteGrid(binary_category_class),
-                "wealth": DiscreteGrid(binary_category_class),
-            },
-            actions={"exercise": DiscreteGrid(binary_category_class)},
-            functions={"utility": lambda: 0},
-            transitions={"next_health": lambda: 0},
+            transition=lambda: 0,
             active=lambda age: age < 5,
         )
 
@@ -137,22 +119,7 @@ def test_regime_invalid_utility():
             states={},
             actions={},
             functions={"utility": 0},  # ty: ignore[invalid-argument-type]
-            transitions={"next_health": lambda: 0},
-            active=lambda age: age < 5,
-        )
-
-
-def test_regime_invalid_transition_names():
-    """Regime rejects transition names not starting with 'next_'."""
-    with pytest.raises(
-        RegimeInitializationError,
-        match=(r"Each transitions name must start with 'next_'."),
-    ):
-        Regime(
-            states={},
-            actions={},
-            functions={"utility": lambda: 0},
-            transitions={"invalid_name": lambda: 0},
+            transition=lambda: 0,
             active=lambda age: age < 5,
         )
 
@@ -164,10 +131,25 @@ def test_regime_overlapping_states_actions(binary_category_class):
         match=r"States and actions cannot have overlapping names.",
     ):
         Regime(
-            states={"health": DiscreteGrid(binary_category_class)},
+            states={"health": DiscreteGrid(binary_category_class, transition=None)},
             actions={"health": DiscreteGrid(binary_category_class)},
             functions={"utility": lambda: 0},
-            transitions={"next_health": lambda: 0},
+            transition=lambda: 0,
+            active=lambda age: age < 5,
+        )
+
+
+def test_regime_transition_must_be_callable():
+    """Regime rejects non-callable transition."""
+    with pytest.raises(
+        RegimeInitializationError,
+        match="transition must be a callable or None",
+    ):
+        Regime(
+            states={},
+            actions={},
+            functions={"utility": lambda: 0},
+            transition=42,  # ty: ignore[invalid-argument-type]
             active=lambda age: age < 5,
         )
 
@@ -180,13 +162,14 @@ def test_model_requires_terminal_regime(binary_category_class):
         test: int
 
     regime = Regime(
-        states={"health": DiscreteGrid(binary_category_class)},
+        states={
+            "health": DiscreteGrid(
+                binary_category_class, transition=lambda health: health
+            ),
+        },
         actions={},
         functions={"utility": lambda health: health},
-        transitions={
-            "next_health": lambda health: health,
-            "next_regime": lcm.mark.stochastic(lambda: jnp.array([1.0])),
-        },
+        transition=lcm.mark.stochastic(lambda: jnp.array([1.0])),
         active=lambda age: age < 1,
     )
     with pytest.raises(ModelInitializationError, match="at least one terminal regime"):
@@ -205,50 +188,14 @@ def test_model_requires_non_terminal_regime(binary_category_class):
         dead: int
 
     dead = Regime(
-        states={"health": DiscreteGrid(binary_category_class)},
+        transition=None,
+        states={"health": DiscreteGrid(binary_category_class, transition=None)},
         functions={"utility": lambda health: health * 0},
-        terminal=True,
         active=lambda age: age >= 1,
     )
     with pytest.raises(ModelInitializationError, match="at least one non-terminal"):
         Model(
             regimes={"dead": dead},
-            ages=AgeGrid(start=0, stop=2, step="Y"),
-            regime_id_class=RegimeId,
-        )
-
-
-def test_multi_regime_without_next_regime_raises(binary_category_class):
-    """Multi-regime models must have next_regime in each regime."""
-
-    @categorical
-    class RegimeId:
-        regime1: int
-        regime2: int
-
-    regime1 = Regime(
-        states={"health": DiscreteGrid(binary_category_class)},
-        actions={},
-        functions={"utility": lambda health: health},
-        transitions={
-            "next_health": lambda health: health,
-            # Missing next_regime
-        },
-        active=lambda age: age < 1,
-    )
-    regime2 = Regime(
-        states={"health": DiscreteGrid(binary_category_class)},
-        actions={},
-        functions={"utility": lambda health: health},
-        transitions={
-            "next_health": lambda health: health,
-            "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
-        },
-        active=lambda age: age < 1,
-    )
-    with pytest.raises(ModelInitializationError, match="next_regime"):
-        Model(
-            regimes={"regime1": regime1, "regime2": regime2},
             ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=RegimeId,
         )
@@ -271,24 +218,25 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
         dead2: int
 
     alive = Regime(
-        states={"health": DiscreteGrid(binary_category_class)},
-        functions={"utility": lambda health: health},
-        transitions={
-            "next_health": lambda health: health,
-            "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.8, 0.1, 0.1])),
+        states={
+            "health": DiscreteGrid(
+                binary_category_class, transition=lambda health: health
+            ),
         },
+        functions={"utility": lambda health: health},
+        transition=lcm.mark.stochastic(lambda: jnp.array([0.8, 0.1, 0.1])),
         active=lambda age: age < 1,
     )
     dead1 = Regime(
-        states={"health": DiscreteGrid(binary_category_class)},
+        transition=None,
+        states={"health": DiscreteGrid(binary_category_class, transition=None)},
         functions={"utility": lambda health: health * 0},
-        terminal=True,
         active=lambda age: age >= 1,
     )
     dead2 = Regime(
-        states={"health": DiscreteGrid(binary_category_class)},
+        transition=None,
+        states={"health": DiscreteGrid(binary_category_class, transition=None)},
         functions={"utility": lambda health: health * 0},
-        terminal=True,
         active=lambda age: age >= 1,
     )
     # Should not raise - multiple terminal regimes are allowed
@@ -309,18 +257,19 @@ def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):
         dead: int
 
     alive = Regime(
-        states={"health": DiscreteGrid(binary_category_class)},
-        functions={"utility": lambda health: health},
-        transitions={
-            "next_health": lambda health: health,
-            "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
+        states={
+            "health": DiscreteGrid(
+                binary_category_class, transition=lambda health: health
+            ),
         },
+        functions={"utility": lambda health: health},
+        transition=lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
         active=lambda age: age < 1,
     )
     dead = Regime(
-        states={"health": DiscreteGrid(binary_category_class)},
+        transition=None,
+        states={"health": DiscreteGrid(binary_category_class, transition=None)},
         functions={"utility": lambda health: health * 0},
-        terminal=True,
         active=lambda age: age >= 1,
     )
     model = Model(
@@ -342,18 +291,19 @@ def test_model_regime_name_validation(binary_category_class):
         dead: int
 
     alive = Regime(
-        states={"health": DiscreteGrid(binary_category_class)},
-        functions={"utility": lambda health: health},
-        transitions={
-            "next_health": lambda health: health,
-            "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
+        states={
+            "health": DiscreteGrid(
+                binary_category_class, transition=lambda health: health
+            ),
         },
+        functions={"utility": lambda health: health},
+        transition=lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
         active=lambda age: age < 1,
     )
     dead = Regime(
-        states={"health": DiscreteGrid(binary_category_class)},
+        transition=None,
+        states={"health": DiscreteGrid(binary_category_class, transition=None)},
         functions={"utility": lambda health: health * 0},
-        terminal=True,
         active=lambda age: age >= 1,
     )
     # Using separator in regime name should raise error
@@ -387,25 +337,26 @@ def test_unused_state_raises_error():
             ),
         },
         states={
-            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
-            "unused_state": DiscreteGrid(UnusedState),  # Not used anywhere!
+            "wealth": LinSpacedGrid(
+                start=1,
+                stop=100,
+                n_points=10,
+                transition=lambda wealth, consumption: wealth - consumption,
+            ),
+            "unused_state": DiscreteGrid(UnusedState, transition=None),
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-        transitions={
-            "next_wealth": lambda wealth, consumption: wealth - consumption,
-            "next_unused_state": lambda unused_state: unused_state,
-            "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.9, 0.1])),
-        },
+        transition=lcm.mark.stochastic(lambda: jnp.array([0.9, 0.1])),
         active=lambda age: age < 5,
     )
 
     retired = Regime(
+        transition=None,
         functions={"utility": lambda wealth: wealth * 0.5},
         states={
-            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
-            "unused_state": DiscreteGrid(UnusedState),
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10, transition=None),
+            "unused_state": DiscreteGrid(UnusedState, transition=None),
         },
-        terminal=True,
         active=lambda age: age >= 5,
     )
 
@@ -437,22 +388,28 @@ def test_unused_action_raises_error():
                 jnp.log(consumption) + wealth * 0.001
             ),
         },
-        states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
+        states={
+            "wealth": LinSpacedGrid(
+                start=1,
+                stop=100,
+                n_points=10,
+                transition=lambda wealth, consumption: wealth - consumption,
+            ),
+        },
         actions={
             "consumption": LinSpacedGrid(start=1, stop=50, n_points=10),
             "unused_action": DiscreteGrid(UnusedAction),  # Not used anywhere!
         },
-        transitions={
-            "next_wealth": lambda wealth, consumption: wealth - consumption,
-            "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.9, 0.1])),
-        },
+        transition=lcm.mark.stochastic(lambda: jnp.array([0.9, 0.1])),
         active=lambda age: age < 5,
     )
 
     retired = Regime(
+        transition=None,
         functions={"utility": lambda wealth: wealth * 0.5},
-        states={"wealth": LinSpacedGrid(start=1, stop=100, n_points=10)},
-        terminal=True,
+        states={
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10, transition=None)
+        },
         active=lambda age: age >= 5,
     )
 
@@ -461,43 +418,6 @@ def test_unused_action_raises_error():
         Model(
             regimes={"working": working, "retired": retired},
             ages=AgeGrid(start=0, stop=5, step="Y"),
-            regime_id_class=RegimeId,
-        )
-
-
-def test_missing_transition_for_other_regime_state_raises_error():
-    """Non-terminal regimes must have transitions for all states across all regimes."""
-
-    @categorical
-    class RegimeId:
-        working: int
-        retired: int
-
-    # Working regime only has 'wealth', but retired has 'wealth' AND 'pension'.
-    # Working must define next_pension since it can transition to retired.
-    working = Regime(
-        functions={"utility": lambda wealth: wealth},
-        states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
-        transitions={
-            "next_wealth": lambda wealth: wealth,
-            # Missing next_pension!
-            "next_regime": lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
-        },
-    )
-
-    retired = Regime(
-        functions={"utility": lambda wealth, pension: wealth + pension},
-        states={
-            "wealth": LinSpacedGrid(start=1, stop=10, n_points=5),
-            "pension": LinSpacedGrid(start=0, stop=5, n_points=3),
-        },
-        terminal=True,
-    )
-
-    with pytest.raises(ModelInitializationError, match="next_pension"):
-        Model(
-            regimes={"working": working, "retired": retired},
-            ages=AgeGrid(start=0, stop=2, step="Y"),
             regime_id_class=RegimeId,
         )
 
@@ -564,25 +484,25 @@ def test_constraint_depending_on_transition_output():
 
     alive_regime = Regime(
         constraints={"borrowing_constraint": borrowing_constraint},
-        transitions={
-            "next_regime": next_regime,
-            "next_assets": next_assets,
-            "next_lagged_employment": next_lagged_employment,
-        },
+        transition=next_regime,
         functions={"utility": utility, "model_end_age": model_end_age},
         actions={
             "consumption_q": LinSpacedGrid(start=1, stop=10, n_points=5),
             "employment": DiscreteGrid(EmploymentStatus),
         },
         states={
-            "assets": LinSpacedGrid(start=10, stop=100, n_points=5),
-            "lagged_employment": DiscreteGrid(EmploymentLastPeriod),
+            "assets": LinSpacedGrid(
+                start=10, stop=100, n_points=5, transition=next_assets
+            ),
+            "lagged_employment": DiscreteGrid(
+                EmploymentLastPeriod, transition=next_lagged_employment
+            ),
         },
     )
 
     dead_regime = Regime(
+        transition=None,
         functions={"utility": dead_utility},
-        terminal=True,
     )
 
     # This should work but currently raises ValueError
@@ -647,25 +567,25 @@ def test_state_only_used_in_transitions():
         )
 
     alive_regime = Regime(
-        transitions={
-            "next_regime": next_regime,
-            "next_assets": next_assets,
-            "next_lagged_employment": next_lagged_employment,
-        },
+        transition=next_regime,
         functions={"utility": utility, "model_end_age": model_end_age},
         actions={
             "consumption_q": LinSpacedGrid(start=1, stop=10, n_points=5),
             "employment": DiscreteGrid(EmploymentStatus),
         },
         states={
-            "assets": LinSpacedGrid(start=10, stop=100, n_points=5),
-            "lagged_employment": DiscreteGrid(EmploymentLastPeriod),
+            "assets": LinSpacedGrid(
+                start=10, stop=100, n_points=5, transition=next_assets
+            ),
+            "lagged_employment": DiscreteGrid(
+                EmploymentLastPeriod, transition=next_lagged_employment
+            ),
         },
     )
 
     dead_regime = Regime(
+        transition=None,
         functions={"utility": dead_utility},
-        terminal=True,
     )
 
     # This should work but currently raises ValueError
@@ -709,12 +629,9 @@ def test_state_only_in_transitions_with_terminal_regime():
     def dead_utility():
         return 0.0
 
-    def next_wealth(wealth, consumption, type_var):
+    def next_wealth(wealth, consumption, type_var: DiscreteState):
         """type_var affects wealth transition but does NOT appear in utility."""
         return (1 + 0.05 * type_var) * (wealth - consumption)
-
-    def next_type_var(type_var):
-        return type_var
 
     def next_regime(age):
         return jnp.where(age >= 2, RegimeId.dead, RegimeId.alive)
@@ -724,21 +641,19 @@ def test_state_only_in_transitions_with_terminal_regime():
     alive = Regime(
         functions={"utility": utility},
         states={
-            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
-            "type_var": DiscreteGrid(TypeVar),
+            "wealth": LinSpacedGrid(
+                start=1, stop=100, n_points=10, transition=next_wealth
+            ),
+            "type_var": DiscreteGrid(TypeVar, transition=None),
         },
         actions={
             "consumption": LinSpacedGrid(start=1, stop=50, n_points=10),
         },
-        transitions={
-            "next_wealth": next_wealth,
-            "next_type_var": next_type_var,
-            "next_regime": next_regime,
-        },
+        transition=next_regime,
         active=lambda age: age <= 2,
     )
 
-    dead = Regime(terminal=True, functions={"utility": dead_utility})
+    dead = Regime(transition=None, functions={"utility": dead_utility})
 
     Model(
         regimes={"alive": alive, "dead": dead},

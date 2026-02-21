@@ -44,8 +44,8 @@ automation. Python 3.14+ is required.
 **Model Definition (`src/lcm/model.py`, `src/lcm/regime.py`)**
 
 - `Model`: User-facing class for defining dynamic choice models
-- `Regime`: Defines a single regime with utility, constraints, transitions, functions,
-  actions, and states
+- `Regime`: Defines a single regime with utility, constraints, functions, actions, and
+  states. State transitions live on grids; regime transitions live on the regime.
 - Models must have at least one terminal regime and one non-terminal regime
 - Models support transitions between multiple regimes
 
@@ -69,21 +69,34 @@ automation. Python 3.14+ is required.
 
 **Grid System (`src/lcm/grids.py`)**
 
-- `DiscreteGrid`: Categorical variables with string labels
-- `LinSpacedGrid`: Linearly spaced grid (start, stop, n_points)
-- `LogSpacedGrid`: Logarithmically spaced grid (start, stop, n_points)
-- `IrregSpacedGrid`: Irregularly spaced grid (points tuple)
-- `PiecewiseLinSpacedGrid`: Piecewise linearly spaced grid with breakpoints
-- `PiecewiseLogSpacedGrid`: Piecewise logarithmically spaced grid with breakpoints
+- `DiscreteGrid`: Categorical variables with string labels. Optional `transition`
+  parameter for state transitions.
+- `LinSpacedGrid`: Linearly spaced grid (start, stop, n_points). Optional `transition`.
+- `LogSpacedGrid`: Logarithmically spaced grid (start, stop, n_points). Optional
+  `transition`.
+- `IrregSpacedGrid`: Irregularly spaced grid (points tuple). Optional `transition`.
+- `PiecewiseLinSpacedGrid`: Piecewise linearly spaced grid with breakpoints. Optional
+  `transition`.
+- `PiecewiseLogSpacedGrid`: Piecewise logarithmically spaced grid with breakpoints.
+  Optional `transition`.
 - `AgeGrid`: Lifecycle age grid (start, stop, step or precise_values)
 - `@categorical`: Decorator for creating categorical classes with auto-assigned integer
   codes
+- **ShockGrids** (in `src/lcm/shocks/`): `Rouwenhorst`, `Tauchen`, `Normal`, `Uniform`.
+  These have intrinsic transitions — do NOT accept a `transition` parameter. Import as
+  modules (`import lcm.shocks.iid`) and use qualified access
+  (`lcm.shocks.iid.Uniform(...)`), never `from lcm.shocks.iid import Uniform`.
 
 Grid class hierarchy: `Grid` is the base class. `ContinuousGrid(Grid)` is the base for
 continuous grids with `get_coordinate` method. `UniformContinuousGrid(ContinuousGrid)`
 is for grids with start/stop/n_points (LinSpacedGrid, LogSpacedGrid inherit from it).
 Other continuous grids (IrregSpacedGrid, PiecewiseLinSpacedGrid, PiecewiseLogSpacedGrid)
-inherit directly from ContinuousGrid.
+inherit directly from ContinuousGrid. `ShockGrid(ContinuousGrid)` is the base for
+stochastic grids.
+
+**State transitions** are attached directly to grid objects via the `transition`
+parameter. A state with no `transition` is fixed (time-invariant) — an identity
+transition is auto-generated during preprocessing.
 
 ### Processing Pipeline
 
@@ -119,33 +132,41 @@ The `Regime` class defines a single regime in the model. The regime name is spec
 the key in the `regimes` dict passed to `Model`:
 
 ```python
+# Non-terminal regime
 Regime(
+    transition=next_regime_fn,                   # Required: regime transition function (None → terminal)
     active=lambda age: 25 <= age < 65,           # Optional: age-based predicate (default: always True)
-    constraints={"name": constraint_fn, ...},    # Optional: constraint functions
-    transitions={                                # Required for non-terminal regimes
-        "next_state1": transition_fn,
-        "next_regime": lambda: {"regime_name": 1.0},
+    states={                                     # State grids with optional transitions
+        "wealth": LinSpacedGrid(..., transition=next_wealth),  # Time-varying state
+        "education": DiscreteGrid(EduStatus, transition=None),   # Fixed state
     },
+    actions={"action_name": Grid, ...},          # Action grids (can be empty)
     functions={                                  # Must include "utility"; other functions optional
         "utility": utility_function,
         "name": helper_fn, ...
     },
-    actions={"action_name": Grid, ...},          # Action grids (can be empty)
-    states={"state_name": Grid, ...},            # State grids (can be empty)
-    absorbing=False,                             # Optional: absorbing regime flag
-    terminal=False,                              # Optional: terminal regime (no transitions)
+    constraints={"name": constraint_fn, ...},    # Optional: constraint functions
+)
+
+# Terminal regime (transition=None)
+Regime(
+    transition=None,
+    functions={"utility": terminal_utility},
+    states={"wealth": LinSpacedGrid(...)},
 )
 ```
 
 **Regime Requirements:**
 
+- `transition` is required: the regime transition function, or `None` for terminal
+  regimes. `terminal` is a derived property (`self.transition is None`).
 - `active` is optional; defaults to `lambda _age: True` (always active)
 - `functions` must contain a `"utility"` entry (the utility function)
-- All transition function names must start with `next_`
-- Non-terminal regimes must have transitions for ALL states across ALL regimes
-- Non-terminal regimes must include a `next_regime` function returning
-  `dict[str, float]`
-- Terminal regimes (`terminal=True`) cannot have any transitions
+- State transitions live on grids via the `transition` parameter. States without a
+  `transition` are fixed (time-invariant) — an identity transition is auto-generated.
+- ShockGrids have intrinsic transitions and do not need a `transition` parameter.
+- Fixed states (no transition) must always pass `transition=None` explicitly — never
+  rely on the default.
 - Regime names (dict keys) cannot contain the reserved separator `__`
 
 ### Model Creation
@@ -268,6 +289,7 @@ initial_regimes = ["working", "working", "retired"]
 
 - Extensive use of typing with custom types in `src/lcm/typing.py`
 - Type checking with ty (pixi run ty)
+- Use `# ty: ignore[error-code]` for type suppression, never `# type: ignore`
 - JAX typing integration via jaxtyping
 
 ### Code Standards
@@ -277,11 +299,6 @@ initial_regimes = ["working", "working", "retired"]
 - All functions require type annotations
 - Pre-commit hooks ensure code quality
 - Never use `from __future__ import annotations` — this project requires Python 3.14+
-
-### Testing Style
-
-- Use plain pytest functions, never test classes (`class TestFoo`)
-- Use `@pytest.mark.parametrize` for test variations
 
 ### Testing Style
 

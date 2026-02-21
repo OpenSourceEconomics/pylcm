@@ -45,19 +45,17 @@ def model() -> Model:
     alive = Regime(
         functions={"utility": utility},
         states={
-            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
-            "health": DiscreteGrid(HealthStatus),
+            "wealth": LinSpacedGrid(
+                start=1, stop=100, n_points=10, transition=lambda wealth: wealth
+            ),
+            "health": DiscreteGrid(HealthStatus, transition=lambda health: health),
         },
-        transitions={
-            "next_wealth": lambda wealth: wealth,
-            "next_health": lambda health: health,
-            "next_regime": next_regime,
-        },
+        transition=next_regime,
         active=lambda age: age < n_periods - 1,
     )
 
     dead = Regime(
-        terminal=True,
+        transition=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age >= n_periods - 1,
     )

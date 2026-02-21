@@ -11,8 +11,6 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.shocks.ar1 import Tauchen
-from lcm.shocks.iid import Normal, Uniform
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
 
 # ======================================================================================
@@ -41,11 +39,6 @@ def _next_wealth(
     return wealth - consumption
 
 
-@lcm.mark.stochastic
-def _next_income() -> None:
-    pass
-
-
 def _constraint(consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
     return consumption <= wealth
 
@@ -57,24 +50,22 @@ def _make_model(*, fixed_params=None):
     """Create a shock model with all shock params supplied at runtime."""
     alive = Regime(
         states={
-            "wealth": LinSpacedGrid(start=1, stop=10, n_points=5),
-            "income": Tauchen(n_points=3),
+            "wealth": LinSpacedGrid(
+                start=1, stop=10, n_points=5, transition=_next_wealth
+            ),
+            "income": lcm.shocks.ar1.Tauchen(n_points=3),
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4)},
         functions={"utility": _utility},
         constraints={"borrowing": _constraint},
-        transitions={
-            "next_wealth": _next_wealth,
-            "next_income": _next_income,
-            "next_regime": lambda period: jnp.where(
-                period >= 1, RegimeIdShock.dead, RegimeIdShock.alive
-            ),
-        },
+        transition=lambda period: jnp.where(
+            period >= 1, RegimeIdShock.dead, RegimeIdShock.alive
+        ),
         active=lambda age: age < 2,
     )
     dead = Regime(
+        transition=None,
         functions={"utility": lambda: 0.0},
-        terminal=True,
         active=lambda age: age >= 2,
     )
 
@@ -93,7 +84,7 @@ def _make_model(*, fixed_params=None):
 
 def test_runtime_shock_params_property():
     """Tauchen without params reports all params as runtime-supplied."""
-    grid = Tauchen(n_points=5)
+    grid = lcm.shocks.ar1.Tauchen(n_points=5)
     for name in ("rho", "sigma", "mu", "n_std"):
         assert name in grid.params_to_pass_at_runtime
     assert not grid.is_fully_specified
@@ -101,12 +92,12 @@ def test_runtime_shock_params_property():
 
 def test_fully_specified_shock():
     """Tauchen with all params should have no runtime-supplied params."""
-    grid = Tauchen(n_points=5, **_TAUCHEN_PARAMS)
+    grid = lcm.shocks.ar1.Tauchen(n_points=5, **_TAUCHEN_PARAMS)
     assert grid.params_to_pass_at_runtime == ()
     assert grid.is_fully_specified
 
 
-@pytest.mark.parametrize("grid_cls", [Uniform, Normal])
+@pytest.mark.parametrize("grid_cls", [lcm.shocks.iid.Uniform, lcm.shocks.iid.Normal])
 def test_shock_without_params_is_not_fully_specified(grid_cls):
     """All distributions require explicit params — nothing is defaulted."""
     grid = grid_cls(n_points=5)

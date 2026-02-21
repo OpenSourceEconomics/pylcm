@@ -6,9 +6,10 @@ import pytest
 from numpy.testing import assert_array_almost_equal
 
 import lcm
-from lcm import AgeGrid, Model
+from lcm import AgeGrid, DiscreteGrid, Model
 from lcm.typing import DiscreteState, FloatND, UserParams
 from tests.test_models.stochastic import (
+    HealthStatus,
     RegimeId,
     dead,
     get_model,
@@ -97,34 +98,34 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
     n_periods = 4
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
 
-    # Create deterministic model with modified function
+    # Create deterministic model by replacing health grid transition
     working_deterministic = working.replace(
-        transitions={
-            **working.transitions,
-            "next_health": next_health_deterministic,
+        states={
+            **working.states,
+            "health": DiscreteGrid(HealthStatus, transition=next_health_deterministic),
         },
         active=lambda age: age < n_periods - 1,
     )
     retired_deterministic = retired.replace(
-        transitions={
-            **retired.transitions,
-            "next_health": next_health_deterministic,
+        states={
+            **retired.states,
+            "health": DiscreteGrid(HealthStatus, transition=next_health_deterministic),
         },
         active=lambda age: age < n_periods - 1,
     )
 
     # Create stochastic model with identity transition function
     working_stochastic = working.replace(
-        transitions={
-            **working.transitions,
-            "next_health": next_health_stochastic,
+        states={
+            **working.states,
+            "health": DiscreteGrid(HealthStatus, transition=next_health_stochastic),
         },
         active=lambda age: age < n_periods - 1,
     )
     retired_stochastic = retired.replace(
-        transitions={
-            **retired.transitions,
-            "next_health": next_health_stochastic,
+        states={
+            **retired.states,
+            "health": DiscreteGrid(HealthStatus, transition=next_health_stochastic),
         },
         active=lambda age: age < n_periods - 1,
     )

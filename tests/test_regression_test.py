@@ -16,7 +16,7 @@ from lcm import (
     PiecewiseLogSpacedGrid,
 )
 from lcm._config import TEST_DATA
-from lcm.grids import ContinuousGrid
+from lcm.grids import UniformContinuousGrid
 from lcm.typing import FloatND
 from tests.test_models.deterministic.regression import get_model, get_params
 
@@ -69,7 +69,12 @@ def test_regression_test():
 
 def _create_grid(
     grid_type: str, start: float, stop: float, n_points: int
-) -> ContinuousGrid:
+) -> (
+    UniformContinuousGrid
+    | IrregSpacedGrid
+    | PiecewiseLinSpacedGrid
+    | PiecewiseLogSpacedGrid
+):
     """Create a grid of the specified type."""
     if grid_type == "LinSpacedGrid":
         return LinSpacedGrid(start=start, stop=stop, n_points=n_points)

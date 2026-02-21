@@ -99,19 +99,18 @@ def _make_model(custom_H=None):
             "consumption": LinSpacedGrid(start=0.5, stop=10, n_points=50),
         },
         states={
-            "wealth": LinSpacedGrid(start=0.5, stop=10, n_points=30),
+            "wealth": LinSpacedGrid(
+                start=0.5, stop=10, n_points=30, transition=next_wealth
+            ),
         },
         constraints={"borrowing_constraint": borrowing_constraint},
-        transitions={
-            "next_wealth": next_wealth,
-            "next_regime": next_regime,
-        },
+        transition=next_regime,
         functions=functions,
         active=lambda age: age <= FINAL_AGE_ALIVE,
     )
 
     dead_regime = Regime(
-        terminal=True,
+        transition=None,
         functions={"utility": lambda: 0.0},
         active=lambda age: age > FINAL_AGE_ALIVE,
     )
@@ -166,7 +165,7 @@ def test_default_H_injected_for_non_terminal():
     """The default H function should be in non-terminal Regime.functions."""
     r = Regime(
         functions={"utility": lambda: 0.0},
-        transitions={"next_regime": lambda: {"a": 1.0}},
+        transition=lambda: {"a": 1.0},
         active=lambda age: age < 1,
     )
     assert "H" in r.functions
@@ -175,7 +174,7 @@ def test_default_H_injected_for_non_terminal():
 def test_default_H_not_injected_for_terminal():
     """Terminal regimes should not have H injected."""
     r = Regime(
-        terminal=True,
+        transition=None,
         functions={"utility": lambda: 0.0},
     )
     assert "H" not in r.functions
@@ -188,7 +187,7 @@ def test_custom_H_not_overwritten():
         return utility + continuation_value
 
     r = Regime(
-        transitions={"next_regime": lambda: {"a": 1.0}},
+        transition=lambda: {"a": 1.0},
         active=lambda age: age < 1,
         functions={"utility": lambda: 0.0, "H": my_H},
     )

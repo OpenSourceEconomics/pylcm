@@ -14,19 +14,17 @@ def test_create_params_without_shocks(binary_category_class):
             "a": DiscreteGrid(binary_category_class),
         },
         states={
-            "b": DiscreteGrid(binary_category_class),
+            "b": DiscreteGrid(binary_category_class, transition=lambda b: b),
         },
-        n_periods=None,
+        transition=lambda: 0,
         functions={"utility": lambda a, b, c: None},  # noqa: ARG005
-        transitions={
-            "next_b": lambda b: b,
-        },
     )
     got = create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
     assert got == {
         "H": {"discount_factor": float},
         "utility": {"c": "no_annotation_found"},
         "next_b": {},
+        "next_regime": {},
     }
 
 
@@ -55,7 +53,7 @@ def test_default_H_with_state_named_discount_factor_raises():
         actions={"a": None},
         states={"discount_factor": None},
         functions={"utility": lambda a, discount_factor: None},  # noqa: ARG005
-        transitions={"next_discount_factor": lambda discount_factor: discount_factor},
+        transition=lambda discount_factor: discount_factor,
     )
     with pytest.raises(InvalidNameError, match="shadow state/action"):
         create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
@@ -83,14 +81,17 @@ def test_regular_function_taking_state_as_argument_no_error(binary_category_clas
             "a": DiscreteGrid(binary_category_class),
         },
         states={
-            "wealth": DiscreteGrid(binary_category_class),
+            "wealth": DiscreteGrid(
+                binary_category_class, transition=lambda wealth: wealth
+            ),
         },
+        transition=lambda: 0,
         functions={"utility": lambda a, wealth, risk_aversion: None},  # noqa: ARG005
-        transitions={"next_wealth": lambda wealth: wealth},
     )
     got = create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
     assert got == {
         "H": {"discount_factor": float},
         "utility": {"risk_aversion": "no_annotation_found"},
         "next_wealth": {},
+        "next_regime": {},
     }

@@ -119,16 +119,14 @@ def test_create_state_space_info():
         bad: int = 1
 
     regime = Regime(
+        transition=lambda: 0,  # non-terminal
         functions={"utility": lambda wealth: wealth},
         states={
-            "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
-            "health": DiscreteGrid(HealthStatus),
+            "wealth": LinSpacedGrid(
+                start=0, stop=100, n_points=5, transition=lambda wealth: wealth
+            ),
+            "health": DiscreteGrid(HealthStatus, transition=lambda health: health),
         },
-        transitions={
-            "next_wealth": lambda wealth: wealth,
-            "next_health": lambda health: health,
-        },
-        terminal=False,
         active=lambda age: age < 5,
     )
 

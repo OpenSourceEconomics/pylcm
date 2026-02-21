@@ -30,7 +30,7 @@ from lcm.input_processing.util import (
 from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
 from lcm.mark import stochastic
 from lcm.ndimage import map_coordinates
-from lcm.regime import Regime
+from lcm.regime import Regime, _collect_state_transitions
 from lcm.shocks import _ShockGrid
 from lcm.state_action_space import create_state_action_space, create_state_space_info
 from lcm.typing import (
@@ -66,13 +66,12 @@ def process_regimes(
     *,
     enable_jit: bool,
 ) -> MappingProxyType[RegimeName, InternalRegime]:
-    """Process the user regime.
+    """Process user regimes into internal regimes.
 
-    This entails the following steps:
-
-    - Set defaults where needed
-    - Generate derived information
-    - Check that the regime specification is valid.
+    Extracts state transitions from grid ``transition`` attributes and
+    regime transitions from ``regime.transition``. For fixed states (grids
+    without a transition), an identity transition is auto-generated. ShockGrid
+    transitions are generated from the grid's intrinsic transition logic.
 
     Args:
         regimes: Mapping of regime names to Regime instances.
@@ -81,26 +80,22 @@ def process_regimes(
         enable_jit: Whether to jit the functions of the internal regime.
 
     Returns:
-        The processed regime.
+        The processed regimes.
 
     """
 
     # ----------------------------------------------------------------------------------
-    # Convert flat transitions to nested format
+    # Extract transitions from grid attributes and regime transition
     # ----------------------------------------------------------------------------------
-    # User provides flat format, internal processing uses nested format.
-    # First, collect state names for each regime to know which transitions map where.
     states_per_regime: dict[str, set[str]] = {
         name: set(regime.states.keys()) for name, regime in regimes.items()
     }
 
-    # Convert each regime's flat transitions to nested format
     nested_transitions = {}
     for name, regime in regimes.items():
-        nested_transitions[name] = _convert_flat_to_nested_transitions(
-            flat_transitions=regime.transitions,
+        nested_transitions[name] = _extract_transitions_from_regime(
+            regime=regime,
             states_per_regime=states_per_regime,
-            terminal=regime.terminal,
         )
     # ----------------------------------------------------------------------------------
     # Stage 1: Initialize regime components that do not depend on other regimes
@@ -362,6 +357,47 @@ def _get_internal_functions(
     )
 
 
+def _extract_transitions_from_regime(
+    regime: Regime,
+    states_per_regime: Mapping[str, set[str]],
+) -> dict[str, dict[str, UserFunction] | UserFunction]:
+    """Extract transitions from grid attributes and auto-generate identity transitions.
+
+    For non-terminal regimes, collects state transitions from grid ``transition``
+    attributes and auto-generates identity transitions for fixed states (grids
+    without a transition). ShockGrid transitions are handled separately during
+    internal function processing.
+
+    Args:
+        regime: The user regime.
+        states_per_regime: Dict mapping regime names to their state names.
+
+    Returns:
+        Nested transitions dict in the format expected by _get_internal_functions.
+
+    """
+    if regime.terminal:
+        return {}
+
+    state_transitions = _collect_state_transitions(regime.states)
+
+    # Build nested format
+    transitioned_state_names = {
+        name.removeprefix("next_") for name in state_transitions
+    }
+
+    nested: dict[str, dict[str, UserFunction] | UserFunction] = {}
+    # Guaranteed non-None: terminal regimes return early in the caller.
+    nested["next_regime"] = regime.transition  # ty: ignore[invalid-assignment]
+    for target_regime_name, target_regime_state_names in states_per_regime.items():
+        if target_regime_state_names <= transitioned_state_names:
+            nested[target_regime_name] = {
+                f"next_{state}": state_transitions[f"next_{state}"]
+                for state in target_regime_state_names & transitioned_state_names
+            }
+    return nested
+
+
 def _extract_param_key(fn_name: str) -> str:
     """Extract the param template key from a possibly prefixed function name.
 
@@ -475,47 +511,3 @@ def _get_weights_fn_for_shock(name: str, gridspec: _ShockGrid) -> UserFunction:
         )
 
     return weights_func
-
-
-def _convert_flat_to_nested_transitions(
-    flat_transitions: Mapping[str, UserFunction],
-    states_per_regime: Mapping[str, set[str]],
-    *,
-    terminal: bool = False,
-) -> dict[str, dict[str, UserFunction] | UserFunction]:
-    """Convert flat transitions dictionary to nested format.
-
-    Takes a user-provided flat transitions dictionary and converts it to the nested
-    format expected by internal processing. Each transition function is mapped to
-    all target regimes that have the corresponding state.
-
-    Args:
-        flat_transitions: Dictionary mapping transition names to functions.
-        states_per_regime: Dictionary mapping regime names to their state names.
-        terminal: Whether the regime is terminal (no transitions).
-
-    Returns:
-        Nested dictionary with state transitions mapped to their target regimes.
-
-    """
-    if terminal:
-        return {}
-
-    next_regime_fn = flat_transitions["next_regime"]
-    state_transitions = {
-        name: fn for name, fn in flat_transitions.items() if name != "next_regime"
-    }
-
-    transitioned_state_names = {
-        name.removeprefix("next_") for name in state_transitions
-    }
-
-    nested: dict[str, dict[str, UserFunction] | UserFunction] = {}
-    nested["next_regime"] = next_regime_fn
-    for regime_name, regime_state_names in states_per_regime.items():
-        if regime_state_names <= transitioned_state_names:
-            nested[regime_name] = {
-                f"next_{state}": state_transitions[f"next_{state}"]
-                for state in regime_state_names & transitioned_state_names
-            }
-    return nested

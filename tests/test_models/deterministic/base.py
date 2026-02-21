@@ -115,15 +115,13 @@ working = Regime(
             start=1,
             stop=400,
             n_points=100,
+            transition=next_wealth,
         ),
     },
     constraints={
         "borrowing_constraint": borrowing_constraint,
     },
-    transitions={
-        "next_wealth": next_wealth,
-        "next_regime": next_regime_from_working,
-    },
+    transition=next_regime_from_working,
     functions={
         "utility": utility_working,
         "labor_income": labor_income,
@@ -133,20 +131,18 @@ working = Regime(
 )
 
 retired = Regime(
+    transition=next_regime_from_retired,
     actions={"consumption": LinSpacedGrid(start=1, stop=400, n_points=500)},
     states={
         "wealth": LinSpacedGrid(
             start=1,
             stop=400,
             n_points=100,
+            transition=next_wealth,
         ),
     },
     constraints={
         "borrowing_constraint": borrowing_constraint,
-    },
-    transitions={
-        "next_wealth": next_wealth,
-        "next_regime": next_regime_from_retired,
     },
     functions={
         "utility": utility_retired,
@@ -156,7 +152,7 @@ retired = Regime(
 
 
 dead = Regime(
-    terminal=True,
+    transition=None,
     functions={"utility": lambda: 0.0},
     active=lambda _age: True,  # Placeholder, overridden at model creation
 )

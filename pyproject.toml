@@ -130,6 +130,8 @@ per-file-ignores."tests/test_Q_and_F.py" = [
   "E731",   # Do not assign a `lambda` expression, use a `def`
 ]
 pydocstyle.convention = "google"
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = [ "lcm.utils.Unset", "Unset" ]
 
 [tool.pyproject-fmt]
 column_width = 88

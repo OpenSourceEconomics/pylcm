@@ -269,7 +269,7 @@ def test_irreg_spaced_grid_invalid_too_few_points():
 
 def test_irreg_spaced_grid_invalid_non_numeric():
     with pytest.raises(GridInitializationError, match="must be int or float"):
-        IrregSpacedGrid(points=(1.0, "a", 3.0))  # type: ignore[arg-type]
+        IrregSpacedGrid(points=(1.0, "a", 3.0))  # ty: ignore[invalid-argument-type]
 
 
 def test_irreg_spaced_grid_invalid_not_ascending():
@@ -474,14 +474,14 @@ def test_piecewise_lin_spaced_grid_invalid_numeric_gap():
 def test_piecewise_lin_spaced_grid_invalid_not_tuple():
     """Pieces must be a tuple."""
     with pytest.raises(GridInitializationError, match="must be a tuple"):
-        PiecewiseLinSpacedGrid(pieces=[Piece(interval="[1, 4]", n_points=3)])  # type: ignore[arg-type]
+        PiecewiseLinSpacedGrid(pieces=[Piece(interval="[1, 4]", n_points=3)])  # ty: ignore[invalid-argument-type]
 
 
 def test_piecewise_lin_spaced_grid_invalid_not_piece():
     """Each element in pieces must be a Piece object."""
     with pytest.raises(GridInitializationError, match="must be a Piece"):
         PiecewiseLinSpacedGrid(
-            pieces=({"interval": "[1, 4]", "n_points": 3},)  # type: ignore[arg-type]
+            pieces=({"interval": "[1, 4]", "n_points": 3},)  # ty: ignore[invalid-argument-type]
         )
 
 

@@ -9,7 +9,6 @@ from jax import Array
 from lcm.grids import ContinuousGrid, Grid
 from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
-from lcm.utils import flatten_regime_namespace
 
 
 def is_stochastic_transition(fn: Callable[..., Any]) -> bool:
@@ -99,15 +98,20 @@ def _indicator_enters_transition(
 ) -> pd.Series[bool]:
     """Determine which states and actions enter the transition.
 
-    Transition functions correspond to the "next_" functions in the regime. This
-    function returns all state and action variables that occur as inputs to these
-    functions.
+    Transition functions correspond to the "next_" functions in the regime (both
+    state transitions from grid attributes and the regime transition). This function
+    returns all state and action variables that occur as inputs to these functions.
 
     Special variables such as the "period" or parameters will be ignored.
 
     """
-    next_fn_names = list(flatten_regime_namespace(regime.transitions))
     user_functions = dict(regime.get_all_functions())
+    next_fn_names = [
+        name
+        for name in user_functions
+        if name.startswith("next_")
+        and not getattr(user_functions[name], "_is_auto_identity", False)
+    ]
     ancestors = get_ancestors(
         user_functions,
         targets=next_fn_names,
