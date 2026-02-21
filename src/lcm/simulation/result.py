@@ -4,7 +4,7 @@ import contextlib
 import inspect
 import pickle
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -21,7 +21,13 @@ from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.grids import DiscreteGrid
 from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
-from lcm.typing import FlatRegimeParams, FloatND, InternalParams, RegimeName
+from lcm.typing import (
+    FlatRegimeParams,
+    FloatND,
+    InternalParams,
+    RegimeName,
+    UserFunction,
+)
 from lcm.utils import flatten_regime_namespace
 
 CLOUDPICKLE_IMPORT_ERROR_MSG = (
@@ -456,7 +462,7 @@ def _process_regime(
     ]
 
     # Concatenate and filter to in-regime subjects
-    data = _concatenate_and_filter(period_dicts)
+    data: dict[str, Array | Sequence[str]] = _concatenate_and_filter(period_dicts)  # ty: ignore[invalid-assignment]
 
     # Add age column (computed from period using ages grid)
     data["age"] = ages.values[data["period"]]  # noqa: PD011
@@ -507,7 +513,7 @@ def _extract_period_data(
     return data
 
 
-def _concatenate_and_filter(period_dicts: list[dict[str, Array]]) -> dict[str, Any]:
+def _concatenate_and_filter(period_dicts: list[dict[str, Array]]) -> dict[str, Array]:
     """Concatenate period data and filter to in-regime subjects."""
     keys = [k for k in period_dicts[0] if k != "_in_regime"]
 
@@ -662,7 +668,7 @@ def _codes_to_categorical(
 
 def _compute_targets(
     *,
-    data: dict[str, Any],
+    data: dict[str, Array | Sequence[str]],
     targets: list[str],
     internal_regime: InternalRegime,
     regime_params: FlatRegimeParams,
@@ -684,9 +690,9 @@ def _compute_targets(
     return {k: jnp.squeeze(v) for k, v in result.items()}
 
 
-def _build_functions_pool(internal_regime: InternalRegime) -> dict[str, Any]:
+def _build_functions_pool(internal_regime: InternalRegime) -> dict[str, UserFunction]:
     """Build pool of available functions for target computation."""
-    pool: dict[str, Any] = {
+    pool: dict[str, UserFunction] = {
         **{k: v for k, v in internal_regime.functions.items() if k != "H"},
         **internal_regime.constraints,
     }
@@ -699,9 +705,9 @@ def _build_functions_pool(internal_regime: InternalRegime) -> dict[str, Any]:
 
 def _create_target_function(
     *,
-    functions_pool: dict[str, Any],
+    functions_pool: dict[str, UserFunction],
     targets: list[str],
-) -> Any:  # noqa: ANN401
+) -> UserFunction:
     """Create combined function for computing targets."""
     return concatenate_functions(
         functions=functions_pool,
@@ -725,11 +731,11 @@ def _get_function_variables(
 # ======================================================================================
 
 
-def _atomic_dump(obj: Any, path: str | Path, *, protocol: int) -> Path:  # noqa: ANN401
+def _atomic_dump(obj: SimulationResult, path: str | Path, *, protocol: int) -> Path:
     """Serialize `obj` to `path` in an atomic (all-or-nothing) way.
 
     Args:
-        obj: Object to serialize.
+        obj: SimulationResult to serialize.
         path: File path to save the pickle.
         protocol: Int which indicates which protocol should be used by the pickler.
             The possible values are 0, 1, 2, 3, 4, 5. See

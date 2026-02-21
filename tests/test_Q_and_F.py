@@ -134,7 +134,7 @@ def internal_functions_illustrative():
     return InternalFunctions(
         transitions=MappingProxyType({}),
         constraints=constraints,  # ty: ignore[invalid-argument-type]
-        functions=MappingProxyType({"utility": lambda: 0, **functions}),
+        functions=MappingProxyType({"utility": lambda: 0, **functions}),  # ty: ignore[invalid-argument-type]
         regime_transition_probs=PhaseVariantContainer(
             solve=mock_transition_solve, simulate=mock_transition_simulate
         ),
@@ -208,7 +208,7 @@ def test_get_combined_constraint():
     internal_functions = InternalFunctions(
         constraints={"f": f, "g": g},  # ty: ignore[invalid-argument-type]
         transitions=MappingProxyType({}),
-        functions=MappingProxyType({"utility": lambda: 0, "h": h}),
+        functions=MappingProxyType({"utility": lambda: 0, "h": h}),  # ty: ignore[invalid-argument-type]
         regime_transition_probs=PhaseVariantContainer(
             solve=mock_transition_solve, simulate=mock_transition_simulate
         ),
@@ -255,14 +255,14 @@ def test_get_U_and_F_with_annotated_constraints():
     mock_transition_simulate = lambda *args, **kwargs: {"mock": jnp.array([1.0])}
 
     internal_functions = InternalFunctions(
-        constraints=MappingProxyType(
+        constraints=MappingProxyType(  # ty: ignore[invalid-argument-type]
             {
                 "budget_constraint": budget_constraint,
                 "positive_consumption_constraint": positive_consumption_constraint,
             }
         ),
         transitions=MappingProxyType({}),
-        functions=MappingProxyType({"utility": utility_func}),
+        functions=MappingProxyType({"utility": utility_func}),  # ty: ignore[invalid-argument-type]
         regime_transition_probs=PhaseVariantContainer(
             solve=mock_transition_solve, simulate=mock_transition_simulate
         ),

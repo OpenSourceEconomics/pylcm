@@ -597,7 +597,7 @@ def create_inputs(
     conp: float,
     penre: float,
     sigma: int,
-) -> tuple[dict[RegimeName, Any], dict[RegimeName, Any], list[RegimeName]]:
+) -> tuple[dict[RegimeName, Any], dict[RegimeName, Any], Int1D]:
     # Create variable grids from supplied parameters
     income_grid = create_income_grid(income_process)  # ty: ignore[invalid-argument-type]
     chimax_grid = create_chimaxgrid(chi)
@@ -625,12 +625,14 @@ def create_inputs(
     prod = jnp.zeros((16), dtype=jnp.int8)
     ht = jnp.zeros((16), dtype=jnp.int8)
     ed = jnp.zeros((16), dtype=jnp.int8)
+    discount = jnp.zeros((16), dtype=jnp.int8)
     for i in range(1, 3):
         for j in range(1, 3):
             for k in range(1, 3):
                 index = (i - 1) * 2 * 2 + (j - 1) * 2 + k - 1
                 prod = prod.at[index].set(j - 1)
                 ht = ht.at[index].set(1 - (k - 1))
+                discount = discount.at[index].set(i - 1)
                 prod = prod.at[index + 8].set(j - 1)
                 ht = ht.at[index + 8].set(1 - (k - 1))
                 ed = ed.at[index + 8].set(1)
@@ -651,6 +653,7 @@ def create_inputs(
     initial_productivity = prod[types]
     initial_effort = jnp.searchsorted(eff_grid, init_distr_2b2t2h[:, 2][types])
     initial_adjustment_cost = random.uniform(new_keys[1], (n_simulation_subjects,))
+    discount_factor_type = discount[types]
     prod_dist = jax.lax.fori_loop(
         0,
         200,
@@ -670,8 +673,7 @@ def create_inputs(
         "education": initial_education,
         "productivity": initial_productivity,
     }
-    initial_regimes = ["alive"] * n_simulation_subjects
-    return params, initial_states, initial_regimes
+    return params, initial_states, discount_factor_type
 
 
 # ======================================================================================
@@ -689,31 +691,53 @@ if __name__ == "__main__":
     # Each type gets beta = beta_mean +/- beta_std.
     beta_mean = START_PARAMS["beta"]["mean"]
     beta_std = START_PARAMS["beta"]["std"]
-    discount_factors = {
-        "low": beta_mean - beta_std,
-        "high": beta_mean + beta_std,
-    }
 
     # Build common inputs (everything except discount_factor).
     start_params_without_beta = {k: v for k, v in START_PARAMS.items() if k != "beta"}
-    common_params, initial_states, initial_regimes = create_inputs(
+    common_params, initial_states, discount_factor_types = create_inputs(
         seed=7235,
         n_simulation_subjects=1_000,
         **start_params_without_beta,  # ty: ignore[invalid-argument-type]
     )
 
+    selected_ids_high = jnp.flatnonzero(discount_factor_types)
+    selected_ids_low = jnp.flatnonzero(1 - discount_factor_types)
+
+    discount_factors = {
+        "low": beta_mean - beta_std,
+        "high": beta_mean + beta_std,
+    }
+
+    initial_states_split = {
+        "low": {
+            state: values[selected_ids_low] for state, values in initial_states.items()
+        },
+        "high": {
+            state: values[selected_ids_high] for state, values in initial_states.items()
+        },
+    }
+
+    initial_regimes_split = {
+        "low": ["alive" for i in range(selected_ids_low.shape[0])],
+        "high": ["alive" for i in range(selected_ids_high.shape[0])],
+    }
+
     timings: list[float] = []
     for i in range(3):
         t0 = time.perf_counter()
-        for beta_value in discount_factors.values():
+        for name, beta in discount_factors.items():
             simulation_result = MAHLER_YUM_MODEL.solve_and_simulate(
                 params={
-                    "alive": {"discount_factor": beta_value, **common_params},
+                    "alive": {
+                        "discount_factor": beta,
+                        **common_params,
+                    },
                 },
-                initial_states=initial_states,
-                initial_regimes=initial_regimes,
+                initial_states=initial_states_split[name],
+                initial_regimes=initial_regimes_split[name],
                 seed=8295,
             )
+
         elapsed = time.perf_counter() - t0
         timings.append(elapsed)
         logger.info("Run %d: %.3fs", i + 1, elapsed)

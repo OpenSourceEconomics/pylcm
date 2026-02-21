@@ -18,7 +18,7 @@ class _ShockGridAR1(_ShockGrid):
     @abstractmethod
     def draw_shock(
         self,
-        params: MappingProxyType[str, float],
+        params: MappingProxyType[str, float | FloatND],
         key: FloatND,
         current_value: Float1D,
     ) -> Float1D: ...
@@ -79,7 +79,7 @@ class Tauchen(_ShockGridAR1):
 
     def draw_shock(
         self,
-        params: MappingProxyType[str, float],
+        params: MappingProxyType[str, float | FloatND],
         key: FloatND,
         current_value: Float1D,
     ) -> Float1D:
@@ -143,7 +143,7 @@ class Rouwenhorst(_ShockGridAR1):
 
     def draw_shock(
         self,
-        params: MappingProxyType[str, float],
+        params: MappingProxyType[str, float | FloatND],
         key: FloatND,
         current_value: Float1D,
     ) -> Float1D:

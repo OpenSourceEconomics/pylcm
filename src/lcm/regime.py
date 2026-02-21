@@ -19,6 +19,7 @@ from lcm.typing import (
     UserFunction,
 )
 from lcm.utils import (
+    Unset,
     ensure_containers_are_immutable,
 )
 
@@ -140,26 +141,9 @@ class Regime:
             Read-only mapping of all regime functions.
 
         """
-        result: dict[str, UserFunction] = {}
+        result = dict(self.constraints) | _collect_state_transitions(self.states)
         for name, func in self.functions.items():
             result[name] = func.solve if isinstance(func, PhaseVariant) else func
-        result |= dict(self.constraints)
-        # Collect state transitions from grids
-        for name, grid in self.states.items():
-            if isinstance(grid, _ShockGrid):
-                # ShockGrids have intrinsic transitions; add a stochastic stub
-                # so the params template includes the entry.
-                result[f"next_{name}"] = stochastic(lambda: None)
-                continue
-            grid_transition = getattr(grid, "transition", None)
-            if grid_transition is not None:
-                result[f"next_{name}"] = grid_transition
-            else:
-                # Fixed state: identity transition for params template discovery
-                ann = (
-                    DiscreteState if isinstance(grid, DiscreteGrid) else ContinuousState
-                )
-                result[f"next_{name}"] = _IdentityTransition(name, annotation=ann)
         # Add regime transition
         if self.transition is not None:
             result["next_regime"] = self.transition
@@ -268,6 +252,7 @@ def _validate_logical_consistency(regime: Regime) -> None:
         )
 
     error_messages.extend(_validate_active(regime.active))
+    error_messages.extend(_validate_state_and_action_transitions(regime))
 
     states_and_actions_overlap = set(regime.states) & set(regime.actions)
     if states_and_actions_overlap:
@@ -288,7 +273,33 @@ def _validate_active(active: ActiveFunction) -> list[str]:
     return []
 
 
-def _make_identity_func(
+def _validate_state_and_action_transitions(regime: Regime) -> list[str]:
+    """Validate transition attributes on state and action grids."""
+    error_messages: list[str] = []
+
+    # State grids must have explicit transition
+    for name, grid in regime.states.items():
+        if not isinstance(grid, _ShockGrid):
+            transition = getattr(grid, "transition", None)
+            if isinstance(transition, Unset):
+                error_messages.append(
+                    f"State '{name}' must explicitly pass transition=<fn> or "
+                    f"transition=None.",
+                )
+
+    # Action grids must not carry transitions
+    for name, grid in regime.actions.items():
+        transition = getattr(grid, "transition", Unset())
+        if not isinstance(transition, Unset):
+            error_messages.append(
+                f"Action '{name}' must not have a transition (got "
+                f"transition={transition!r}).",
+            )
+
+    return error_messages
+
+
+def _make_identity_fn(
     state_name: str, *, annotation: TypeAliasType
 ) -> _IdentityTransition:
     """Create an identity transition for a fixed state.
@@ -297,3 +308,26 @@ def _make_identity_func(
 
     """
     return _IdentityTransition(state_name, annotation=annotation)
+
+
+def _collect_state_transitions(
+    states: Mapping[str, Grid],
+) -> dict[str, UserFunction]:
+    """Collect state transition functions from grid objects.
+
+    For each state grid, produces an entry `f"next_{name}"` mapped to:
+    - A stochastic stub for `ShockGrid` types,
+    - The grid's `transition` attribute if present, or
+    - An auto-generated identity transition for fixed states.
+
+    """
+    transitions: dict[str, UserFunction] = {}
+    for name, grid in states.items():
+        if isinstance(grid, _ShockGrid):
+            transitions[f"next_{name}"] = stochastic(lambda: None)
+        elif callable(grid_transition := getattr(grid, "transition", None)):
+            transitions[f"next_{name}"] = grid_transition
+        else:
+            ann = DiscreteState if isinstance(grid, DiscreteGrid) else ContinuousState
+            transitions[f"next_{name}"] = _make_identity_fn(name, annotation=ann)
+    return transitions

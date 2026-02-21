@@ -184,7 +184,7 @@ def test_mutable_then_immutable_roundtrip():
     mutable = ensure_containers_are_mutable(original)
     immutable = ensure_containers_are_immutable(mutable)
 
-    assert immutable["mapping"]["nested"] == 1
+    assert immutable["mapping"]["nested"] == 1  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert immutable["tuple"] == (1, 2)
     assert immutable["frozenset"] == frozenset({3, 4})
     assert immutable["scalar"] == 5
