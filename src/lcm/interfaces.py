@@ -254,11 +254,12 @@ class InternalRegime:
                 )
                 if not all_present:
                     continue
-                shock_kw = dict(spec.params)
+                shock_kw: dict[str, bool | float | Array] = dict(spec.params)
                 for p in spec.params_to_pass_at_runtime:
                     shock_kw[p] = all_params[f"{state_name}__{p}"]
                 replacements[state_name] = spec.compute_gridpoints(
-                    spec.n_points, **shock_kw
+                    spec.n_points,
+                    **shock_kw,  # ty: ignore[invalid-argument-type]
                 )
 
         if not replacements:

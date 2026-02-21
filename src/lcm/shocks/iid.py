@@ -17,7 +17,7 @@ class _ShockGridIID(_ShockGrid):
     @abstractmethod
     def draw_shock(
         self,
-        params: MappingProxyType[str, float],
+        params: MappingProxyType[str, float | FloatND],
         key: FloatND,
     ) -> Float1D: ...
 
@@ -45,7 +45,7 @@ class Uniform(_ShockGridIID):
 
     def draw_shock(
         self,
-        params: MappingProxyType[str, float],
+        params: MappingProxyType[str, float | FloatND],
         key: FloatND,
     ) -> Float1D:
         return jax.random.uniform(
@@ -90,7 +90,7 @@ class Normal(_ShockGridIID):
 
     def draw_shock(
         self,
-        params: MappingProxyType[str, float],
+        params: MappingProxyType[str, float | FloatND],
         key: FloatND,
     ) -> Float1D:
         return params["mu"] + params["sigma"] * jax.random.normal(key=key)
