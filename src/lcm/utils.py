@@ -16,6 +16,13 @@ from lcm.typing import RegimeName
 T = TypeVar("T")
 
 
+class Unset:
+    """Sentinel for parameters that haven't been explicitly set."""
+
+    def __repr__(self) -> str:
+        return "Unset()"
+
+
 def _make_immutable(value: Any) -> Any:  # noqa: ANN401
     """Recursively convert a value to its immutable equivalent."""
     if isinstance(value, (MappingLeaf, SequenceLeaf)):
