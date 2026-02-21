@@ -10,17 +10,7 @@ import portion
 from lcm import grid_helpers
 from lcm.exceptions import GridInitializationError, format_messages
 from lcm.typing import Float1D, Int1D, ScalarFloat
-from lcm.utils import find_duplicates, get_field_names_and_values
-
-
-class _Unset:
-    """Sentinel for grid ``transition`` parameters that haven't been explicitly set."""
-
-    def __repr__(self) -> str:
-        return "UNSET"
-
-
-UNSET = _Unset()
+from lcm.utils import Unset, find_duplicates, get_field_names_and_values
 
 
 def categorical[T](cls: type[T]) -> type[T]:
@@ -96,7 +86,7 @@ class DiscreteGrid(Grid):
     Attributes:
         categories: The list of category names.
         codes: The list of category codes.
-        transition: The transition function, `None` for fixed states, or `UNSET`.
+        transition: The transition function, `None` for fixed states, or `Unset`.
 
     Raises:
         GridInitializationError: If the `category_class` is not a dataclass with int
@@ -107,7 +97,7 @@ class DiscreteGrid(Grid):
     def __init__(
         self,
         category_class: type,
-        transition: Callable[..., Any] | None | _Unset = UNSET,
+        transition: Callable[..., Any] | None | Unset = Unset(),
     ) -> None:
         """Initialize the DiscreteGrid.
 
@@ -137,8 +127,8 @@ class DiscreteGrid(Grid):
         return self.__codes
 
     @property
-    def transition(self) -> Callable[..., Any] | None | _Unset:
-        """Return the transition function, ``None`` for fixed states, or UNSET."""
+    def transition(self) -> Callable[..., Any] | None | Unset:
+        """Return the transition function, ``None`` for fixed states, or ``Unset``."""
         return self.__transition
 
     def to_jax(self) -> Int1D:
@@ -163,7 +153,7 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
     start: int | float
     stop: int | float
     n_points: int
-    transition: Callable[..., Any] | None | _Unset = UNSET
+    transition: Callable[..., Any] | None | Unset = Unset()
     """Transition function for time-varying states, or `None` for fixed states.
 
     Must be set explicitly when this grid is used as a state in a Regime.
@@ -285,7 +275,7 @@ class IrregSpacedGrid(ContinuousGrid):
 
     points: Sequence[float] | Float1D | None = None
     n_points: int | None = None
-    transition: Callable[..., Any] | None | _Unset = UNSET
+    transition: Callable[..., Any] | None | Unset = Unset()
     """Transition function for time-varying states, or `None` for fixed states.
 
     Must be set explicitly when this grid is used as a state in a Regime.
@@ -383,7 +373,7 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
     """
 
     pieces: tuple[Piece, ...]
-    transition: Callable[..., Any] | None | _Unset = UNSET
+    transition: Callable[..., Any] | None | Unset = Unset()
     """Transition function for time-varying states, or `None` for fixed states.
 
     Must be set explicitly when this grid is used as a state in a Regime.
@@ -460,7 +450,7 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
     """
 
     pieces: tuple[Piece, ...]
-    transition: Callable[..., Any] | None | _Unset = UNSET
+    transition: Callable[..., Any] | None | Unset = Unset()
     """Transition function for time-varying states, or `None` for fixed states.
 
     Must be set explicitly when this grid is used as a state in a Regime.
@@ -576,15 +566,15 @@ def _init_piecewise_grid_cache(
 # ======================================================================================
 
 
-def _validate_transition(transition: Callable[..., Any] | None | _Unset) -> None:
-    """Validate that ``transition`` is callable, None, or UNSET.
+def _validate_transition(transition: Callable[..., Any] | None | Unset) -> None:
+    """Validate that ``transition`` is callable, None, or Unset.
 
     Raises:
-        GridInitializationError: If ``transition`` is not callable, None, or UNSET.
+        GridInitializationError: If ``transition`` is not callable, None, or Unset.
 
     """
     if not (
-        isinstance(transition, _Unset) or transition is None or callable(transition)
+        isinstance(transition, Unset) or transition is None or callable(transition)
     ):
         raise GridInitializationError(
             f"transition must be a callable or None, "

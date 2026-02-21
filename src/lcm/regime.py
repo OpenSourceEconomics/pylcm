@@ -8,7 +8,7 @@ from typing import Any, TypeAliasType, overload
 from dags.tree import QNAME_DELIMITER
 
 from lcm.exceptions import RegimeInitializationError, format_messages
-from lcm.grids import UNSET, DiscreteGrid, Grid, _Unset
+from lcm.grids import DiscreteGrid, Grid
 from lcm.mark import stochastic
 from lcm.shocks._base import _ShockGrid
 from lcm.typing import (
@@ -18,6 +18,7 @@ from lcm.typing import (
     UserFunction,
 )
 from lcm.utils import (
+    Unset,
     ensure_containers_are_immutable,
 )
 
@@ -276,7 +277,7 @@ def _validate_state_and_action_transitions(regime: Regime) -> list[str]:
     for name, grid in regime.states.items():
         if not isinstance(grid, _ShockGrid):
             transition = getattr(grid, "transition", None)
-            if isinstance(transition, _Unset):
+            if isinstance(transition, Unset):
                 error_messages.append(
                     f"State '{name}' must explicitly pass transition=<fn> or "
                     f"transition=None.",
@@ -284,8 +285,8 @@ def _validate_state_and_action_transitions(regime: Regime) -> list[str]:
 
     # Action grids must not carry transitions
     for name, grid in regime.actions.items():
-        transition = getattr(grid, "transition", UNSET)
-        if not isinstance(transition, _Unset):
+        transition = getattr(grid, "transition", Unset())
+        if not isinstance(transition, Unset):
             error_messages.append(
                 f"Action '{name}' must not have a transition (got "
                 f"transition={transition!r}).",
