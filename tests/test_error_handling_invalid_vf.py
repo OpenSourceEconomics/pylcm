@@ -200,11 +200,13 @@ def test_simulate_model_with_inf_value_function_array_does_not_raise_error(
     inf_value_model: Model, params: UserParams
 ) -> None:
     initial_states = {
-        "wealth": jnp.array([0.9, 1.0]),
+        "wealth": jnp.array([1.5, 2.0]),
         "health": jnp.array([1.0, 1.0]),
     }
 
-    # This should not raise an error
+    # This should not raise an error. Subject 1 (wealth=2.0, health=1.0) triggers the
+    # +inf utility term (wealth > 1.9 AND health > 0.9), but the simulation should
+    # still complete without error.
     inf_value_model.solve_and_simulate(
         params, initial_states=initial_states, initial_regimes=["non_terminal"] * 2
     )

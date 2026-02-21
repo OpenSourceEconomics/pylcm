@@ -11,7 +11,14 @@ from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.grids import IrregSpacedGrid
 from lcm.regime import _IdentityTransition
-from lcm.typing import ContinuousState, DiscreteState
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    ScalarInt,
+)
 
 
 def utility(consumption):
@@ -358,3 +365,65 @@ def test_discrete_state_grid_without_explicit_transition_raises():
             functions={"utility": lambda status: status},
             states={"status": DiscreteGrid(Status)},
         )
+
+
+# ======================================================================================
+# Regression guard for GitHub issue #152
+# ======================================================================================
+
+
+def test_regime_with_fixed_states_only():
+    """Issue #152 (resolved): regimes with only fixed states (transition=None) work.
+
+    Regression guard -- previously state transition functions were always required.
+    """
+
+    @categorical
+    class FixedRegimeId:
+        working: int
+        dead: int
+
+    def fixed_utility(
+        consumption: ContinuousAction, wealth: ContinuousState
+    ) -> FloatND:
+        return jnp.log(consumption) + 0.01 * wealth
+
+    def fixed_borrowing(
+        consumption: ContinuousAction, wealth: ContinuousState
+    ) -> BoolND:
+        return consumption <= wealth
+
+    def fixed_next_regime(age: float, final_age_alive: float) -> ScalarInt:
+        dead = FixedRegimeId.dead
+        working = FixedRegimeId.working
+        return jnp.where(age >= final_age_alive, dead, working)
+
+    final_age = 1
+
+    working_regime = Regime(
+        actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=20)},
+        states={
+            "wealth": LinSpacedGrid(start=1, stop=10, n_points=15, transition=None),
+        },
+        constraints={"borrowing": fixed_borrowing},
+        transition=fixed_next_regime,
+        functions={"utility": fixed_utility},
+        active=lambda age: age <= final_age,
+    )
+    dead_regime = Regime(
+        transition=None,
+        functions={"utility": lambda: 0.0},
+        active=lambda age: age > final_age,
+    )
+    model = Model(
+        regimes={"working": working_regime, "dead": dead_regime},
+        ages=AgeGrid(start=0, stop=final_age + 1, step="Y"),
+        regime_id_class=FixedRegimeId,
+    )
+    V = model.solve(
+        {
+            "discount_factor": 0.95,
+            "working": {"next_regime": {"final_age_alive": final_age}},
+        }
+    )
+    assert all(jnp.all(jnp.isfinite(V[p]["working"])) for p in V if "working" in V[p])
