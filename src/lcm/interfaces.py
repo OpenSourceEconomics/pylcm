@@ -211,10 +211,6 @@ class InternalRegime:
     next_state_simulation_function: NextStateSimulationFunction
     """Compiled function to compute next-period states during simulation."""
 
-    # Not properly processed yet
-    random_utility_shocks: ShockType
-    """Type of random utility shocks (extreme value or none)."""
-
     _base_state_action_space: StateActionSpace = dataclasses.field(repr=False)
     """Base state-action space before runtime grid substitution."""
 

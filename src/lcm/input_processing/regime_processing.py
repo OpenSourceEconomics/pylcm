@@ -27,7 +27,7 @@ from lcm.input_processing.util import (
     get_variable_info,
     is_stochastic_transition,
 )
-from lcm.interfaces import InternalFunctions, InternalRegime, ShockType
+from lcm.interfaces import InternalFunctions, InternalRegime
 from lcm.mark import stochastic
 from lcm.ndimage import map_coordinates
 from lcm.regime import Regime, _collect_state_transitions
@@ -195,8 +195,6 @@ def process_regimes(
                 argmax_and_max_Q_over_a_functions
             ),
             next_state_simulation_function=next_state_simulation_function,
-            # currently no additive utility shocks are supported
-            random_utility_shocks=ShockType.NONE,
             _base_state_action_space=state_action_spaces[name],
         )
 
