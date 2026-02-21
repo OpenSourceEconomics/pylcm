@@ -134,23 +134,11 @@ class Regime:
             Read-only mapping of all regime functions.
 
         """
-        result = dict(self.functions) | dict(self.constraints)
-        # Collect state transitions from grids
-        for name, grid in self.states.items():
-            if isinstance(grid, _ShockGrid):
-                # ShockGrids have intrinsic transitions; add a stochastic stub
-                # so the params template includes the entry.
-                result[f"next_{name}"] = stochastic(lambda: None)
-                continue
-            grid_transition = getattr(grid, "transition", None)
-            if grid_transition is not None:
-                result[f"next_{name}"] = grid_transition
-            else:
-                # Fixed state: identity transition for params template discovery
-                ann = (
-                    DiscreteState if isinstance(grid, DiscreteGrid) else ContinuousState
-                )
-                result[f"next_{name}"] = _IdentityTransition(name, annotation=ann)
+        result = (
+            dict(self.functions)
+            | dict(self.constraints)
+            | _collect_state_transitions(self.states)
+        )
         # Add regime transition
         if self.transition is not None:
             result["next_regime"] = self.transition
@@ -288,3 +276,26 @@ def _make_identity_fn(
 
     """
     return _IdentityTransition(state_name, annotation=annotation)
+
+
+def _collect_state_transitions(
+    states: Mapping[str, Grid],
+) -> dict[str, UserFunction]:
+    """Collect state transition functions from grid objects.
+
+    For each state grid, produces an entry ``f"next_{name}"`` mapped to:
+    - A stochastic stub for ``ShockGrid`` types,
+    - The grid's ``transition`` attribute if present, or
+    - An auto-generated identity transition for fixed states.
+
+    """
+    transitions: dict[str, UserFunction] = {}
+    for name, grid in states.items():
+        if isinstance(grid, _ShockGrid):
+            transitions[f"next_{name}"] = stochastic(lambda: None)
+        elif (grid_transition := getattr(grid, "transition", None)) is not None:
+            transitions[f"next_{name}"] = grid_transition
+        else:
+            ann = DiscreteState if isinstance(grid, DiscreteGrid) else ContinuousState
+            transitions[f"next_{name}"] = _make_identity_fn(name, annotation=ann)
+    return transitions
