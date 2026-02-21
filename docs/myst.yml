@@ -1,0 +1,65 @@
+---
+# Jupyter Book 2.0 configuration
+# See: https://jupyterbook.org/
+version: 1
+project:
+  id: pylcm
+  title: pylcm
+  description: >-
+    Specification, solution, and simulation of finite-horizon
+    discrete-continuous dynamic choice models.
+  authors:
+    - name: Tim Mensinger
+      email: mensingertim@gmail.com
+      corresponding: true
+      github: timmens
+    - name: Maximilian Jahn
+      github: mj023
+    - name: Janos Gabler
+      github: janosg
+    - name: Hans-Martin von Gaudecker
+      email: hmgaudecker@uni-bonn.de
+      corresponding: true
+      github: hmgaudecker
+  keywords:
+    - dynamic programming
+    - life cycle models
+    - economics
+    - jax
+  github: https://github.com/OpenSourceEconomics/pylcm
+  jupyter: true
+  toc:
+    - file: index.md
+    - file: getting_started/index.md
+      title: Getting Started
+      children:
+        - file: getting_started/installation.md
+        - file: getting_started/tiny_example.ipynb
+    - file: user_guide/index.md
+      title: User Guide
+      children:
+        - file: user_guide/defining_models.md
+        - file: user_guide/grids.md
+        - file: user_guide/solving_and_simulating.md
+        - file: user_guide/parameters.md
+        - file: user_guide/shocks.md
+    - file: explanations/index.md
+      title: Explanations
+      children:
+        - file: explanations/params_workflow.ipynb
+        - file: explanations/function_representation.ipynb
+    - file: examples/index.md
+      title: Examples
+      children:
+        - file: examples/consumption_saving.md
+    - file: development/index.md
+      title: Development
+  error_rules:
+    - rule: link-resolves
+      severity: ignore
+site:
+  template: book-theme
+  options:
+    logo: _static/images/ose-logo.png
+    logo_text: pylcm
+    style: _static/css/custom.css
