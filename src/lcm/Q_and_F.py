@@ -57,7 +57,7 @@ def get_Q_and_F(
     # Generate dynamic functions
     # ----------------------------------------------------------------------------------
     U_and_F = _get_U_and_F(internal_functions)
-    regime_transition_prob_func = internal_functions.regime_transition_probs.solve  # ty: ignore[possibly-missing-attribute]
+    regime_transition_prob_func = internal_functions.regime_transition_probs.solve  # ty: ignore[unresolved-attribute]
     state_transitions = {}
     next_stochastic_states_weights = {}
     joint_weights_from_marginals = {}

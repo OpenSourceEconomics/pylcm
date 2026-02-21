@@ -1,5 +1,7 @@
 """Test analytical solution and simulation with only discrete actions."""
 
+from typing import cast
+
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -408,7 +410,9 @@ def test_deterministic_solve(discount_factor, n_wealth_points):
     n_periods = 3
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     new_states = dict(alive_deterministic.states)
-    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)
+    new_states["wealth"] = cast("LinSpacedGrid", new_states["wealth"]).replace(
+        n_points=n_wealth_points
+    )
     model = Model(
         regimes={
             "alive": alive_deterministic.replace(
@@ -432,7 +436,7 @@ def test_deterministic_solve(discount_factor, n_wealth_points):
 
     # Compute analytical solution
     # ==================================================================================
-    wealth_grid_class: LinSpacedGrid = new_states["wealth"]
+    wealth_grid_class = cast("LinSpacedGrid", new_states["wealth"])
     wealth_grid = np.linspace(
         start=wealth_grid_class.start,
         stop=wealth_grid_class.stop,
@@ -460,7 +464,9 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
     n_periods = 3
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     new_states = dict(alive_deterministic.states)
-    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)
+    new_states["wealth"] = cast("LinSpacedGrid", new_states["wealth"]).replace(
+        n_points=n_wealth_points
+    )
     model = Model(
         regimes={
             "alive": alive_deterministic.replace(
@@ -518,7 +524,9 @@ def test_stochastic_solve(discount_factor, n_wealth_points, health_transition):
     n_periods = 3
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     new_states = dict(alive_stochastic.states)
-    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)
+    new_states["wealth"] = cast("LinSpacedGrid", new_states["wealth"]).replace(
+        n_points=n_wealth_points
+    )
     model = Model(
         regimes={
             "alive": alive_stochastic.replace(
@@ -540,7 +548,7 @@ def test_stochastic_solve(discount_factor, n_wealth_points, health_transition):
 
     # Compute analytical solution
     # ==================================================================================
-    wealth_grid_class: LinSpacedGrid = new_states["wealth"]
+    wealth_grid_class = cast("LinSpacedGrid", new_states["wealth"])
     _wealth_grid = np.linspace(
         start=wealth_grid_class.start,
         stop=wealth_grid_class.stop,
@@ -582,7 +590,9 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, health_transition
     n_periods = 3
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     new_states = dict(alive_stochastic.states)
-    new_states["wealth"] = new_states["wealth"].replace(n_points=n_wealth_points)
+    new_states["wealth"] = cast("LinSpacedGrid", new_states["wealth"]).replace(
+        n_points=n_wealth_points
+    )
     model = Model(
         regimes={
             "alive": alive_stochastic.replace(
