@@ -188,6 +188,7 @@ def test_simulate_model_with_nan_value_function_array_raises_error(
     initial_states = {
         "wealth": jnp.array([0.9, 1.0]),
         "health": jnp.array([1.0, 1.0]),
+        "age": jnp.array([0.0, 0.0]),
     }
 
     with pytest.raises(InvalidValueFunctionError):
@@ -205,6 +206,7 @@ def test_simulate_model_with_inf_value_function_array_does_not_raise_error(
     initial_states = {
         "wealth": jnp.array([1.5, 2.0]),
         "health": jnp.array([1.0, 1.0]),
+        "age": jnp.array([0.0, 0.0]),
     }
 
     # This should not raise an error. Subject 1 (wealth=2.0, health=1.0) triggers the

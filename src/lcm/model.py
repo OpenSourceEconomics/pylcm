@@ -211,7 +211,7 @@ class Model:
                 initial_regimes=initial_regimes,
                 internal_regimes=self.internal_regimes,
                 internal_params=internal_params,
-                initial_age=float(self.ages.values[0]),
+                ages=self.ages,
             )
         return simulate(
             internal_params=internal_params,
@@ -268,7 +268,7 @@ class Model:
                 initial_regimes=initial_regimes,
                 internal_regimes=self.internal_regimes,
                 internal_params=internal_params,
-                initial_age=float(self.ages.values[0]),
+                ages=self.ages,
             )
         V_arr_dict = solve(
             internal_params=internal_params,

@@ -34,6 +34,7 @@ def test_model_with_shock(distribution_type):
             "health": jnp.asarray([0, 0]),
             "income": jnp.asarray([0, 0]),
             "wealth": jnp.asarray([1, 1]),
+            "age": jnp.asarray([0.0, 0.0]),
         },
         V_arr_dict=got_solve,
         seed=42,

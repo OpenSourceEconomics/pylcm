@@ -49,6 +49,7 @@ def test_model_solve_and_simulate_with_stochastic_model():
             "health": jnp.array([1, 1, 0, 0]),
             "partner": jnp.array([0, 0, 1, 0]),
             "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
+            "age": jnp.array([0.0, 0.0, 0.0, 0.0]),
         },
         initial_regimes=["working"] * 4,
     )
@@ -208,6 +209,7 @@ def test_compare_deterministic_and_stochastic_results_value_function(
         "health": jnp.array([1, 1, 0, 0]),
         "partner": jnp.array([0, 0, 0, 0]),
         "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
+        "age": jnp.array([0.0, 0.0, 0.0, 0.0]),
     }
     initial_regimes = ["working"] * 4
 
