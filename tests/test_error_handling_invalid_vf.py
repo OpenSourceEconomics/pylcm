@@ -195,7 +195,7 @@ def test_simulate_model_with_nan_value_function_array_raises_error(
             params,
             initial_states=initial_states,
             initial_regimes=["non_terminal"] * 2,
-            check_initial_state_feasibility=False,
+            check_initial_conditions=False,
         )
 
 

@@ -1,4 +1,4 @@
-"""Tests for initial states conversion and validation utilities."""
+"""Tests for initial conditions validation utilities."""
 
 from dataclasses import dataclass
 
@@ -7,11 +7,11 @@ import pytest
 
 from lcm import DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.ages import AgeGrid
-from lcm.exceptions import InvalidInitialRegimesError, InvalidInitialStatesError
+from lcm.exceptions import InvalidInitialConditionsError
+from lcm.input_processing.params_processing import process_params
 from lcm.simulation.util import (
     convert_initial_states_to_nested,
-    validate_initial_regimes,
-    validate_initial_states,
+    validate_initial_conditions,
 )
 from lcm.typing import (
     BoolND,
@@ -19,6 +19,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    InternalParams,
     ScalarInt,
 )
 
@@ -77,6 +78,14 @@ def model() -> Model:
     )
 
 
+@pytest.fixture
+def internal_params(model: Model) -> InternalParams:
+    """Process params for the minimal model."""
+    return process_params(
+        params={"discount_factor": 0.95}, params_template=model.params_template
+    )
+
+
 # ==============================================================================
 # Tests
 # ==============================================================================
@@ -95,74 +104,112 @@ def test_convert_flat_to_nested_single_regime(model: Model) -> None:
     assert "health" in nested["active"]
 
 
-def test_validate_initial_states_valid_input(model: Model) -> None:
+def test_validate_initial_conditions_valid_input(
+    model: Model, internal_params: InternalParams
+) -> None:
     """Valid input should not raise."""
     flat = {
         "wealth": jnp.array([10.0, 50.0]),
         "health": jnp.array([0, 1]),
     }
-    validate_initial_states(
-        initial_states=flat, internal_regimes=model.internal_regimes
+    validate_initial_conditions(
+        initial_states=flat,
+        initial_regimes=["active", "active"],
+        internal_regimes=model.internal_regimes,
+        internal_params=internal_params,
+        initial_age=float(model.ages.values[0]),
     )
 
 
-def test_validate_initial_states_missing_state(model: Model) -> None:
-    """Missing state should raise InvalidInitialStatesError."""
+def test_validate_initial_conditions_missing_state(
+    model: Model, internal_params: InternalParams
+) -> None:
+    """Missing state should raise InvalidInitialConditionsError."""
     flat = {"wealth": jnp.array([10.0, 50.0])}
 
     with pytest.raises(
-        InvalidInitialStatesError, match=r"Missing initial states: \['health'\].*"
+        InvalidInitialConditionsError, match=r"Missing initial states: \['health'\].*"
     ):
-        validate_initial_states(
-            initial_states=flat, internal_regimes=model.internal_regimes
+        validate_initial_conditions(
+            initial_states=flat,
+            initial_regimes=["active", "active"],
+            internal_regimes=model.internal_regimes,
+            internal_params=internal_params,
+            initial_age=float(model.ages.values[0]),
         )
 
 
-def test_validate_initial_states_extra_state(model: Model) -> None:
-    """Extra state should raise InvalidInitialStatesError."""
+def test_validate_initial_conditions_extra_state(
+    model: Model, internal_params: InternalParams
+) -> None:
+    """Extra state should raise InvalidInitialConditionsError."""
     flat = {
         "wealth": jnp.array([10.0]),
         "health": jnp.array([0]),
         "unknown": jnp.array([1.0]),
     }
 
-    with pytest.raises(InvalidInitialStatesError, match="Unknown initial states"):
-        validate_initial_states(
-            initial_states=flat, internal_regimes=model.internal_regimes
+    with pytest.raises(InvalidInitialConditionsError, match="Unknown initial states"):
+        validate_initial_conditions(
+            initial_states=flat,
+            initial_regimes=["active"],
+            internal_regimes=model.internal_regimes,
+            internal_params=internal_params,
+            initial_age=float(model.ages.values[0]),
         )
 
 
-def test_validate_initial_states_inconsistent_lengths(model: Model) -> None:
-    """Arrays with different lengths should raise InvalidInitialStatesError."""
+def test_validate_initial_conditions_inconsistent_lengths(
+    model: Model, internal_params: InternalParams
+) -> None:
+    """Arrays with different lengths should raise InvalidInitialConditionsError."""
     flat = {
         "wealth": jnp.array([10.0, 20.0]),
         "health": jnp.array([0]),
     }
 
-    with pytest.raises(InvalidInitialStatesError, match="same length"):
-        validate_initial_states(
-            initial_states=flat, internal_regimes=model.internal_regimes
+    with pytest.raises(InvalidInitialConditionsError, match="same length"):
+        validate_initial_conditions(
+            initial_states=flat,
+            initial_regimes=["active", "active"],
+            internal_regimes=model.internal_regimes,
+            internal_params=internal_params,
+            initial_age=float(model.ages.values[0]),
         )
 
 
-def test_validate_initial_states_invalid_discrete_value(model: Model) -> None:
-    """Invalid discrete state code should raise InvalidInitialStatesError."""
+def test_validate_initial_conditions_invalid_discrete_value(
+    model: Model, internal_params: InternalParams
+) -> None:
+    """Invalid discrete state code should raise InvalidInitialConditionsError."""
     flat = {
         "wealth": jnp.array([10.0]),
         "health": jnp.array([5]),
     }
-    with pytest.raises(InvalidInitialStatesError, match=r"Invalid values.*health"):
-        validate_initial_states(
-            initial_states=flat, internal_regimes=model.internal_regimes
+    with pytest.raises(InvalidInitialConditionsError, match=r"Invalid values.*health"):
+        validate_initial_conditions(
+            initial_states=flat,
+            initial_regimes=["active"],
+            internal_regimes=model.internal_regimes,
+            internal_params=internal_params,
+            initial_age=float(model.ages.values[0]),
         )
 
 
-def test_validate_initial_regimes_invalid_name(model: Model) -> None:
-    """Invalid regime name should raise InvalidInitialRegimesError."""
-    with pytest.raises(InvalidInitialRegimesError, match="Invalid regime names"):
-        validate_initial_regimes(
+def test_validate_initial_conditions_invalid_regime_name(
+    model: Model, internal_params: InternalParams
+) -> None:
+    """Invalid regime name should raise InvalidInitialConditionsError."""
+    with pytest.raises(InvalidInitialConditionsError, match="Invalid regime names"):
+        validate_initial_conditions(
+            initial_states={
+                "wealth": jnp.array([10.0]),
+                "health": jnp.array([0]),
+            },
             initial_regimes=["nonexistent"],
             internal_regimes=model.internal_regimes,
+            internal_params=internal_params,
+            initial_age=float(model.ages.values[0]),
         )
 
 
@@ -248,7 +295,7 @@ def test_infeasible_initial_states_detected(constraint_model):
     wealth=0.25 < min consumption (0.5), so consumption <= wealth is always False.
     """
     model, params = constraint_model
-    with pytest.raises(InvalidInitialStatesError):
+    with pytest.raises(InvalidInitialConditionsError):
         model.solve_and_simulate(
             params=params,
             initial_states={"wealth": jnp.array([0.25])},
@@ -290,7 +337,7 @@ def test_on_grid_state_but_combination_infeasible():
         "discount_factor": 0.95,
         "working": {"next_regime": {"final_age_alive": _FINAL_AGE_64}},
     }
-    with pytest.raises(InvalidInitialStatesError):
+    with pytest.raises(InvalidInitialConditionsError):
         model.solve_and_simulate(
             params=params,
             initial_states={"wealth": jnp.array([0.3])},
