@@ -7,13 +7,11 @@ from jax import Array, vmap
 from jax import numpy as jnp
 
 from lcm.exceptions import (
-    InvalidInitialRegimesError,
-    InvalidInitialStatesError,
+    InvalidInitialConditionsError,
     InvalidRegimeTransitionProbabilitiesError,
     format_messages,
 )
 from lcm.grids import DiscreteGrid
-from lcm.input_processing.params_processing import process_params
 from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.Q_and_F import _get_feasibility
@@ -23,10 +21,9 @@ from lcm.typing import (
     Bool1D,
     FlatRegimeParams,
     Int1D,
-    ParamsTemplate,
+    InternalParams,
     RegimeName,
     RegimeNamesToIds,
-    UserParams,
 )
 from lcm.utils import flatten_regime_namespace, normalize_regime_transition_probs
 
@@ -291,29 +288,92 @@ def _update_states_for_subjects(
     return MappingProxyType(updated_states)
 
 
-def validate_initial_states(
+def validate_initial_conditions(
     *,
     initial_states: Mapping[str, Array],
+    initial_regimes: list[RegimeName],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    internal_params: InternalParams,
 ) -> None:
-    """Validate flat initial_states dict.
+    """Validate initial conditions (regimes, states, and feasibility).
 
     Checks that:
-    1. All required state names (across all regimes) are provided
-    2. No extra/unknown state names are provided
-    3. All arrays have the same length (same number of subjects)
+    1. initial_regimes is non-empty and contains only valid regime names
+    2. All required state names (across all regimes) are provided, with no extras
+    3. All state arrays have the same length
     4. Discrete state values are valid codes
+    5. Each subject has at least one feasible action combination
 
     Args:
         initial_states: Mapping of state names to arrays.
+        initial_regimes: List of regime names the subjects start in.
+        internal_regimes: Immutable mapping of regime names to internal regime
+            instances.
+        internal_params: Immutable mapping of regime names to flat parameter mappings.
+
+    Raises:
+        InvalidInitialConditionsError: If any validation check fails.
+
+    """
+    # Validate regime names and state names/shapes first; early-exit on errors so that
+    # downstream checks (discrete codes, feasibility) can assume correct names.
+    structural_errors = _collect_structural_errors(
+        initial_states=initial_states,
+        initial_regimes=initial_regimes,
+        internal_regimes=internal_regimes,
+    )
+    if structural_errors:
+        raise InvalidInitialConditionsError(format_messages(structural_errors))
+
+    # Validate discrete state values
+    _validate_discrete_state_values(
+        initial_states=initial_states, internal_regimes=internal_regimes
+    )
+
+    # Validate feasibility
+    feasibility_errors = _collect_feasibility_errors(
+        initial_states=initial_states,
+        initial_regimes=initial_regimes,
+        internal_regimes=internal_regimes,
+        internal_params=internal_params,
+    )
+    if feasibility_errors:
+        raise InvalidInitialConditionsError(format_messages(feasibility_errors))
+
+
+def _collect_structural_errors(
+    *,
+    initial_states: Mapping[str, Array],
+    initial_regimes: list[RegimeName],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+) -> list[str]:
+    """Collect errors about regime names, state names, and array shapes.
+
+    Args:
+        initial_states: Mapping of state names to arrays.
+        initial_regimes: List of regime names the subjects start in.
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
 
-    Raises:
-        InvalidInitialStatesError: If validation fails with descriptive message.
+    Returns:
+        List of error message strings (empty if everything is valid).
 
     """
-    # Collect all required state names across all regimes
+    errors: list[str] = []
+
+    # Validate initial regimes
+    if not initial_regimes:
+        errors.append("initial_regimes must not be empty.")
+
+    valid_regime_names = set(internal_regimes.keys())
+    invalid_names = sorted({r for r in initial_regimes if r not in valid_regime_names})
+    if invalid_names:
+        errors.append(
+            f"Invalid regime names {invalid_names} in initial_regimes. "
+            f"Valid regime names are: {sorted(valid_regime_names)}"
+        )
+
+    # Validate initial states
     required_states: set[str] = set()
     for internal_regime in internal_regimes.values():
         regime_states = set(internal_regime.variable_info.query("is_state").index)
@@ -321,136 +381,53 @@ def validate_initial_states(
 
     provided_states = set(initial_states.keys())
 
-    # Check for missing states
     missing = required_states - provided_states
     if missing:
-        raise InvalidInitialStatesError(
+        errors.append(
             f"Missing initial states: {sorted(missing)}. "
             f"Required states are: {sorted(required_states)}"
         )
 
-    # Check for extra states
     extra = provided_states - required_states
     if extra:
-        raise InvalidInitialStatesError(
+        errors.append(
             f"Unknown initial states: {sorted(extra)}. "
             f"Valid states are: {sorted(required_states)}"
         )
 
-    # Check array lengths are consistent
     if initial_states:
         lengths = {name: len(arr) for name, arr in initial_states.items()}
         unique_lengths = set(lengths.values())
         if len(unique_lengths) > 1:
-            raise InvalidInitialStatesError(
+            errors.append(
                 f"All initial state arrays must have the same length. "
                 f"Got lengths: {lengths}"
             )
 
-    # Check discrete state values are valid codes
-    _validate_discrete_state_values(
-        initial_states=initial_states, internal_regimes=internal_regimes
-    )
+    return errors
 
 
-def _validate_discrete_state_values(
+def _collect_feasibility_errors(
     *,
-    initial_states: Mapping[str, Array],
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-) -> None:
-    """Validate that discrete state values are valid codes.
-
-    Args:
-        initial_states: Mapping of state names to arrays.
-        internal_regimes: Immutable mapping of regime names to internal regime
-            instances.
-
-    Raises:
-        InvalidInitialStatesError: If any discrete state contains invalid codes.
-
-    """
-    discrete_valid_codes: dict[str, set[int]] = {}
-    for internal_regime in internal_regimes.values():
-        for state_name in internal_regime.variable_info.query(
-            "is_state and is_discrete"
-        ).index:
-            gridspec = internal_regime.gridspecs[state_name]
-            if isinstance(gridspec, DiscreteGrid):
-                discrete_valid_codes[state_name] = set(gridspec.codes)
-
-    for state_name, valid_codes in discrete_valid_codes.items():
-        values = initial_states[state_name]
-        invalid_mask = jnp.isin(values, jnp.array(sorted(valid_codes)), invert=True)
-        if jnp.any(invalid_mask):
-            invalid_vals = sorted({int(v) for v in values[invalid_mask]})
-            raise InvalidInitialStatesError(
-                f"Invalid values {invalid_vals} for discrete state "
-                f"'{state_name}'. Valid codes are: {sorted(valid_codes)}"
-            )
-
-
-def validate_initial_regimes(
-    *,
-    initial_regimes: list[RegimeName],
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-) -> None:
-    """Validate initial_regimes list.
-
-    Checks that:
-    1. All provided regime names are valid regime names
-    2. The list is not empty
-
-    Args:
-        initial_regimes: List of regime names the subjects start in.
-        internal_regimes: Immutable mapping of regime names to internal regime
-            instances.
-
-    Raises:
-        InvalidInitialRegimesError: If validation fails with descriptive message.
-
-    """
-    if not initial_regimes:
-        raise InvalidInitialRegimesError("initial_regimes must not be empty.")
-
-    valid_regime_names = set(internal_regimes.keys())
-    invalid_names = sorted({r for r in initial_regimes if r not in valid_regime_names})
-    if invalid_names:
-        raise InvalidInitialRegimesError(
-            f"Invalid regime names {invalid_names} in initial_regimes. "
-            f"Valid regime names are: {sorted(valid_regime_names)}"
-        )
-
-
-def validate_initial_state_feasibility(
-    *,
-    params: UserParams,
-    params_template: ParamsTemplate,
     initial_states: Mapping[str, Array],
     initial_regimes: list[RegimeName],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-) -> None:
-    """Validate that initial states have at least one feasible action combination.
-
-    For each regime, check that every subject starting in that regime has at
-    least one action combination satisfying all constraints. Uses the same
-    combined-constraint machinery as the solver.
+    internal_params: InternalParams,
+) -> list[str]:
+    """Collect errors about action feasibility for each subject.
 
     Args:
-        params: User-provided model parameters.
-        params_template: Template for the model parameters.
         initial_states: Mapping of state names to arrays.
         initial_regimes: List of regime names the subjects start in.
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
+        internal_params: Immutable mapping of regime names to flat parameter mappings.
 
-    Raises:
-        InvalidInitialStatesError: If any subject has no feasible action combination.
+    Returns:
+        List of error message strings (empty if everything is feasible).
 
     """
-    internal_params = process_params(params=params, params_template=params_template)
-
-    error_messages: list[str] = []
-
+    errors: list[str] = []
     for regime_name, internal_regime in internal_regimes.items():
         subject_indices = [i for i, r in enumerate(initial_regimes) if r == regime_name]
         if not subject_indices:
@@ -469,10 +446,45 @@ def validate_initial_state_feasibility(
             regime_params=regime_params,
         )
         if msg is not None:
-            error_messages.append(msg)
+            errors.append(msg)
 
-    if error_messages:
-        raise InvalidInitialStatesError(format_messages(error_messages))
+    return errors
+
+
+def _validate_discrete_state_values(
+    *,
+    initial_states: Mapping[str, Array],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+) -> None:
+    """Validate that discrete state values are valid codes.
+
+    Args:
+        initial_states: Mapping of state names to arrays.
+        internal_regimes: Immutable mapping of regime names to internal regime
+            instances.
+
+    Raises:
+        InvalidInitialConditionsError: If any discrete state contains invalid codes.
+
+    """
+    discrete_valid_codes: dict[str, set[int]] = {}
+    for internal_regime in internal_regimes.values():
+        for state_name in internal_regime.variable_info.query(
+            "is_state and is_discrete"
+        ).index:
+            gridspec = internal_regime.gridspecs[state_name]
+            if isinstance(gridspec, DiscreteGrid):
+                discrete_valid_codes[state_name] = set(gridspec.codes)
+
+    for state_name, valid_codes in discrete_valid_codes.items():
+        values = initial_states[state_name]
+        invalid_mask = jnp.isin(values, jnp.array(sorted(valid_codes)), invert=True)
+        if jnp.any(invalid_mask):
+            invalid_vals = sorted({int(v) for v in values[invalid_mask]})
+            raise InvalidInitialConditionsError(
+                f"Invalid values {invalid_vals} for discrete state "
+                f"'{state_name}'. Valid codes are: {sorted(valid_codes)}"
+            )
 
 
 def _check_regime_feasibility(
