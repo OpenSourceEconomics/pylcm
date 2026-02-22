@@ -345,9 +345,15 @@ initial_regimes = ["working", "working", "retired"]
 - Use plain pytest functions, never test classes (`class TestFoo`)
 - Use `@pytest.mark.parametrize` for test variations
 
+### Plotting
+
+- Always use **plotly** for visualizations, never matplotlib. Use `plotly.graph_objects`
+  and `plotly.subplots.make_subplots`.
+
 ### Key Dependencies
 
 - **jax**: Numerical computation
 - **jaxtyping**: Array type annotations
 - **pandas**: DataFrame output
 - **dags**: Function composition and nested namespace flattening
+- **plotly**: Plotting and visualization

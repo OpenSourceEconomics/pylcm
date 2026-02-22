@@ -48,6 +48,7 @@ project:
       children:
         - file: explanations/params_workflow.ipynb
         - file: explanations/function_representation.ipynb
+        - file: explanations/interpolation.ipynb
     - file: examples/index.md
       title: Examples
       children:

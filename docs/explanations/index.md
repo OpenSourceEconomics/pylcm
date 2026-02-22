@@ -12,3 +12,6 @@ hood.
   regime, and function levels.
 - [Function Representation](function_representation.ipynb) — What the function
   representation does and how it works.
+- [Interpolation and Extrapolation](interpolation.ipynb) — How pylcm's
+  coordinate finders and `map_coordinates` handle interpolation and extrapolation across
+  grid types.
