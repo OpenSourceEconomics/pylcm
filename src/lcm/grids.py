@@ -14,7 +14,6 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     Float1D,
-    FloatND,
     Int1D,
     ScalarFloat,
 )
@@ -151,7 +150,7 @@ class DiscreteMarkovGrid(DiscreteGrid):
         self,
         category_class: type,
         *,
-        transition: Callable[..., FloatND],
+        transition: Callable[..., DiscreteState],
     ) -> None:
         if not callable(transition):
             raise GridInitializationError(
