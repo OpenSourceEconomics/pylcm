@@ -14,6 +14,10 @@ class InvalidInitialStatesError(PyLCMError):
     """Raised when the initial states are invalid."""
 
 
+class InvalidInitialRegimesError(PyLCMError):
+    """Raised when the initial regimes are invalid."""
+
+
 class InvalidParamsError(PyLCMError):
     """Raised when the params structure does not match the params template."""
 

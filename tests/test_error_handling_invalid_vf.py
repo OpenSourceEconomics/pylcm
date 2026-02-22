@@ -192,7 +192,10 @@ def test_simulate_model_with_nan_value_function_array_raises_error(
 
     with pytest.raises(InvalidValueFunctionError):
         nan_value_model.solve_and_simulate(
-            params, initial_states=initial_states, initial_regimes=["non_terminal"] * 2
+            params,
+            initial_states=initial_states,
+            initial_regimes=["non_terminal"] * 2,
+            check_initial_state_feasibility=False,
         )
 
 

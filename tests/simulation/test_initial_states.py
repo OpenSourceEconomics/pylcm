@@ -7,9 +7,10 @@ import pytest
 
 from lcm import DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.ages import AgeGrid
-from lcm.exceptions import InvalidInitialStatesError
+from lcm.exceptions import InvalidInitialRegimesError, InvalidInitialStatesError
 from lcm.simulation.util import (
     convert_initial_states_to_nested,
+    validate_initial_regimes,
     validate_initial_states,
 )
 from lcm.typing import (
@@ -144,6 +145,27 @@ def test_validate_initial_states_inconsistent_lengths(model: Model) -> None:
         )
 
 
+def test_validate_initial_states_invalid_discrete_value(model: Model) -> None:
+    """Invalid discrete state code should raise InvalidInitialStatesError."""
+    flat = {
+        "wealth": jnp.array([10.0]),
+        "health": jnp.array([5]),
+    }
+    with pytest.raises(InvalidInitialStatesError, match=r"Invalid values.*health"):
+        validate_initial_states(
+            initial_states=flat, internal_regimes=model.internal_regimes
+        )
+
+
+def test_validate_initial_regimes_invalid_name(model: Model) -> None:
+    """Invalid regime name should raise InvalidInitialRegimesError."""
+    with pytest.raises(InvalidInitialRegimesError, match="Invalid regime names"):
+        validate_initial_regimes(
+            initial_regimes=["nonexistent"],
+            internal_regimes=model.internal_regimes,
+        )
+
+
 # ==============================================================================
 # Reproducer for GitHub issue #64
 # ==============================================================================
@@ -220,7 +242,6 @@ def constraint_model():
     return model, params
 
 
-@pytest.mark.xfail(reason="Issue #64: infeasible initial states not checked")
 def test_infeasible_initial_states_detected(constraint_model):
     """Issue #64: wealth below constraint threshold makes all actions infeasible.
 
@@ -231,6 +252,48 @@ def test_infeasible_initial_states_detected(constraint_model):
         model.solve_and_simulate(
             params=params,
             initial_states={"wealth": jnp.array([0.25])},
+            initial_regimes=["working"],
+        )
+
+
+def test_on_grid_state_but_combination_infeasible():
+    """State ON the grid but constraint fails for ALL action combinations.
+
+    wealth=0.3 is the grid minimum, but min consumption (0.5) > 0.3,
+    so consumption <= wealth is always False.
+    """
+    working_regime = Regime(
+        actions={
+            "consumption": LinSpacedGrid(start=0.5, stop=10, n_points=20),
+        },
+        states={
+            "wealth": LinSpacedGrid(
+                start=0.3, stop=10, n_points=15, transition=_next_wealth_64
+            ),
+        },
+        constraints={"borrowing_constraint": _borrowing_constraint_64},
+        transition=_next_regime_64,
+        functions={"utility": _utility_64},
+        active=lambda age: age <= _FINAL_AGE_64,
+    )
+    dead_regime = Regime(
+        transition=None,
+        functions={"utility": lambda: 0.0},
+        active=lambda age: age > _FINAL_AGE_64,
+    )
+    model = Model(
+        regimes={"working": working_regime, "dead": dead_regime},
+        ages=AgeGrid(start=0, stop=_FINAL_AGE_64 + 1, step="Y"),
+        regime_id_class=_RegimeId64,
+    )
+    params = {
+        "discount_factor": 0.95,
+        "working": {"next_regime": {"final_age_alive": _FINAL_AGE_64}},
+    }
+    with pytest.raises(InvalidInitialStatesError):
+        model.solve_and_simulate(
+            params=params,
+            initial_states={"wealth": jnp.array([0.3])},
             initial_regimes=["working"],
         )
 

@@ -19,6 +19,7 @@ from lcm.simulation.util import (
     calculate_next_states,
     convert_initial_states_to_nested,
     create_regime_state_action_space,
+    validate_initial_regimes,
     validate_initial_states,
 )
 from lcm.typing import (
@@ -75,6 +76,9 @@ def simulate(
     # ----------------------------------------------------------------------------------
     validate_initial_states(
         initial_states=initial_states, internal_regimes=internal_regimes
+    )
+    validate_initial_regimes(
+        initial_regimes=initial_regimes, internal_regimes=internal_regimes
     )
     nested_initial_states = convert_initial_states_to_nested(
         initial_states=initial_states, internal_regimes=internal_regimes
