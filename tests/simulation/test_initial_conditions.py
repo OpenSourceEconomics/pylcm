@@ -1,4 +1,4 @@
-"""Tests for initial states conversion and validation utilities."""
+"""Tests for initial conditions validation utilities."""
 
 from dataclasses import dataclass
 
