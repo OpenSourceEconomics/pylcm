@@ -5,8 +5,15 @@ import pandas as pd
 import pytest
 from numpy.testing import assert_array_almost_equal
 
-import lcm
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    DiscreteMarkovGrid,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    categorical,
+)
 from lcm.exceptions import InvalidParamsError
 from lcm.typing import (
     BoolND,
@@ -97,7 +104,6 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
 
     """
 
-    @lcm.mark.stochastic
     def next_health_stochastic(health: DiscreteState) -> FloatND:
         return jnp.identity(2)[health]
 
@@ -131,7 +137,7 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
     working_stochastic = working.replace(
         states={
             **working.states,
-            "health": DiscreteGrid(
+            "health": DiscreteMarkovGrid(
                 category_class=HealthStatus, transition=next_health_stochastic
             ),
         },
@@ -140,7 +146,7 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
     retired_stochastic = retired.replace(
         states={
             **retired.states,
-            "health": DiscreteGrid(
+            "health": DiscreteMarkovGrid(
                 category_class=HealthStatus, transition=next_health_stochastic
             ),
         },
@@ -247,7 +253,6 @@ class _ShockRegimeId:
 _STOCH_FINAL_AGE = 1  # 3 periods total
 
 
-@lcm.mark.stochastic
 def _next_shock(shock: DiscreteState, shock_transition: FloatND) -> FloatND:
     """Default stochastic transition using a pre-computed transition matrix."""
     return shock_transition[shock]
@@ -282,7 +287,7 @@ def _make_minimal_stochastic_model(shock_transition_func=None) -> Model:
     working_regime = Regime(
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=20)},
         states={
-            "shock": DiscreteGrid(_ShockStatus, transition=shock_transition_func),
+            "shock": DiscreteMarkovGrid(_ShockStatus, transition=shock_transition_func),
             "wealth": LinSpacedGrid(
                 start=1, stop=10, n_points=15, transition=_stoch_next_wealth
             ),
@@ -330,7 +335,6 @@ def test_stochastic_next_function_with_no_arguments(stoch_base_params):
     one argument, causing a failure.
     """
 
-    @lcm.mark.stochastic
     def next_shock_no_args() -> FloatND:
         return jnp.array([0.5, 0.5])
 
@@ -346,7 +350,6 @@ def test_stochastic_next_depending_on_continuous_state(stoch_base_params):
     dependency that was not a discrete state.
     """
 
-    @lcm.mark.stochastic
     def next_shock_continuous(wealth: ContinuousState) -> FloatND:
         p_good = jnp.clip(wealth / 10.0, 0.1, 0.9)
         return jnp.array([1.0 - p_good, p_good])
@@ -356,7 +359,6 @@ def test_stochastic_next_depending_on_continuous_state(stoch_base_params):
     assert all(jnp.all(jnp.isfinite(V[p]["working"])) for p in V if "working" in V[p])
 
 
-@pytest.mark.xfail(reason="Issue #63: wrong transition matrix shapes not validated")
 @pytest.mark.parametrize("bad_shape", [(1, 2), (4, 2)])
 def test_wrong_transition_matrix_shape_rejected(bad_shape, minimal_stochastic_model):
     """Issue #63: solve should reject wrong-shaped transition matrices.
@@ -378,7 +380,6 @@ def test_wrong_transition_matrix_shape_rejected(bad_shape, minimal_stochastic_mo
         minimal_stochastic_model.solve(params)
 
 
-@pytest.mark.xfail(reason="Issue #185: no shape info in params_template")
 def test_params_template_includes_stochastic_transition_shape(
     minimal_stochastic_model,
 ):

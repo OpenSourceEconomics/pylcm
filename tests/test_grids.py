@@ -9,6 +9,7 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm.exceptions import GridInitializationError
 from lcm.grids import (
     DiscreteGrid,
+    DiscreteMarkovGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
@@ -167,6 +168,39 @@ def test_discrete_grid_invalid_category_class():
         match="Field values of the category_class can only be int",
     ):
         DiscreteGrid(category_class)
+
+
+# --------------------------------------------------------------------------------------
+# DiscreteMarkovGrid
+# --------------------------------------------------------------------------------------
+
+
+def test_markov_grid_basic():
+    category_class = make_dataclass(
+        "Category", [("a", int, 0), ("b", int, 1), ("c", int, 2)]
+    )
+    grid = DiscreteMarkovGrid(category_class, transition=lambda: None)
+    assert grid.categories == ("a", "b", "c")
+    assert grid.codes == (0, 1, 2)
+    assert grid.n_states == 3
+    assert callable(grid.transition)
+    assert np.allclose(grid.to_jax(), np.arange(3))
+
+
+def test_markov_grid_rejects_none_transition():
+    category_class = make_dataclass("Category", [("a", int, 0), ("b", int, 1)])
+    with pytest.raises(
+        GridInitializationError,
+        match="DiscreteMarkovGrid requires a callable transition",
+    ):
+        DiscreteMarkovGrid(category_class, transition=None)  # ty: ignore[invalid-argument-type]
+
+
+def test_markov_grid_is_discrete_grid():
+    category_class = make_dataclass("Category", [("a", int, 0), ("b", int, 1)])
+    grid = DiscreteMarkovGrid(category_class, transition=lambda: None)
+    assert isinstance(grid, DiscreteGrid)
+    assert isinstance(grid, DiscreteMarkovGrid)
 
 
 # ======================================================================================

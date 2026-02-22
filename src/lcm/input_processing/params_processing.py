@@ -106,6 +106,8 @@ def process_params(
         regime_name, remainder = key.split(QNAME_DELIMITER, 1)
         result[regime_name][remainder] = value
 
+    _validate_param_shapes(result, params_template)
+
     return cast("InternalParams", ensure_containers_are_immutable(result))
 
 
@@ -189,6 +191,38 @@ def create_params_template(  # noqa: C901
     # E.g., labor_income is a function in 'working' but a param in 'retired'.
 
     return ensure_containers_are_immutable(template)
+
+
+def _validate_param_shapes(
+    resolved: dict[str, dict[str, Any]],
+    template: ParamsTemplate,
+) -> None:
+    """Validate that array parameters match expected shape suffixes.
+
+    When a template value is a tuple of ints (e.g. (2, 2) for a transition matrix),
+    check that the corresponding resolved value has a matching shape suffix.
+
+    """
+    for regime_name, regime_template in template.items():
+        for func_name, func_params in regime_template.items():
+            if not isinstance(func_params, Mapping):
+                continue
+            for param_name, expected in func_params.items():
+                if not (
+                    isinstance(expected, tuple)
+                    and all(isinstance(d, int) for d in expected)
+                ):
+                    continue
+                flat_key = f"{func_name}{QNAME_DELIMITER}{param_name}"
+                value = resolved.get(regime_name, {}).get(flat_key)
+                if value is None or not hasattr(value, "shape"):
+                    continue
+                n = len(expected)
+                if len(value.shape) < n or value.shape[-n:] != expected:
+                    raise InvalidParamsError(
+                        f"Parameter '{regime_name}/{func_name}/{param_name}' "
+                        f"has shape {value.shape}, expected suffix {expected}."
+                    )
 
 
 def get_flat_param_names(regime_params_template: RegimeParamsTemplate) -> set[str]:

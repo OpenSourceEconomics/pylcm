@@ -3,6 +3,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 
 import jax
+from dags.tree import QNAME_DELIMITER
 from jax import Array, vmap
 from jax import numpy as jnp
 
@@ -14,7 +15,6 @@ from lcm.exceptions import (
 )
 from lcm.grids import DiscreteGrid
 from lcm.input_processing.params_processing import process_params
-from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.Q_and_F import _get_feasibility
 from lcm.random import generate_simulation_keys
@@ -95,12 +95,13 @@ def calculate_next_states(
     """
     # Identify stochastic transitions and generate random keys
     # ---------------------------------------------------------------------------------
+    stochastic_transition_names = (
+        internal_regime.internal_functions.stochastic_transition_names
+    )
     stochastic_next_function_names = [
         next_func_name
-        for next_func_name, next_func in flatten_regime_namespace(
-            internal_regime.transitions
-        ).items()
-        if is_stochastic_transition(next_func)
+        for next_func_name in flatten_regime_namespace(internal_regime.transitions)
+        if next_func_name.split(QNAME_DELIMITER)[-1] in stochastic_transition_names
     ]
     # There is a bug that sometimes changes the order of the names,
     # sorting fixes this
@@ -428,6 +429,7 @@ def validate_initial_state_feasibility(
     initial_states: Mapping[str, Array],
     initial_regimes: list[RegimeName],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    initial_age: float,
 ) -> None:
     """Validate that initial states have at least one feasible action combination.
 
@@ -442,6 +444,7 @@ def validate_initial_state_feasibility(
         initial_regimes: List of regime names the subjects start in.
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
+        initial_age: Age at the first period (period 0).
 
     Raises:
         InvalidInitialStatesError: If any subject has no feasible action combination.
@@ -467,6 +470,7 @@ def validate_initial_state_feasibility(
             initial_states=initial_states,
             subject_indices=subject_indices,
             regime_params=regime_params,
+            initial_age=initial_age,
         )
         if msg is not None:
             error_messages.append(msg)
@@ -482,6 +486,7 @@ def _check_regime_feasibility(
     initial_states: Mapping[str, Array],
     subject_indices: list[int],
     regime_params: Mapping[str, object],
+    initial_age: float,
 ) -> str | None:
     """Check whether all subjects in a regime have at least one feasible action.
 
@@ -491,6 +496,7 @@ def _check_regime_feasibility(
         initial_states: Mapping of state names to arrays.
         subject_indices: Indices of subjects starting in this regime.
         regime_params: Merged fixed and runtime parameters for this regime.
+        initial_age: Age at the first period (period 0).
 
     Returns:
         An error message string if any subjects are infeasible, or None.
@@ -511,14 +517,22 @@ def _check_regime_feasibility(
     filtered_params = {k: v for k, v in regime_params.items() if k in accepted}
     state_names = list(internal_regime.variable_info.query("is_state").index)
 
+    # Initial states are always at period 0
+    initial_period_age: dict[str, float | int] = {}
+    if "period" in accepted:
+        initial_period_age["period"] = 0
+    if "age" in accepted:
+        initial_period_age["age"] = initial_age
+
     infeasible_indices: list[int] = []
     for idx in subject_indices:
-        kwargs: dict[str, Array | float] = {}
+        kwargs: dict[str, Array | float | int] = {}
         for sn in state_names:
             if sn in accepted:
                 kwargs[sn] = initial_states[sn][idx]
         kwargs.update({k: v for k, v in flat_actions.items() if k in accepted})
         kwargs.update(filtered_params)  # ty: ignore[no-matching-overload]
+        kwargs.update(initial_period_age)
 
         result = feasibility_func(**kwargs)
         if not jnp.any(result):

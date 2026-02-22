@@ -210,6 +210,7 @@ class Model:
                 initial_states=initial_states,
                 initial_regimes=initial_regimes,
                 internal_regimes=self.internal_regimes,
+                initial_age=float(self.ages.values[0]),
             )
         internal_params = process_params(
             params=params, params_template=self.params_template
@@ -268,6 +269,7 @@ class Model:
                 initial_states=initial_states,
                 initial_regimes=initial_regimes,
                 internal_regimes=self.internal_regimes,
+                initial_age=float(self.ages.values[0]),
             )
         V_arr_dict = self.solve(params, debug_mode=debug_mode)
         return self.simulate(
@@ -508,10 +510,10 @@ def _remove_fixed_from_template(
     template so users don't need to supply them at solve/simulate time.
 
     """
-    result: dict[str, dict[str, dict[str, type]]] = {}
+    result: dict[str, dict[str, dict[str, type | tuple[int, ...]]]] = {}
     for regime_name, regime_template in template.items():
         regime_fixed = fixed_internal.get(regime_name, MappingProxyType({}))
-        new_regime: dict[str, dict[str, type]] = {}
+        new_regime: dict[str, dict[str, type | tuple[int, ...]]] = {}
         for func_name, func_params in regime_template.items():
             new_func_params = {
                 param_name: param_type

@@ -9,8 +9,15 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
-import lcm
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    DiscreteMarkovGrid,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    categorical,
+)
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -102,14 +109,13 @@ dead = Regime(
 )
 
 
-@lcm.mark.stochastic
 def next_health(health: DiscreteState, health_transition: FloatND) -> FloatND:
     return health_transition[health]
 
 
 alive_stochastic = alive_deterministic.replace(
     states=dict(alive_deterministic.states)
-    | {"health": DiscreteGrid(HealthStatus, transition=next_health)},
+    | {"health": DiscreteMarkovGrid(HealthStatus, transition=next_health)},
 )
 
 model_deterministic = Model(

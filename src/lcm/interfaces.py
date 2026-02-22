@@ -136,13 +136,6 @@ class StateSpaceInfo:
     """Immutable mapping of continuous state names to their grids."""
 
 
-class ShockType(Enum):
-    """Type of shocks."""
-
-    EXTREME_VALUE = "extreme_value"
-    NONE = None
-
-
 class PhaseVariantContainer[S, T]:
     """Container for objects that vary whether we are in the solve or simulate phase."""
 
@@ -309,6 +302,9 @@ class InternalFunctions:
         | None
     )
     """Regime transition probability functions, or None for terminal regimes."""
+
+    stochastic_transition_names: frozenset[str] = frozenset()
+    """Frozenset of stochastic transition function names."""
 
     def get_all_functions(self) -> MappingProxyType[str, InternalUserFunction]:
         """Get all regime functions including utility, constraints, and transitions.

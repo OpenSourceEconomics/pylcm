@@ -10,7 +10,14 @@ from jax import Array
 
 from lcm import grid_helpers
 from lcm.exceptions import GridInitializationError, format_messages
-from lcm.typing import ContinuousState, DiscreteState, Float1D, Int1D, ScalarFloat
+from lcm.typing import (
+    ContinuousState,
+    DiscreteState,
+    Float1D,
+    FloatND,
+    Int1D,
+    ScalarFloat,
+)
 from lcm.utils import Unset, find_duplicates, get_field_names_and_values
 
 
@@ -135,6 +142,28 @@ class DiscreteGrid(Grid):
     def to_jax(self) -> Int1D:
         """Convert the grid to a Jax array."""
         return jnp.array(self.codes)
+
+
+class DiscreteMarkovGrid(DiscreteGrid):
+    """Discrete grid with a stochastic Markov transition."""
+
+    def __init__(
+        self,
+        category_class: type,
+        *,
+        transition: Callable[..., FloatND],
+    ) -> None:
+        if not callable(transition):
+            raise GridInitializationError(
+                f"DiscreteMarkovGrid requires a callable transition, "
+                f"but got {type(transition).__name__}: {transition!r}"
+            )
+        super().__init__(category_class, transition=transition)
+
+    @property
+    def n_states(self) -> int:
+        """Return the number of discrete states."""
+        return len(self.codes)
 
 
 @dataclass(frozen=True, kw_only=True)

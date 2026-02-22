@@ -11,8 +11,15 @@ See also the specifications in tests/test_models/deterministic.py.
 
 import jax.numpy as jnp
 
-import lcm
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    DiscreteMarkovGrid,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    categorical,
+)
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -130,7 +137,6 @@ def next_regime_from_retired(age: float, final_age_alive: float) -> ScalarInt:
 # --------------------------------------------------------------------------------------
 # Stochastic state transitions
 # --------------------------------------------------------------------------------------
-@lcm.mark.stochastic
 def next_health(health: DiscreteState, partner: DiscreteState) -> FloatND:
     """Stochastic transition with JIT-calculated markov transition probabilities."""
     return jnp.where(
@@ -148,7 +154,6 @@ def next_health(health: DiscreteState, partner: DiscreteState) -> FloatND:
     )
 
 
-@lcm.mark.stochastic
 def next_partner(
     period: Period,
     labor_supply: DiscreteAction,
@@ -182,8 +187,8 @@ working = Regime(
         ),
     },
     states={
-        "health": DiscreteGrid(HealthStatus, transition=next_health),
-        "partner": DiscreteGrid(PartnerStatus, transition=next_partner),
+        "health": DiscreteMarkovGrid(HealthStatus, transition=next_health),
+        "partner": DiscreteMarkovGrid(PartnerStatus, transition=next_partner),
         "wealth": LinSpacedGrid(
             start=1,
             stop=100,
@@ -207,8 +212,8 @@ working = Regime(
 retired = Regime(
     actions={"consumption": LinSpacedGrid(start=1, stop=100, n_points=200)},
     states={
-        "health": DiscreteGrid(HealthStatus, transition=next_health),
-        "partner": DiscreteGrid(PartnerStatus, transition=next_partner),
+        "health": DiscreteMarkovGrid(HealthStatus, transition=next_health),
+        "partner": DiscreteMarkovGrid(PartnerStatus, transition=next_partner),
         "wealth": LinSpacedGrid(
             start=1,
             stop=100,

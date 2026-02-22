@@ -18,7 +18,15 @@ from jax import random
 from scipy.interpolate import interp1d
 
 import lcm
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    DiscreteMarkovGrid,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    categorical,
+)
 from lcm.dispatchers import _base_productmap
 from lcm.typing import (
     BoolND,
@@ -253,7 +261,6 @@ def next_wealth(saving: ContinuousAction) -> ContinuousState:
     return saving
 
 
-@lcm.mark.stochastic
 def next_health(
     period: Period,
     health: DiscreteState,
@@ -273,7 +280,6 @@ def next_effort_t_1(effort: DiscreteAction) -> DiscreteState:
 # --------------------------------------------------------------------------------------
 # Regime Transitions
 # --------------------------------------------------------------------------------------
-@lcm.mark.stochastic
 def next_regime(
     period: Period,
     education: DiscreteState,
@@ -317,10 +323,11 @@ prod_shock_grid = lcm.shocks.ar1.Rouwenhorst(n_points=5, rho=rho, mu=0, sigma=1)
 
 ALIVE_REGIME = Regime(
     transition=next_regime,
+    stochastic_transition=True,
     active=partial(alive_is_active, final_age_alive=ages.values[-2]),
     states={
         "wealth": LinSpacedGrid(start=0, stop=49, n_points=50, transition=next_wealth),
-        "health": DiscreteGrid(HealthStatus, transition=next_health),
+        "health": DiscreteMarkovGrid(HealthStatus, transition=next_health),
         "productivity_shock": prod_shock_grid,
         "effort_t_1": DiscreteGrid(Effort, transition=next_effort_t_1),
         "adjustment_cost": lcm.shocks.iid.Uniform(n_points=5, start=0, stop=1),

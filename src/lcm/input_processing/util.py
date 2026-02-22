@@ -1,6 +1,4 @@
-from collections.abc import Callable
 from types import MappingProxyType
-from typing import Any
 
 import pandas as pd
 from dags import get_ancestors
@@ -9,10 +7,6 @@ from jax import Array
 from lcm.grids import ContinuousGrid, Grid
 from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
-
-
-def is_stochastic_transition(func: Callable[..., Any]) -> bool:
-    return hasattr(func, "_stochastic_info")
 
 
 def get_variable_info(regime: Regime) -> pd.DataFrame:
