@@ -9,8 +9,8 @@ from tests.test_models.deterministic.base import get_model, get_params
 @pytest.mark.xfail(
     reason=(
         "Simulation does not support heterogeneous initial ages. All subjects "
-        "are forced to start at period 0 (ages.minimum). The API has no "
-        "parameter to specify per-subject starting ages/periods."
+        "are forced to start at period 0 (ages.minimum). The simulation loop "
+        "does not yet use the per-subject age from initial_states."
     ),
     strict=True,
 )
@@ -18,20 +18,21 @@ def test_simulation_with_heterogeneous_initial_ages():
     """Subjects should be able to start simulation at different ages.
 
     The simulation loop iterates all periods starting from 0 for every subject.
-    There is no API to specify that some subjects enter the model at later ages
-    (e.g., age 2 instead of age 0). The solve_and_simulate method does not
-    accept an initial_periods parameter.
+    Even though `initial_states["age"]` can specify per-subject starting ages,
+    the simulation does not yet use them to offset each subject's timeline.
     """
     n_periods = 5
     model = get_model(n_periods)
     params = get_params(n_periods)
 
-    # Subject 0 starts at period 0 (age 0), subject 1 starts at period 2 (age 2)
+    # Subject 0 starts at age 0, subject 1 starts at age 2
     result = model.solve_and_simulate(
         params,
-        initial_states={"wealth": jnp.array([50.0, 50.0])},
+        initial_states={
+            "age": jnp.array([0.0, 2.0]),
+            "wealth": jnp.array([50.0, 50.0]),
+        },
         initial_regimes=["working", "working"],
-        initial_periods=jnp.array([0, 2]),
     )
     df = result.to_dataframe()
 
