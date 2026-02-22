@@ -22,7 +22,7 @@ from lcm.logging import get_logger
 from lcm.regime import Regime
 from lcm.simulation.result import SimulationResult
 from lcm.simulation.simulate import simulate
-from lcm.simulation.util import validate_initial_state_feasibility
+from lcm.simulation.util import validate_initial_conditions
 from lcm.solution.solve_brute import solve
 from lcm.typing import (
     FloatND,
@@ -173,7 +173,7 @@ class Model:
         initial_regimes: list[RegimeName],
         V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
         *,
-        check_initial_state_feasibility: bool = True,
+        check_initial_conditions: bool = True,
         seed: int | None = None,
         debug_mode: bool = True,
     ) -> SimulationResult:
@@ -193,8 +193,7 @@ class Model:
                 state variable defined in at least one regime.
             initial_regimes: List of regime names the subjects start in.
             V_arr_dict: Value function arrays from solve().
-            check_initial_state_feasibility: Whether to check that initial
-                states have at least one feasible action combination.
+            check_initial_conditions: Whether to validate initial states and regimes.
             seed: Random seed.
             debug_mode: Whether to enable debug logging.
 
@@ -203,18 +202,17 @@ class Model:
             optionally with additional_targets.
 
         """
-        if check_initial_state_feasibility:
-            validate_initial_state_feasibility(
-                params=params,
-                params_template=self.params_template,
-                initial_states=initial_states,
-                initial_regimes=initial_regimes,
-                internal_regimes=self.internal_regimes,
-                initial_age=float(self.ages.values[0]),
-            )
         internal_params = process_params(
             params=params, params_template=self.params_template
         )
+        if check_initial_conditions:
+            validate_initial_conditions(
+                initial_states=initial_states,
+                initial_regimes=initial_regimes,
+                internal_regimes=self.internal_regimes,
+                internal_params=internal_params,
+                ages=self.ages,
+            )
         return simulate(
             internal_params=internal_params,
             initial_states=initial_states,
@@ -233,7 +231,7 @@ class Model:
         initial_states: Mapping[str, Array],
         initial_regimes: list[RegimeName],
         *,
-        check_initial_state_feasibility: bool = True,
+        check_initial_conditions: bool = True,
         seed: int | None = None,
         debug_mode: bool = True,
     ) -> SimulationResult:
@@ -252,8 +250,7 @@ class Model:
                 same length (number of subjects). Each state name should correspond to a
                 state variable defined in at least one regime.
             initial_regimes: List of regime names the subjects start in.
-            check_initial_state_feasibility: Whether to check that initial
-                states have at least one feasible action combination.
+            check_initial_conditions: Whether to validate initial states and regimes.
             seed: Random seed.
             debug_mode: Whether to enable debug logging.
 
@@ -262,24 +259,33 @@ class Model:
             optionally with additional_targets.
 
         """
-        if check_initial_state_feasibility:
-            validate_initial_state_feasibility(
-                params=params,
-                params_template=self.params_template,
+        internal_params = process_params(
+            params=params, params_template=self.params_template
+        )
+        if check_initial_conditions:
+            validate_initial_conditions(
                 initial_states=initial_states,
                 initial_regimes=initial_regimes,
                 internal_regimes=self.internal_regimes,
-                initial_age=float(self.ages.values[0]),
+                internal_params=internal_params,
+                ages=self.ages,
             )
-        V_arr_dict = self.solve(params, debug_mode=debug_mode)
-        return self.simulate(
-            params=params,
+        V_arr_dict = solve(
+            internal_params=internal_params,
+            ages=self.ages,
+            internal_regimes=self.internal_regimes,
+            logger=get_logger(debug_mode=debug_mode),
+        )
+        return simulate(
+            internal_params=internal_params,
             initial_states=initial_states,
             initial_regimes=initial_regimes,
+            internal_regimes=self.internal_regimes,
+            regime_names_to_ids=self.regime_names_to_ids,
+            logger=get_logger(debug_mode=debug_mode),
             V_arr_dict=V_arr_dict,
-            check_initial_state_feasibility=False,
+            ages=self.ages,
             seed=seed,
-            debug_mode=debug_mode,
         )
 
 

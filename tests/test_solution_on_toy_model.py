@@ -492,7 +492,10 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
     }
     result = model.solve_and_simulate(
         params={"discount_factor": discount_factor, "alive": params_alive},
-        initial_states={"wealth": jnp.array([0.25, 0.75, 1.25, 1.75])},
+        initial_states={
+            "wealth": jnp.array([0.25, 0.75, 1.25, 1.75]),
+            "age": jnp.array([0.0, 0.0, 0.0, 0.0]),
+        },
         initial_regimes=["alive"] * 4,
     )
     # Filter to alive regime only (dead regime has trivial values)
@@ -619,6 +622,7 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, health_transition
     initial_states = {
         "wealth": jnp.array([0.25, 0.75, 1.25, 1.75, 2.0]),
         "health": jnp.array([0, 1, 0, 1, 1]),
+        "age": jnp.array([0.0, 0.0, 0.0, 0.0, 0.0]),
     }
     result = model.solve_and_simulate(
         params={"discount_factor": discount_factor, "alive": params_alive},

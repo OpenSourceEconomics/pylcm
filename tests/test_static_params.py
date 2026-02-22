@@ -107,7 +107,10 @@ def test_solve_and_simulate_with_fixed_params():
     params_full = {"discount_factor": 0.95, "interest_rate": 0.05}
     result_full = model_full.solve_and_simulate(
         params=params_full,
-        initial_states={"wealth": jnp.array([5.0, 7.0])},
+        initial_states={
+            "wealth": jnp.array([5.0, 7.0]),
+            "age": jnp.array([0.0, 0.0]),
+        },
         initial_regimes=["alive", "alive"],
         debug_mode=False,
     )
@@ -119,7 +122,10 @@ def test_solve_and_simulate_with_fixed_params():
     params_fixed = {"discount_factor": 0.95}
     result_fixed = model_fixed.solve_and_simulate(
         params=params_fixed,
-        initial_states={"wealth": jnp.array([5.0, 7.0])},
+        initial_states={
+            "wealth": jnp.array([5.0, 7.0]),
+            "age": jnp.array([0.0, 0.0]),
+        },
         initial_regimes=["alive", "alive"],
         debug_mode=False,
     )
