@@ -347,6 +347,33 @@ def validate_initial_conditions(
         raise InvalidInitialConditionsError(format_messages(feasibility_errors))
 
 
+def _format_missing_states_message(missing: set[str], required: set[str]) -> str:
+    """Format an error message for missing initial states.
+
+    Provides a specific hint when 'age' is missing, since users often omit it.
+
+    Args:
+        missing: Set of missing state names.
+        required: Set of all required state names.
+
+    Returns:
+        A formatted error message string.
+
+    """
+    parts: list[str] = []
+    if "age" in missing:
+        parts.append(
+            "'age' must be provided in initial_states so the validation "
+            "knows each subject's starting age. Example: "
+            "initial_states={'age': jnp.array([25.0, 25.0]), ...}"
+        )
+    missing_model_states = sorted(missing - {"age"})
+    if missing_model_states:
+        parts.append(f"Missing model states: {missing_model_states}.")
+    parts.append(f"Required initial states are: {sorted(required)}")
+    return " ".join(parts)
+
+
 def _collect_structural_errors(
     *,
     initial_states: Mapping[str, Array],
@@ -391,10 +418,7 @@ def _collect_structural_errors(
 
     missing = required_states - provided_states
     if missing:
-        errors.append(
-            f"Missing initial states: {sorted(missing)}. "
-            f"Required states are: {sorted(required_states)}"
-        )
+        errors.append(_format_missing_states_message(missing, required_states))
 
     extra = provided_states - required_states
     if extra:

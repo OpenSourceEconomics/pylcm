@@ -132,7 +132,7 @@ def test_validate_initial_conditions_missing_state(
     }
 
     with pytest.raises(
-        InvalidInitialConditionsError, match=r"Missing initial states: \['health'\].*"
+        InvalidInitialConditionsError, match=r"Missing model states: \['health'\]"
     ):
         validate_initial_conditions(
             initial_states=flat,
@@ -398,4 +398,25 @@ def test_irreg_spaced_grid_with_runtime_points():
             params=params,
             initial_states={"wealth": jnp.array([0.3])},
             initial_regimes=["working"],
+        )
+
+
+def test_missing_age_error_message(
+    model: Model, internal_params: InternalParams
+) -> None:
+    """Issue #256: missing 'age' in initial_states should produce a helpful message."""
+    flat = {
+        "wealth": jnp.array([10.0]),
+        "health": jnp.array([0]),
+    }
+    with pytest.raises(
+        InvalidInitialConditionsError,
+        match="'age' must be provided in initial_states",
+    ):
+        validate_initial_conditions(
+            initial_states=flat,
+            initial_regimes=["active"],
+            internal_regimes=model.internal_regimes,
+            internal_params=internal_params,
+            ages=model.ages,
         )
