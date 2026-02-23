@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import jax.numpy as jnp
 import pytest
 
-from lcm import DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import DiscreteGrid, IrregSpacedGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidInitialConditionsError
 from lcm.input_processing.params_processing import process_params
@@ -346,3 +346,23 @@ def test_on_grid_initial_states_accepted():
         initial_states={"wealth": jnp.array([5.0])},
         initial_regimes=["working"],
     )
+
+
+def test_irreg_spaced_grid_with_runtime_points():
+    """Feasibility check works when grid points are supplied at runtime via params."""
+    model = _make_constraint_model(
+        wealth_grid=IrregSpacedGrid(n_points=15, transition=_next_wealth)
+    )
+    params = {
+        "discount_factor": 0.95,
+        "working": {
+            "wealth": {"points": jnp.linspace(0.3, 10, 15)},
+            "next_regime": {"final_age_alive": 1},
+        },
+    }
+    with pytest.raises(InvalidInitialConditionsError):
+        model.solve_and_simulate(
+            params=params,
+            initial_states={"wealth": jnp.array([0.3])},
+            initial_regimes=["working"],
+        )
