@@ -5,7 +5,6 @@ from typing import Any, cast
 import jax.numpy as jnp
 from dags import concatenate_functions
 from dags.signature import with_signature
-from dags.tree import QNAME_DELIMITER
 from jax import Array
 
 from lcm.dispatchers import productmap
@@ -114,6 +113,14 @@ def get_Q_and_F(
     # Create the state-action value and feasibility function
     # ----------------------------------------------------------------------------------
 
+    # Determine which qname params H accepts so we can filter at runtime.
+    # This is necessary when the params template is the union of multiple
+    # PhaseVariant signatures but each variant only uses its own subset.
+    _H_func = internal_functions.functions["H"]
+    _H_accepted_params = frozenset(
+        get_union_of_args([_H_func]) - {"utility", "E_next_V"}
+    )
+
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         [
             U_and_F,
@@ -160,7 +167,7 @@ def get_Q_and_F(
             active_regimes_next_period=active_regimes_next_period,
         )
 
-        continuation_value = jnp.zeros_like(U_arr)
+        E_next_V = jnp.zeros_like(U_arr)
         for target_regime_name in active_regimes_next_period:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,
@@ -197,20 +204,16 @@ def get_Q_and_F(
                 next_V_at_stochastic_states_arr,
                 weights=joint_next_stochastic_states_weights,
             )
-            continuation_value = (
-                continuation_value
+            E_next_V = (
+                E_next_V
                 + normalized_regime_transition_probs[target_regime_name]
                 * next_V_expected_arr
             )
 
         H_kwargs = {
-            k: v
-            for k, v in states_actions_params.items()
-            if k.startswith(f"H{QNAME_DELIMITER}")
+            k: v for k, v in states_actions_params.items() if k in _H_accepted_params
         }
-        Q_arr = internal_functions.functions["H"](
-            utility=U_arr, continuation_value=continuation_value, **H_kwargs
-        )
+        Q_arr = _H_func(utility=U_arr, E_next_V=E_next_V, **H_kwargs)
 
         # Handle cases when there is only one state.
         # In that case, Q_arr and F_arr are scalars, but we require arrays as output.

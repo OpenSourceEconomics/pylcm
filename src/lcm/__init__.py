@@ -19,6 +19,7 @@ from lcm.grids import (
     PiecewiseLogSpacedGrid,
     categorical,
 )
+from lcm.interfaces import PhaseVariant
 from lcm.model import Model
 from lcm.regime import Regime
 from lcm.simulation.result import SimulationResult
@@ -39,6 +40,7 @@ __all__ = [
     "LinSpacedGrid",
     "LogSpacedGrid",
     "Model",
+    "PhaseVariant",
     "Piece",
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",

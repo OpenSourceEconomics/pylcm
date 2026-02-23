@@ -136,14 +136,30 @@ class StateSpaceInfo:
     """Immutable mapping of continuous state names to their grids."""
 
 
-class PhaseVariantContainer[S, T]:
-    """Container for objects that vary whether we are in the solve or simulate phase."""
+class PhaseVariant[S, T]:
+    """Container for phase-specific function variants.
+
+    Use this to provide different implementations of a function for the solve
+    and simulate phases.  For example, naive beta-delta discounting uses
+    exponential discounting during backward induction (solve) but present-biased
+    discounting for action selection (simulate).
+
+    Variants may have different parameter signatures.  The params template is
+    the union of both variants' parameters; each variant receives only the
+    kwargs it expects.
+
+    """
 
     __slots__ = ("simulate", "solve")
 
     def __init__(self, *, solve: S, simulate: T) -> None:
         self.solve = solve
         self.simulate = simulate
+
+
+# Internal alias kept for backward compatibility with existing infrastructure
+# that already uses `PhaseVariantContainer`.
+PhaseVariantContainer = PhaseVariant
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -305,6 +321,32 @@ class InternalFunctions:
 
     stochastic_transition_names: frozenset[str] = frozenset()
     """Frozenset of stochastic transition function names."""
+
+    simulate_overrides: MappingProxyType[str, InternalUserFunction] = MappingProxyType(
+        {}
+    )
+    """Simulate-phase overrides for functions that have PhaseVariant entries.
+
+    Keys are function names whose simulate variant differs from the solve variant
+    stored in `functions`.
+    """
+
+    def with_simulate_overrides(self) -> InternalFunctions:
+        """Return a copy with simulate overrides applied to functions.
+
+        For functions with phase variants, replaces the solve variant
+        with the simulate variant.
+
+        """
+        if not self.simulate_overrides:
+            return self
+        merged = dict(self.functions) | dict(self.simulate_overrides)
+        return InternalFunctions(
+            functions=MappingProxyType(merged),
+            constraints=self.constraints,
+            transitions=self.transitions,
+            regime_transition_probs=self.regime_transition_probs,
+        )
 
     def get_all_functions(self) -> MappingProxyType[str, InternalUserFunction]:
         """Get all regime functions including utility, constraints, and transitions.

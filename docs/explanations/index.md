@@ -16,3 +16,5 @@ hood.
 - [Interpolation and Extrapolation](interpolation.ipynb) — How pylcm's
   coordinate finders and `map_coordinates` handle interpolation and extrapolation across
   grid types.
+- [Beta-Delta (Quasi-Hyperbolic) Discounting](beta_delta.ipynb) — How to use the plugin
+  system to model consumers with this particular form of time-inconsistent preferences.

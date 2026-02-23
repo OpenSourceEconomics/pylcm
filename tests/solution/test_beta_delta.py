@@ -21,7 +21,7 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_allclose
 
-from lcm import AgeGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import AgeGrid, LinSpacedGrid, Model, PhaseVariant, Regime, categorical
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 
@@ -61,13 +61,21 @@ def borrowing_constraint(
     return consumption <= wealth
 
 
+def exponential_H(
+    utility: float,
+    E_next_V: float,
+    discount_factor: float,
+) -> float:
+    return utility + discount_factor * E_next_V
+
+
 def beta_delta_H(
     utility: float,
-    continuation_value: float,
+    E_next_V: float,
     beta: float,
     delta: float,
 ) -> float:
-    return utility + beta * delta * continuation_value
+    return utility + beta * delta * E_next_V
 
 
 # --------------------------------------------------------------------------------------
@@ -79,7 +87,7 @@ N_WEALTH = 200
 N_CONSUMPTION = 500
 
 
-def _make_model():
+def _make_model(*, H_func=beta_delta_H):
     working = Regime(
         actions={
             "consumption": LinSpacedGrid(
@@ -100,7 +108,7 @@ def _make_model():
         transition=next_regime,
         functions={
             "utility": utility,
-            "H": beta_delta_H,
+            "H": H_func,
         },
         active=lambda age: age <= 1,
     )
@@ -154,15 +162,15 @@ def _denominators_naive(beta, delta):
         ("exponential", 1.0, 0.95),
         ("sophisticated", 0.7, 0.95),
         ("naive", 0.7, 0.95),
+        ("naive_phase_variant", 0.7, 0.95),
     ],
 )
 def test_beta_delta_consumption(label, beta, delta):
-    model = _make_model()
     initial_wealth = jnp.array([20.0])
     initial_age = jnp.array([0.0])
     w0 = 20.0
 
-    if label == "naive":
+    if label.startswith("naive"):
         d0_exp, d1_exp = _denominators_naive(beta, delta)
     else:
         d0_exp, d1_exp = _denominators(beta, delta)
@@ -172,7 +180,24 @@ def test_beta_delta_consumption(label, beta, delta):
 
     h_params = {"beta": beta, "delta": delta}
 
-    if label == "naive":
+    if label == "naive_phase_variant":
+        # Use PhaseVariant to solve with exponential H, simulate with beta-delta H
+        model = _make_model(
+            H_func=PhaseVariant(solve=exponential_H, simulate=beta_delta_H),
+        )
+        # Params are the union of both variants' params
+        result = model.solve_and_simulate(
+            params={
+                "working": {
+                    "H": {"discount_factor": delta, "beta": beta, "delta": delta},
+                },
+            },
+            initial_states={"age": initial_age, "wealth": initial_wealth},
+            initial_regimes=["working"],
+            debug_mode=False,
+        )
+    elif label == "naive":
+        model = _make_model()
         # Solve with exponential discounting (beta=1)
         solve_params = {"working": {"H": {"beta": 1.0, "delta": delta}}}
         V = model.solve(solve_params, debug_mode=False)
@@ -187,6 +212,7 @@ def test_beta_delta_consumption(label, beta, delta):
             debug_mode=False,
         )
     else:
+        model = _make_model()
         result = model.solve_and_simulate(
             params={"working": {"H": h_params}},
             initial_states={"age": initial_age, "wealth": initial_wealth},

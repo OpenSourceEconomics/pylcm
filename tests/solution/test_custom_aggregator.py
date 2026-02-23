@@ -68,14 +68,14 @@ def borrowing_constraint(
 # --------------------------------------------------------------------------------------
 def ces_H(
     utility: float,
-    continuation_value: float,
+    E_next_V: float,
     discount_factor: float,
     ies: float,
 ) -> float:
     rho = 1 - ies
-    return (
-        (1 - discount_factor) * utility**rho + discount_factor * continuation_value**rho
-    ) ** (1 / rho)
+    return ((1 - discount_factor) * utility**rho + discount_factor * E_next_V**rho) ** (
+        1 / rho
+    )
 
 
 START_AGE = 0
@@ -183,8 +183,8 @@ def test_default_H_not_injected_for_terminal():
 def test_custom_H_not_overwritten():
     """A user-provided H should not be replaced by the default."""
 
-    def my_H(utility: float, continuation_value: float) -> float:
-        return utility + continuation_value
+    def my_H(utility: float, E_next_V: float) -> float:
+        return utility + E_next_V
 
     r = Regime(
         transition=lambda: {"a": 1.0},

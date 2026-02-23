@@ -26,7 +26,11 @@ from lcm.input_processing.util import (
     get_gridspecs,
     get_variable_info,
 )
-from lcm.interfaces import InternalFunctions, InternalRegime
+from lcm.interfaces import (
+    InternalFunctions,
+    InternalRegime,
+    PhaseVariant,
+)
 from lcm.ndimage import map_coordinates
 from lcm.regime import Regime, _collect_state_transitions
 from lcm.shocks import _ShockGrid
@@ -143,7 +147,8 @@ def process_regimes(
             enable_jit=enable_jit,
         )
 
-        Q_and_F_functions = build_Q_and_F_functions(
+        # Build Q_and_F for solve (uses the default functions, i.e. solve variants).
+        Q_and_F_solve = build_Q_and_F_functions(
             regime_name=name,
             regime=regime,
             regimes_to_active_periods=regimes_to_active_periods,
@@ -152,14 +157,32 @@ def process_regimes(
             ages=ages,
             regime_params_template=regime_params_template,
         )
+
+        # Build Q_and_F for simulate (uses simulate overrides if any).
+        if _has_phase_variants(regime):
+            simulate_internal_functions = _resolve_internal_functions_for_simulate(
+                internal_functions,
+            )
+            Q_and_F_simulate = build_Q_and_F_functions(
+                regime_name=name,
+                regime=regime,
+                regimes_to_active_periods=regimes_to_active_periods,
+                internal_functions=simulate_internal_functions,
+                state_space_infos=state_space_infos,
+                ages=ages,
+                regime_params_template=regime_params_template,
+            )
+        else:
+            Q_and_F_simulate = Q_and_F_solve
+
         max_Q_over_a_functions = build_max_Q_over_a_functions(
             state_action_space=state_action_spaces[name],
-            Q_and_F_functions=Q_and_F_functions,
+            Q_and_F_functions=Q_and_F_solve,
             enable_jit=enable_jit,
         )
         argmax_and_max_Q_over_a_functions = build_argmax_and_max_Q_over_a_functions(
             state_action_space=state_action_spaces[name],
-            Q_and_F_functions=Q_and_F_functions,
+            Q_and_F_functions=Q_and_F_simulate,
             enable_jit=enable_jit,
         )
         next_state_simulation_function = build_next_state_simulation_functions(
@@ -239,9 +262,23 @@ def _get_internal_functions(
     # We rename user function parameters to qualified names (e.g.,
     # risk_aversion -> utility__risk_aversion) so they can be matched with flat params.
 
+    # Collect PhaseVariant entries from regime.functions for separate handling.
+    phase_variant_entries: dict[str, PhaseVariant] = {
+        name: func
+        for name, func in regime.functions.items()
+        if isinstance(func, PhaseVariant)
+    }
+    # For the purpose of building all_functions, use the solve variant as
+    # the representative callable (get_all_functions already does this).
+    resolved_functions: dict[str, UserFunction] = {}
+    for name, func in regime.functions.items():
+        resolved_functions[name] = cast(
+            "UserFunction", func.solve if isinstance(func, PhaseVariant) else func
+        )
+
     # Build all_functions using nested_transitions (to get prefixed names)
-    all_functions = {
-        **regime.functions,
+    all_functions: dict[str, UserFunction] = {
+        **resolved_functions,
         **regime.constraints,
         **flat_nested_transitions,
     }
@@ -277,13 +314,27 @@ def _get_internal_functions(
     }
 
     functions: dict[str, InternalUserFunction] = {}
+    simulate_overrides: dict[str, InternalUserFunction] = {}
 
     for func_name, func in deterministic_functions.items():
-        functions[func_name] = _rename_params_to_qnames(
-            func=func,
-            regime_params_template=regime_params_template,
-            param_key=func_name,
-        )
+        if func_name in phase_variant_entries:
+            pv = phase_variant_entries[func_name]
+            functions[func_name] = _rename_params_to_qnames(
+                func=pv.solve,
+                regime_params_template=regime_params_template,
+                param_key=func_name,
+            )
+            simulate_overrides[func_name] = _rename_params_to_qnames(
+                func=pv.simulate,
+                regime_params_template=regime_params_template,
+                param_key=func_name,
+            )
+        else:
+            functions[func_name] = _rename_params_to_qnames(
+                func=func,
+                regime_params_template=regime_params_template,
+                param_key=func_name,
+            )
 
     for func_name, func in deterministic_transition_functions.items():
         param_key = _extract_param_key(func_name)
@@ -353,7 +404,28 @@ def _get_internal_functions(
         transitions=_wrap_transitions(unflatten_regime_namespace(internal_transition)),
         regime_transition_probs=internal_regime_transition_probs,
         stochastic_transition_names=stochastic_transition_names,
+        simulate_overrides=MappingProxyType(simulate_overrides),
     )
+
+
+def _has_phase_variants(regime: Regime) -> bool:
+    """Check if any function in the regime is a PhaseVariant."""
+    return any(isinstance(f, PhaseVariant) for f in regime.functions.values())
+
+
+def _resolve_internal_functions_for_simulate(
+    internal_functions: InternalFunctions,
+) -> InternalFunctions:
+    """Return InternalFunctions with simulate overrides applied.
+
+    Args:
+        internal_functions: The internal functions with possible simulate overrides.
+
+    Returns:
+        InternalFunctions with simulate overrides merged into functions.
+
+    """
+    return internal_functions.with_simulate_overrides()
 
 
 def _extract_transitions_from_regime(

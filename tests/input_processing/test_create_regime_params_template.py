@@ -29,10 +29,10 @@ def test_create_params_without_shocks(binary_category_class):
 
 
 def test_create_params_with_custom_H_no_extra_params():
-    """A custom H with no extra params beyond utility and continuation_value."""
+    """A custom H with no extra params beyond utility and E_next_V."""
 
-    def custom_H(utility: float, continuation_value: float) -> float:
-        return utility + continuation_value
+    def custom_H(utility: float, E_next_V: float) -> float:
+        return utility + E_next_V
 
     regime = RegimeMock(
         actions={
@@ -62,8 +62,8 @@ def test_default_H_with_state_named_discount_factor_raises():
 def test_custom_function_shadowing_state_raises():
     """A custom function whose param name matches a state must error."""
 
-    def custom_H(utility: float, continuation_value: float, wealth: float) -> float:
-        return utility + wealth * continuation_value
+    def custom_H(utility: float, E_next_V: float, wealth: float) -> float:
+        return utility + wealth * E_next_V
 
     regime = RegimeMock(
         actions={"a": None},
