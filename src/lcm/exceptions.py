@@ -10,8 +10,8 @@ class InvalidRegimeTransitionProbabilitiesError(PyLCMError):
     """Raised when the regime transition probabilities are invalid."""
 
 
-class InvalidInitialStatesError(PyLCMError):
-    """Raised when the initial states are invalid."""
+class InvalidInitialConditionsError(PyLCMError):
+    """Raised when the initial conditions (states or regimes) are invalid."""
 
 
 class InvalidParamsError(PyLCMError):

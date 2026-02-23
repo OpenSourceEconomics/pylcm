@@ -6,8 +6,17 @@ import pytest
 from numpy.testing import assert_array_almost_equal
 
 import lcm
-from lcm import AgeGrid, DiscreteGrid, Model
-from lcm.typing import DiscreteState, FloatND, UserParams
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm.exceptions import InvalidParamsError
+from lcm.typing import (
+    BoolND,
+    ContinuousAction,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    ScalarInt,
+    UserParams,
+)
 from tests.test_models.stochastic import (
     HealthStatus,
     RegimeId,
@@ -216,3 +225,158 @@ def test_compare_deterministic_and_stochastic_results_value_function(
         df_deterministic.reset_index(drop=True),
         df_stochastic.reset_index(drop=True),
     )
+
+
+# ======================================================================================
+# Minimal stochastic model for issue reproducers
+# ======================================================================================
+
+
+@lcm.mark.stochastic
+def _next_shock(shock: DiscreteState, shock_transition: FloatND) -> FloatND:
+    """Default stochastic transition using a pre-computed transition matrix."""
+    return shock_transition[shock]
+
+
+def _make_minimal_stochastic_model(shock_transition_func=None) -> Model:
+    """Create a minimal stochastic model with a discrete shock state."""
+    if shock_transition_func is None:
+        shock_transition_func = _next_shock
+
+    final_age = 1
+
+    @categorical
+    class ShockStatus:
+        bad: int
+        good: int
+
+    @categorical
+    class ShockRegimeId:
+        working: int
+        dead: int
+
+    def utility(consumption: ContinuousAction, shock: DiscreteState) -> FloatND:
+        bonus = jnp.where(shock == ShockStatus.good, 1.0, 0.0)
+        return jnp.log(consumption) + bonus
+
+    def next_wealth(
+        wealth: ContinuousState, consumption: ContinuousAction
+    ) -> ContinuousState:
+        return wealth - consumption + 2.0
+
+    def borrowing_constraint(
+        consumption: ContinuousAction, wealth: ContinuousState
+    ) -> BoolND:
+        return consumption <= wealth
+
+    def next_regime(age: float, final_age_alive: float) -> ScalarInt:
+        return jnp.where(
+            age >= final_age_alive, ShockRegimeId.dead, ShockRegimeId.working
+        )
+
+    working_regime = Regime(
+        actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=20)},
+        states={
+            "shock": DiscreteGrid(ShockStatus, transition=shock_transition_func),
+            "wealth": LinSpacedGrid(
+                start=1, stop=10, n_points=15, transition=next_wealth
+            ),
+        },
+        constraints={"borrowing_constraint": borrowing_constraint},
+        transition=next_regime,
+        functions={"utility": utility},
+        active=lambda age: age <= final_age,
+    )
+    dead_regime = Regime(
+        transition=None,
+        functions={"utility": lambda: 0.0},
+        active=lambda age: age > final_age,
+    )
+    return Model(
+        regimes={"working": working_regime, "dead": dead_regime},
+        ages=AgeGrid(start=0, stop=final_age + 1, step="Y"),
+        regime_id_class=ShockRegimeId,
+    )
+
+
+# ======================================================================================
+# Issue reproducers / regression guards
+# ======================================================================================
+
+
+def test_stochastic_next_function_with_no_arguments():
+    """Issue #39 (resolved): zero-arg stochastic next functions now work.
+
+    Regression guard -- previously the weight function machinery assumed at least
+    one argument, causing a failure.
+    """
+
+    @lcm.mark.stochastic
+    def next_shock_no_args() -> FloatND:
+        return jnp.array([0.5, 0.5])
+
+    model = _make_minimal_stochastic_model(next_shock_no_args)
+    params = {
+        "discount_factor": 0.95,
+        "working": {"next_regime": {"final_age_alive": 1}},
+    }
+    V = model.solve(params)
+    assert all(jnp.all(jnp.isfinite(V[p]["working"])) for p in V if "working" in V[p])
+
+
+def test_stochastic_next_depending_on_continuous_state():
+    """Issue #35 (resolved): stochastic next functions can depend on continuous states.
+
+    Regression guard -- previously an explicit check rejected any stochastic
+    dependency that was not a discrete state.
+    """
+
+    @lcm.mark.stochastic
+    def next_shock_continuous(wealth: ContinuousState) -> FloatND:
+        p_good = jnp.clip(wealth / 10.0, 0.1, 0.9)
+        return jnp.array([1.0 - p_good, p_good])
+
+    model = _make_minimal_stochastic_model(next_shock_continuous)
+    params = {
+        "discount_factor": 0.95,
+        "working": {"next_regime": {"final_age_alive": 1}},
+    }
+    V = model.solve(params)
+    assert all(jnp.all(jnp.isfinite(V[p]["working"])) for p in V if "working" in V[p])
+
+
+@pytest.mark.xfail(reason="Issue #63: wrong transition matrix shapes not validated")
+@pytest.mark.parametrize("bad_shape", [(1, 2), (4, 2)])
+def test_wrong_transition_matrix_shape_rejected(bad_shape):
+    """Issue #63: solve should reject wrong-shaped transition matrices.
+
+    ShockStatus has 2 values, so the transition matrix must be (2, 2).
+    Passing (1, 2) or (4, 2) should raise a validation error but currently
+    succeeds silently (JAX clips out-of-bounds indices).
+    """
+    model = _make_minimal_stochastic_model()
+    params = {
+        "discount_factor": 0.95,
+        "working": {
+            "next_shock": {
+                "shock_transition": jnp.ones(bad_shape) / bad_shape[1],
+            },
+            "next_regime": {"final_age_alive": 1},
+        },
+    }
+    with pytest.raises(InvalidParamsError):
+        model.solve(params)
+
+
+@pytest.mark.xfail(reason="Issue #185: no shape info in params_template")
+def test_params_template_includes_stochastic_transition_shape():
+    """Issue #185: params_template should include required array shapes.
+
+    For this model, shock_transition[shock] indexes by current shock state (0 or 1)
+    and returns a probability vector of length 2, so the correct shape is (2, 2).
+    Currently the template only shows the type alias (FloatND).
+    """
+    model = _make_minimal_stochastic_model()
+    template = model.params_template
+    shock_info = template["working"]["next_shock"]["shock_transition"]
+    assert isinstance(shock_info, tuple)

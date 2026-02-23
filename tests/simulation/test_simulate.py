@@ -187,19 +187,19 @@ def test_simulate_with_only_discrete_actions():
 
     result = model.solve_and_simulate(
         params,
-        initial_states={"wealth": jnp.array([0, 4])},
+        initial_states={"wealth": jnp.array([0, 2])},
         initial_regimes=["working"] * 2,
     )
     got = result.to_dataframe().query('regime == "working"')
 
     # Expected: sorted by (subject_id, period)
-    # Subject 0: wealth=0 -> works, low; wealth=2 -> retires, high
-    # Subject 1: wealth=4 -> retires, high; wealth=2 -> retires, high
+    # Subject 0: wealth=low -> works, low consumption; wealth=high -> retires, high
+    # Subject 1: wealth=high -> retires, high; wealth=medium -> retires, high
     expected = pd.DataFrame(
         {
             "subject_id": [0, 0, 1, 1],
             "period": [0, 1, 0, 1],
-            "wealth": [0.0, 2.0, 4.0, 2.0],
+            "wealth": ["low", "high", "high", "medium"],
             "labor_supply": ["work", "retire", "retire", "retire"],
             "consumption": ["low", "high", "high", "high"],
         }
