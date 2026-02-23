@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import jax.numpy as jnp
 import pytest
 
-from lcm import DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import DiscreteGrid, IrregSpacedGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidInitialConditionsError
 from lcm.input_processing.params_processing import process_params
@@ -251,77 +251,69 @@ def test_validate_initial_conditions_invalid_age_values(
 #
 #   v_0 = 0.25 < 0.5 = constraint < v_1 = 1.0 < 2.0 = grid_min < v_2 = 5.0
 
-_FINAL_AGE_64 = 1
 
-
-@categorical
-class _RegimeId64:
-    working: int
-    dead: int
-
-
-def _utility_64(consumption: ContinuousAction) -> FloatND:
-    return jnp.log(consumption)
-
-
-def _next_wealth_64(
+def _next_wealth(
     wealth: ContinuousState, consumption: ContinuousAction
 ) -> ContinuousState:
     return wealth - consumption + 2.0
 
 
-def _borrowing_constraint_64(
-    consumption: ContinuousAction, wealth: ContinuousState
-) -> BoolND:
-    return consumption <= wealth
+def _make_constraint_model(wealth_grid) -> Model:
+    """Create a constraint model with the given wealth grid."""
+    final_age = 1
 
+    @categorical
+    class RegimeId:
+        working: int
+        dead: int
 
-def _next_regime_64(age: float, final_age_alive: float) -> ScalarInt:
-    dead = _RegimeId64.dead
-    working = _RegimeId64.working
-    return jnp.where(age >= final_age_alive, dead, working)
+    def utility(consumption: ContinuousAction) -> FloatND:
+        return jnp.log(consumption)
 
+    def borrowing_constraint(
+        consumption: ContinuousAction, wealth: ContinuousState
+    ) -> BoolND:
+        return consumption <= wealth
 
-@pytest.fixture
-def constraint_model():
-    """Model where constraint threshold (0.5) < grid minimum (2.0)."""
+    def next_regime(age: float, final_age_alive: float) -> ScalarInt:
+        return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.working)
+
     working_regime = Regime(
         actions={
             "consumption": LinSpacedGrid(start=0.5, stop=10, n_points=20),
         },
-        states={
-            "wealth": LinSpacedGrid(
-                start=2.0, stop=10, n_points=15, transition=_next_wealth_64
-            ),
-        },
-        constraints={"borrowing_constraint": _borrowing_constraint_64},
-        transition=_next_regime_64,
-        functions={"utility": _utility_64},
-        active=lambda age: age <= _FINAL_AGE_64,
+        states={"wealth": wealth_grid},
+        constraints={"borrowing_constraint": borrowing_constraint},
+        transition=next_regime,
+        functions={"utility": utility},
+        active=lambda age: age <= final_age,
     )
     dead_regime = Regime(
         transition=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age > _FINAL_AGE_64,
+        active=lambda age: age > final_age,
     )
-    model = Model(
+    return Model(
         regimes={"working": working_regime, "dead": dead_regime},
-        ages=AgeGrid(start=0, stop=_FINAL_AGE_64 + 1, step="Y"),
-        regime_id_class=_RegimeId64,
+        ages=AgeGrid(start=0, stop=final_age + 1, step="Y"),
+        regime_id_class=RegimeId,
     )
-    params = {
-        "discount_factor": 0.95,
-        "working": {"next_regime": {"final_age_alive": _FINAL_AGE_64}},
-    }
-    return model, params
 
 
-def test_infeasible_initial_states_detected(constraint_model):
+def test_infeasible_initial_states_detected():
     """Issue #64: wealth below constraint threshold makes all actions infeasible.
 
     wealth=0.25 < min consumption (0.5), so consumption <= wealth is always False.
     """
-    model, params = constraint_model
+    model = _make_constraint_model(
+        wealth_grid=LinSpacedGrid(
+            start=2.0, stop=10, n_points=15, transition=_next_wealth
+        )
+    )
+    params = {
+        "discount_factor": 0.95,
+        "working": {"next_regime": {"final_age_alive": 1}},
+    }
     with pytest.raises(InvalidInitialConditionsError):
         model.solve_and_simulate(
             params=params,
@@ -336,33 +328,14 @@ def test_on_grid_state_but_combination_infeasible():
     wealth=0.3 is the grid minimum, but min consumption (0.5) > 0.3,
     so consumption <= wealth is always False.
     """
-    working_regime = Regime(
-        actions={
-            "consumption": LinSpacedGrid(start=0.5, stop=10, n_points=20),
-        },
-        states={
-            "wealth": LinSpacedGrid(
-                start=0.3, stop=10, n_points=15, transition=_next_wealth_64
-            ),
-        },
-        constraints={"borrowing_constraint": _borrowing_constraint_64},
-        transition=_next_regime_64,
-        functions={"utility": _utility_64},
-        active=lambda age: age <= _FINAL_AGE_64,
-    )
-    dead_regime = Regime(
-        transition=None,
-        functions={"utility": lambda: 0.0},
-        active=lambda age: age > _FINAL_AGE_64,
-    )
-    model = Model(
-        regimes={"working": working_regime, "dead": dead_regime},
-        ages=AgeGrid(start=0, stop=_FINAL_AGE_64 + 1, step="Y"),
-        regime_id_class=_RegimeId64,
+    model = _make_constraint_model(
+        wealth_grid=LinSpacedGrid(
+            start=0.3, stop=10, n_points=15, transition=_next_wealth
+        )
     )
     params = {
         "discount_factor": 0.95,
-        "working": {"next_regime": {"final_age_alive": _FINAL_AGE_64}},
+        "working": {"next_regime": {"final_age_alive": 1}},
     }
     with pytest.raises(InvalidInitialConditionsError):
         model.solve_and_simulate(
@@ -372,9 +345,17 @@ def test_on_grid_state_but_combination_infeasible():
         )
 
 
-def test_extrapolated_initial_states_accepted(constraint_model):
+def test_extrapolated_initial_states_accepted():
     """wealth=1.0 is above constraint threshold but below grid min — feasible."""
-    model, params = constraint_model
+    model = _make_constraint_model(
+        wealth_grid=LinSpacedGrid(
+            start=2.0, stop=10, n_points=15, transition=_next_wealth
+        )
+    )
+    params = {
+        "discount_factor": 0.95,
+        "working": {"next_regime": {"final_age_alive": 1}},
+    }
     model.solve_and_simulate(
         params=params,
         initial_states={"age": jnp.array([0.0]), "wealth": jnp.array([1.0])},
@@ -382,11 +363,39 @@ def test_extrapolated_initial_states_accepted(constraint_model):
     )
 
 
-def test_on_grid_initial_states_accepted(constraint_model):
+def test_on_grid_initial_states_accepted():
     """wealth=5.0 is above grid min — fully on grid, feasible."""
-    model, params = constraint_model
+    model = _make_constraint_model(
+        wealth_grid=LinSpacedGrid(
+            start=2.0, stop=10, n_points=15, transition=_next_wealth
+        )
+    )
+    params = {
+        "discount_factor": 0.95,
+        "working": {"next_regime": {"final_age_alive": 1}},
+    }
     model.solve_and_simulate(
         params=params,
         initial_states={"age": jnp.array([0.0]), "wealth": jnp.array([5.0])},
         initial_regimes=["working"],
     )
+
+
+def test_irreg_spaced_grid_with_runtime_points():
+    """Feasibility check works when grid points are supplied at runtime via params."""
+    model = _make_constraint_model(
+        wealth_grid=IrregSpacedGrid(n_points=15, transition=_next_wealth)
+    )
+    params = {
+        "discount_factor": 0.95,
+        "working": {
+            "wealth": {"points": jnp.linspace(0.3, 10, 15)},
+            "next_regime": {"final_age_alive": 1},
+        },
+    }
+    with pytest.raises(InvalidInitialConditionsError):
+        model.solve_and_simulate(
+            params=params,
+            initial_states={"wealth": jnp.array([0.3])},
+            initial_regimes=["working"],
+        )
