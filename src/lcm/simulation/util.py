@@ -1,4 +1,3 @@
-import inspect
 from collections.abc import Mapping
 from types import MappingProxyType
 
@@ -13,6 +12,7 @@ from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
     format_messages,
 )
+from lcm.functools import get_union_of_args
 from lcm.grids import DiscreteGrid, DiscreteMarkovGrid
 from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.Q_and_F import _get_feasibility
@@ -564,8 +564,7 @@ def _check_regime_feasibility(
 
     """
     feasibility_func = _get_feasibility(internal_regime.internal_functions)
-    sig = inspect.signature(feasibility_func)
-    accepted = set(sig.parameters)
+    accepted = get_union_of_args([feasibility_func])
 
     action_names = list(internal_regime.variable_info.query("is_action").index)
     if not action_names:
