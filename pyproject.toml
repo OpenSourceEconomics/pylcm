@@ -36,18 +36,23 @@ dependencies = [
   "portion>=2.6",
 ]
 [[project.authors]]
-name = "Janos Gabler"
-[[project.authors]]
 name = "Tim Mensinger"
 email = "mensingertim@gmail.com"
+[[project.authors]]
+name = "Maximilian Jahn"
+[[project.authors]]
+name = "Janos Gabler"
+[[project.authors]]
+name = "Hans-Martin von Gaudecker"
+email = "hmgaudecker@uni-bonn.de"
 [project.license]
 file = "LICENSE"
 [[project.maintainers]]
-name = "Hans-Martin von Gaudecker"
-email = "hmgaudecker@uni-bonn.de"
-[[project.maintainers]]
 name = "Tim Mensinger"
 email = "mensingertim@gmail.com"
+[[project.maintainers]]
+name = "Hans-Martin von Gaudecker"
+email = "hmgaudecker@uni-bonn.de"
 [project.readme]
 content-type = "text/markdown"
 file = "README.md"
@@ -89,6 +94,20 @@ extend-ignore = [
   "TC003",   # Move standard library import into a type-checking block
   "TRY003",  # Long messages outside exception class
   "UP047",   # Generic function should use type parameters
+]
+per-file-ignores."docs/**/*" = [
+  "ANN001", # Missing type annotation for function argument
+  "ANN002", # Missing type annotation for *args
+  "ANN003", # Missing type annotation for **kwargs
+  "ANN201", # Missing return type annotation for public function
+  "ANN202", # Missing return type annotation for private function
+  "ARG001", # Unused function argument
+  "D100",   # Missing docstring in public module
+  "D103",   # Missing docstring in public function
+  "D104",   # Missing docstring in public package
+  "S101",   # Use of assert
+  "T201",   # print found
+  "T203",   # pprint found
 ]
 per-file-ignores."examples/*" = [
   "E402",   # Module level import not at top of file
@@ -163,6 +182,7 @@ unsupported-base = "error"
 unused-ignore-comment = "error"
 useless-overload-body = "error"
 [tool.ty.src]
+exclude = [ "docs/**/*.ipynb" ]
 include = [ "src/", "tests/", "examples/" ]
 
 [tool.pixi.dependencies]
@@ -180,6 +200,7 @@ snakeviz = "*"
 [tool.pixi.environments]
 cuda12 = { features = [ "cuda12" ], solve-group = "cuda12" }
 cuda13 = { features = [ "cuda13" ], solve-group = "cuda13" }
+docs = { features = [ "docs", "tests" ], solve-group = "default" }
 tests-cpu = { features = [ "tests" ], solve-group = "default" }
 tests-cuda12 = { features = [ "tests", "cuda12" ], solve-group = "cuda12" }
 tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
@@ -197,6 +218,12 @@ system-requirements = { cuda = "13" }
 cuda-nvcc = "~=13.0"
 [tool.pixi.feature.cuda13.target.linux-64.pypi-dependencies]
 jax = { version = ">=0.8", extras = [ "cuda13" ] }
+[tool.pixi.feature.docs.dependencies]
+jupyter-book = ">=2.0"
+mystmd = "*"
+[tool.pixi.feature.docs.tasks]
+docs = { cmd = "jupyter book build --html --execute", cwd = "docs" }
+view-docs = { cmd = "jupyter book start --execute", cwd = "docs" }
 [tool.pixi.feature.tests.dependencies]
 matplotlib = "*"  # required because of pandas
 pandas-stubs = "*"
@@ -206,7 +233,7 @@ pytest-xdist = "*"
 scipy-stubs = "*"
 ty = "*"
 [tool.pixi.feature.tests.tasks]
-explanation-notebooks = "jupyter execute explanations/*.ipynb"
+explanation-notebooks = "jupyter execute docs/explanations/*.ipynb"
 tests = "pytest tests"
 tests-32bit = "pytest tests --precision=32"
 tests-with-cov = "pytest tests --cov-report=xml --cov=./"
