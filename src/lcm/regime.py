@@ -334,7 +334,7 @@ def _collect_state_transitions(
             transitions[f"next_{name}"] = lambda: None
         elif isinstance(grid, DiscreteMarkovGrid):
             # DiscreteMarkovGrid.__init__ guarantees transition is callable
-            transitions[f"next_{name}"] = grid.transition  # ty: ignore[invalid-assignment]
+            transitions[f"next_{name}"] = grid.transition
         elif callable(grid_transition := getattr(grid, "transition", None)):
             transitions[f"next_{name}"] = grid_transition
         else:

@@ -196,10 +196,10 @@ def test_markov_grid_rejects_none_transition():
         DiscreteMarkovGrid(category_class, transition=None)  # ty: ignore[invalid-argument-type]
 
 
-def test_markov_grid_is_discrete_grid():
+def test_markov_grid_is_not_discrete_grid():
     category_class = make_dataclass("Category", [("a", int, 0), ("b", int, 1)])
     grid = DiscreteMarkovGrid(category_class, transition=lambda: None)
-    assert isinstance(grid, DiscreteGrid)
+    assert not isinstance(grid, DiscreteGrid)
     assert isinstance(grid, DiscreteMarkovGrid)
 
 

@@ -19,7 +19,7 @@ from jax import Array
 from lcm.ages import AgeGrid
 from lcm.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
-from lcm.grids import DiscreteGrid
+from lcm.grids import DiscreteGrid, DiscreteMarkovGrid
 from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
 from lcm.typing import (
     FlatRegimeParams,
@@ -299,7 +299,10 @@ def _compute_metadata(
 
         # Extract categories from discrete grids
         for var_name, grid in regime.gridspecs.items():
-            if isinstance(grid, DiscreteGrid) and var_name not in discrete_categories:
+            if (
+                isinstance(grid, DiscreteGrid | DiscreteMarkovGrid)
+                and var_name not in discrete_categories
+            ):
                 discrete_categories[var_name] = grid.categories
 
     n_periods = len(raw_results[regime_names[0]])

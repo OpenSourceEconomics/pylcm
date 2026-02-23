@@ -13,7 +13,7 @@ from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
     format_messages,
 )
-from lcm.grids import DiscreteGrid
+from lcm.grids import DiscreteGrid, DiscreteMarkovGrid
 from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.Q_and_F import _get_feasibility
 from lcm.random import generate_simulation_keys
@@ -502,7 +502,7 @@ def _validate_discrete_state_values(
             "is_state and is_discrete"
         ).index:
             gridspec = internal_regime.gridspecs[state_name]
-            if isinstance(gridspec, DiscreteGrid):
+            if isinstance(gridspec, DiscreteGrid | DiscreteMarkovGrid):
                 discrete_valid_codes[state_name] = set(gridspec.codes)
 
     for state_name, valid_codes in discrete_valid_codes.items():
