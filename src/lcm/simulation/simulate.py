@@ -14,7 +14,7 @@ from lcm.interfaces import (
 )
 from lcm.random import draw_random_seed
 from lcm.simulation.result import SimulationResult
-from lcm.simulation.util import (
+from lcm.simulation.utils import (
     calculate_next_regime_membership,
     calculate_next_states,
     convert_initial_states_to_nested,

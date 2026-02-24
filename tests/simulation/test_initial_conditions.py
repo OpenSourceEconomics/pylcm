@@ -9,10 +9,8 @@ from lcm import DiscreteGrid, IrregSpacedGrid, LinSpacedGrid, Model, Regime, cat
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidInitialConditionsError
 from lcm.input_processing.params_processing import process_params
-from lcm.simulation.util import (
-    convert_initial_states_to_nested,
-    validate_initial_conditions,
-)
+from lcm.simulation.utils import convert_initial_states_to_nested
+from lcm.simulation.validation import validate_initial_conditions
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -416,6 +414,251 @@ def test_missing_age_error_message(
         validate_initial_conditions(
             initial_states=flat,
             initial_regimes=["active"],
+            internal_regimes=model.internal_regimes,
+            internal_params=internal_params,
+            ages=model.ages,
+        )
+
+
+# ==============================================================================
+# Cross-regime state validation
+# ==============================================================================
+
+
+def _make_constrained_asymmetric_model() -> Model:
+    """Create a constrained asymmetric model.
+
+    Alive has a consumption action with `consumption <= wealth` constraint;
+    dead has no actions. Consumption grid starts at 51, so wealth <= 50
+    makes all actions infeasible in alive.
+    Ages 0, 1, 2. alive is active for age < 2, dead is active for age >= 2.
+    """
+
+    @categorical
+    class RegimeId:
+        alive: int
+        dead: int
+
+    def utility(consumption: ContinuousAction) -> FloatND:
+        return jnp.log(consumption)
+
+    def borrowing_constraint(
+        consumption: ContinuousAction, wealth: ContinuousState
+    ) -> BoolND:
+        return consumption <= wealth
+
+    def next_wealth(
+        wealth: ContinuousState, consumption: ContinuousAction
+    ) -> ContinuousState:
+        return wealth - consumption + 60.0
+
+    def next_regime(age: float) -> ScalarInt:
+        return jnp.where(age >= 1, RegimeId.dead, RegimeId.alive)
+
+    alive = Regime(
+        functions={"utility": utility},
+        states={
+            "wealth": LinSpacedGrid(
+                start=1, stop=100, n_points=10, transition=next_wealth
+            ),
+        },
+        actions={
+            "consumption": LinSpacedGrid(start=51, stop=100, n_points=10),
+        },
+        constraints={"borrowing_constraint": borrowing_constraint},
+        transition=next_regime,
+        active=lambda age: age < 2,
+    )
+
+    dead = Regime(
+        transition=None,
+        functions={"utility": lambda wealth: wealth},
+        states={
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10, transition=None),
+        },
+        active=lambda age: age >= 2,
+    )
+
+    return Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, stop=3, step="Y"),
+        regime_id_class=RegimeId,
+    )
+
+
+def _make_asymmetric_state_model() -> Model:
+    """Create a model where alive has 2 states (wealth + health), dead has 1 (wealth).
+
+    Ages 0, 1, 2.  alive is active for age < 2, dead is active for age >= 2.
+    """
+
+    @dataclass
+    class HealthStatus:
+        healthy: int = 0
+        sick: int = 1
+
+    @categorical
+    class RegimeId:
+        alive: int
+        dead: int
+
+    def utility(
+        wealth: ContinuousState,
+        health: DiscreteState,  # noqa: ARG001
+    ) -> FloatND:
+        return wealth
+
+    def next_regime(age: float) -> ScalarInt:
+        return jnp.where(age >= 1, RegimeId.dead, RegimeId.alive)
+
+    alive = Regime(
+        functions={"utility": utility},
+        states={
+            "wealth": LinSpacedGrid(
+                start=1, stop=100, n_points=10, transition=lambda wealth: wealth
+            ),
+            "health": DiscreteGrid(
+                category_class=HealthStatus, transition=lambda health: health
+            ),
+        },
+        transition=next_regime,
+        active=lambda age: age < 2,
+    )
+
+    dead = Regime(
+        transition=None,
+        functions={"utility": lambda wealth: wealth},
+        states={
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10, transition=None),
+        },
+        active=lambda age: age >= 2,
+    )
+
+    return Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, stop=3, step="Y"),
+        regime_id_class=RegimeId,
+    )
+
+
+def test_subject_in_inactive_regime_at_starting_age() -> None:
+    """Subject starts in dead at age 0, but dead is only active for age >= 2."""
+    model = _make_asymmetric_state_model()
+    internal_params = process_params(
+        params={"discount_factor": 0.95}, params_template=model.params_template
+    )
+
+    with pytest.raises(InvalidInitialConditionsError, match="not active"):
+        validate_initial_conditions(
+            initial_states={
+                "age": jnp.array([0.0]),
+                "wealth": jnp.array([10.0]),
+            },
+            initial_regimes=["dead"],
+            internal_regimes=model.internal_regimes,
+            internal_params=internal_params,
+            ages=model.ages,
+        )
+
+
+def test_all_subjects_in_regime_with_fewer_states() -> None:
+    """Both subjects start in dead, which only needs wealth — health is not required."""
+    model = _make_asymmetric_state_model()
+    internal_params = process_params(
+        params={"discount_factor": 0.95}, params_template=model.params_template
+    )
+
+    validate_initial_conditions(
+        initial_states={
+            "age": jnp.array([2.0, 2.0]),
+            "wealth": jnp.array([10.0, 50.0]),
+        },
+        initial_regimes=["dead", "dead"],
+        internal_regimes=model.internal_regimes,
+        internal_params=internal_params,
+        ages=model.ages,
+    )
+
+
+def test_mixed_regimes_all_union_states_provided() -> None:
+    """One subject in alive (needs wealth + health), one in dead (needs wealth).
+
+    Passing the full union of states (wealth + health + age) satisfies validation.
+    """
+    model = _make_asymmetric_state_model()
+    internal_params = process_params(
+        params={"discount_factor": 0.95}, params_template=model.params_template
+    )
+
+    validate_initial_conditions(
+        initial_states={
+            "age": jnp.array([0.0, 2.0]),
+            "wealth": jnp.array([10.0, 50.0]),
+            "health": jnp.array([0, 0]),
+        },
+        initial_regimes=["alive", "dead"],
+        internal_regimes=model.internal_regimes,
+        internal_params=internal_params,
+        ages=model.ages,
+    )
+
+
+def test_constraint_not_checked_for_unused_regime() -> None:
+    """Subject in dead (no constraint); wealth=40 fine even though alive needs > 50."""
+    model = _make_constrained_asymmetric_model()
+    internal_params = process_params(
+        params={"discount_factor": 0.95}, params_template=model.params_template
+    )
+
+    validate_initial_conditions(
+        initial_states={
+            "age": jnp.array([2.0]),
+            "wealth": jnp.array([40.0]),
+        },
+        initial_regimes=["dead"],
+        internal_regimes=model.internal_regimes,
+        internal_params=internal_params,
+        ages=model.ages,
+    )
+
+
+def test_constraint_checked_for_starting_regime() -> None:
+    """Subject in alive (has constraint); wealth=40 is infeasible."""
+    model = _make_constrained_asymmetric_model()
+    internal_params = process_params(
+        params={"discount_factor": 0.95}, params_template=model.params_template
+    )
+
+    with pytest.raises(InvalidInitialConditionsError, match="infeasible"):
+        validate_initial_conditions(
+            initial_states={
+                "age": jnp.array([0.0]),
+                "wealth": jnp.array([40.0]),
+            },
+            initial_regimes=["alive"],
+            internal_regimes=model.internal_regimes,
+            internal_params=internal_params,
+            ages=model.ages,
+        )
+
+
+def test_mixed_regimes_constraint_only_checked_for_starting_regime() -> None:
+    """One subject in alive (infeasible), one in dead (no constraint).
+
+    wealth=40 violates alive's constraint but dead has no actions to check.
+    """
+    model = _make_constrained_asymmetric_model()
+    internal_params = process_params(
+        params={"discount_factor": 0.95}, params_template=model.params_template
+    )
+
+    with pytest.raises(InvalidInitialConditionsError, match="infeasible"):
+        validate_initial_conditions(
+            initial_states={
+                "age": jnp.array([0.0, 2.0]),
+                "wealth": jnp.array([40.0, 40.0]),
+            },
+            initial_regimes=["alive", "dead"],
             internal_regimes=model.internal_regimes,
             internal_params=internal_params,
             ages=model.ages,

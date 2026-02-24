@@ -22,7 +22,7 @@ from lcm.logging import get_logger
 from lcm.regime import Regime
 from lcm.simulation.result import SimulationResult
 from lcm.simulation.simulate import simulate
-from lcm.simulation.util import validate_initial_conditions
+from lcm.simulation.validation import validate_initial_conditions
 from lcm.solution.solve_brute import solve
 from lcm.typing import (
     FloatND,
