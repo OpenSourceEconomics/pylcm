@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import pytest
 
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
-from lcm.simulation.util import _validate_normalized_regime_transition_probs
+from lcm.simulation.utils import validate_normalized_regime_transition_probs
 from lcm.utils import normalize_regime_transition_probs
 
 
@@ -50,7 +50,7 @@ def test_normalize_with_array_values():
 
 
 # ======================================================================================
-# Tests for _validate_normalized_regime_transition_probs
+# Tests for validate_normalized_regime_transition_probs
 # ======================================================================================
 
 
@@ -63,7 +63,7 @@ def test_validate_normalized_probs_passes_for_valid_probs():
         }
     )
     # Should not raise
-    _validate_normalized_regime_transition_probs(
+    validate_normalized_regime_transition_probs(
         normalized_regime_transition_probs=normalized_probs,
         regime_name="working",
         period=0,
@@ -87,7 +87,7 @@ def test_validate_normalized_probs_raises_for_nan_values():
         InvalidRegimeTransitionProbabilitiesError,
         match="do not sum to 1 after normalization",
     ):
-        _validate_normalized_regime_transition_probs(
+        validate_normalized_regime_transition_probs(
             normalized_regime_transition_probs=normalized_probs,
             regime_name="working",
             period=0,
@@ -109,7 +109,7 @@ def test_validate_normalized_probs_raises_for_inf_values():
         InvalidRegimeTransitionProbabilitiesError,
         match="do not sum to 1 after normalization",
     ):
-        _validate_normalized_regime_transition_probs(
+        validate_normalized_regime_transition_probs(
             normalized_regime_transition_probs=normalized_probs,
             regime_name="working",
             period=0,
@@ -128,7 +128,7 @@ def test_validate_normalized_probs_raises_for_probs_not_summing_to_one():
         InvalidRegimeTransitionProbabilitiesError,
         match="do not sum to 1 after normalization",
     ):
-        _validate_normalized_regime_transition_probs(
+        validate_normalized_regime_transition_probs(
             normalized_regime_transition_probs=normalized_probs,
             regime_name="working",
             period=0,
