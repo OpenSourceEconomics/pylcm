@@ -5,7 +5,6 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_equal
 
-import lcm
 from lcm import AgeGrid
 from lcm.input_processing import process_regimes
 from lcm.input_processing.params_processing import (
@@ -171,18 +170,17 @@ def test_get_combined_constraint_illustrative(internal_functions_illustrative):
 
 
 def test_get_multiply_weights():
-    @lcm.mark.stochastic
     def next_a():
         return jnp.array([0.1, 0.9])
 
-    @lcm.mark.stochastic
     def next_b():
         return jnp.array([0.2, 0.8])
 
     transitions = MappingProxyType({"next_a": next_a, "next_b": next_b})
     multiply_weights = _get_joint_weights_function(
         regime_name="test",
-        transitions=transitions,
+        transitions=transitions,  # ty: ignore[invalid-argument-type]
+        stochastic_transition_names=frozenset({"next_a", "next_b"}),
     )
 
     a = jnp.array([1, 2])

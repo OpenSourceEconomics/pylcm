@@ -10,7 +10,14 @@ from jax import Array
 
 from lcm import grid_helpers
 from lcm.exceptions import GridInitializationError, format_messages
-from lcm.typing import ContinuousState, DiscreteState, Float1D, Int1D, ScalarFloat
+from lcm.typing import (
+    ContinuousState,
+    DiscreteState,
+    Float1D,
+    FloatND,
+    Int1D,
+    ScalarFloat,
+)
 from lcm.utils import Unset, find_duplicates, get_field_names_and_values
 
 
@@ -78,15 +85,44 @@ class ContinuousGrid(Grid):
         """Return the generalized coordinate of a value in the grid."""
 
 
-class DiscreteGrid(Grid):
-    """A class representing a discrete grid.
+class _DiscreteGridBase(Grid):
+    """Base class for discrete grids: categories, codes, and JAX conversion.
+
+    Subclasses (`DiscreteGrid`, `DiscreteMarkovGrid`) add their own `transition`
+    property with the appropriate type.
+
+    """
+
+    def __init__(self, category_class: type) -> None:
+        _validate_discrete_grid(category_class)
+        names_and_values = get_field_names_and_values(category_class)
+        self.__categories = tuple(names_and_values.keys())
+        self.__codes = tuple(names_and_values.values())
+
+    @property
+    def categories(self) -> tuple[str, ...]:
+        """Return the list of category names."""
+        return self.__categories
+
+    @property
+    def codes(self) -> tuple[int, ...]:
+        """Return the list of category codes."""
+        return self.__codes
+
+    def to_jax(self) -> Int1D:
+        """Convert the grid to a Jax array."""
+        return jnp.array(self.codes)
+
+
+class DiscreteGrid(_DiscreteGridBase):
+    """A discrete grid with an optional deterministic transition.
 
     Args:
-        category_class (type): The category class representing the grid categories. Must
+        category_class: The category class representing the grid categories. Must
             be a dataclass with fields that have unique int values.
-        transition: Transition function for time-varying states, or `None` for fixed
-            states. Must be set explicitly when this grid is used as a state in a
-            Regime. Must be left unset when used as an action.
+        transition: Deterministic transition function for time-varying states,
+            or `None` for fixed states. Must be set explicitly when this grid is
+            used as a state in a Regime. Must be left unset when used as an action.
 
     Raises:
         GridInitializationError: If the `category_class` is not a dataclass with int
@@ -100,41 +136,50 @@ class DiscreteGrid(Grid):
         *,
         transition: Callable[..., DiscreteState] | None | Unset = Unset(),
     ) -> None:
-        """Initialize the DiscreteGrid.
-
-        Args:
-            category_class (type): The category class representing the grid categories.
-                Must be a dataclass with fields that have unique int values.
-            transition: Optional transition function in case of state variables.
-
-        """
-        _validate_discrete_grid(category_class)
+        super().__init__(category_class)
         _validate_transition(transition)
-
-        names_and_values = get_field_names_and_values(category_class)
-
-        self.__categories = tuple(names_and_values.keys())
-        self.__codes = tuple(names_and_values.values())
         self.__transition = transition
 
     @property
-    def categories(self) -> tuple[str, ...]:
-        """Return the list of category names."""
-        return self.__categories
-
-    @property
-    def codes(self) -> tuple[int, ...]:
-        """Return the list of category codes."""
-        return self.__codes
-
-    @property
     def transition(self) -> Callable[..., DiscreteState] | None | Unset:
-        """Return the transition function, ``None`` for fixed states, or ``Unset``."""
+        """Return the deterministic state transition function.
+
+        Compute the next discrete state value (`DiscreteState`).
+        `None` for fixed states, `Unset` for action grids.
+        """
         return self.__transition
 
-    def to_jax(self) -> Int1D:
-        """Convert the grid to a Jax array."""
-        return jnp.array(self.codes)
+
+class DiscreteMarkovGrid(_DiscreteGridBase):
+    """Discrete grid with a stochastic Markov transition."""
+
+    def __init__(
+        self,
+        category_class: type,
+        *,
+        transition: Callable[..., FloatND],
+    ) -> None:
+        if not callable(transition):
+            raise GridInitializationError(
+                f"DiscreteMarkovGrid requires a callable transition, "
+                f"but got {type(transition).__name__}: {transition!r}"
+            )
+        super().__init__(category_class)
+        self.__transition = transition
+
+    @property
+    def transition(self) -> Callable[..., FloatND]:
+        """Return the stochastic Markov transition function.
+
+        Compute a probability distribution (`FloatND`) over next
+        discrete states — not the next state value itself.
+        """
+        return self.__transition
+
+    @property
+    def n_states(self) -> int:
+        """Return the number of discrete states."""
+        return len(self.codes)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -151,11 +196,10 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
     """The number of points in the grid."""
 
     transition: Callable[..., ContinuousState] | None | Unset = Unset()
-    """Transition function for time-varying states, or `None` for fixed states.
+    """Deterministic transition for state evolution.
 
-    Must be set explicitly when this grid is used as a state in a Regime.
-    Must be left unset (no `transition` argument) when used as an action.
-    Non-callable values other than `None` raise GridInitializationError.
+    Compute the next continuous state value (`ContinuousState`).
+    `None` for fixed states. `Unset` for action grids.
     """
 
     def __post_init__(self) -> None:
@@ -272,11 +316,10 @@ class IrregSpacedGrid(ContinuousGrid):
     """Number of points. Derived from `len(points)` when points are given."""
 
     transition: Callable[..., ContinuousState] | None | Unset = Unset()
-    """Transition function for time-varying states, or `None` for fixed states.
+    """Deterministic transition for state evolution.
 
-    Must be set explicitly when this grid is used as a state in a Regime.
-    Must be left unset (no `transition` argument) when used as an action.
-    Non-callable values other than `None` raise GridInitializationError.
+    Compute the next continuous state value (`ContinuousState`).
+    `None` for fixed states. `Unset` for action grids.
     """
 
     def __post_init__(self) -> None:
@@ -368,11 +411,10 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
     """Tuple of Piece objects defining each segment. Pieces must be adjacent."""
 
     transition: Callable[..., ContinuousState] | None | Unset = Unset()
-    """Transition function for time-varying states, or `None` for fixed states.
+    """Deterministic transition for state evolution.
 
-    Must be set explicitly when this grid is used as a state in a Regime.
-    Must be left unset (no `transition` argument) when used as an action.
-    Non-callable values other than `None` raise GridInitializationError.
+    Compute the next continuous state value (`ContinuousState`).
+    `None` for fixed states. `Unset` for action grids.
     """
 
     # Cached JAX arrays for efficient coordinate computation (set in __post_init__)
@@ -444,11 +486,10 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
     """Tuple of Piece objects defining each segment. All boundaries must be positive."""
 
     transition: Callable[..., ContinuousState] | None | Unset = Unset()
-    """Transition function for time-varying states, or `None` for fixed states.
+    """Deterministic transition for state evolution.
 
-    Must be set explicitly when this grid is used as a state in a Regime.
-    Must be left unset (no `transition` argument) when used as an action.
-    Non-callable values other than `None` raise GridInitializationError.
+    Compute the next continuous state value (`ContinuousState`).
+    `None` for fixed states. `Unset` for action grids.
     """
 
     # Cached JAX arrays for efficient coordinate computation (set in __post_init__)

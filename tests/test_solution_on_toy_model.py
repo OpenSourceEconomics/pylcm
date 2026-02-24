@@ -9,8 +9,15 @@ import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
 
-import lcm
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    DiscreteMarkovGrid,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    categorical,
+)
 from lcm.typing import (
     BoolND,
     ContinuousState,
@@ -102,14 +109,13 @@ dead = Regime(
 )
 
 
-@lcm.mark.stochastic
 def next_health(health: DiscreteState, health_transition: FloatND) -> FloatND:
     return health_transition[health]
 
 
 alive_stochastic = alive_deterministic.replace(
     states=dict(alive_deterministic.states)
-    | {"health": DiscreteGrid(HealthStatus, transition=next_health)},
+    | {"health": DiscreteMarkovGrid(HealthStatus, transition=next_health)},
 )
 
 model_deterministic = Model(
@@ -486,7 +492,10 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
     }
     result = model.solve_and_simulate(
         params={"discount_factor": discount_factor, "alive": params_alive},
-        initial_states={"wealth": jnp.array([0.25, 0.75, 1.25, 1.75])},
+        initial_states={
+            "wealth": jnp.array([0.25, 0.75, 1.25, 1.75]),
+            "age": jnp.array([0.0, 0.0, 0.0, 0.0]),
+        },
         initial_regimes=["alive"] * 4,
     )
     # Filter to alive regime only (dead regime has trivial values)
@@ -613,6 +622,7 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, health_transition
     initial_states = {
         "wealth": jnp.array([0.25, 0.75, 1.25, 1.75, 2.0]),
         "health": jnp.array([0, 1, 0, 1, 1]),
+        "age": jnp.array([0.0, 0.0, 0.0, 0.0, 0.0]),
     }
     result = model.solve_and_simulate(
         params={"discount_factor": discount_factor, "alive": params_alive},

@@ -5,9 +5,15 @@ import pandas as pd
 import pytest
 from numpy.testing import assert_array_almost_equal
 
-import lcm
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
-from lcm.exceptions import InvalidParamsError
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    DiscreteMarkovGrid,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    categorical,
+)
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -42,6 +48,7 @@ def test_model_solve_and_simulate_with_stochastic_model():
             "health": jnp.array([1, 1, 0, 0]),
             "partner": jnp.array([0, 0, 1, 0]),
             "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
+            "age": jnp.array([0.0, 0.0, 0.0, 0.0]),
         },
         initial_regimes=["working"] * 4,
     )
@@ -97,7 +104,6 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
 
     """
 
-    @lcm.mark.stochastic
     def next_health_stochastic(health: DiscreteState) -> FloatND:
         return jnp.identity(2)[health]
 
@@ -131,7 +137,7 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
     working_stochastic = working.replace(
         states={
             **working.states,
-            "health": DiscreteGrid(
+            "health": DiscreteMarkovGrid(
                 category_class=HealthStatus, transition=next_health_stochastic
             ),
         },
@@ -140,7 +146,7 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
     retired_stochastic = retired.replace(
         states={
             **retired.states,
-            "health": DiscreteGrid(
+            "health": DiscreteMarkovGrid(
                 category_class=HealthStatus, transition=next_health_stochastic
             ),
         },
@@ -202,6 +208,7 @@ def test_compare_deterministic_and_stochastic_results_value_function(
         "health": jnp.array([1, 1, 0, 0]),
         "partner": jnp.array([0, 0, 0, 0]),
         "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
+        "age": jnp.array([0.0, 0.0, 0.0, 0.0]),
     }
     initial_regimes = ["working"] * 4
 
@@ -232,7 +239,6 @@ def test_compare_deterministic_and_stochastic_results_value_function(
 # ======================================================================================
 
 
-@lcm.mark.stochastic
 def _next_shock(shock: DiscreteState, shock_transition: FloatND) -> FloatND:
     """Default stochastic transition using a pre-computed transition matrix."""
     return shock_transition[shock]
@@ -277,7 +283,7 @@ def _make_minimal_stochastic_model(shock_transition_func=None) -> Model:
     working_regime = Regime(
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=20)},
         states={
-            "shock": DiscreteGrid(ShockStatus, transition=shock_transition_func),
+            "shock": DiscreteMarkovGrid(ShockStatus, transition=shock_transition_func),
             "wealth": LinSpacedGrid(
                 start=1, stop=10, n_points=15, transition=next_wealth
             ),
@@ -311,7 +317,6 @@ def test_stochastic_next_function_with_no_arguments():
     one argument, causing a failure.
     """
 
-    @lcm.mark.stochastic
     def next_shock_no_args() -> FloatND:
         return jnp.array([0.5, 0.5])
 
@@ -331,7 +336,6 @@ def test_stochastic_next_depending_on_continuous_state():
     dependency that was not a discrete state.
     """
 
-    @lcm.mark.stochastic
     def next_shock_continuous(wealth: ContinuousState) -> FloatND:
         p_good = jnp.clip(wealth / 10.0, 0.1, 0.9)
         return jnp.array([1.0 - p_good, p_good])
@@ -343,40 +347,3 @@ def test_stochastic_next_depending_on_continuous_state():
     }
     V = model.solve(params)
     assert all(jnp.all(jnp.isfinite(V[p]["working"])) for p in V if "working" in V[p])
-
-
-@pytest.mark.xfail(reason="Issue #63: wrong transition matrix shapes not validated")
-@pytest.mark.parametrize("bad_shape", [(1, 2), (4, 2)])
-def test_wrong_transition_matrix_shape_rejected(bad_shape):
-    """Issue #63: solve should reject wrong-shaped transition matrices.
-
-    ShockStatus has 2 values, so the transition matrix must be (2, 2).
-    Passing (1, 2) or (4, 2) should raise a validation error but currently
-    succeeds silently (JAX clips out-of-bounds indices).
-    """
-    model = _make_minimal_stochastic_model()
-    params = {
-        "discount_factor": 0.95,
-        "working": {
-            "next_shock": {
-                "shock_transition": jnp.ones(bad_shape) / bad_shape[1],
-            },
-            "next_regime": {"final_age_alive": 1},
-        },
-    }
-    with pytest.raises(InvalidParamsError):
-        model.solve(params)
-
-
-@pytest.mark.xfail(reason="Issue #185: no shape info in params_template")
-def test_params_template_includes_stochastic_transition_shape():
-    """Issue #185: params_template should include required array shapes.
-
-    For this model, shock_transition[shock] indexes by current shock state (0 or 1)
-    and returns a probability vector of length 2, so the correct shape is (2, 2).
-    Currently the template only shows the type alias (FloatND).
-    """
-    model = _make_minimal_stochastic_model()
-    template = model.params_template
-    shock_info = template["working"]["next_shock"]["shock_transition"]
-    assert isinstance(shock_info, tuple)

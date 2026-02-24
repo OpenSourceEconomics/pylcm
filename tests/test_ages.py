@@ -163,7 +163,10 @@ def test_model_with_quarterly_steps():
     # Solve and simulate
     result = model.solve_and_simulate(
         params=params,
-        initial_states={"wealth": jnp.array([50.0, 100.0, 150.0])},
+        initial_states={
+            "wealth": jnp.array([50.0, 100.0, 150.0]),
+            "age": jnp.array([18.0, 18.0, 18.0]),
+        },
         initial_regimes=["working"] * 3,
     )
 

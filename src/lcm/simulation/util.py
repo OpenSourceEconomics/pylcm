@@ -3,16 +3,17 @@ from collections.abc import Mapping
 from types import MappingProxyType
 
 import jax
+from dags.tree import QNAME_DELIMITER
 from jax import Array, vmap
 from jax import numpy as jnp
 
+from lcm.ages import AgeGrid
 from lcm.exceptions import (
     InvalidInitialConditionsError,
     InvalidRegimeTransitionProbabilitiesError,
     format_messages,
 )
-from lcm.grids import DiscreteGrid
-from lcm.input_processing.util import is_stochastic_transition
+from lcm.grids import DiscreteGrid, DiscreteMarkovGrid
 from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.Q_and_F import _get_feasibility
 from lcm.random import generate_simulation_keys
@@ -92,12 +93,13 @@ def calculate_next_states(
     """
     # Identify stochastic transitions and generate random keys
     # ---------------------------------------------------------------------------------
+    stochastic_transition_names = (
+        internal_regime.internal_functions.stochastic_transition_names
+    )
     stochastic_next_function_names = [
         next_func_name
-        for next_func_name, next_func in flatten_regime_namespace(
-            internal_regime.transitions
-        ).items()
-        if is_stochastic_transition(next_func)
+        for next_func_name in flatten_regime_namespace(internal_regime.transitions)
+        if next_func_name.split(QNAME_DELIMITER)[-1] in stochastic_transition_names
     ]
     # There is a bug that sometimes changes the order of the names,
     # sorting fixes this
@@ -294,6 +296,7 @@ def validate_initial_conditions(
     initial_regimes: list[RegimeName],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     internal_params: InternalParams,
+    ages: AgeGrid,
 ) -> None:
     """Validate initial conditions (regimes, states, and feasibility).
 
@@ -310,6 +313,7 @@ def validate_initial_conditions(
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
         internal_params: Immutable mapping of regime names to flat parameter mappings.
+        ages: AgeGrid for the model.
 
     Raises:
         InvalidInitialConditionsError: If any validation check fails.
@@ -321,6 +325,7 @@ def validate_initial_conditions(
         initial_states=initial_states,
         initial_regimes=initial_regimes,
         internal_regimes=internal_regimes,
+        ages=ages,
     )
     if structural_errors:
         raise InvalidInitialConditionsError(format_messages(structural_errors))
@@ -336,6 +341,7 @@ def validate_initial_conditions(
         initial_regimes=initial_regimes,
         internal_regimes=internal_regimes,
         internal_params=internal_params,
+        ages=ages,
     )
     if feasibility_errors:
         raise InvalidInitialConditionsError(format_messages(feasibility_errors))
@@ -346,14 +352,16 @@ def _collect_structural_errors(
     initial_states: Mapping[str, Array],
     initial_regimes: list[RegimeName],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    ages: AgeGrid,
 ) -> list[str]:
-    """Collect errors about regime names, state names, and array shapes.
+    """Collect errors about regime names, state names, age values, and array shapes.
 
     Args:
         initial_states: Mapping of state names to arrays.
         initial_regimes: List of regime names the subjects start in.
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
+        ages: AgeGrid for the model.
 
     Returns:
         List of error message strings (empty if everything is valid).
@@ -373,8 +381,8 @@ def _collect_structural_errors(
             f"Valid regime names are: {sorted(valid_regime_names)}"
         )
 
-    # Validate initial states
-    required_states: set[str] = set()
+    # Validate initial states — "age" is always required alongside regime states
+    required_states: set[str] = {"age"}
     for internal_regime in internal_regimes.values():
         regime_states = set(internal_regime.variable_info.query("is_state").index)
         required_states.update(regime_states)
@@ -404,6 +412,22 @@ def _collect_structural_errors(
                 f"Got lengths: {lengths}"
             )
 
+    # Early exit before value-level checks if names/shapes are wrong
+    if errors:
+        return errors
+
+    # Validate that all age values are representable on the age grid.  Compare
+    # against float64 conversions of AgeGrid.precise_values to avoid float32
+    # precision issues with sub-annual steps.
+    valid_ages = {float(v) for v in ages.precise_values}
+    age_values = initial_states["age"]
+    invalid_ages = sorted({float(a) for a in age_values if float(a) not in valid_ages})
+    if invalid_ages:
+        errors.append(
+            f"Invalid age values {invalid_ages} in initial_states. "
+            f"Valid ages are: {sorted(valid_ages)}"
+        )
+
     return errors
 
 
@@ -413,6 +437,7 @@ def _collect_feasibility_errors(
     initial_regimes: list[RegimeName],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     internal_params: InternalParams,
+    ages: AgeGrid,
 ) -> list[str]:
     """Collect errors about action feasibility for each subject.
 
@@ -422,11 +447,14 @@ def _collect_feasibility_errors(
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
         internal_params: Immutable mapping of regime names to flat parameter mappings.
+        ages: AgeGrid for the model.
 
     Returns:
         List of error message strings (empty if everything is feasible).
 
     """
+    age_to_period = {float(v): i for i, v in enumerate(ages.precise_values)}
+
     errors: list[str] = []
     for regime_name, internal_regime in internal_regimes.items():
         subject_indices = [i for i, r in enumerate(initial_regimes) if r == regime_name]
@@ -444,6 +472,7 @@ def _collect_feasibility_errors(
             initial_states=initial_states,
             subject_indices=subject_indices,
             regime_params=regime_params,
+            age_to_period=age_to_period,
         )
         if msg is not None:
             errors.append(msg)
@@ -473,7 +502,7 @@ def _validate_discrete_state_values(
             "is_state and is_discrete"
         ).index:
             gridspec = internal_regime.gridspecs[state_name]
-            if isinstance(gridspec, DiscreteGrid):
+            if isinstance(gridspec, DiscreteGrid | DiscreteMarkovGrid):
                 discrete_valid_codes[state_name] = set(gridspec.codes)
 
     for state_name, valid_codes in discrete_valid_codes.items():
@@ -494,15 +523,17 @@ def _check_regime_feasibility(
     initial_states: Mapping[str, Array],
     subject_indices: list[int],
     regime_params: Mapping[str, object],
+    age_to_period: dict[float, int],
 ) -> str | None:
     """Check whether all subjects in a regime have at least one feasible action.
 
     Args:
         internal_regime: The internal regime instance.
         regime_name: Name of the regime.
-        initial_states: Mapping of state names to arrays.
+        initial_states: Mapping of state names to arrays (includes "age").
         subject_indices: Indices of subjects starting in this regime.
         regime_params: Merged fixed and runtime parameters for this regime.
+        age_to_period: Mapping from float age values to period indices.
 
     Returns:
         An error message string if any subjects are infeasible, or None.
@@ -522,15 +553,23 @@ def _check_regime_feasibility(
 
     filtered_params = {k: v for k, v in regime_params.items() if k in accepted}
     state_names = list(internal_regime.variable_info.query("is_state").index)
+    needs_age = "age" in accepted
+    needs_period = "period" in accepted
 
     infeasible_indices: list[int] = []
     for idx in subject_indices:
-        kwargs: dict[str, Array | float] = {}
+        kwargs: dict[str, Array | float | int] = {}
         for sn in state_names:
             if sn in accepted:
                 kwargs[sn] = initial_states[sn][idx]
         kwargs.update({k: v for k, v in flat_actions.items() if k in accepted})
         kwargs.update(filtered_params)  # ty: ignore[no-matching-overload]
+
+        subject_age = float(initial_states["age"][idx])
+        if needs_age:
+            kwargs["age"] = subject_age
+        if needs_period:
+            kwargs["period"] = age_to_period[subject_age]
 
         result = feasibility_func(**kwargs)
         if not jnp.any(result):

@@ -11,7 +11,6 @@ from dags.tree import QNAME_DELIMITER
 from jax import Array
 
 from lcm.grids import Grid
-from lcm.input_processing.util import is_stochastic_transition
 from lcm.shocks import _ShockGrid
 from lcm.shocks.ar1 import _ShockGridAR1
 from lcm.shocks.iid import _ShockGridIID
@@ -64,6 +63,7 @@ def get_next_state_function_for_simulation(
     grids: GridsDict,
     gridspecs: MappingProxyType[str, Grid],
     variable_info: pd.DataFrame,
+    stochastic_transition_names: frozenset[str] = frozenset(),
 ) -> NextStateSimulationFunction:
     """Get function that computes the next states during the simulation.
 
@@ -73,6 +73,7 @@ def get_next_state_function_for_simulation(
         variable_info: Variable info of a regime.
         transitions: Transitions to the next states of a regime.
         functions: Immutable mapping of auxiliary functions of a regime.
+        stochastic_transition_names: Frozenset of stochastic transition function names.
 
     Returns:
         Function that computes the next states. Depends on states and actions of the
@@ -88,6 +89,7 @@ def get_next_state_function_for_simulation(
         gridspecs=gridspecs,
         transitions=transitions,
         variable_info=variable_info,
+        stochastic_transition_names=stochastic_transition_names,
     )
     functions_to_concatenate = extended_transitions | dict(functions)
 
@@ -105,6 +107,7 @@ def get_next_stochastic_weights_function(
     regime_name: RegimeName,
     functions: MappingProxyType[str, InternalUserFunction],
     transitions: MappingProxyType[str, InternalUserFunction],
+    stochastic_transition_names: frozenset[str],
 ) -> Callable[..., dict[str, Array]]:
     """Get function that computes the weights for the next stochastic states.
 
@@ -112,6 +115,7 @@ def get_next_stochastic_weights_function(
         regime_name: Name of the regime that the transitions target.
         functions: Immutable mapping of auxiliary functions of the model.
         transitions: Transitions to the target regime.
+        stochastic_transition_names: Frozenset of stochastic transition function names.
 
     Returns:
         Function that computes the weights for the next stochastic states.
@@ -119,8 +123,8 @@ def get_next_stochastic_weights_function(
     """
     targets = [
         f"weight_{regime_name}__{func_name}"
-        for func_name, func in transitions.items()
-        if is_stochastic_transition(func)
+        for func_name in transitions
+        if func_name in stochastic_transition_names
     ]
     return concatenate_functions(
         functions=functions,
@@ -137,6 +141,7 @@ def _extend_transitions_for_simulation(
     gridspecs: MappingProxyType[str, Grid],
     transitions: MappingProxyType[str, InternalUserFunction],
     variable_info: pd.DataFrame,
+    stochastic_transition_names: frozenset[str],
 ) -> dict[str, Callable[..., Array]]:
     """Extend the functions dictionary for the simulation target.
 
@@ -145,6 +150,7 @@ def _extend_transitions_for_simulation(
         gridspecs: The specifications of the current regimes grids.
         transitions: Immutable mapping of transitions to extend.
         variable_info: Variable info of the current regime.
+        stochastic_transition_names: Frozenset of stochastic transition function names.
 
     Returns:
         Extended functions dictionary.
@@ -154,14 +160,14 @@ def _extend_transitions_for_simulation(
     flat_grids = flatten_regime_namespace(grids)
     discrete_stochastic_targets = [
         func_name
-        for func_name, func in transitions.items()
-        if is_stochastic_transition(func)
+        for func_name in transitions
+        if func_name.split(QNAME_DELIMITER)[-1] in stochastic_transition_names
         and func_name.split(QNAME_DELIMITER)[-1].replace("next_", "") not in shock_names
     ]
     continuous_stochastic_targets = [
-        (func_name, func)
-        for func_name, func in transitions.items()
-        if is_stochastic_transition(func)
+        func_name
+        for func_name in transitions
+        if func_name.split(QNAME_DELIMITER)[-1] in stochastic_transition_names
         and func_name.split(QNAME_DELIMITER)[-1].replace("next_", "") in shock_names
     ]
     # Handle stochastic next states functions
@@ -181,7 +187,7 @@ def _extend_transitions_for_simulation(
     }
     continuous_stochastic_next = {
         name: _create_continuous_stochastic_next_func(name, gridspecs=gridspecs)
-        for name, func in continuous_stochastic_targets
+        for name in continuous_stochastic_targets
     }
 
     # Overwrite regime transitions with generated stochastic next states functions

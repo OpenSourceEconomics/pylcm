@@ -11,7 +11,7 @@ from jax import numpy as jnp
 
 from lcm.ages import AgeGrid
 from lcm.grid_helpers import get_irreg_coordinate
-from lcm.grids import Grid
+from lcm.grids import DiscreteMarkovGrid, Grid
 from lcm.input_processing.create_regime_params_template import (
     create_regime_params_template,
 )
@@ -25,10 +25,8 @@ from lcm.input_processing.regime_components import (
 from lcm.input_processing.util import (
     get_gridspecs,
     get_variable_info,
-    is_stochastic_transition,
 )
 from lcm.interfaces import InternalFunctions, InternalRegime
-from lcm.mark import stochastic
 from lcm.ndimage import map_coordinates
 from lcm.regime import Regime, _collect_state_transitions
 from lcm.shocks import _ShockGrid
@@ -248,10 +246,20 @@ def _get_internal_functions(
         **flat_nested_transitions,
     }
 
+    # Compute stochastic state names from grid types
+    markov_state_names = {
+        name for name, grid in gridspecs.items() if isinstance(grid, DiscreteMarkovGrid)
+    }
+    shock_state_names = set(variable_info.query("is_shock").index.tolist())
+    stochastic_transition_names = frozenset(
+        f"next_{name}" for name in markov_state_names | shock_state_names
+    )
+
     stochastic_transition_functions = {
         func_name: func
-        for func_name, func in all_functions.items()
-        if is_stochastic_transition(func) and func_name != "next_regime"
+        for func_name, func in flat_nested_transitions.items()
+        if func_name.split(QNAME_DELIMITER)[-1] in stochastic_transition_names
+        and func_name != "next_regime"
     }
 
     deterministic_transition_functions = {
@@ -295,7 +303,7 @@ def _get_internal_functions(
             regime_params_template=regime_params_template,
             param_key=param_key,
         )
-        functions[func_name] = _get_stochastic_next_function(
+        functions[func_name] = _get_discrete_markov_next_function(
             func=func,
             grid=flat_grids[func_name.replace("next_", "")],
         )
@@ -325,15 +333,7 @@ def _get_internal_functions(
             if func_name not in excluded_from_functions
         }
     )
-    # Determine if next_regime is stochastic (decorated with @lcm.mark.stochastic)
-    # next_regime is at top level in both flat and nested formats
-    next_regime_func = nested_transitions.get("next_regime")
-    is_stochastic_regime_transition = (
-        next_regime_func is not None
-        and is_stochastic_transition(
-            next_regime_func  # ty: ignore[invalid-argument-type]
-        )
-    )
+    is_stochastic_regime_transition = regime.stochastic_transition
 
     if regime.terminal:
         internal_regime_transition_probs = None
@@ -352,6 +352,7 @@ def _get_internal_functions(
         constraints=internal_constraints,
         transitions=_wrap_transitions(unflatten_regime_namespace(internal_transition)),
         regime_transition_probs=internal_regime_transition_probs,
+        stochastic_transition_names=stochastic_transition_names,
     )
 
 
@@ -435,7 +436,9 @@ def _rename_params_to_qnames(
     return cast("InternalUserFunction", rename_arguments(func, mapper=mapper))
 
 
-def _get_stochastic_next_function(*, func: UserFunction, grid: Int1D) -> UserFunction:
+def _get_discrete_markov_next_function(
+    *, func: UserFunction, grid: Int1D
+) -> UserFunction:
     @with_signature(args=None, return_annotation="Int1D")
     @functools.wraps(func)
     def next_func(**kwargs: Any) -> Int1D:  # noqa: ANN401, ARG001
@@ -450,7 +453,6 @@ def _get_stochastic_next_function_for_shock(
     """Get function that returns the indices in the vf arr of the next shock states."""
 
     @with_signature(args={f"{name}": "ContinuousState"}, return_annotation="Int1D")
-    @stochastic
     def next_func(**kwargs: Any) -> Int1D:  # noqa: ARG001, ANN401
         return jnp.arange(grid.shape[0])
 

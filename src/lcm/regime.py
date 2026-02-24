@@ -8,8 +8,7 @@ from typing import Any, TypeAliasType, overload
 from dags.tree import QNAME_DELIMITER
 
 from lcm.exceptions import RegimeInitializationError, format_messages
-from lcm.grids import DiscreteGrid, Grid
-from lcm.mark import stochastic
+from lcm.grids import DiscreteGrid, DiscreteMarkovGrid, Grid
 from lcm.shocks._base import _ShockGrid
 from lcm.typing import (
     ActiveFunction,
@@ -81,6 +80,9 @@ class Regime:
 
     transition: UserFunction | None
     """Regime transition function, or `None` for terminal regimes."""
+
+    stochastic_transition: bool = False
+    """Whether the regime transition is stochastic (returns probability array)."""
 
     active: ActiveFunction = lambda _age: True
     """Callable that takes age (float) and returns True if regime is active."""
@@ -246,6 +248,11 @@ def _validate_logical_consistency(regime: Regime) -> None:
             f"{invalid_variable_names}.",
         )
 
+    if regime.stochastic_transition and regime.terminal:
+        error_messages.append(
+            "Terminal regimes (transition=None) cannot have stochastic_transition=True."
+        )
+
     if "utility" not in regime.functions:
         error_messages.append(
             "A 'utility' function must be provided in the functions dictionary.",
@@ -316,7 +323,7 @@ def _collect_state_transitions(
     """Collect state transition functions from grid objects.
 
     For each state grid, produces an entry `f"next_{name}"` mapped to:
-    - A stochastic stub for `ShockGrid` types,
+    - A stochastic stub for `_ShockGrid` types,
     - The grid's `transition` attribute if present, or
     - An auto-generated identity transition for fixed states.
 
@@ -324,7 +331,10 @@ def _collect_state_transitions(
     transitions: dict[str, UserFunction] = {}
     for name, grid in states.items():
         if isinstance(grid, _ShockGrid):
-            transitions[f"next_{name}"] = stochastic(lambda: None)
+            transitions[f"next_{name}"] = lambda: None
+        elif isinstance(grid, DiscreteMarkovGrid):
+            # DiscreteMarkovGrid.__init__ guarantees transition is callable
+            transitions[f"next_{name}"] = grid.transition
         elif callable(grid_transition := getattr(grid, "transition", None)):
             transitions[f"next_{name}"] = grid_transition
         else:

@@ -1,7 +1,6 @@
 import jax.numpy as jnp
 import pytest
 
-import lcm
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.typing import (
@@ -173,7 +172,8 @@ def test_model_requires_terminal_regime(binary_category_class):
         },
         actions={},
         functions={"utility": lambda health: health},
-        transition=lcm.mark.stochastic(lambda: jnp.array([1.0])),
+        transition=lambda: jnp.array([1.0]),
+        stochastic_transition=True,
         active=lambda age: age < 1,
     )
     with pytest.raises(ModelInitializationError, match="at least one terminal regime"):
@@ -232,7 +232,8 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
             ),
         },
         functions={"utility": lambda health: health},
-        transition=lcm.mark.stochastic(lambda: jnp.array([0.8, 0.1, 0.1])),
+        transition=lambda: jnp.array([0.8, 0.1, 0.1]),
+        stochastic_transition=True,
         active=lambda age: age < 1,
     )
     dead1 = Regime(
@@ -279,7 +280,8 @@ def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):
             ),
         },
         functions={"utility": lambda health: health},
-        transition=lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
+        transition=lambda: jnp.array([0.5, 0.5]),
+        stochastic_transition=True,
         active=lambda age: age < 1,
     )
     dead = Regime(
@@ -317,7 +319,8 @@ def test_model_regime_name_validation(binary_category_class):
             ),
         },
         functions={"utility": lambda health: health},
-        transition=lcm.mark.stochastic(lambda: jnp.array([0.5, 0.5])),
+        transition=lambda: jnp.array([0.5, 0.5]),
+        stochastic_transition=True,
         active=lambda age: age < 1,
     )
     dead = Regime(
@@ -370,7 +373,8 @@ def test_unused_state_raises_error():
             "unused_state": DiscreteGrid(UnusedState, transition=None),
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-        transition=lcm.mark.stochastic(lambda: jnp.array([0.9, 0.1])),
+        transition=lambda: jnp.array([0.9, 0.1]),
+        stochastic_transition=True,
         active=lambda age: age < 5,
     )
 
@@ -426,7 +430,8 @@ def test_unused_action_raises_error():
                 category_class=UnusedAction
             ),  # Not used anywhere!
         },
-        transition=lcm.mark.stochastic(lambda: jnp.array([0.9, 0.1])),
+        transition=lambda: jnp.array([0.9, 0.1]),
+        stochastic_transition=True,
         active=lambda age: age < 5,
     )
 

@@ -42,7 +42,10 @@ def test_regression_test():
     got_solve: Mapping[int, Mapping[str, FloatND]] = model.solve(params)
     got_simulate = model.solve_and_simulate(
         params=params,
-        initial_states={"wealth": jnp.array([5.0, 20, 40, 70])},
+        initial_states={
+            "wealth": jnp.array([5.0, 20, 40, 70]),
+            "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
+        },
         initial_regimes=["working"] * 4,
     ).to_dataframe()
 
@@ -146,7 +149,10 @@ def test_model_with_different_grid_types(grid_type: str):
     # This should complete without error
     result = model.solve_and_simulate(
         params=params,
-        initial_states={"wealth": jnp.array([5.0, 20, 40, 70])},
+        initial_states={
+            "wealth": jnp.array([5.0, 20, 40, 70]),
+            "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
+        },
         initial_regimes=["working"] * 4,
     )
     df = result.to_dataframe()

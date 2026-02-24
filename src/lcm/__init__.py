@@ -6,10 +6,11 @@ import jax
 with contextlib.suppress(ImportError):
     import pdbp  # noqa: F401
 
-from lcm import mark, shocks
+from lcm import shocks
 from lcm.ages import AgeGrid
 from lcm.grids import (
     DiscreteGrid,
+    DiscreteMarkovGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
@@ -33,6 +34,7 @@ jax.tree_util.register_pytree_node(
 __all__ = [
     "AgeGrid",
     "DiscreteGrid",
+    "DiscreteMarkovGrid",
     "IrregSpacedGrid",
     "LinSpacedGrid",
     "LogSpacedGrid",
@@ -43,6 +45,5 @@ __all__ = [
     "Regime",
     "SimulationResult",
     "categorical",
-    "mark",
     "shocks",
 ]

@@ -93,8 +93,9 @@ Grid class hierarchy: `Grid` is the base class. `ContinuousGrid(Grid)` is the ba
 continuous grids with `get_coordinate` method. `UniformContinuousGrid(ContinuousGrid)`
 is for grids with start/stop/n_points (LinSpacedGrid, LogSpacedGrid inherit from it).
 Other continuous grids (IrregSpacedGrid, PiecewiseLinSpacedGrid, PiecewiseLogSpacedGrid)
-inherit directly from ContinuousGrid. `ShockGrid(ContinuousGrid)` is the base for
-stochastic grids.
+inherit directly from ContinuousGrid. `_ShockGrid(ContinuousGrid)` is the base for
+stochastic continuous grids. `DiscreteMarkovGrid(DiscreteGrid)` is the base for discrete
+Markov-chain grids.
 
 **State transitions** are attached directly to grid objects via the `transition`
 parameter. A state with no `transition` is fixed (time-invariant) — an identity

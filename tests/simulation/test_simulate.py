@@ -83,7 +83,10 @@ def test_simulate_using_raw_inputs(simulate_inputs):
                 1: MappingProxyType({"working": jnp.zeros(100), "dead": jnp.zeros(2)}),
             }
         ),
-        initial_states={"wealth": jnp.array([1.0, 50.400803])},
+        initial_states={
+            "wealth": jnp.array([1.0, 50.400803]),
+            "age": jnp.array([0.0, 0.0]),
+        },
         initial_regimes=["working"] * 2,
         logger=get_logger(debug_mode=False),
         **simulate_inputs,
@@ -140,7 +143,10 @@ def test_simulate_using_model_methods(
     result = model.simulate(
         params,
         V_arr_dict=V_arr_dict,
-        initial_states={"wealth": jnp.array([20.0, 150, 250, 320])},
+        initial_states={
+            "wealth": jnp.array([20.0, 150, 250, 320]),
+            "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
+        },
         initial_regimes=["working"] * 4,
     )
     df = result.to_dataframe(
@@ -187,7 +193,10 @@ def test_simulate_with_only_discrete_actions():
 
     result = model.solve_and_simulate(
         params,
-        initial_states={"wealth": jnp.array([0, 2])},
+        initial_states={
+            "wealth": jnp.array([0, 2]),
+            "age": jnp.array([0.0, 0.0]),
+        },
         initial_regimes=["working"] * 2,
     )
     got = result.to_dataframe().query('regime == "working"')
@@ -252,7 +261,10 @@ def test_effect_of_discount_factor_on_last_period():
     df_low = (
         model.solve_and_simulate(
             params_low,
-            initial_states={"wealth": initial_wealth},
+            initial_states={
+                "wealth": initial_wealth,
+                "age": jnp.array([18.0, 18.0, 18.0]),
+            },
             initial_regimes=["working"] * 3,
         )
         .to_dataframe()
@@ -262,7 +274,10 @@ def test_effect_of_discount_factor_on_last_period():
     df_high = (
         model.solve_and_simulate(
             params_high,
-            initial_states={"wealth": initial_wealth},
+            initial_states={
+                "wealth": initial_wealth,
+                "age": jnp.array([18.0, 18.0, 18.0]),
+            },
             initial_regimes=["working"] * 3,
         )
         .to_dataframe()
@@ -309,7 +324,10 @@ def test_effect_of_disutility_of_work():
     df_low = (
         model.solve_and_simulate(
             params_low,
-            initial_states={"wealth": initial_wealth},
+            initial_states={
+                "wealth": initial_wealth,
+                "age": jnp.array([18.0, 18.0, 18.0]),
+            },
             initial_regimes=["working"] * 3,
         )
         .to_dataframe()
@@ -319,7 +337,10 @@ def test_effect_of_disutility_of_work():
     df_high = (
         model.solve_and_simulate(
             params_high,
-            initial_states={"wealth": initial_wealth},
+            initial_states={
+                "wealth": initial_wealth,
+                "age": jnp.array([18.0, 18.0, 18.0]),
+            },
             initial_regimes=["working"] * 3,
         )
         .to_dataframe()
@@ -353,7 +374,10 @@ def test_to_dataframe_use_labels_parameter():
     params = get_params(n_periods=3)
     result = model.solve_and_simulate(
         params,
-        initial_states={"wealth": jnp.array([20.0, 50.0])},
+        initial_states={
+            "wealth": jnp.array([20.0, 50.0]),
+            "age": jnp.array([18.0, 18.0]),
+        },
         initial_regimes=["working"] * 2,
     )
 
@@ -382,7 +406,10 @@ def regression_simulation_result():
     params = get_params(n_periods=3)
     return model.solve_and_simulate(
         params,
-        initial_states={"wealth": jnp.array([20.0, 50.0])},
+        initial_states={
+            "wealth": jnp.array([20.0, 50.0]),
+            "age": jnp.array([18.0, 18.0]),
+        },
         initial_regimes=["working"] * 2,
     )
 
@@ -424,6 +451,7 @@ def test_additional_targets_all_with_stochastic_transitions():
             "wealth": jnp.array([20.0, 50.0]),
             "health": jnp.array([HealthStatus.good, HealthStatus.bad]),
             "partner": jnp.array([PartnerStatus.single, PartnerStatus.partnered]),
+            "age": jnp.array([0.0, 0.0]),
         },
         initial_regimes=["working", "working"],
     )
@@ -468,7 +496,10 @@ def test_simulation_result_pickle_roundtrip(tmp_path: Path):
     params = get_params(n_periods=3)
     result = model.solve_and_simulate(
         params,
-        initial_states={"wealth": jnp.array([20.0, 50.0])},
+        initial_states={
+            "wealth": jnp.array([20.0, 50.0]),
+            "age": jnp.array([18.0, 18.0]),
+        },
         initial_regimes=["working"] * 2,
     )
 

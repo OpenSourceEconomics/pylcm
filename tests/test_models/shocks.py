@@ -4,7 +4,7 @@ from jax import numpy as jnp
 
 import lcm
 from lcm.ages import AgeGrid
-from lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
+from lcm.grids import DiscreteMarkovGrid, LinSpacedGrid, categorical
 from lcm.model import Model
 from lcm.regime import Regime
 from lcm.typing import (
@@ -27,7 +27,6 @@ def get_model(
     n_periods: int,
     distribution_type: Literal["uniform", "normal", "tauchen", "rouwenhorst"],
 ):
-    @lcm.mark.stochastic
     def next_health(health: DiscreteState, health_transition: FloatND) -> FloatND:
         return health_transition[health]
 
@@ -74,7 +73,7 @@ def get_model(
                 start=1, stop=5, n_points=5, transition=next_wealth
             ),
             "income": _SHOCK_GRID_CLASSES[distribution_type](n_points=5),
-            "health": DiscreteGrid(Health, transition=next_health),
+            "health": DiscreteMarkovGrid(Health, transition=next_health),
         },
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),

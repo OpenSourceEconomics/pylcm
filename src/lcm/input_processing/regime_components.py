@@ -165,6 +165,7 @@ def build_next_state_simulation_functions(
         variable_info=variable_info,
         grids=grids,
         gridspecs=gridspecs,
+        stochastic_transition_names=internal_functions.stochastic_transition_names,
     )
     sig_args = tuple(inspect.signature(next_state).parameters)
 

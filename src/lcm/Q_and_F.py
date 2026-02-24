@@ -11,7 +11,6 @@ from jax import Array
 from lcm.dispatchers import productmap
 from lcm.function_representation import get_value_function_representation
 from lcm.functools import get_union_of_args
-from lcm.input_processing.util import is_stochastic_transition
 from lcm.interfaces import InternalFunctions, StateSpaceInfo
 from lcm.next_state import (
     get_next_state_function_for_solution,
@@ -59,6 +58,7 @@ def get_Q_and_F(
     # ----------------------------------------------------------------------------------
     U_and_F = _get_U_and_F(internal_functions)
     regime_transition_probs_func = internal_functions.regime_transition_probs.solve  # ty: ignore[unresolved-attribute]
+    stochastic_transition_names = internal_functions.stochastic_transition_names
     state_transitions = {}
     next_stochastic_states_weights = {}
     joint_weights_from_marginals = {}
@@ -87,10 +87,13 @@ def get_Q_and_F(
                 regime_name=regime_name,
                 functions=internal_functions.functions,
                 transitions=transitions,
+                stochastic_transition_names=stochastic_transition_names,
             )
         )
         joint_weights_from_marginals[target_regime] = _get_joint_weights_function(
-            regime_name=regime_name, transitions=transitions
+            regime_name=regime_name,
+            transitions=transitions,
+            stochastic_transition_names=stochastic_transition_names,
         )
         _scalar_next_V = get_value_function_representation(
             next_state_space_infos[target_regime]
@@ -103,9 +106,7 @@ def get_Q_and_F(
         next_V[target_regime] = productmap(
             func=_scalar_next_V,
             variables=tuple(
-                key
-                for key, value in transitions.items()
-                if is_stochastic_transition(value)
+                key for key in transitions if key in stochastic_transition_names
             ),
         )
 
@@ -307,6 +308,7 @@ def _get_joint_weights_function(
     *,
     regime_name: RegimeName,
     transitions: MappingProxyType[str, InternalUserFunction],
+    stochastic_transition_names: frozenset[str],
 ) -> Callable[..., FloatND]:
     """Get function that calculates the joint weights.
 
@@ -317,6 +319,7 @@ def _get_joint_weights_function(
     Args:
         regime_name: Name of the target regime.
         transitions: Transitions of the target regime.
+        stochastic_transition_names: Frozenset of stochastic transition function names.
 
     Returns:
         A function that computes the outer product of the weights of the stochastic
@@ -325,8 +328,8 @@ def _get_joint_weights_function(
     """
     arg_names = [
         f"weight_{regime_name}__{key}"
-        for key, value in transitions.items()
-        if is_stochastic_transition(value)
+        for key in transitions
+        if key in stochastic_transition_names
     ]
 
     @with_signature(args=arg_names)

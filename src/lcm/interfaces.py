@@ -6,7 +6,13 @@ from types import MappingProxyType
 import pandas as pd
 from jax import Array
 
-from lcm.grids import ContinuousGrid, DiscreteGrid, Grid, IrregSpacedGrid
+from lcm.grids import (
+    ContinuousGrid,
+    DiscreteGrid,
+    DiscreteMarkovGrid,
+    Grid,
+    IrregSpacedGrid,
+)
 from lcm.shocks import _ShockGrid
 from lcm.typing import (
     ArgmaxQOverAFunction,
@@ -129,18 +135,13 @@ class StateSpaceInfo:
     state_names: tuple[str, ...]
     """Tuple of state variable names."""
 
-    discrete_states: MappingProxyType[str, DiscreteGrid | _ShockGrid]
+    discrete_states: MappingProxyType[
+        str, DiscreteGrid | DiscreteMarkovGrid | _ShockGrid
+    ]
     """Immutable mapping of discrete state names to their grids."""
 
     continuous_states: MappingProxyType[str, ContinuousGrid]
     """Immutable mapping of continuous state names to their grids."""
-
-
-class ShockType(Enum):
-    """Type of shocks."""
-
-    EXTREME_VALUE = "extreme_value"
-    NONE = None
 
 
 class PhaseVariantContainer[S, T]:
@@ -309,6 +310,9 @@ class InternalFunctions:
         | None
     )
     """Regime transition probability functions, or None for terminal regimes."""
+
+    stochastic_transition_names: frozenset[str] = frozenset()
+    """Frozenset of stochastic transition function names."""
 
     def get_all_functions(self) -> MappingProxyType[str, InternalUserFunction]:
         """Get all regime functions including utility, constraints, and transitions.
