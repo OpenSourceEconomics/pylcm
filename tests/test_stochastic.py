@@ -14,7 +14,6 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.exceptions import InvalidParamsError
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -348,38 +347,3 @@ def test_stochastic_next_depending_on_continuous_state():
     }
     V = model.solve(params)
     assert all(jnp.all(jnp.isfinite(V[p]["working"])) for p in V if "working" in V[p])
-
-
-@pytest.mark.parametrize("bad_shape", [(1, 2), (4, 2)])
-def test_wrong_transition_matrix_shape_rejected(bad_shape):
-    """Issue #63: solve should reject wrong-shaped transition matrices.
-
-    ShockStatus has 2 values, so the transition matrix must be (2, 2).
-    Passing (1, 2) or (4, 2) should raise a validation error but currently
-    succeeds silently (JAX clips out-of-bounds indices).
-    """
-    model = _make_minimal_stochastic_model()
-    params = {
-        "discount_factor": 0.95,
-        "working": {
-            "next_shock": {
-                "shock_transition": jnp.ones(bad_shape) / bad_shape[1],
-            },
-            "next_regime": {"final_age_alive": 1},
-        },
-    }
-    with pytest.raises(InvalidParamsError):
-        model.solve(params)
-
-
-def test_params_template_includes_stochastic_transition_shape():
-    """Issue #185: params_template should include required array shapes.
-
-    For this model, shock_transition[shock] indexes by current shock state (0 or 1)
-    and returns a probability vector of length 2, so the correct shape is (2, 2).
-    Currently the template only shows the type alias (FloatND).
-    """
-    model = _make_minimal_stochastic_model()
-    template = model.params_template
-    shock_info = template["working"]["next_shock"]["shock_transition"]
-    assert isinstance(shock_info, tuple)

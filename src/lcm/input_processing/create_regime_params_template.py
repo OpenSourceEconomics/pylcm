@@ -2,14 +2,14 @@ import dags.tree as dt
 from jax import Array
 
 from lcm.exceptions import InvalidNameError
-from lcm.grids import DiscreteMarkovGrid, IrregSpacedGrid
+from lcm.grids import IrregSpacedGrid
 from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
-from lcm.typing import FloatND, RegimeParamsTemplate
+from lcm.typing import RegimeParamsTemplate
 from lcm.utils import ensure_containers_are_immutable
 
 
-def create_regime_params_template(  # noqa: C901
+def create_regime_params_template(
     regime: Regime,
 ) -> RegimeParamsTemplate:
     """Create parameter template from a regime specification.
@@ -62,18 +62,6 @@ def create_regime_params_template(  # noqa: C901
                 f"shadow state/action variable(s) with the same name. Please rename "
                 f"the parameter(s) or the state(s)/action(s) to avoid ambiguity."
             )
-
-    # Replace FloatND type annotations with (n_states, n_states) shape tuples
-    # for DiscreteMarkovGrid transitions, so users know the expected matrix shape.
-    for state_name, grid in regime.states.items():
-        if isinstance(grid, DiscreteMarkovGrid):
-            func_key = f"next_{state_name}"
-            if func_key in function_params:
-                n = grid.n_states
-                function_params[func_key] = {
-                    pname: (n, n) if ptype is FloatND else ptype
-                    for pname, ptype in function_params[func_key].items()
-                }
 
     # Add entries for grids whose points/params are supplied at runtime
     for state_name, grid in regime.states.items():
