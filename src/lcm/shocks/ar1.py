@@ -59,7 +59,11 @@ class Tauchen(_ShockGridAR1):
 
     def __post_init__(self) -> None:
         if self.n_points % 2 == 0:
-            msg = f"n_points must be odd (got {self.n_points})."
+            msg = (
+                f"n_points must be odd (got {self.n_points}). Odd n guarantees a"
+                " quadrature node at the mean (Abramowitz & Stegun, 1972,"
+                " Table 25.10)."
+            )
             raise GridInitializationError(msg)
         if self.gauss_hermite and self.n_std is not None:
             msg = "gauss_hermite=True and n_std are mutually exclusive."
@@ -146,7 +150,11 @@ class Rouwenhorst(_ShockGridAR1):
 
     def __post_init__(self) -> None:
         if self.n_points % 2 == 0:
-            msg = f"n_points must be odd (got {self.n_points})."
+            msg = (
+                f"n_points must be odd (got {self.n_points}). Odd n guarantees a"
+                " quadrature node at the mean (Abramowitz & Stegun, 1972,"
+                " Table 25.10)."
+            )
             raise GridInitializationError(msg)
 
     def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
