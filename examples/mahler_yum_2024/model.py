@@ -671,6 +671,7 @@ def create_inputs(
         random.choice(new_keys[2], jnp.arange(5), (n_simulation_subjects,), p=prod_dist)
     ]
     initial_states = {
+        "age": jnp.full(n_simulation_subjects, ages.values[0]),
         "wealth": initial_wealth,
         "health": initial_health,
         "health_type": initial_health_type,
