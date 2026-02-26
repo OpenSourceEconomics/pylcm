@@ -89,36 +89,26 @@ class Tauchen(_ShockGridAR1):
         if self.gauss_hermite:
             std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
             nodes, _weights = _gauss_hermite_normal(n_points, 0.0, std_y)
-            x = nodes
-            midpoints = (x[:-1] + x[1:]) / 2
-            P = jnp.empty((n_points, n_points))
-            for i in range(n_points):
-                P = P.at[i, 0].set(cdf(midpoints[0], loc=rho * x[i], scale=sigma))
-                P = P.at[i, -1].set(1 - cdf(midpoints[-1], loc=rho * x[i], scale=sigma))
-                for j in range(1, n_points - 1):
-                    P = P.at[i, j].set(
-                        cdf(midpoints[j], loc=rho * x[i], scale=sigma)
-                        - cdf(midpoints[j - 1], loc=rho * x[i], scale=sigma)
-                    )
-            return P
+            midpoints = (nodes[:-1] + nodes[1:]) / 2
+            # CDF at all midpoints for all source states: (n_points, n_points-1)
+            cdf_vals = cdf(midpoints[None, :], loc=rho * nodes[:, None], scale=sigma)
+            first = cdf_vals[:, :1]
+            interior = jnp.diff(cdf_vals, axis=1)
+            last = 1 - cdf_vals[:, -1:]
+            return jnp.concatenate([first, interior, last], axis=1)
         n_std = kwargs["n_std"]
         std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
         x_max = n_std * std_y
         x = jnp.linspace(-x_max, x_max, n_points)
         step = (2 * x_max) / (n_points - 1)
         half_step = 0.5 * step
-        P = jnp.empty((n_points, n_points))
-        for i in range(n_points):
-            P = P.at[i, 0].set(cdf((x[0] - rho * x[i] + half_step) / sigma))
-            P = P.at[i, -1].set(
-                1 - cdf((x[n_points - 1] - rho * x[i] - half_step) / sigma)
-            )
-            for j in range(1, n_points - 1):
-                z = x[j] - rho * x[i]
-                P = P.at[i, j].set(
-                    cdf((z + half_step) / sigma) - cdf((z - half_step) / sigma)
-                )
-        return P
+        # z[i, j] = x[j] - rho * x[i]: (n_points, n_points)
+        z = x[None, :] - rho * x[:, None]
+        upper = cdf((z + half_step) / sigma)
+        lower = cdf((z - half_step) / sigma)
+        P = upper - lower
+        P = P.at[:, 0].set(upper[:, 0])
+        return P.at[:, -1].set(1 - lower[:, -1])
 
     def draw_shock(
         self,

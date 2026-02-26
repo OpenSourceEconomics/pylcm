@@ -329,6 +329,26 @@ def test_normal_gauss_hermite_weights_sum_to_one():
     aaae(P[0].sum(), 1.0, decimal=DECIMAL_PRECISION)
 
 
+def test_normal_linspace_transition_probs_rows_sum_to_one():
+    """Non-GH Normal iid transition probability rows sum to 1."""
+    grid = lcm.shocks.iid.Normal(
+        n_points=7, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=3.0
+    )
+    P = grid.get_transition_probs()
+    row_sums = P.sum(axis=1)
+    aaae(row_sums, jnp.ones(7), decimal=DECIMAL_PRECISION)
+
+
+def test_lognormal_linspace_transition_probs_rows_sum_to_one():
+    """Non-GH LogNormal iid transition probability rows sum to 1."""
+    grid = lcm.shocks.iid.LogNormal(
+        n_points=7, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=3.0
+    )
+    P = grid.get_transition_probs()
+    row_sums = P.sum(axis=1)
+    aaae(row_sums, jnp.ones(7), decimal=DECIMAL_PRECISION)
+
+
 def test_normal_gauss_hermite_n_std_not_in_params():
     """n_std is excluded from params_to_pass_at_runtime when gauss_hermite=True."""
     grid = lcm.shocks.iid.Normal(n_points=5, gauss_hermite=True)
@@ -339,6 +359,16 @@ def test_tauchen_gauss_hermite_transition_probs_rows_sum_to_one():
     """Each row of the GH Tauchen transition matrix sums to 1."""
     grid = lcm.shocks.ar1.Tauchen(
         n_points=7, gauss_hermite=True, rho=0.9, sigma=0.5, mu=1.0
+    )
+    P = grid.get_transition_probs()
+    row_sums = P.sum(axis=1)
+    aaae(row_sums, jnp.ones(7), decimal=DECIMAL_PRECISION)
+
+
+def test_tauchen_linspace_transition_probs_rows_sum_to_one():
+    """Each row of the non-GH Tauchen transition matrix sums to 1."""
+    grid = lcm.shocks.ar1.Tauchen(
+        n_points=7, gauss_hermite=False, rho=0.9, sigma=0.5, mu=1.0, n_std=3.0
     )
     P = grid.get_transition_probs()
     row_sums = P.sum(axis=1)
