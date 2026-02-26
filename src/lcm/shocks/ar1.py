@@ -1,5 +1,5 @@
 from abc import abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from math import comb
 from types import MappingProxyType
 
@@ -7,7 +7,8 @@ import jax
 import jax.numpy as jnp
 from jax.scipy.stats.norm import cdf
 
-from lcm.shocks._base import _ShockGrid
+from lcm.exceptions import GridInitializationError
+from lcm.shocks._base import _gauss_hermite_normal, _ShockGrid
 from lcm.typing import Float1D, FloatND
 
 
@@ -32,9 +33,17 @@ class Tauchen(_ShockGridAR1):
     $y_t = \mu + \rho \, y_{t-1} + \varepsilon_t$,
     where $\varepsilon_t \sim N(0, \sigma_\varepsilon^2)$.
 
+    When `gauss_hermite=True`, the grid uses Gauss-Hermite quadrature nodes
+    for the unconditional distribution.  When `gauss_hermite=False`, it uses
+    equally spaced points spanning $\pm n_\text{std}$ unconditional standard
+    deviations.
+
     Original implementation follows [QuantEcon](https://quanteconpy.readthedocs.io/en/latest/markov/approximation.html#quantecon.markov.approximation.tauchen).
 
     """
+
+    gauss_hermite: bool
+    """Use Gauss-Hermite quadrature nodes and weights."""
 
     rho: float | None = None
     """Persistence parameter of the AR(1) process."""
@@ -48,9 +57,28 @@ class Tauchen(_ShockGridAR1):
     n_std: float | None = None
     """Number of standard deviations for the grid boundary."""
 
+    def __post_init__(self) -> None:
+        if self.n_points % 2 == 0:
+            msg = f"n_points must be odd (got {self.n_points})."
+            raise GridInitializationError(msg)
+        if self.gauss_hermite and self.n_std is not None:
+            msg = "gauss_hermite=True and n_std are mutually exclusive."
+            raise GridInitializationError(msg)
+
+    @property
+    def _param_field_names(self) -> tuple[str, ...]:
+        exclude = {"n_points", "gauss_hermite"}
+        if self.gauss_hermite:
+            exclude.add("n_std")
+        return tuple(f.name for f in fields(self) if f.name not in exclude)
+
     def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
-        rho, sigma = kwargs["rho"], kwargs["sigma"]
-        mu, n_std = kwargs["mu"], kwargs["n_std"]
+        rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
+        if self.gauss_hermite:
+            std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
+            nodes, _weights = _gauss_hermite_normal(n_points, 0.0, std_y)
+            return nodes + mu / (1 - rho)
+        n_std = kwargs["n_std"]
         std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
         x_max = n_std * std_y
         x = jnp.linspace(-x_max, x_max, n_points)
@@ -58,6 +86,21 @@ class Tauchen(_ShockGridAR1):
 
     def compute_transition_probs(self, n_points: int, **kwargs: float) -> FloatND:
         rho, sigma = kwargs["rho"], kwargs["sigma"]
+        if self.gauss_hermite:
+            std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
+            nodes, _weights = _gauss_hermite_normal(n_points, 0.0, std_y)
+            x = nodes
+            midpoints = (x[:-1] + x[1:]) / 2
+            P = jnp.empty((n_points, n_points))
+            for i in range(n_points):
+                P = P.at[i, 0].set(cdf(midpoints[0], loc=rho * x[i], scale=sigma))
+                P = P.at[i, -1].set(1 - cdf(midpoints[-1], loc=rho * x[i], scale=sigma))
+                for j in range(1, n_points - 1):
+                    P = P.at[i, j].set(
+                        cdf(midpoints[j], loc=rho * x[i], scale=sigma)
+                        - cdf(midpoints[j - 1], loc=rho * x[i], scale=sigma)
+                    )
+            return P
         n_std = kwargs["n_std"]
         std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
         x_max = n_std * std_y
@@ -110,6 +153,11 @@ class Rouwenhorst(_ShockGridAR1):
 
     mu: float | None = None
     """Intercept (drift) of the AR(1) process."""
+
+    def __post_init__(self) -> None:
+        if self.n_points % 2 == 0:
+            msg = f"n_points must be odd (got {self.n_points})."
+            raise GridInitializationError(msg)
 
     def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
         rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
