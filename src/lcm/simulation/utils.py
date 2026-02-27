@@ -20,8 +20,10 @@ from lcm.typing import (
 )
 from lcm.utils import flatten_regime_namespace, normalize_regime_transition_probs
 
-# Sentinel for categorical states not in initial conditions.
-MISSING_CAT_CODE = -1
+# Sentinel for categorical states not in initial conditions.  Using int32 min
+# instead of -1 so that JAX indexing produces obviously wrong values rather than
+# silently returning the last element.
+MISSING_CAT_CODE = jnp.iinfo(jnp.int32).min
 
 
 def get_regime_state_names(
