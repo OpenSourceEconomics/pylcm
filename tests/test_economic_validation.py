@@ -16,6 +16,7 @@ _N_PERIODS = 7
 _N_SUBJECTS = 50
 _SEED = 42
 _SIGMA_ZERO = 1e-8  # Effectively zero; exact 0 causes degenerate grids
+_DETERMINISTIC_ATOL = 1e-6 if X64_ENABLED else 1e-3
 
 
 def _solve_and_simulate(shock_type, *, sigma, rho=0.0, mu=0.0):
@@ -46,7 +47,6 @@ def _mean_wealth_in_final_alive_period(df):
 # ======================================================================================
 
 
-@pytest.mark.skipif(not X64_ENABLED, reason="Requires 64-bit precision")
 @pytest.mark.parametrize("shock_type", ["normal_gh", "rouwenhorst"])
 def test_deterministic_when_sigma_zero(shock_type):
     rho = 0.5 if shock_type == "rouwenhorst" else 0.0
@@ -55,8 +55,10 @@ def test_deterministic_when_sigma_zero(shock_type):
     alive_df = df[df["regime"] == "alive"]
     for period in alive_df["period"].unique():
         period_data = alive_df[alive_df["period"] == period]
-        assert period_data["wealth"].std() == pytest.approx(0, abs=1e-6)
-        assert period_data["consumption"].std() == pytest.approx(0, abs=1e-6)
+        assert period_data["wealth"].std() == pytest.approx(0, abs=_DETERMINISTIC_ATOL)
+        assert period_data["consumption"].std() == pytest.approx(
+            0, abs=_DETERMINISTIC_ATOL
+        )
 
 
 # ======================================================================================
@@ -64,7 +66,6 @@ def test_deterministic_when_sigma_zero(shock_type):
 # ======================================================================================
 
 
-@pytest.mark.skipif(not X64_ENABLED, reason="Requires 64-bit precision")
 def test_higher_sigma_increases_mean_wealth_normal():
     df_low = _solve_and_simulate("normal_gh", sigma=0.1)
     df_high = _solve_and_simulate("normal_gh", sigma=0.5)
@@ -79,7 +80,6 @@ def test_higher_sigma_increases_mean_wealth_normal():
 # ======================================================================================
 
 
-@pytest.mark.skipif(not X64_ENABLED, reason="Requires 64-bit precision")
 def test_higher_sigma_increases_mean_wealth_rouwenhorst():
     df_low = _solve_and_simulate("rouwenhorst", sigma=0.1, rho=0.5)
     df_high = _solve_and_simulate("rouwenhorst", sigma=0.5, rho=0.5)
@@ -89,7 +89,6 @@ def test_higher_sigma_increases_mean_wealth_rouwenhorst():
     ) > _mean_wealth_in_final_alive_period(df_low)
 
 
-@pytest.mark.skipif(not X64_ENABLED, reason="Requires 64-bit precision")
 def test_higher_rho_increases_mean_wealth_rouwenhorst():
     df_low = _solve_and_simulate("rouwenhorst", sigma=0.3, rho=0.2)
     df_high = _solve_and_simulate("rouwenhorst", sigma=0.3, rho=0.8)
@@ -99,7 +98,6 @@ def test_higher_rho_increases_mean_wealth_rouwenhorst():
     ) > _mean_wealth_in_final_alive_period(df_low)
 
 
-@pytest.mark.skipif(not X64_ENABLED, reason="Requires 64-bit precision")
 def test_precautionary_savings_with_nonzero_mu():
     """Precautionary savings motive holds with non-zero drift (mu != 0)."""
     df_low = _solve_and_simulate("rouwenhorst", sigma=0.1, rho=0.5, mu=0.5)
@@ -115,7 +113,6 @@ def test_precautionary_savings_with_nonzero_mu():
 # ======================================================================================
 
 
-@pytest.mark.skipif(not X64_ENABLED, reason="Requires 64-bit precision")
 @pytest.mark.parametrize("shock_type", ["normal_gh", "rouwenhorst"])
 def test_precautionary_savings_versus_deterministic_baseline(shock_type):
     rho = 0.5 if shock_type == "rouwenhorst" else 0.0
