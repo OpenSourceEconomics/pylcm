@@ -474,7 +474,7 @@ def test_tauchen_matches_quantecon(case):
         grid.get_transition_probs(),
         jnp.array(case["gridpoints"]),
         jnp.array(case["transition_probs"]),
-        decimal=12,
+        decimal=DECIMAL_PRECISION,
     )
 
 
@@ -494,7 +494,7 @@ def test_rouwenhorst_matches_quantecon(case):
         grid.get_transition_probs(),
         jnp.array(case["gridpoints"]),
         jnp.array(case["transition_probs"]),
-        decimal=12,
+        decimal=DECIMAL_PRECISION,
     )
 
 
