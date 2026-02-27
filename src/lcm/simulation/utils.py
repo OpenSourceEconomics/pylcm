@@ -7,6 +7,7 @@ from jax import Array, vmap
 from jax import numpy as jnp
 
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
+from lcm.grids import DiscreteGrid, DiscreteMarkovGrid
 from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.random import generate_simulation_keys
 from lcm.state_action_space import create_state_action_space
@@ -18,6 +19,9 @@ from lcm.typing import (
     RegimeNamesToIds,
 )
 from lcm.utils import flatten_regime_namespace, normalize_regime_transition_probs
+
+# Sentinel for categorical states not in initial conditions.
+MISSING_CAT_CODE = -1
 
 
 def get_regime_state_names(
@@ -304,7 +308,10 @@ def convert_initial_states_to_nested(
     """Convert flat initial_states dict to nested format.
 
     Takes user-provided flat format and converts to the nested format
-    expected by internal simulation code.
+    expected by internal simulation code. States not present in
+    `initial_states` (e.g. states that only exist in a target regime no
+    subject starts in) are filled with `jnp.nan` (continuous) or
+    `MISSING_CAT_CODE` (discrete).
 
     Args:
         initial_states: Mapping of state names to arrays.
@@ -318,14 +325,24 @@ def convert_initial_states_to_nested(
 
     """
     nested: dict[RegimeName, dict[str, Array]] = {}
-
     n_subjects = len(next(iter(initial_states.values())))
+
     for regime_name, internal_regime in internal_regimes.items():
         regime_state_names = get_regime_state_names(internal_regime)
-        nested[regime_name] = {
-            state_name: initial_states.get(state_name, jnp.zeros(n_subjects))
-            for state_name in regime_state_names
-        }
+        regime_states: dict[str, Array] = {}
+        for state_name in regime_state_names:
+            if state_name in initial_states:
+                regime_states[state_name] = initial_states[state_name]
+            elif isinstance(
+                internal_regime.gridspecs[state_name],
+                DiscreteGrid | DiscreteMarkovGrid,
+            ):
+                regime_states[state_name] = jnp.full(
+                    n_subjects, MISSING_CAT_CODE, dtype=jnp.int32
+                )
+            else:
+                regime_states[state_name] = jnp.full(n_subjects, jnp.nan)
+        nested[regime_name] = regime_states
 
     return nested
 
