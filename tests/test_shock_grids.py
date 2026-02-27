@@ -502,56 +502,60 @@ def test_rouwenhorst_matches_quantecon(case):
 # Long-series Markov-chain simulation tests
 # ======================================================================================
 
-_N_POINTS_SIM = 21
-_N_STEPS = 200_000
-_BURN_IN = 10_000
+
+def _stationary_moments(gridpoints, P):
+    """Compute mean and variance from the stationary distribution of a Markov chain."""
+    # Stationary distribution: solve pi @ P = pi via eigendecomposition
+    eigvals, eigvecs = jnp.linalg.eig(P.T)
+    idx = jnp.argmin(jnp.abs(eigvals - 1.0))
+    pi = jnp.real(eigvecs[:, idx])
+    pi = pi / pi.sum()
+    mean = jnp.dot(pi, gridpoints)
+    var = jnp.dot(pi, (gridpoints - mean) ** 2)
+    return float(mean), float(jnp.sqrt(var))
 
 
-def _simulate_discrete_markov(gridpoints, transition_probs, n_steps, burn_in, seed=0):
-    """Simulate a discrete Markov chain and return the post-burn-in series."""
-    n = len(gridpoints)
-    key = jax.random.key(seed)
-    state = n // 2  # start at middle
-
-    states = []
-    for _ in range(n_steps + burn_in):
-        key, subkey = jax.random.split(key)
-        state = int(jax.random.choice(subkey, n, p=transition_probs[state]))
-        states.append(state)
-
-    indices = jnp.array(states[burn_in:])
-    return gridpoints[indices]
+def _lag1_autocorrelation(gridpoints, P):
+    """Compute lag-1 autocorrelation from gridpoints and transition matrix."""
+    eigvals, eigvecs = jnp.linalg.eig(P.T)
+    idx = jnp.argmin(jnp.abs(eigvals - 1.0))
+    pi = jnp.real(eigvecs[:, idx])
+    pi = pi / pi.sum()
+    mean = jnp.dot(pi, gridpoints)
+    var = jnp.dot(pi, (gridpoints - mean) ** 2)
+    # E[X_t * X_{t+1}] = sum_i sum_j pi_i * P_ij * x_i * x_j
+    cross = float(jnp.sum(pi[:, None] * P * gridpoints[:, None] * gridpoints[None, :]))
+    return (cross - float(mean) ** 2) / float(var)
 
 
 @pytest.mark.parametrize("gauss_hermite", [True, False])
-def test_iid_normal_simulation_moments(gauss_hermite):
-    """IID Normal simulation mean and std match mu and sigma."""
+def test_iid_normal_stationary_moments(gauss_hermite):
+    """IID Normal stationary mean and std match mu and sigma."""
     mu, sigma = 1.5, 0.8
     extra = {"gauss_hermite": gauss_hermite}
     if not gauss_hermite:
         extra["n_std"] = 4.0
-    grid = lcm.shocks.iid.Normal(n_points=_N_POINTS_SIM, mu=mu, sigma=sigma, **extra)
-    series = _simulate_discrete_markov(
-        grid.get_gridpoints(), grid.get_transition_probs(), _N_STEPS, _BURN_IN
+    grid = lcm.shocks.iid.Normal(n_points=21, mu=mu, sigma=sigma, **extra)
+    got_mean, got_std = _stationary_moments(
+        grid.get_gridpoints(), grid.get_transition_probs()
     )
-    aaae(series.mean(), mu, decimal=1)
-    aaae(series.std(), sigma, decimal=1)
+    aaae(got_mean, mu, decimal=1)
+    aaae(got_std, sigma, decimal=1)
 
 
 @pytest.mark.parametrize("gauss_hermite", [True, False])
-def test_iid_lognormal_simulation_moments(gauss_hermite):
-    """IID LogNormal simulation log-mean and log-std match mu and sigma."""
+def test_iid_lognormal_stationary_moments(gauss_hermite):
+    """IID LogNormal stationary log-mean and log-std match mu and sigma."""
     mu, sigma = 0.5, 0.3
     extra = {"gauss_hermite": gauss_hermite}
     if not gauss_hermite:
         extra["n_std"] = 4.0
-    grid = lcm.shocks.iid.LogNormal(n_points=_N_POINTS_SIM, mu=mu, sigma=sigma, **extra)
-    series = _simulate_discrete_markov(
-        grid.get_gridpoints(), grid.get_transition_probs(), _N_STEPS, _BURN_IN
-    )
-    log_series = jnp.log(series)
-    aaae(log_series.mean(), mu, decimal=1)
-    aaae(log_series.std(), sigma, decimal=1)
+    grid = lcm.shocks.iid.LogNormal(n_points=21, mu=mu, sigma=sigma, **extra)
+    points = grid.get_gridpoints()
+    P = grid.get_transition_probs()
+    got_mean, got_std = _stationary_moments(jnp.log(points), P)
+    aaae(got_mean, mu, decimal=1)
+    aaae(got_std, sigma, decimal=1)
 
 
 @pytest.mark.parametrize(
@@ -563,21 +567,19 @@ def test_iid_lognormal_simulation_moments(gauss_hermite):
     ],
     ids=["tauchen-gh", "tauchen-linspace", "rouwenhorst"],
 )
-def test_ar1_simulation_unconditional_moments(grid_cls, extra_kw):
-    """AR(1) simulation mean, std, and lag-1 autocorrelation match theory."""
+def test_ar1_stationary_moments_and_autocorrelation(grid_cls, extra_kw):
+    """AR(1) stationary mean, std, and lag-1 autocorrelation match theory."""
     rho, sigma, mu = 0.8, 0.4, 1.0
-    grid = grid_cls(n_points=_N_POINTS_SIM, rho=rho, sigma=sigma, mu=mu, **extra_kw)
-    series = _simulate_discrete_markov(
-        grid.get_gridpoints(), grid.get_transition_probs(), _N_STEPS, _BURN_IN
-    )
+    grid = grid_cls(n_points=21, rho=rho, sigma=sigma, mu=mu, **extra_kw)
+    points = grid.get_gridpoints()
+    P = grid.get_transition_probs()
 
     expected_mean = mu / (1 - rho)
     expected_std = sigma / jnp.sqrt(1 - rho**2)
 
-    aaae(series.mean(), expected_mean, decimal=1)
-    aaae(series.std(), expected_std, decimal=1)
+    got_mean, got_std = _stationary_moments(points, P)
+    aaae(got_mean, expected_mean, decimal=1)
+    aaae(got_std, expected_std, decimal=1)
 
-    # Lag-1 autocorrelation
-    y = series - series.mean()
-    autocorr = jnp.dot(y[:-1], y[1:]) / jnp.dot(y, y)
-    aaae(autocorr, rho, decimal=1)
+    got_rho = _lag1_autocorrelation(points, P)
+    aaae(got_rho, rho, decimal=1)
