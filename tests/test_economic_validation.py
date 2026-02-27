@@ -21,11 +21,12 @@ _SIGMA_ZERO = 1e-8  # Effectively zero; exact 0 causes degenerate grids
 def _solve_and_simulate(shock_type, *, sigma, rho=0.0, mu=0.0):
     model = get_model(_N_PERIODS, shock_type)
     params = get_params(shock_type, sigma=sigma, mu=mu, rho=rho)
+    unconditional_mean = mu / (1 - rho)
     result = model.solve_and_simulate(
         params=params,
         initial_states={
             "wealth": jnp.full(_N_SUBJECTS, 5.0),
-            "income": jnp.zeros(_N_SUBJECTS),
+            "income": jnp.full(_N_SUBJECTS, unconditional_mean),
             "age": jnp.zeros(_N_SUBJECTS),
         },
         initial_regimes=["alive"] * _N_SUBJECTS,
@@ -92,6 +93,17 @@ def test_higher_sigma_increases_mean_wealth_rouwenhorst():
 def test_higher_rho_increases_mean_wealth_rouwenhorst():
     df_low = _solve_and_simulate("rouwenhorst", sigma=0.3, rho=0.2)
     df_high = _solve_and_simulate("rouwenhorst", sigma=0.3, rho=0.8)
+
+    assert _mean_wealth_in_final_alive_period(
+        df_high
+    ) > _mean_wealth_in_final_alive_period(df_low)
+
+
+@pytest.mark.skipif(not X64_ENABLED, reason="Requires 64-bit precision")
+def test_precautionary_savings_with_nonzero_mu():
+    """Precautionary savings motive holds with non-zero drift (mu != 0)."""
+    df_low = _solve_and_simulate("rouwenhorst", sigma=0.1, rho=0.5, mu=0.5)
+    df_high = _solve_and_simulate("rouwenhorst", sigma=0.5, rho=0.5, mu=0.5)
 
     assert _mean_wealth_in_final_alive_period(
         df_high
