@@ -1,13 +1,14 @@
 from abc import abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from math import comb
 from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
-from jax.scipy.stats.norm import cdf
+from jax.scipy.stats.norm import cdf, pdf
 
-from lcm.shocks._base import _ShockGrid
+from lcm.exceptions import GridInitializationError
+from lcm.shocks._base import _gauss_hermite_normal, _ShockGrid
 from lcm.typing import Float1D, FloatND
 
 
@@ -32,9 +33,17 @@ class Tauchen(_ShockGridAR1):
     $y_t = \mu + \rho \, y_{t-1} + \varepsilon_t$,
     where $\varepsilon_t \sim N(0, \sigma_\varepsilon^2)$.
 
-    Original implementation follows [QuantEcon](https://quanteconpy.readthedocs.io/en/latest/markov/approximation.html#quantecon.markov.approximation.tauchen).
+    When `gauss_hermite=True`, the grid uses Gauss-Hermite quadrature nodes
+    with importance-sampling weights following
+    [Tauchen & Hussey (1991)](https://doi.org/10.2307/2938229).
+    When `gauss_hermite=False`, it uses equally spaced points spanning
+    $\pm n_\text{std}$ unconditional standard deviations, following
+    [QuantEcon](https://quanteconpy.readthedocs.io/en/latest/markov/approximation.html#quantecon.markov.approximation.tauchen).
 
     """
+
+    gauss_hermite: bool
+    """Use Gauss-Hermite quadrature nodes and weights."""
 
     rho: float | None = None
     """Persistence parameter of the AR(1) process."""
@@ -48,9 +57,30 @@ class Tauchen(_ShockGridAR1):
     n_std: float | None = None
     """Number of standard deviations for the grid boundary."""
 
+    def __post_init__(self) -> None:
+        if self.n_points % 2 == 0:
+            msg = (
+                f"n_points must be odd (got {self.n_points}). Odd n guarantees a"
+                " quadrature node at the mean (Abramowitz & Stegun, 1972,"
+                " Table 25.10)."
+            )
+            raise GridInitializationError(msg)
+        if self.gauss_hermite and self.n_std is not None:
+            msg = "gauss_hermite=True and n_std are mutually exclusive."
+            raise GridInitializationError(msg)
+
+    @property
+    def _param_field_names(self) -> tuple[str, ...]:
+        exclude = {"n_points", "gauss_hermite"}
+        if self.gauss_hermite:
+            exclude.add("n_std")
+        return tuple(f.name for f in fields(self) if f.name not in exclude)
+
     def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
-        rho, sigma = kwargs["rho"], kwargs["sigma"]
-        mu, n_std = kwargs["mu"], kwargs["n_std"]
+        rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
+        if self.gauss_hermite:
+            return _gauss_hermite_normal(n_points, mu / (1 - rho), sigma)[0]
+        n_std = kwargs["n_std"]
         std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
         x_max = n_std * std_y
         x = jnp.linspace(-x_max, x_max, n_points)
@@ -58,24 +88,25 @@ class Tauchen(_ShockGridAR1):
 
     def compute_transition_probs(self, n_points: int, **kwargs: float) -> FloatND:
         rho, sigma = kwargs["rho"], kwargs["sigma"]
+        if self.gauss_hermite:
+            nodes, weights = _gauss_hermite_normal(n_points, 0.0, sigma)
+            f_cond = pdf(nodes[None, :], loc=rho * nodes[:, None], scale=sigma)
+            g_prop = pdf(nodes, loc=0.0, scale=sigma)
+            raw = weights * f_cond / g_prop
+            return raw / raw.sum(axis=1, keepdims=True)
         n_std = kwargs["n_std"]
         std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
         x_max = n_std * std_y
         x = jnp.linspace(-x_max, x_max, n_points)
         step = (2 * x_max) / (n_points - 1)
         half_step = 0.5 * step
-        P = jnp.empty((n_points, n_points))
-        for i in range(n_points):
-            P = P.at[i, 0].set(cdf((x[0] - rho * x[i] + half_step) / sigma))
-            P = P.at[i, -1].set(
-                1 - cdf((x[n_points - 1] - rho * x[i] - half_step) / sigma)
-            )
-            for j in range(1, n_points - 1):
-                z = x[j] - rho * x[i]
-                P = P.at[i, j].set(
-                    cdf((z + half_step) / sigma) - cdf((z - half_step) / sigma)
-                )
-        return P
+        # z[i, j] = x[j] - rho * x[i]: (n_points, n_points)
+        z = x[None, :] - rho * x[:, None]
+        upper = cdf((z + half_step) / sigma)
+        lower = cdf((z - half_step) / sigma)
+        P = upper - lower
+        P = P.at[:, 0].set(upper[:, 0])
+        return P.at[:, -1].set(1 - lower[:, -1])
 
     def draw_shock(
         self,
@@ -98,7 +129,7 @@ class Rouwenhorst(_ShockGridAR1):
     $y_t = \mu + \rho \, y_{t-1} + \varepsilon_t$,
     where $\varepsilon_t \sim N(0, \sigma_\varepsilon^2)$.
 
-    Original implementation follows [QuantEcon](https://quanteconpy.readthedocs.io/en/latest/markov/approximation.html#quantecon.markov.approximation.rouwenhorst).
+    Implementation based on [Kopecky & Suen (2010)](https://doi.org/10.1016/j.red.2010.02.002).
 
     """
 
@@ -110,6 +141,15 @@ class Rouwenhorst(_ShockGridAR1):
 
     mu: float | None = None
     """Intercept (drift) of the AR(1) process."""
+
+    def __post_init__(self) -> None:
+        if self.n_points % 2 == 0:
+            msg = (
+                f"n_points must be odd (got {self.n_points}). Odd n guarantees a"
+                " quadrature node at the mean (Abramowitz & Stegun, 1972,"
+                " Table 25.10)."
+            )
+            raise GridInitializationError(msg)
 
     def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
         rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]

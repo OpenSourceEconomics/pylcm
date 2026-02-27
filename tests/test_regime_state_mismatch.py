@@ -128,7 +128,12 @@ def test_discrete_state_different_categories_across_regimes():
 
 
 @pytest.mark.xfail(
-    reason="Cannot express transition for state that only exists in the target regime",
+    reason=(
+        "Unsupported: source regime transitions to a target regime that has a state "
+        "not present in the source. The missing state is filled with MISSING_CAT_CODE "
+        "so simulation completes, but the results are incorrect because the framework "
+        "cannot determine the correct initial value for the missing state."
+    ),
     strict=True,
 )
 def test_transition_to_state_only_in_target_regime() -> None:
@@ -184,7 +189,7 @@ def test_transition_to_state_only_in_target_regime() -> None:
 
     params = {"discount_factor": 0.95}
     V_arr_dict = model.solve(params)
-    model.simulate(
+    result = model.simulate(
         params=params,
         initial_states={
             "age": jnp.array([0.0]),
@@ -193,3 +198,7 @@ def test_transition_to_state_only_in_target_regime() -> None:
         initial_regimes=["alive"],
         V_arr_dict=V_arr_dict,
     )
+    df = result.to_dataframe()
+    dead_rows = df[df["regime_id"] == "dead"]
+    valid_codes = {HeirPresent.no, HeirPresent.yes}
+    assert dead_rows["heir_present"].isin(valid_codes).all()

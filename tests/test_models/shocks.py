@@ -22,6 +22,13 @@ _SHOCK_GRID_CLASSES = {
     "rouwenhorst": lcm.shocks.ar1.Rouwenhorst,
 }
 
+_SHOCK_GRID_KWARGS: dict[str, dict[str, bool]] = {
+    "uniform": {},
+    "normal": {"gauss_hermite": True},
+    "tauchen": {"gauss_hermite": True},
+    "rouwenhorst": {},
+}
+
 
 def get_model(
     n_periods: int,
@@ -72,7 +79,9 @@ def get_model(
             "wealth": LinSpacedGrid(
                 start=1, stop=5, n_points=5, transition=next_wealth
             ),
-            "income": _SHOCK_GRID_CLASSES[distribution_type](n_points=5),
+            "income": _SHOCK_GRID_CLASSES[distribution_type](
+                n_points=5, **_SHOCK_GRID_KWARGS[distribution_type]
+            ),
             "health": DiscreteMarkovGrid(Health, transition=next_health),
         },
         actions={
@@ -96,8 +105,8 @@ def get_model(
 
 _SHOCK_PARAMS: dict[str, dict[str, float]] = {
     "uniform": {"start": 0.0, "stop": 1.0},
-    "normal": {"mu": 0.0, "sigma": 1.0, "n_std": 3.0},
-    "tauchen": {"rho": 0.975, "sigma": 1.0, "mu": 0.0, "n_std": 2},
+    "normal": {"mu": 0.0, "sigma": 1.0},
+    "tauchen": {"rho": 0.975, "sigma": 1.0, "mu": 0.0},
     "rouwenhorst": {"rho": 0.975, "sigma": 1.0, "mu": 0.0},
 }
 
