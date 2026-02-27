@@ -1,3 +1,4 @@
+import pickle
 from types import MappingProxyType
 
 import jax
@@ -12,6 +13,11 @@ from lcm._config import TEST_DATA
 from lcm.exceptions import GridInitializationError
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 from tests.test_models.shocks import get_model, get_params
+
+with (TEST_DATA / "shocks" / "quantecon_tauchen.pkl").open("rb") as _f:
+    TAUCHEN_CASES = pickle.load(_f)
+with (TEST_DATA / "shocks" / "quantecon_rouwenhorst.pkl").open("rb") as _f:
+    ROUWENHORST_CASES = pickle.load(_f)
 
 
 @pytest.mark.skipif(not X64_ENABLED, reason="Not working with 32-Bit because of RNG")
@@ -427,3 +433,151 @@ def test_lognormal_gauss_hermite_weights_sum_to_one():
     grid = lcm.shocks.iid.LogNormal(n_points=7, gauss_hermite=True, mu=0.0, sigma=1.0)
     P = grid.get_transition_probs()
     aaae(P[0].sum(), 1.0, decimal=DECIMAL_PRECISION)
+
+
+# ======================================================================================
+# Regression tests against QuantEcon reference values
+# ======================================================================================
+# Reference values computed using the same algorithms as QuantEcon (MIT license,
+# copyright Thomas J. Sargent and John Stachurski), verified against quantecon==0.11.0.
+
+
+def _assert_markov_chain_close(got_points, got_P, exp_points, exp_P, decimal):
+    """Assert gridpoints and transition probs match, reporting both on failure."""
+    gp_diff = float(jnp.max(jnp.abs(got_points - exp_points)))
+    P_diff = float(jnp.max(jnp.abs(got_P - exp_P)))
+    atol = 1.5 * 10 ** (-decimal)
+    failures = []
+    if gp_diff > atol:
+        failures.append(f"Gridpoints max diff: {gp_diff:.2e}")
+    if P_diff > atol:
+        failures.append(f"Transition probs max diff: {P_diff:.2e}")
+    if failures:
+        pytest.fail("\n".join(failures))
+
+
+@pytest.mark.parametrize(
+    "case", TAUCHEN_CASES, ids=lambda c: f"rho={c['rho']}_n={c['n']}"
+)
+def test_tauchen_matches_quantecon(case):
+    """Tauchen (non-GH) gridpoints and transition probs match QuantEcon reference."""
+    grid = lcm.shocks.ar1.Tauchen(
+        n_points=case["n"],
+        gauss_hermite=False,
+        rho=case["rho"],
+        sigma=case["sigma"],
+        mu=case["mu"],
+        n_std=case["n_std"],
+    )
+    _assert_markov_chain_close(
+        grid.get_gridpoints(),
+        grid.get_transition_probs(),
+        jnp.array(case["gridpoints"]),
+        jnp.array(case["transition_probs"]),
+        decimal=12,
+    )
+
+
+@pytest.mark.parametrize(
+    "case", ROUWENHORST_CASES, ids=lambda c: f"rho={c['rho']}_n={c['n']}"
+)
+def test_rouwenhorst_matches_quantecon(case):
+    """Rouwenhorst gridpoints and transition probs match QuantEcon reference."""
+    grid = lcm.shocks.ar1.Rouwenhorst(
+        n_points=case["n"],
+        rho=case["rho"],
+        sigma=case["sigma"],
+        mu=case["mu"],
+    )
+    _assert_markov_chain_close(
+        grid.get_gridpoints(),
+        grid.get_transition_probs(),
+        jnp.array(case["gridpoints"]),
+        jnp.array(case["transition_probs"]),
+        decimal=12,
+    )
+
+
+# ======================================================================================
+# Long-series Markov-chain simulation tests
+# ======================================================================================
+
+_N_POINTS_SIM = 21
+_N_STEPS = 200_000
+_BURN_IN = 10_000
+
+
+def _simulate_discrete_markov(gridpoints, transition_probs, n_steps, burn_in, seed=0):
+    """Simulate a discrete Markov chain and return the post-burn-in series."""
+    n = len(gridpoints)
+    key = jax.random.key(seed)
+    state = n // 2  # start at middle
+
+    states = []
+    for _ in range(n_steps + burn_in):
+        key, subkey = jax.random.split(key)
+        state = int(jax.random.choice(subkey, n, p=transition_probs[state]))
+        states.append(state)
+
+    indices = jnp.array(states[burn_in:])
+    return gridpoints[indices]
+
+
+@pytest.mark.parametrize("gauss_hermite", [True, False])
+def test_iid_normal_simulation_moments(gauss_hermite):
+    """IID Normal simulation mean and std match mu and sigma."""
+    mu, sigma = 1.5, 0.8
+    extra = {"gauss_hermite": gauss_hermite}
+    if not gauss_hermite:
+        extra["n_std"] = 4.0
+    grid = lcm.shocks.iid.Normal(n_points=_N_POINTS_SIM, mu=mu, sigma=sigma, **extra)
+    series = _simulate_discrete_markov(
+        grid.get_gridpoints(), grid.get_transition_probs(), _N_STEPS, _BURN_IN
+    )
+    aaae(series.mean(), mu, decimal=1)
+    aaae(series.std(), sigma, decimal=1)
+
+
+@pytest.mark.parametrize("gauss_hermite", [True, False])
+def test_iid_lognormal_simulation_moments(gauss_hermite):
+    """IID LogNormal simulation log-mean and log-std match mu and sigma."""
+    mu, sigma = 0.5, 0.3
+    extra = {"gauss_hermite": gauss_hermite}
+    if not gauss_hermite:
+        extra["n_std"] = 4.0
+    grid = lcm.shocks.iid.LogNormal(n_points=_N_POINTS_SIM, mu=mu, sigma=sigma, **extra)
+    series = _simulate_discrete_markov(
+        grid.get_gridpoints(), grid.get_transition_probs(), _N_STEPS, _BURN_IN
+    )
+    log_series = jnp.log(series)
+    aaae(log_series.mean(), mu, decimal=1)
+    aaae(log_series.std(), sigma, decimal=1)
+
+
+@pytest.mark.parametrize(
+    ("grid_cls", "extra_kw"),
+    [
+        (lcm.shocks.ar1.Tauchen, {"gauss_hermite": True}),
+        (lcm.shocks.ar1.Tauchen, {"gauss_hermite": False, "n_std": 3.0}),
+        (lcm.shocks.ar1.Rouwenhorst, {}),
+    ],
+    ids=["tauchen-gh", "tauchen-linspace", "rouwenhorst"],
+)
+def test_ar1_simulation_unconditional_moments(grid_cls, extra_kw):
+    """AR(1) simulation mean, std, and lag-1 autocorrelation match theory."""
+    rho, sigma, mu = 0.8, 0.4, 1.0
+    grid = grid_cls(n_points=_N_POINTS_SIM, rho=rho, sigma=sigma, mu=mu, **extra_kw)
+    series = _simulate_discrete_markov(
+        grid.get_gridpoints(), grid.get_transition_probs(), _N_STEPS, _BURN_IN
+    )
+
+    expected_mean = mu / (1 - rho)
+    expected_std = sigma / jnp.sqrt(1 - rho**2)
+
+    aaae(series.mean(), expected_mean, decimal=1)
+    aaae(series.std(), expected_std, decimal=1)
+
+    # Lag-1 autocorrelation
+    y = series - series.mean()
+    autocorr = jnp.dot(y[:-1], y[1:]) / jnp.dot(y, y)
+    aaae(autocorr, rho, decimal=1)

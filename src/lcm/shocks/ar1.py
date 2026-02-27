@@ -5,7 +5,7 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
-from jax.scipy.stats.norm import cdf
+from jax.scipy.stats.norm import cdf, pdf
 
 from lcm.exceptions import GridInitializationError
 from lcm.shocks._base import _gauss_hermite_normal, _ShockGrid
@@ -34,11 +34,11 @@ class Tauchen(_ShockGridAR1):
     where $\varepsilon_t \sim N(0, \sigma_\varepsilon^2)$.
 
     When `gauss_hermite=True`, the grid uses Gauss-Hermite quadrature nodes
-    for the unconditional distribution.  When `gauss_hermite=False`, it uses
-    equally spaced points spanning $\pm n_\text{std}$ unconditional standard
-    deviations.
-
-    Original implementation follows [QuantEcon](https://quanteconpy.readthedocs.io/en/latest/markov/approximation.html#quantecon.markov.approximation.tauchen).
+    with importance-sampling weights following
+    [Tauchen & Hussey (1991)](https://doi.org/10.2307/2938229).
+    When `gauss_hermite=False`, it uses equally spaced points spanning
+    $\pm n_\text{std}$ unconditional standard deviations, following
+    [QuantEcon](https://quanteconpy.readthedocs.io/en/latest/markov/approximation.html#quantecon.markov.approximation.tauchen).
 
     """
 
@@ -79,9 +79,7 @@ class Tauchen(_ShockGridAR1):
     def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
         rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
         if self.gauss_hermite:
-            std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
-            nodes, _weights = _gauss_hermite_normal(n_points, 0.0, std_y)
-            return nodes + mu / (1 - rho)
+            return _gauss_hermite_normal(n_points, mu / (1 - rho), sigma)[0]
         n_std = kwargs["n_std"]
         std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
         x_max = n_std * std_y
@@ -91,15 +89,11 @@ class Tauchen(_ShockGridAR1):
     def compute_transition_probs(self, n_points: int, **kwargs: float) -> FloatND:
         rho, sigma = kwargs["rho"], kwargs["sigma"]
         if self.gauss_hermite:
-            std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
-            nodes, _weights = _gauss_hermite_normal(n_points, 0.0, std_y)
-            midpoints = (nodes[:-1] + nodes[1:]) / 2
-            # CDF at all midpoints for all source states: (n_points, n_points-1)
-            cdf_vals = cdf(midpoints[None, :], loc=rho * nodes[:, None], scale=sigma)
-            first = cdf_vals[:, :1]
-            interior = jnp.diff(cdf_vals, axis=1)
-            last = 1 - cdf_vals[:, -1:]
-            return jnp.concatenate([first, interior, last], axis=1)
+            nodes, weights = _gauss_hermite_normal(n_points, 0.0, sigma)
+            f_cond = pdf(nodes[None, :], loc=rho * nodes[:, None], scale=sigma)
+            g_prop = pdf(nodes, loc=0.0, scale=sigma)
+            raw = weights * f_cond / g_prop
+            return raw / raw.sum(axis=1, keepdims=True)
         n_std = kwargs["n_std"]
         std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
         x_max = n_std * std_y
@@ -135,7 +129,7 @@ class Rouwenhorst(_ShockGridAR1):
     $y_t = \mu + \rho \, y_{t-1} + \varepsilon_t$,
     where $\varepsilon_t \sim N(0, \sigma_\varepsilon^2)$.
 
-    Original implementation follows [QuantEcon](https://quanteconpy.readthedocs.io/en/latest/markov/approximation.html#quantecon.markov.approximation.rouwenhorst).
+    Implementation based on [Kopecky & Suen (2010)](https://doi.org/10.1016/j.red.2010.02.002).
 
     """
 
