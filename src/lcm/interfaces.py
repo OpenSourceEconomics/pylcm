@@ -22,6 +22,7 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FlatRegimeParams,
+    InternalParams,
     InternalUserFunction,
     MaxQOverAFunction,
     NextStateSimulationFunction,
@@ -229,6 +230,23 @@ class InternalRegime:
     # Resolved fixed params (flat) for this regime, used by to_dataframe targets
     resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
     """Flat resolved fixed params for this regime, used by to_dataframe targets."""
+
+    def build_cross_boundary_params(
+        self, internal_params: InternalParams
+    ) -> dict[str, object]:
+        """Build cross-boundary params from target regimes.
+
+        For per-boundary mapping transitions owned by a target regime, resolve the
+        parameter values from the target regime's internal params.
+
+        """
+        return {
+            param_name: internal_params[target_regime][target_qname]
+            for param_name, (
+                target_regime,
+                target_qname,
+            ) in self.cross_boundary_params.items()
+        }
 
     def state_action_space(self, regime_params: FlatRegimeParams) -> StateActionSpace:
         """Return the state-action space with runtime state grids filled in.

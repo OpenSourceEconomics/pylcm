@@ -451,28 +451,19 @@ def _extract_transitions_from_regime(
         missing_states: list[str] = []
 
         for state_name in target_state_names:
-            resolved = _resolve_state_transition(
+            result = _resolve_state_transition(
                 state_name=state_name,
                 boundary_key=boundary_key,
                 source_regime=regime,
                 target_regime=target_regime,
             )
-            if resolved is _UNRESOLVED:
+            if result is _UNRESOLVED:
                 missing_states.append(state_name)
             else:
+                resolved, is_target_originated = result  # ty: ignore[not-iterable]
                 boundary_transitions[f"next_{state_name}"] = resolved
-
-                # Check if the resolved function came from the target grid's
-                # mapping (priority 1).
-                target_grid = target_regime.states.get(state_name)
-                if target_grid is not None:
-                    target_trans = _get_grid_transition(target_grid)
-                    if (
-                        isinstance(target_trans, Mapping)
-                        and boundary_key in target_trans
-                        and target_trans[boundary_key] is not None  # ty: ignore[invalid-argument-type]
-                    ):
-                        target_originated.add(f"{target_name}__next_{state_name}")
+                if is_target_originated:
+                    target_originated.add(f"{target_name}__next_{state_name}")
 
         if missing_states:
             continue
@@ -498,7 +489,7 @@ def _resolve_state_transition(
     boundary_key: tuple[str, str],
     source_regime: Regime,
     target_regime: Regime,
-) -> UserFunction | object:
+) -> tuple[UserFunction, bool] | object:
     """Resolve the transition function for one state in a ``(source, target)`` boundary.
 
     Priority (highest to lowest):
@@ -512,7 +503,9 @@ def _resolve_state_transition(
     7. Target or source has mapping but boundary not listed → identity
 
     Returns:
-        The resolved transition function, or ``_UNRESOLVED`` sentinel.
+        Tuple of ``(resolved_function, target_originated)`` where
+        ``target_originated`` is ``True`` when the function came from the target
+        grid's mapping (priority 1), or the ``_UNRESOLVED`` sentinel.
 
     """
     source_grid = source_regime.states.get(state_name)
@@ -521,32 +514,31 @@ def _resolve_state_transition(
     # ShockGrids have intrinsic transitions handled separately by
     # _get_internal_functions; return a placeholder so the target stays reachable.
     if isinstance(source_grid, _ShockGrid) or isinstance(target_grid, _ShockGrid):
-        return lambda: None
+        return lambda: None, False
 
     source_trans = _get_grid_transition(source_grid)
     target_trans = _get_grid_transition(target_grid)
 
     identity = _make_identity_for_target(state_name, target_regime)
 
-    # Priority 1-2: Mapping with this boundary key (target wins over source)
-    for trans in (target_trans, source_trans):
+    # Priority 1-2: Mapping with this boundary key (target wins over source).
+    # target_originated is True only when the target grid provided the function.
+    for trans, target_originated in ((target_trans, True), (source_trans, False)):
         if isinstance(trans, Mapping) and boundary_key in trans:
-            fn = trans[boundary_key]
-            return identity if fn is None else fn
+            fn = trans[boundary_key]  # ty: ignore[invalid-argument-type]
+            return (identity if fn is None else fn, target_originated)
 
     # Priority 3-6: Source then target — single-callable or None
     for trans in (source_trans, target_trans):
         if callable(trans):
-            return trans
+            return trans, False
         if trans is None:
-            return identity
+            return identity, False
 
     # Priority 7: Mapping exists but boundary not listed → identity
-    return (
-        identity
-        if isinstance(target_trans, Mapping) or isinstance(source_trans, Mapping)
-        else _UNRESOLVED
-    )
+    if isinstance(target_trans, Mapping) or isinstance(source_trans, Mapping):
+        return identity, False
+    return _UNRESOLVED
 
 
 def _get_grid_transition(grid: Grid | None) -> object:
@@ -742,19 +734,21 @@ def _rename_target_originated_transition(
     param_key = _extract_param_key(func_name)
     target_template = all_regime_params_templates[target_name]
 
-    if param_key in target_template:
-        param_names = list(target_template[param_key])
-        if param_names:
-            mapper = {p: f"{func_name}{QNAME_DELIMITER}{p}" for p in param_names}
-            renamed = cast(
-                "InternalUserFunction", rename_arguments(func, mapper=mapper)
-            )
-            for p in param_names:
-                src_qname = f"{func_name}{QNAME_DELIMITER}{p}"
-                tgt_qname = f"{param_key}{QNAME_DELIMITER}{p}"
-                cross_boundary_params[src_qname] = (target_name, tgt_qname)
-            return renamed
-    return cast("InternalUserFunction", func)
+    assert param_key in target_template, (  # noqa: S101
+        f"Target-originated transition '{func_name}' has no matching entry "
+        f"'{param_key}' in the target regime's parameter template. "
+        f"This indicates a bug in _discover_mapping_transition_params."
+    )
+    param_names = list(target_template[param_key])
+    if not param_names:
+        return cast("InternalUserFunction", func)
+    mapper = {p: f"{func_name}{QNAME_DELIMITER}{p}" for p in param_names}
+    renamed = cast("InternalUserFunction", rename_arguments(func, mapper=mapper))
+    for p in param_names:
+        src_qname = f"{func_name}{QNAME_DELIMITER}{p}"
+        tgt_qname = f"{param_key}{QNAME_DELIMITER}{p}"
+        cross_boundary_params[src_qname] = (target_name, tgt_qname)
+    return renamed
 
 
 def _get_discrete_markov_next_function(

@@ -147,25 +147,6 @@ def simulate(
     )
 
 
-def _build_cross_boundary_params(
-    internal_regime: InternalRegime,
-    internal_params: InternalParams,
-) -> dict[str, object]:
-    """Build cross-boundary params from target regimes.
-
-    For per-boundary mapping transitions owned by a target regime, resolve the
-    parameter values from the target regime's internal params.
-
-    """
-    return {
-        param_name: internal_params[target_regime][target_qname]
-        for param_name, (
-            target_regime,
-            target_qname,
-        ) in internal_regime.cross_boundary_params.items()
-    }
-
-
 def _simulate_regime_in_period(
     *,
     regime_name: RegimeName,
@@ -229,7 +210,7 @@ def _simulate_regime_in_period(
     # action combination is worth. To find the optimal discrete action, we
     # therefore only need to maximize the Q-function values over all actions.
     argmax_and_max_Q_over_a = internal_regime.argmax_and_max_Q_over_a_functions[period]
-    cross_params = _build_cross_boundary_params(internal_regime, internal_params)
+    cross_params = internal_regime.build_cross_boundary_params(internal_params)
 
     indices_optimal_actions, V_arr = argmax_and_max_Q_over_a(
         **state_action_space.states,
