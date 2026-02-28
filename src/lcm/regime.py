@@ -28,12 +28,26 @@ class RegimeTransition:
 
     func: UserFunction
 
+    def __post_init__(self) -> None:
+        if not callable(self.func):
+            raise RegimeInitializationError(
+                "RegimeTransition.func must be callable, "
+                f"got {type(self.func).__name__}."
+            )
+
 
 @dataclass(frozen=True)
 class MarkovRegimeTransition:
     """Stochastic regime transition (returns probability array over regimes)."""
 
     func: UserFunction
+
+    def __post_init__(self) -> None:
+        if not callable(self.func):
+            raise RegimeInitializationError(
+                f"MarkovRegimeTransition.func must be callable, "
+                f"got {type(self.func).__name__}."
+            )
 
 
 def _default_H(
