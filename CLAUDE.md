@@ -99,7 +99,10 @@ Markov-chain grids.
 
 **State transitions** are attached directly to grid objects via the `transition`
 parameter. A state with no `transition` is fixed (time-invariant) — an identity
-transition is auto-generated during preprocessing.
+transition is auto-generated during preprocessing. The `transition` parameter accepts a
+single callable (used for all regime boundaries), `None` (fixed state), or a
+`Mapping[tuple[str, str], Callable]` keyed by `(source_regime, target_regime)` name
+pairs for per-boundary transitions.
 
 ### Processing Pipeline
 
@@ -171,6 +174,25 @@ Regime(
 - Fixed states (no transition) must always pass `transition=None` explicitly — never
   rely on the default.
 - Regime names (dict keys) cannot contain the reserved separator `__`
+- **Per-boundary transitions**: When a state has different discrete categories or
+  requires custom initialization across regime boundaries, use a mapping transition on
+  the **target** regime's grid, keyed by `(source, target)` regime name pairs:
+  ```python
+  retired = Regime(
+      states={
+          "health": DiscreteGrid(
+              HealthRetirement,
+              transition={("working", "retired"): map_working_health_to_retired},
+          ),
+      },
+      ...
+  )
+  ```
+  A grid's `transition` is either a single callable/None **or** a mapping — never both.
+  Discrete states with different categories across regimes **must** have an explicit
+  per-boundary transition or `ModelInitializationError` is raised. Resolution priority:
+  target mapping > source mapping > source callable > target callable > identity. See
+  `tests/test_regime_state_mismatch.py` for examples.
 
 ### Model Creation
 
