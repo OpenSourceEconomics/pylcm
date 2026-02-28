@@ -529,6 +529,8 @@ def _resolve_state_transition(
     for trans, target_originated in ((target_trans, True), (source_trans, False)):
         if isinstance(trans, Mapping) and boundary_key in trans:
             fn = trans[boundary_key]  # ty: ignore[invalid-argument-type]
+            # _get_grid_transition is untyped; remove suppression once it returns
+            # UserFunction | Mapping | None.
             return (identity if fn is None else fn, target_originated)  # ty: ignore[invalid-return-type]
 
     # Priority 3-6: Source then target — single-callable or None
