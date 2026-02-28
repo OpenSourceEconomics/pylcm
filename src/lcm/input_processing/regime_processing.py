@@ -1,4 +1,5 @@
 import functools
+import inspect
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, cast
@@ -299,8 +300,7 @@ def _get_internal_functions(
                 param_key=param_key,
             )
         else:
-            # Cross-regime transition: function depends on source states/actions
-            # which don't need parameter renaming.
+            _validate_cross_regime_transition(func, func_name, regime_params_template)
             functions[func_name] = cast("InternalUserFunction", func)
 
     for func_name, func in stochastic_transition_functions.items():
@@ -315,6 +315,7 @@ def _get_internal_functions(
                 param_key=param_key,
             )
         else:
+            _validate_cross_regime_transition(func, func_name, regime_params_template)
             functions[f"weight_{func_name}"] = cast("InternalUserFunction", func)
         functions[func_name] = _get_discrete_markov_next_function(
             func=func,
@@ -566,6 +567,36 @@ def _validate_discrete_category_compatibility(
                 f'DiscreteGrid(..., transition={{("{source_name}", "{target_name}"): '
                 f"map_fn}})"
             )
+
+
+def _validate_cross_regime_transition(
+    func: UserFunction,
+    func_name: str,
+    regime_params_template: RegimeParamsTemplate,
+) -> None:
+    """Validate a cross-regime transition function before casting.
+
+    Verify that the function's parameters don't collide with model parameter
+    names that would normally require qualified-name renaming. A collision
+    indicates a missing entry in the regime parameter template.
+
+    """
+    try:
+        func_param_names = set(inspect.signature(func).parameters)
+    except ValueError, TypeError:
+        return
+
+    template_param_names = {
+        p for entry in regime_params_template.values() for p in entry
+    }
+    overlap = func_param_names & template_param_names
+    if overlap:
+        msg = (
+            f"Cross-regime transition '{func_name}' has parameter(s) "
+            f"{sorted(overlap)} that collide with model parameter names in the "
+            f"regime template. This may indicate a missing template entry."
+        )
+        raise ModelInitializationError(msg)
 
 
 def _extract_param_key(func_name: str) -> str:

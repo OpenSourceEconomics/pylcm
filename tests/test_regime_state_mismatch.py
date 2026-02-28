@@ -3,6 +3,7 @@
 Covers:
 - Discrete states with different categories across regimes (validation error)
 - States only present in the target regime (mapping transition API)
+- Continuous states with per-boundary mapping transitions
 """
 
 import jax.numpy as jnp
@@ -256,3 +257,89 @@ def test_transition_to_state_only_in_target_regime() -> None:
     dead_rows = df[df["regime"] == "dead"]
     valid_labels = {"no", "yes"}
     assert dead_rows["heir_present"].isin(valid_labels).all()
+
+
+# ======================================================================================
+# Continuous state per-boundary mapping transition
+# ======================================================================================
+
+
+def test_continuous_state_per_boundary_mapping_transition() -> None:
+    """LinSpacedGrid with per-boundary mapping transition across regime boundaries.
+
+    Wealth uses a different transition when crossing from working to retired
+    (taxed at 80%) vs within the working regime (5% growth). The retired
+    regime's grid specifies a mapping transition keyed by ``("working", "retired")``;
+    unlisted boundaries fall back to identity.
+    """
+
+    @categorical
+    class _RegimeId:
+        working: int
+        retired: int
+        dead: int
+
+    def next_regime_working(age: float) -> ScalarInt:
+        return jnp.where(age >= 2, _RegimeId.retired, _RegimeId.working)
+
+    def next_regime_retired(age: float) -> ScalarInt:
+        return jnp.where(age >= 3, _RegimeId.dead, _RegimeId.retired)
+
+    def next_wealth_working(wealth: ContinuousState) -> ContinuousState:
+        return wealth * 1.05
+
+    def next_wealth_working_to_retired(wealth: ContinuousState) -> ContinuousState:
+        return wealth * 0.8
+
+    def utility(wealth: ContinuousState) -> FloatND:
+        return jnp.log(wealth)
+
+    working = Regime(
+        states={
+            "wealth": LinSpacedGrid(
+                start=1, stop=100, n_points=10, transition=next_wealth_working
+            ),
+        },
+        functions={"utility": utility},
+        transition=RegimeTransition(next_regime_working),
+        active=lambda age: age < 3,
+    )
+
+    retired = Regime(
+        states={
+            "wealth": LinSpacedGrid(
+                start=1,
+                stop=100,
+                n_points=10,
+                transition={
+                    ("working", "retired"): next_wealth_working_to_retired,
+                },
+            ),
+        },
+        functions={"utility": utility},
+        transition=RegimeTransition(next_regime_retired),
+        active=lambda age: age < 4,
+    )
+
+    dead = Regime(transition=None, functions={"utility": lambda: 0.0})
+
+    model = Model(
+        regimes={"working": working, "retired": retired, "dead": dead},
+        ages=AgeGrid(start=0, stop=4, step="Y"),
+        regime_id_class=_RegimeId,
+    )
+
+    params = {"discount_factor": 0.95}
+    V_arr_dict = model.solve(params)
+    result = model.simulate(
+        params=params,
+        initial_states={
+            "age": jnp.array([0.0]),
+            "wealth": jnp.array([50.0]),
+        },
+        initial_regimes=["working"],
+        V_arr_dict=V_arr_dict,
+    )
+    df = result.to_dataframe()
+    assert len(df) > 0
+    assert "wealth" in df.columns
