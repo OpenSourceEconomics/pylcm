@@ -8,7 +8,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import jax.numpy as jnp
 import pandas as pd
@@ -466,7 +466,9 @@ def _process_regime(
     ]
 
     # Concatenate and filter to in-regime subjects
-    data: dict[str, Array | Sequence[str]] = _concatenate_and_filter(period_dicts)  # ty: ignore[invalid-assignment]
+    data = cast(
+        "dict[str, Array | Sequence[str]]", _concatenate_and_filter(period_dicts)
+    )
 
     # Add age column (computed from period using ages grid)
     data["age"] = ages.values[data["period"]]  # noqa: PD011

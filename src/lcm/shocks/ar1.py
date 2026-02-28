@@ -5,6 +5,7 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.scipy.stats.norm import cdf, pdf
 
 from lcm.exceptions import GridInitializationError
@@ -76,7 +77,7 @@ class Tauchen(_ShockGridAR1):
             exclude.add("n_std")
         return tuple(f.name for f in fields(self) if f.name not in exclude)
 
-    def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
+    def compute_gridpoints(self, n_points: int, **kwargs: float | Array) -> Float1D:
         rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
         if self.gauss_hermite:
             return _gauss_hermite_normal(n_points, mu / (1 - rho), sigma)[0]
@@ -86,7 +87,9 @@ class Tauchen(_ShockGridAR1):
         x = jnp.linspace(-x_max, x_max, n_points)
         return x + mu / (1 - rho)
 
-    def compute_transition_probs(self, n_points: int, **kwargs: float) -> FloatND:
+    def compute_transition_probs(
+        self, n_points: int, **kwargs: float | Array
+    ) -> FloatND:
         rho, sigma = kwargs["rho"], kwargs["sigma"]
         if self.gauss_hermite:
             nodes, weights = _gauss_hermite_normal(n_points, 0.0, sigma)
@@ -151,13 +154,15 @@ class Rouwenhorst(_ShockGridAR1):
             )
             raise GridInitializationError(msg)
 
-    def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
+    def compute_gridpoints(self, n_points: int, **kwargs: float | Array) -> Float1D:
         rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
         nu = jnp.sqrt((n_points - 1) / (1 - rho**2)) * sigma
         long_run_mean = mu / (1.0 - rho)
         return jnp.linspace(long_run_mean - nu, long_run_mean + nu, n_points)
 
-    def compute_transition_probs(self, n_points: int, **kwargs: float) -> FloatND:
+    def compute_transition_probs(
+        self, n_points: int, **kwargs: float | Array
+    ) -> FloatND:
         rho = kwargs["rho"]
         q = (rho + 1) / 2
 

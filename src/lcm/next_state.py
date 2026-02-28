@@ -11,7 +11,6 @@ from dags.tree import QNAME_DELIMITER
 from jax import Array
 
 from lcm.grids import Grid
-from lcm.shocks import _ShockGrid
 from lcm.shocks.ar1 import _ShockGridAR1
 from lcm.shocks.iid import _ShockGridIID
 from lcm.typing import (
@@ -246,7 +245,7 @@ def _create_continuous_stochastic_next_func(
 
     """
     prev_state_name = name.split("next_")[1]
-    gridspec: _ShockGrid = gridspecs[prev_state_name]  # ty: ignore [invalid-assignment]
+    gridspec = gridspecs[prev_state_name]
 
     if isinstance(gridspec, _ShockGridAR1):
         return _create_ar1_next_func(name, prev_state_name, gridspec=gridspec)
