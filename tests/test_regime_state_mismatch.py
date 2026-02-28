@@ -348,14 +348,15 @@ def test_continuous_state_per_boundary_mapping_transition() -> None:
     # The agent starts in "working" at age 0 with wealth ~50. Within working, wealth
     # grows by 5% each period. At the working→retired boundary (age 2→3), the
     # per-boundary mapping applies a 0.8 multiplier instead of the 1.05 growth.
-    working_rows = df[df["regime"] == "working"]
-    retired_rows = df[df["regime"] == "retired"]
+    working_rows = df[df["regime"] == "working"].sort_values("age")
+    retired_rows = df[df["regime"] == "retired"].sort_values("age")
     assert len(retired_rows) > 0, "Agent should transition to retired regime"
     last_working_wealth = working_rows["wealth"].iloc[-1]
     first_retired_wealth = retired_rows["wealth"].iloc[0]
-    # Retired wealth should reflect the 80% tax on the transitioned wealth
+    # Retired wealth should reflect the 80% tax on the transitioned wealth.
+    # Use rel=0.02 to accommodate grid discretization error.
     expected = last_working_wealth * 0.8
-    assert abs(first_retired_wealth - expected) < 1.0, (
+    assert first_retired_wealth == pytest.approx(expected, rel=0.02), (
         f"Expected retired wealth ~{expected:.1f} (80% of {last_working_wealth:.1f}), "
         f"got {first_retired_wealth:.1f}"
     )
