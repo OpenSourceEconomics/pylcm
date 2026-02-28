@@ -188,8 +188,9 @@ def calculate_next_regime_membership(
     """
     # Compute regime transition probabilities
     # ---------------------------------------------------------------------------------
-    regime_transition_probs: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
-        internal_regime.internal_functions.regime_transition_probs.simulate(  # ty: ignore[unresolved-attribute]
+    assert internal_regime.internal_functions.regime_transition_probs is not None  # noqa: S101
+    regime_transition_probs: MappingProxyType[str, Array] = (
+        internal_regime.internal_functions.regime_transition_probs.simulate(
             **state_action_space.states,
             **optimal_actions,
             period=period,

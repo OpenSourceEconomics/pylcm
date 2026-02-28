@@ -57,7 +57,8 @@ def get_Q_and_F(
     # Generate dynamic functions
     # ----------------------------------------------------------------------------------
     U_and_F = _get_U_and_F(internal_functions)
-    regime_transition_probs_func = internal_functions.regime_transition_probs.solve  # ty: ignore[unresolved-attribute]
+    assert internal_functions.regime_transition_probs is not None  # noqa: S101
+    regime_transition_probs_func = internal_functions.regime_transition_probs.solve
     stochastic_transition_names = internal_functions.stochastic_transition_names
     state_transitions = {}
     next_stochastic_states_weights = {}
@@ -142,7 +143,7 @@ def get_Q_and_F(
             A tuple containing the arrays with state-action values and feasibilities.
 
         """
-        regime_transition_probs: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
+        regime_transition_probs: MappingProxyType[str, Array] = (
             regime_transition_probs_func(
                 **states_actions_params,
                 period=period,

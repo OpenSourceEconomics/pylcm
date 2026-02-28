@@ -409,7 +409,8 @@ def _extract_transitions_from_regime(
 
     nested: dict[str, dict[str, UserFunction] | UserFunction] = {}
     # Guaranteed non-None: terminal regimes return early.
-    nested["next_regime"] = regime.transition.func  # ty: ignore[invalid-assignment]
+    assert regime.transition is not None  # noqa: S101
+    nested["next_regime"] = regime.transition.func
 
     for target_name, target_state_names in states_per_regime.items():
         target_regime = all_regimes[target_name]
