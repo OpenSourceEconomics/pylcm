@@ -360,3 +360,213 @@ def test_continuous_state_per_boundary_mapping_transition() -> None:
         f"Expected retired wealth ~{expected:.1f} (80% of {last_working_wealth:.1f}), "
         f"got {first_retired_wealth:.1f}"
     )
+
+
+# ======================================================================================
+# Cross-regime transition parameter resolution
+# ======================================================================================
+
+
+@pytest.mark.xfail(
+    reason="Per-boundary mapping transitions should use the target regime's "
+    "parameters, but currently the source regime's parameters are used.",
+    strict=True,
+)
+def test_boundary_transition_uses_target_regime_params() -> None:
+    """Per-boundary mapping transition should use the target regime's parameters.
+
+    Both regimes define next_wealth(wealth, growth_rate) but with different values
+    (phase1: 0.05, phase2: 0.10). The target grid declares a per-boundary mapping
+    transition for (phase1, phase2). At the boundary, the target regime's
+    growth_rate=0.10 should be used.
+    """
+
+    @categorical
+    class _RegimeId:
+        phase1: int
+        phase2: int
+        dead: int
+
+    def next_regime_phase1(age: float) -> ScalarInt:
+        return jnp.where(age >= 1, _RegimeId.phase2, _RegimeId.phase1)
+
+    def next_regime_phase2(age: float) -> ScalarInt:
+        return jnp.where(age >= 2, _RegimeId.dead, _RegimeId.phase2)
+
+    def next_wealth(wealth: ContinuousState, growth_rate: float) -> ContinuousState:
+        return wealth * (1.0 + growth_rate)
+
+    def utility(wealth: ContinuousState) -> FloatND:
+        return jnp.log(wealth)
+
+    phase1 = Regime(
+        states={
+            "wealth": LinSpacedGrid(
+                start=1, stop=200, n_points=100, transition=next_wealth
+            ),
+        },
+        functions={"utility": utility},
+        transition=RegimeTransition(next_regime_phase1),
+        active=lambda age: age < 2,
+    )
+
+    phase2 = Regime(
+        states={
+            "wealth": LinSpacedGrid(
+                start=1,
+                stop=200,
+                n_points=100,
+                transition={("phase1", "phase2"): next_wealth},
+            ),
+        },
+        functions={"utility": utility},
+        transition=RegimeTransition(next_regime_phase2),
+        active=lambda age: age < 3,
+    )
+
+    dead = Regime(transition=None, functions={"utility": lambda: 0.0})
+
+    model = Model(
+        regimes={"phase1": phase1, "phase2": phase2, "dead": dead},
+        ages=AgeGrid(start=0, stop=3, step="Y"),
+        regime_id_class=_RegimeId,
+    )
+
+    params = {
+        "discount_factor": 0.95,
+        "phase1": {"next_wealth": {"growth_rate": 0.05}},
+        "phase2": {"next_wealth": {"growth_rate": 0.10}},
+    }
+
+    V_arr_dict = model.solve(params)
+    result = model.simulate(
+        params=params,
+        initial_states={
+            "age": jnp.array([0.0]),
+            "wealth": jnp.array([100.0]),
+        },
+        initial_regimes=["phase1"],
+        V_arr_dict=V_arr_dict,
+    )
+    df = result.to_dataframe()
+
+    phase1_rows = df[df["regime"] == "phase1"].sort_values("age")
+    phase2_rows = df[df["regime"] == "phase2"].sort_values("age")
+
+    assert len(phase2_rows) > 0, "Agent should transition to phase2"
+
+    last_phase1_wealth = phase1_rows["wealth"].iloc[-1]
+    first_phase2_wealth = phase2_rows["wealth"].iloc[0]
+
+    # The per-boundary mapping is on the target grid, so the target regime's
+    # growth_rate (0.10) should be used — not the source's (0.05).
+    expected = last_phase1_wealth * 1.10
+    assert first_phase2_wealth == pytest.approx(expected, rel=0.03), (
+        f"Expected wealth ~{expected:.1f} (target growth_rate=0.10), "
+        f"got {first_phase2_wealth:.1f}"
+    )
+
+
+@pytest.mark.xfail(
+    reason="Per-boundary mapping transitions should use the target regime's "
+    "parameters, but currently the source regime's parameter template is used, "
+    "which lacks the target-only parameter.",
+    strict=True,
+)
+def test_boundary_transition_with_target_only_param() -> None:
+    """Per-boundary mapping transition should resolve parameters from the target regime.
+
+    The source regime's transition (next_wealth) takes no parameters. The target
+    regime's grid declares a per-boundary mapping transition that takes growth_rate,
+    a parameter only defined in the target regime. The target's growth_rate=0.10
+    should be applied at the boundary.
+    """
+
+    @categorical
+    class _RegimeId:
+        phase1: int
+        phase2: int
+        dead: int
+
+    def next_regime_phase1(age: float) -> ScalarInt:
+        return jnp.where(age >= 1, _RegimeId.phase2, _RegimeId.phase1)
+
+    def next_regime_phase2(age: float) -> ScalarInt:
+        return jnp.where(age >= 2, _RegimeId.dead, _RegimeId.phase2)
+
+    def next_wealth_no_param(wealth: ContinuousState) -> ContinuousState:
+        return wealth
+
+    def next_wealth_with_param(
+        wealth: ContinuousState, growth_rate: float
+    ) -> ContinuousState:
+        return wealth * (1.0 + growth_rate)
+
+    def utility(wealth: ContinuousState) -> FloatND:
+        return jnp.log(wealth)
+
+    phase1 = Regime(
+        states={
+            "wealth": LinSpacedGrid(
+                start=1, stop=200, n_points=100, transition=next_wealth_no_param
+            ),
+        },
+        functions={"utility": utility},
+        transition=RegimeTransition(next_regime_phase1),
+        active=lambda age: age < 2,
+    )
+
+    phase2 = Regime(
+        states={
+            "wealth": LinSpacedGrid(
+                start=1,
+                stop=200,
+                n_points=100,
+                transition={("phase1", "phase2"): next_wealth_with_param},
+            ),
+        },
+        functions={"utility": utility},
+        transition=RegimeTransition(next_regime_phase2),
+        active=lambda age: age < 3,
+    )
+
+    dead = Regime(transition=None, functions={"utility": lambda: 0.0})
+
+    model = Model(
+        regimes={"phase1": phase1, "phase2": phase2, "dead": dead},
+        ages=AgeGrid(start=0, stop=3, step="Y"),
+        regime_id_class=_RegimeId,
+    )
+
+    params = {
+        "discount_factor": 0.95,
+        "phase2": {"next_wealth": {"growth_rate": 0.10}},
+    }
+
+    V_arr_dict = model.solve(params)
+    result = model.simulate(
+        params=params,
+        initial_states={
+            "age": jnp.array([0.0]),
+            "wealth": jnp.array([100.0]),
+        },
+        initial_regimes=["phase1"],
+        V_arr_dict=V_arr_dict,
+    )
+    df = result.to_dataframe()
+
+    phase1_rows = df[df["regime"] == "phase1"].sort_values("age")
+    phase2_rows = df[df["regime"] == "phase2"].sort_values("age")
+
+    assert len(phase2_rows) > 0, "Agent should transition to phase2"
+
+    last_phase1_wealth = phase1_rows["wealth"].iloc[-1]
+    first_phase2_wealth = phase2_rows["wealth"].iloc[0]
+
+    # The per-boundary mapping on the target grid takes growth_rate, which only
+    # exists in the target regime. The target's growth_rate=0.10 should be applied.
+    expected = last_phase1_wealth * 1.10
+    assert first_phase2_wealth == pytest.approx(expected, rel=0.03), (
+        f"Expected wealth ~{expected:.1f} (target growth_rate=0.10), "
+        f"got {first_phase2_wealth:.1f}"
+    )
