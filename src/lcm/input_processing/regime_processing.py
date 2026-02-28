@@ -457,10 +457,10 @@ def _extract_transitions_from_regime(
                 source_regime=regime,
                 target_regime=target_regime,
             )
-            if result is _UNRESOLVED:
+            if isinstance(result, _Unresolved):
                 missing_states.append(state_name)
             else:
-                resolved, is_target_originated = result  # ty: ignore[not-iterable]
+                resolved, is_target_originated = result
                 boundary_transitions[f"next_{state_name}"] = resolved
                 if is_target_originated:
                     target_originated.add(f"{target_name}__next_{state_name}")
@@ -479,8 +479,11 @@ def _extract_transitions_from_regime(
     return nested, frozenset(target_originated)
 
 
-# Sentinel for unresolved transitions
-_UNRESOLVED = object()
+class _Unresolved:
+    """Sentinel type for unresolved transitions."""
+
+
+_UNRESOLVED = _Unresolved()
 
 
 def _resolve_state_transition(
@@ -489,7 +492,7 @@ def _resolve_state_transition(
     boundary_key: tuple[str, str],
     source_regime: Regime,
     target_regime: Regime,
-) -> tuple[UserFunction, bool] | object:
+) -> tuple[UserFunction, bool] | _Unresolved:
     """Resolve the transition function for one state in a ``(source, target)`` boundary.
 
     Priority (highest to lowest):
@@ -514,7 +517,7 @@ def _resolve_state_transition(
     # ShockGrids have intrinsic transitions handled separately by
     # _get_internal_functions; return a placeholder so the target stays reachable.
     if isinstance(source_grid, _ShockGrid) or isinstance(target_grid, _ShockGrid):
-        return lambda: None, False
+        return (lambda: None, False)
 
     source_trans = _get_grid_transition(source_grid)
     target_trans = _get_grid_transition(target_grid)
@@ -526,7 +529,7 @@ def _resolve_state_transition(
     for trans, target_originated in ((target_trans, True), (source_trans, False)):
         if isinstance(trans, Mapping) and boundary_key in trans:
             fn = trans[boundary_key]  # ty: ignore[invalid-argument-type]
-            return (identity if fn is None else fn, target_originated)
+            return (identity if fn is None else fn, target_originated)  # ty: ignore[invalid-return-type]
 
     # Priority 3-6: Source then target — single-callable or None
     for trans in (source_trans, target_trans):
