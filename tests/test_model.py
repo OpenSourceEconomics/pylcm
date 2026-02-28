@@ -1,7 +1,16 @@
 import jax.numpy as jnp
 import pytest
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    LinSpacedGrid,
+    MarkovRegimeTransition,
+    Model,
+    Regime,
+    RegimeTransition,
+    categorical,
+)
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.typing import (
     BoolND,
@@ -17,7 +26,7 @@ def test_regime_invalid_states():
     """Regime rejects non-dict states argument."""
     with pytest.raises(RegimeInitializationError, match="states must be a mapping"):
         Regime(
-            transition=lambda: 0,
+            transition=RegimeTransition(lambda: 0),
             states="health",  # ty: ignore[invalid-argument-type]
             actions={},
             functions={"utility": lambda: 0},
@@ -29,7 +38,7 @@ def test_regime_invalid_actions():
     """Regime rejects non-dict actions argument."""
     with pytest.raises(RegimeInitializationError, match="actions must be a mapping"):
         Regime(
-            transition=lambda: 0,
+            transition=RegimeTransition(lambda: 0),
             states={},
             actions="exercise",  # ty: ignore[invalid-argument-type]
             functions={"utility": lambda: 0},
@@ -43,7 +52,7 @@ def test_regime_invalid_functions():
         RegimeInitializationError, match="functions must each be a mapping"
     ):
         Regime(
-            transition=lambda: 0,
+            transition=RegimeTransition(lambda: 0),
             states={},
             actions={},
             functions="utility",  # ty: ignore[invalid-argument-type]
@@ -60,7 +69,7 @@ def test_regime_invalid_functions_values():
         Regime(
             states={},
             actions={},
-            transition=lambda: 0,
+            transition=RegimeTransition(lambda: 0),
             functions={"utility": lambda: 0, "function": 0},  # ty: ignore[invalid-argument-type]
             active=lambda age: age < 5,
         )
@@ -74,7 +83,7 @@ def test_regime_invalid_functions_keys():
         Regime(
             states={},
             actions={},
-            transition=lambda: 0,
+            transition=RegimeTransition(lambda: 0),
             functions={"utility": lambda: 0, 0: lambda: 0},  # ty: ignore[invalid-argument-type]
             active=lambda age: age < 5,
         )
@@ -89,7 +98,7 @@ def test_regime_invalid_actions_values():
             states={},
             actions={"exercise": 0},  # ty: ignore[invalid-argument-type]
             functions={"utility": lambda: 0},
-            transition=lambda: 0,
+            transition=RegimeTransition(lambda: 0),
             active=lambda age: age < 5,
         )
 
@@ -103,7 +112,7 @@ def test_regime_invalid_states_values():
             states={"health": 0},  # ty: ignore[invalid-argument-type]
             actions={},
             functions={"utility": lambda: 0},
-            transition=lambda: 0,
+            transition=RegimeTransition(lambda: 0),
             active=lambda age: age < 5,
         )
 
@@ -118,7 +127,7 @@ def test_regime_invalid_utility():
             states={},
             actions={},
             functions={"utility": 0},  # ty: ignore[invalid-argument-type]
-            transition=lambda: 0,
+            transition=RegimeTransition(lambda: 0),
             active=lambda age: age < 5,
         )
 
@@ -137,16 +146,16 @@ def test_regime_overlapping_states_actions(binary_category_class):
             },
             actions={"health": DiscreteGrid(binary_category_class)},
             functions={"utility": lambda: 0},
-            transition=lambda: 0,
+            transition=RegimeTransition(lambda: 0),
             active=lambda age: age < 5,
         )
 
 
-def test_regime_transition_must_be_callable():
-    """Regime rejects non-callable transition."""
+def test_regime_transition_must_be_wrapper_type():
+    """Regime rejects non-wrapper transition."""
     with pytest.raises(
         RegimeInitializationError,
-        match="transition must be a callable or None",
+        match="transition must be a RegimeTransition, MarkovRegimeTransition, or None",
     ):
         Regime(
             states={},
@@ -172,8 +181,7 @@ def test_model_requires_terminal_regime(binary_category_class):
         },
         actions={},
         functions={"utility": lambda health: health},
-        transition=lambda: jnp.array([1.0]),
-        stochastic_transition=True,
+        transition=MarkovRegimeTransition(lambda: jnp.array([1.0])),
         active=lambda age: age < 1,
     )
     with pytest.raises(ModelInitializationError, match="at least one terminal regime"):
@@ -232,8 +240,7 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
             ),
         },
         functions={"utility": lambda health: health},
-        transition=lambda: jnp.array([0.8, 0.1, 0.1]),
-        stochastic_transition=True,
+        transition=MarkovRegimeTransition(lambda: jnp.array([0.8, 0.1, 0.1])),
         active=lambda age: age < 1,
     )
     dead1 = Regime(
@@ -280,8 +287,7 @@ def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):
             ),
         },
         functions={"utility": lambda health: health},
-        transition=lambda: jnp.array([0.5, 0.5]),
-        stochastic_transition=True,
+        transition=MarkovRegimeTransition(lambda: jnp.array([0.5, 0.5])),
         active=lambda age: age < 1,
     )
     dead = Regime(
@@ -319,8 +325,7 @@ def test_model_regime_name_validation(binary_category_class):
             ),
         },
         functions={"utility": lambda health: health},
-        transition=lambda: jnp.array([0.5, 0.5]),
-        stochastic_transition=True,
+        transition=MarkovRegimeTransition(lambda: jnp.array([0.5, 0.5])),
         active=lambda age: age < 1,
     )
     dead = Regime(
@@ -373,8 +378,7 @@ def test_unused_state_raises_error():
             "unused_state": DiscreteGrid(UnusedState, transition=None),
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-        transition=lambda: jnp.array([0.9, 0.1]),
-        stochastic_transition=True,
+        transition=MarkovRegimeTransition(lambda: jnp.array([0.9, 0.1])),
         active=lambda age: age < 5,
     )
 
@@ -430,8 +434,7 @@ def test_unused_action_raises_error():
                 category_class=UnusedAction
             ),  # Not used anywhere!
         },
-        transition=lambda: jnp.array([0.9, 0.1]),
-        stochastic_transition=True,
+        transition=MarkovRegimeTransition(lambda: jnp.array([0.9, 0.1])),
         active=lambda age: age < 5,
     )
 
@@ -515,7 +518,7 @@ def test_constraint_depending_on_transition_output():
 
     alive_regime = Regime(
         constraints={"borrowing_constraint": borrowing_constraint},
-        transition=next_regime,
+        transition=RegimeTransition(next_regime),
         functions={"utility": utility, "model_end_age": model_end_age},
         actions={
             "consumption_q": LinSpacedGrid(start=1, stop=10, n_points=5),
@@ -598,7 +601,7 @@ def test_state_only_used_in_transitions():
         )
 
     alive_regime = Regime(
-        transition=next_regime,
+        transition=RegimeTransition(next_regime),
         functions={"utility": utility, "model_end_age": model_end_age},
         actions={
             "consumption_q": LinSpacedGrid(start=1, stop=10, n_points=5),
@@ -680,7 +683,7 @@ def test_state_only_in_transitions_with_terminal_regime():
         actions={
             "consumption": LinSpacedGrid(start=1, stop=50, n_points=10),
         },
-        transition=next_regime,
+        transition=RegimeTransition(next_regime),
         active=lambda age: age <= 2,
     )
 

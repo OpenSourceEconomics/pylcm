@@ -12,6 +12,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     Regime,
+    RegimeTransition,
     categorical,
 )
 from lcm.typing import (
@@ -289,7 +290,7 @@ def _make_minimal_stochastic_model(shock_transition_func=None) -> Model:
             ),
         },
         constraints={"borrowing_constraint": borrowing_constraint},
-        transition=next_regime,
+        transition=RegimeTransition(next_regime),
         functions={"utility": utility},
         active=lambda age: age <= final_age,
     )

@@ -29,7 +29,7 @@ from lcm.input_processing.util import (
 )
 from lcm.interfaces import InternalFunctions, InternalRegime
 from lcm.ndimage import map_coordinates
-from lcm.regime import Regime, _make_identity_fn
+from lcm.regime import MarkovRegimeTransition, Regime, _make_identity_fn
 from lcm.shocks import _ShockGrid
 from lcm.state_action_space import create_state_action_space, create_state_space_info
 from lcm.typing import (
@@ -346,7 +346,9 @@ def _get_internal_functions(
             if func_name not in excluded_from_functions
         }
     )
-    is_stochastic_regime_transition = regime.stochastic_transition
+    is_stochastic_regime_transition = isinstance(
+        regime.transition, MarkovRegimeTransition
+    )
 
     if regime.terminal:
         internal_regime_transition_probs = None
@@ -407,7 +409,7 @@ def _extract_transitions_from_regime(
 
     nested: dict[str, dict[str, UserFunction] | UserFunction] = {}
     # Guaranteed non-None: terminal regimes return early.
-    nested["next_regime"] = regime.transition  # ty: ignore[invalid-assignment]
+    nested["next_regime"] = regime.transition.func  # ty: ignore[invalid-assignment]
 
     for target_name, target_state_names in states_per_regime.items():
         target_regime = all_regimes[target_name]

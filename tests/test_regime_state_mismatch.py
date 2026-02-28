@@ -8,7 +8,15 @@ Covers:
 import jax.numpy as jnp
 import pytest
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    RegimeTransition,
+    categorical,
+)
 from lcm.exceptions import ModelInitializationError
 from lcm.typing import (
     ContinuousAction,
@@ -83,7 +91,7 @@ def test_discrete_state_different_categories_raises_without_mapping():
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": hm_utility_working},
-        transition=hm_next_regime_working,
+        transition=RegimeTransition(hm_next_regime_working),
         active=lambda age: age < 3,
     )
 
@@ -93,7 +101,7 @@ def test_discrete_state_different_categories_raises_without_mapping():
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": hm_utility_retired},
-        transition=hm_next_regime_retired,
+        transition=RegimeTransition(hm_next_regime_retired),
         active=lambda age: age < 4,
     )
 
@@ -129,7 +137,7 @@ def test_discrete_state_different_categories_with_mapping_transition():
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": hm_utility_working},
-        transition=hm_next_regime_working,
+        transition=RegimeTransition(hm_next_regime_working),
         active=lambda age: age < 3,
     )
 
@@ -144,7 +152,7 @@ def test_discrete_state_different_categories_with_mapping_transition():
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": hm_utility_retired},
-        transition=hm_next_regime_retired,
+        transition=RegimeTransition(hm_next_regime_retired),
         active=lambda age: age < 4,
     )
 
@@ -205,7 +213,7 @@ def test_transition_to_state_only_in_target_regime() -> None:
                 start=1, stop=100, n_points=10, transition=next_wealth
             ),
         },
-        transition=next_regime,
+        transition=RegimeTransition(next_regime),
         active=lambda age: age < 2,
     )
 

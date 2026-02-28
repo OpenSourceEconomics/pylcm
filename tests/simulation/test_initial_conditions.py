@@ -5,7 +5,15 @@ from dataclasses import dataclass
 import jax.numpy as jnp
 import pytest
 
-from lcm import DiscreteGrid, IrregSpacedGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import (
+    DiscreteGrid,
+    IrregSpacedGrid,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    RegimeTransition,
+    categorical,
+)
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidInitialConditionsError
 from lcm.input_processing.params_processing import process_params
@@ -59,7 +67,7 @@ def model() -> Model:
                 category_class=HealthStatus, transition=lambda health: health
             ),
         },
-        transition=next_regime,
+        transition=RegimeTransition(next_regime),
         active=lambda age: age < n_periods - 1,
     )
 
@@ -282,7 +290,7 @@ def _make_constraint_model(wealth_grid) -> Model:
         },
         states={"wealth": wealth_grid},
         constraints={"borrowing_constraint": borrowing_constraint},
-        transition=next_regime,
+        transition=RegimeTransition(next_regime),
         functions={"utility": utility},
         active=lambda age: age <= final_age,
     )
@@ -466,7 +474,7 @@ def _make_constrained_asymmetric_model() -> Model:
             "consumption": LinSpacedGrid(start=51, stop=100, n_points=10),
         },
         constraints={"borrowing_constraint": borrowing_constraint},
-        transition=next_regime,
+        transition=RegimeTransition(next_regime),
         active=lambda age: age < 2,
     )
 
@@ -521,7 +529,7 @@ def _make_asymmetric_state_model() -> Model:
                 category_class=HealthStatus, transition=lambda health: health
             ),
         },
-        transition=next_regime,
+        transition=RegimeTransition(next_regime),
         active=lambda age: age < 2,
     )
 

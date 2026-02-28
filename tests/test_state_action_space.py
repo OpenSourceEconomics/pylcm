@@ -7,7 +7,7 @@ from numpy.testing import assert_array_equal
 
 from lcm.grids import DiscreteGrid, LinSpacedGrid
 from lcm.interfaces import StateActionSpace, StateSpaceInfo
-from lcm.regime import Regime
+from lcm.regime import Regime, RegimeTransition
 from lcm.state_action_space import (
     create_state_action_space,
     create_state_space_info,
@@ -119,7 +119,7 @@ def test_create_state_space_info():
         bad: int = 1
 
     regime = Regime(
-        transition=lambda: 0,  # non-terminal
+        transition=RegimeTransition(lambda: 0),  # non-terminal
         functions={"utility": lambda wealth: wealth},
         states={
             "wealth": LinSpacedGrid(

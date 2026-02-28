@@ -3,7 +3,7 @@
 import jax.numpy as jnp
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm import AgeGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import AgeGrid, LinSpacedGrid, Model, Regime, RegimeTransition, categorical
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
 
 # ======================================================================================
@@ -50,7 +50,7 @@ def _make_model(n_periods=3, *, extra_fixed_params=None):
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        transition=_next_regime,
+        transition=RegimeTransition(_next_regime),
         active=lambda age, n=n_periods: age < n - 1,
     )
     dead = Regime(

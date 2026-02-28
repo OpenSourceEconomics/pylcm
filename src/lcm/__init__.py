@@ -20,7 +20,7 @@ from lcm.grids import (
     categorical,
 )
 from lcm.model import Model
-from lcm.regime import Regime
+from lcm.regime import MarkovRegimeTransition, Regime, RegimeTransition
 from lcm.simulation.result import SimulationResult
 
 # Register MappingProxyType as a JAX pytree so it can be used in JIT-traced functions.
@@ -38,11 +38,13 @@ __all__ = [
     "IrregSpacedGrid",
     "LinSpacedGrid",
     "LogSpacedGrid",
+    "MarkovRegimeTransition",
     "Model",
     "Piece",
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",
     "Regime",
+    "RegimeTransition",
     "SimulationResult",
     "categorical",
     "shocks",

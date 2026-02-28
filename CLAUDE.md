@@ -138,20 +138,26 @@ The `Regime` class defines a single regime in the model. The regime name is spec
 the key in the `regimes` dict passed to `Model`:
 
 ```python
-# Non-terminal regime
+# Non-terminal regime (deterministic regime transition)
 Regime(
-    transition=next_regime_func,                  # Required: regime transition function (None → terminal)
-    active=lambda age: 25 <= age < 65,           # Optional: age-based predicate (default: always True)
-    states={                                     # State grids with optional transitions
+    transition=RegimeTransition(next_regime_func),  # Required: wrapped regime transition (None → terminal)
+    active=lambda age: 25 <= age < 65,              # Optional: age-based predicate (default: always True)
+    states={                                        # State grids with optional transitions
         "wealth": LinSpacedGrid(..., transition=next_wealth),  # Time-varying state
         "education": DiscreteGrid(EduStatus, transition=None),   # Fixed state
     },
-    actions={"action_name": Grid, ...},          # Action grids (can be empty)
-    functions={                                  # Must include "utility"; other functions optional
+    actions={"action_name": Grid, ...},             # Action grids (can be empty)
+    functions={                                     # Must include "utility"; other functions optional
         "utility": utility_function,
         "name": helper_func, ...
     },
-    constraints={"name": constraint_func, ...},  # Optional: constraint functions
+    constraints={"name": constraint_func, ...},     # Optional: constraint functions
+)
+
+# Non-terminal regime (stochastic regime transition)
+Regime(
+    transition=MarkovRegimeTransition(next_regime_probs_func),  # Returns probability array over regimes
+    ...
 )
 
 # Terminal regime (transition=None)
@@ -164,8 +170,11 @@ Regime(
 
 **Regime Requirements:**
 
-- `transition` is required: the regime transition function, or `None` for terminal
-  regimes. `terminal` is a derived property (`self.transition is None`).
+- `transition` is required: a `RegimeTransition` (deterministic, returns regime index),
+  `MarkovRegimeTransition` (stochastic, returns probability array over regimes), or
+  `None` for terminal regimes. `terminal` is a derived property
+  (`self.transition is None`). The naming follows `DiscreteGrid` / `DiscreteMarkovGrid`
+  — the "Markov" prefix indicates stochasticity.
 - `active` is optional; defaults to `lambda _age: True` (always active)
 - `functions` must contain a `"utility"` entry (the utility function)
 - State transitions live on grids via the `transition` parameter. States without a

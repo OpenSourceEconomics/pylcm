@@ -10,7 +10,7 @@ from typing import Literal
 from jax import numpy as jnp
 
 import lcm
-from lcm import AgeGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import AgeGrid, LinSpacedGrid, Model, Regime, RegimeTransition, categorical
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -82,7 +82,7 @@ def get_model(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=5, n_points=7),
         },
-        transition=next_regime,
+        transition=RegimeTransition(next_regime),
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )

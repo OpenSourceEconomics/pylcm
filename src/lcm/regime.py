@@ -22,6 +22,20 @@ from lcm.utils import (
 )
 
 
+@dataclass(frozen=True)
+class RegimeTransition:
+    """Deterministic regime transition (returns a regime index)."""
+
+    func: UserFunction
+
+
+@dataclass(frozen=True)
+class MarkovRegimeTransition:
+    """Stochastic regime transition (returns probability array over regimes)."""
+
+    func: UserFunction
+
+
 def _default_H(
     utility: float, continuation_value: float, discount_factor: float
 ) -> float:
@@ -78,11 +92,8 @@ class Regime:
 
     """
 
-    transition: UserFunction | None
-    """Regime transition function, or `None` for terminal regimes."""
-
-    stochastic_transition: bool = False
-    """Whether the regime transition is stochastic (returns probability array)."""
+    transition: RegimeTransition | MarkovRegimeTransition | None
+    """Regime transition wrapper, or `None` for terminal regimes."""
 
     active: ActiveFunction = lambda _age: True
     """Callable that takes age (float) and returns True if regime is active."""
@@ -148,7 +159,7 @@ class Regime:
         )
         # Add regime transition
         if self.transition is not None:
-            result["next_regime"] = self.transition
+            result["next_regime"] = self.transition.func
         return MappingProxyType(result)
 
     def replace(self, **kwargs: Any) -> Regime:  # noqa: ANN401
@@ -208,10 +219,12 @@ def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
                 "constraints and functions must each be a mapping of callables."
             )
 
-    # Validate regime transition is callable if provided
-    if regime.transition is not None and not callable(regime.transition):
+    # Validate regime transition type
+    if regime.transition is not None and not isinstance(
+        regime.transition, (RegimeTransition, MarkovRegimeTransition)
+    ):
         error_messages.append(
-            "transition must be a callable or None, "
+            "transition must be a RegimeTransition, MarkovRegimeTransition, or None, "
             f"but is {type(regime.transition).__name__}."
         )
 
@@ -246,11 +259,6 @@ def _validate_logical_consistency(regime: Regime) -> None:
             f"State and action names cannot contain the reserved separator "
             f"'{QNAME_DELIMITER}'. The following names are invalid: "
             f"{invalid_variable_names}.",
-        )
-
-    if regime.stochastic_transition and regime.terminal:
-        error_messages.append(
-            "Terminal regimes (transition=None) cannot have stochastic_transition=True."
         )
 
     if "utility" not in regime.functions:

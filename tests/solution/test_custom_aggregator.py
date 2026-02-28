@@ -3,7 +3,15 @@
 import jax.numpy as jnp
 from numpy.testing import assert_array_equal
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    RegimeTransition,
+    categorical,
+)
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -104,7 +112,7 @@ def _make_model(custom_H=None):
             ),
         },
         constraints={"borrowing_constraint": borrowing_constraint},
-        transition=next_regime,
+        transition=RegimeTransition(next_regime),
         functions=functions,
         active=lambda age: age <= FINAL_AGE_ALIVE,
     )
@@ -165,7 +173,7 @@ def test_default_H_injected_for_non_terminal():
     """The default H function should be in non-terminal Regime.functions."""
     r = Regime(
         functions={"utility": lambda: 0.0},
-        transition=lambda: {"a": 1.0},
+        transition=RegimeTransition(lambda: {"a": 1.0}),
         active=lambda age: age < 1,
     )
     assert "H" in r.functions
@@ -187,7 +195,7 @@ def test_custom_H_not_overwritten():
         return utility + continuation_value
 
     r = Regime(
-        transition=lambda: {"a": 1.0},
+        transition=RegimeTransition(lambda: {"a": 1.0}),
         active=lambda age: age < 1,
         functions={"utility": lambda: 0.0, "H": my_H},
     )
