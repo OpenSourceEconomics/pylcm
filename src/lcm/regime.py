@@ -324,8 +324,10 @@ def _collect_state_transitions(
 
     For each state grid, produces an entry `f"next_{name}"` mapped to:
     - A stochastic stub for `_ShockGrid` types,
-    - The grid's `transition` attribute if present, or
-    - An auto-generated identity transition for fixed states.
+    - The grid's `transition` attribute if it's a single callable, or
+    - An auto-generated identity transition for fixed states (`None`) or for states
+      with boundary-keyed mapping transitions (the per-boundary functions are resolved
+      separately in `_extract_transitions_from_regime`).
 
     """
     transitions: dict[str, UserFunction] = {}
@@ -333,9 +335,21 @@ def _collect_state_transitions(
         if isinstance(grid, _ShockGrid):
             transitions[f"next_{name}"] = lambda: None
         elif isinstance(grid, DiscreteMarkovGrid):
-            # DiscreteMarkovGrid.__init__ guarantees transition is callable
-            transitions[f"next_{name}"] = grid.transition
-        elif callable(grid_transition := getattr(grid, "transition", None)):
+            transition = grid.transition
+            if isinstance(transition, Mapping):
+                # Mapping form: generate identity placeholder; actual per-boundary
+                # functions are resolved in regime_processing.
+                transitions[f"next_{name}"] = _make_identity_fn(
+                    name, annotation=DiscreteState
+                )
+            else:
+                transitions[f"next_{name}"] = transition
+        elif isinstance(grid_transition := getattr(grid, "transition", None), Mapping):
+            # Mapping form: generate identity placeholder; actual per-boundary
+            # functions are resolved in regime_processing.
+            ann = DiscreteState if isinstance(grid, DiscreteGrid) else ContinuousState
+            transitions[f"next_{name}"] = _make_identity_fn(name, annotation=ann)
+        elif callable(grid_transition):
             transitions[f"next_{name}"] = grid_transition
         else:
             ann = DiscreteState if isinstance(grid, DiscreteGrid) else ContinuousState
