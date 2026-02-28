@@ -23,11 +23,13 @@ class InternalRegimeMock:
     - state_action_space(): method returning the state-action space
     - max_Q_over_a_functions: dict mapping period to max_Q_over_a function
     - active_periods: list of periods the regime is active
+    - cross_boundary_params: mapping of cross-boundary param names
     """
 
     _base_state_action_space: StateActionSpace
     max_Q_over_a_functions: dict[int, MaxQOverAFunction]
     active_periods: list[int]
+    cross_boundary_params: MappingProxyType[str, tuple[str, str]] = MappingProxyType({})
 
     def state_action_space(self, regime_params):  # noqa: ARG002
         return self._base_state_action_space

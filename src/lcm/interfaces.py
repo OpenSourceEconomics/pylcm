@@ -25,6 +25,7 @@ from lcm.typing import (
     InternalUserFunction,
     MaxQOverAFunction,
     NextStateSimulationFunction,
+    RegimeName,
     RegimeParamsTemplate,
     RegimeTransitionFunction,
     TransitionFunctionsMapping,
@@ -214,6 +215,16 @@ class InternalRegime:
 
     _base_state_action_space: StateActionSpace = dataclasses.field(repr=False)
     """Base state-action space before runtime grid substitution."""
+
+    cross_boundary_params: MappingProxyType[str, tuple[RegimeName, str]] = (
+        MappingProxyType({})
+    )
+    """Mapping from cross-boundary param names to ``(target_regime, target_qname)``.
+
+    For per-boundary mapping transitions owned by a target regime, this maps
+    the qualified param name in this (source) regime's namespace to the
+    corresponding target regime name and flat param name in the target.
+    """
 
     # Resolved fixed params (flat) for this regime, used by to_dataframe targets
     resolved_fixed_params: FlatRegimeParams = MappingProxyType({})

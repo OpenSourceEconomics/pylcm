@@ -367,11 +367,6 @@ def test_continuous_state_per_boundary_mapping_transition() -> None:
 # ======================================================================================
 
 
-@pytest.mark.xfail(
-    reason="Per-boundary mapping transitions should use the target regime's "
-    "parameters, but currently the source regime's parameters are used.",
-    strict=True,
-)
 def test_boundary_transition_uses_target_regime_params() -> None:
     """Per-boundary mapping transition should use the target regime's parameters.
 
@@ -467,12 +462,6 @@ def test_boundary_transition_uses_target_regime_params() -> None:
     )
 
 
-@pytest.mark.xfail(
-    reason="Per-boundary mapping transitions should use the target regime's "
-    "parameters, but currently the source regime's parameter template is used, "
-    "which lacks the target-only parameter.",
-    strict=True,
-)
 def test_boundary_transition_with_target_only_param() -> None:
     """Per-boundary mapping transition should resolve parameters from the target regime.
 

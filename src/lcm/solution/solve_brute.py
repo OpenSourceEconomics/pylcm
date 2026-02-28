@@ -9,6 +9,25 @@ from lcm.interfaces import InternalRegime
 from lcm.typing import FloatND, InternalParams, RegimeName
 
 
+def _build_cross_boundary_params(
+    internal_regime: InternalRegime,
+    internal_params: InternalParams,
+) -> dict[str, object]:
+    """Build cross-boundary params from target regimes.
+
+    For per-boundary mapping transitions owned by a target regime, resolve the
+    parameter values from the target regime's internal params.
+
+    """
+    return {
+        param_name: internal_params[target_regime][target_qname]
+        for param_name, (
+            target_regime,
+            target_qname,
+        ) in internal_regime.cross_boundary_params.items()
+    }
+
+
 def solve(
     *,
     internal_params: InternalParams,
@@ -51,6 +70,9 @@ def solve(
                 regime_params=internal_params[name],
             )
             max_Q_over_a = internal_regime.max_Q_over_a_functions[period]
+            cross_params = _build_cross_boundary_params(
+                internal_regime, internal_params
+            )
 
             # evaluate Q-function on states and actions, and maximize over actions
             V_arr = max_Q_over_a(
@@ -58,6 +80,7 @@ def solve(
                 **state_action_space.actions,
                 next_V_arr=next_V_arr,
                 **internal_params[name],
+                **cross_params,
             )
 
             validate_value_function_array(V_arr=V_arr, age=ages.values[period])

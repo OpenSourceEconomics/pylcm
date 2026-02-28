@@ -147,6 +147,25 @@ def simulate(
     )
 
 
+def _build_cross_boundary_params(
+    internal_regime: InternalRegime,
+    internal_params: InternalParams,
+) -> dict[str, object]:
+    """Build cross-boundary params from target regimes.
+
+    For per-boundary mapping transitions owned by a target regime, resolve the
+    parameter values from the target regime's internal params.
+
+    """
+    return {
+        param_name: internal_params[target_regime][target_qname]
+        for param_name, (
+            target_regime,
+            target_qname,
+        ) in internal_regime.cross_boundary_params.items()
+    }
+
+
 def _simulate_regime_in_period(
     *,
     regime_name: RegimeName,
@@ -210,6 +229,7 @@ def _simulate_regime_in_period(
     # action combination is worth. To find the optimal discrete action, we
     # therefore only need to maximize the Q-function values over all actions.
     argmax_and_max_Q_over_a = internal_regime.argmax_and_max_Q_over_a_functions[period]
+    cross_params = _build_cross_boundary_params(internal_regime, internal_params)
 
     indices_optimal_actions, V_arr = argmax_and_max_Q_over_a(
         **state_action_space.states,
@@ -217,6 +237,7 @@ def _simulate_regime_in_period(
         **state_action_space.continuous_actions,
         next_V_arr=next_V_arr,
         **internal_params[regime_name],
+        **cross_params,
     )
     validate_value_function_array(V_arr=V_arr, age=age)
 
@@ -250,12 +271,15 @@ def _simulate_regime_in_period(
     if not internal_regime.terminal:
         next_states_key, next_regime_key, key = jax.random.split(key, 3)
 
+        merged_regime_params = MappingProxyType(
+            {**internal_params[regime_name], **cross_params}
+        )
         next_states = calculate_next_states(
             internal_regime=internal_regime,
             optimal_actions=optimal_actions,
             period=period,
             age=age,
-            regime_params=internal_params[regime_name],
+            regime_params=merged_regime_params,  # ty: ignore[invalid-argument-type]
             states=states,
             state_action_space=state_action_space,
             key=next_states_key,

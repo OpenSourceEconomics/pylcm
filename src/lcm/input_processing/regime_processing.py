@@ -94,13 +94,16 @@ def process_regimes(
     }
 
     nested_transitions = {}
+    target_originated_per_regime: dict[str, frozenset[str]] = {}
     for name, regime in regimes.items():
-        nested_transitions[name] = _extract_transitions_from_regime(
+        transitions, target_originated = _extract_transitions_from_regime(
             regime=regime,
             regime_name=name,
             all_regimes=regimes,
             states_per_regime=states_per_regime,
         )
+        nested_transitions[name] = transitions
+        target_originated_per_regime[name] = target_originated
     # ----------------------------------------------------------------------------------
     # Stage 1: Initialize regime components that do not depend on other regimes
     # ----------------------------------------------------------------------------------
@@ -133,11 +136,18 @@ def process_regimes(
     # ----------------------------------------------------------------------------------
     # Stage 2: Initialize regime components that depend on other regimes
     # ----------------------------------------------------------------------------------
+    all_regime_params_templates = MappingProxyType(
+        {
+            name: create_regime_params_template(regime)
+            for name, regime in regimes.items()
+        }
+    )
+
     internal_regimes = {}
     for name, regime in regimes.items():
-        regime_params_template = create_regime_params_template(regime)
+        regime_params_template = all_regime_params_templates[name]
 
-        internal_functions = _get_internal_functions(
+        internal_functions, cross_boundary_params = _get_internal_functions(
             regime=regime,
             regime_name=name,
             nested_transitions=nested_transitions[name],
@@ -147,7 +157,11 @@ def process_regimes(
             gridspecs=gridspecs[name],
             variable_info=variable_info[name],
             enable_jit=enable_jit,
+            all_regime_params_templates=all_regime_params_templates,
+            target_originated_transitions=target_originated_per_regime[name],
         )
+
+        cross_boundary_param_names = frozenset(cross_boundary_params.keys())
 
         Q_and_F_functions = build_Q_and_F_functions(
             regime_name=name,
@@ -157,6 +171,7 @@ def process_regimes(
             state_space_infos=state_space_infos,
             ages=ages,
             regime_params_template=regime_params_template,
+            cross_boundary_param_names=cross_boundary_param_names,
         )
         max_Q_over_a_functions = build_max_Q_over_a_functions(
             state_action_space=state_action_spaces[name],
@@ -175,6 +190,7 @@ def process_regimes(
             variable_info=variable_info[name],
             regime_params_template=regime_params_template,
             enable_jit=enable_jit,
+            cross_boundary_param_names=cross_boundary_param_names,
         )
 
         # ------------------------------------------------------------------------------
@@ -200,6 +216,7 @@ def process_regimes(
             ),
             next_state_simulation_function=next_state_simulation_function,
             _base_state_action_space=state_action_spaces[name],
+            cross_boundary_params=cross_boundary_params,
         )
 
     return ensure_containers_are_immutable(internal_regimes)
@@ -216,7 +233,9 @@ def _get_internal_functions(
     gridspecs: MappingProxyType[str, Grid],
     variable_info: pd.DataFrame,
     enable_jit: bool,
-) -> InternalFunctions:
+    all_regime_params_templates: MappingProxyType[RegimeName, RegimeParamsTemplate],
+    target_originated_transitions: frozenset[str],
+) -> tuple[InternalFunctions, MappingProxyType[str, tuple[str, str]]]:
     """Process the user provided regime functions.
 
     Args:
@@ -230,9 +249,15 @@ def _get_internal_functions(
         gridspecs: The specifications of the current regimes grids.
         variable_info: Variable info of the regime.
         enable_jit: Whether to jit the internal functions.
+        all_regime_params_templates: Immutable mapping of all regime names to their
+            parameter templates.
+        target_originated_transitions: Frozenset of flat function names whose
+            transitions were resolved from the target grid's mapping.
 
     Returns:
-        The processed regime functions.
+        Tuple of the processed regime functions and an immutable mapping from
+        cross-boundary qualified param names to ``(target_regime, target_qname)``
+        tuples.
 
     """
     flat_grids = flatten_regime_namespace(grids)
@@ -291,32 +316,30 @@ def _get_internal_functions(
             param_key=func_name,
         )
 
+    cross_boundary_params: dict[str, tuple[str, str]] = {}
+
     for func_name, func in deterministic_transition_functions.items():
-        param_key = _extract_param_key(func_name)
-        if param_key in regime_params_template:
-            functions[func_name] = _rename_params_to_qnames(
-                func=func,
-                regime_params_template=regime_params_template,
-                param_key=param_key,
-            )
-        else:
-            _validate_cross_regime_transition(func, func_name, regime_params_template)
-            functions[func_name] = cast("InternalUserFunction", func)
+        functions[func_name] = _rename_transition_params(
+            func=func,
+            func_name=func_name,
+            regime_params_template=regime_params_template,
+            target_originated_transitions=target_originated_transitions,
+            all_regime_params_templates=all_regime_params_templates,
+            cross_boundary_params=cross_boundary_params,
+        )
 
     for func_name, func in stochastic_transition_functions.items():
         # The user-specified next function is the weighting function for the
         # stochastic transition. For the solution, we must also define a next function
         # that returns the whole grid of possible values.
-        param_key = _extract_param_key(func_name)
-        if param_key in regime_params_template:
-            functions[f"weight_{func_name}"] = _rename_params_to_qnames(
-                func=func,
-                regime_params_template=regime_params_template,
-                param_key=param_key,
-            )
-        else:
-            _validate_cross_regime_transition(func, func_name, regime_params_template)
-            functions[f"weight_{func_name}"] = cast("InternalUserFunction", func)
+        functions[f"weight_{func_name}"] = _rename_transition_params(
+            func=func,
+            func_name=func_name,
+            regime_params_template=regime_params_template,
+            target_originated_transitions=target_originated_transitions,
+            all_regime_params_templates=all_regime_params_templates,
+            cross_boundary_params=cross_boundary_params,
+        )
         functions[func_name] = _get_discrete_markov_next_function(
             func=func,
             grid=flat_grids[func_name.replace("next_", "")],
@@ -363,12 +386,17 @@ def _get_internal_functions(
             is_stochastic=is_stochastic_regime_transition,
             enable_jit=enable_jit,
         )
-    return InternalFunctions(
-        functions=internal_functions,
-        constraints=internal_constraints,
-        transitions=_wrap_transitions(unflatten_regime_namespace(internal_transition)),
-        regime_transition_probs=internal_regime_transition_probs,
-        stochastic_transition_names=stochastic_transition_names,
+    return (
+        InternalFunctions(
+            functions=internal_functions,
+            constraints=internal_constraints,
+            transitions=_wrap_transitions(
+                unflatten_regime_namespace(internal_transition)
+            ),
+            regime_transition_probs=internal_regime_transition_probs,
+            stochastic_transition_names=stochastic_transition_names,
+        ),
+        MappingProxyType(cross_boundary_params),
     )
 
 
@@ -378,7 +406,7 @@ def _extract_transitions_from_regime(
     regime_name: str,
     all_regimes: Mapping[str, Regime],
     states_per_regime: Mapping[str, set[str]],
-) -> dict[str, dict[str, UserFunction] | UserFunction]:
+) -> tuple[dict[str, dict[str, UserFunction] | UserFunction], frozenset[str]]:
     """Extract transitions from grid attributes and auto-generate identity transitions.
 
     For non-terminal regimes, collects state transitions from source and target grids,
@@ -402,13 +430,16 @@ def _extract_transitions_from_regime(
         states_per_regime: Mapping of regime names to their state names.
 
     Returns:
-        Nested transitions dict in the format expected by _get_internal_functions.
+        Tuple of nested transitions dict and frozenset of flat function names
+        (e.g., ``"phase2__next_wealth"``) whose transitions were resolved from the
+        target grid's mapping (priority 1).
 
     """
     if regime.terminal:
-        return {}
+        return {}, frozenset()
 
     nested: dict[str, dict[str, UserFunction] | UserFunction] = {}
+    target_originated: set[str] = set()
     # Guaranteed non-None: terminal regimes return early.
     assert regime.transition is not None  # noqa: S101
     nested["next_regime"] = regime.transition.func
@@ -431,6 +462,18 @@ def _extract_transitions_from_regime(
             else:
                 boundary_transitions[f"next_{state_name}"] = resolved
 
+                # Check if the resolved function came from the target grid's
+                # mapping (priority 1).
+                target_grid = target_regime.states.get(state_name)
+                if target_grid is not None:
+                    target_trans = _get_grid_transition(target_grid)
+                    if (
+                        isinstance(target_trans, Mapping)
+                        and boundary_key in target_trans
+                        and target_trans[boundary_key] is not None  # ty: ignore[invalid-argument-type]
+                    ):
+                        target_originated.add(f"{target_name}__next_{state_name}")
+
         if missing_states:
             continue
 
@@ -442,7 +485,7 @@ def _extract_transitions_from_regime(
         )
         nested[target_name] = boundary_transitions
 
-    return nested
+    return nested, frozenset(target_originated)
 
 
 # Sentinel for unresolved transitions
@@ -635,6 +678,83 @@ def _rename_params_to_qnames(
         return cast("InternalUserFunction", func)
     mapper = {p: f"{param_key}{QNAME_DELIMITER}{p}" for p in param_names}
     return cast("InternalUserFunction", rename_arguments(func, mapper=mapper))
+
+
+def _rename_transition_params(
+    *,
+    func: UserFunction,
+    func_name: str,
+    regime_params_template: RegimeParamsTemplate,
+    target_originated_transitions: frozenset[str],
+    all_regime_params_templates: MappingProxyType[RegimeName, RegimeParamsTemplate],
+    cross_boundary_params: dict[str, tuple[str, str]],
+) -> InternalUserFunction:
+    """Rename a transition function's parameters to qualified names.
+
+    Dispatches to target-originated or source-regime renaming based on whether
+    the transition was resolved from the target grid's mapping.
+
+    """
+    if func_name in target_originated_transitions:
+        return _rename_target_originated_transition(
+            func=func,
+            func_name=func_name,
+            all_regime_params_templates=all_regime_params_templates,
+            cross_boundary_params=cross_boundary_params,
+        )
+    param_key = _extract_param_key(func_name)
+    if param_key in regime_params_template:
+        return _rename_params_to_qnames(
+            func=func,
+            regime_params_template=regime_params_template,
+            param_key=param_key,
+        )
+    _validate_cross_regime_transition(func, func_name, regime_params_template)
+    return cast("InternalUserFunction", func)
+
+
+def _rename_target_originated_transition(
+    *,
+    func: UserFunction,
+    func_name: str,
+    all_regime_params_templates: MappingProxyType[RegimeName, RegimeParamsTemplate],
+    cross_boundary_params: dict[str, tuple[str, str]],
+) -> InternalUserFunction:
+    """Rename parameters of a target-originated transition to cross-boundary qnames.
+
+    For transitions resolved from the target grid's mapping, rename the function's
+    parameters using a target-prefixed qualified name (e.g.,
+    ``growth_rate`` -> ``phase2__next_wealth__growth_rate``) and record the mapping
+    from cross-boundary qname to ``(target_regime, target_qname)`` so the values
+    can be resolved from the target regime's params at runtime.
+
+    Args:
+        func: The user transition function.
+        func_name: The flat function name (e.g., ``"phase2__next_wealth"``).
+        all_regime_params_templates: All regime parameter templates.
+        cross_boundary_params: Mutable dict to populate with cross-boundary mappings.
+
+    Returns:
+        The function with renamed parameters.
+
+    """
+    target_name = func_name.split(QNAME_DELIMITER, 1)[0]
+    param_key = _extract_param_key(func_name)
+    target_template = all_regime_params_templates[target_name]
+
+    if param_key in target_template:
+        param_names = list(target_template[param_key])
+        if param_names:
+            mapper = {p: f"{func_name}{QNAME_DELIMITER}{p}" for p in param_names}
+            renamed = cast(
+                "InternalUserFunction", rename_arguments(func, mapper=mapper)
+            )
+            for p in param_names:
+                src_qname = f"{func_name}{QNAME_DELIMITER}{p}"
+                tgt_qname = f"{param_key}{QNAME_DELIMITER}{p}"
+                cross_boundary_params[src_qname] = (target_name, tgt_qname)
+            return renamed
+    return cast("InternalUserFunction", func)
 
 
 def _get_discrete_markov_next_function(
