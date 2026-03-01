@@ -14,7 +14,6 @@ from jax import Array
 from lcm.ages import AgeGrid
 from lcm.dispatchers import simulation_spacemap, vmap_1d
 from lcm.grids import Grid
-from lcm.input_processing.params_processing import get_flat_param_names
 from lcm.interfaces import (
     InternalFunctions,
     PhaseVariantContainer,
@@ -34,7 +33,6 @@ from lcm.typing import (
     QAndFFunction,
     RegimeName,
     RegimeNamesToIds,
-    RegimeParamsTemplate,
     RegimeTransitionFunction,
     VmappedRegimeTransitionFunction,
 )
@@ -49,14 +47,8 @@ def build_Q_and_F_functions(
     internal_functions: InternalFunctions,
     state_space_infos: MappingProxyType[RegimeName, StateSpaceInfo],
     ages: AgeGrid,
-    regime_params_template: RegimeParamsTemplate,
-    cross_boundary_param_names: frozenset[str] = frozenset(),
+    flat_param_names: frozenset[str],
 ) -> MappingProxyType[int, QAndFFunction]:
-    flat_param_names = (
-        frozenset(get_flat_param_names(regime_params_template))
-        | cross_boundary_param_names
-    )
-
     Q_and_F_functions = {}
     for period, age in enumerate(ages.values):
         if regime.terminal:
@@ -160,9 +152,8 @@ def build_next_state_simulation_functions(
     grids: GridsDict,
     gridspecs: MappingProxyType[str, Grid],
     variable_info: pd.DataFrame,
-    regime_params_template: RegimeParamsTemplate,
+    flat_param_names: frozenset[str],
     enable_jit: bool,
-    cross_boundary_param_names: frozenset[str] = frozenset(),
 ) -> NextStateSimulationFunction:
     next_state = get_next_state_function_for_simulation(
         transitions=flatten_regime_namespace(internal_functions.transitions),
@@ -178,8 +169,7 @@ def build_next_state_simulation_functions(
         func=next_state,
         variables=_get_vmap_params(
             all_args=sig_args,
-            regime_params_template=regime_params_template,
-            extra_non_vmap=cross_boundary_param_names,
+            flat_param_names=flat_param_names,
         ),
     )
 
@@ -196,7 +186,7 @@ def build_regime_transition_probs_functions(
     regime_transition_probs: InternalUserFunction,
     grids: MappingProxyType[str, Array],
     regime_names_to_ids: RegimeNamesToIds,
-    regime_params_template: RegimeParamsTemplate,
+    flat_param_names: frozenset[str],
     is_stochastic: bool,
     enable_jit: bool,
 ) -> PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]:
@@ -237,7 +227,7 @@ def build_regime_transition_probs_functions(
         func=next_regime_accepting_all,
         variables=_get_vmap_params(
             all_args=tuple(inspect.signature(next_regime_accepting_all).parameters),
-            regime_params_template=regime_params_template,
+            flat_param_names=flat_param_names,
         ),
     )
 
@@ -250,16 +240,10 @@ def build_regime_transition_probs_functions(
 def _get_vmap_params(
     *,
     all_args: tuple[str, ...],
-    regime_params_template: RegimeParamsTemplate,
-    extra_non_vmap: frozenset[str] = frozenset(),
+    flat_param_names: frozenset[str],
 ) -> tuple[str, ...]:
     """Get parameter names that should be vmapped (states and actions)."""
-    non_vmap = (
-        {"period", "age"}
-        | get_flat_param_names(regime_params_template)
-        | extra_non_vmap
-    )
-    # Filter for states and actions
+    non_vmap = {"period", "age"} | flat_param_names
     return tuple(arg for arg in all_args if arg not in non_vmap)
 
 

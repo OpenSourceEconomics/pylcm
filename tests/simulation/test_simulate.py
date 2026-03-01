@@ -46,7 +46,7 @@ def simulate_inputs():
     regime_names_to_ids = MappingProxyType(
         {name: idx for idx, name in enumerate(regimes.keys())}
     )
-    internal_regimes = process_regimes(
+    internal_regimes, _params_template = process_regimes(
         regimes=regimes,
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,

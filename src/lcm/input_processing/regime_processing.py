@@ -17,6 +17,10 @@ from lcm.grids import DiscreteMarkovGrid, Grid, _DiscreteGridBase
 from lcm.input_processing.create_regime_params_template import (
     create_regime_params_template,
 )
+from lcm.input_processing.params_processing import (
+    create_params_template,
+    get_flat_param_names,
+)
 from lcm.input_processing.regime_components import (
     build_argmax_and_max_Q_over_a_functions,
     build_max_Q_over_a_functions,
@@ -39,6 +43,7 @@ from lcm.typing import (
     Float1D,
     Int1D,
     InternalUserFunction,
+    ParamsTemplate,
     RegimeName,
     RegimeNamesToIds,
     RegimeParamsTemplate,
@@ -67,7 +72,7 @@ def process_regimes(
     ages: AgeGrid,
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
-) -> MappingProxyType[RegimeName, InternalRegime]:
+) -> tuple[MappingProxyType[RegimeName, InternalRegime], ParamsTemplate]:
     """Process user regimes into internal regimes.
 
     Extracts state transitions from grid `transition` attributes and
@@ -82,7 +87,7 @@ def process_regimes(
         enable_jit: Whether to jit the functions of the internal regime.
 
     Returns:
-        The processed regimes.
+        Tuple of the processed regimes and the parameter template.
 
     """
 
@@ -143,6 +148,8 @@ def process_regimes(
         }
     )
 
+    params_template = create_params_template(all_regime_params_templates)
+
     internal_regimes = {}
     for name, regime in regimes.items():
         regime_params_template = all_regime_params_templates[name]
@@ -161,7 +168,9 @@ def process_regimes(
             target_originated_transitions=target_originated_per_regime[name],
         )
 
-        cross_boundary_param_names = frozenset(cross_boundary_params.keys())
+        flat_param_names = frozenset(
+            get_flat_param_names(regime_params_template)
+        ) | frozenset(cross_boundary_params.keys())
 
         Q_and_F_functions = build_Q_and_F_functions(
             regime_name=name,
@@ -170,8 +179,7 @@ def process_regimes(
             internal_functions=internal_functions,
             state_space_infos=state_space_infos,
             ages=ages,
-            regime_params_template=regime_params_template,
-            cross_boundary_param_names=cross_boundary_param_names,
+            flat_param_names=flat_param_names,
         )
         max_Q_over_a_functions = build_max_Q_over_a_functions(
             state_action_space=state_action_spaces[name],
@@ -188,9 +196,8 @@ def process_regimes(
             grids=grids,
             gridspecs=gridspecs[name],
             variable_info=variable_info[name],
-            regime_params_template=regime_params_template,
+            flat_param_names=flat_param_names,
             enable_jit=enable_jit,
-            cross_boundary_param_names=cross_boundary_param_names,
         )
 
         # ------------------------------------------------------------------------------
@@ -208,7 +215,7 @@ def process_regimes(
             regime_transition_probs=internal_functions.regime_transition_probs,
             internal_functions=internal_functions,
             transitions=internal_functions.transitions,
-            regime_params_template=regime_params_template,
+            flat_param_names=flat_param_names,
             state_space_info=state_space_infos[name],
             max_Q_over_a_functions=MappingProxyType(max_Q_over_a_functions),
             argmax_and_max_Q_over_a_functions=MappingProxyType(
@@ -219,7 +226,7 @@ def process_regimes(
             cross_boundary_params=cross_boundary_params,
         )
 
-    return ensure_containers_are_immutable(internal_regimes)
+    return ensure_containers_are_immutable(internal_regimes), params_template
 
 
 def _get_internal_functions(
@@ -374,6 +381,10 @@ def _get_internal_functions(
         regime.transition, MarkovRegimeTransition
     )
 
+    flat_param_names = frozenset(
+        get_flat_param_names(regime_params_template)
+    ) | frozenset(cross_boundary_params.keys())
+
     if regime.terminal:
         internal_regime_transition_probs = None
     else:
@@ -382,7 +393,7 @@ def _get_internal_functions(
             regime_transition_probs=functions["next_regime"],
             grids=grids[regime_name],
             regime_names_to_ids=regime_names_to_ids,
-            regime_params_template=regime_params_template,
+            flat_param_names=flat_param_names,
             is_stochastic=is_stochastic_regime_transition,
             enable_jit=enable_jit,
         )

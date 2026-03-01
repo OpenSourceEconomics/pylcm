@@ -7,7 +7,6 @@ from typing import Any, cast
 from dags.tree import QNAME_DELIMITER
 
 from lcm.exceptions import InvalidNameError, InvalidParamsError
-from lcm.interfaces import InternalRegime
 from lcm.typing import (
     InternalParams,
     ParamsTemplate,
@@ -110,15 +109,16 @@ def process_params(
 
 
 def create_params_template(  # noqa: C901
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    all_regime_params_templates: MappingProxyType[RegimeName, RegimeParamsTemplate],
 ) -> ParamsTemplate:
-    """Create params_template from internal regimes and validate name uniqueness.
+    """Create params_template from regime parameter templates and validate uniqueness.
 
     This function validates that regime names, function names, and argument names
     are disjoint sets to enable unambiguous parameter propagation.
 
     Args:
-        internal_regimes: Mapping of regime names to InternalRegime instances.
+        all_regime_params_templates: Immutable mapping of regime names to their
+            parameter templates.
 
     Returns:
         The parameter template.
@@ -132,10 +132,9 @@ def create_params_template(  # noqa: C901
     function_names: set[str] = set()
     arg_names: set[str] = set()
 
-    for name, regime in internal_regimes.items():
+    for name, regime_template in all_regime_params_templates.items():
         regime_names.add(name)
-        regime_template = dict(regime.regime_params_template)
-        template[name] = regime_template
+        template[name] = dict(regime_template)
 
         for key, val in regime_template.items():
             if isinstance(val, (dict, Mapping)):

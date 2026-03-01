@@ -21,13 +21,11 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     DiscreteState,
-    FlatRegimeParams,
     InternalParams,
     InternalUserFunction,
     MaxQOverAFunction,
     NextStateSimulationFunction,
     RegimeName,
-    RegimeParamsTemplate,
     RegimeTransitionFunction,
     TransitionFunctionsMapping,
     VmappedRegimeTransitionFunction,
@@ -199,8 +197,8 @@ class InternalRegime:
     Includes user functions, constraints, and transitions.
     """
 
-    regime_params_template: RegimeParamsTemplate
-    """Template for the parameter structure expected by this regime."""
+    flat_param_names: frozenset[str]
+    """All flat parameter names for this regime, including cross-boundary params."""
 
     state_space_info: StateSpaceInfo
     """Metadata for working with function outputs on the state space."""
@@ -228,27 +226,14 @@ class InternalRegime:
     """
 
     # Resolved fixed params (flat) for this regime, used by to_dataframe targets
-    resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
+    resolved_fixed_params: MappingProxyType[str, bool | float | Array] = (
+        MappingProxyType({})
+    )
     """Flat resolved fixed params for this regime, used by to_dataframe targets."""
 
-    def build_cross_boundary_params(
-        self, internal_params: InternalParams
-    ) -> dict[str, object]:
-        """Build cross-boundary params from target regimes.
-
-        For per-boundary mapping transitions owned by a target regime, resolve the
-        parameter values from the target regime's internal params.
-
-        """
-        return {
-            param_name: internal_params[target_regime][target_qname]
-            for param_name, (
-                target_regime,
-                target_qname,
-            ) in self.cross_boundary_params.items()
-        }
-
-    def state_action_space(self, regime_params: FlatRegimeParams) -> StateActionSpace:
+    def state_action_space(
+        self, regime_params: MappingProxyType[str, bool | float | Array]
+    ) -> StateActionSpace:
         """Return the state-action space with runtime state grids filled in.
 
         For IrregSpacedGrid with runtime-supplied points, the grid points come from
@@ -363,3 +348,30 @@ class InternalFunctions:
                 self.regime_transition_probs.simulate
             )
         return MappingProxyType(flatten_regime_namespace(functions_pool))
+
+
+def merge_cross_boundary_params(
+    internal_params: InternalParams,
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+) -> InternalParams:
+    """Merge cross-boundary params into each regime's internal params.
+
+    For regimes with target-originated transitions, resolve parameter values
+    from the target regime and merge them into the source regime's params.
+
+    Args:
+        internal_params: Immutable mapping of regime names to flat parameter mappings.
+        internal_regimes: Immutable mapping of regime names to internal regime
+            instances.
+
+    Returns:
+        New internal params with cross-boundary params merged in.
+
+    """
+    result = {}
+    for name, regime in internal_regimes.items():
+        merged = dict(internal_params[name])
+        for src_qname, (tgt_name, tgt_qname) in regime.cross_boundary_params.items():
+            merged[src_qname] = internal_params[tgt_name][tgt_qname]
+        result[name] = MappingProxyType(merged)
+    return MappingProxyType(result)

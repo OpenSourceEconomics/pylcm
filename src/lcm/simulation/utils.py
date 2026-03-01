@@ -13,7 +13,6 @@ from lcm.random import generate_simulation_keys
 from lcm.state_action_space import create_state_action_space
 from lcm.typing import (
     Bool1D,
-    FlatRegimeParams,
     Int1D,
     RegimeName,
     RegimeNamesToIds,
@@ -78,7 +77,7 @@ def calculate_next_states(
     optimal_actions: MappingProxyType[str, Array],
     period: int,
     age: float,
-    regime_params: FlatRegimeParams,
+    regime_params: MappingProxyType[str, bool | float | Array],
     states: MappingProxyType[str, Array],
     state_action_space: StateActionSpace,
     key: Array,
@@ -154,7 +153,7 @@ def calculate_next_regime_membership(
     optimal_actions: MappingProxyType[str, Array],
     period: int,
     age: float,
-    regime_params: FlatRegimeParams,
+    regime_params: MappingProxyType[str, bool | float | Array],
     regime_names_to_ids: MappingProxyType[RegimeName, int],
     new_subject_regime_ids: Int1D,
     active_regimes_next_period: tuple[RegimeName, ...],

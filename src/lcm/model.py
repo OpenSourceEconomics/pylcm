@@ -11,10 +11,7 @@ from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, format_messages
-from lcm.input_processing.params_processing import (
-    create_params_template,
-    process_params,
-)
+from lcm.input_processing.params_processing import process_params
 from lcm.input_processing.regime_processing import InternalRegime, process_regimes
 from lcm.input_processing.util import get_variable_info
 from lcm.interfaces import PhaseVariantContainer
@@ -303,13 +300,12 @@ def _build_regimes_and_template(
     so that each result is computed exactly once.
 
     """
-    internal_regimes = process_regimes(
+    internal_regimes, params_template = process_regimes(
         regimes=regimes,
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=enable_jit,
     )
-    params_template = create_params_template(internal_regimes)
 
     if fixed_params:
         fixed_internal = _resolve_fixed_params(

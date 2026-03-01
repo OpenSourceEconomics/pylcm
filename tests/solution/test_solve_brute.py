@@ -34,9 +34,6 @@ class InternalRegimeMock:
     def state_action_space(self, regime_params):  # noqa: ARG002
         return self._base_state_action_space
 
-    def build_cross_boundary_params(self, internal_params):  # noqa: ARG002
-        return {}
-
 
 def test_solve_brute():
     """Test solve brute with hand written inputs.

@@ -7,11 +7,7 @@ from numpy.testing import assert_array_equal
 
 from lcm import AgeGrid
 from lcm.input_processing import process_regimes
-from lcm.input_processing.params_processing import (
-    create_params_template,
-    get_flat_param_names,
-    process_params,
-)
+from lcm.input_processing.params_processing import process_params
 from lcm.interfaces import InternalFunctions, PhaseVariantContainer
 from lcm.Q_and_F import (
     _get_feasibility,
@@ -42,7 +38,7 @@ def test_get_Q_and_F_function():
     regime_names_to_ids = MappingProxyType(
         {name: idx for idx, name in enumerate(regimes.keys())}
     )
-    internal_regimes = process_regimes(
+    internal_regimes, params_template = process_regimes(
         regimes=regimes,
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
@@ -51,13 +47,9 @@ def test_get_Q_and_F_function():
 
     raw_params = get_params(n_periods=4)
 
-    params_template = create_params_template(internal_regimes)
     internal_params = process_params(params=raw_params, params_template=params_template)
 
-    # Compute flat param names for the working regime's regime_params_template
-    flat_param_names = frozenset(
-        get_flat_param_names(internal_regimes["working"].regime_params_template)
-    )
+    flat_param_names = internal_regimes["working"].flat_param_names
 
     # Test terminal period Q_and_F where Q = U (no continuation value)
     Q_and_F = get_Q_and_F_terminal(

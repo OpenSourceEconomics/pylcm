@@ -22,7 +22,6 @@ from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.grids import DiscreteGrid, DiscreteMarkovGrid
 from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
 from lcm.typing import (
-    FlatRegimeParams,
     FloatND,
     InternalParams,
     RegimeName,
@@ -449,7 +448,7 @@ def _process_regime(
     regime_results: MappingProxyType[int, PeriodRegimeSimulationData],
     regime_states: tuple[str, ...],
     regime_actions: tuple[str, ...],
-    regime_params: FlatRegimeParams,
+    regime_params: MappingProxyType[str, bool | float | Array],
     additional_targets: list[str] | None,
     ages: AgeGrid,
 ) -> pd.DataFrame:
@@ -677,7 +676,7 @@ def _compute_targets(
     data: dict[str, Array | Sequence[str]],
     targets: list[str],
     internal_regime: InternalRegime,
-    regime_params: FlatRegimeParams,
+    regime_params: MappingProxyType[str, bool | float | Array],
 ) -> dict[str, Array]:
     """Compute additional targets for a regime."""
     functions_pool = _build_functions_pool(internal_regime)

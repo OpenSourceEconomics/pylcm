@@ -184,73 +184,69 @@ def test_ambiguous_model_regime_level(params_template):
 # ======================================================================================
 
 
-class MockRegime:
-    """Mock regime with regime_params_template for testing create_params_template."""
-
-    def __init__(self, regime_params_template: dict) -> None:
-        self._regime_params_template = regime_params_template
-
-    @property
-    def regime_params_template(self) -> MappingProxyType:
-        """Return regime_params_template as MappingProxyType."""
-        return MappingProxyType(self._regime_params_template)
-
-
 def test_function_params_no_qname_separator():
     """Function parameters should not contain the qname separator."""
-    internal_regimes = {
-        "regime_0": MockRegime(
-            {"fun_0": {"arg__0": float}}  # Invalid: contains '__'
-        ),
-    }
+    templates = MappingProxyType(
+        {
+            "regime_0": MappingProxyType(
+                {"fun_0": MappingProxyType({"arg__0": float})}
+            ),
+        }
+    )
     with pytest.raises(InvalidNameError):
-        create_params_template(internal_regimes)  # ty: ignore[invalid-argument-type]
+        create_params_template(templates)
 
 
 def test_regime_name_no_qname_separator():
     """Regime names should not contain the qname separator."""
-    internal_regimes = {
-        "regime__0": MockRegime(  # Invalid: contains '__'
-            {"fun_0": {"arg_0": float}}
-        ),
-    }
+    templates = MappingProxyType(
+        {
+            "regime__0": MappingProxyType(
+                {"fun_0": MappingProxyType({"arg_0": float})}
+            ),
+        }
+    )
     with pytest.raises(InvalidNameError):
-        create_params_template(internal_regimes)  # ty: ignore[invalid-argument-type]
+        create_params_template(templates)
 
 
 def test_function_name_no_qname_separator():
     """Function names should not contain the qname separator."""
-    internal_regimes = {
-        "regime_0": MockRegime(
-            {"fun__0": {"arg_0": float}}  # Invalid: contains '__'
-        ),
-    }
+    templates = MappingProxyType(
+        {
+            "regime_0": MappingProxyType(
+                {"fun__0": MappingProxyType({"arg_0": float})}
+            ),
+        }
+    )
     with pytest.raises(InvalidNameError):
-        create_params_template(internal_regimes)  # ty: ignore[invalid-argument-type]
+        create_params_template(templates)
 
 
 def test_regime_function_names_disjoint():
     """Regime names and function names must be disjoint."""
-    # Case: function name same as regime name
-    internal_regimes = {
-        "regime_0": MockRegime(
-            {"regime_0": {"arg_0": float}}  # Invalid: function name = regime name
-        ),
-    }
+    templates = MappingProxyType(
+        {
+            "regime_0": MappingProxyType(
+                {"regime_0": MappingProxyType({"arg_0": float})}
+            ),
+        }
+    )
     with pytest.raises(InvalidNameError):
-        create_params_template(internal_regimes)  # ty: ignore[invalid-argument-type]
+        create_params_template(templates)
 
 
 def test_regime_argument_names_disjoint():
     """Regime names and argument names must be disjoint."""
-    # Case: argument name same as regime name
-    internal_regimes = {
-        "regime_0": MockRegime(
-            {"fun_0": {"regime_0": float}}  # Invalid: arg name = regime name
-        ),
-    }
+    templates = MappingProxyType(
+        {
+            "regime_0": MappingProxyType(
+                {"fun_0": MappingProxyType({"regime_0": float})}
+            ),
+        }
+    )
     with pytest.raises(InvalidNameError):
-        create_params_template(internal_regimes)  # ty: ignore[invalid-argument-type]
+        create_params_template(templates)
 
 
 # ======================================================================================
