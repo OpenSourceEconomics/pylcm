@@ -667,7 +667,7 @@ def _validate_transition(
     """Validate that `transition` is callable, None, Unset, or a boundary mapping.
 
     Raises:
-        GridInitializationError: If ``transition`` is not one of the accepted forms.
+        GridInitializationError: If `transition` is not one of the accepted forms.
 
     """
     if isinstance(transition, Mapping):

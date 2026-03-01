@@ -220,7 +220,7 @@ class InternalRegime:
     cross_boundary_params: MappingProxyType[str, tuple[RegimeName, str]] = (
         MappingProxyType({})
     )
-    """Mapping from cross-boundary param names to ``(target_regime, target_qname)``.
+    """Mapping from cross-boundary param names to `(target_regime, target_qname)`.
 
     For per-boundary mapping transitions owned by a target regime, this maps
     the qualified param name in this (source) regime's namespace to the

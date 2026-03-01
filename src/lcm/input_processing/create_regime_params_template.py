@@ -79,9 +79,9 @@ def _discover_mapping_transition_params(
 ) -> None:
     """Discover parameters from per-boundary mapping transition callables.
 
-    When a grid has a mapping transition ``{(src, tgt): func}``, the callable may
+    When a grid has a mapping transition `{(src, tgt): func}`, the callable may
     have parameters that belong to this (target) regime's template but are not
-    visible through ``get_all_functions()`` (which returns an identity placeholder).
+    visible through `get_all_functions()` (which returns an identity placeholder).
 
     """
     for state_name, grid in regime.states.items():

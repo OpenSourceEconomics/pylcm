@@ -82,7 +82,7 @@ def test_discrete_state_different_categories_raises_without_mapping():
 
     Health has 3 categories in working (disabled, bad, good) but only 2 in retirement
     (bad, good). Without a per-boundary mapping transition, model construction raises
-    ``ModelInitializationError`` to prevent silent index clipping.
+    `ModelInitializationError` to prevent silent index clipping.
     """
     working = Regime(
         states={
@@ -269,7 +269,7 @@ def test_continuous_state_per_boundary_mapping_transition() -> None:
 
     Wealth uses a different transition when crossing from working to retired
     (taxed at 80%) vs within the working regime (5% growth). The retired
-    regime's grid specifies a mapping transition keyed by ``("working", "retired")``;
+    regime's grid specifies a mapping transition keyed by `("working", "retired")`;
     unlisted boundaries fall back to identity.
     """
 

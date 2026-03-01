@@ -256,7 +256,7 @@ def _get_internal_functions(
 
     Returns:
         Tuple of the processed regime functions and an immutable mapping from
-        cross-boundary qualified param names to ``(target_regime, target_qname)``
+        cross-boundary qualified param names to `(target_regime, target_qname)`
         tuples.
 
     """
@@ -412,12 +412,12 @@ def _extract_transitions_from_regime(
     For non-terminal regimes, collects state transitions from source and target grids,
     resolving per-boundary transitions using a hierarchical priority:
 
-    1. Target grid's mapping transition with ``(source, target)`` key
-    2. Source grid's mapping transition with ``(source, target)`` key
+    1. Target grid's mapping transition with `(source, target)` key
+    2. Source grid's mapping transition with `(source, target)` key
     3. Source grid's single-callable transition
-    4. Source grid's ``None`` transition (identity)
+    4. Source grid's `None` transition (identity)
     5. Target grid's single-callable transition
-    6. Target grid's ``None`` transition (identity)
+    6. Target grid's `None` transition (identity)
     7. Unlisted boundary in a mapping → identity
 
     Validates that discrete states with different categories across regimes have
@@ -431,7 +431,7 @@ def _extract_transitions_from_regime(
 
     Returns:
         Tuple of nested transitions dict and frozenset of flat function names
-        (e.g., ``"phase2__next_wealth"``) whose transitions were resolved from the
+        (e.g., `"phase2__next_wealth"`) whose transitions were resolved from the
         target grid's mapping (priority 1).
 
     """
@@ -493,22 +493,22 @@ def _resolve_state_transition(
     source_regime: Regime,
     target_regime: Regime,
 ) -> tuple[UserFunction, bool] | _Unresolved:
-    """Resolve the transition function for one state in a ``(source, target)`` boundary.
+    """Resolve the transition function for one state in a `(source, target)` boundary.
 
     Priority (highest to lowest):
 
-    1. Target grid mapping with ``(source, target)`` key
-    2. Source grid mapping with ``(source, target)`` key
+    1. Target grid mapping with `(source, target)` key
+    2. Source grid mapping with `(source, target)` key
     3. Source grid single-callable
-    4. Source grid ``None`` (identity)
+    4. Source grid `None` (identity)
     5. Target grid single-callable
-    6. Target grid ``None`` (identity)
+    6. Target grid `None` (identity)
     7. Target or source has mapping but boundary not listed → identity
 
     Returns:
-        Tuple of ``(resolved_function, target_originated)`` where
-        ``target_originated`` is ``True`` when the function came from the target
-        grid's mapping (priority 1), or the ``_UNRESOLVED`` sentinel.
+        Tuple of `(resolved_function, target_originated)` where
+        `target_originated` is `True` when the function came from the target
+        grid's mapping (priority 1), or the `_UNRESOLVED` sentinel.
 
     """
     source_grid = source_regime.states.get(state_name)
@@ -547,7 +547,7 @@ def _resolve_state_transition(
 
 
 def _get_grid_transition(grid: Grid | None) -> object:
-    """Extract the raw transition attribute from a grid, or return ``_UNRESOLVED``."""
+    """Extract the raw transition attribute from a grid, or return `_UNRESOLVED`."""
     if grid is None:
         return _UNRESOLVED
     if isinstance(grid, _ShockGrid):
@@ -575,7 +575,7 @@ def _validate_discrete_category_compatibility(
 ) -> None:
     """Validate discrete states with different categories have explicit transitions.
 
-    Raise ``ModelInitializationError`` if a discrete state has different category sets
+    Raise `ModelInitializationError` if a discrete state has different category sets
     in source and target regimes but no per-boundary transition was provided.
 
     """
@@ -721,13 +721,13 @@ def _rename_target_originated_transition(
 
     For transitions resolved from the target grid's mapping, rename the function's
     parameters using a target-prefixed qualified name (e.g.,
-    ``growth_rate`` -> ``phase2__next_wealth__growth_rate``) and record the mapping
-    from cross-boundary qname to ``(target_regime, target_qname)`` so the values
+    `growth_rate` -> `phase2__next_wealth__growth_rate`) and record the mapping
+    from cross-boundary qname to `(target_regime, target_qname)` so the values
     can be resolved from the target regime's params at runtime.
 
     Args:
         func: The user transition function.
-        func_name: The flat function name (e.g., ``"phase2__next_wealth"``).
+        func_name: The flat function name (e.g., `"phase2__next_wealth"`).
         all_regime_params_templates: All regime parameter templates.
         cross_boundary_params: Mutable dict to populate with cross-boundary mappings.
 
