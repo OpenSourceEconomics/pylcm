@@ -465,7 +465,7 @@ def test_constraint_depending_on_transition_output():
     """Regression guard for GitHub issue #230.
 
     Constraint depending on a transition output (next_assets) used to raise
-    ``ValueError: list.index(x): x not in list``.
+    `ValueError: list.index(x): x not in list`.
     """
 
     @categorical
@@ -546,7 +546,7 @@ def test_state_only_used_in_transitions():
     """Regression guard for GitHub issue #230.
 
     State used only in transitions (not in utility/constraints) used to raise
-    ``ValueError: list.index(x): x not in list``.
+    `ValueError: list.index(x): x not in list`.
     """
 
     @categorical
