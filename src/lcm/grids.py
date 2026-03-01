@@ -1,6 +1,6 @@
 import dataclasses
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, is_dataclass
 from typing import overload
 
@@ -19,6 +19,8 @@ from lcm.typing import (
     ScalarFloat,
 )
 from lcm.utils import Unset, find_duplicates, get_field_names_and_values
+
+type BoundaryKey = tuple[str, str]
 
 
 def categorical[T](cls: type[T]) -> type[T]:
@@ -121,8 +123,10 @@ class DiscreteGrid(_DiscreteGridBase):
         category_class: The category class representing the grid categories. Must
             be a dataclass with fields that have unique int values.
         transition: Deterministic transition function for time-varying states,
-            or `None` for fixed states. Must be set explicitly when this grid is
-            used as a state in a Regime. Must be left unset when used as an action.
+            or `None` for fixed states. Can also be a mapping from
+            `(source_regime, target_regime)` name pairs to per-boundary transition
+            functions. Must be set explicitly when this grid is used as a state in
+            a Regime. Must be left unset when used as an action.
 
     Raises:
         GridInitializationError: If the `category_class` is not a dataclass with int
@@ -134,18 +138,32 @@ class DiscreteGrid(_DiscreteGridBase):
         self,
         category_class: type,
         *,
-        transition: Callable[..., DiscreteState] | None | Unset = Unset(),
+        transition: (
+            Callable[..., DiscreteState]
+            | None
+            | Mapping[BoundaryKey, Callable[..., DiscreteState] | None]
+            | Unset
+        ) = Unset(),
     ) -> None:
         super().__init__(category_class)
         _validate_transition(transition)
         self.__transition = transition
 
     @property
-    def transition(self) -> Callable[..., DiscreteState] | None | Unset:
+    def transition(
+        self,
+    ) -> (
+        Callable[..., DiscreteState]
+        | None
+        | Mapping[BoundaryKey, Callable[..., DiscreteState] | None]
+        | Unset
+    ):
         """Return the deterministic state transition function.
 
         Compute the next discrete state value (`DiscreteState`).
         `None` for fixed states, `Unset` for action grids.
+        Can be a mapping from `(source, target)` regime name pairs to per-boundary
+        transition functions.
         """
         return self.__transition
 
@@ -157,9 +175,13 @@ class DiscreteMarkovGrid(_DiscreteGridBase):
         self,
         category_class: type,
         *,
-        transition: Callable[..., FloatND],
+        transition: (
+            Callable[..., FloatND] | Mapping[BoundaryKey, Callable[..., FloatND]]
+        ),
     ) -> None:
-        if not callable(transition):
+        if isinstance(transition, Mapping):
+            _validate_transition_mapping(transition, allow_none_values=False)
+        elif not callable(transition):
             raise GridInitializationError(
                 f"DiscreteMarkovGrid requires a callable transition, "
                 f"but got {type(transition).__name__}: {transition!r}"
@@ -168,11 +190,15 @@ class DiscreteMarkovGrid(_DiscreteGridBase):
         self.__transition = transition
 
     @property
-    def transition(self) -> Callable[..., FloatND]:
+    def transition(
+        self,
+    ) -> Callable[..., FloatND] | Mapping[BoundaryKey, Callable[..., FloatND]]:
         """Return the stochastic Markov transition function.
 
         Compute a probability distribution (`FloatND`) over next
         discrete states — not the next state value itself.
+        Can be a mapping from `(source, target)` regime name pairs to per-boundary
+        transition functions.
         """
         return self.__transition
 
@@ -195,11 +221,17 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
     n_points: int
     """The number of points in the grid."""
 
-    transition: Callable[..., ContinuousState] | None | Unset = Unset()
+    transition: (
+        Callable[..., ContinuousState]
+        | None
+        | Mapping[BoundaryKey, Callable[..., ContinuousState] | None]
+        | Unset
+    ) = Unset()
     """Deterministic transition for state evolution.
 
     Compute the next continuous state value (`ContinuousState`).
-    `None` for fixed states. `Unset` for action grids.
+    `None` for fixed states. `Unset` for action grids. Can be a mapping from
+    `(source, target)` regime name pairs to per-boundary transition functions.
     """
 
     def __post_init__(self) -> None:
@@ -315,11 +347,17 @@ class IrregSpacedGrid(ContinuousGrid):
     n_points: int | None = None
     """Number of points. Derived from `len(points)` when points are given."""
 
-    transition: Callable[..., ContinuousState] | None | Unset = Unset()
+    transition: (
+        Callable[..., ContinuousState]
+        | None
+        | Mapping[BoundaryKey, Callable[..., ContinuousState] | None]
+        | Unset
+    ) = Unset()
     """Deterministic transition for state evolution.
 
     Compute the next continuous state value (`ContinuousState`).
-    `None` for fixed states. `Unset` for action grids.
+    `None` for fixed states. `Unset` for action grids. Can be a mapping from
+    `(source, target)` regime name pairs to per-boundary transition functions.
     """
 
     def __post_init__(self) -> None:
@@ -410,11 +448,17 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
     pieces: tuple[Piece, ...]
     """Tuple of Piece objects defining each segment. Pieces must be adjacent."""
 
-    transition: Callable[..., ContinuousState] | None | Unset = Unset()
+    transition: (
+        Callable[..., ContinuousState]
+        | None
+        | Mapping[BoundaryKey, Callable[..., ContinuousState] | None]
+        | Unset
+    ) = Unset()
     """Deterministic transition for state evolution.
 
     Compute the next continuous state value (`ContinuousState`).
-    `None` for fixed states. `Unset` for action grids.
+    `None` for fixed states. `Unset` for action grids. Can be a mapping from
+    `(source, target)` regime name pairs to per-boundary transition functions.
     """
 
     # Cached JAX arrays for efficient coordinate computation (set in __post_init__)
@@ -485,11 +529,17 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
     pieces: tuple[Piece, ...]
     """Tuple of Piece objects defining each segment. All boundaries must be positive."""
 
-    transition: Callable[..., ContinuousState] | None | Unset = Unset()
+    transition: (
+        Callable[..., ContinuousState]
+        | None
+        | Mapping[BoundaryKey, Callable[..., ContinuousState] | None]
+        | Unset
+    ) = Unset()
     """Deterministic transition for state evolution.
 
     Compute the next continuous state value (`ContinuousState`).
-    `None` for fixed states. `Unset` for action grids.
+    `None` for fixed states. `Unset` for action grids. Can be a mapping from
+    `(source, target)` regime name pairs to per-boundary transition functions.
     """
 
     # Cached JAX arrays for efficient coordinate computation (set in __post_init__)
@@ -607,21 +657,79 @@ def _init_piecewise_grid_cache(
 
 
 def _validate_transition(
-    transition: Callable[..., ContinuousState | DiscreteState] | None | Unset,
+    transition: (
+        Callable[..., ContinuousState | DiscreteState]
+        | None
+        | Mapping[BoundaryKey, Callable[..., ContinuousState | DiscreteState] | None]
+        | Unset
+    ),
 ) -> None:
-    """Validate that `transition` is callable, None, or UNSET.
+    """Validate that `transition` is callable, None, Unset, or a boundary mapping.
 
     Raises:
-        GridInitializationError: If ``transition`` is not callable, None, or Unset.
+        GridInitializationError: If `transition` is not one of the accepted forms.
 
     """
+    if isinstance(transition, Mapping):
+        _validate_transition_mapping(transition, allow_none_values=True)
+        return
+
     if not (
         isinstance(transition, Unset) or transition is None or callable(transition)
     ):
         raise GridInitializationError(
-            f"transition must be a callable or None, "
+            f"transition must be a callable, None, or a mapping from "
+            f"(source, target) pairs to callables, "
             f"but got {type(transition).__name__}: {transition!r}"
         )
+
+
+def _validate_transition_mapping(
+    transition: Mapping[BoundaryKey, object],
+    *,
+    allow_none_values: bool,
+) -> None:
+    """Validate a boundary-keyed transition mapping.
+
+    Args:
+        transition: Mapping from `(source, target)` pairs to callables (or None).
+        allow_none_values: Whether None values are allowed (True for
+            discrete/continuous, False for DiscreteMarkovGrid).
+
+    Raises:
+        GridInitializationError: If keys are not string pairs or values aren't callable.
+
+    """
+    if not transition:
+        raise GridInitializationError("Transition mapping must not be empty.")
+
+    error_messages: list[str] = []
+    for key, value in transition.items():
+        if not (
+            isinstance(key, tuple)
+            and len(key) == 2  # noqa: PLR2004
+            and all(isinstance(k, str) for k in key)
+        ):
+            error_messages.append(
+                f"Transition mapping keys must be (source, target) string pairs, "
+                f"got {key!r}."
+            )
+        if value is None:
+            if not allow_none_values:
+                error_messages.append(
+                    f"Transition mapping values must be callable, "
+                    f"got None for key {key!r}."
+                )
+        elif not callable(value):
+            error_messages.append(
+                f"Transition mapping values must be callable"
+                f"{' or None' if allow_none_values else ''}, "
+                f"got {type(value).__name__} for key {key!r}."
+            )
+
+    if error_messages:
+        msg = format_messages(error_messages)
+        raise GridInitializationError(msg)
 
 
 def _validate_discrete_grid(category_class: type) -> None:

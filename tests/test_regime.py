@@ -6,7 +6,14 @@ import jax.numpy as jnp
 import pytest
 from dags.tree import QNAME_DELIMITER
 
-from lcm import DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import (
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    RegimeTransition,
+    categorical,
+)
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.grids import IrregSpacedGrid
@@ -45,7 +52,7 @@ def test_regime_name_does_not_contain_separator():
         functions={"utility": utility},
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
-        transition=lambda: 0,
+        transition=RegimeTransition(lambda: 0),
         active=lambda age: age < 5,
     )
     dead = Regime(
@@ -69,7 +76,7 @@ def test_function_name_does_not_contain_separator():
         Regime(
             states={"wealth": WEALTH_GRID},
             actions={f"consumption{QNAME_DELIMITER}action": CONSUMPTION_GRID},
-            transition=next_wealth,
+            transition=RegimeTransition(next_wealth),
             functions={"utility": utility, f"helper{QNAME_DELIMITER}func": lambda: 1},
             active=lambda age: age < 5,
         )
@@ -81,7 +88,7 @@ def test_state_name_does_not_contain_separator():
             functions={"utility": utility},
             states={f"my{QNAME_DELIMITER}wealth": WEALTH_GRID},
             actions={"consumption": CONSUMPTION_GRID},
-            transition=next_wealth,
+            transition=RegimeTransition(next_wealth),
             active=lambda age: age < 5,
         )
 
@@ -121,7 +128,7 @@ def test_non_terminal_regime_has_transition():
         functions={"utility": utility},
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
-        transition=next_wealth,
+        transition=RegimeTransition(next_wealth),
         active=lambda age: age < 5,
     )
     assert regime.terminal is False
@@ -147,7 +154,7 @@ def test_terminal_regime_can_be_created_without_states():
 def test_regime_with_active_callable():
     """Regime can specify active periods with a callable."""
     regime = Regime(
-        transition=next_wealth,
+        transition=RegimeTransition(next_wealth),
         functions={"utility": utility},
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
@@ -172,7 +179,7 @@ def test_active_validation_rejects_non_callable():
     """Active attribute must be a callable."""
     with pytest.raises(RegimeInitializationError, match="must be a callable"):
         Regime(
-            transition=next_wealth,
+            transition=RegimeTransition(next_wealth),
             functions={"utility": utility},
             states={"wealth": WEALTH_GRID},
             actions={"consumption": CONSUMPTION_GRID},
@@ -238,7 +245,7 @@ def test_get_all_functions_includes_identity_for_fixed_discrete_state():
         high: int
 
     regime = Regime(
-        transition=lambda: 0,
+        transition=RegimeTransition(lambda: 0),
         functions={"utility": lambda education: education},
         states={"education": DiscreteGrid(Edu, transition=None)},
     )
@@ -252,7 +259,7 @@ def test_get_all_functions_includes_identity_for_fixed_discrete_state():
 def test_get_all_functions_includes_identity_for_fixed_continuous_state():
     """Fixed continuous states get identity transitions with correct annotation."""
     regime = Regime(
-        transition=lambda: 0,
+        transition=RegimeTransition(lambda: 0),
         functions={"utility": lambda wealth: wealth},
         states={"wealth": LinSpacedGrid(start=0, stop=10, n_points=5, transition=None)},
     )
@@ -272,7 +279,7 @@ def test_state_grid_without_explicit_transition_raises():
     """State grid with UNSET transition (no transition= arg) is rejected."""
     with pytest.raises(RegimeInitializationError, match="must explicitly pass"):
         Regime(
-            transition=lambda: 0,
+            transition=RegimeTransition(lambda: 0),
             functions={"utility": utility},
             states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
             actions={"consumption": CONSUMPTION_GRID},
@@ -282,7 +289,7 @@ def test_state_grid_without_explicit_transition_raises():
 def test_state_grid_with_transition_none_is_accepted():
     """State grid with transition=None (fixed state) is valid."""
     regime = Regime(
-        transition=lambda: 0,
+        transition=RegimeTransition(lambda: 0),
         functions={"utility": utility},
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5, transition=None)},
         actions={"consumption": CONSUMPTION_GRID},
@@ -293,7 +300,7 @@ def test_state_grid_with_transition_none_is_accepted():
 def test_state_grid_with_transition_callable_is_accepted():
     """State grid with a transition function is valid."""
     regime = Regime(
-        transition=lambda: 0,
+        transition=RegimeTransition(lambda: 0),
         functions={"utility": utility},
         states={
             "wealth": LinSpacedGrid(
@@ -309,7 +316,7 @@ def test_action_grid_with_explicit_transition_raises():
     """Action grid with an explicit transition= argument is rejected."""
     with pytest.raises(RegimeInitializationError, match="must not have a transition"):
         Regime(
-            transition=lambda: 0,
+            transition=RegimeTransition(lambda: 0),
             functions={"utility": utility},
             states={"wealth": WEALTH_GRID},
             actions={
@@ -323,7 +330,7 @@ def test_action_grid_with_explicit_transition_raises():
 def test_action_grid_without_transition_is_accepted():
     """Action grid with default UNSET transition is valid."""
     regime = Regime(
-        transition=lambda: 0,
+        transition=RegimeTransition(lambda: 0),
         functions={"utility": utility},
         states={"wealth": WEALTH_GRID},
         actions={"consumption": CONSUMPTION_GRID},
@@ -345,7 +352,7 @@ def test_state_grid_unset_error_with_different_grid_types(grid_cls):
 
     with pytest.raises(RegimeInitializationError, match="must explicitly pass"):
         Regime(
-            transition=lambda: 0,
+            transition=RegimeTransition(lambda: 0),
             functions={"utility": utility},
             states={"wealth": grid},
         )
@@ -361,7 +368,7 @@ def test_discrete_state_grid_without_explicit_transition_raises():
 
     with pytest.raises(RegimeInitializationError, match="must explicitly pass"):
         Regime(
-            transition=lambda: 0,
+            transition=RegimeTransition(lambda: 0),
             functions={"utility": lambda status: status},
             states={"status": DiscreteGrid(Status)},
         )
@@ -406,7 +413,7 @@ def test_regime_with_fixed_states_only():
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=15, transition=None),
         },
         constraints={"borrowing": fixed_borrowing},
-        transition=fixed_next_regime,
+        transition=RegimeTransition(fixed_next_regime),
         functions={"utility": fixed_utility},
         active=lambda age: age <= final_age,
     )

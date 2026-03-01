@@ -1,0 +1,10 @@
+agent = "gemini"
+review_context_count = 2   # Recent reviews to include as context
+review_guidelines = """
+Always run python and checks via pixi and prek:
+- `pixi run -e tests-cpu ty`
+- `pixi run -e tests-cpu tests`
+- `prek run --all-files`
+
+Read CLAUDE.md for further instructions.
+"""

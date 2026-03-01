@@ -6,7 +6,7 @@ import lcm
 from lcm.ages import AgeGrid
 from lcm.grids import DiscreteMarkovGrid, LinSpacedGrid, categorical
 from lcm.model import Model
-from lcm.regime import Regime
+from lcm.regime import Regime, RegimeTransition
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -87,7 +87,7 @@ def get_model(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
         },
-        transition=next_regime,
+        transition=RegimeTransition(next_regime),
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )

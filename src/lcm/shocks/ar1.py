@@ -5,7 +5,8 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
-from jax.scipy.stats.norm import cdf, pdf
+from jax import Array
+from jax.scipy.stats.norm import cdf
 
 from lcm.exceptions import GridInitializationError
 from lcm.shocks._base import _gauss_hermite_normal, _ShockGrid
@@ -34,8 +35,7 @@ class Tauchen(_ShockGridAR1):
     where $\varepsilon_t \sim N(0, \sigma_\varepsilon^2)$.
 
     When `gauss_hermite=True`, the grid uses Gauss-Hermite quadrature nodes
-    with importance-sampling weights following
-    [Tauchen & Hussey (1991)](https://doi.org/10.2307/2938229).
+    with CDF-based transition probabilities computed at midpoints between nodes.
     When `gauss_hermite=False`, it uses equally spaced points spanning
     $\pm n_\text{std}$ unconditional standard deviations, following
     [QuantEcon](https://quanteconpy.readthedocs.io/en/latest/markov/approximation.html#quantecon.markov.approximation.tauchen).
@@ -59,11 +59,17 @@ class Tauchen(_ShockGridAR1):
 
     def __post_init__(self) -> None:
         if self.n_points % 2 == 0:
-            msg = (
-                f"n_points must be odd (got {self.n_points}). Odd n guarantees a"
-                " quadrature node at the mean (Abramowitz & Stegun, 1972,"
-                " Table 25.10)."
-            )
+            if self.gauss_hermite:
+                msg = (
+                    f"n_points must be odd (got {self.n_points}). Odd n guarantees"
+                    " a quadrature node at the mean (Abramowitz & Stegun, 1972,"
+                    " Table 25.10)."
+                )
+            else:
+                msg = (
+                    f"n_points must be odd (got {self.n_points}). Odd n guarantees"
+                    " a grid point exactly at the unconditional mean."
+                )
             raise GridInitializationError(msg)
         if self.gauss_hermite and self.n_std is not None:
             msg = "gauss_hermite=True and n_std are mutually exclusive."
@@ -76,7 +82,7 @@ class Tauchen(_ShockGridAR1):
             exclude.add("n_std")
         return tuple(f.name for f in fields(self) if f.name not in exclude)
 
-    def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
+    def compute_gridpoints(self, n_points: int, **kwargs: float | Array) -> Float1D:
         rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
         if self.gauss_hermite:
             return _gauss_hermite_normal(n_points, mu / (1 - rho), sigma)[0]
@@ -86,14 +92,21 @@ class Tauchen(_ShockGridAR1):
         x = jnp.linspace(-x_max, x_max, n_points)
         return x + mu / (1 - rho)
 
-    def compute_transition_probs(self, n_points: int, **kwargs: float) -> FloatND:
+    def compute_transition_probs(
+        self, n_points: int, **kwargs: float | Array
+    ) -> FloatND:
         rho, sigma = kwargs["rho"], kwargs["sigma"]
         if self.gauss_hermite:
-            nodes, weights = _gauss_hermite_normal(n_points, 0.0, sigma)
-            f_cond = pdf(nodes[None, :], loc=rho * nodes[:, None], scale=sigma)
-            g_prop = pdf(nodes, loc=0.0, scale=sigma)
-            raw = weights * f_cond / g_prop
-            return raw / raw.sum(axis=1, keepdims=True)
+            nodes, _weights = _gauss_hermite_normal(n_points, 0.0, sigma)
+            # Midpoints between consecutive GH nodes: (n_points - 1,)
+            midpoints = (nodes[:-1] + nodes[1:]) / 2
+            # CDF at midpoints for each source state: (n_points, n_points - 1)
+            cdf_vals = cdf((midpoints[None, :] - rho * nodes[:, None]) / sigma)
+            first_col = cdf_vals[:, :1]
+            last_col = 1 - cdf_vals[:, -1:]
+            return jnp.concatenate(
+                [first_col, jnp.diff(cdf_vals, axis=1), last_col], axis=1
+            )
         n_std = kwargs["n_std"]
         std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
         x_max = n_std * std_y
@@ -145,19 +158,20 @@ class Rouwenhorst(_ShockGridAR1):
     def __post_init__(self) -> None:
         if self.n_points % 2 == 0:
             msg = (
-                f"n_points must be odd (got {self.n_points}). Odd n guarantees a"
-                " quadrature node at the mean (Abramowitz & Stegun, 1972,"
-                " Table 25.10)."
+                f"n_points must be odd (got {self.n_points}). Odd n guarantees"
+                " a grid point exactly at the unconditional mean."
             )
             raise GridInitializationError(msg)
 
-    def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
+    def compute_gridpoints(self, n_points: int, **kwargs: float | Array) -> Float1D:
         rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
         nu = jnp.sqrt((n_points - 1) / (1 - rho**2)) * sigma
         long_run_mean = mu / (1.0 - rho)
         return jnp.linspace(long_run_mean - nu, long_run_mean + nu, n_points)
 
-    def compute_transition_probs(self, n_points: int, **kwargs: float) -> FloatND:
+    def compute_transition_probs(
+        self, n_points: int, **kwargs: float | Array
+    ) -> FloatND:
         rho = kwargs["rho"]
         q = (rho + 1) / 2
 

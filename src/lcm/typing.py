@@ -103,7 +103,7 @@ class InternalUserFunction(Protocol):
 class RegimeTransitionFunction(Protocol):
     """The regime transition function provided by the user.
 
-    Returns an array of transition probabilities indexed by regime ID.
+    Returns a mapping from regime names to transition probabilities.
 
     Only used for type checking.
 
@@ -113,13 +113,13 @@ class RegimeTransitionFunction(Protocol):
         self,
         *args: Array | float,
         **kwargs: Array | float,
-    ) -> Float1D: ...
+    ) -> MappingProxyType[str, Array]: ...
 
 
 class VmappedRegimeTransitionFunction(Protocol):
     """The vmapped regime transition function.
 
-    Returns a 2D array of transition probabilities with shape [n_regimes, n_subjects].
+    Returns a mapping from regime names to transition probability arrays.
 
     Only used for type checking.
 
@@ -129,7 +129,7 @@ class VmappedRegimeTransitionFunction(Protocol):
         self,
         *args: Array | float,
         **kwargs: Array | float,
-    ) -> FloatND: ...
+    ) -> MappingProxyType[str, Array]: ...
 
 
 class QAndFFunction(Protocol):

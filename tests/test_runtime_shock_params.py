@@ -9,6 +9,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     Regime,
+    RegimeTransition,
     categorical,
 )
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
@@ -58,8 +59,10 @@ def _make_model(*, fixed_params=None):
         actions={"consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4)},
         functions={"utility": _utility},
         constraints={"borrowing": _constraint},
-        transition=lambda period: jnp.where(
-            period >= 1, RegimeIdShock.dead, RegimeIdShock.alive
+        transition=RegimeTransition(
+            lambda period: jnp.where(
+                period >= 1, RegimeIdShock.dead, RegimeIdShock.alive
+            )
         ),
         active=lambda age: age < 2,
     )

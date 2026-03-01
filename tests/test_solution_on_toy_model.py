@@ -16,6 +16,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     Regime,
+    RegimeTransition,
     categorical,
 )
 from lcm.typing import (
@@ -98,7 +99,7 @@ alive_deterministic = Regime(
     constraints={
         "borrowing_constraint": borrowing_constraint,
     },
-    transition=next_regime,
+    transition=RegimeTransition(next_regime),
     active=lambda age: age < 1,  # n_periods=2, so active in period 0
 )
 

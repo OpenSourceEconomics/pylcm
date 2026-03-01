@@ -50,8 +50,12 @@ def build_Q_and_F_functions(
     state_space_infos: MappingProxyType[RegimeName, StateSpaceInfo],
     ages: AgeGrid,
     regime_params_template: RegimeParamsTemplate,
+    cross_boundary_param_names: frozenset[str] = frozenset(),
 ) -> MappingProxyType[int, QAndFFunction]:
-    flat_param_names = frozenset(get_flat_param_names(regime_params_template))
+    flat_param_names = (
+        frozenset(get_flat_param_names(regime_params_template))
+        | cross_boundary_param_names
+    )
 
     Q_and_F_functions = {}
     for period, age in enumerate(ages.values):
@@ -158,6 +162,7 @@ def build_next_state_simulation_functions(
     variable_info: pd.DataFrame,
     regime_params_template: RegimeParamsTemplate,
     enable_jit: bool,
+    cross_boundary_param_names: frozenset[str] = frozenset(),
 ) -> NextStateSimulationFunction:
     next_state = get_next_state_function_for_simulation(
         transitions=flatten_regime_namespace(internal_functions.transitions),
@@ -172,7 +177,9 @@ def build_next_state_simulation_functions(
     next_state_vmapped = vmap_1d(
         func=next_state,
         variables=_get_vmap_params(
-            all_args=sig_args, regime_params_template=regime_params_template
+            all_args=sig_args,
+            regime_params_template=regime_params_template,
+            extra_non_vmap=cross_boundary_param_names,
         ),
     )
 
@@ -244,9 +251,14 @@ def _get_vmap_params(
     *,
     all_args: tuple[str, ...],
     regime_params_template: RegimeParamsTemplate,
+    extra_non_vmap: frozenset[str] = frozenset(),
 ) -> tuple[str, ...]:
     """Get parameter names that should be vmapped (states and actions)."""
-    non_vmap = {"period", "age"} | get_flat_param_names(regime_params_template)
+    non_vmap = (
+        {"period", "age"}
+        | get_flat_param_names(regime_params_template)
+        | extra_non_vmap
+    )
     # Filter for states and actions
     return tuple(arg for arg in all_args if arg not in non_vmap)
 

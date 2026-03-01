@@ -22,9 +22,11 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FlatRegimeParams,
+    InternalParams,
     InternalUserFunction,
     MaxQOverAFunction,
     NextStateSimulationFunction,
+    RegimeName,
     RegimeParamsTemplate,
     RegimeTransitionFunction,
     TransitionFunctionsMapping,
@@ -215,9 +217,36 @@ class InternalRegime:
     _base_state_action_space: StateActionSpace = dataclasses.field(repr=False)
     """Base state-action space before runtime grid substitution."""
 
+    cross_boundary_params: MappingProxyType[str, tuple[RegimeName, str]] = (
+        MappingProxyType({})
+    )
+    """Mapping from cross-boundary param names to `(target_regime, target_qname)`.
+
+    For per-boundary mapping transitions owned by a target regime, this maps
+    the qualified param name in this (source) regime's namespace to the
+    corresponding target regime name and flat param name in the target.
+    """
+
     # Resolved fixed params (flat) for this regime, used by to_dataframe targets
     resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
     """Flat resolved fixed params for this regime, used by to_dataframe targets."""
+
+    def build_cross_boundary_params(
+        self, internal_params: InternalParams
+    ) -> dict[str, object]:
+        """Build cross-boundary params from target regimes.
+
+        For per-boundary mapping transitions owned by a target regime, resolve the
+        parameter values from the target regime's internal params.
+
+        """
+        return {
+            param_name: internal_params[target_regime][target_qname]
+            for param_name, (
+                target_regime,
+                target_qname,
+            ) in self.cross_boundary_params.items()
+        }
 
     def state_action_space(self, regime_params: FlatRegimeParams) -> StateActionSpace:
         """Return the state-action space with runtime state grids filled in.
@@ -251,12 +280,12 @@ class InternalRegime:
                 )
                 if not all_present:
                     continue
-                shock_kw: dict[str, bool | float | Array] = dict(spec.params)
+                shock_kw: dict[str, float] = dict(spec.params)
                 for p in spec.params_to_pass_at_runtime:
-                    shock_kw[p] = all_params[f"{state_name}__{p}"]
+                    shock_kw[p] = float(all_params[f"{state_name}__{p}"])
                 replacements[state_name] = spec.compute_gridpoints(
                     spec.n_points,
-                    **shock_kw,  # ty: ignore[invalid-argument-type]
+                    **shock_kw,
                 )
 
         if not replacements:

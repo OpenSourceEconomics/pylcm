@@ -39,7 +39,8 @@ project:
       title: User Guide
       children:
         - file: user_guide/defining_models.md
-        - file: user_guide/grids.md
+        - file: user_guide/regimes.ipynb
+        - file: user_guide/grids.ipynb
         - file: user_guide/solving_and_simulating.md
         - file: user_guide/parameters.md
         - file: user_guide/shocks.md
@@ -49,6 +50,7 @@ project:
         - file: explanations/params_workflow.ipynb
         - file: explanations/function_representation.ipynb
         - file: explanations/interpolation.ipynb
+        - file: explanations/transitions.ipynb
     - file: examples/index.md
       title: Examples
       children:

@@ -99,7 +99,10 @@ Markov-chain grids.
 
 **State transitions** are attached directly to grid objects via the `transition`
 parameter. A state with no `transition` is fixed (time-invariant) — an identity
-transition is auto-generated during preprocessing.
+transition is auto-generated during preprocessing. The `transition` parameter accepts a
+single callable (used for all regime boundaries), `None` (fixed state), or a
+`Mapping[tuple[str, str], Callable]` keyed by `(source_regime, target_regime)` name
+pairs for per-boundary transitions.
 
 ### Processing Pipeline
 
@@ -135,20 +138,26 @@ The `Regime` class defines a single regime in the model. The regime name is spec
 the key in the `regimes` dict passed to `Model`:
 
 ```python
-# Non-terminal regime
+# Non-terminal regime (deterministic regime transition)
 Regime(
-    transition=next_regime_func,                  # Required: regime transition function (None → terminal)
-    active=lambda age: 25 <= age < 65,           # Optional: age-based predicate (default: always True)
-    states={                                     # State grids with optional transitions
+    transition=RegimeTransition(next_regime_func),  # Required: wrapped regime transition (None → terminal)
+    active=lambda age: 25 <= age < 65,              # Optional: age-based predicate (default: always True)
+    states={                                        # State grids with optional transitions
         "wealth": LinSpacedGrid(..., transition=next_wealth),  # Time-varying state
         "education": DiscreteGrid(EduStatus, transition=None),   # Fixed state
     },
-    actions={"action_name": Grid, ...},          # Action grids (can be empty)
-    functions={                                  # Must include "utility"; other functions optional
+    actions={"action_name": Grid, ...},             # Action grids (can be empty)
+    functions={                                     # Must include "utility"; other functions optional
         "utility": utility_function,
         "name": helper_func, ...
     },
-    constraints={"name": constraint_func, ...},  # Optional: constraint functions
+    constraints={"name": constraint_func, ...},     # Optional: constraint functions
+)
+
+# Non-terminal regime (stochastic regime transition)
+Regime(
+    transition=MarkovRegimeTransition(next_regime_probs_func),  # Returns probability array over regimes
+    ...
 )
 
 # Terminal regime (transition=None)
@@ -161,8 +170,11 @@ Regime(
 
 **Regime Requirements:**
 
-- `transition` is required: the regime transition function, or `None` for terminal
-  regimes. `terminal` is a derived property (`self.transition is None`).
+- `transition` is required: a `RegimeTransition` (deterministic, returns regime index),
+  `MarkovRegimeTransition` (stochastic, returns probability array over regimes), or
+  `None` for terminal regimes. `terminal` is a derived property
+  (`self.transition is None`). The naming follows `DiscreteGrid` / `DiscreteMarkovGrid`
+  — the "Markov" prefix indicates stochasticity.
 - `active` is optional; defaults to `lambda _age: True` (always active)
 - `functions` must contain a `"utility"` entry (the utility function)
 - State transitions live on grids via the `transition` parameter. States without a
@@ -171,6 +183,25 @@ Regime(
 - Fixed states (no transition) must always pass `transition=None` explicitly — never
   rely on the default.
 - Regime names (dict keys) cannot contain the reserved separator `__`
+- **Per-boundary transitions**: When a state has different discrete categories or
+  requires custom initialization across regime boundaries, use a mapping transition on
+  the **target** regime's grid, keyed by `(source, target)` regime name pairs:
+  ```python
+  retired = Regime(
+      states={
+          "health": DiscreteGrid(
+              HealthRetirement,
+              transition={("working", "retired"): map_working_health_to_retired},
+          ),
+      },
+      ...
+  )
+  ```
+  A grid's `transition` is either a single callable/None **or** a mapping — never both.
+  Discrete states with different categories across regimes **must** have an explicit
+  per-boundary transition or `ModelInitializationError` is raised. Resolution priority:
+  target mapping > source mapping > source callable > target callable > identity. See
+  `tests/test_regime_state_mismatch.py` for examples.
 
 ### Model Creation
 

@@ -545,6 +545,16 @@ def _partial_fixed_params_into_regimes(
     result = {}
     for name, regime in internal_regimes.items():
         regime_fixed = dict(fixed_internal.get(name, MappingProxyType({})))
+
+        # Include cross-boundary params that are fixed in the target regime
+        for source_qname, (
+            target_name,
+            target_qname,
+        ) in regime.cross_boundary_params.items():
+            target_fixed = dict(fixed_internal.get(target_name, MappingProxyType({})))
+            if target_qname in target_fixed:
+                regime_fixed[source_qname] = target_fixed[target_qname]
+
         if not regime_fixed:
             result[name] = regime
             continue

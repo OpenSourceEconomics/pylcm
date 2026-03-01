@@ -70,11 +70,13 @@ class _ShockGrid(ContinuousGrid):
         return not self.params_to_pass_at_runtime
 
     @abstractmethod
-    def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
+    def compute_gridpoints(self, n_points: int, **kwargs: float | Array) -> Float1D:
         """Compute discretized gridpoints for the shock distribution."""
 
     @abstractmethod
-    def compute_transition_probs(self, n_points: int, **kwargs: float) -> FloatND:
+    def compute_transition_probs(
+        self, n_points: int, **kwargs: float | Array
+    ) -> FloatND:
         """Compute transition probability matrix for the shock distribution."""
 
     def get_gridpoints(self) -> Float1D:

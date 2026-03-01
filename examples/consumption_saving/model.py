@@ -12,7 +12,15 @@ jax.config.update("jax_enable_x64", val=True)
 
 import jax.numpy as jnp
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    RegimeTransition,
+    categorical,
+)
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -124,7 +132,7 @@ def retired_is_active(age: float) -> bool:
 
 
 working = Regime(
-    transition=next_regime,
+    transition=RegimeTransition(next_regime),
     active=working_is_active,
     states={
         "wealth": LinSpacedGrid(

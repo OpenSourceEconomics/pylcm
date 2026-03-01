@@ -1,3 +1,5 @@
+from collections.abc import Mapping
+
 import dags.tree as dt
 from jax import Array
 
@@ -50,6 +52,8 @@ def create_regime_params_template(
         params = {k: v for k, v in sorted(tree.items()) if k not in excl}
         function_params[name] = params
 
+    _discover_mapping_transition_params(regime, variables, function_params)
+
     # Validate that no discovered parameter shadows a state or action name.
     # In practice, only H can trigger this since other functions already exclude
     # states/actions from their parameter discovery.
@@ -63,23 +67,60 @@ def create_regime_params_template(
                 f"the parameter(s) or the state(s)/action(s) to avoid ambiguity."
             )
 
-    # Add entries for grids whose points/params are supplied at runtime
+    _add_runtime_grid_params(regime, function_params)
+
+    return ensure_containers_are_immutable(function_params)
+
+
+def _discover_mapping_transition_params(
+    regime: Regime,
+    variables: set[str],
+    function_params: dict[str, dict[str, type]],
+) -> None:
+    """Discover parameters from per-boundary mapping transition callables.
+
+    When a grid has a mapping transition `{(src, tgt): func}`, the callable may
+    have parameters that belong to this (target) regime's template but are not
+    visible through `get_all_functions()` (which returns an identity placeholder).
+
+    """
+    for state_name, grid in regime.states.items():
+        trans = getattr(grid, "transition", None)
+        if not isinstance(trans, Mapping):
+            continue
+        next_name = f"next_{state_name}"
+        for func in trans.values():
+            if func is None or not callable(func):
+                continue
+            tree = dt.create_tree_with_input_types({next_name: func})
+            params = {k: v for k, v in sorted(tree.items()) if k not in variables}
+            if params:
+                existing = dict(function_params.get(next_name, {}))
+                existing.update(params)
+                function_params[next_name] = existing
+
+
+def _add_runtime_grid_params(
+    regime: Regime,
+    function_params: dict[str, dict[str, type]],
+) -> None:
+    """Add entries for grids whose points/params are supplied at runtime."""
     for state_name, grid in regime.states.items():
         if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:
             if state_name in function_params:
                 raise InvalidNameError(
                     f"IrregSpacedGrid state '{state_name}' (with runtime-supplied "
-                    f"points) conflicts with a function of the same name in the regime."
+                    f"points) conflicts with a function of the same name in the "
+                    f"regime."
                 )
             function_params[state_name] = {"points": Array}
         elif isinstance(grid, _ShockGrid) and grid.params_to_pass_at_runtime:
             if state_name in function_params:
                 raise InvalidNameError(
-                    f"_ShockGrid state '{state_name}' (with runtime-supplied params) "
-                    f"conflicts with a function of the same name in the regime."
+                    f"_ShockGrid state '{state_name}' (with runtime-supplied "
+                    f"params) conflicts with a function of the same name in the "
+                    f"regime."
                 )
             function_params[state_name] = dict.fromkeys(
                 grid.params_to_pass_at_runtime, float
             )
-
-    return ensure_containers_are_immutable(function_params)
