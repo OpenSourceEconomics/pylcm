@@ -50,7 +50,6 @@ def create_regime_state_action_space(
     Args:
         internal_regime: The internal regime instance.
         states: The current states of all subjects.
-        subject_ids_in_regime: Indices of subjects in the current regime.
 
     Returns:
         The state-action space for the subjects in the regime.
@@ -291,7 +290,7 @@ def _update_states_for_subjects(
     for next_state_name, next_state_values in computed_next_states.items():
         # State names may be prefixed with regime (e.g., "working__next_wealth")
         # We need to replace "next_" with "" to get "working__wealth"
-        state_name = next_state_name.replace("next_", "")
+        state_name = next_state_name.replace("next_", "", 1)
         updated_states[state_name] = jnp.where(
             subject_indices,
             next_state_values,

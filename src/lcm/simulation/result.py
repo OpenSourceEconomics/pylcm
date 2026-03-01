@@ -770,6 +770,7 @@ def _atomic_dump(obj: SimulationResult, path: str | Path, *, protocol: int) -> P
         # one, never a partially-written file. (Temp file is closed already, which
         # matters on Windows.)
         tmp.replace(p)
+        tmp = None
         return p
     finally:
         # If anything failed before the replace succeeded, delete the temp file. We used

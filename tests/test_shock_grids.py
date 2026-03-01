@@ -69,6 +69,33 @@ def test_model_with_shock(distribution_type):
     )
 
 
+@pytest.mark.skipif(not X64_ENABLED, reason="Not working with 32-Bit because of RNG")
+def test_model_with_lognormal_shock():
+    """LogNormal shock grid solves and simulates without error."""
+    n_periods = 3
+
+    model = get_model(n_periods, "lognormal")
+    params = get_params("lognormal")
+
+    got_solve = model.solve(params=params)
+
+    got_simulate = model.simulate(
+        params=params,
+        initial_regimes=["test_regime"] * 2,
+        initial_states={
+            "health": jnp.asarray([0, 0]),
+            "income": jnp.asarray([0, 0]),
+            "wealth": jnp.asarray([1, 1]),
+            "age": jnp.asarray([0.0, 0.0]),
+        },
+        V_arr_dict=got_solve,
+        seed=42,
+    ).to_dataframe()
+
+    assert len(got_simulate) > 0
+    assert "income" in got_simulate.columns
+
+
 # ======================================================================================
 # Shape tests
 # ======================================================================================
