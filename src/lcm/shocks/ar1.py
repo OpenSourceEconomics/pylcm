@@ -95,6 +95,8 @@ class Tauchen(_ShockGridAR1):
             # Midpoints between consecutive GH nodes: (n_points - 1,)
             midpoints = (nodes[:-1] + nodes[1:]) / 2
             # CDF at midpoints for each source state: (n_points, n_points - 1)
+            # Denominator is sigma (innovation std), not std_y (unconditional std),
+            # because the conditional distribution y'|y has variance sigma^2.
             cdf_vals = cdf((midpoints[None, :] - rho * nodes[:, None]) / sigma)
             first_col = cdf_vals[:, :1]
             last_col = 1 - cdf_vals[:, -1:]

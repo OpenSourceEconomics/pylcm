@@ -367,7 +367,7 @@ def _validate_model_inputs(
     regime_names = sorted(regimes.keys())
     if regime_id_fields != regime_names:
         error_messages.append(
-            f"regime_id_cls fields must match regime names.\n Got:"
+            f"regime_id_cls fields must match regime names.\nGot:\n"
             "regime_id_cls fields:\n"
             f"    {regime_id_fields}\n"
             "regime names:\n"

@@ -462,13 +462,10 @@ def test_unused_action_raises_error():
 
 
 def test_constraint_depending_on_transition_output():
-    """Test that constraints can depend on transition outputs like next_assets.
+    """Regression guard for GitHub issue #230.
 
-    Previously this worked, but now fails with:
-    ValueError: list.index(x): x not in list
-
-    The workaround is to rewrite the constraint to use raw states/actions instead
-    of transition outputs.
+    Constraint depending on a transition output (next_assets) used to raise
+    ``ValueError: list.index(x): x not in list``.
     """
 
     @categorical
@@ -512,7 +509,6 @@ def test_constraint_depending_on_transition_output():
             EmploymentLastPeriod.unemployed,
         )
 
-    # This constraint depends on transition output - used to work, now fails
     def borrowing_constraint(next_assets: ContinuousState) -> BoolND:
         return next_assets >= 0.0
 
@@ -539,7 +535,6 @@ def test_constraint_depending_on_transition_output():
         functions={"utility": dead_utility},
     )
 
-    # This should work but currently raises ValueError
     Model(
         regimes={"alive": alive_regime, "dead": dead_regime},
         ages=AgeGrid(start=59, stop=61, step="Y"),
@@ -548,13 +543,10 @@ def test_constraint_depending_on_transition_output():
 
 
 def test_state_only_used_in_transitions():
-    """Test that states can be used only in transitions, not in utility/constraints.
+    """Regression guard for GitHub issue #230.
 
-    Previously this worked, but now fails with:
-    ValueError: list.index(x): x not in list
-
-    The state 'assets' is only used in the next_assets transition, not directly
-    in utility or constraints.
+    State used only in transitions (not in utility/constraints) used to raise
+    ``ValueError: list.index(x): x not in list``.
     """
 
     @categorical
@@ -622,7 +614,6 @@ def test_state_only_used_in_transitions():
         functions={"utility": dead_utility},
     )
 
-    # This should work but currently raises ValueError
     Model(
         regimes={"alive": alive_regime, "dead": dead_regime},
         ages=AgeGrid(start=59, stop=61, step="Y"),
