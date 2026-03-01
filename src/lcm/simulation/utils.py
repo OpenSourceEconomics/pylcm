@@ -77,7 +77,7 @@ def calculate_next_states(
     optimal_actions: MappingProxyType[str, Array],
     period: int,
     age: float,
-    regime_params: MappingProxyType[str, bool | float | Array],
+    model_params: MappingProxyType[str, bool | float | Array],
     states: MappingProxyType[str, Array],
     state_action_space: StateActionSpace,
     key: Array,
@@ -91,7 +91,7 @@ def calculate_next_states(
         optimal_actions: Optimal actions computed for these subjects.
         period: Current period.
         age: Age corresponding to current period.
-        regime_params: Flat regime parameters.
+        model_params: Flat model-level parameters with regime-prefixed keys.
         states: Current states for all subjects (all regimes).
         state_action_space: State-action space for subjects in this regime.
         key: JAX random key.
@@ -132,7 +132,7 @@ def calculate_next_states(
         **stochastic_variables_keys,
         period=period,
         age=age,
-        **regime_params,
+        **model_params,
     )
 
     # Update global states array with computed next states for subjects in regime
@@ -153,7 +153,7 @@ def calculate_next_regime_membership(
     optimal_actions: MappingProxyType[str, Array],
     period: int,
     age: float,
-    regime_params: MappingProxyType[str, bool | float | Array],
+    model_params: MappingProxyType[str, bool | float | Array],
     regime_names_to_ids: MappingProxyType[RegimeName, int],
     new_subject_regime_ids: Int1D,
     active_regimes_next_period: tuple[RegimeName, ...],
@@ -171,13 +171,12 @@ def calculate_next_regime_membership(
         optimal_actions: Optimal actions computed for these subjects.
         period: Current period.
         age: Age corresponding to current period.
-        regime_params: Flat regime parameters.
+        model_params: Flat model-level parameters with regime-prefixed keys.
         regime_names_to_ids: Mapping from regime names to integer IDs.
         new_subject_regime_ids: Array to update with next regime assignments.
         active_regimes_next_period: Tuple of active regime names in the next period.
         key: JAX random key.
         subjects_in_regime: Boolean array indicating if subject is in regime.
-
 
     Returns:
         Updated array of regime IDs with next period assignments for subjects in this
@@ -194,7 +193,7 @@ def calculate_next_regime_membership(
             **optimal_actions,
             period=period,
             age=age,
-            **regime_params,
+            **model_params,
         )
     )
     normalized_regime_transition_probs = normalize_regime_transition_probs(

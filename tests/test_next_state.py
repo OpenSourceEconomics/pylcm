@@ -41,10 +41,10 @@ def test_get_next_state_function_with_solve_target():
         functions=internal_working.functions,
     )
 
-    flat_regime_params = {
-        "discount_factor": 1.0,
-        "utility__disutility_of_work": 1.0,
-        "next_wealth__interest_rate": 0.05,
+    flat_model_params = {
+        "working__discount_factor": 1.0,
+        "working__utility__disutility_of_work": 1.0,
+        "working__next_wealth__interest_rate": 0.05,
     }
     action = {"labor_supply": 1, "consumption": 10}
     state = {"wealth": 20}
@@ -54,7 +54,7 @@ def test_get_next_state_function_with_solve_target():
         **state,
         period=1,
         age=1.0,
-        **flat_regime_params,
+        **flat_model_params,
     )
     assert got == {"next_wealth": 1.05 * (20 - 10)}
 

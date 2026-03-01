@@ -67,7 +67,7 @@ def test_get_Q_and_F_function():
         consumption=consumption,
         labor_supply=labor_supply,
         wealth=wealth,
-        **internal_params["working"],
+        **internal_params,
         next_V_arr=jnp.empty(0),  # Terminal period doesn't use continuation value
     )
 

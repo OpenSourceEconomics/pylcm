@@ -260,8 +260,9 @@ def _create_ar1_next_func(
     name: str, prev_state_name: str, *, gridspec: _ShockGridAR1
 ) -> StochasticNextFunction:
     fixed_params = dict(gridspec.params)
+    regime_prefix = name.split(f"{QNAME_DELIMITER}next_", maxsplit=1)[0]
     runtime_param_names = {
-        f"{prev_state_name}{QNAME_DELIMITER}{p}": p
+        f"{regime_prefix}{QNAME_DELIMITER}{prev_state_name}{QNAME_DELIMITER}{p}": p
         for p in gridspec.params_to_pass_at_runtime
     }
     args: dict[str, str] = {
@@ -292,8 +293,9 @@ def _create_iid_next_func(
     name: str, prev_state_name: str, *, gridspec: _ShockGridIID
 ) -> StochasticNextFunction:
     fixed_params = dict(gridspec.params)
+    regime_prefix = name.split(f"{QNAME_DELIMITER}next_", maxsplit=1)[0]
     runtime_param_names = {
-        f"{prev_state_name}{QNAME_DELIMITER}{p}": p
+        f"{regime_prefix}{QNAME_DELIMITER}{prev_state_name}{QNAME_DELIMITER}{p}": p
         for p in gridspec.params_to_pass_at_runtime
     }
     args: dict[str, str] = {

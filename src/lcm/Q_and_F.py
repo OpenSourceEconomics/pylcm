@@ -97,7 +97,8 @@ def get_Q_and_F(
             stochastic_transition_names=stochastic_transition_names,
         )
         _scalar_next_V = get_value_function_representation(
-            next_state_space_infos[target_regime]
+            next_state_space_infos[target_regime],
+            regime_name=target_regime,
         )
         # Determine extra kwargs needed by next_V beyond next_states and next_V_arr
         # (e.g. wealth__points for IrregSpacedGrid with runtime-supplied points).
@@ -204,10 +205,9 @@ def get_Q_and_F(
                 * next_V_expected_arr
             )
 
+        H_prefix = f"{regime_name}{QNAME_DELIMITER}H{QNAME_DELIMITER}"
         H_kwargs = {
-            k: v
-            for k, v in states_actions_params.items()
-            if k.startswith(f"H{QNAME_DELIMITER}")
+            k: v for k, v in states_actions_params.items() if k.startswith(H_prefix)
         }
         Q_arr = internal_functions.functions["H"](
             utility=U_arr, continuation_value=continuation_value, **H_kwargs

@@ -4,6 +4,7 @@ from enum import Enum
 from types import MappingProxyType
 
 import pandas as pd
+from dags.tree import QNAME_DELIMITER
 from jax import Array
 
 from lcm.grids import (
@@ -21,11 +22,9 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     DiscreteState,
-    InternalParams,
     InternalUserFunction,
     MaxQOverAFunction,
     NextStateSimulationFunction,
-    RegimeName,
     RegimeTransitionFunction,
     TransitionFunctionsMapping,
     VmappedRegimeTransitionFunction,
@@ -215,59 +214,57 @@ class InternalRegime:
     _base_state_action_space: StateActionSpace = dataclasses.field(repr=False)
     """Base state-action space before runtime grid substitution."""
 
-    cross_boundary_params: MappingProxyType[str, tuple[RegimeName, str]] = (
-        MappingProxyType({})
-    )
-    """Mapping from cross-boundary param names to `(target_regime, target_qname)`.
-
-    For per-boundary mapping transitions owned by a target regime, this maps
-    the qualified param name in this (source) regime's namespace to the
-    corresponding target regime name and flat param name in the target.
-    """
-
-    # Resolved fixed params (flat) for this regime, used by to_dataframe targets
+    # Resolved fixed params (model-level flat) used by to_dataframe targets
     resolved_fixed_params: MappingProxyType[str, bool | float | Array] = (
         MappingProxyType({})
     )
     """Flat resolved fixed params for this regime, used by to_dataframe targets."""
 
     def state_action_space(
-        self, regime_params: MappingProxyType[str, bool | float | Array]
+        self, model_params: MappingProxyType[str, bool | float | Array]
     ) -> StateActionSpace:
         """Return the state-action space with runtime state grids filled in.
 
         For IrregSpacedGrid with runtime-supplied points, the grid points come from
-        params as `{state_name}__points`. For _ShockGrid with runtime-supplied params,
-        the grid points are computed from shock params in the params dict or
-        resolved_fixed_params.
+        params as `{regime}__{state_name}__points`. For _ShockGrid with
+        runtime-supplied params, the grid points are computed from shock params in
+        the params dict or resolved_fixed_params.
 
         Args:
-            regime_params: Flat regime parameters supplied at runtime.
+            model_params: Flat model-level parameters supplied at runtime.
 
         Returns:
             Completed state-action space.
 
         """
-        all_params = {**self.resolved_fixed_params, **regime_params}
+        all_params = {**self.resolved_fixed_params, **model_params}
         replacements: dict[str, object] = {}
         for state_name, spec in self.gridspecs.items():
             if state_name not in self._base_state_action_space.states:
                 continue
             if isinstance(spec, IrregSpacedGrid) and spec.pass_points_at_runtime:
-                points_key = f"{state_name}__points"
+                points_key = (
+                    f"{self.name}{QNAME_DELIMITER}{state_name}{QNAME_DELIMITER}points"
+                )
                 if points_key not in all_params:
                     continue
                 replacements[state_name] = all_params[points_key]
             elif isinstance(spec, _ShockGrid) and spec.params_to_pass_at_runtime:
                 all_present = all(
-                    f"{state_name}__{p}" in all_params
+                    f"{self.name}{QNAME_DELIMITER}{state_name}{QNAME_DELIMITER}{p}"
+                    in all_params
                     for p in spec.params_to_pass_at_runtime
                 )
                 if not all_present:
                     continue
                 shock_kw: dict[str, float] = dict(spec.params)
                 for p in spec.params_to_pass_at_runtime:
-                    shock_kw[p] = float(all_params[f"{state_name}__{p}"])
+                    shock_kw[p] = float(
+                        all_params[
+                            f"{self.name}{QNAME_DELIMITER}"
+                            f"{state_name}{QNAME_DELIMITER}{p}"
+                        ]
+                    )
                 replacements[state_name] = spec.compute_gridpoints(
                     spec.n_points,
                     **shock_kw,
@@ -348,30 +345,3 @@ class InternalFunctions:
                 self.regime_transition_probs.simulate
             )
         return MappingProxyType(flatten_regime_namespace(functions_pool))
-
-
-def merge_cross_boundary_params(
-    internal_params: InternalParams,
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-) -> InternalParams:
-    """Merge cross-boundary params into each regime's internal params.
-
-    For regimes with target-originated transitions, resolve parameter values
-    from the target regime and merge them into the source regime's params.
-
-    Args:
-        internal_params: Immutable mapping of regime names to flat parameter mappings.
-        internal_regimes: Immutable mapping of regime names to internal regime
-            instances.
-
-    Returns:
-        New internal params with cross-boundary params merged in.
-
-    """
-    result = {}
-    for name, regime in internal_regimes.items():
-        merged = dict(internal_params[name])
-        for src_qname, (tgt_name, tgt_qname) in regime.cross_boundary_params.items():
-            merged[src_qname] = internal_params[tgt_name][tgt_qname]
-        result[name] = MappingProxyType(merged)
-    return MappingProxyType(result)

@@ -427,7 +427,7 @@ def _create_flat_dataframe(
             regime_results=raw_results[name],
             regime_states=metadata.regime_to_states[name],
             regime_actions=metadata.regime_to_actions[name],
-            regime_params=internal_params[name],
+            model_params=internal_params,
             additional_targets=additional_targets,
             ages=ages,
         )
@@ -448,7 +448,7 @@ def _process_regime(
     regime_results: MappingProxyType[int, PeriodRegimeSimulationData],
     regime_states: tuple[str, ...],
     regime_actions: tuple[str, ...],
-    regime_params: MappingProxyType[str, bool | float | Array],
+    model_params: MappingProxyType[str, bool | float | Array],
     additional_targets: list[str] | None,
     ages: AgeGrid,
 ) -> pd.DataFrame:
@@ -485,7 +485,7 @@ def _process_regime(
                 data=data,
                 targets=targets_for_regime,
                 internal_regime=internal_regime,
-                regime_params=regime_params,
+                model_params=model_params,
             )
             data.update(target_values)
 
@@ -676,7 +676,7 @@ def _compute_targets(
     data: dict[str, Array | Sequence[str]],
     targets: list[str],
     internal_regime: InternalRegime,
-    regime_params: MappingProxyType[str, bool | float | Array],
+    model_params: MappingProxyType[str, bool | float | Array],
 ) -> dict[str, Array]:
     """Compute additional targets for a regime."""
     functions_pool = _build_functions_pool(internal_regime)
@@ -685,7 +685,7 @@ def _compute_targets(
     )
     # Merge resolved fixed params with runtime params so that the target
     # function (built from raw user functions) receives all needed arguments.
-    all_params = {**internal_regime.resolved_fixed_params, **regime_params}
+    all_params = {**internal_regime.resolved_fixed_params, **model_params}
     flat_param_names = frozenset(all_params.keys())
     variables = _get_function_variables(func=target_func, param_names=flat_param_names)
     vectorized_func = vmap_1d(func=target_func, variables=variables)

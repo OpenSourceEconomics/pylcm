@@ -56,12 +56,10 @@ type UserParams = Mapping[
     ],
 ]
 
-# Internal regime parameters: A flat mapping with function-qualified names.
-# Keys are always function-qualified (e.g., "utility__risk_aversion",
-# "H__discount_factor"). Values are scalars or arrays.
-type InternalParams = MappingProxyType[
-    RegimeName, MappingProxyType[str, bool | float | Array]
-]
+# Internal model parameters: A flat mapping with regime-and-function-qualified names.
+# Keys are always regime-prefixed (e.g., "working__utility__risk_aversion",
+# "working__H__discount_factor"). Values are scalars or arrays.
+type InternalParams = MappingProxyType[str, bool | float | Array]
 
 # Immutable templates, used internally
 type RegimeParamsTemplate = MappingProxyType[

@@ -5,7 +5,7 @@ import jax.numpy as jnp
 
 from lcm.ages import AgeGrid
 from lcm.error_handling import validate_value_function_array
-from lcm.interfaces import InternalRegime, merge_cross_boundary_params
+from lcm.interfaces import InternalRegime
 from lcm.typing import FloatND, InternalParams, RegimeName
 
 
@@ -19,7 +19,7 @@ def solve(
     """Solve a model using grid search.
 
     Args:
-        internal_params: Immutable mapping of regime names to flat parameter mappings.
+        internal_params: Flat model-level parameter mapping with regime-prefixed keys.
         ages: Age grid for the model.
         internal_regimes: The internal regimes, that contain all necessary functions
             to solve the model.
@@ -29,8 +29,6 @@ def solve(
         Immutable mapping of periods to regime value function arrays.
 
     """
-    internal_params = merge_cross_boundary_params(internal_params, internal_regimes)
-
     solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
     next_V_arr: MappingProxyType[RegimeName, FloatND] = MappingProxyType(
         {name: jnp.empty(0) for name in internal_regimes}
@@ -50,7 +48,7 @@ def solve(
 
         for name, internal_regime in active_regimes.items():
             state_action_space = internal_regime.state_action_space(
-                regime_params=internal_params[name],
+                model_params=internal_params,
             )
             max_Q_over_a = internal_regime.max_Q_over_a_functions[period]
 
@@ -59,7 +57,7 @@ def solve(
                 **state_action_space.states,
                 **state_action_space.actions,
                 next_V_arr=next_V_arr,
-                **internal_params[name],
+                **internal_params,
             )
 
             validate_value_function_array(V_arr=V_arr, age=ages.values[period])

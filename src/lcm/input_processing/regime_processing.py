@@ -150,11 +150,18 @@ def process_regimes(
 
     params_template = create_params_template(all_regime_params_templates)
 
+    # Compute model-level flat param names (shared across all regimes)
+    all_flat_param_names = frozenset(
+        f"{rname}{QNAME_DELIMITER}{qname}"
+        for rname, template in all_regime_params_templates.items()
+        for qname in get_flat_param_names(template)
+    )
+
     internal_regimes = {}
     for name, regime in regimes.items():
         regime_params_template = all_regime_params_templates[name]
 
-        internal_functions, cross_boundary_params = _get_internal_functions(
+        internal_functions = _get_internal_functions(
             regime=regime,
             regime_name=name,
             nested_transitions=nested_transitions[name],
@@ -166,11 +173,8 @@ def process_regimes(
             enable_jit=enable_jit,
             all_regime_params_templates=all_regime_params_templates,
             target_originated_transitions=target_originated_per_regime[name],
+            all_flat_param_names=all_flat_param_names,
         )
-
-        flat_param_names = frozenset(
-            get_flat_param_names(regime_params_template)
-        ) | frozenset(cross_boundary_params.keys())
 
         Q_and_F_functions = build_Q_and_F_functions(
             regime_name=name,
@@ -179,7 +183,7 @@ def process_regimes(
             internal_functions=internal_functions,
             state_space_infos=state_space_infos,
             ages=ages,
-            flat_param_names=flat_param_names,
+            flat_param_names=all_flat_param_names,
         )
         max_Q_over_a_functions = build_max_Q_over_a_functions(
             state_action_space=state_action_spaces[name],
@@ -196,7 +200,7 @@ def process_regimes(
             grids=grids,
             gridspecs=gridspecs[name],
             variable_info=variable_info[name],
-            flat_param_names=flat_param_names,
+            flat_param_names=all_flat_param_names,
             enable_jit=enable_jit,
         )
 
@@ -215,7 +219,7 @@ def process_regimes(
             regime_transition_probs=internal_functions.regime_transition_probs,
             internal_functions=internal_functions,
             transitions=internal_functions.transitions,
-            flat_param_names=flat_param_names,
+            flat_param_names=all_flat_param_names,
             state_space_info=state_space_infos[name],
             max_Q_over_a_functions=MappingProxyType(max_Q_over_a_functions),
             argmax_and_max_Q_over_a_functions=MappingProxyType(
@@ -223,7 +227,6 @@ def process_regimes(
             ),
             next_state_simulation_function=next_state_simulation_function,
             _base_state_action_space=state_action_spaces[name],
-            cross_boundary_params=cross_boundary_params,
         )
 
     return ensure_containers_are_immutable(internal_regimes), params_template
@@ -242,7 +245,8 @@ def _get_internal_functions(
     enable_jit: bool,
     all_regime_params_templates: MappingProxyType[RegimeName, RegimeParamsTemplate],
     target_originated_transitions: frozenset[str],
-) -> tuple[InternalFunctions, MappingProxyType[str, tuple[str, str]]]:
+    all_flat_param_names: frozenset[str],
+) -> InternalFunctions:
     """Process the user provided regime functions.
 
     Args:
@@ -260,11 +264,11 @@ def _get_internal_functions(
             parameter templates.
         target_originated_transitions: Frozenset of flat function names whose
             transitions were resolved from the target grid's mapping.
+        all_flat_param_names: Model-level frozenset of all regime-prefixed flat
+            parameter names across all regimes.
 
     Returns:
-        Tuple of the processed regime functions and an immutable mapping from
-        cross-boundary qualified param names to `(target_regime, target_qname)`
-        tuples.
+        The processed regime functions.
 
     """
     flat_grids = flatten_regime_namespace(grids)
@@ -321,18 +325,17 @@ def _get_internal_functions(
             func=func,
             regime_params_template=regime_params_template,
             param_key=func_name,
+            regime_name=regime_name,
         )
-
-    cross_boundary_params: dict[str, tuple[str, str]] = {}
 
     for func_name, func in deterministic_transition_functions.items():
         functions[func_name] = _rename_transition_params(
             func=func,
             func_name=func_name,
+            regime_name=regime_name,
             regime_params_template=regime_params_template,
             target_originated_transitions=target_originated_transitions,
             all_regime_params_templates=all_regime_params_templates,
-            cross_boundary_params=cross_boundary_params,
         )
 
     for func_name, func in stochastic_transition_functions.items():
@@ -342,10 +345,10 @@ def _get_internal_functions(
         functions[f"weight_{func_name}"] = _rename_transition_params(
             func=func,
             func_name=func_name,
+            regime_name=regime_name,
             regime_params_template=regime_params_template,
             target_originated_transitions=target_originated_transitions,
             all_regime_params_templates=all_regime_params_templates,
-            cross_boundary_params=cross_boundary_params,
         )
         functions[func_name] = _get_discrete_markov_next_function(
             func=func,
@@ -354,6 +357,7 @@ def _get_internal_functions(
     for shock_name in variable_info.query("is_shock").index.tolist():
         relative_name = f"{regime_name}__next_{shock_name}"
         functions[f"weight_{relative_name}"] = _get_weights_func_for_shock(
+            regime_name=regime_name,
             name=shock_name,
             gridspec=cast("_ShockGrid", gridspecs[shock_name]),
         )
@@ -381,10 +385,6 @@ def _get_internal_functions(
         regime.transition, MarkovRegimeTransition
     )
 
-    flat_param_names = frozenset(
-        get_flat_param_names(regime_params_template)
-    ) | frozenset(cross_boundary_params.keys())
-
     if regime.terminal:
         internal_regime_transition_probs = None
     else:
@@ -393,21 +393,16 @@ def _get_internal_functions(
             regime_transition_probs=functions["next_regime"],
             grids=grids[regime_name],
             regime_names_to_ids=regime_names_to_ids,
-            flat_param_names=flat_param_names,
+            flat_param_names=all_flat_param_names,
             is_stochastic=is_stochastic_regime_transition,
             enable_jit=enable_jit,
         )
-    return (
-        InternalFunctions(
-            functions=internal_functions,
-            constraints=internal_constraints,
-            transitions=_wrap_transitions(
-                unflatten_regime_namespace(internal_transition)
-            ),
-            regime_transition_probs=internal_regime_transition_probs,
-            stochastic_transition_names=stochastic_transition_names,
-        ),
-        MappingProxyType(cross_boundary_params),
+    return InternalFunctions(
+        functions=internal_functions,
+        constraints=internal_constraints,
+        transitions=_wrap_transitions(unflatten_regime_namespace(internal_transition)),
+        regime_transition_probs=internal_regime_transition_probs,
+        stochastic_transition_names=stochastic_transition_names,
     )
 
 
@@ -667,15 +662,17 @@ def _rename_params_to_qnames(
     func: UserFunction,
     regime_params_template: RegimeParamsTemplate,
     param_key: str,
+    regime_name: str,
 ) -> InternalUserFunction:
-    """Rename function params to qualified names using dags.signature.rename_arguments.
+    """Rename function params to regime-prefixed qualified names.
 
-    E.g., risk_aversion -> utility__risk_aversion.
+    E.g., `risk_aversion` -> `working__utility__risk_aversion`.
 
     Args:
         func: The user function.
         regime_params_template: The parameter template for the regime.
         param_key: The key to look up in regime_params_template (e.g., "utility").
+        regime_name: The name of the regime (e.g., "working").
 
     Returns:
         The function with renamed parameters.
@@ -684,7 +681,10 @@ def _rename_params_to_qnames(
     param_names = list(regime_params_template[param_key])
     if not param_names:
         return cast("InternalUserFunction", func)
-    mapper = {p: f"{param_key}{QNAME_DELIMITER}{p}" for p in param_names}
+    mapper = {
+        p: f"{regime_name}{QNAME_DELIMITER}{param_key}{QNAME_DELIMITER}{p}"
+        for p in param_names
+    }
     return cast("InternalUserFunction", rename_arguments(func, mapper=mapper))
 
 
@@ -692,10 +692,10 @@ def _rename_transition_params(
     *,
     func: UserFunction,
     func_name: str,
+    regime_name: str,
     regime_params_template: RegimeParamsTemplate,
     target_originated_transitions: frozenset[str],
     all_regime_params_templates: MappingProxyType[RegimeName, RegimeParamsTemplate],
-    cross_boundary_params: dict[str, tuple[str, str]],
 ) -> InternalUserFunction:
     """Rename a transition function's parameters to qualified names.
 
@@ -708,7 +708,6 @@ def _rename_transition_params(
             func=func,
             func_name=func_name,
             all_regime_params_templates=all_regime_params_templates,
-            cross_boundary_params=cross_boundary_params,
         )
     param_key = _extract_param_key(func_name)
     if param_key in regime_params_template:
@@ -716,6 +715,7 @@ def _rename_transition_params(
             func=func,
             regime_params_template=regime_params_template,
             param_key=param_key,
+            regime_name=regime_name,
         )
     _validate_cross_regime_transition(func, func_name, regime_params_template)
     return cast("InternalUserFunction", func)
@@ -726,21 +726,18 @@ def _rename_target_originated_transition(
     func: UserFunction,
     func_name: str,
     all_regime_params_templates: MappingProxyType[RegimeName, RegimeParamsTemplate],
-    cross_boundary_params: dict[str, tuple[str, str]],
 ) -> InternalUserFunction:
-    """Rename parameters of a target-originated transition to cross-boundary qnames.
+    """Rename parameters of a target-originated transition to regime-prefixed qnames.
 
     For transitions resolved from the target grid's mapping, rename the function's
     parameters using a target-prefixed qualified name (e.g.,
-    `growth_rate` -> `phase2__next_wealth__growth_rate`) and record the mapping
-    from cross-boundary qname to `(target_regime, target_qname)` so the values
-    can be resolved from the target regime's params at runtime.
+    `growth_rate` -> `phase2__next_wealth__growth_rate`). With model-level flat
+    params, the target regime's value is already present under this key.
 
     Args:
         func: The user transition function.
         func_name: The flat function name (e.g., `"phase2__next_wealth"`).
         all_regime_params_templates: All regime parameter templates.
-        cross_boundary_params: Mutable dict to populate with cross-boundary mappings.
 
     Returns:
         The function with renamed parameters.
@@ -759,12 +756,7 @@ def _rename_target_originated_transition(
     if not param_names:
         return cast("InternalUserFunction", func)
     mapper = {p: f"{func_name}{QNAME_DELIMITER}{p}" for p in param_names}
-    renamed = cast("InternalUserFunction", rename_arguments(func, mapper=mapper))
-    for p in param_names:
-        src_qname = f"{func_name}{QNAME_DELIMITER}{p}"
-        tgt_qname = f"{param_key}{QNAME_DELIMITER}{p}"
-        cross_boundary_params[src_qname] = (target_name, tgt_qname)
-    return renamed
+    return cast("InternalUserFunction", rename_arguments(func, mapper=mapper))
 
 
 def _get_discrete_markov_next_function(
@@ -790,7 +782,9 @@ def _get_stochastic_next_function_for_shock(
     return next_func
 
 
-def _get_weights_func_for_shock(*, name: str, gridspec: _ShockGrid) -> UserFunction:
+def _get_weights_func_for_shock(
+    *, regime_name: str, name: str, gridspec: _ShockGrid
+) -> UserFunction:
     """Get function that uses linear interpolation to calculate the shock weights.
 
     For shocks whose params are supplied at runtime, the grid points and transition
@@ -801,7 +795,8 @@ def _get_weights_func_for_shock(*, name: str, gridspec: _ShockGrid) -> UserFunct
         n_points = gridspec.n_points
         fixed_params = dict(gridspec.params)
         runtime_param_names = {
-            f"{name}{QNAME_DELIMITER}{p}": p for p in gridspec.params_to_pass_at_runtime
+            f"{regime_name}{QNAME_DELIMITER}{name}{QNAME_DELIMITER}{p}": p
+            for p in gridspec.params_to_pass_at_runtime
         }
         args = {name: "ContinuousState", **dict.fromkeys(runtime_param_names, "float")}
 
