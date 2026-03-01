@@ -85,7 +85,8 @@ class Tauchen(_ShockGridAR1):
     def compute_gridpoints(self, n_points: int, **kwargs: float | Array) -> Float1D:
         rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
         if self.gauss_hermite:
-            return _gauss_hermite_normal(n_points, mu / (1 - rho), sigma)[0]
+            std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
+            return _gauss_hermite_normal(n_points, mu / (1 - rho), std_y)[0]
         n_std = kwargs["n_std"]
         std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
         x_max = n_std * std_y
@@ -97,7 +98,8 @@ class Tauchen(_ShockGridAR1):
     ) -> FloatND:
         rho, sigma = kwargs["rho"], kwargs["sigma"]
         if self.gauss_hermite:
-            nodes, _weights = _gauss_hermite_normal(n_points, 0.0, sigma)
+            std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
+            nodes, _weights = _gauss_hermite_normal(n_points, 0.0, std_y)
             # Midpoints between consecutive GH nodes: (n_points - 1,)
             midpoints = (nodes[:-1] + nodes[1:]) / 2
             # CDF at midpoints for each source state: (n_points, n_points - 1)

@@ -618,7 +618,7 @@ def _validate_discrete_category_compatibility(
 def _validate_cross_regime_transition(
     func: UserFunction,
     func_name: str,
-    regime_params_template: RegimeParamsTemplate,
+    all_regime_params_templates: MappingProxyType[RegimeName, RegimeParamsTemplate],
 ) -> None:
     """Validate a cross-regime transition function before casting.
 
@@ -633,7 +633,10 @@ def _validate_cross_regime_transition(
         return
 
     template_param_names = {
-        p for entry in regime_params_template.values() for p in entry
+        p
+        for template in all_regime_params_templates.values()
+        for entry in template.values()
+        for p in entry
     }
     overlap = func_param_names & template_param_names
     if overlap:
@@ -717,7 +720,7 @@ def _rename_transition_params(
             param_key=param_key,
             regime_name=regime_name,
         )
-    _validate_cross_regime_transition(func, func_name, regime_params_template)
+    _validate_cross_regime_transition(func, func_name, all_regime_params_templates)
     return cast("InternalUserFunction", func)
 
 
