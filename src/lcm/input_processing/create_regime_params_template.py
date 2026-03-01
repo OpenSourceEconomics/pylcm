@@ -108,11 +108,10 @@ def _discover_mapping_transition_params(
                     )
                     raise ModelInitializationError(msg)
 
-        for params in all_params:
-            if params:
-                existing = dict(function_params.get(next_name, {}))
-                existing.update(params)
-                function_params[next_name] = existing
+        if all_params and all_params[0]:
+            existing = dict(function_params.get(next_name, {}))
+            existing.update(all_params[0])
+            function_params[next_name] = existing
 
 
 def _add_runtime_grid_params(
