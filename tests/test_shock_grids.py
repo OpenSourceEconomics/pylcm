@@ -94,9 +94,9 @@ def test_model_with_lognormal_shock():
 
     assert len(got_simulate) > 0
     assert "income" in got_simulate.columns
-    income = got_simulate["income"].dropna()
-    assert len(income) > 0
-    assert (income >= 0).all()
+    income = got_simulate["income"]
+    assert income.notna().any()
+    assert (income.dropna() >= 0).all()
 
 
 # ======================================================================================
