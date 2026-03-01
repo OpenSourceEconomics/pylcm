@@ -289,8 +289,10 @@ def _update_states_for_subjects(
     updated_states = dict(all_states)
     for next_state_name, next_state_values in computed_next_states.items():
         # State names may be prefixed with regime (e.g., "working__next_wealth")
-        # We need to replace "next_" with "" to get "working__wealth"
-        state_name = next_state_name.replace("next_", "", 1)
+        # We need to strip "next_" from the final component to get "working__wealth"
+        parts = next_state_name.split("__")
+        parts[-1] = parts[-1].removeprefix("next_")
+        state_name = "__".join(parts)
         updated_states[state_name] = jnp.where(
             subject_indices,
             next_state_values,
