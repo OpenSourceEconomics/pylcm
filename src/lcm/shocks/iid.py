@@ -1,13 +1,18 @@
 from abc import abstractmethod
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.scipy.stats.norm import cdf
 
-from lcm.exceptions import GridInitializationError
-from lcm.shocks._base import _gauss_hermite_normal, _ShockGrid
+from lcm.shocks._base import (
+    _gauss_hermite_normal,
+    _gauss_hermite_param_field_names,
+    _ShockGrid,
+    _validate_gauss_hermite_grid,
+)
 from lcm.typing import Float1D, FloatND
 
 
@@ -38,10 +43,14 @@ class Uniform(_ShockGridIID):
     stop: float | None = None
     """Upper bound of the uniform distribution."""
 
-    def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
+    def compute_gridpoints(self, n_points: int, **kwargs: float | Array) -> Float1D:
         return jnp.linspace(start=kwargs["start"], stop=kwargs["stop"], num=n_points)
 
-    def compute_transition_probs(self, n_points: int, **kwargs: float) -> FloatND:  # noqa: ARG002
+    def compute_transition_probs(
+        self,
+        n_points: int,
+        **kwargs: float | Array,  # noqa: ARG002
+    ) -> FloatND:
         return jnp.full((n_points, n_points), fill_value=1 / n_points)
 
     def draw_shock(
@@ -78,25 +87,15 @@ class Normal(_ShockGridIID):
     """Number of standard deviations from the mean to the grid boundary."""
 
     def __post_init__(self) -> None:
-        if self.n_points % 2 == 0:
-            msg = (
-                f"n_points must be odd (got {self.n_points}). Odd n guarantees a"
-                " quadrature node at the mean (Abramowitz & Stegun, 1972,"
-                " Table 25.10)."
-            )
-            raise GridInitializationError(msg)
-        if self.gauss_hermite and self.n_std is not None:
-            msg = "gauss_hermite=True and n_std are mutually exclusive."
-            raise GridInitializationError(msg)
+        _validate_gauss_hermite_grid(
+            self.n_points, gauss_hermite=self.gauss_hermite, n_std=self.n_std
+        )
 
     @property
     def _param_field_names(self) -> tuple[str, ...]:
-        exclude = {"n_points", "gauss_hermite"}
-        if self.gauss_hermite:
-            exclude.add("n_std")
-        return tuple(f.name for f in fields(self) if f.name not in exclude)
+        return _gauss_hermite_param_field_names(self, gauss_hermite=self.gauss_hermite)
 
-    def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
+    def compute_gridpoints(self, n_points: int, **kwargs: float | Array) -> Float1D:
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
             nodes, _weights = _gauss_hermite_normal(n_points, mu, sigma)
@@ -106,7 +105,9 @@ class Normal(_ShockGridIID):
         x_max = mu + n_std * sigma
         return jnp.linspace(start=x_min, stop=x_max, num=n_points)
 
-    def compute_transition_probs(self, n_points: int, **kwargs: float) -> FloatND:
+    def compute_transition_probs(
+        self, n_points: int, **kwargs: float | Array
+    ) -> FloatND:
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
             _nodes, weights = _gauss_hermite_normal(n_points, mu, sigma)
@@ -146,25 +147,15 @@ class LogNormal(_ShockGridIID):
     """Number of standard deviations in log-space for the grid boundary."""
 
     def __post_init__(self) -> None:
-        if self.n_points % 2 == 0:
-            msg = (
-                f"n_points must be odd (got {self.n_points}). Odd n guarantees a"
-                " quadrature node at the mean (Abramowitz & Stegun, 1972,"
-                " Table 25.10)."
-            )
-            raise GridInitializationError(msg)
-        if self.gauss_hermite and self.n_std is not None:
-            msg = "gauss_hermite=True and n_std are mutually exclusive."
-            raise GridInitializationError(msg)
+        _validate_gauss_hermite_grid(
+            self.n_points, gauss_hermite=self.gauss_hermite, n_std=self.n_std
+        )
 
     @property
     def _param_field_names(self) -> tuple[str, ...]:
-        exclude = {"n_points", "gauss_hermite"}
-        if self.gauss_hermite:
-            exclude.add("n_std")
-        return tuple(f.name for f in fields(self) if f.name not in exclude)
+        return _gauss_hermite_param_field_names(self, gauss_hermite=self.gauss_hermite)
 
-    def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
+    def compute_gridpoints(self, n_points: int, **kwargs: float | Array) -> Float1D:
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
             nodes, _weights = _gauss_hermite_normal(n_points, mu, sigma)
@@ -172,7 +163,9 @@ class LogNormal(_ShockGridIID):
         n_std = kwargs["n_std"]
         return jnp.exp(jnp.linspace(mu - n_std * sigma, mu + n_std * sigma, n_points))
 
-    def compute_transition_probs(self, n_points: int, **kwargs: float) -> FloatND:
+    def compute_transition_probs(
+        self, n_points: int, **kwargs: float | Array
+    ) -> FloatND:
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
             _nodes, weights = _gauss_hermite_normal(n_points, mu, sigma)

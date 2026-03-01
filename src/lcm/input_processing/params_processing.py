@@ -7,7 +7,6 @@ from typing import Any, cast
 from dags.tree import QNAME_DELIMITER
 
 from lcm.exceptions import InvalidNameError, InvalidParamsError
-from lcm.interfaces import InternalRegime
 from lcm.typing import (
     InternalParams,
     ParamsTemplate,
@@ -100,25 +99,20 @@ def process_params(
     if unknown_keys:
         raise InvalidParamsError(f"Unknown keys: {sorted(unknown_keys)}")
 
-    # Split flat keys into per-regime dicts and ensure all regimes are present
-    result = {name: {} for name in params_template}
-    for key, value in result_flat.items():
-        regime_name, remainder = key.split(QNAME_DELIMITER, 1)
-        result[regime_name][remainder] = value
-
-    return cast("InternalParams", ensure_containers_are_immutable(result))
+    return cast("InternalParams", ensure_containers_are_immutable(result_flat))
 
 
 def create_params_template(  # noqa: C901
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    all_regime_params_templates: MappingProxyType[RegimeName, RegimeParamsTemplate],
 ) -> ParamsTemplate:
-    """Create params_template from internal regimes and validate name uniqueness.
+    """Create params_template from regime parameter templates and validate uniqueness.
 
     This function validates that regime names, function names, and argument names
     are disjoint sets to enable unambiguous parameter propagation.
 
     Args:
-        internal_regimes: Mapping of regime names to InternalRegime instances.
+        all_regime_params_templates: Immutable mapping of regime names to their
+            parameter templates.
 
     Returns:
         The parameter template.
@@ -132,10 +126,9 @@ def create_params_template(  # noqa: C901
     function_names: set[str] = set()
     arg_names: set[str] = set()
 
-    for name, regime in internal_regimes.items():
+    for name, regime_template in all_regime_params_templates.items():
         regime_names.add(name)
-        regime_template = dict(regime.regime_params_template)
-        template[name] = regime_template
+        template[name] = dict(regime_template)
 
         for key, val in regime_template.items():
             if isinstance(val, (dict, Mapping)):
@@ -191,16 +184,26 @@ def create_params_template(  # noqa: C901
     return ensure_containers_are_immutable(template)
 
 
-def get_flat_param_names(regime_params_template: RegimeParamsTemplate) -> set[str]:
+def get_flat_param_names(
+    regime_params_template: RegimeParamsTemplate,
+    regime_name: str | None = None,
+) -> set[str]:
     """Get all flat parameter names from a regime params template.
 
     Converts nested template entries like {"utility": {"risk_aversion": type}} to
-    flat names like "utility__risk_aversion".
+    flat names like "utility__risk_aversion". When `regime_name` is provided,
+    produces regime-prefixed names like "working__utility__risk_aversion".
+
+    Args:
+        regime_params_template: The regime's parameter template.
+        regime_name: Optional regime name prefix. When provided, each name is
+            prefixed with `{regime_name}__`.
 
     """
     result = set()
+    prefix = f"{regime_name}{QNAME_DELIMITER}" if regime_name is not None else ""
     for key, value in regime_params_template.items():
         if isinstance(value, Mapping):
             for param_name in value:
-                result.add(f"{key}{QNAME_DELIMITER}{param_name}")
+                result.add(f"{prefix}{key}{QNAME_DELIMITER}{param_name}")
     return result

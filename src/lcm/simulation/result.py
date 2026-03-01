@@ -8,7 +8,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import jax.numpy as jnp
 import pandas as pd
@@ -22,7 +22,6 @@ from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.grids import DiscreteGrid, DiscreteMarkovGrid
 from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
 from lcm.typing import (
-    FlatRegimeParams,
     FloatND,
     InternalParams,
     RegimeName,
@@ -428,7 +427,7 @@ def _create_flat_dataframe(
             regime_results=raw_results[name],
             regime_states=metadata.regime_to_states[name],
             regime_actions=metadata.regime_to_actions[name],
-            regime_params=internal_params[name],
+            model_params=internal_params,
             additional_targets=additional_targets,
             ages=ages,
         )
@@ -449,7 +448,7 @@ def _process_regime(
     regime_results: MappingProxyType[int, PeriodRegimeSimulationData],
     regime_states: tuple[str, ...],
     regime_actions: tuple[str, ...],
-    regime_params: FlatRegimeParams,
+    model_params: MappingProxyType[str, bool | float | Array],
     additional_targets: list[str] | None,
     ages: AgeGrid,
 ) -> pd.DataFrame:
@@ -466,7 +465,9 @@ def _process_regime(
     ]
 
     # Concatenate and filter to in-regime subjects
-    data: dict[str, Array | Sequence[str]] = _concatenate_and_filter(period_dicts)  # ty: ignore[invalid-assignment]
+    data = cast(
+        "dict[str, Array | Sequence[str]]", _concatenate_and_filter(period_dicts)
+    )
 
     # Add age column (computed from period using ages grid)
     data["age"] = ages.values[data["period"]]  # noqa: PD011
@@ -484,7 +485,7 @@ def _process_regime(
                 data=data,
                 targets=targets_for_regime,
                 internal_regime=internal_regime,
-                regime_params=regime_params,
+                model_params=model_params,
             )
             data.update(target_values)
 
@@ -519,6 +520,8 @@ def _extract_period_data(
 
 def _concatenate_and_filter(period_dicts: list[dict[str, Array]]) -> dict[str, Array]:
     """Concatenate period data and filter to in-regime subjects."""
+    assert all(d.keys() == period_dicts[0].keys() for d in period_dicts[1:])  # noqa: S101
+
     keys = [k for k in period_dicts[0] if k != "_in_regime"]
 
     concatenated = {
@@ -675,7 +678,7 @@ def _compute_targets(
     data: dict[str, Array | Sequence[str]],
     targets: list[str],
     internal_regime: InternalRegime,
-    regime_params: FlatRegimeParams,
+    model_params: MappingProxyType[str, bool | float | Array],
 ) -> dict[str, Array]:
     """Compute additional targets for a regime."""
     functions_pool = _build_functions_pool(internal_regime)
@@ -684,7 +687,7 @@ def _compute_targets(
     )
     # Merge resolved fixed params with runtime params so that the target
     # function (built from raw user functions) receives all needed arguments.
-    all_params = {**internal_regime.resolved_fixed_params, **regime_params}
+    all_params = {**internal_regime.resolved_fixed_params, **model_params}
     flat_param_names = frozenset(all_params.keys())
     variables = _get_function_variables(func=target_func, param_names=flat_param_names)
     vectorized_func = vmap_1d(func=target_func, variables=variables)
@@ -769,6 +772,7 @@ def _atomic_dump(obj: SimulationResult, path: str | Path, *, protocol: int) -> P
         # one, never a partially-written file. (Temp file is closed already, which
         # matters on Windows.)
         tmp.replace(p)
+        tmp = None
         return p
     finally:
         # If anything failed before the replace succeeded, delete the temp file. We used

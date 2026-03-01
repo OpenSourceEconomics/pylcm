@@ -23,6 +23,7 @@ from lcm import (
     DiscreteGrid,
     DiscreteMarkovGrid,
     LinSpacedGrid,
+    MarkovRegimeTransition,
     Model,
     Regime,
     categorical,
@@ -322,8 +323,7 @@ def dead_is_active(age: float, initial_age: float) -> bool:
 prod_shock_grid = lcm.shocks.ar1.Rouwenhorst(n_points=5, rho=rho, mu=0, sigma=1)
 
 ALIVE_REGIME = Regime(
-    transition=next_regime,
-    stochastic_transition=True,
+    transition=MarkovRegimeTransition(next_regime),
     active=partial(alive_is_active, final_age_alive=ages.values[-2]),
     states={
         "wealth": LinSpacedGrid(start=0, stop=49, n_points=50, transition=next_wealth),

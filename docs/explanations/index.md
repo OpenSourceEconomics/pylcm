@@ -16,3 +16,5 @@ hood.
 - [Interpolation and Extrapolation](interpolation.ipynb) — How pylcm's
   coordinate finders and `map_coordinates` handle interpolation and extrapolation across
   grid types.
+- [The Transition System](transitions.ipynb) — How state transitions, regime
+  transitions, and per-boundary mappings work internally.

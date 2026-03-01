@@ -4,6 +4,7 @@ from enum import Enum
 from types import MappingProxyType
 
 import pandas as pd
+from dags.tree import QNAME_DELIMITER
 from jax import Array
 
 from lcm.grids import (
@@ -21,11 +22,9 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     DiscreteState,
-    FlatRegimeParams,
     InternalUserFunction,
     MaxQOverAFunction,
     NextStateSimulationFunction,
-    RegimeParamsTemplate,
     RegimeTransitionFunction,
     TransitionFunctionsMapping,
     VmappedRegimeTransitionFunction,
@@ -197,8 +196,8 @@ class InternalRegime:
     Includes user functions, constraints, and transitions.
     """
 
-    regime_params_template: RegimeParamsTemplate
-    """Template for the parameter structure expected by this regime."""
+    flat_param_names: frozenset[str]
+    """All flat parameter names for this regime, including cross-boundary params."""
 
     state_space_info: StateSpaceInfo
     """Metadata for working with function outputs on the state space."""
@@ -215,48 +214,57 @@ class InternalRegime:
     _base_state_action_space: StateActionSpace = dataclasses.field(repr=False)
     """Base state-action space before runtime grid substitution."""
 
-    # Resolved fixed params (flat) for this regime, used by to_dataframe targets
-    resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
+    # Resolved fixed params (model-level flat) used by to_dataframe targets
+    resolved_fixed_params: MappingProxyType[str, bool | float | Array] = (
+        MappingProxyType({})
+    )
     """Flat resolved fixed params for this regime, used by to_dataframe targets."""
 
-    def state_action_space(self, regime_params: FlatRegimeParams) -> StateActionSpace:
+    def state_action_space(
+        self, model_params: MappingProxyType[str, bool | float | Array]
+    ) -> StateActionSpace:
         """Return the state-action space with runtime state grids filled in.
 
         For IrregSpacedGrid with runtime-supplied points, the grid points come from
-        params as `{state_name}__points`. For _ShockGrid with runtime-supplied params,
-        the grid points are computed from shock params in the params dict or
-        resolved_fixed_params.
+        params as `{regime}__{state_name}__points`. For _ShockGrid with
+        runtime-supplied params, the grid points are computed from shock params in
+        the params dict or resolved_fixed_params.
 
         Args:
-            regime_params: Flat regime parameters supplied at runtime.
+            model_params: Flat model-level parameters supplied at runtime.
 
         Returns:
             Completed state-action space.
 
         """
-        all_params = {**self.resolved_fixed_params, **regime_params}
+        all_params = {**self.resolved_fixed_params, **model_params}
         replacements: dict[str, object] = {}
         for state_name, spec in self.gridspecs.items():
             if state_name not in self._base_state_action_space.states:
                 continue
             if isinstance(spec, IrregSpacedGrid) and spec.pass_points_at_runtime:
-                points_key = f"{state_name}__points"
+                points_key = (
+                    f"{self.name}{QNAME_DELIMITER}{state_name}{QNAME_DELIMITER}points"
+                )
                 if points_key not in all_params:
                     continue
                 replacements[state_name] = all_params[points_key]
             elif isinstance(spec, _ShockGrid) and spec.params_to_pass_at_runtime:
                 all_present = all(
-                    f"{state_name}__{p}" in all_params
+                    f"{self.name}{QNAME_DELIMITER}{state_name}{QNAME_DELIMITER}{p}"
+                    in all_params
                     for p in spec.params_to_pass_at_runtime
                 )
                 if not all_present:
                     continue
-                shock_kw: dict[str, bool | float | Array] = dict(spec.params)
+                shock_kw: dict[str, float | Array] = dict(spec.params)
                 for p in spec.params_to_pass_at_runtime:
-                    shock_kw[p] = all_params[f"{state_name}__{p}"]
+                    shock_kw[p] = all_params[
+                        f"{self.name}{QNAME_DELIMITER}{state_name}{QNAME_DELIMITER}{p}"
+                    ]
                 replacements[state_name] = spec.compute_gridpoints(
                     spec.n_points,
-                    **shock_kw,  # ty: ignore[invalid-argument-type]
+                    **shock_kw,
                 )
 
         if not replacements:

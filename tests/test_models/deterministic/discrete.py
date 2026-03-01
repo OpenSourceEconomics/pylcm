@@ -10,7 +10,7 @@ continuous version.
 
 import jax.numpy as jnp
 
-from lcm import AgeGrid, DiscreteGrid, Model, Regime, categorical
+from lcm import AgeGrid, DiscreteGrid, Model, Regime, RegimeTransition, categorical
 from lcm.typing import (
     BoolND,
     DiscreteAction,
@@ -113,7 +113,7 @@ working = Regime(
     constraints={
         "borrowing_constraint": borrowing_constraint,
     },
-    transition=next_regime,
+    transition=RegimeTransition(next_regime),
     functions={
         "utility": utility_discrete,
         "labor_income": labor_income,

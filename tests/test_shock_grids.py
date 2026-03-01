@@ -22,7 +22,7 @@ with (TEST_DATA / "shocks" / "quantecon_rouwenhorst.pkl").open("rb") as _f:
 
 @pytest.mark.skipif(not X64_ENABLED, reason="Not working with 32-Bit because of RNG")
 @pytest.mark.parametrize(
-    "distribution_type", ["uniform", "normal", "tauchen", "rouwenhorst"]
+    "distribution_type", ["uniform", "normal", "lognormal", "tauchen", "rouwenhorst"]
 )
 def test_model_with_shock(distribution_type):
     n_periods = 3
@@ -295,8 +295,11 @@ def test_ar1_draw_shock_unconditional_moments(grid_cls):
     "grid_cls_and_kwargs",
     [
         (lcm.shocks.iid.Normal, {"gauss_hermite": True}),
+        (lcm.shocks.iid.Normal, {"gauss_hermite": False, "n_std": 3.0}),
         (lcm.shocks.iid.LogNormal, {"gauss_hermite": True}),
+        (lcm.shocks.iid.LogNormal, {"gauss_hermite": False, "n_std": 3.0}),
         (lcm.shocks.ar1.Tauchen, {"gauss_hermite": True}),
+        (lcm.shocks.ar1.Tauchen, {"gauss_hermite": False, "n_std": 3.0}),
         (lcm.shocks.ar1.Rouwenhorst, {}),
     ],
 )

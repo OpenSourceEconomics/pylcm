@@ -18,6 +18,7 @@ from lcm import (
     LinSpacedGrid,
     Model,
     Regime,
+    RegimeTransition,
     categorical,
 )
 from lcm.typing import (
@@ -199,7 +200,7 @@ working = Regime(
     constraints={
         "borrowing_constraint": borrowing_constraint,
     },
-    transition=next_regime_from_working,
+    transition=RegimeTransition(next_regime_from_working),
     functions={
         "utility": utility_working,
         "labor_income": labor_income,
@@ -224,7 +225,7 @@ retired = Regime(
     constraints={
         "borrowing_constraint": borrowing_constraint,
     },
-    transition=next_regime_from_retired,
+    transition=RegimeTransition(next_regime_from_retired),
     functions={
         "utility": utility_retired,
     },

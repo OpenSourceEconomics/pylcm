@@ -6,7 +6,7 @@ import lcm
 from lcm.ages import AgeGrid
 from lcm.grids import DiscreteMarkovGrid, LinSpacedGrid, categorical
 from lcm.model import Model
-from lcm.regime import Regime
+from lcm.regime import Regime, RegimeTransition
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -18,6 +18,7 @@ from lcm.typing import (
 _SHOCK_GRID_CLASSES = {
     "uniform": lcm.shocks.iid.Uniform,
     "normal": lcm.shocks.iid.Normal,
+    "lognormal": lcm.shocks.iid.LogNormal,
     "tauchen": lcm.shocks.ar1.Tauchen,
     "rouwenhorst": lcm.shocks.ar1.Rouwenhorst,
 }
@@ -25,6 +26,7 @@ _SHOCK_GRID_CLASSES = {
 _SHOCK_GRID_KWARGS: dict[str, dict[str, bool]] = {
     "uniform": {},
     "normal": {"gauss_hermite": True},
+    "lognormal": {"gauss_hermite": True},
     "tauchen": {"gauss_hermite": True},
     "rouwenhorst": {},
 }
@@ -32,7 +34,9 @@ _SHOCK_GRID_KWARGS: dict[str, dict[str, bool]] = {
 
 def get_model(
     n_periods: int,
-    distribution_type: Literal["uniform", "normal", "tauchen", "rouwenhorst"],
+    distribution_type: Literal[
+        "uniform", "normal", "lognormal", "tauchen", "rouwenhorst"
+    ],
 ):
     def next_health(health: DiscreteState, health_transition: FloatND) -> FloatND:
         return health_transition[health]
@@ -87,7 +91,7 @@ def get_model(
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),
         },
-        transition=next_regime,
+        transition=RegimeTransition(next_regime),
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
@@ -106,6 +110,7 @@ def get_model(
 _SHOCK_PARAMS: dict[str, dict[str, float]] = {
     "uniform": {"start": 0.0, "stop": 1.0},
     "normal": {"mu": 0.0, "sigma": 1.0},
+    "lognormal": {"mu": 0.0, "sigma": 1.0},
     "tauchen": {"rho": 0.975, "sigma": 1.0, "mu": 0.0},
     "rouwenhorst": {"rho": 0.975, "sigma": 1.0, "mu": 0.0},
 }
@@ -113,7 +118,7 @@ _SHOCK_PARAMS: dict[str, dict[str, float]] = {
 
 def get_params(
     distribution_type: Literal[
-        "uniform", "normal", "tauchen", "rouwenhorst"
+        "uniform", "normal", "lognormal", "tauchen", "rouwenhorst"
     ] = "tauchen",
 ):
     return {

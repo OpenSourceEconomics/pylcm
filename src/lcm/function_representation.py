@@ -17,6 +17,7 @@ from lcm.typing import FloatND, ScalarFloat, ScalarInt
 def get_value_function_representation(
     state_space_info: StateSpaceInfo,
     *,
+    regime_name: str = "",
     input_prefix: str = "next_",
     name_of_values_on_grid: str = "next_V_arr",
 ) -> Callable[..., FloatND]:
@@ -112,6 +113,7 @@ def get_value_function_representation(
             funcs[f"__{var}_coord__"] = _get_coordinate_finder(
                 in_name=input_prefix + var,
                 grid=grid_spec,
+                regime_name=regime_name,
             )
 
         # ==============================================================================
@@ -191,6 +193,7 @@ def _get_coordinate_finder(
     *,
     in_name: str,
     grid: ContinuousGrid,
+    regime_name: str = "",
 ) -> Callable[..., Array]:
     """Create a function that translates a value into coordinates on a grid.
 
@@ -202,6 +205,7 @@ def _get_coordinate_finder(
             passed into the resulting function.
         grid: The continuous grid on which the value is to be translated into
             coordinates.
+        regime_name: Name of the regime for regime-prefixed param names.
 
     Returns:
         A callable with keyword-only argument [in_name] that translates a value into
@@ -211,7 +215,12 @@ def _get_coordinate_finder(
     if isinstance(grid, IrregSpacedGrid):
         if grid.pass_points_at_runtime:
             state_name = in_name.removeprefix("next_")
-            points_param = f"{state_name}{QNAME_DELIMITER}points"
+            if regime_name:
+                points_param = (
+                    f"{regime_name}{QNAME_DELIMITER}{state_name}{QNAME_DELIMITER}points"
+                )
+            else:
+                points_param = f"{state_name}{QNAME_DELIMITER}points"
             arg_names = [in_name, points_param]
 
             @with_signature(

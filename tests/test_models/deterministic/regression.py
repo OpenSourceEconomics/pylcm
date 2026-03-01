@@ -11,6 +11,7 @@ from lcm import (
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
     Regime,
+    RegimeTransition,
     categorical,
 )
 from lcm.grids import UniformContinuousGrid
@@ -113,7 +114,7 @@ working = Regime(
         "wealth": DEFAULT_WEALTH_GRID,  # placeholder, will be replaced by get_model()
     },
     constraints={"borrowing_constraint": borrowing_constraint},
-    transition=next_regime,
+    transition=RegimeTransition(next_regime),
     functions={
         "utility": utility,
         "labor_income": labor_income,

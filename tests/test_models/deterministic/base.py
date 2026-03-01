@@ -1,6 +1,14 @@
 import jax.numpy as jnp
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    RegimeTransition,
+    categorical,
+)
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -121,7 +129,7 @@ working = Regime(
     constraints={
         "borrowing_constraint": borrowing_constraint,
     },
-    transition=next_regime_from_working,
+    transition=RegimeTransition(next_regime_from_working),
     functions={
         "utility": utility_working,
         "labor_income": labor_income,
@@ -131,7 +139,7 @@ working = Regime(
 )
 
 retired = Regime(
-    transition=next_regime_from_retired,
+    transition=RegimeTransition(next_regime_from_retired),
     actions={"consumption": LinSpacedGrid(start=1, stop=400, n_points=500)},
     states={
         "wealth": LinSpacedGrid(

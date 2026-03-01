@@ -70,11 +70,13 @@ class _ShockGrid(ContinuousGrid):
         return not self.params_to_pass_at_runtime
 
     @abstractmethod
-    def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
+    def compute_gridpoints(self, n_points: int, **kwargs: float | Array) -> Float1D:
         """Compute discretized gridpoints for the shock distribution."""
 
     @abstractmethod
-    def compute_transition_probs(self, n_points: int, **kwargs: float) -> FloatND:
+    def compute_transition_probs(
+        self, n_points: int, **kwargs: float | Array
+    ) -> FloatND:
         """Compute transition probability matrix for the shock distribution."""
 
     def get_gridpoints(self) -> Float1D:
@@ -114,3 +116,39 @@ class _ShockGrid(ContinuousGrid):
                 "Cannot compute coordinate for a ShockGrid without all shock params."
             )
         return grid_helpers.get_irreg_coordinate(value=value, points=self.to_jax())
+
+
+def _validate_gauss_hermite_grid(
+    n_points: int,
+    *,
+    gauss_hermite: bool,
+    n_std: float | None,
+    mean_label: str = "the mean",
+) -> None:
+    """Validate `n_points` / `gauss_hermite` / `n_std` consistency."""
+    if n_points % 2 == 0:
+        if gauss_hermite:
+            msg = (
+                f"n_points must be odd (got {n_points}). Odd n guarantees"
+                " a quadrature node at the mean (Abramowitz & Stegun, 1972,"
+                " Table 25.10)."
+            )
+        else:
+            msg = (
+                f"n_points must be odd (got {n_points}). Odd n guarantees"
+                f" a grid point exactly at {mean_label}."
+            )
+        raise GridInitializationError(msg)
+    if gauss_hermite and n_std is not None:
+        msg = "gauss_hermite=True and n_std are mutually exclusive."
+        raise GridInitializationError(msg)
+
+
+def _gauss_hermite_param_field_names(
+    shock: _ShockGrid, *, gauss_hermite: bool
+) -> tuple[str, ...]:
+    """Return parameter field names, excluding `gauss_hermite` and (if GH) `n_std`."""
+    exclude = {"n_points", "gauss_hermite"}
+    if gauss_hermite:
+        exclude.add("n_std")
+    return tuple(f.name for f in fields(shock) if f.name not in exclude)

@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm import AgeGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import AgeGrid, LinSpacedGrid, Model, Regime, RegimeTransition, categorical
 from lcm.grids import IrregSpacedGrid
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
 
@@ -53,7 +53,7 @@ def _make_model(*, wealth_grid=None):
         states={"wealth": dataclasses.replace(wealth_grid, transition=_next_wealth)},
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
-        transition=_next_regime,
+        transition=RegimeTransition(_next_regime),
         active=lambda age: age < 2,
     )
     dead = Regime(

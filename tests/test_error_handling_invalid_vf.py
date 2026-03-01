@@ -1,7 +1,7 @@
 import jax.numpy as jnp
 import pytest
 
-from lcm import Model, Regime, categorical
+from lcm import Model, Regime, RegimeTransition, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError
 from lcm.grids import LinSpacedGrid
@@ -80,7 +80,7 @@ def regimes_and_ages(n_periods: int) -> tuple[dict[str, Regime], AgeGrid]:
         constraints={
             "borrowing_constraint": borrowing_constraint,
         },
-        transition=next_regime,
+        transition=RegimeTransition(next_regime),
         active=lambda age, n=n_periods: age < n - 1,
     )
 

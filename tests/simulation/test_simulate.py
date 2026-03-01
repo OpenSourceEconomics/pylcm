@@ -46,7 +46,7 @@ def simulate_inputs():
     regime_names_to_ids = MappingProxyType(
         {name: idx for idx, name in enumerate(regimes.keys())}
     )
-    internal_regimes = process_regimes(
+    internal_regimes, _params_template = process_regimes(
         regimes=regimes,
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
@@ -63,15 +63,10 @@ def simulate_inputs():
 def test_simulate_using_raw_inputs(simulate_inputs):
     internal_params = MappingProxyType(
         {
-            "working": MappingProxyType(
-                {
-                    "H__discount_factor": 1.0,
-                    "utility__disutility_of_work": 1.0,
-                    "next_wealth__interest_rate": 0.05,
-                    "next_regime__final_age_alive": 0,
-                }
-            ),
-            "dead": MappingProxyType({}),
+            "working__H__discount_factor": 1.0,
+            "working__utility__disutility_of_work": 1.0,
+            "working__next_wealth__interest_rate": 0.05,
+            "working__next_regime__final_age_alive": 0,
         }
     )
 

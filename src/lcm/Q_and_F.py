@@ -57,7 +57,8 @@ def get_Q_and_F(
     # Generate dynamic functions
     # ----------------------------------------------------------------------------------
     U_and_F = _get_U_and_F(internal_functions)
-    regime_transition_probs_func = internal_functions.regime_transition_probs.solve  # ty: ignore[unresolved-attribute]
+    assert internal_functions.regime_transition_probs is not None  # noqa: S101
+    regime_transition_probs_func = internal_functions.regime_transition_probs.solve
     stochastic_transition_names = internal_functions.stochastic_transition_names
     state_transitions = {}
     next_stochastic_states_weights = {}
@@ -96,7 +97,8 @@ def get_Q_and_F(
             stochastic_transition_names=stochastic_transition_names,
         )
         _scalar_next_V = get_value_function_representation(
-            next_state_space_infos[target_regime]
+            next_state_space_infos[target_regime],
+            regime_name=target_regime,
         )
         # Determine extra kwargs needed by next_V beyond next_states and next_V_arr
         # (e.g. wealth__points for IrregSpacedGrid with runtime-supplied points).
@@ -142,7 +144,7 @@ def get_Q_and_F(
             A tuple containing the arrays with state-action values and feasibilities.
 
         """
-        regime_transition_probs: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
+        regime_transition_probs: MappingProxyType[str, Array] = (
             regime_transition_probs_func(
                 **states_actions_params,
                 period=period,
@@ -203,10 +205,9 @@ def get_Q_and_F(
                 * next_V_expected_arr
             )
 
+        H_prefix = f"{regime_name}{QNAME_DELIMITER}H{QNAME_DELIMITER}"
         H_kwargs = {
-            k: v
-            for k, v in states_actions_params.items()
-            if k.startswith(f"H{QNAME_DELIMITER}")
+            k: v for k, v in states_actions_params.items() if k.startswith(H_prefix)
         }
         Q_arr = internal_functions.functions["H"](
             utility=U_arr, continuation_value=continuation_value, **H_kwargs

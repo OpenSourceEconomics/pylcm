@@ -13,7 +13,6 @@ from lcm.random import generate_simulation_keys
 from lcm.state_action_space import create_state_action_space
 from lcm.typing import (
     Bool1D,
-    FlatRegimeParams,
     Int1D,
     RegimeName,
     RegimeNamesToIds,
@@ -51,7 +50,6 @@ def create_regime_state_action_space(
     Args:
         internal_regime: The internal regime instance.
         states: The current states of all subjects.
-        subject_ids_in_regime: Indices of subjects in the current regime.
 
     Returns:
         The state-action space for the subjects in the regime.
@@ -78,7 +76,7 @@ def calculate_next_states(
     optimal_actions: MappingProxyType[str, Array],
     period: int,
     age: float,
-    regime_params: FlatRegimeParams,
+    model_params: MappingProxyType[str, bool | float | Array],
     states: MappingProxyType[str, Array],
     state_action_space: StateActionSpace,
     key: Array,
@@ -92,7 +90,7 @@ def calculate_next_states(
         optimal_actions: Optimal actions computed for these subjects.
         period: Current period.
         age: Age corresponding to current period.
-        regime_params: Flat regime parameters.
+        model_params: Flat model-level parameters with regime-prefixed keys.
         states: Current states for all subjects (all regimes).
         state_action_space: State-action space for subjects in this regime.
         key: JAX random key.
@@ -133,7 +131,7 @@ def calculate_next_states(
         **stochastic_variables_keys,
         period=period,
         age=age,
-        **regime_params,
+        **model_params,
     )
 
     # Update global states array with computed next states for subjects in regime
@@ -154,7 +152,7 @@ def calculate_next_regime_membership(
     optimal_actions: MappingProxyType[str, Array],
     period: int,
     age: float,
-    regime_params: FlatRegimeParams,
+    model_params: MappingProxyType[str, bool | float | Array],
     regime_names_to_ids: MappingProxyType[RegimeName, int],
     new_subject_regime_ids: Int1D,
     active_regimes_next_period: tuple[RegimeName, ...],
@@ -172,13 +170,12 @@ def calculate_next_regime_membership(
         optimal_actions: Optimal actions computed for these subjects.
         period: Current period.
         age: Age corresponding to current period.
-        regime_params: Flat regime parameters.
+        model_params: Flat model-level parameters with regime-prefixed keys.
         regime_names_to_ids: Mapping from regime names to integer IDs.
         new_subject_regime_ids: Array to update with next regime assignments.
         active_regimes_next_period: Tuple of active regime names in the next period.
         key: JAX random key.
         subjects_in_regime: Boolean array indicating if subject is in regime.
-
 
     Returns:
         Updated array of regime IDs with next period assignments for subjects in this
@@ -188,13 +185,14 @@ def calculate_next_regime_membership(
     """
     # Compute regime transition probabilities
     # ---------------------------------------------------------------------------------
-    regime_transition_probs: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
-        internal_regime.internal_functions.regime_transition_probs.simulate(  # ty: ignore[unresolved-attribute]
+    assert internal_regime.internal_functions.regime_transition_probs is not None  # noqa: S101
+    regime_transition_probs: MappingProxyType[str, Array] = (
+        internal_regime.internal_functions.regime_transition_probs.simulate(
             **state_action_space.states,
             **optimal_actions,
             period=period,
             age=age,
-            **regime_params,
+            **model_params,
         )
     )
     normalized_regime_transition_probs = normalize_regime_transition_probs(
@@ -291,8 +289,10 @@ def _update_states_for_subjects(
     updated_states = dict(all_states)
     for next_state_name, next_state_values in computed_next_states.items():
         # State names may be prefixed with regime (e.g., "working__next_wealth")
-        # We need to replace "next_" with "" to get "working__wealth"
-        state_name = next_state_name.replace("next_", "")
+        # We need to strip "next_" from the final component to get "working__wealth"
+        parts = next_state_name.split("__")
+        parts[-1] = parts[-1].removeprefix("next_")
+        state_name = "__".join(parts)
         updated_states[state_name] = jnp.where(
             subject_indices,
             next_state_values,

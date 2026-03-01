@@ -1,0 +1,13 @@
+review_context_count = 2   # Recent reviews to include as context
+review_guidelines = """
+Always run python and checks via pixi and prek:
+- `pixi run -e tests-cpu ty`
+- `pixi run -e tests-cpu tests`
+- `prek run --all-files`
+
+All docstrings use mystmd syntax
+
+This is Python 3.14 only. `except ValueError, TypeError` is perfectly valid syntax.
+
+Read CLAUDE.md for further instructions.
+"""

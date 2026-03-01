@@ -46,7 +46,7 @@ def simulate(
     """Simulate the model forward in time given pre-computed value function arrays.
 
     Args:
-        internal_params: Immutable mapping of regime names to flat parameter mappings.
+        internal_params: Flat model-level parameter mapping with regime-prefixed keys.
         initial_states: Flat mapping of state names to arrays. All arrays must have
             the same length (number of subjects). Each state name should correspond to
             a state variable defined in at least one regime.
@@ -216,7 +216,7 @@ def _simulate_regime_in_period(
         **state_action_space.discrete_actions,
         **state_action_space.continuous_actions,
         next_V_arr=next_V_arr,
-        **internal_params[regime_name],
+        **internal_params,
     )
     validate_value_function_array(V_arr=V_arr, age=age)
 
@@ -255,7 +255,7 @@ def _simulate_regime_in_period(
             optimal_actions=optimal_actions,
             period=period,
             age=age,
-            regime_params=internal_params[regime_name],
+            model_params=internal_params,
             states=states,
             state_action_space=state_action_space,
             key=next_states_key,
@@ -268,7 +268,7 @@ def _simulate_regime_in_period(
             optimal_actions=optimal_actions,
             period=period,
             age=age,
-            regime_params=internal_params[regime_name],
+            model_params=internal_params,
             regime_names_to_ids=regime_names_to_ids,
             new_subject_regime_ids=new_subject_regime_ids,
             active_regimes_next_period=active_regimes_next_period,

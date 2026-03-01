@@ -56,11 +56,10 @@ type UserParams = Mapping[
     ],
 ]
 
-# Internal regime parameters: A flat mapping with function-qualified names.
-# Keys are always function-qualified (e.g., "utility__risk_aversion",
-# "H__discount_factor"). Values are scalars or arrays.
-type FlatRegimeParams = MappingProxyType[str, bool | float | Array]
-type InternalParams = MappingProxyType[RegimeName, FlatRegimeParams]
+# Internal model parameters: A flat mapping with regime-and-function-qualified names.
+# Keys are always regime-prefixed (e.g., "working__utility__risk_aversion",
+# "working__H__discount_factor"). Values are scalars or arrays.
+type InternalParams = MappingProxyType[str, bool | float | Array]
 
 # Immutable templates, used internally
 type RegimeParamsTemplate = MappingProxyType[
@@ -103,7 +102,7 @@ class InternalUserFunction(Protocol):
 class RegimeTransitionFunction(Protocol):
     """The regime transition function provided by the user.
 
-    Returns an array of transition probabilities indexed by regime ID.
+    Returns a mapping from regime names to transition probabilities.
 
     Only used for type checking.
 
@@ -113,13 +112,13 @@ class RegimeTransitionFunction(Protocol):
         self,
         *args: Array | float,
         **kwargs: Array | float,
-    ) -> Float1D: ...
+    ) -> MappingProxyType[str, Array]: ...
 
 
 class VmappedRegimeTransitionFunction(Protocol):
     """The vmapped regime transition function.
 
-    Returns a 2D array of transition probabilities with shape [n_regimes, n_subjects].
+    Returns a mapping from regime names to transition probability arrays.
 
     Only used for type checking.
 
@@ -129,7 +128,7 @@ class VmappedRegimeTransitionFunction(Protocol):
         self,
         *args: Array | float,
         **kwargs: Array | float,
-    ) -> FloatND: ...
+    ) -> MappingProxyType[str, Array]: ...
 
 
 class QAndFFunction(Protocol):

@@ -85,12 +85,14 @@ class AgeGrid:
             self._step_size = None
             self._precise_step_size = None
         else:
-            self._precise_step_size = parse_step(step)  # ty: ignore[invalid-argument-type]
+            assert start is not None  # noqa: S101
+            assert stop is not None  # noqa: S101
+            assert step is not None  # noqa: S101
+            self._precise_step_size = parse_step(step)
             self._step_size = float(self._precise_step_size)
-            n_steps = int((stop - start) // self._precise_step_size) + 1  # ty: ignore[unsupported-operator]
+            n_steps = int((stop - start) // self._precise_step_size) + 1
             self._precise_values = tuple(
-                start + i * self._precise_step_size  # ty: ignore[unsupported-operator]
-                for i in range(n_steps)
+                start + i * self._precise_step_size for i in range(n_steps)
             )
             self._values = jnp.array([float(age) for age in self._precise_values])
 
@@ -187,8 +189,8 @@ def _validate_age_grid(
 
     if has_values and has_range:
         error_messages.append("Cannot specify both 'values' and 'start/stop/step'.")
-    elif has_values:
-        error_messages.extend(_validate_values(precise_values))  # ty: ignore[invalid-argument-type]
+    elif precise_values is not None:
+        error_messages.extend(_validate_values(precise_values))
     elif has_range:
         if start is None or stop is None or step is None:
             error_messages.append(

@@ -42,7 +42,7 @@ def validate_initial_conditions(
         initial_regimes: List of regime names the subjects start in.
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
-        internal_params: Immutable mapping of regime names to flat parameter mappings.
+        internal_params: Flat model-level parameter mapping with regime-prefixed keys.
         ages: AgeGrid for the model.
 
     Raises:
@@ -268,7 +268,7 @@ def _collect_feasibility_errors(
         initial_regimes: List of regime names the subjects start in.
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
-        internal_params: Immutable mapping of regime names to flat parameter mappings.
+        internal_params: Flat model-level parameter mapping with regime-prefixed keys.
         ages: AgeGrid for the model.
 
     Returns:
@@ -285,7 +285,7 @@ def _collect_feasibility_errors(
 
         regime_params = {
             **internal_regime.resolved_fixed_params,
-            **dict(internal_params.get(regime_name, MappingProxyType({}))),
+            **dict(internal_params),
         }
 
         msg = _check_regime_feasibility(

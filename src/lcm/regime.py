@@ -22,6 +22,34 @@ from lcm.utils import (
 )
 
 
+@dataclass(frozen=True)
+class RegimeTransition:
+    """Deterministic regime transition (returns a regime index)."""
+
+    func: UserFunction
+
+    def __post_init__(self) -> None:
+        if not callable(self.func):
+            raise RegimeInitializationError(
+                "RegimeTransition.func must be callable, "
+                f"got {type(self.func).__name__}."
+            )
+
+
+@dataclass(frozen=True)
+class MarkovRegimeTransition:
+    """Stochastic regime transition (returns probability array over regimes)."""
+
+    func: UserFunction
+
+    def __post_init__(self) -> None:
+        if not callable(self.func):
+            raise RegimeInitializationError(
+                f"MarkovRegimeTransition.func must be callable, "
+                f"got {type(self.func).__name__}."
+            )
+
+
 def _default_H(
     utility: float, continuation_value: float, discount_factor: float
 ) -> float:
@@ -78,11 +106,8 @@ class Regime:
 
     """
 
-    transition: UserFunction | None
-    """Regime transition function, or `None` for terminal regimes."""
-
-    stochastic_transition: bool = False
-    """Whether the regime transition is stochastic (returns probability array)."""
+    transition: RegimeTransition | MarkovRegimeTransition | None
+    """Regime transition wrapper, or `None` for terminal regimes."""
 
     active: ActiveFunction = lambda _age: True
     """Callable that takes age (float) and returns True if regime is active."""
@@ -148,7 +173,7 @@ class Regime:
         )
         # Add regime transition
         if self.transition is not None:
-            result["next_regime"] = self.transition
+            result["next_regime"] = self.transition.func
         return MappingProxyType(result)
 
     def replace(self, **kwargs: Any) -> Regime:  # noqa: ANN401
@@ -208,10 +233,12 @@ def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
                 "constraints and functions must each be a mapping of callables."
             )
 
-    # Validate regime transition is callable if provided
-    if regime.transition is not None and not callable(regime.transition):
+    # Validate regime transition type
+    if regime.transition is not None and not isinstance(
+        regime.transition, (RegimeTransition, MarkovRegimeTransition)
+    ):
         error_messages.append(
-            "transition must be a callable or None, "
+            "transition must be a RegimeTransition, MarkovRegimeTransition, or None, "
             f"but is {type(regime.transition).__name__}."
         )
 
@@ -246,11 +273,6 @@ def _validate_logical_consistency(regime: Regime) -> None:
             f"State and action names cannot contain the reserved separator "
             f"'{QNAME_DELIMITER}'. The following names are invalid: "
             f"{invalid_variable_names}.",
-        )
-
-    if regime.stochastic_transition and regime.terminal:
-        error_messages.append(
-            "Terminal regimes (transition=None) cannot have stochastic_transition=True."
         )
 
     if "utility" not in regime.functions:
@@ -324,8 +346,10 @@ def _collect_state_transitions(
 
     For each state grid, produces an entry `f"next_{name}"` mapped to:
     - A stochastic stub for `_ShockGrid` types,
-    - The grid's `transition` attribute if present, or
-    - An auto-generated identity transition for fixed states.
+    - The grid's `transition` attribute if it's a single callable, or
+    - An auto-generated identity transition for fixed states (`None`) or for states
+      with boundary-keyed mapping transitions (the per-boundary functions are resolved
+      separately in `_extract_transitions_from_regime`).
 
     """
     transitions: dict[str, UserFunction] = {}
@@ -333,9 +357,21 @@ def _collect_state_transitions(
         if isinstance(grid, _ShockGrid):
             transitions[f"next_{name}"] = lambda: None
         elif isinstance(grid, DiscreteMarkovGrid):
-            # DiscreteMarkovGrid.__init__ guarantees transition is callable
-            transitions[f"next_{name}"] = grid.transition
-        elif callable(grid_transition := getattr(grid, "transition", None)):
+            transition = grid.transition
+            if isinstance(transition, Mapping):
+                # Mapping form: generate identity placeholder; actual per-boundary
+                # functions are resolved in regime_processing.
+                transitions[f"next_{name}"] = _make_identity_fn(
+                    name, annotation=DiscreteState
+                )
+            else:
+                transitions[f"next_{name}"] = transition
+        elif isinstance(grid_transition := getattr(grid, "transition", None), Mapping):
+            # Mapping form: generate identity placeholder; actual per-boundary
+            # functions are resolved in regime_processing.
+            ann = DiscreteState if isinstance(grid, DiscreteGrid) else ContinuousState
+            transitions[f"next_{name}"] = _make_identity_fn(name, annotation=ann)
+        elif callable(grid_transition):
             transitions[f"next_{name}"] = grid_transition
         else:
             ann = DiscreteState if isinstance(grid, DiscreteGrid) else ContinuousState

@@ -11,10 +11,7 @@ from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, format_messages
-from lcm.input_processing.params_processing import (
-    create_params_template,
-    process_params,
-)
+from lcm.input_processing.params_processing import process_params
 from lcm.input_processing.regime_processing import InternalRegime, process_regimes
 from lcm.input_processing.util import get_variable_info
 from lcm.interfaces import PhaseVariantContainer
@@ -303,19 +300,18 @@ def _build_regimes_and_template(
     so that each result is computed exactly once.
 
     """
-    internal_regimes = process_regimes(
+    internal_regimes, params_template = process_regimes(
         regimes=regimes,
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=enable_jit,
     )
-    params_template = create_params_template(internal_regimes)
 
     if fixed_params:
         fixed_internal = _resolve_fixed_params(
             fixed_params=dict(fixed_params), template=params_template
         )
-        if any(v for v in fixed_internal.values()):
+        if fixed_internal:
             internal_regimes = _partial_fixed_params_into_regimes(
                 internal_regimes=internal_regimes, fixed_internal=fixed_internal
             )
@@ -371,7 +367,7 @@ def _validate_model_inputs(
     regime_names = sorted(regimes.keys())
     if regime_id_fields != regime_names:
         error_messages.append(
-            f"regime_id_cls fields must match regime names.\n Got:"
+            f"regime_id_cls fields must match regime names.\nGot:\n"
             "regime_id_cls fields:\n"
             f"    {regime_id_fields}\n"
             "regime names:\n"
@@ -468,6 +464,8 @@ def _resolve_fixed_params(
     Like process_params, supports model/regime/function level specification, but
     does NOT require all template keys to be present — only matches what's provided.
 
+    Returns a flat model-level mapping with regime-prefixed keys.
+
     """
     template_flat = flatten_regime_namespace(template)
     params_flat = flatten_regime_namespace(fixed_params)
@@ -493,16 +491,7 @@ def _resolve_fixed_params(
             f"Unknown keys in fixed_params: {sorted(unknown)}"
         )
 
-    # Split by regime
-    result: dict[str, dict[str, object]] = {}
-    for key, value in result_flat.items():
-        regime_name, remainder = key.split(QNAME_DELIMITER, 1)
-        result.setdefault(regime_name, {})[remainder] = value
-
-    for regime_name in template:
-        result.setdefault(regime_name, {})
-
-    return ensure_containers_are_immutable(result)  # ty: ignore[invalid-return-type]
+    return ensure_containers_are_immutable(result_flat)  # ty: ignore[invalid-return-type]
 
 
 def _remove_fixed_from_template(
@@ -518,13 +507,13 @@ def _remove_fixed_from_template(
     """
     result: dict[str, dict[str, dict[str, type | tuple[int, ...]]]] = {}
     for regime_name, regime_template in template.items():
-        regime_fixed = fixed_internal.get(regime_name, MappingProxyType({}))
         new_regime: dict[str, dict[str, type | tuple[int, ...]]] = {}
         for func_name, func_params in regime_template.items():
             new_func_params = {
                 param_name: param_type
                 for param_name, param_type in func_params.items()
-                if f"{func_name}{QNAME_DELIMITER}{param_name}" not in regime_fixed
+                if QNAME_DELIMITER.join((regime_name, func_name, param_name))
+                not in fixed_internal
             }
             if new_func_params:
                 new_regime[func_name] = new_func_params
@@ -541,29 +530,36 @@ def _partial_fixed_params_into_regimes(
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     fixed_internal: InternalParams,
 ) -> MappingProxyType[RegimeName, InternalRegime]:
-    """Partial fixed params into all compiled functions on each InternalRegime."""
+    """Partial fixed params into all compiled functions on each InternalRegime.
+
+    Partials the full model-level fixed params dict into every compiled function.
+    Q-functions and next-state functions use `allow_only_kwargs(enforce=False)`
+    wrappers that silently ignore extra kwargs, so the full unfiltered dict is
+    safe. `regime_transition_probs` lacks this wrapper, so we filter to matching
+    kwargs to avoid signature mismatches in `inspect.signature`.
+
+    """
+    model_fixed = dict(fixed_internal)
+    if not model_fixed:
+        return internal_regimes
+
     result = {}
     for name, regime in internal_regimes.items():
-        regime_fixed = dict(fixed_internal.get(name, MappingProxyType({})))
-        if not regime_fixed:
-            result[name] = regime
-            continue
-
         # Partial into per-period solve functions
         new_max_Q = {
-            period: functools.partial(func, **regime_fixed)
+            period: functools.partial(func, **model_fixed)
             for period, func in regime.max_Q_over_a_functions.items()
         }
 
         # Partial into per-period simulate functions
         new_argmax_max_Q = {
-            period: functools.partial(func, **regime_fixed)
+            period: functools.partial(func, **model_fixed)
             for period, func in regime.argmax_and_max_Q_over_a_functions.items()
         }
 
         # Partial into next-state simulation function
         new_next_state = functools.partial(
-            regime.next_state_simulation_function, **regime_fixed
+            regime.next_state_simulation_function, **model_fixed
         )
 
         # Partial into regime transition probs — only include params that the
@@ -574,14 +570,14 @@ def _partial_fixed_params_into_regimes(
                 solve=functools.partial(
                     regime.regime_transition_probs.solve,
                     **_filter_kwargs_for_func(
-                        func=regime.regime_transition_probs.solve, kwargs=regime_fixed
+                        func=regime.regime_transition_probs.solve, kwargs=model_fixed
                     ),
                 ),
                 simulate=functools.partial(
                     regime.regime_transition_probs.simulate,
                     **_filter_kwargs_for_func(
                         func=regime.regime_transition_probs.simulate,
-                        kwargs=regime_fixed,
+                        kwargs=model_fixed,
                     ),
                 ),
             )
@@ -603,7 +599,7 @@ def _partial_fixed_params_into_regimes(
             next_state_simulation_function=new_next_state,
             regime_transition_probs=new_regime_tp,
             internal_functions=new_internal_functions,
-            resolved_fixed_params=MappingProxyType(regime_fixed),
+            resolved_fixed_params=MappingProxyType(model_fixed),
         )
     return MappingProxyType(result)
 

@@ -29,7 +29,7 @@ class InternalRegimeMock:
     max_Q_over_a_functions: dict[int, MaxQOverAFunction]
     active_periods: list[int]
 
-    def state_action_space(self, regime_params):  # noqa: ARG002
+    def state_action_space(self, model_params):  # noqa: ARG002
         return self._base_state_action_space
 
 
@@ -115,7 +115,7 @@ def test_solve_brute():
     )
 
     solution = solve(
-        internal_params=MappingProxyType({"default": internal_params}),
+        internal_params=internal_params,
         ages=AgeGrid(start=0, stop=2, step="Y"),
         internal_regimes={"default": internal_regime},  # ty: ignore[invalid-argument-type]
         logger=get_logger(debug_mode=False),
@@ -171,7 +171,7 @@ def test_solve_brute_single_period_Qc_arr():
     )
 
     got = solve(
-        internal_params=MappingProxyType({"default": MappingProxyType({})}),
+        internal_params=MappingProxyType({}),
         ages=AgeGrid(start=0, stop=2, step="Y"),
         internal_regimes={"default": internal_regime},  # ty: ignore[invalid-argument-type]
         logger=get_logger(debug_mode=False),
