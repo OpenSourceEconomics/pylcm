@@ -166,7 +166,20 @@ def test_discrete_state_different_categories_with_mapping_transition():
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=RegimeId,
     )
-    model.solve(params)
+    V_arr_dict = model.solve(params)
+    result = model.simulate(
+        params=params,
+        initial_states={
+            "age": jnp.array([0.0, 0.0]),
+            "health": jnp.array([HealthWorkingLife.disabled, HealthWorkingLife.bad]),
+        },
+        initial_regimes=["working", "working"],
+        V_arr_dict=V_arr_dict,
+    )
+    df = result.to_dataframe(use_labels=False)
+    retired_rows = df[df["regime"] == "retired"]
+    valid_codes = {HealthRetirement.bad, HealthRetirement.good}
+    assert set(retired_rows["health"].unique()).issubset(valid_codes)
 
 
 # ======================================================================================

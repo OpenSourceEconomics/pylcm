@@ -3,7 +3,7 @@ from collections.abc import Mapping
 import dags.tree as dt
 from jax import Array
 
-from lcm.exceptions import InvalidNameError
+from lcm.exceptions import InvalidNameError, ModelInitializationError
 from lcm.grids import IrregSpacedGrid
 from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
@@ -89,11 +89,26 @@ def _discover_mapping_transition_params(
         if not isinstance(trans, Mapping):
             continue
         next_name = f"next_{state_name}"
+        all_params: list[dict[str, type]] = []
         for func in trans.values():
             if func is None or not callable(func):
                 continue
             tree = dt.create_tree_with_input_types({next_name: func})
             params = {k: v for k, v in sorted(tree.items()) if k not in variables}
+            all_params.append(params)
+
+        if len(all_params) > 1:
+            first = all_params[0]
+            for other in all_params[1:]:
+                if other != first:
+                    msg = (
+                        f"All per-boundary mapping transition callables for "
+                        f"'{state_name}' must have the same parameter signature. "
+                        f"Got {first} and {other}."
+                    )
+                    raise ModelInitializationError(msg)
+
+        for params in all_params:
             if params:
                 existing = dict(function_params.get(next_name, {}))
                 existing.update(params)

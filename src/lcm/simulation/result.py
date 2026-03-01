@@ -520,6 +520,8 @@ def _extract_period_data(
 
 def _concatenate_and_filter(period_dicts: list[dict[str, Array]]) -> dict[str, Array]:
     """Concatenate period data and filter to in-regime subjects."""
+    assert all(d.keys() == period_dicts[0].keys() for d in period_dicts[1:])  # noqa: S101
+
     keys = [k for k in period_dicts[0] if k != "_in_regime"]
 
     concatenated = {

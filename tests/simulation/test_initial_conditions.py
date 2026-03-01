@@ -402,7 +402,7 @@ def test_irreg_spaced_grid_with_runtime_points():
     with pytest.raises(InvalidInitialConditionsError):
         model.solve_and_simulate(
             params=params,
-            initial_states={"wealth": jnp.array([0.3])},
+            initial_states={"age": jnp.array([0.0]), "wealth": jnp.array([0.3])},
             initial_regimes=["working"],
         )
 
