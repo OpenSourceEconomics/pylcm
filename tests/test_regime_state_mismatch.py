@@ -460,6 +460,9 @@ def test_boundary_transition_uses_target_regime_params() -> None:
         f"Expected wealth ~{expected:.1f} (target growth_rate=0.10), "
         f"got {first_phase2_wealth:.1f}"
     )
+    assert first_phase2_wealth != pytest.approx(last_phase1_wealth * 1.05, rel=0.03), (
+        "Transition should use target growth_rate=0.10, not source growth_rate=0.05"
+    )
 
 
 def test_boundary_transition_with_target_only_param() -> None:

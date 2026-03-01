@@ -325,8 +325,11 @@ def test_ar1_draw_shock_unconditional_moments(grid_cls):
     "grid_cls_and_kwargs",
     [
         (lcm.shocks.iid.Normal, {"gauss_hermite": True}),
+        (lcm.shocks.iid.Normal, {"gauss_hermite": False, "n_std": 3.0}),
         (lcm.shocks.iid.LogNormal, {"gauss_hermite": True}),
+        (lcm.shocks.iid.LogNormal, {"gauss_hermite": False, "n_std": 3.0}),
         (lcm.shocks.ar1.Tauchen, {"gauss_hermite": True}),
+        (lcm.shocks.ar1.Tauchen, {"gauss_hermite": False, "n_std": 3.0}),
         (lcm.shocks.ar1.Rouwenhorst, {}),
     ],
 )

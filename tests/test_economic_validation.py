@@ -37,9 +37,9 @@ def _solve_and_simulate(shock_type, *, sigma, rho=0.0, mu=0.0):
 
 
 def _mean_wealth_in_final_alive_period(df):
-    return df[(df["period"] == _N_PERIODS - 1) & (df["regime"] == "alive")][
-        "wealth"
-    ].mean()
+    rows = df[(df["period"] == _N_PERIODS - 1) & (df["regime"] == "alive")]
+    assert len(rows) > 0, "No rows in final alive period"
+    return rows["wealth"].mean()
 
 
 # ======================================================================================

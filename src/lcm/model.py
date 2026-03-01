@@ -533,8 +533,10 @@ def _partial_fixed_params_into_regimes(
     """Partial fixed params into all compiled functions on each InternalRegime.
 
     Partials the full model-level fixed params dict into every compiled function.
-    Each function's `allow_only_kwargs` wrapper filters at call time, so extra
-    params from other regimes are silently ignored.
+    Q-functions and next-state functions use `allow_only_kwargs(enforce=False)`
+    wrappers that silently ignore extra kwargs, so the full unfiltered dict is
+    safe. `regime_transition_probs` lacks this wrapper, so we filter to matching
+    kwargs to avoid signature mismatches in `inspect.signature`.
 
     """
     model_fixed = dict(fixed_internal)

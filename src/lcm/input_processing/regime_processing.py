@@ -454,6 +454,7 @@ def _extract_transitions_from_regime(
         target_regime = all_regimes[target_name]
         boundary_key = (regime_name, target_name)
         boundary_transitions: dict[str, UserFunction] = {}
+        boundary_target_originated: set[str] = set()
         missing_states: list[str] = []
 
         for state_name in target_state_names:
@@ -469,10 +470,12 @@ def _extract_transitions_from_regime(
                 resolved, is_target_originated = result
                 boundary_transitions[f"next_{state_name}"] = resolved
                 if is_target_originated:
-                    target_originated.add(f"{target_name}__next_{state_name}")
+                    boundary_target_originated.add(f"{target_name}__next_{state_name}")
 
         if missing_states:
             continue
+
+        target_originated.update(boundary_target_originated)
 
         _validate_discrete_category_compatibility(
             boundary_key=boundary_key,
