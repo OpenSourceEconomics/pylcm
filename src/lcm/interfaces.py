@@ -257,14 +257,11 @@ class InternalRegime:
                 )
                 if not all_present:
                     continue
-                shock_kw: dict[str, float] = dict(spec.params)
+                shock_kw: dict[str, float | Array] = dict(spec.params)
                 for p in spec.params_to_pass_at_runtime:
-                    shock_kw[p] = float(
-                        all_params[
-                            f"{self.name}{QNAME_DELIMITER}"
-                            f"{state_name}{QNAME_DELIMITER}{p}"
-                        ]
-                    )
+                    shock_kw[p] = all_params[
+                        f"{self.name}{QNAME_DELIMITER}{state_name}{QNAME_DELIMITER}{p}"
+                    ]
                 replacements[state_name] = spec.compute_gridpoints(
                     spec.n_points,
                     **shock_kw,
