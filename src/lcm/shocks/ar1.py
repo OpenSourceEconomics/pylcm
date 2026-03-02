@@ -142,15 +142,6 @@ class Rouwenhorst(_ShockGridAR1):
     mu: float | None = None
     """Intercept (drift) of the AR(1) process."""
 
-    def __post_init__(self) -> None:
-        if self.n_points % 2 == 0:
-            msg = (
-                f"n_points must be odd (got {self.n_points}). Odd n guarantees a"
-                " quadrature node at the mean (Abramowitz & Stegun, 1972,"
-                " Table 25.10)."
-            )
-            raise GridInitializationError(msg)
-
     def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
         rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
         nu = jnp.sqrt((n_points - 1) / (1 - rho**2)) * sigma

@@ -293,11 +293,10 @@ def test_ar1_draw_shock_unconditional_moments(grid_cls):
         (lcm.shocks.iid.Normal, {"gauss_hermite": True}),
         (lcm.shocks.iid.LogNormal, {"gauss_hermite": True}),
         (lcm.shocks.ar1.Tauchen, {"gauss_hermite": True}),
-        (lcm.shocks.ar1.Rouwenhorst, {}),
     ],
 )
 def test_even_n_points_rejected(grid_cls_and_kwargs):
-    """Normal, LogNormal, Tauchen, and Rouwenhorst reject even n_points."""
+    """Gauss-Hermite grids reject even n_points."""
     grid_cls, extra_kw = grid_cls_and_kwargs
     with pytest.raises(GridInitializationError, match="n_points must be odd"):
         grid_cls(n_points=4, **extra_kw)
