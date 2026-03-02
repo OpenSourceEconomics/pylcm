@@ -17,10 +17,7 @@ from lcm.grids import DiscreteMarkovGrid, Grid, _DiscreteGridBase
 from lcm.input_processing.create_regime_params_template import (
     create_regime_params_template,
 )
-from lcm.input_processing.params_processing import (
-    create_params_template,
-    get_flat_param_names,
-)
+from lcm.input_processing.params_processing import validate_params_template
 from lcm.input_processing.regime_components import (
     build_argmax_and_max_Q_over_a_functions,
     build_max_Q_over_a_functions,
@@ -141,25 +138,21 @@ def process_regimes(
     # ----------------------------------------------------------------------------------
     # Stage 2: Initialize regime components that depend on other regimes
     # ----------------------------------------------------------------------------------
-    all_regime_params_templates = MappingProxyType(
+    params_template: ParamsTemplate = ensure_containers_are_immutable(
         {
             name: create_regime_params_template(regime)
             for name, regime in regimes.items()
         }
     )
 
-    params_template = create_params_template(all_regime_params_templates)
+    validate_params_template(params_template)
 
     # Compute model-level flat param names (shared across all regimes)
-    all_flat_param_names = frozenset(
-        f"{rname}{QNAME_DELIMITER}{qname}"
-        for rname, template in all_regime_params_templates.items()
-        for qname in get_flat_param_names(template)
-    )
+    flat_param_names = frozenset(flatten_regime_namespace(params_template))
 
     internal_regimes = {}
     for name, regime in regimes.items():
-        regime_params_template = all_regime_params_templates[name]
+        regime_params_template = params_template[name]
 
         internal_functions = _get_internal_functions(
             regime=regime,
@@ -171,9 +164,9 @@ def process_regimes(
             gridspecs=gridspecs[name],
             variable_info=variable_info[name],
             enable_jit=enable_jit,
-            all_regime_params_templates=all_regime_params_templates,
+            all_regime_params_templates=params_template,
             target_originated_transitions=target_originated_per_regime[name],
-            all_flat_param_names=all_flat_param_names,
+            all_flat_param_names=flat_param_names,
         )
 
         Q_and_F_functions = build_Q_and_F_functions(
@@ -183,7 +176,7 @@ def process_regimes(
             internal_functions=internal_functions,
             state_space_infos=state_space_infos,
             ages=ages,
-            flat_param_names=all_flat_param_names,
+            flat_param_names=flat_param_names,
         )
         max_Q_over_a_functions = build_max_Q_over_a_functions(
             state_action_space=state_action_spaces[name],
@@ -200,7 +193,7 @@ def process_regimes(
             grids=grids,
             gridspecs=gridspecs[name],
             variable_info=variable_info[name],
-            flat_param_names=all_flat_param_names,
+            flat_param_names=flat_param_names,
             enable_jit=enable_jit,
         )
 
@@ -219,7 +212,7 @@ def process_regimes(
             regime_transition_probs=internal_functions.regime_transition_probs,
             internal_functions=internal_functions,
             transitions=internal_functions.transitions,
-            flat_param_names=all_flat_param_names,
+            flat_param_names=flat_param_names,
             state_space_info=state_space_infos[name],
             max_Q_over_a_functions=MappingProxyType(max_Q_over_a_functions),
             argmax_and_max_Q_over_a_functions=MappingProxyType(

@@ -180,7 +180,7 @@ class DiscreteMarkovGrid(_DiscreteGridBase):
         ),
     ) -> None:
         if isinstance(transition, Mapping):
-            _validate_transition_mapping(transition, allow_none_values=False)
+            _validate_transition_mapping(transition, allow_none_values=False)  # ty: ignore[invalid-argument-type]
         elif not callable(transition):
             raise GridInitializationError(
                 f"DiscreteMarkovGrid requires a callable transition, "
@@ -671,7 +671,7 @@ def _validate_transition(
 
     """
     if isinstance(transition, Mapping):
-        _validate_transition_mapping(transition, allow_none_values=True)
+        _validate_transition_mapping(transition, allow_none_values=True)  # ty: ignore[invalid-argument-type]
         return
 
     if not (

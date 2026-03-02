@@ -6,8 +6,8 @@ import pytest
 
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.input_processing.params_processing import (
-    create_params_template,
     process_params,
+    validate_params_template,
 )
 
 
@@ -175,7 +175,7 @@ def test_ambiguous_model_regime_level(params_template):
 
 
 # ======================================================================================
-# Tests for name validation in create_params_template
+# Tests for name validation in validate_params_template
 # ======================================================================================
 
 
@@ -189,7 +189,7 @@ def test_function_params_no_qname_separator():
         }
     )
     with pytest.raises(InvalidNameError):
-        create_params_template(templates)
+        validate_params_template(templates)
 
 
 def test_regime_name_no_qname_separator():
@@ -202,7 +202,7 @@ def test_regime_name_no_qname_separator():
         }
     )
     with pytest.raises(InvalidNameError):
-        create_params_template(templates)
+        validate_params_template(templates)
 
 
 def test_function_name_no_qname_separator():
@@ -215,7 +215,7 @@ def test_function_name_no_qname_separator():
         }
     )
     with pytest.raises(InvalidNameError):
-        create_params_template(templates)
+        validate_params_template(templates)
 
 
 def test_regime_function_names_disjoint():
@@ -228,7 +228,7 @@ def test_regime_function_names_disjoint():
         }
     )
     with pytest.raises(InvalidNameError):
-        create_params_template(templates)
+        validate_params_template(templates)
 
 
 def test_regime_argument_names_disjoint():
@@ -241,7 +241,7 @@ def test_regime_argument_names_disjoint():
         }
     )
     with pytest.raises(InvalidNameError):
-        create_params_template(templates)
+        validate_params_template(templates)
 
 
 # ======================================================================================

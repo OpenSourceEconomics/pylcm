@@ -1,8 +1,7 @@
 """Process user-provided params into internal params."""
 
 from collections.abc import Mapping
-from types import MappingProxyType
-from typing import Any, cast
+from typing import cast
 
 from dags.tree import QNAME_DELIMITER
 
@@ -10,8 +9,6 @@ from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.typing import (
     InternalParams,
     ParamsTemplate,
-    RegimeName,
-    RegimeParamsTemplate,
     UserParams,
 )
 from lcm.utils import (
@@ -102,34 +99,24 @@ def process_params(
     return cast("InternalParams", ensure_containers_are_immutable(result_flat))
 
 
-def create_params_template(  # noqa: C901
-    all_regime_params_templates: MappingProxyType[RegimeName, RegimeParamsTemplate],
-) -> ParamsTemplate:
-    """Create params_template from regime parameter templates and validate uniqueness.
+def validate_params_template(params_template: ParamsTemplate) -> None:  # noqa: C901
+    """Validate regime parameter templates for uniqueness and naming rules.
 
-    This function validates that regime names, function names, and argument names
+    Validate that regime names, function names, and argument names
     are disjoint sets to enable unambiguous parameter propagation.
 
     Args:
         all_regime_params_templates: Immutable mapping of regime names to their
             parameter templates.
 
-    Returns:
-        The parameter template.
-
     Raises:
         InvalidNameError: If names are not disjoint or contain the separator.
 
     """
-    template: dict[str, Any] = {}
-    regime_names: set[str] = set()
     function_names: set[str] = set()
     arg_names: set[str] = set()
 
-    for name, regime_template in all_regime_params_templates.items():
-        regime_names.add(name)
-        template[name] = dict(regime_template)
-
+    for name, regime_template in params_template.items():
         for key, val in regime_template.items():
             if isinstance(val, (dict, Mapping)):
                 function_names.add(key)
@@ -148,7 +135,7 @@ def create_params_template(  # noqa: C901
                 )
 
     # Check for separator in regime names
-    for name in regime_names:
+    for name in params_template:
         if QNAME_DELIMITER in name:
             raise InvalidNameError(
                 f"Regime name {name!r} cannot contain the separator '{QNAME_DELIMITER}'"
@@ -163,47 +150,16 @@ def create_params_template(  # noqa: C901
             )
 
     # Check that names are disjoint
-    regime_func_overlap = regime_names & function_names
+    regime_func_overlap = set(params_template) & function_names
     if regime_func_overlap:
         raise InvalidNameError(
             f"Regime names and function names must be disjoint. "
             f"Overlap: {sorted(regime_func_overlap)}"
         )
 
-    regime_arg_overlap = regime_names & arg_names
+    regime_arg_overlap = set(params_template) & arg_names
     if regime_arg_overlap:
         raise InvalidNameError(
             f"Regime names and argument names must be disjoint. "
             f"Overlap: {sorted(regime_arg_overlap)}"
         )
-
-    # Note: Function names CAN overlap with argument names across regimes.
-    # This happens when a function output in one regime is a parameter in another.
-    # E.g., labor_income is a function in 'working' but a param in 'retired'.
-
-    return ensure_containers_are_immutable(template)
-
-
-def get_flat_param_names(
-    regime_params_template: RegimeParamsTemplate,
-    regime_name: str | None = None,
-) -> set[str]:
-    """Get all flat parameter names from a regime params template.
-
-    Converts nested template entries like {"utility": {"risk_aversion": type}} to
-    flat names like "utility__risk_aversion". When `regime_name` is provided,
-    produces regime-prefixed names like "working__utility__risk_aversion".
-
-    Args:
-        regime_params_template: The regime's parameter template.
-        regime_name: Optional regime name prefix. When provided, each name is
-            prefixed with `{regime_name}__`.
-
-    """
-    result = set()
-    prefix = f"{regime_name}{QNAME_DELIMITER}" if regime_name is not None else ""
-    for key, value in regime_params_template.items():
-        if isinstance(value, Mapping):
-            for param_name in value:
-                result.add(f"{prefix}{key}{QNAME_DELIMITER}{param_name}")
-    return result
