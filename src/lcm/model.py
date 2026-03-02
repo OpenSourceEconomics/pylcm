@@ -11,7 +11,7 @@ from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, format_messages
-from lcm.input_processing.params_processing import process_params
+from lcm.input_processing.params_processing import collapse_pair_keys, process_params
 from lcm.input_processing.regime_processing import InternalRegime, process_regimes
 from lcm.input_processing.util import get_variable_info
 from lcm.interfaces import PhaseVariantContainer
@@ -108,12 +108,14 @@ class Model:
             )
         )
         self.regimes = MappingProxyType(dict(regimes))
-        self.internal_regimes, self.params_template = _build_regimes_and_template(
-            regimes=regimes,
-            ages=self.ages,
-            regime_names_to_ids=self.regime_names_to_ids,
-            enable_jit=enable_jit,
-            fixed_params=self.fixed_params,
+        self.internal_regimes, self._internal_params_template, self.params_template = (
+            _build_regimes_and_template(
+                regimes=regimes,
+                ages=self.ages,
+                regime_names_to_ids=self.regime_names_to_ids,
+                enable_jit=enable_jit,
+                fixed_params=self.fixed_params,
+            )
         )
         self.enable_jit = enable_jit
 
@@ -178,7 +180,7 @@ class Model:
             Immutable mapping of period to a value function array for each regime.
         """
         internal_params = process_params(
-            params=params, params_template=self.params_template
+            params=params, params_template=self._internal_params_template
         )
         return solve(
             internal_params=internal_params,
@@ -224,7 +226,7 @@ class Model:
 
         """
         internal_params = process_params(
-            params=params, params_template=self.params_template
+            params=params, params_template=self._internal_params_template
         )
         if check_initial_conditions:
             validate_initial_conditions(
@@ -281,7 +283,7 @@ class Model:
 
         """
         internal_params = process_params(
-            params=params, params_template=self.params_template
+            params=params, params_template=self._internal_params_template
         )
         if check_initial_conditions:
             validate_initial_conditions(
@@ -317,14 +319,21 @@ def _build_regimes_and_template(
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
-) -> tuple[MappingProxyType[RegimeName, InternalRegime], ParamsTemplate]:
+) -> tuple[
+    MappingProxyType[RegimeName, InternalRegime], ParamsTemplate, ParamsTemplate
+]:
     """Build internal regimes and params template in a single pass.
 
     Composes regime processing, template creation, and optional fixed-param partialling
     so that each result is computed exactly once.
 
+    Returns:
+        Tuple of (internal_regimes, internal_params_template, user_params_template).
+        The internal template always uses pair keys; the user-facing template collapses
+        pair keys when all boundaries from a source regime are structurally identical.
+
     """
-    internal_regimes, params_template = process_regimes(
+    internal_regimes, internal_template = process_regimes(
         regimes=regimes,
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
@@ -333,17 +342,18 @@ def _build_regimes_and_template(
 
     if fixed_params:
         fixed_internal = _resolve_fixed_params(
-            fixed_params=dict(fixed_params), template=params_template
+            fixed_params=dict(fixed_params), template=internal_template
         )
         if fixed_internal:
             internal_regimes = _partial_fixed_params_into_regimes(
                 internal_regimes=internal_regimes, fixed_internal=fixed_internal
             )
-            params_template = _remove_fixed_from_template(
-                template=params_template, fixed_internal=fixed_internal
+            internal_template = _remove_fixed_from_template(
+                template=internal_template, fixed_internal=fixed_internal
             )
 
-    return internal_regimes, params_template
+    user_template = collapse_pair_keys(internal_template)
+    return internal_regimes, internal_template, user_template
 
 
 def _validate_model_inputs(  # noqa: C901

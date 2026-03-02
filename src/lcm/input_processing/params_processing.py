@@ -114,6 +114,70 @@ def process_params(  # noqa: C901
     return cast("InternalParams", ensure_containers_are_immutable(result_flat))
 
 
+def collapse_pair_keys(params_template: ParamsTemplate) -> ParamsTemplate:
+    """Collapse pair keys to source-regime keys when all boundaries are identical.
+
+    For each source regime, if all pair keys (e.g., `working_to_working`,
+    `working_to_retired`) have identical parameter structures, merge their entries
+    into the source regime's dict and remove the pair keys. If any differ, keep
+    all pair keys for that source.
+
+    """
+    # Group pair keys by source regime
+    pair_groups: dict[str, list[str]] = {}
+    for key in params_template:
+        if REGIME_PAIR_SEPARATOR in key:
+            source = key.split(REGIME_PAIR_SEPARATOR, 1)[0]
+            pair_groups.setdefault(source, []).append(key)
+
+    if not pair_groups:
+        return params_template
+
+    result: dict[str, object] = {}
+
+    for key, entry in params_template.items():
+        if REGIME_PAIR_SEPARATOR not in key:
+            result[key] = dict(entry)
+
+    for source, pair_keys in pair_groups.items():
+        entries = [dict(params_template[pk]) for pk in pair_keys]
+
+        # Check if all entries are structurally identical
+        if all(_entries_equal(entries[0], e) for e in entries[1:]):
+            # Merge into source regime
+            if source not in result:
+                result[source] = {}
+            result[source].update(entries[0])  # ty: ignore[unresolved-attribute]
+        else:
+            # Keep pair keys
+            for pk in pair_keys:
+                result[pk] = dict(params_template[pk])
+
+    return ensure_containers_are_immutable(result)  # ty: ignore[invalid-return-type]
+
+
+def _entries_equal(
+    a: Mapping[str, Mapping[str, type | tuple[int, ...]]],
+    b: Mapping[str, Mapping[str, type | tuple[int, ...]]],
+) -> bool:
+    """Check if two regime template entries have identical structure.
+
+    Compare function names, parameter names, and parameter types.
+
+    """
+    if set(a.keys()) != set(b.keys()):
+        return False
+    for func_name, a_func in a.items():
+        b_func = b[func_name]
+        if not isinstance(a_func, Mapping) or not isinstance(b_func, Mapping):
+            return a_func == b_func
+        if set(a_func.keys()) != set(b_func.keys()):
+            return False
+        if any(a_func[k] != b_func[k] for k in a_func):
+            return False
+    return True
+
+
 def validate_params_template(params_template: ParamsTemplate) -> None:  # noqa: C901
     """Validate regime parameter templates for uniqueness and naming rules.
 
