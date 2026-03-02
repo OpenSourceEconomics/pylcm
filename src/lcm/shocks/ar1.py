@@ -35,7 +35,7 @@ class Tauchen(_ShockGridAR1):
 
     When `gauss_hermite=True`, the grid uses Gauss-Hermite quadrature nodes
     with importance-sampling weights following
-    [Tauchen & Hussey (1991)](https://doi.org/10.2307/2938229).
+    [Tauchen & Hussey (1991)](https://doi.org/10.2307/2938261).
     When `gauss_hermite=False`, it uses equally spaced points spanning
     $\pm n_\text{std}$ unconditional standard deviations, following
     [QuantEcon](https://quanteconpy.readthedocs.io/en/latest/markov/approximation.html#quantecon.markov.approximation.tauchen).
@@ -141,15 +141,6 @@ class Rouwenhorst(_ShockGridAR1):
 
     mu: float | None = None
     """Intercept (drift) of the AR(1) process."""
-
-    def __post_init__(self) -> None:
-        if self.n_points % 2 == 0:
-            msg = (
-                f"n_points must be odd (got {self.n_points}). Odd n guarantees a"
-                " quadrature node at the mean (Abramowitz & Stegun, 1972,"
-                " Table 25.10)."
-            )
-            raise GridInitializationError(msg)
 
     def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
         rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
