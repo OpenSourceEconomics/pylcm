@@ -5,7 +5,7 @@ from dags import get_ancestors
 from jax import Array
 
 from lcm.grids import ContinuousGrid, Grid
-from lcm.regime import Regime
+from lcm.regime import Regime, resolve_mapping_leaf
 from lcm.shocks import _ShockGrid
 
 
@@ -75,7 +75,11 @@ def _indicator_enters_concurrent_valuation(
         "utility",
         *list(regime.constraints),
     ]
-    user_functions = dict(regime.get_all_functions())
+    user_functions = {
+        name: resolved
+        for name, func_or_leaf in regime.get_all_functions().items()
+        if (resolved := resolve_mapping_leaf(func_or_leaf)) is not None
+    }
     ancestors = get_ancestors(
         user_functions,
         targets=enters_Q_and_F_func_names,
@@ -101,7 +105,11 @@ def _indicator_enters_transition(
     Special variables such as the "period" or parameters will be ignored.
 
     """
-    user_functions = dict(regime.get_all_functions())
+    user_functions = {
+        name: resolved
+        for name, func_or_leaf in regime.get_all_functions().items()
+        if (resolved := resolve_mapping_leaf(func_or_leaf)) is not None
+    }
     next_func_names = [
         name
         for name in user_functions

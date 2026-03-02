@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 
 from lcm.grids import Grid
+from lcm.params.mapping_leaf import MappingLeaf
 from lcm.regime import _collect_state_transitions, _default_H
 from lcm.typing import UserFunction
 
@@ -29,9 +30,10 @@ class RegimeMock:
         if not self.terminal and "H" not in self.functions:
             self.functions = {**self.functions, "H": _default_H}
 
-    def get_all_functions(self) -> dict[str, UserFunction]:
+    def get_all_functions(self) -> dict[str, UserFunction | MappingLeaf]:
         """Get all regime functions including utility, constraints, and transitions."""
-        result = dict(self.functions) | dict(self.constraints)
+        result: dict[str, UserFunction | MappingLeaf] = dict(self.functions)
+        result.update(self.constraints)
         if self.states:
             result |= _collect_state_transitions(
                 {k: v for k, v in self.states.items() if v is not None},

@@ -1,11 +1,9 @@
-from collections.abc import Mapping
-
 import dags.tree as dt
 from jax import Array
 
-from lcm.exceptions import InvalidNameError, ModelInitializationError
+from lcm.exceptions import InvalidNameError
 from lcm.grids import IrregSpacedGrid
-from lcm.regime import Regime
+from lcm.regime import Regime, resolve_mapping_leaf
 from lcm.shocks import _ShockGrid
 from lcm.typing import RegimeParamsTemplate
 from lcm.utils import ensure_containers_are_immutable
@@ -43,14 +41,15 @@ def create_regime_params_template(regime: Regime) -> RegimeParamsTemplate:
 
     function_params = {}
     # Use dags.tree to discover parameters and their type annotations for each function.
-    for name, func in regime.get_all_functions().items():
+    for name, func_or_leaf in regime.get_all_functions().items():
+        func = resolve_mapping_leaf(func_or_leaf)
+        if func is None:
+            continue
         tree = dt.create_tree_with_input_types({name: func})
         excl = H_variables if name == "H" else variables
         # Filter out variables to get only the parameters
         params = {k: v for k, v in sorted(tree.items()) if k not in excl}
         function_params[name] = params
-
-    _discover_mapping_transition_params(regime, variables, function_params)
 
     # Validate that no discovered parameter shadows a state or action name.
     # In practice, only H can trigger this since other functions already exclude
@@ -68,48 +67,6 @@ def create_regime_params_template(regime: Regime) -> RegimeParamsTemplate:
     _add_runtime_grid_params(regime, function_params)
 
     return ensure_containers_are_immutable(function_params)
-
-
-def _discover_mapping_transition_params(
-    regime: Regime,
-    variables: set[str],
-    function_params: dict[str, dict[str, type]],
-) -> None:
-    """Discover parameters from per-boundary mapping transition callables.
-
-    When a grid has a mapping transition `{(src, tgt): func}`, the callable may
-    have parameters that belong to this (target) regime's template but are not
-    visible through `get_all_functions()` (which returns an identity placeholder).
-
-    """
-    for state_name, grid in regime.states.items():
-        trans = getattr(grid, "transition", None)
-        if not isinstance(trans, Mapping):
-            continue
-        next_name = f"next_{state_name}"
-        all_params: list[dict[str, type]] = []
-        for func in trans.values():
-            if func is None or not callable(func):
-                continue
-            tree = dt.create_tree_with_input_types({next_name: func})
-            params = {k: v for k, v in sorted(tree.items()) if k not in variables}
-            all_params.append(params)
-
-        if len(all_params) > 1:
-            first = all_params[0]
-            for other in all_params[1:]:
-                if other != first:
-                    msg = (
-                        f"All per-boundary mapping transition callables for "
-                        f"'{state_name}' must have the same parameter signature. "
-                        f"Got {first} and {other}."
-                    )
-                    raise ModelInitializationError(msg)
-
-        if all_params and all_params[0]:
-            existing = dict(function_params.get(next_name, {}))
-            existing.update(all_params[0])
-            function_params[next_name] = existing
 
 
 def _add_runtime_grid_params(
