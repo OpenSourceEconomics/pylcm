@@ -1,4 +1,3 @@
-import pickle
 from types import MappingProxyType
 
 import jax
@@ -7,17 +6,14 @@ import pytest
 from jax import numpy as jnp
 from numpy.testing import assert_array_almost_equal as aaae
 from pandas.testing import assert_frame_equal
+from quantecon.markov.approximation import rouwenhorst as qe_rouwenhorst
+from quantecon.markov.approximation import tauchen as qe_tauchen
 
 import lcm
 from lcm._config import TEST_DATA
 from lcm.exceptions import GridInitializationError
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 from tests.test_models.shocks import get_model, get_params
-
-with (TEST_DATA / "shocks" / "quantecon_tauchen.pkl").open("rb") as _f:
-    TAUCHEN_CASES = pickle.load(_f)
-with (TEST_DATA / "shocks" / "quantecon_rouwenhorst.pkl").open("rb") as _f:
-    ROUWENHORST_CASES = pickle.load(_f)
 
 
 @pytest.mark.skipif(not X64_ENABLED, reason="Not working with 32-Bit because of RNG")
@@ -436,31 +432,28 @@ def test_lognormal_gauss_hermite_weights_sum_to_one():
 
 
 # ======================================================================================
-# Regression tests against QuantEcon reference values
+# Regression tests against QuantEcon
 # ======================================================================================
-# Reference values computed using the same algorithms as QuantEcon (MIT license,
-# copyright Thomas J. Sargent and John Stachurski), verified against quantecon==0.11.0.
 
+TAUCHEN_CASES = [
+    {"rho": 0.9, "sigma": 0.5, "mu": 0.0, "n_std": 3, "n": 7},
+    {"rho": 0.7, "sigma": 1.0, "mu": 2.0, "n_std": 2, "n": 5},
+    {"rho": 0.99, "sigma": 0.1, "mu": 0.0, "n_std": 3, "n": 11},
+]
 
-def _assert_markov_chain_close(got_points, got_P, exp_points, exp_P, decimal):
-    """Assert gridpoints and transition probs match, reporting both on failure."""
-    gp_diff = float(jnp.max(jnp.abs(got_points - exp_points)))
-    P_diff = float(jnp.max(jnp.abs(got_P - exp_P)))
-    atol = 1.5 * 10 ** (-decimal)
-    failures = []
-    if gp_diff > atol:
-        failures.append(f"Gridpoints max diff: {gp_diff:.2e}")
-    if P_diff > atol:
-        failures.append(f"Transition probs max diff: {P_diff:.2e}")
-    if failures:
-        pytest.fail("\n".join(failures))
+ROUWENHORST_CASES = [
+    {"rho": 0.9, "sigma": 0.5, "mu": 0.0, "n": 7},
+    {"rho": 0.7, "sigma": 1.0, "mu": 2.0, "n": 5},
+    {"rho": 0.99, "sigma": 0.1, "mu": 0.0, "n": 11},
+]
 
 
 @pytest.mark.parametrize(
     "case", TAUCHEN_CASES, ids=lambda c: f"rho={c['rho']}_n={c['n']}"
 )
 def test_tauchen_matches_quantecon(case):
-    """Tauchen (non-GH) gridpoints and transition probs match QuantEcon reference."""
+    """Tauchen (non-GH) gridpoints and transition probs match QuantEcon."""
+    qe = qe_tauchen(case["n"], case["rho"], case["sigma"], case["mu"], case["n_std"])
     grid = lcm.shocks.ar1.Tauchen(
         n_points=case["n"],
         gauss_hermite=False,
@@ -469,33 +462,24 @@ def test_tauchen_matches_quantecon(case):
         mu=case["mu"],
         n_std=case["n_std"],
     )
-    _assert_markov_chain_close(
-        grid.get_gridpoints(),
-        grid.get_transition_probs(),
-        jnp.array(case["gridpoints"]),
-        jnp.array(case["transition_probs"]),
-        decimal=DECIMAL_PRECISION,
-    )
+    aaae(grid.get_gridpoints(), qe.state_values, decimal=DECIMAL_PRECISION)
+    aaae(grid.get_transition_probs(), qe.P, decimal=DECIMAL_PRECISION)
 
 
 @pytest.mark.parametrize(
     "case", ROUWENHORST_CASES, ids=lambda c: f"rho={c['rho']}_n={c['n']}"
 )
 def test_rouwenhorst_matches_quantecon(case):
-    """Rouwenhorst gridpoints and transition probs match QuantEcon reference."""
+    """Rouwenhorst gridpoints and transition probs match QuantEcon."""
+    qe = qe_rouwenhorst(case["n"], case["rho"], case["sigma"], case["mu"])
     grid = lcm.shocks.ar1.Rouwenhorst(
         n_points=case["n"],
         rho=case["rho"],
         sigma=case["sigma"],
         mu=case["mu"],
     )
-    _assert_markov_chain_close(
-        grid.get_gridpoints(),
-        grid.get_transition_probs(),
-        jnp.array(case["gridpoints"]),
-        jnp.array(case["transition_probs"]),
-        decimal=DECIMAL_PRECISION,
-    )
+    aaae(grid.get_gridpoints(), qe.state_values, decimal=DECIMAL_PRECISION)
+    aaae(grid.get_transition_probs(), qe.P, decimal=DECIMAL_PRECISION)
 
 
 # ======================================================================================
