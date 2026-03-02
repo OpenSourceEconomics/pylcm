@@ -4,7 +4,7 @@ from enum import Enum
 from types import MappingProxyType
 
 import pandas as pd
-from dags.tree import QNAME_DELIMITER, flatten_to_qnames
+from dags.tree import QNAME_DELIMITER
 from jax import Array
 
 from lcm.grids import (
@@ -321,24 +321,3 @@ class InternalFunctions:
 
     stochastic_transition_names: frozenset[str] = frozenset()
     """Frozenset of stochastic transition function names."""
-
-    def get_all_functions(self) -> MappingProxyType[str, InternalUserFunction]:
-        """Get all regime functions including utility, constraints, and transitions.
-
-        Returns:
-            Read-only mapping of all regime functions to the functions.
-
-        """
-        functions_pool = {
-            **self.functions,
-            **self.constraints,
-            **self.transitions,
-        }
-        if self.regime_transition_probs is not None:
-            functions_pool["regime_transition_probs_solve"] = (
-                self.regime_transition_probs.solve
-            )
-            functions_pool["regime_transition_probs_simulate"] = (
-                self.regime_transition_probs.simulate
-            )
-        return MappingProxyType(flatten_to_qnames(functions_pool))
