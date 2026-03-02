@@ -4,12 +4,29 @@ from types import MappingProxyType
 from typing import overload
 
 import jax.numpy as jnp
+import numpy as np
 from jax import Array
 
 from lcm import grid_helpers
 from lcm.exceptions import GridInitializationError
 from lcm.grids import ContinuousGrid
 from lcm.typing import Float1D, FloatND, ScalarFloat
+
+
+def _gauss_hermite_normal(
+    n_points: int, mu: float | Float1D, sigma: float | Float1D
+) -> tuple[Float1D, Float1D]:
+    """Compute Gauss-Hermite quadrature nodes and weights for $N(\\mu, \\sigma^2)$.
+
+    The raw Hermite nodes/weights are computed via numpy (requires only the
+    concrete `n_points`).  The affine transform to $N(\\mu, \\sigma^2)$ uses
+    JAX so that `mu` and `sigma` may be JAX tracers inside JIT.
+
+    """
+    raw_nodes, raw_weights = np.polynomial.hermite.hermgauss(n_points)
+    nodes = mu + sigma * np.sqrt(2) * jnp.asarray(raw_nodes)
+    weights = jnp.asarray(raw_weights / np.sqrt(np.pi))
+    return nodes, weights
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -213,6 +213,7 @@ if __name__ == "__main__":
         params=params,
         initial_regimes=["working"] * n_simulation_subjects,
         initial_states={
+            "age": jnp.full(n_simulation_subjects, model.ages.values[0]),
             "wealth": jnp.full(n_simulation_subjects, 1),
             "health": jnp.full(n_simulation_subjects, 1),
         },

@@ -53,7 +53,7 @@ def _make_model(*, fixed_params=None):
             "wealth": LinSpacedGrid(
                 start=1, stop=10, n_points=5, transition=_next_wealth
             ),
-            "income": lcm.shocks.ar1.Tauchen(n_points=3),
+            "income": lcm.shocks.ar1.Tauchen(n_points=3, gauss_hermite=False),
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4)},
         functions={"utility": _utility},
@@ -84,7 +84,7 @@ def _make_model(*, fixed_params=None):
 
 def test_runtime_shock_params_property():
     """Tauchen without params reports all params as runtime-supplied."""
-    grid = lcm.shocks.ar1.Tauchen(n_points=5)
+    grid = lcm.shocks.ar1.Tauchen(n_points=5, gauss_hermite=False)
     for name in ("rho", "sigma", "mu", "n_std"):
         assert name in grid.params_to_pass_at_runtime
     assert not grid.is_fully_specified
@@ -92,15 +92,21 @@ def test_runtime_shock_params_property():
 
 def test_fully_specified_shock():
     """Tauchen with all params should have no runtime-supplied params."""
-    grid = lcm.shocks.ar1.Tauchen(n_points=5, **_TAUCHEN_PARAMS)
+    grid = lcm.shocks.ar1.Tauchen(n_points=5, gauss_hermite=False, **_TAUCHEN_PARAMS)
     assert grid.params_to_pass_at_runtime == ()
     assert grid.is_fully_specified
 
 
-@pytest.mark.parametrize("grid_cls", [lcm.shocks.iid.Uniform, lcm.shocks.iid.Normal])
-def test_shock_without_params_is_not_fully_specified(grid_cls):
+@pytest.mark.parametrize(
+    ("grid_cls", "extra_kw"),
+    [
+        (lcm.shocks.iid.Uniform, {}),
+        (lcm.shocks.iid.Normal, {"gauss_hermite": True}),
+    ],
+)
+def test_shock_without_params_is_not_fully_specified(grid_cls, extra_kw):
     """All distributions require explicit params — nothing is defaulted."""
-    grid = grid_cls(n_points=5)
+    grid = grid_cls(n_points=5, **extra_kw)
     assert not grid.is_fully_specified
     assert grid.params_to_pass_at_runtime
 

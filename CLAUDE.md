@@ -25,7 +25,7 @@ automation. Python 3.14+ is required.
 
 ### Code Quality
 
-- `pixi run ty` - Type checking with ty
+- `pixi run -e tests-cpu ty` - Type checking with ty
 - `prek run --all-files` - Run all pre-commit hooks
 
 ### Documentation
