@@ -233,6 +233,8 @@ pytest-cov = "*"
 pytest-xdist = "*"
 scipy-stubs = "*"
 ty = "*"
+[tool.pixi.feature.tests.pypi-dependencies]
+quantecon = "*"
 [tool.pixi.feature.tests.tasks]
 explanation-notebooks = "jupyter execute docs/explanations/*.ipynb"
 tests = "pytest tests"
