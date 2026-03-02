@@ -35,7 +35,7 @@ class Tauchen(_ShockGridAR1):
 
     When `gauss_hermite=True`, the grid uses Gauss-Hermite quadrature nodes
     with importance-sampling weights following
-    [Tauchen & Hussey (1991)](https://doi.org/10.2307/2938229).
+    [Tauchen & Hussey (1991)](https://doi.org/10.2307/2938261).
     When `gauss_hermite=False`, it uses equally spaced points spanning
     $\pm n_\text{std}$ unconditional standard deviations, following
     [QuantEcon](https://quanteconpy.readthedocs.io/en/latest/markov/approximation.html#quantecon.markov.approximation.tauchen).
