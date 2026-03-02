@@ -99,13 +99,12 @@ def test_process_regimes():
     regime_names_to_ids = MappingProxyType(
         {name: idx for idx, name in enumerate(regimes.keys())}
     )
-    internal_regimes, _params_template = process_regimes(
+    internal_working_regime = process_regimes(
         regimes=regimes,
         ages=ages,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
-    )
-    internal_working_regime = internal_regimes["working"]
+    )[0]["working"]
 
     # Variable Info
     assert (

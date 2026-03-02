@@ -455,7 +455,7 @@ ROUWENHORST_CASES = [
 )
 def test_tauchen_matches_quantecon(case):
     """Tauchen (non-GH) gridpoints and transition probs match QuantEcon."""
-    qe = qe_tauchen(case["n"], case["rho"], case["sigma"], case["mu"], case["n_std"])
+    qe = qe_tauchen(**case)
     grid = lcm.shocks.ar1.Tauchen(
         n_points=case["n"],
         gauss_hermite=False,
@@ -473,7 +473,7 @@ def test_tauchen_matches_quantecon(case):
 )
 def test_rouwenhorst_matches_quantecon(case):
     """Rouwenhorst gridpoints and transition probs match QuantEcon."""
-    qe = qe_rouwenhorst(case["n"], case["rho"], case["sigma"], case["mu"])
+    qe = qe_rouwenhorst(**case)
     grid = lcm.shocks.ar1.Rouwenhorst(
         n_points=case["n"],
         rho=case["rho"],
