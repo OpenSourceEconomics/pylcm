@@ -2,7 +2,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 
 import jax
-from dags.tree import QNAME_DELIMITER
+from dags.tree import QNAME_DELIMITER, flatten_to_qnames
 from jax import Array, vmap
 from jax import numpy as jnp
 
@@ -17,7 +17,7 @@ from lcm.typing import (
     RegimeName,
     RegimeNamesToIds,
 )
-from lcm.utils import flatten_regime_namespace, normalize_regime_transition_probs
+from lcm.utils import normalize_regime_transition_probs
 
 # Sentinel for categorical states not in initial conditions.  Using int32 min
 # instead of -1 so that JAX indexing produces obviously wrong values rather than
@@ -108,7 +108,7 @@ def calculate_next_states(
     )
     stochastic_next_function_names = [
         next_func_name
-        for next_func_name in flatten_regime_namespace(internal_regime.transitions)
+        for next_func_name in flatten_to_qnames(internal_regime.transitions)
         if next_func_name.split(QNAME_DELIMITER)[-1] in stochastic_transition_names
     ]
     # There is a bug that sometimes changes the order of the names,

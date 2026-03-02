@@ -4,7 +4,7 @@ from enum import Enum
 from types import MappingProxyType
 
 import pandas as pd
-from dags.tree import QNAME_DELIMITER
+from dags.tree import QNAME_DELIMITER, flatten_to_qnames
 from jax import Array
 
 from lcm.grids import (
@@ -29,7 +29,7 @@ from lcm.typing import (
     TransitionFunctionsMapping,
     VmappedRegimeTransitionFunction,
 )
-from lcm.utils import first_non_none, flatten_regime_namespace
+from lcm.utils import first_non_none
 
 
 @dataclasses.dataclass(frozen=True)
@@ -341,4 +341,4 @@ class InternalFunctions:
             functions_pool["regime_transition_probs_simulate"] = (
                 self.regime_transition_probs.simulate
             )
-        return MappingProxyType(flatten_regime_namespace(functions_pool))
+        return MappingProxyType(flatten_to_qnames(functions_pool))

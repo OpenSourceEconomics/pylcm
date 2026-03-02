@@ -6,12 +6,10 @@ from types import MappingProxyType
 from typing import Any, TypeVar, cast
 
 import jax.numpy as jnp
-from dags.tree import flatten_to_qnames, unflatten_from_qnames
 from jax import Array
 
 from lcm.params import MappingLeaf
 from lcm.params.sequence_leaf import SequenceLeaf
-from lcm.typing import RegimeName
 
 T = TypeVar("T")
 
@@ -140,14 +138,6 @@ def first_non_none(*args: T | None) -> T:
         if arg is not None:
             return arg
     raise ValueError("All arguments are None")
-
-
-def flatten_regime_namespace(d: Mapping[RegimeName, Any]) -> MappingProxyType[str, Any]:
-    return MappingProxyType(flatten_to_qnames(d))
-
-
-def unflatten_regime_namespace(d: dict[str, Any]) -> dict[RegimeName, Any]:
-    return unflatten_from_qnames(d)  # ty: ignore[invalid-return-type]
 
 
 def normalize_regime_transition_probs(

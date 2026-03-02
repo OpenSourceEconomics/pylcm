@@ -9,6 +9,7 @@ import jax
 import pandas as pd
 from dags import concatenate_functions, get_annotations
 from dags.signature import with_signature
+from dags.tree import flatten_to_qnames
 from jax import Array
 
 from lcm.ages import AgeGrid
@@ -36,7 +37,6 @@ from lcm.typing import (
     RegimeTransitionFunction,
     VmappedRegimeTransitionFunction,
 )
-from lcm.utils import flatten_regime_namespace
 
 
 def build_Q_and_F_functions(
@@ -156,7 +156,7 @@ def build_next_state_simulation_functions(
     enable_jit: bool,
 ) -> NextStateSimulationFunction:
     next_state = get_next_state_function_for_simulation(
-        transitions=flatten_regime_namespace(internal_functions.transitions),
+        transitions=MappingProxyType(flatten_to_qnames(internal_functions.transitions)),
         functions=internal_functions.functions,
         variable_info=variable_info,
         grids=grids,

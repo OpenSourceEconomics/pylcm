@@ -7,7 +7,7 @@ import jax
 import pandas as pd
 from dags import concatenate_functions
 from dags.signature import with_signature
-from dags.tree import QNAME_DELIMITER
+from dags.tree import QNAME_DELIMITER, flatten_to_qnames
 from jax import Array
 
 from lcm.grids import Grid
@@ -23,7 +23,6 @@ from lcm.typing import (
     RegimeName,
     StochasticNextFunction,
 )
-from lcm.utils import flatten_regime_namespace
 
 
 def get_next_state_function_for_solution(
@@ -156,7 +155,7 @@ def _extend_transitions_for_simulation(
 
     """
     shock_names = set(variable_info.query("is_shock").index.to_list())
-    flat_grids = flatten_regime_namespace(grids)
+    flat_grids = flatten_to_qnames(grids)
     discrete_stochastic_targets = [
         func_name
         for func_name in transitions

@@ -6,7 +6,7 @@ import inspect
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
 
-from dags.tree import QNAME_DELIMITER
+from dags.tree import QNAME_DELIMITER, flatten_to_qnames
 from jax import Array
 
 from lcm.ages import AgeGrid
@@ -33,7 +33,6 @@ from lcm.typing import (
 from lcm.utils import (
     ensure_containers_are_immutable,
     ensure_containers_are_mutable,
-    flatten_regime_namespace,
     get_field_names_and_values,
 )
 
@@ -467,8 +466,8 @@ def _resolve_fixed_params(
     Returns a flat model-level mapping with regime-prefixed keys.
 
     """
-    template_flat = flatten_regime_namespace(template)
-    params_flat = flatten_regime_namespace(fixed_params)
+    template_flat = flatten_to_qnames(template)
+    params_flat = flatten_to_qnames(fixed_params)
 
     result_flat: dict[str, object] = {}
     used_keys: set[str] = set()

@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from typing import cast
 
-from dags.tree import QNAME_DELIMITER
+from dags.tree import QNAME_DELIMITER, flatten_to_qnames
 
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.typing import (
@@ -11,10 +11,7 @@ from lcm.typing import (
     ParamsTemplate,
     UserParams,
 )
-from lcm.utils import (
-    ensure_containers_are_immutable,
-    flatten_regime_namespace,
-)
+from lcm.utils import ensure_containers_are_immutable
 
 _NUM_PARTS_FUNCTION_PARAM = 3
 
@@ -47,8 +44,8 @@ def process_params(
         InvalidNameError: If the same parameter is specified at multiple levels.
 
     """
-    template_flat = flatten_regime_namespace(params_template)
-    params_flat = flatten_regime_namespace(params)
+    template_flat = flatten_to_qnames(params_template)
+    params_flat = flatten_to_qnames(params)
 
     result_flat = {}
     used_keys: set[str] = set()

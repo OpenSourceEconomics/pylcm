@@ -3,12 +3,12 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
+from dags.tree import flatten_to_qnames
 
 from lcm.params.sequence_leaf import SequenceLeaf
 from lcm.utils import (
     ensure_containers_are_immutable,
     ensure_containers_are_mutable,
-    flatten_regime_namespace,
 )
 
 # ======================================================================================
@@ -181,13 +181,13 @@ def test_not_a_sequence():
 
 
 # ======================================================================================
-# flatten_regime_namespace treats SequenceLeaf as a leaf
+# flatten_to_qnames treats SequenceLeaf as a leaf
 # ======================================================================================
 
 
-def test_flatten_regime_namespace_treats_sequence_leaf_as_leaf():
+def test_flatten_to_qnames_treats_sequence_leaf_as_leaf():
     leaf = SequenceLeaf([1, 2])
     data = {"regime": {"param": leaf, "scalar": 3.0}}
-    result = flatten_regime_namespace(data)
+    result = flatten_to_qnames(data)
     assert result["regime__param"] is leaf
     assert result["regime__scalar"] == 3.0

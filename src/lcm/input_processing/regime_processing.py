@@ -6,7 +6,7 @@ from typing import Any, cast
 
 import pandas as pd
 from dags.signature import rename_arguments, with_signature
-from dags.tree import QNAME_DELIMITER
+from dags.tree import QNAME_DELIMITER, flatten_to_qnames, unflatten_from_qnames
 from jax import Array
 from jax import numpy as jnp
 
@@ -47,11 +47,7 @@ from lcm.typing import (
     TransitionFunctionsMapping,
     UserFunction,
 )
-from lcm.utils import (
-    ensure_containers_are_immutable,
-    flatten_regime_namespace,
-    unflatten_regime_namespace,
-)
+from lcm.utils import ensure_containers_are_immutable
 
 
 def _wrap_transitions(
@@ -148,7 +144,7 @@ def process_regimes(
     validate_params_template(params_template)
 
     # Compute model-level flat param names (shared across all regimes)
-    flat_param_names = frozenset(flatten_regime_namespace(params_template))
+    flat_param_names = frozenset(flatten_to_qnames(params_template))
 
     internal_regimes = {}
     for name, regime in regimes.items():
@@ -264,9 +260,9 @@ def _get_internal_functions(
         The processed regime functions.
 
     """
-    flat_grids = flatten_regime_namespace(grids)
+    flat_grids = flatten_to_qnames(grids)
     # Flatten nested transitions to get prefixed names like "regime__next_wealth"
-    flat_nested_transitions = flatten_regime_namespace(nested_transitions)
+    flat_nested_transitions = flatten_to_qnames(nested_transitions)
 
     # ==================================================================================
     # Rename function parameters to qualified names
@@ -393,7 +389,7 @@ def _get_internal_functions(
     return InternalFunctions(
         functions=internal_functions,
         constraints=internal_constraints,
-        transitions=_wrap_transitions(unflatten_regime_namespace(internal_transition)),
+        transitions=_wrap_transitions(unflatten_from_qnames(internal_transition)),  # ty: ignore[invalid-argument-type]
         regime_transition_probs=internal_regime_transition_probs,
         stochastic_transition_names=stochastic_transition_names,
     )

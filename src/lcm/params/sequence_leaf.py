@@ -9,7 +9,7 @@ import jax
 class SequenceLeaf:
     """A Sequence wrapper that is a JAX pytree but not itself a Sequence.
 
-    Prevents flatten_regime_namespace from recursing into contents while
+    Prevents flatten_to_qnames from recursing into contents while
     allowing JAX to trace through array values.
 
     Data is frozen to immutable containers on construction.

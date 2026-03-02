@@ -4,6 +4,7 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
+from dags.tree import flatten_to_qnames
 from jax import Array, vmap
 
 from lcm.ages import AgeGrid
@@ -28,7 +29,6 @@ from lcm.typing import (
     RegimeName,
     RegimeNamesToIds,
 )
-from lcm.utils import flatten_regime_namespace
 
 
 def simulate(
@@ -81,7 +81,7 @@ def simulate(
     key = jax.random.key(seed=seed)
 
     # The following variables are updated during the forward simulation
-    states = MappingProxyType(flatten_regime_namespace(nested_initial_states))
+    states = MappingProxyType(flatten_to_qnames(nested_initial_states))
     subject_regime_ids = jnp.asarray(
         [regime_names_to_ids[initial_regime] for initial_regime in initial_regimes]
     )
