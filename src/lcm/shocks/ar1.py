@@ -8,7 +8,6 @@ import jax.numpy as jnp
 from jax import Array
 from jax.scipy.stats.norm import cdf
 
-from lcm.exceptions import GridInitializationError
 from lcm.shocks._base import (
     _gauss_hermite_normal,
     _gauss_hermite_param_field_names,
@@ -35,15 +34,20 @@ class _ShockGridAR1(_ShockGrid):
 class Tauchen(_ShockGridAR1):
     r"""AR(1) shock discretized via Tauchen (1986).
 
-    The process is
-    $y_t = \mu + \rho \, y_{t-1} + \varepsilon_t$,
-    where $\varepsilon_t \sim N(0, \sigma_\varepsilon^2)$.
+        The process is
+        $y_t = \mu + \rho \, y_{t-1} + \varepsilon_t$,
+        where $\varepsilon_t \sim N(0, \sigma_\varepsilon^2)$.
 
-    When `gauss_hermite=True`, the grid uses Gauss-Hermite quadrature nodes
-    with CDF-based transition probabilities computed at midpoints between nodes.
-    When `gauss_hermite=False`, it uses equally spaced points spanning
-    $\pm n_\text{std}$ unconditional standard deviations, following
-    [QuantEcon](https://quanteconpy.readthedocs.io/en/latest/markov/approximation.html#quantecon.markov.approximation.tauchen).
+        When `gauss_hermite=True`, the grid uses Gauss-Hermite quadrature nodes
+    <<<<<<< HEAD
+        with CDF-based transition probabilities computed at midpoints between nodes.
+    =======
+        with importance-sampling weights following
+        [Tauchen & Hussey (1991)](https://doi.org/10.2307/2938261).
+    >>>>>>> validation-tests-for-shocks
+        When `gauss_hermite=False`, it uses equally spaced points spanning
+        $\pm n_\text{std}$ unconditional standard deviations, following
+        [QuantEcon](https://quanteconpy.readthedocs.io/en/latest/markov/approximation.html#quantecon.markov.approximation.tauchen).
 
     """
 
@@ -150,14 +154,6 @@ class Rouwenhorst(_ShockGridAR1):
 
     mu: float | None = None
     """Intercept (drift) of the AR(1) process."""
-
-    def __post_init__(self) -> None:
-        if self.n_points % 2 == 0:
-            msg = (
-                f"n_points must be odd (got {self.n_points}). Odd n guarantees"
-                " a grid point exactly at the unconditional mean."
-            )
-            raise GridInitializationError(msg)
 
     def compute_gridpoints(self, n_points: int, **kwargs: float | Array) -> Float1D:
         rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
