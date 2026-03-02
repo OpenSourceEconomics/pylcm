@@ -34,20 +34,16 @@ class _ShockGridAR1(_ShockGrid):
 class Tauchen(_ShockGridAR1):
     r"""AR(1) shock discretized via Tauchen (1986).
 
-        The process is
-        $y_t = \mu + \rho \, y_{t-1} + \varepsilon_t$,
-        where $\varepsilon_t \sim N(0, \sigma_\varepsilon^2)$.
+    The process is
+    $y_t = \mu + \rho \, y_{t-1} + \varepsilon_t$,
+    where $\varepsilon_t \sim N(0, \sigma_\varepsilon^2)$.
 
-        When `gauss_hermite=True`, the grid uses Gauss-Hermite quadrature nodes
-    <<<<<<< HEAD
-        with CDF-based transition probabilities computed at midpoints between nodes.
-    =======
-        with importance-sampling weights following
-        [Tauchen & Hussey (1991)](https://doi.org/10.2307/2938261).
-    >>>>>>> validation-tests-for-shocks
-        When `gauss_hermite=False`, it uses equally spaced points spanning
-        $\pm n_\text{std}$ unconditional standard deviations, following
-        [QuantEcon](https://quanteconpy.readthedocs.io/en/latest/markov/approximation.html#quantecon.markov.approximation.tauchen).
+    When `gauss_hermite=True`, the grid uses Gauss-Hermite quadrature nodes
+    with CDF-based transition probabilities computed at midpoints between nodes.
+
+    When `gauss_hermite=False`, it uses equally spaced points spanning
+    $\pm n_\text{std}$ unconditional standard deviations, following
+    [QuantEcon](https://quanteconpy.readthedocs.io/en/latest/markov/approximation.html#quantecon.markov.approximation.tauchen).
 
     """
 
