@@ -40,9 +40,9 @@ def test_get_next_state_function_with_solve_target():
     )
 
     flat_params = {
-        "working__discount_factor": 1.0,
+        "working__H__discount_factor": 1.0,
         "working__utility__disutility_of_work": 1.0,
-        "working__next_wealth__interest_rate": 0.05,
+        "working_to_working__next_wealth__interest_rate": 0.05,
     }
     action = {"labor_supply": 1, "consumption": 10}
     state = {"wealth": 20}

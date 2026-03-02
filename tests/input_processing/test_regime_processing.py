@@ -33,7 +33,8 @@ def test_get_variable_info(binary_category_class):
         functions={"utility": utility},
     )
 
-    got = get_variable_info(regime_mock)  # ty: ignore[invalid-argument-type]
+    user_functions = regime_mock.get_user_functions()
+    got = get_variable_info(regime_mock, user_functions=user_functions)  # ty: ignore[invalid-argument-type]
     exp = pd.DataFrame(
         {
             "is_state": [False, True],
@@ -64,7 +65,8 @@ def test_get_gridspecs(binary_category_class):
         functions={"utility": lambda _c: None},
     )
 
-    got = get_gridspecs(regime_mock)  # ty: ignore[invalid-argument-type]
+    user_functions = regime_mock.get_user_functions()
+    got = get_gridspecs(regime_mock, user_functions=user_functions)  # ty: ignore[invalid-argument-type]
     assert isinstance(got["a"], DiscreteGrid)
     assert got["a"].categories == ("cat0", "cat1")
     assert got["a"].codes == (0, 1)
@@ -88,7 +90,8 @@ def test_get_grids(binary_category_class):
         functions={"utility": lambda _c: None},
     )
 
-    got = get_grids(regime_mock)  # ty: ignore[invalid-argument-type]
+    user_functions = regime_mock.get_user_functions()
+    got = get_grids(regime_mock, user_functions=user_functions)  # ty: ignore[invalid-argument-type]
     assert_array_equal(got["a"], jnp.array([0, 1]))
     assert_array_equal(got["c"], jnp.array([0, 1]))
 
@@ -157,5 +160,13 @@ def test_variable_info_with_continuous_constraint_has_unique_index():
         constraints=dict(working.constraints) | {"wealth_constraint": wealth_constraint}
     )
 
-    got = get_variable_info(working_copy)
+    from lcm.input_processing.process_transitions import (  # noqa: PLC0415
+        collect_regime_functions,
+    )
+
+    all_funcs, _ = collect_regime_functions(
+        regime_name="working",
+        regimes={"working": working_copy, "dead": dead},
+    )
+    got = get_variable_info(working_copy, user_functions=all_funcs)
     assert got.index.is_unique

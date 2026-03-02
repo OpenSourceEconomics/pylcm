@@ -4,9 +4,7 @@ import pandas as pd
 from jax import Array
 
 from lcm.grids import ContinuousGrid, DiscreteGrid, DiscreteMarkovGrid
-from lcm.input_processing.util import get_gridspecs, get_variable_info
 from lcm.interfaces import StateActionSpace, StateSpaceInfo
-from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
 
 
@@ -62,22 +60,28 @@ def create_state_action_space(
     )
 
 
-def create_state_space_info(regime: Regime) -> StateSpaceInfo:
+def create_state_space_info(
+    *,
+    variable_info: pd.DataFrame,
+    gridspecs: MappingProxyType[str, object],
+    terminal: bool,
+) -> StateSpaceInfo:
     """Collect information on the state space for the regime solution.
 
     A state-space information is a compressed representation of all feasible states.
 
     Args:
-        regime: Regime instance.
+        variable_info: Variable info DataFrame from get_variable_info.
+        gridspecs: Immutable mapping of variable names to grid specification objects.
+        terminal: Whether this is a terminal regime.
 
     Returns:
         The state-space information.
 
     """
-    vi = get_variable_info(regime)
-    gridspecs = get_gridspecs(regime)
+    vi = variable_info
 
-    if regime.terminal:
+    if terminal:
         vi = vi.query("enters_concurrent_valuation")
 
     state_names = vi.query("is_state").index.tolist()

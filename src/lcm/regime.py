@@ -1,20 +1,16 @@
 import dataclasses
-import inspect
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, TypeAliasType, overload
+from typing import Any
 
 from dags.tree import QNAME_DELIMITER
 
 from lcm.exceptions import RegimeInitializationError, format_messages
-from lcm.grids import DiscreteGrid, DiscreteMarkovGrid, Grid
-from lcm.params.mapping_leaf import MappingLeaf
+from lcm.grids import Grid
 from lcm.shocks._base import _ShockGrid
 from lcm.typing import (
     ActiveFunction,
-    ContinuousState,
-    DiscreteState,
     UserFunction,
 )
 from lcm.utils import (
@@ -55,41 +51,6 @@ def _default_H(
     utility: float, continuation_value: float, discount_factor: float
 ) -> float:
     return utility + discount_factor * continuation_value
-
-
-class _IdentityTransition:
-    """Identity transition function for fixed states.
-
-    Used by `get_all_functions()` so the params template includes fixed states.
-    The `_is_auto_identity` attribute lets validation distinguish auto-generated
-    identities from user-provided transitions.
-
-    """
-
-    _is_auto_identity: bool = True
-
-    def __init__(self, state_name: str, *, annotation: TypeAliasType) -> None:
-        self._state_name = state_name
-        self.__name__ = f"next_{state_name}"
-        param = inspect.Parameter(
-            state_name,
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            annotation=annotation,
-        )
-        self.__signature__ = inspect.Signature(
-            [param],
-            return_annotation=annotation,
-        )
-        self.__annotations__ = {state_name: annotation, "return": annotation}
-
-    @overload
-    def __call__(self, **kwargs: DiscreteState) -> DiscreteState: ...
-    @overload
-    def __call__(self, **kwargs: ContinuousState) -> ContinuousState: ...
-    def __call__(
-        self, **kwargs: DiscreteState | ContinuousState
-    ) -> DiscreteState | ContinuousState:
-        return kwargs[self._state_name]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -153,35 +114,6 @@ class Regime:
         make_immutable("states")
         make_immutable("actions")
         make_immutable("constraints")
-
-    def get_all_functions(
-        self,
-    ) -> MappingProxyType[str, UserFunction | MappingLeaf]:
-        """Get all regime functions including utility, constraints, and transitions.
-
-        Collects functions from four sources:
-        - `self.functions` (utility, helpers, H)
-        - `self.constraints`
-        - State transitions from grid `transition` attributes
-        - The regime transition (`self.transition`, keyed as `"next_regime"`)
-
-        Mapping transitions are wrapped in `MappingLeaf` to expose per-boundary
-        callables without recursion by `flatten_to_qnames`.
-
-        Returns:
-            Read-only mapping of all regime functions. Mapping transitions appear
-            as `MappingLeaf` values.
-
-        """
-        result: dict[str, UserFunction | MappingLeaf] = (
-            dict(self.functions)
-            | dict(self.constraints)
-            | _collect_state_transitions(self.states)
-        )
-        # Add regime transition
-        if self.transition is not None:
-            result["next_regime"] = self.transition.func
-        return MappingProxyType(result)
 
     def replace(self, **kwargs: Any) -> Regime:  # noqa: ANN401
         """Replace the attributes of the regime.
@@ -333,74 +265,3 @@ def _validate_state_and_action_transitions(regime: Regime) -> list[str]:
             )
 
     return error_messages
-
-
-def _make_identity_fn(
-    state_name: str, *, annotation: TypeAliasType
-) -> _IdentityTransition:
-    """Create an identity transition for a fixed state.
-
-    Convenience wrapper around `_IdentityTransition`.
-
-    """
-    return _IdentityTransition(state_name, annotation=annotation)
-
-
-def resolve_mapping_leaf(
-    func_or_leaf: UserFunction | MappingLeaf,
-) -> UserFunction | None:
-    """Return a representative callable from a MappingLeaf, or the value as-is.
-
-    For `MappingLeaf`, return the first non-None callable (all per-boundary callables
-    must have the same signature, validated at `Regime.__post_init__`). Return `None`
-    if all values are `None`.
-
-    """
-    if isinstance(func_or_leaf, MappingLeaf):
-        for func in func_or_leaf.data.values():
-            if func is not None and callable(func):
-                return func
-        return None
-    return func_or_leaf
-
-
-def _mapping_to_leaf(transition: Mapping[tuple[str, str], object]) -> MappingLeaf:
-    """Wrap a per-boundary transition mapping in a `MappingLeaf`."""
-    return MappingLeaf(
-        {
-            f"{src}{QNAME_DELIMITER}{tgt}": func
-            for (src, tgt), func in transition.items()
-        }
-    )
-
-
-def _collect_state_transitions(
-    states: Mapping[str, Grid],
-) -> dict[str, UserFunction | MappingLeaf]:
-    """Collect state transition functions from grid objects.
-
-    For each state grid, produces an entry `f"next_{name}"` mapped to:
-    - A stochastic stub for `_ShockGrid` types,
-    - The grid's `transition` attribute if it's a single callable,
-    - A `MappingLeaf` wrapping the per-boundary callables for mapping transitions, or
-    - An auto-generated identity transition for fixed states (`None`).
-
-    """
-    transitions: dict[str, UserFunction | MappingLeaf] = {}
-    for name, grid in states.items():
-        if isinstance(grid, _ShockGrid):
-            transitions[f"next_{name}"] = lambda: None
-        elif isinstance(grid, DiscreteMarkovGrid):
-            transition = grid.transition
-            if isinstance(transition, Mapping):
-                transitions[f"next_{name}"] = _mapping_to_leaf(transition)  # ty: ignore[invalid-argument-type]
-            else:
-                transitions[f"next_{name}"] = transition
-        elif isinstance(grid_transition := getattr(grid, "transition", None), Mapping):
-            transitions[f"next_{name}"] = _mapping_to_leaf(grid_transition)
-        elif callable(grid_transition):
-            transitions[f"next_{name}"] = grid_transition
-        else:
-            ann = DiscreteState if isinstance(grid, DiscreteGrid) else ContinuousState
-            transitions[f"next_{name}"] = _make_identity_fn(name, annotation=ann)
-    return transitions

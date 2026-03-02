@@ -22,12 +22,14 @@ from lcm.simulation.simulate import simulate
 from lcm.simulation.validation import validate_initial_conditions
 from lcm.solution.solve_brute import solve
 from lcm.typing import (
+    REGIME_PAIR_SEPARATOR,
     FloatND,
     InternalParams,
     MutableParamsTemplate,
     ParamsTemplate,
     RegimeName,
     RegimeNamesToIds,
+    UserFunction,
     UserParams,
 )
 from lcm.utils import (
@@ -129,6 +131,29 @@ class Model:
         return ensure_containers_are_mutable(  # ty: ignore[invalid-return-type]
             self.params_template
         )
+
+    def get_all_functions(
+        self,
+        regime_name: str,
+    ) -> MappingProxyType[str, UserFunction]:
+        """Get all functions for a regime, including boundary-encoded transitions.
+
+        Args:
+            regime_name: Name of the regime.
+
+        Returns:
+            Read-only mapping of all regime functions.
+
+        """
+        from lcm.input_processing.process_transitions import (  # noqa: PLC0415
+            collect_regime_functions,
+        )
+
+        all_funcs, _ = collect_regime_functions(
+            regime_name=regime_name,
+            regimes=self.regimes,
+        )
+        return MappingProxyType(all_funcs)
 
     def solve(
         self,
@@ -321,7 +346,7 @@ def _build_regimes_and_template(
     return internal_regimes, params_template
 
 
-def _validate_model_inputs(
+def _validate_model_inputs(  # noqa: C901
     *,
     n_periods: int,
     regimes: Mapping[str, Regime],
@@ -351,6 +376,14 @@ def _validate_model_inputs(
         error_messages.append(
             f"Regime names cannot contain the separator character "
             f"'{QNAME_DELIMITER}'. The following names are invalid: {invalid_names}."
+        )
+
+    # Validate regime names don't contain the boundary pair separator
+    invalid_boundary = [name for name in regimes if REGIME_PAIR_SEPARATOR in name]
+    if invalid_boundary:
+        error_messages.append(
+            f"Regime names cannot contain '{REGIME_PAIR_SEPARATOR}' "
+            f"(reserved for boundary pairs). Invalid: {invalid_boundary}."
         )
 
     # Assume all items in regimes are lcm.Regime instances beyond this point
@@ -393,10 +426,18 @@ def _validate_all_variables_used(regimes: Mapping[str, Regime]) -> list[str]:
         A list of error messages. Empty list if validation passes.
 
     """
+    from lcm.input_processing.process_transitions import (  # noqa: PLC0415
+        collect_regime_functions,
+    )
+
     error_messages = []
 
     for regime_name, regime in regimes.items():
-        variable_info = get_variable_info(regime)
+        all_funcs, _ = collect_regime_functions(
+            regime_name=regime_name,
+            regimes=regimes,
+        )
+        variable_info = get_variable_info(regime, user_functions=all_funcs)
         is_used = (
             variable_info["enters_concurrent_valuation"]
             | variable_info["enters_transition"]
@@ -434,7 +475,13 @@ def _find_candidates(
     key: str,
     params_flat: Mapping[str, object],
 ) -> list[str]:
-    """Find candidate matches for a template key at exact, regime, and model levels."""
+    """Find candidate matches for a template key.
+
+    Checks exact, pair, source-regime, and model levels. For pair keys
+    (e.g., `working_to_retired__next_wealth__rate`), also checks
+    source-regime matches for backward compatibility.
+
+    """
     parts = key.split(QNAME_DELIMITER)
     param_name = parts[-1]
     candidates: list[str] = []
@@ -443,9 +490,23 @@ def _find_candidates(
         candidates.append(key)
 
     if len(parts) == 3:  # noqa: PLR2004
-        regime_level_key = f"{parts[0]}{QNAME_DELIMITER}{param_name}"
-        if regime_level_key in params_flat:
-            candidates.append(regime_level_key)
+        top_key = parts[0]
+        top_level_key = f"{top_key}{QNAME_DELIMITER}{param_name}"
+        if top_level_key in params_flat:
+            candidates.append(top_level_key)
+
+        # Source-regime matching for pair keys (e.g., "working_to_retired")
+        if REGIME_PAIR_SEPARATOR in top_key:
+            source = top_key.split(REGIME_PAIR_SEPARATOR, 1)[0]
+            func_name = parts[1]
+            source_func_key = (
+                f"{source}{QNAME_DELIMITER}{func_name}{QNAME_DELIMITER}{param_name}"
+            )
+            if source_func_key in params_flat:
+                candidates.append(source_func_key)
+            source_regime_key = f"{source}{QNAME_DELIMITER}{param_name}"
+            if source_regime_key in params_flat:
+                candidates.append(source_regime_key)
 
     if param_name in params_flat:
         candidates.append(param_name)

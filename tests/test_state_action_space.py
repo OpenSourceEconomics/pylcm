@@ -6,6 +6,8 @@ import pandas as pd
 from numpy.testing import assert_array_equal
 
 from lcm.grids import DiscreteGrid, LinSpacedGrid
+from lcm.input_processing.process_transitions import collect_regime_functions
+from lcm.input_processing.util import get_gridspecs, get_variable_info
 from lcm.interfaces import StateActionSpace, StateSpaceInfo
 from lcm.regime import Regime, RegimeTransition
 from lcm.state_action_space import (
@@ -132,7 +134,18 @@ def test_create_state_space_info():
         active=lambda age: age < 5,
     )
 
-    state_space_info = create_state_space_info(regime)
+    all_funcs, _ = collect_regime_functions(
+        regime_name="test",
+        regimes={"test": regime},
+    )
+    variable_info = get_variable_info(regime, user_functions=all_funcs)
+    gridspecs = get_gridspecs(regime, user_functions=all_funcs)
+
+    state_space_info = create_state_space_info(
+        variable_info=variable_info,
+        gridspecs=gridspecs,
+        terminal=regime.terminal,
+    )
 
     assert isinstance(state_space_info, StateSpaceInfo)
     assert set(state_space_info.state_names) == {"wealth", "health"}

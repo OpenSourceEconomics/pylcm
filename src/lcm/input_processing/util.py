@@ -2,18 +2,25 @@ from types import MappingProxyType
 
 import pandas as pd
 from dags import get_ancestors
+from dags.tree import QNAME_DELIMITER
 from jax import Array
 
 from lcm.grids import ContinuousGrid, Grid
-from lcm.regime import Regime, resolve_mapping_leaf
+from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
+from lcm.typing import UserFunction
 
 
-def get_variable_info(regime: Regime) -> pd.DataFrame:
+def get_variable_info(
+    regime: Regime,
+    *,
+    user_functions: dict[str, UserFunction],
+) -> pd.DataFrame:
     """Derive information about all variables in the regime.
 
     Args:
         regime: The regime as provided by the user.
+        user_functions: Flat mapping of all function names to callables for this regime.
 
     Returns:
         A table with information about all variables in the regime. The index contains
@@ -39,11 +46,12 @@ def get_variable_info(regime: Regime) -> pd.DataFrame:
     info["enters_concurrent_valuation"] = _indicator_enters_concurrent_valuation(
         state_and_action_names=list(variables),
         regime=regime,
+        user_functions=user_functions,
     )
 
     info["enters_transition"] = _indicator_enters_transition(
         state_and_action_names=list(variables),
-        regime=regime,
+        user_functions=user_functions,
     )
 
     order = info.query("is_discrete & is_state").index.tolist()
@@ -61,6 +69,7 @@ def _indicator_enters_concurrent_valuation(
     *,
     state_and_action_names: list[str],
     regime: Regime,
+    user_functions: dict[str, UserFunction],
 ) -> pd.Series[bool]:
     """Determine which states and actions enter the concurrent valuation.
 
@@ -75,13 +84,14 @@ def _indicator_enters_concurrent_valuation(
         "utility",
         *list(regime.constraints),
     ]
-    user_functions = {
-        name: resolved
-        for name, func_or_leaf in regime.get_all_functions().items()
-        if (resolved := resolve_mapping_leaf(func_or_leaf)) is not None
+    # Filter out non-callable entries
+    resolved = {
+        name: func
+        for name, func in user_functions.items()
+        if func is not None and callable(func)
     }
     ancestors = get_ancestors(
-        user_functions,
+        resolved,
         targets=enters_Q_and_F_func_names,
         include_targets=False,
     )
@@ -94,7 +104,7 @@ def _indicator_enters_concurrent_valuation(
 def _indicator_enters_transition(
     *,
     state_and_action_names: list[str],
-    regime: Regime,
+    user_functions: dict[str, UserFunction],
 ) -> pd.Series[bool]:
     """Determine which states and actions enter the transition.
 
@@ -105,19 +115,20 @@ def _indicator_enters_transition(
     Special variables such as the "period" or parameters will be ignored.
 
     """
-    user_functions = {
-        name: resolved
-        for name, func_or_leaf in regime.get_all_functions().items()
-        if (resolved := resolve_mapping_leaf(func_or_leaf)) is not None
+    # Filter out non-callable entries
+    resolved = {
+        name: func
+        for name, func in user_functions.items()
+        if func is not None and callable(func)
     }
     next_func_names = [
         name
-        for name in user_functions
-        if name.startswith("next_")
-        and not getattr(user_functions[name], "_is_auto_identity", False)
+        for name in resolved
+        if name.split(QNAME_DELIMITER)[-1].startswith("next_")
+        and not getattr(resolved[name], "_is_auto_identity", False)
     ]
     ancestors = get_ancestors(
-        user_functions,
+        resolved,
         targets=next_func_names,
         include_targets=False,
     )
@@ -129,11 +140,14 @@ def _indicator_enters_transition(
 
 def get_gridspecs(
     regime: Regime,
+    *,
+    user_functions: dict[str, UserFunction],
 ) -> MappingProxyType[str, Grid]:
     """Create a dictionary of grid specifications for each variable in the regime.
 
     Args:
         regime: The regime as provided by the user.
+        user_functions: Flat mapping of all function names to callables for this regime.
 
     Returns:
         Immutable dictionary containing all variables of the regime. The keys are the
@@ -142,7 +156,7 @@ def get_gridspecs(
         information about how to build the grids.
 
     """
-    variable_info = get_variable_info(regime)
+    variable_info = get_variable_info(regime, user_functions=user_functions)
 
     raw_variables = dict(regime.states) | dict(regime.actions)
     order = variable_info.index.tolist()
@@ -151,19 +165,22 @@ def get_gridspecs(
 
 def get_grids(
     regime: Regime,
+    *,
+    user_functions: dict[str, UserFunction],
 ) -> MappingProxyType[str, Array]:
     """Create a dictionary of array grids for each variable in the regime.
 
     Args:
         regime: The regime as provided by the user.
+        user_functions: Flat mapping of all function names to callables for this regime.
 
     Returns:
         Immutable dictionary containing all variables of the regime. The keys are the
         names of the variables. The values are the grids.
 
     """
-    variable_info = get_variable_info(regime)
-    gridspecs = get_gridspecs(regime)
+    variable_info = get_variable_info(regime, user_functions=user_functions)
+    gridspecs = get_gridspecs(regime, user_functions=user_functions)
 
     grids = {name: spec.to_jax() for name, spec in gridspecs.items()}
     order = variable_info.index.tolist()

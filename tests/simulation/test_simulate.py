@@ -65,7 +65,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
         {
             "working__H__discount_factor": 1.0,
             "working__utility__disutility_of_work": 1.0,
-            "working__next_wealth__interest_rate": 0.05,
+            "working_to_working__next_wealth__interest_rate": 0.05,
             "working__next_regime__final_age_alive": 0,
         }
     )

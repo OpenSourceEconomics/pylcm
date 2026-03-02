@@ -17,7 +17,7 @@ from lcm import (
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.grids import IrregSpacedGrid
-from lcm.regime import _IdentityTransition
+from lcm.input_processing.process_transitions import _IdentityTransition
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -236,7 +236,7 @@ def test_identity_transition_is_auto_identity():
     assert identity._is_auto_identity is True  # noqa: SLF001
 
 
-def test_get_all_functions_includes_identity_for_fixed_discrete_state():
+def test_model_get_all_functions_includes_identity_for_fixed_discrete_state():
     """Fixed discrete states get identity transitions with DiscreteState annotation."""
 
     @categorical
@@ -244,27 +244,62 @@ def test_get_all_functions_includes_identity_for_fixed_discrete_state():
         low: int
         high: int
 
-    regime = Regime(
-        transition=RegimeTransition(lambda: 0),
+    @categorical
+    class RId:
+        working: int
+        dead: int
+
+    working = Regime(
+        transition=RegimeTransition(lambda: RId.dead),
         functions={"utility": lambda education: education},
         states={"education": DiscreteGrid(Edu, transition=None)},
     )
-    all_funcs = regime.get_all_functions()
-    identity_func = all_funcs["next_education"]
+    dead = Regime(
+        transition=None,
+        functions={"utility": lambda: 0.0},
+    )
+    model = Model(
+        regimes={"working": working, "dead": dead},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=RId,
+    )
+    all_funcs = model.get_all_functions("working")
+    # Identity transition should be under a boundary-encoded key
+    identity_keys = [k for k in all_funcs if "next_education" in k]
+    assert len(identity_keys) > 0
+    identity_func = all_funcs[identity_keys[0]]
     assert isinstance(identity_func, _IdentityTransition)
     assert identity_func.__annotations__["education"] is DiscreteState
     assert identity_func.__annotations__["return"] is DiscreteState
 
 
-def test_get_all_functions_includes_identity_for_fixed_continuous_state():
+def test_model_get_all_functions_includes_identity_for_fixed_continuous_state():
     """Fixed continuous states get identity transitions with correct annotation."""
-    regime = Regime(
-        transition=RegimeTransition(lambda: 0),
+
+    @categorical
+    class RId:
+        working: int
+        dead: int
+
+    working = Regime(
+        transition=RegimeTransition(lambda: RId.dead),
         functions={"utility": lambda wealth: wealth},
         states={"wealth": LinSpacedGrid(start=0, stop=10, n_points=5, transition=None)},
     )
-    all_funcs = regime.get_all_functions()
-    identity_func = all_funcs["next_wealth"]
+    dead = Regime(
+        transition=None,
+        functions={"utility": lambda: 0.0},
+    )
+    model = Model(
+        regimes={"working": working, "dead": dead},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=RId,
+    )
+    all_funcs = model.get_all_functions("working")
+    # Identity transition should be under a boundary-encoded key
+    identity_keys = [k for k in all_funcs if "next_wealth" in k]
+    assert len(identity_keys) > 0
+    identity_func = all_funcs[identity_keys[0]]
     assert isinstance(identity_func, _IdentityTransition)
     assert identity_func.__annotations__["wealth"] is ContinuousState
     assert identity_func.__annotations__["return"] is ContinuousState

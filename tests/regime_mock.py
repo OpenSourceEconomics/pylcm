@@ -1,9 +1,10 @@
 from dataclasses import dataclass, field
 
-from lcm.grids import Grid
-from lcm.params.mapping_leaf import MappingLeaf
-from lcm.regime import _collect_state_transitions, _default_H
-from lcm.typing import UserFunction
+from lcm.grids import DiscreteGrid, DiscreteMarkovGrid, Grid
+from lcm.input_processing.process_transitions import _IdentityTransition
+from lcm.regime import _default_H
+from lcm.shocks._base import _ShockGrid
+from lcm.typing import ContinuousState, DiscreteState, UserFunction
 
 
 @dataclass
@@ -30,14 +31,29 @@ class RegimeMock:
         if not self.terminal and "H" not in self.functions:
             self.functions = {**self.functions, "H": _default_H}
 
-    def get_all_functions(self) -> dict[str, UserFunction | MappingLeaf]:
+    def get_user_functions(self) -> dict[str, UserFunction]:
         """Get all regime functions including utility, constraints, and transitions."""
-        result: dict[str, UserFunction | MappingLeaf] = dict(self.functions)
+        result: dict[str, UserFunction] = dict(self.functions)
         result.update(self.constraints)
         if self.states:
-            result |= _collect_state_transitions(
-                {k: v for k, v in self.states.items() if v is not None},
-            )
+            for name, grid in self.states.items():
+                if grid is None:
+                    continue
+                if isinstance(grid, _ShockGrid):
+                    result[f"next_{name}"] = lambda: None
+                elif isinstance(grid, DiscreteMarkovGrid):
+                    transition = grid.transition
+                    if callable(transition):
+                        result[f"next_{name}"] = transition
+                elif callable(grid_trans := getattr(grid, "transition", None)):
+                    result[f"next_{name}"] = grid_trans
+                elif grid_trans is None:
+                    ann = (
+                        DiscreteState
+                        if isinstance(grid, DiscreteGrid)
+                        else ContinuousState
+                    )
+                    result[f"next_{name}"] = _IdentityTransition(name, annotation=ann)
         if self.transition:
             result["next_regime"] = self.transition
         return result

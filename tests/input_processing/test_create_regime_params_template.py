@@ -19,7 +19,8 @@ def test_create_params_without_shocks(binary_category_class):
         transition=lambda: 0,
         functions={"utility": lambda a, b, c: None},  # noqa: ARG005
     )
-    got = create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
+    user_functions = regime.get_user_functions()
+    got = create_regime_params_template(regime, user_functions=user_functions)  # ty: ignore[invalid-argument-type]
     assert got == {
         "H": {"discount_factor": float},
         "utility": {"c": "no_annotation_found"},
@@ -43,7 +44,8 @@ def test_create_params_with_custom_H_no_extra_params():
         },
         functions={"utility": lambda a, b, c: None, "H": custom_H},  # noqa: ARG005
     )
-    got = create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
+    user_functions = regime.get_user_functions()
+    got = create_regime_params_template(regime, user_functions=user_functions)  # ty: ignore[invalid-argument-type]
     assert got == {"H": {}, "utility": {"c": "no_annotation_found"}}
 
 
@@ -55,8 +57,9 @@ def test_default_H_with_state_named_discount_factor_raises():
         functions={"utility": lambda a, discount_factor: None},  # noqa: ARG005
         transition=lambda discount_factor: discount_factor,
     )
+    user_functions = regime.get_user_functions()
     with pytest.raises(InvalidNameError, match="shadow state/action"):
-        create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
+        create_regime_params_template(regime, user_functions=user_functions)  # ty: ignore[invalid-argument-type]
 
 
 def test_custom_function_shadowing_state_raises():
@@ -70,8 +73,9 @@ def test_custom_function_shadowing_state_raises():
         states={"wealth": None},
         functions={"utility": lambda a, wealth: None, "H": custom_H},  # noqa: ARG005
     )
+    user_functions = regime.get_user_functions()
     with pytest.raises(InvalidNameError, match="shadow state/action"):
-        create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
+        create_regime_params_template(regime, user_functions=user_functions)  # ty: ignore[invalid-argument-type]
 
 
 def test_regular_function_taking_state_as_argument_no_error(binary_category_class):
@@ -88,7 +92,8 @@ def test_regular_function_taking_state_as_argument_no_error(binary_category_clas
         transition=lambda: 0,
         functions={"utility": lambda a, wealth, risk_aversion: None},  # noqa: ARG005
     )
-    got = create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
+    user_functions = regime.get_user_functions()
+    got = create_regime_params_template(regime, user_functions=user_functions)  # ty: ignore[invalid-argument-type]
     assert got == {
         "H": {"discount_factor": float},
         "utility": {"risk_aversion": "no_annotation_found"},

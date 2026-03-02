@@ -7,6 +7,7 @@ from dags.tree import QNAME_DELIMITER, flatten_to_qnames
 
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.typing import (
+    REGIME_PAIR_SEPARATOR,
     InternalParams,
     ParamsTemplate,
     UserParams,
@@ -16,18 +17,22 @@ from lcm.utils import ensure_containers_are_immutable
 _NUM_PARTS_FUNCTION_PARAM = 3
 
 
-def process_params(
+def process_params(  # noqa: C901
     *,
     params: UserParams,
     params_template: ParamsTemplate,
 ) -> InternalParams:
     """Process user-provided params into internal params.
 
-    Users can provide parameters at exactly one of three levels:
+    Users can provide parameters at exactly one of five levels (checked in order):
 
-    - Model level: {"arg_0": 0.0} - propagates to all functions needing arg_0
-    - Regime level: {"regime_0": {"arg_0": 0.0}} - propagates within regime_0
-    - Function level: {"regime_0": {"func": {"arg_0": 0.0}}} - direct specification
+    1. Function level: `{"pair_or_regime": {"func": {"arg": val}}}` — exact match
+    2. Pair/regime level: `{"pair_or_regime": {"arg": val}}` — propagates within scope
+    3. Source-regime function level (pair keys only):
+       `{"source": {"func": {"arg": val}}}` — propagates to all boundaries from source
+    4. Source-regime level (pair keys only):
+       `{"source": {"arg": val}}` — propagates to all boundaries from source
+    5. Model level: `{"arg": val}` — propagates globally
 
     The output always matches the params_template skeleton.
 
@@ -56,20 +61,33 @@ def process_params(
 
         candidates = []
 
-        # 1. Exact match (e.g. regime__function__param or regime__param)
+        # 1. Exact match (e.g. pair__function__param or regime__function__param)
         if key in params_flat:
             candidates.append(key)
 
-        # 2. Regime level (if key is function level: regime__function__param)
-        # We want to check for regime__param
+        # 2. Pair/Regime level (if key is function level)
         if len(parts) == _NUM_PARTS_FUNCTION_PARAM:
-            regime = parts[0]
-            regime_level_key = f"{regime}{QNAME_DELIMITER}{param_name}"
-            # Check if this regime-level key was provided in params
-            if regime_level_key in params_flat:
-                candidates.append(regime_level_key)
+            top_key = parts[0]
+            top_level_key = f"{top_key}{QNAME_DELIMITER}{param_name}"
+            if top_level_key in params_flat:
+                candidates.append(top_level_key)
 
-        # 3. Model level (Global: param)
+            # 3-4. Source-regime matching for pair keys (e.g. "working_to_retired")
+            if REGIME_PAIR_SEPARATOR in top_key:
+                source = top_key.split(REGIME_PAIR_SEPARATOR, 1)[0]
+                func_name = parts[1]
+                # 3. Source function level: source__func__param
+                source_func_key = (
+                    f"{source}{QNAME_DELIMITER}{func_name}{QNAME_DELIMITER}{param_name}"
+                )
+                if source_func_key in params_flat:
+                    candidates.append(source_func_key)
+                # 4. Source regime level: source__param
+                source_regime_key = f"{source}{QNAME_DELIMITER}{param_name}"
+                if source_regime_key in params_flat:
+                    candidates.append(source_regime_key)
+
+        # 5. Model level (Global: param)
         if param_name in params_flat:
             candidates.append(param_name)
 

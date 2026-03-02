@@ -442,8 +442,9 @@ def test_boundary_transition_uses_target_regime_params() -> None:
 
     params = {
         "discount_factor": 0.95,
-        "phase1": {"next_wealth": {"growth_rate": 0.05}},
-        "phase2": {"next_wealth": {"growth_rate": 0.10}},
+        "phase1_to_phase1": {"next_wealth": {"growth_rate": 0.05}},
+        "phase1_to_phase2": {"next_wealth": {"growth_rate": 0.10}},
+        "phase2_to_phase1": {"next_wealth": {"growth_rate": 0.10}},
     }
 
     V_arr_dict = model.solve(params)
@@ -466,15 +467,15 @@ def test_boundary_transition_uses_target_regime_params() -> None:
     last_phase1_wealth = phase1_rows["wealth"].iloc[-1]
     first_phase2_wealth = phase2_rows["wealth"].iloc[0]
 
-    # The per-boundary mapping is on the target grid, so the target regime's
-    # growth_rate (0.10) should be used — not the source's (0.05).
+    # The per-boundary mapping is on the target grid, and the pair key
+    # "phase1_to_phase2" uses growth_rate=0.10.
     expected = last_phase1_wealth * 1.10
     assert first_phase2_wealth == pytest.approx(expected, rel=0.03), (
-        f"Expected wealth ~{expected:.1f} (target growth_rate=0.10), "
+        f"Expected wealth ~{expected:.1f} (growth_rate=0.10 from pair key), "
         f"got {first_phase2_wealth:.1f}"
     )
     assert first_phase2_wealth != pytest.approx(last_phase1_wealth * 1.05, rel=0.03), (
-        "Transition should use target growth_rate=0.10, not source growth_rate=0.05"
+        "Transition should use phase1_to_phase2 growth_rate=0.10, not 0.05"
     )
 
 
@@ -545,7 +546,7 @@ def test_boundary_transition_with_target_only_param() -> None:
 
     params = {
         "discount_factor": 0.95,
-        "phase2": {"next_wealth": {"growth_rate": 0.10}},
+        "phase1_to_phase2": {"next_wealth": {"growth_rate": 0.10}},
     }
 
     V_arr_dict = model.solve(params)
@@ -569,9 +570,9 @@ def test_boundary_transition_with_target_only_param() -> None:
     first_phase2_wealth = phase2_rows["wealth"].iloc[0]
 
     # The per-boundary mapping on the target grid takes growth_rate, which only
-    # exists in the target regime. The target's growth_rate=0.10 should be applied.
+    # exists on the phase1→phase2 boundary. growth_rate=0.10 should be applied.
     expected = last_phase1_wealth * 1.10
     assert first_phase2_wealth == pytest.approx(expected, rel=0.03), (
-        f"Expected wealth ~{expected:.1f} (target growth_rate=0.10), "
+        f"Expected wealth ~{expected:.1f} (growth_rate=0.10), "
         f"got {first_phase2_wealth:.1f}"
     )

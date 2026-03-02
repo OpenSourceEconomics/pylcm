@@ -3,26 +3,28 @@ from jax import Array
 
 from lcm.exceptions import InvalidNameError
 from lcm.grids import IrregSpacedGrid
-from lcm.regime import Regime, resolve_mapping_leaf
+from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
-from lcm.typing import RegimeParamsTemplate
+from lcm.typing import RegimeParamsTemplate, UserFunction
 from lcm.utils import ensure_containers_are_immutable
 
 
-def create_regime_params_template(regime: Regime) -> RegimeParamsTemplate:
-    """Create parameter template from a regime specification.
+def create_regime_params_template(
+    regime: Regime,
+    *,
+    user_functions: dict[str, UserFunction],
+) -> RegimeParamsTemplate:
+    """Create parameter template from a regime specification and user functions.
 
     Uses dags.tree.create_tree_with_input_types() to discover parameters and their
     type annotations from function signatures. Parameters are identified as function
     arguments that are not states, actions, other regime functions, or special variables
     (period, age, continuation_value).
 
-    Grids with runtime-supplied values (IrregSpacedGrid without points, _ShockGrid
-    without full shock_params) add entries to the template under pseudo-function keys
-    matching the state name.
-
     Args:
         regime: The regime as provided by the user.
+        user_functions: Flat mapping of function names to callables to discover
+            parameters from.
 
     Returns:
         The regime parameter template with type annotations as values. Contains a
@@ -41,9 +43,8 @@ def create_regime_params_template(regime: Regime) -> RegimeParamsTemplate:
 
     function_params = {}
     # Use dags.tree to discover parameters and their type annotations for each function.
-    for name, func_or_leaf in regime.get_all_functions().items():
-        func = resolve_mapping_leaf(func_or_leaf)
-        if func is None:
+    for name, func in user_functions.items():
+        if func is None or not callable(func):
             continue
         tree = dt.create_tree_with_input_types({name: func})
         excl = H_variables if name == "H" else variables
@@ -64,12 +65,10 @@ def create_regime_params_template(regime: Regime) -> RegimeParamsTemplate:
                 f"the parameter(s) or the state(s)/action(s) to avoid ambiguity."
             )
 
-    _add_runtime_grid_params(regime, function_params)
-
     return ensure_containers_are_immutable(function_params)
 
 
-def _add_runtime_grid_params(
+def add_runtime_grid_params(
     regime: Regime,
     function_params: dict[str, dict[str, type]],
 ) -> None:
