@@ -43,7 +43,7 @@ def build_Q_and_F_functions(
     *,
     regime_name: str,
     regime: Regime,
-    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    regime_names_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     internal_functions: InternalFunctions,
     state_space_infos: MappingProxyType[RegimeName, StateSpaceInfo],
     ages: AgeGrid,
@@ -61,7 +61,7 @@ def build_Q_and_F_functions(
         else:
             Q_and_F = get_Q_and_F(
                 regime_name=regime_name,
-                regimes_to_active_periods=regimes_to_active_periods,
+                regime_names_to_active_periods=regime_names_to_active_periods,
                 period=period,
                 age=age,
                 next_state_space_infos=state_space_infos,

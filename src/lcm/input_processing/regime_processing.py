@@ -43,20 +43,9 @@ from lcm.typing import (
     ParamsTemplate,
     RegimeName,
     RegimeNamesToIds,
-    RegimeParamsTemplate,
-    TransitionFunctionsMapping,
     UserFunction,
 )
 from lcm.utils import ensure_containers_are_immutable
-
-
-def _wrap_transitions(
-    transitions: dict[RegimeName, dict[str, InternalUserFunction]],
-) -> TransitionFunctionsMapping:
-    """Wrap nested transitions dict in MappingProxyType."""
-    return MappingProxyType(
-        {name: MappingProxyType(inner) for name, inner in transitions.items()}
-    )
 
 
 def process_regimes(
@@ -93,11 +82,10 @@ def process_regimes(
 
     nested_transitions = {}
     target_originated_per_regime: dict[str, frozenset[str]] = {}
-    for name, regime in regimes.items():
+    for name in regimes:
         transitions, target_originated = _extract_transitions_from_regime(
-            regime=regime,
             regime_name=name,
-            all_regimes=regimes,
+            regimes=regimes,
             states_per_regime=states_per_regime,
         )
         nested_transitions[name] = transitions
@@ -127,7 +115,7 @@ def process_regimes(
             for n in regimes
         }
     )
-    regimes_to_active_periods = MappingProxyType(
+    regime_names_to_active_periods = MappingProxyType(
         {n: ages.get_periods_where(r.active) for n, r in regimes.items()}
     )
 
@@ -148,19 +136,16 @@ def process_regimes(
 
     internal_regimes = {}
     for name, regime in regimes.items():
-        regime_params_template = params_template[name]
-
         internal_functions = _get_internal_functions(
-            regime=regime,
             regime_name=name,
+            regime=regime,
             nested_transitions=nested_transitions[name],
             grids=grids,
-            regime_params_template=regime_params_template,
             regime_names_to_ids=regime_names_to_ids,
             gridspecs=gridspecs[name],
             variable_info=variable_info[name],
             enable_jit=enable_jit,
-            all_regime_params_templates=params_template,
+            params_template=params_template,
             target_originated_transitions=target_originated_per_regime[name],
             all_flat_param_names=flat_param_names,
         )
@@ -168,7 +153,7 @@ def process_regimes(
         Q_and_F_functions = build_Q_and_F_functions(
             regime_name=name,
             regime=regime,
-            regimes_to_active_periods=regimes_to_active_periods,
+            regime_names_to_active_periods=regime_names_to_active_periods,
             internal_functions=internal_functions,
             state_space_infos=state_space_infos,
             ages=ages,
@@ -204,7 +189,7 @@ def process_regimes(
             variable_info=variable_info[name],
             functions=MappingProxyType(internal_functions.functions),
             constraints=MappingProxyType(internal_functions.constraints),
-            active_periods=tuple(regimes_to_active_periods[name]),
+            active_periods=tuple(regime_names_to_active_periods[name]),
             regime_transition_probs=internal_functions.regime_transition_probs,
             internal_functions=internal_functions,
             transitions=internal_functions.transitions,
@@ -223,33 +208,31 @@ def process_regimes(
 
 def _get_internal_functions(
     *,
-    regime: Regime,
     regime_name: str,
+    regime: Regime,
     nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
     grids: MappingProxyType[RegimeName, MappingProxyType[str, Array]],
-    regime_params_template: RegimeParamsTemplate,
     regime_names_to_ids: RegimeNamesToIds,
     gridspecs: MappingProxyType[str, Grid],
     variable_info: pd.DataFrame,
     enable_jit: bool,
-    all_regime_params_templates: MappingProxyType[RegimeName, RegimeParamsTemplate],
+    params_template: ParamsTemplate,
     target_originated_transitions: frozenset[str],
     all_flat_param_names: frozenset[str],
 ) -> InternalFunctions:
     """Process the user provided regime functions.
 
     Args:
-        regime: The regime as provided by the user.
         regime_name: The name of the regime.
+        regime: The regime as provided by the user.
         nested_transitions: Nested transitions dict for internal processing.
             Format: {"regime_name": {"next_state": func, ...}, "next_regime": func}
         grids: Immutable mapping of regime names to grid arrays.
-        regime_params_template: The regime's parameter template.
         regime_names_to_ids: Mapping from regime names to integer indices.
         gridspecs: The specifications of the current regimes grids.
         variable_info: Variable info of the regime.
         enable_jit: Whether to jit the internal functions.
-        all_regime_params_templates: Immutable mapping of all regime names to their
+        params_template: Immutable mapping of all regime names to their
             parameter templates.
         target_originated_transitions: Frozenset of flat function names whose
             transitions were resolved from the target grid's mapping.
@@ -312,7 +295,7 @@ def _get_internal_functions(
     for func_name, func in deterministic_functions.items():
         functions[func_name] = _rename_params_to_qnames(
             func=func,
-            regime_params_template=regime_params_template,
+            params_template=params_template,
             param_key=func_name,
             regime_name=regime_name,
         )
@@ -322,9 +305,8 @@ def _get_internal_functions(
             func=func,
             func_name=func_name,
             regime_name=regime_name,
-            regime_params_template=regime_params_template,
             target_originated_transitions=target_originated_transitions,
-            all_regime_params_templates=all_regime_params_templates,
+            params_template=params_template,
         )
 
     for func_name, func in stochastic_transition_functions.items():
@@ -335,9 +317,8 @@ def _get_internal_functions(
             func=func,
             func_name=func_name,
             regime_name=regime_name,
-            regime_params_template=regime_params_template,
             target_originated_transitions=target_originated_transitions,
-            all_regime_params_templates=all_regime_params_templates,
+            params_template=params_template,
         )
         functions[func_name] = _get_discrete_markov_next_function(
             func=func,
@@ -389,7 +370,9 @@ def _get_internal_functions(
     return InternalFunctions(
         functions=internal_functions,
         constraints=internal_constraints,
-        transitions=_wrap_transitions(unflatten_from_qnames(internal_transition)),  # ty: ignore[invalid-argument-type]
+        transitions=ensure_containers_are_immutable(
+            unflatten_from_qnames(internal_transition)
+        ),
         regime_transition_probs=internal_regime_transition_probs,
         stochastic_transition_names=stochastic_transition_names,
     )
@@ -397,9 +380,8 @@ def _get_internal_functions(
 
 def _extract_transitions_from_regime(
     *,
-    regime: Regime,
     regime_name: str,
-    all_regimes: Mapping[str, Regime],
+    regimes: Mapping[str, Regime],
     states_per_regime: Mapping[str, set[str]],
 ) -> tuple[dict[str, dict[str, UserFunction] | UserFunction], frozenset[str]]:
     """Extract transitions from grid attributes and auto-generate identity transitions.
@@ -419,9 +401,8 @@ def _extract_transitions_from_regime(
     explicit per-boundary transitions.
 
     Args:
-        regime: The user regime (source).
         regime_name: Name of the source regime.
-        all_regimes: Mapping of all regime names to regime instances.
+        regimes: Mapping of all regime names to regime instances.
         states_per_regime: Mapping of regime names to their state names.
 
     Returns:
@@ -430,6 +411,7 @@ def _extract_transitions_from_regime(
         target grid's mapping (priority 1).
 
     """
+    regime = regimes[regime_name]
     if regime.terminal:
         return {}, frozenset()
 
@@ -440,7 +422,7 @@ def _extract_transitions_from_regime(
     nested["next_regime"] = regime.transition.func
 
     for target_name, target_state_names in states_per_regime.items():
-        target_regime = all_regimes[target_name]
+        target_regime = regimes[target_name]
         boundary_key = (regime_name, target_name)
         boundary_transitions: dict[str, UserFunction] = {}
         boundary_target_originated: set[str] = set()
@@ -610,7 +592,7 @@ def _validate_discrete_category_compatibility(
 def _validate_cross_regime_transition(
     func: UserFunction,
     func_name: str,
-    all_regime_params_templates: MappingProxyType[RegimeName, RegimeParamsTemplate],
+    params_template: ParamsTemplate,
 ) -> None:
     """Validate a cross-regime transition function before casting.
 
@@ -626,7 +608,7 @@ def _validate_cross_regime_transition(
 
     template_param_names = {
         p
-        for template in all_regime_params_templates.values()
+        for template in params_template.values()
         for entry in template.values()
         for p in entry
     }
@@ -655,7 +637,7 @@ def _extract_param_key(func_name: str) -> str:
 def _rename_params_to_qnames(
     *,
     func: UserFunction,
-    regime_params_template: RegimeParamsTemplate,
+    params_template: ParamsTemplate,
     param_key: str,
     regime_name: str,
 ) -> InternalUserFunction:
@@ -665,15 +647,16 @@ def _rename_params_to_qnames(
 
     Args:
         func: The user function.
-        regime_params_template: The parameter template for the regime.
-        param_key: The key to look up in regime_params_template (e.g., "utility").
+        params_template: Parameter template for all regimes.
+        param_key: The key to look up in the regime's parameter template
+            (e.g., "utility").
         regime_name: The name of the regime (e.g., "working").
 
     Returns:
         The function with renamed parameters.
 
     """
-    param_names = list(regime_params_template[param_key])
+    param_names = list(params_template[regime_name][param_key])
     if not param_names:
         return cast("InternalUserFunction", func)
     mapper = {
@@ -688,9 +671,8 @@ def _rename_transition_params(
     func: UserFunction,
     func_name: str,
     regime_name: str,
-    regime_params_template: RegimeParamsTemplate,
     target_originated_transitions: frozenset[str],
-    all_regime_params_templates: MappingProxyType[RegimeName, RegimeParamsTemplate],
+    params_template: ParamsTemplate,
 ) -> InternalUserFunction:
     """Rename a transition function's parameters to qualified names.
 
@@ -702,17 +684,17 @@ def _rename_transition_params(
         return _rename_target_originated_transition(
             func=func,
             func_name=func_name,
-            all_regime_params_templates=all_regime_params_templates,
+            params_template=params_template,
         )
     param_key = _extract_param_key(func_name)
-    if param_key in regime_params_template:
+    if param_key in params_template[regime_name]:
         return _rename_params_to_qnames(
             func=func,
-            regime_params_template=regime_params_template,
+            params_template=params_template,
             param_key=param_key,
             regime_name=regime_name,
         )
-    _validate_cross_regime_transition(func, func_name, all_regime_params_templates)
+    _validate_cross_regime_transition(func, func_name, params_template)
     return cast("InternalUserFunction", func)
 
 
@@ -720,7 +702,7 @@ def _rename_target_originated_transition(
     *,
     func: UserFunction,
     func_name: str,
-    all_regime_params_templates: MappingProxyType[RegimeName, RegimeParamsTemplate],
+    params_template: ParamsTemplate,
 ) -> InternalUserFunction:
     """Rename parameters of a target-originated transition to regime-prefixed qnames.
 
@@ -732,7 +714,7 @@ def _rename_target_originated_transition(
     Args:
         func: The user transition function.
         func_name: The flat function name (e.g., `"phase2__next_wealth"`).
-        all_regime_params_templates: All regime parameter templates.
+        params_template: All regime parameter templates.
 
     Returns:
         The function with renamed parameters.
@@ -740,7 +722,7 @@ def _rename_target_originated_transition(
     """
     target_name = func_name.split(QNAME_DELIMITER, 1)[0]
     param_key = _extract_param_key(func_name)
-    target_template = all_regime_params_templates[target_name]
+    target_template = params_template[target_name]
 
     assert param_key in target_template, (  # noqa: S101
         f"Target-originated transition '{func_name}' has no matching entry "

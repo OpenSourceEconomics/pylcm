@@ -103,8 +103,7 @@ def validate_params_template(params_template: ParamsTemplate) -> None:  # noqa: 
     are disjoint sets to enable unambiguous parameter propagation.
 
     Args:
-        all_regime_params_templates: Immutable mapping of regime names to their
-            parameter templates.
+        params_template: Immutable mapping of regime names to their parameter templates.
 
     Raises:
         InvalidNameError: If names are not disjoint or contain the separator.

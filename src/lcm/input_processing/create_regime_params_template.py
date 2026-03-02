@@ -11,9 +11,7 @@ from lcm.typing import RegimeParamsTemplate
 from lcm.utils import ensure_containers_are_immutable
 
 
-def create_regime_params_template(
-    regime: Regime,
-) -> RegimeParamsTemplate:
+def create_regime_params_template(regime: Regime) -> RegimeParamsTemplate:
     """Create parameter template from a regime specification.
 
     Uses dags.tree.create_tree_with_input_types() to discover parameters and their

@@ -30,7 +30,7 @@ from lcm.utils import normalize_regime_transition_probs
 def get_Q_and_F(
     *,
     regime_name: str,
-    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    regime_names_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     period: int,
     age: float,
     next_state_space_infos: MappingProxyType[RegimeName, StateSpaceInfo],
@@ -41,7 +41,7 @@ def get_Q_and_F(
 
     Args:
         regime_name: The name of the regime.
-        regimes_to_active_periods: Mapping regime names to their active periods.
+        regime_names_to_active_periods: Mapping of regime names to their active periods.
         period: The current period.
         age: The age corresponding to the current period.
         next_state_space_infos: The state space information of the next period.
@@ -69,7 +69,7 @@ def get_Q_and_F(
     active_regimes_next_period = tuple(
         target_name
         for target_name in target_regimes
-        if period + 1 in regimes_to_active_periods[target_name]
+        if period + 1 in regime_names_to_active_periods[target_name]
     )
     next_V_extra_param_names: dict[str, frozenset[str]] = {}
 

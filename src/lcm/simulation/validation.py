@@ -13,7 +13,6 @@ from lcm.functools import get_union_of_args
 from lcm.grids import DiscreteGrid, DiscreteMarkovGrid
 from lcm.interfaces import InternalRegime
 from lcm.Q_and_F import _get_feasibility
-from lcm.simulation.utils import get_regime_state_names
 from lcm.typing import (
     InternalParams,
     RegimeName,
@@ -133,13 +132,15 @@ def _collect_state_name_errors(
     # All known states (union across all regimes) — used for the "extra" check
     all_known_states: set[str] = {"age"}
     for internal_regime in internal_regimes.values():
-        all_known_states.update(get_regime_state_names(internal_regime))
+        all_known_states.update(internal_regime.variable_info.query("is_state").index)
 
     # Required states — only from regimes subjects actually start in
     required_states: set[str] = {"age"}
     used_regime_names = set(initial_regimes) & valid_regime_names
     for regime_name in used_regime_names:
-        required_states.update(get_regime_state_names(internal_regimes[regime_name]))
+        required_states.update(
+            internal_regimes[regime_name].variable_info.query("is_state").index
+        )
 
     provided_states = set(initial_states.keys())
 

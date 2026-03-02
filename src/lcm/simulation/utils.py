@@ -25,21 +25,6 @@ from lcm.utils import normalize_regime_transition_probs
 MISSING_CAT_CODE = jnp.iinfo(jnp.int32).min
 
 
-def get_regime_state_names(
-    internal_regime: InternalRegime,
-) -> set[str]:
-    """Get state names from an internal regime's variable info.
-
-    Args:
-        internal_regime: The internal regime instance.
-
-    Returns:
-        Set of state variable names.
-
-    """
-    return set(internal_regime.variable_info.query("is_state").index)
-
-
 def create_regime_state_action_space(
     *,
     internal_regime: InternalRegime,
@@ -330,7 +315,7 @@ def convert_initial_states_to_nested(
     n_subjects = len(next(iter(initial_states.values())))
 
     for regime_name, internal_regime in internal_regimes.items():
-        regime_state_names = get_regime_state_names(internal_regime)
+        regime_state_names = set(internal_regime.variable_info.query("is_state").index)
         regime_states: dict[str, Array] = {}
         for state_name in regime_state_names:
             if state_name in initial_states:
