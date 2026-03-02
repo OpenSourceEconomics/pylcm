@@ -119,8 +119,8 @@ class _ShockGrid(ContinuousGrid):
 
 
 def _validate_gauss_hermite_grid(
-    n_points: int,
     *,
+    n_points: int,
     gauss_hermite: bool,
     n_std: float | None,
     mean_label: str = "the mean",
@@ -142,13 +142,3 @@ def _validate_gauss_hermite_grid(
     if gauss_hermite and n_std is not None:
         msg = "gauss_hermite=True and n_std are mutually exclusive."
         raise GridInitializationError(msg)
-
-
-def _gauss_hermite_param_field_names(
-    shock: _ShockGrid, *, gauss_hermite: bool
-) -> tuple[str, ...]:
-    """Return parameter field names, excluding `gauss_hermite` and (if GH) `n_std`."""
-    exclude = {"n_points", "gauss_hermite"}
-    if gauss_hermite:
-        exclude.add("n_std")
-    return tuple(f.name for f in fields(shock) if f.name not in exclude)

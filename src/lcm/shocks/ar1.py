@@ -1,5 +1,5 @@
 from abc import abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from math import comb
 from types import MappingProxyType
 
@@ -10,7 +10,6 @@ from jax.scipy.stats.norm import cdf
 
 from lcm.shocks._base import (
     _gauss_hermite_normal,
-    _gauss_hermite_param_field_names,
     _ShockGrid,
     _validate_gauss_hermite_grid,
 )
@@ -64,7 +63,7 @@ class Tauchen(_ShockGridAR1):
 
     def __post_init__(self) -> None:
         _validate_gauss_hermite_grid(
-            self.n_points,
+            n_points=self.n_points,
             gauss_hermite=self.gauss_hermite,
             n_std=self.n_std,
             mean_label="the unconditional mean",
@@ -72,7 +71,10 @@ class Tauchen(_ShockGridAR1):
 
     @property
     def _param_field_names(self) -> tuple[str, ...]:
-        return _gauss_hermite_param_field_names(self, gauss_hermite=self.gauss_hermite)
+        exclude = {"n_points", "gauss_hermite"}
+        if self.gauss_hermite:
+            exclude.add("n_std")
+        return tuple(f.name for f in fields(self) if f.name not in exclude)
 
     def compute_gridpoints(self, n_points: int, **kwargs: float | Array) -> Float1D:
         rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
