@@ -267,7 +267,7 @@ def _create_ar1_next_func(
     }
     args: dict[str, str] = {
         f"key_{name}": "dict[str, Array]",
-        prev_state_name: "Array",
+        prev_state_name: "ContinuousState",
         **dict.fromkeys(runtime_param_names, "float"),
     }
     _draw_shock = gridspec.draw_shock
