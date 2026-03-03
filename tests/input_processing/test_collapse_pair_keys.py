@@ -8,7 +8,7 @@ from lcm.input_processing.params_processing import collapse_pair_keys
 
 
 @pytest.fixture
-def _identical_boundaries():
+def identical_boundaries():
     """Template where all boundaries from 'working' have identical params."""
     return MappingProxyType(
         {
@@ -40,7 +40,7 @@ def _identical_boundaries():
 
 
 @pytest.fixture
-def _differing_boundaries():
+def differing_boundaries():
     """Template where boundaries from 'growing' have different params."""
     return MappingProxyType(
         {
@@ -69,8 +69,8 @@ def _differing_boundaries():
     )
 
 
-def test_identical_boundaries_collapsed(_identical_boundaries):
-    result = collapse_pair_keys(_identical_boundaries)
+def testidentical_boundaries_collapsed(identical_boundaries):
+    result = collapse_pair_keys(identical_boundaries)
 
     # Pair keys should be gone
     assert "working_to_working" not in result
@@ -89,8 +89,8 @@ def test_identical_boundaries_collapsed(_identical_boundaries):
     assert "utility" in result["retired"]
 
 
-def test_differing_boundaries_kept(_differing_boundaries):
-    result = collapse_pair_keys(_differing_boundaries)
+def testdiffering_boundaries_kept(differing_boundaries):
+    result = collapse_pair_keys(differing_boundaries)
 
     # Pair keys should remain because params differ
     assert "growing_to_growing" in result

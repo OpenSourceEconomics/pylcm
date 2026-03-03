@@ -10,7 +10,12 @@ from dags.tree import QNAME_DELIMITER, flatten_to_qnames
 from jax import Array
 
 from lcm.ages import AgeGrid
-from lcm.exceptions import ModelInitializationError, format_messages
+from lcm.exceptions import (
+    InvalidNameError,
+    InvalidParamsError,
+    ModelInitializationError,
+    format_messages,
+)
 from lcm.input_processing.params_processing import collapse_pair_keys, process_params
 from lcm.input_processing.regime_processing import InternalRegime, process_regimes
 from lcm.input_processing.util import get_variable_info
@@ -108,14 +113,17 @@ class Model:
             )
         )
         self.regimes = MappingProxyType(dict(regimes))
-        self.internal_regimes, self._internal_params_template, self.params_template = (
-            _build_regimes_and_template(
-                regimes=regimes,
-                ages=self.ages,
-                regime_names_to_ids=self.regime_names_to_ids,
-                enable_jit=enable_jit,
-                fixed_params=self.fixed_params,
-            )
+        (
+            self.internal_regimes,
+            self._internal_params_template,
+            self.params_template,
+            self._collapsed_pair_keys,
+        ) = _build_regimes_and_template(
+            regimes=regimes,
+            ages=self.ages,
+            regime_names_to_ids=self.regime_names_to_ids,
+            enable_jit=enable_jit,
+            fixed_params=self.fixed_params,
         )
         self.enable_jit = enable_jit
 
@@ -157,6 +165,25 @@ class Model:
         )
         return MappingProxyType(all_funcs)
 
+    def _process_params(self, params: UserParams) -> InternalParams:
+        """Process user params against the internal template with user-facing errors.
+
+        Wraps `process_params` to translate internal pair-key references (e.g.,
+        `working_to_retired`) back to their collapsed source-regime form (e.g.,
+        `working`) in error messages, so errors match what users see in
+        `params_template`.
+
+        """
+        try:
+            return process_params(
+                params=params, params_template=self._internal_params_template
+            )
+        except (InvalidParamsError, InvalidNameError) as e:
+            msg = str(e)
+            for pair_key, source in self._collapsed_pair_keys.items():
+                msg = msg.replace(pair_key, source)
+            raise type(e)(msg) from None
+
     def solve(
         self,
         params: UserParams,
@@ -179,9 +206,7 @@ class Model:
         Returns:
             Immutable mapping of period to a value function array for each regime.
         """
-        internal_params = process_params(
-            params=params, params_template=self._internal_params_template
-        )
+        internal_params = self._process_params(params)
         return solve(
             internal_params=internal_params,
             ages=self.ages,
@@ -225,9 +250,7 @@ class Model:
             optionally with additional_targets.
 
         """
-        internal_params = process_params(
-            params=params, params_template=self._internal_params_template
-        )
+        internal_params = self._process_params(params)
         if check_initial_conditions:
             validate_initial_conditions(
                 initial_states=initial_states,
@@ -282,9 +305,7 @@ class Model:
             optionally with additional_targets.
 
         """
-        internal_params = process_params(
-            params=params, params_template=self._internal_params_template
-        )
+        internal_params = self._process_params(params)
         if check_initial_conditions:
             validate_initial_conditions(
                 initial_states=initial_states,
@@ -320,7 +341,10 @@ def _build_regimes_and_template(
     enable_jit: bool,
     fixed_params: UserParams,
 ) -> tuple[
-    MappingProxyType[RegimeName, InternalRegime], ParamsTemplate, ParamsTemplate
+    MappingProxyType[RegimeName, InternalRegime],
+    ParamsTemplate,
+    ParamsTemplate,
+    MappingProxyType[str, str],
 ]:
     """Build internal regimes and params template in a single pass.
 
@@ -328,9 +352,11 @@ def _build_regimes_and_template(
     so that each result is computed exactly once.
 
     Returns:
-        Tuple of (internal_regimes, internal_params_template, user_params_template).
-        The internal template always uses pair keys; the user-facing template collapses
-        pair keys when all boundaries from a source regime are structurally identical.
+        Tuple of (internal_regimes, internal_params_template, user_params_template,
+        collapsed_pair_keys). The internal template always uses pair keys; the
+        user-facing template collapses pair keys when all boundaries from a source
+        regime are structurally identical. `collapsed_pair_keys` maps each collapsed
+        pair key to its source regime name, for translating error messages.
 
     """
     internal_regimes, internal_template = process_regimes(
@@ -353,7 +379,20 @@ def _build_regimes_and_template(
             )
 
     user_template = collapse_pair_keys(internal_template)
-    return internal_regimes, internal_template, user_template
+
+    # Build mapping of collapsed pair keys to source regimes
+    collapsed = {
+        pk: pk.split(REGIME_PAIR_SEPARATOR, 1)[0]
+        for pk in internal_template
+        if REGIME_PAIR_SEPARATOR in pk and pk not in user_template
+    }
+
+    return (
+        internal_regimes,
+        internal_template,
+        user_template,
+        MappingProxyType(collapsed),
+    )
 
 
 def _validate_model_inputs(  # noqa: C901
