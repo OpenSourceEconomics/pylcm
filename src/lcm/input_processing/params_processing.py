@@ -170,7 +170,9 @@ def _entries_equal(
     for func_name, a_func in a.items():
         b_func = b[func_name]
         if not isinstance(a_func, Mapping) or not isinstance(b_func, Mapping):
-            return a_func == b_func
+            if a_func != b_func:
+                return False
+            continue
         if set(a_func.keys()) != set(b_func.keys()):
             return False
         if any(a_func[k] != b_func[k] for k in a_func):
