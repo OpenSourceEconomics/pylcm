@@ -43,7 +43,6 @@ project:
         - file: user_guide/grids.ipynb
         - file: user_guide/solving_and_simulating.md
         - file: user_guide/parameters.md
-        - file: user_guide/shocks.md
     - file: explanations/index.md
       title: Explanations
       children:
@@ -51,6 +50,7 @@ project:
         - file: explanations/function_representation.ipynb
         - file: explanations/interpolation.ipynb
         - file: explanations/transitions.ipynb
+        - file: explanations/shocks.ipynb
     - file: examples/index.md
       title: Examples
       children:
