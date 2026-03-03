@@ -69,7 +69,7 @@ def differing_boundaries():
     )
 
 
-def testidentical_boundaries_collapsed(identical_boundaries):
+def test_identical_boundaries_collapsed(identical_boundaries):
     result = collapse_pair_keys(identical_boundaries)
 
     # Pair keys should be gone
@@ -89,7 +89,7 @@ def testidentical_boundaries_collapsed(identical_boundaries):
     assert "utility" in result["retired"]
 
 
-def testdiffering_boundaries_kept(differing_boundaries):
+def test_differing_boundaries_kept(differing_boundaries):
     result = collapse_pair_keys(differing_boundaries)
 
     # Pair keys should remain because params differ
