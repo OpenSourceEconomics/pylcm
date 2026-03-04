@@ -612,7 +612,7 @@ def _validate_transition(
     """Validate that `transition` is callable, None, or UNSET.
 
     Raises:
-        GridInitializationError: If ``transition`` is not callable, None, or Unset.
+        GridInitializationError: If `transition` is not callable, None, or Unset.
 
     """
     if not (
