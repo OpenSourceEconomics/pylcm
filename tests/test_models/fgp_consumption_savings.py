@@ -1,32 +1,44 @@
-"""Minimal consumption-savings model for economic validation tests.
+"""Simplified FGP-style consumption-savings model.
 
-A stripped-down model (no health, no discrete states) designed to test
-precautionary savings behavior under different shock parametrizations.
+A single-persistent-shock model designed to compare Rouwenhorst vs Tauchen
+discretization quality, following the spirit of Fella, Gallipoli & Pan (2019).
+
+FGP's full benchmark uses EGM with 1000 asset x 10000 income grid points and
+Gauss-Hermite quadrature — infeasible with brute-force DP. This simplified version
+uses coarser grids and a single persistent shock (no transitory component).
 
 """
 
 from typing import Literal
 
-from jax import numpy as jnp
+import jax.numpy as jnp
 
 import lcm
-from lcm import AgeGrid, LinSpacedGrid, Model, Regime, categorical
-from lcm.typing import (
-    BoolND,
-    ContinuousAction,
-    ContinuousState,
-    FloatND,
-    ScalarInt,
+from lcm import (
+    AgeGrid,
+    LinSpacedGrid,
+    LogSpacedGrid,
+    Model,
+    Regime,
+    categorical,
 )
+from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
+
+# FGP reference parameters (Section 4, p. 191)
+SIGMA_EPS = 0.1269  # sqrt(0.0161)
+RHO = 0.95
+R = 0.04
+BETA = 0.96
+N_PERIODS = 10
 
 _SHOCK_GRID_CLASSES = {
-    "normal_gh": lcm.shocks.iid.Normal,
     "rouwenhorst": lcm.shocks.ar1.Rouwenhorst,
+    "tauchen": lcm.shocks.ar1.Tauchen,
 }
 
-_SHOCK_GRID_KWARGS: dict[str, dict[str, bool]] = {
-    "normal_gh": {"gauss_hermite": True},
+_SHOCK_GRID_KWARGS: dict[str, dict[str, bool | float]] = {
     "rouwenhorst": {},
+    "tauchen": {"gauss_hermite": False, "n_std": 3.0},
 }
 
 
@@ -35,7 +47,7 @@ def next_wealth(
     consumption: ContinuousAction,
     income: ContinuousState,
 ) -> FloatND:
-    return wealth - consumption + jnp.exp(income)
+    return (1 + R) * (wealth - consumption) + jnp.exp(income)
 
 
 def next_regime(age: float, final_age_alive: float) -> ScalarInt:
@@ -60,27 +72,27 @@ class RegimeId:
 
 
 def get_model(
-    n_periods: int,
-    shock_type: Literal["normal_gh", "rouwenhorst"],
+    shock_type: Literal["rouwenhorst", "tauchen"],
+    n_periods: int = N_PERIODS,
 ) -> Model:
     final_age_alive = n_periods - 2
 
     alive = Regime(
         active=lambda age, n=final_age_alive: age <= n,
         states={
-            "wealth": LinSpacedGrid(
-                start=1,
-                stop=20,
-                n_points=7,
+            "wealth": LogSpacedGrid(
+                start=0.5,
+                stop=50.0,
+                n_points=50,
                 transition=next_wealth,
             ),
             "income": _SHOCK_GRID_CLASSES[shock_type](
                 n_points=5,
-                **_SHOCK_GRID_KWARGS[shock_type],
+                **_SHOCK_GRID_KWARGS[shock_type],  # ty: ignore[invalid-argument-type]
             ),
         },
         actions={
-            "consumption": LinSpacedGrid(start=0.1, stop=5, n_points=7),
+            "consumption": LinSpacedGrid(start=0.1, stop=10.0, n_points=20),
         },
         transition=next_regime,
         constraints={"wealth_constraint": wealth_constraint},
@@ -102,17 +114,14 @@ def get_model(
 
 
 def get_params(
-    shock_type: Literal["normal_gh", "rouwenhorst"],
+    shock_type: Literal["rouwenhorst", "tauchen"],  # noqa: ARG001
     *,
-    sigma: float,
+    rho: float = RHO,
+    sigma: float = SIGMA_EPS,
     mu: float = 0.0,
-    rho: float = 0.0,
-    discount_factor: float = 0.95,
+    discount_factor: float = BETA,
 ) -> dict:
-    if shock_type == "normal_gh":
-        shock_params: dict[str, float] = {"mu": mu, "sigma": sigma}
-    else:
-        shock_params = {"mu": mu, "sigma": sigma, "rho": rho}
+    shock_params: dict[str, float] = {"mu": mu, "sigma": sigma, "rho": rho}
 
     return {
         "discount_factor": discount_factor,

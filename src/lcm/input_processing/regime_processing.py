@@ -474,18 +474,15 @@ def _get_weights_func_for_shock(*, name: str, gridspec: _ShockGrid) -> UserFunct
         }
         args = {name: "ContinuousState", **dict.fromkeys(runtime_param_names, "float")}
 
-        _compute_gridpoints = gridspec.compute_gridpoints
-        _compute_transition_probs = gridspec.compute_transition_probs
-
         @with_signature(args=args, return_annotation="FloatND", enforce=False)
         def weights_func_runtime(*a: Array, **kwargs: Array) -> Float1D:  # noqa: ARG001
-            shock_kw = {
+            shock_kw: dict[str, float] = {  # ty: ignore[invalid-assignment]
                 **fixed_params,
                 **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
             }
-            grid_points = _compute_gridpoints(n_points, **shock_kw)  # ty: ignore[invalid-argument-type]
-            transition_probs = _compute_transition_probs(n_points, **shock_kw)  # ty: ignore[invalid-argument-type]
-            coord = get_irreg_coordinate(value=kwargs[name], points=grid_points)
+            gridpoints = gridspec.compute_gridpoints(**shock_kw)
+            transition_probs = gridspec.compute_transition_probs(**shock_kw)
+            coord = get_irreg_coordinate(value=kwargs[name], points=gridpoints)
             return map_coordinates(
                 input=transition_probs,
                 coordinates=[
@@ -496,7 +493,7 @@ def _get_weights_func_for_shock(*, name: str, gridspec: _ShockGrid) -> UserFunct
 
         return weights_func_runtime
 
-    grid_points = gridspec.get_gridpoints()
+    gridpoints = gridspec.get_gridpoints()
     transition_probs = gridspec.get_transition_probs()
 
     @with_signature(
@@ -505,7 +502,7 @@ def _get_weights_func_for_shock(*, name: str, gridspec: _ShockGrid) -> UserFunct
         enforce=False,
     )
     def weights_func(*args: Array, **kwargs: Array) -> Float1D:  # noqa: ARG001
-        coordinate = get_irreg_coordinate(value=kwargs[f"{name}"], points=grid_points)
+        coordinate = get_irreg_coordinate(value=kwargs[f"{name}"], points=gridpoints)
         return map_coordinates(
             input=transition_probs,
             coordinates=[

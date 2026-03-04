@@ -6,6 +6,7 @@ from typing import overload
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from jax.scipy.stats.norm import cdf
 
 from lcm import grid_helpers
 from lcm.exceptions import GridInitializationError
@@ -14,7 +15,7 @@ from lcm.typing import Float1D, FloatND, ScalarFloat
 
 
 def _gauss_hermite_normal(
-    n_points: int, mu: float | Float1D, sigma: float | Float1D
+    *, n_points: int, mu: float | Float1D, sigma: float | Float1D
 ) -> tuple[Float1D, Float1D]:
     """Compute Gauss-Hermite quadrature nodes and weights for $N(\\mu, \\sigma^2)$.
 
@@ -70,11 +71,11 @@ class _ShockGrid(ContinuousGrid):
         return not self.params_to_pass_at_runtime
 
     @abstractmethod
-    def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
+    def compute_gridpoints(self, **kwargs: float) -> Float1D:
         """Compute discretized gridpoints for the shock distribution."""
 
     @abstractmethod
-    def compute_transition_probs(self, n_points: int, **kwargs: float) -> FloatND:
+    def compute_transition_probs(self, **kwargs: float) -> FloatND:
         """Compute transition probability matrix for the shock distribution."""
 
     def get_gridpoints(self) -> Float1D:
@@ -86,7 +87,7 @@ class _ShockGrid(ContinuousGrid):
         """
         if not self.is_fully_specified:
             return jnp.full(self.n_points, jnp.nan)
-        return self.compute_gridpoints(self.n_points, **self.params)
+        return self.compute_gridpoints(**self.params)
 
     def get_transition_probs(self) -> FloatND:
         """Get the transition probabilities at the gridpoints.
@@ -97,7 +98,7 @@ class _ShockGrid(ContinuousGrid):
         """
         if not self.is_fully_specified:
             return jnp.full((self.n_points, self.n_points), jnp.nan)
-        return self.compute_transition_probs(self.n_points, **self.params)
+        return self.compute_transition_probs(**self.params)
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
@@ -114,3 +115,40 @@ class _ShockGrid(ContinuousGrid):
                 "Cannot compute coordinate for a ShockGrid without all shock params."
             )
         return grid_helpers.get_irreg_coordinate(value=value, points=self.to_jax())
+
+
+def _validate_gauss_hermite_grid(
+    *,
+    n_points: int,
+    gauss_hermite: bool,
+    n_std: float | None,
+) -> None:
+    """Validate `n_points` / `gauss_hermite` / `n_std` consistency."""
+    if gauss_hermite and n_points % 2 == 0:
+        msg = (
+            f"n_points must be odd (got {n_points}). Odd n guarantees"
+            " a quadrature node at the mean (Abramowitz & Stegun, 1972,"
+            " Table 25.10)."
+        )
+        raise GridInitializationError(msg)
+    if gauss_hermite and n_std is not None:
+        msg = "gauss_hermite=True and n_std are mutually exclusive."
+        raise GridInitializationError(msg)
+
+
+def _mixture_cdf(
+    *,
+    x: FloatND,
+    p1: float,
+    mu1: float,
+    sigma1: float,
+    mu2: float,
+    sigma2: float,
+) -> FloatND:
+    """Evaluate the CDF of a two-component normal mixture.
+
+    $F(x) = p_1 \\, \\Phi\\!\\left(\\frac{x - \\mu_1}{\\sigma_1}\\right)
+           + (1 - p_1) \\, \\Phi\\!\\left(\\frac{x - \\mu_2}{\\sigma_2}\\right)$
+
+    """
+    return p1 * cdf((x - mu1) / sigma1) + (1 - p1) * cdf((x - mu2) / sigma2)

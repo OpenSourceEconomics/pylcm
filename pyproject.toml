@@ -106,6 +106,8 @@ per-file-ignores."docs/**/*" = [
   "D103",   # Missing docstring in public function
   "D104",   # Missing docstring in public package
   "S101",   # Use of assert
+  "PD011",  # Use `.to_numpy()` instead of `.values`
+  "RUF001", # Ambiguous Unicode characters (Greek letters in plot titles)
   "T201",   # print found
   "T203",   # pprint found
 ]
@@ -222,8 +224,8 @@ jax = { version = ">=0.8", extras = [ "cuda13" ] }
 jupyter-book = ">=2.0"
 mystmd = "*"
 [tool.pixi.feature.docs.tasks]
-docs = { cmd = "jupyter book build --html --execute", cwd = "docs" }
-view-docs = { cmd = "jupyter book start --execute", cwd = "docs" }
+docs = { cmd = "jupyter book build --html --execute", cwd = "docs", env = { JAX_PLATFORMS = "cpu" } }
+view-docs = { cmd = "jupyter book start --execute", cwd = "docs", env = { JAX_PLATFORMS = "cpu" } }
 [tool.pixi.feature.tests.dependencies]
 matplotlib = "*"  # required because of pandas
 pandas-stubs = "*"

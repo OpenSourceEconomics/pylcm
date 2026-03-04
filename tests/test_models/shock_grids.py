@@ -18,6 +18,7 @@ from lcm.typing import (
 _SHOCK_GRID_CLASSES = {
     "uniform": lcm.shocks.iid.Uniform,
     "normal": lcm.shocks.iid.Normal,
+    "lognormal": lcm.shocks.iid.LogNormal,
     "tauchen": lcm.shocks.ar1.Tauchen,
     "rouwenhorst": lcm.shocks.ar1.Rouwenhorst,
 }
@@ -25,56 +26,65 @@ _SHOCK_GRID_CLASSES = {
 _SHOCK_GRID_KWARGS: dict[str, dict[str, bool]] = {
     "uniform": {},
     "normal": {"gauss_hermite": True},
+    "lognormal": {"gauss_hermite": True},
     "tauchen": {"gauss_hermite": True},
     "rouwenhorst": {},
 }
 
 
+def next_health(health: DiscreteState, health_transition: FloatND) -> FloatND:
+    return health_transition[health]
+
+
+def next_wealth(consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
+    return wealth - consumption
+
+
+def next_regime(age: float, final_age_alive: float) -> ScalarInt:
+    return jnp.where(
+        age >= final_age_alive,
+        RegimeId.test_regime_term,
+        RegimeId.test_regime,
+    )
+
+
+def wealth_constraint(
+    wealth: ContinuousState, income: ContinuousState, consumption: ContinuousAction
+):
+    return wealth - consumption + jnp.exp(income) >= 0
+
+
+def utility(
+    wealth: ContinuousState,  # noqa: ARG001
+    income: ContinuousState,  # noqa: ARG001
+    health: DiscreteState,
+    consumption: ContinuousAction,
+) -> FloatND:
+    return jnp.log(consumption) * (1.0 - (1.0 - health) * 0.3)
+
+
+@categorical
+class Health:
+    bad: int = 0
+    good: int = 1
+
+
+@categorical
+class RegimeId:
+    test_regime: int
+    test_regime_term: int
+
+
 def get_model(
     n_periods: int,
-    distribution_type: Literal["uniform", "normal", "tauchen", "rouwenhorst"],
+    distribution_type: Literal[
+        "uniform", "normal", "lognormal", "tauchen", "rouwenhorst"
+    ],
 ):
-    def next_health(health: DiscreteState, health_transition: FloatND) -> FloatND:
-        return health_transition[health]
-
-    def next_wealth(consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
-        return wealth - consumption
-
-    def next_regime(period: int) -> ScalarInt:
-        terminal = period >= n_periods - 1  # is test_term in last period
-        return jnp.where(terminal, RegimeId.test_regime_term, RegimeId.test_regime)
-
-    def wealth_constraint(
-        wealth: ContinuousState, income: ContinuousState, consumption: ContinuousAction
-    ):
-        return wealth - consumption + jnp.exp(income) >= 0
-
-    def utility(
-        wealth: ContinuousState,  # noqa: ARG001
-        income: ContinuousState,  # noqa: ARG001
-        health: DiscreteState,
-        consumption: ContinuousAction,
-    ) -> FloatND:
-        return jnp.log(consumption) * (1.0 - (1.0 - health) * 0.3)
-
-    def test_active(age):
-        return age < n_periods
-
-    def test_term_active(age):
-        return age == n_periods
-
-    @categorical
-    class Health:
-        bad: int = 0
-        good: int = 1
-
-    @categorical
-    class RegimeId:
-        test_regime: int
-        test_regime_term: int
+    final_age_alive = n_periods - 2
 
     test_regime = Regime(
-        active=test_active,
+        active=lambda age, n=final_age_alive: age <= n,
         states={
             "wealth": LinSpacedGrid(
                 start=1, stop=5, n_points=5, transition=next_wealth
@@ -93,19 +103,21 @@ def get_model(
     )
     test_regime_term = Regime(
         transition=None,
-        active=test_term_active,
+        active=lambda age, n=final_age_alive: age > n,
         functions={"utility": lambda: 0.0},
     )
     return Model(
         regimes={"test_regime": test_regime, "test_regime_term": test_regime_term},
         regime_id_class=RegimeId,
-        ages=AgeGrid(start=0, stop=n_periods, step="Y"),
+        ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
+        fixed_params={"final_age_alive": final_age_alive},
     )
 
 
 _SHOCK_PARAMS: dict[str, dict[str, float]] = {
     "uniform": {"start": 0.0, "stop": 1.0},
     "normal": {"mu": 0.0, "sigma": 1.0},
+    "lognormal": {"mu": 0.0, "sigma": 1.0},
     "tauchen": {"rho": 0.975, "sigma": 1.0, "mu": 0.0},
     "rouwenhorst": {"rho": 0.975, "sigma": 1.0, "mu": 0.0},
 }
@@ -113,7 +125,7 @@ _SHOCK_PARAMS: dict[str, dict[str, float]] = {
 
 def get_params(
     distribution_type: Literal[
-        "uniform", "normal", "tauchen", "rouwenhorst"
+        "uniform", "normal", "lognormal", "tauchen", "rouwenhorst"
     ] = "tauchen",
 ):
     return {
