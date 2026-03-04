@@ -2,7 +2,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 
 import jax
-from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
+from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import Array, vmap
 from jax import numpy as jnp
 
@@ -110,7 +110,7 @@ def calculate_next_states(
     stochastic_next_function_names = [
         next_func_name
         for next_func_name in flatten_regime_namespace(internal_regime.transitions)
-        if next_func_name.split(QNAME_DELIMITER)[-1] in stochastic_transition_names
+        if tree_path_from_qname(next_func_name)[-1] in stochastic_transition_names
     ]
     # There is a bug that sometimes changes the order of the names,
     # sorting fixes this

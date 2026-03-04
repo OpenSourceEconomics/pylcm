@@ -13,7 +13,7 @@ from typing import Any, Literal
 import jax.numpy as jnp
 import pandas as pd
 from dags import concatenate_functions
-from dags.tree import QNAME_DELIMITER
+from dags.tree import tree_path_from_qname
 from jax import Array
 
 from lcm.ages import AgeGrid
@@ -401,7 +401,7 @@ def _get_stochastic_weight_function_names(regime: InternalRegime) -> set[str]:
     return {
         f"weight_{name}"
         for name in flat_transitions
-        if name.split(QNAME_DELIMITER)[-1] in stochastic_transition_names
+        if tree_path_from_qname(name)[-1] in stochastic_transition_names
     }
 
 

@@ -3,7 +3,7 @@ from collections.abc import Callable
 import jax.numpy as jnp
 from dags import concatenate_functions
 from dags.signature import with_signature
-from dags.tree import QNAME_DELIMITER
+from dags.tree import qname_from_tree_path
 from jax import Array
 
 from lcm.functools import all_as_kwargs
@@ -211,7 +211,7 @@ def _get_coordinate_finder(
     if isinstance(grid, IrregSpacedGrid):
         if grid.pass_points_at_runtime:
             state_name = in_name.removeprefix("next_")
-            points_param = f"{state_name}{QNAME_DELIMITER}points"
+            points_param = qname_from_tree_path((state_name, "points"))
             arg_names = [in_name, points_param]
 
             @with_signature(

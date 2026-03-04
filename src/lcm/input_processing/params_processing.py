@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, cast
 
-from dags.tree import QNAME_DELIMITER
+from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
 
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.interfaces import InternalRegime
@@ -58,7 +58,7 @@ def process_params(
     used_keys: set[str] = set()
 
     for key in template_flat:
-        parts = key.split(QNAME_DELIMITER)
+        parts = tree_path_from_qname(key)
         param_name = parts[-1]
 
         candidates = []
@@ -71,7 +71,7 @@ def process_params(
         # We want to check for regime__param
         if len(parts) == _NUM_PARTS_FUNCTION_PARAM:
             regime = parts[0]
-            regime_level_key = f"{regime}{QNAME_DELIMITER}{param_name}"
+            regime_level_key = qname_from_tree_path((regime, param_name))
             # Check if this regime-level key was provided in params
             if regime_level_key in params_flat:
                 candidates.append(regime_level_key)
@@ -103,7 +103,9 @@ def process_params(
     # Split flat keys into per-regime dicts and ensure all regimes are present
     result = {name: {} for name in params_template}
     for key, value in result_flat.items():
-        regime_name, remainder = key.split(QNAME_DELIMITER, 1)
+        path = tree_path_from_qname(key)
+        regime_name = path[0]
+        remainder = qname_from_tree_path(path[1:])
         result[regime_name][remainder] = value
 
     return cast("InternalParams", ensure_containers_are_immutable(result))
@@ -202,5 +204,5 @@ def get_flat_param_names(regime_params_template: RegimeParamsTemplate) -> set[st
     for key, value in regime_params_template.items():
         if isinstance(value, Mapping):
             for param_name in value:
-                result.add(f"{key}{QNAME_DELIMITER}{param_name}")
+                result.add(qname_from_tree_path((key, param_name)))
     return result

@@ -6,7 +6,7 @@ import inspect
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
 
-from dags.tree import QNAME_DELIMITER
+from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
 from jax import Array
 
 from lcm.ages import AgeGrid
@@ -44,31 +44,37 @@ from lcm.utils import (
 class Model:
     """A model which is created from a regime.
 
-    Upon initialization, an internal regime will be created which contains all
+    Upon initialization, internal regimes will be created which contain all
     the functions needed to solve and simulate the model.
-
-    Attributes:
-        description: Description of the model.
-        n_periods: Number of periods in the model.
-        enable_jit: Whether to jit the functions of the internal regime.
-        regime_names_to_ids: Mapping from regime names to integer indices.
-        regimes: The user provided regimes that contain the information
-            about the model's regimes.
-        internal_regimes: The internal regime instances created by LCM, which allow
-            to solve and simulate the model.
-        params_template: Template for the model parameters.
 
     """
 
     description: str | None = None
+    """Description of the model."""
+
     ages: AgeGrid
+    """Age grid for the model."""
+
     n_periods: int
+    """Number of periods in the model."""
+
     regime_names_to_ids: RegimeNamesToIds
+    """Immutable mapping from regime names to integer indices."""
+
     regimes: MappingProxyType[str, Regime]
+    """Immutable mapping of regime names to user `Regime` instances."""
+
     internal_regimes: MappingProxyType[RegimeName, InternalRegime]
+    """Immutable mapping of regime names to internal regime instances."""
+
     enable_jit: bool = True
+    """Whether to JIT-compile the functions of the internal regime."""
+
     fixed_params: UserParams
+    """Parameters fixed at model initialization."""
+
     params_template: ParamsTemplate
+    """Template for the model parameters."""
 
     def __init__(
         self,
@@ -440,7 +446,7 @@ def _find_candidates(
     params_flat: Mapping[str, object],
 ) -> list[str]:
     """Find candidate matches for a template key at exact, regime, and model levels."""
-    parts = key.split(QNAME_DELIMITER)
+    parts = tree_path_from_qname(key)
     param_name = parts[-1]
     candidates: list[str] = []
 
@@ -448,7 +454,7 @@ def _find_candidates(
         candidates.append(key)
 
     if len(parts) == 3:  # noqa: PLR2004
-        regime_level_key = f"{parts[0]}{QNAME_DELIMITER}{param_name}"
+        regime_level_key = qname_from_tree_path((parts[0], param_name))
         if regime_level_key in params_flat:
             candidates.append(regime_level_key)
 
@@ -496,7 +502,9 @@ def _resolve_fixed_params(
     # Split by regime
     result: dict[str, dict[str, object]] = {}
     for key, value in result_flat.items():
-        regime_name, remainder = key.split(QNAME_DELIMITER, 1)
+        path = tree_path_from_qname(key)
+        regime_name = path[0]
+        remainder = qname_from_tree_path(path[1:])
         result.setdefault(regime_name, {})[remainder] = value
 
     for regime_name in template:
@@ -524,7 +532,7 @@ def _remove_fixed_from_template(
             new_func_params = {
                 param_name: param_type
                 for param_name, param_type in func_params.items()
-                if f"{func_name}{QNAME_DELIMITER}{param_name}" not in regime_fixed
+                if qname_from_tree_path((func_name, param_name)) not in regime_fixed
             }
             if new_func_params:
                 new_regime[func_name] = new_func_params
