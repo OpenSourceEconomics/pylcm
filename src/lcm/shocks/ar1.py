@@ -5,10 +5,8 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
-from jax import Array
 from jax.scipy.stats.norm import cdf
 
-from lcm.exceptions import GridInitializationError
 from lcm.shocks._base import (
     _gauss_hermite_normal,
     _mixture_cdf,
@@ -68,7 +66,6 @@ class Tauchen(_ShockGridAR1):
             n_points=self.n_points,
             gauss_hermite=self.gauss_hermite,
             n_std=self.n_std,
-            mean_label="the unconditional mean",
         )
 
     @property
@@ -78,27 +75,27 @@ class Tauchen(_ShockGridAR1):
             exclude.add("n_std")
         return tuple(f.name for f in fields(self) if f.name not in exclude)
 
-    def compute_gridpoints(self, n_points: int, **kwargs: float | Array) -> Float1D:
+    def compute_gridpoints(self, **kwargs: float | Float1D) -> Float1D:
+        n = self.n_points
         rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
         if self.gauss_hermite:
             std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
-            return _gauss_hermite_normal(n_points, mu / (1 - rho), std_y)[0]
+            return _gauss_hermite_normal(n, mu / (1 - rho), std_y)[0]
         n_std = kwargs["n_std"]
         std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
         x_max = n_std * std_y
-        x = jnp.linspace(-x_max, x_max, n_points)
+        x = jnp.linspace(-x_max, x_max, n)
         return x + mu / (1 - rho)
 
-    def compute_transition_probs(
-        self, n_points: int, **kwargs: float | Array
-    ) -> FloatND:
+    def compute_transition_probs(self, **kwargs: float | Float1D) -> FloatND:
+        n = self.n_points
         rho, sigma = kwargs["rho"], kwargs["sigma"]
         if self.gauss_hermite:
             std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
-            nodes, _weights = _gauss_hermite_normal(n_points, 0.0, std_y)
-            # Midpoints between consecutive GH nodes: (n_points - 1,)
+            nodes, _weights = _gauss_hermite_normal(n, 0.0, std_y)
+            # Midpoints between consecutive GH nodes: (n - 1,)
             midpoints = (nodes[:-1] + nodes[1:]) / 2
-            # CDF at midpoints for each source state: (n_points, n_points - 1)
+            # CDF at midpoints for each source state: (n, n - 1)
             # Denominator is sigma (innovation std), not std_y (unconditional std),
             # because the conditional distribution y'|y has variance sigma^2.
             cdf_vals = cdf((midpoints[None, :] - rho * nodes[:, None]) / sigma)
@@ -110,10 +107,10 @@ class Tauchen(_ShockGridAR1):
         n_std = kwargs["n_std"]
         std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
         x_max = n_std * std_y
-        x = jnp.linspace(-x_max, x_max, n_points)
-        step = (2 * x_max) / (n_points - 1)
+        x = jnp.linspace(-x_max, x_max, n)
+        step = (2 * x_max) / (n - 1)
         half_step = 0.5 * step
-        # z[i, j] = x[j] - rho * x[i]: (n_points, n_points)
+        # z[i, j] = x[j] - rho * x[i]: (n, n)
         z = x[None, :] - rho * x[:, None]
         upper = cdf((z + half_step) / sigma)
         lower = cdf((z - half_step) / sigma)
@@ -155,34 +152,34 @@ class Rouwenhorst(_ShockGridAR1):
     mu: float | None = None
     """Intercept (drift) of the AR(1) process."""
 
-    def compute_gridpoints(self, n_points: int, **kwargs: float | Array) -> Float1D:
+    def compute_gridpoints(self, **kwargs: float | Float1D) -> Float1D:
+        n = self.n_points
         rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
-        nu = jnp.sqrt((n_points - 1) / (1 - rho**2)) * sigma
+        nu = jnp.sqrt((n - 1) / (1 - rho**2)) * sigma
         long_run_mean = mu / (1.0 - rho)
-        return jnp.linspace(long_run_mean - nu, long_run_mean + nu, n_points)
+        return jnp.linspace(long_run_mean - nu, long_run_mean + nu, n)
 
-    def compute_transition_probs(
-        self, n_points: int, **kwargs: float | Array
-    ) -> FloatND:
+    def compute_transition_probs(self, **kwargs: float | Float1D) -> FloatND:
+        n = self.n_points
         rho = kwargs["rho"]
         q = (rho + 1) / 2
 
         # Binomial coefficient lookup table
-        C = jnp.array([[comb(n, k) for k in range(n_points)] for n in range(n_points)])
+        C = jnp.array([[comb(nr, k) for k in range(n)] for nr in range(n)])
 
-        i = jnp.arange(n_points)[:, None, None]
-        j = jnp.arange(n_points)[None, :, None]
-        k = jnp.arange(n_points)[None, None, :]
+        i = jnp.arange(n)[:, None, None]
+        j = jnp.arange(n)[None, :, None]
+        k = jnp.arange(n)[None, None, :]
 
         # P[i,j] = sum_k C(i,k) C(n-1-i,j-k) q^(n-1-i-j+2k) (1-q)^(i+j-2k)
-        valid = (k >= jnp.maximum(0, i + j - n_points + 1)) & (k <= jnp.minimum(i, j))
+        valid = (k >= jnp.maximum(0, i + j - n + 1)) & (k <= jnp.minimum(i, j))
         k_s = jnp.where(valid, k, 0)
         jmk = jnp.where(valid, j - k, 0)
 
         terms = (
             C[i, k_s]
-            * C[n_points - 1 - i, jmk]
-            * q ** (n_points - 1 - i - j + 2 * k_s)
+            * C[n - 1 - i, jmk]
+            * q ** (n - 1 - i - j + 2 * k_s)
             * (1 - q) ** (i + j - 2 * k_s)
         )
         return jnp.where(valid, terms, 0.0).sum(axis=-1)
@@ -239,27 +236,20 @@ class TauchenNormalMixture(_ShockGridAR1):
     sigma2: float | None = None
     """Standard deviation of the second mixture component."""
 
-    def __post_init__(self) -> None:
-        if self.n_points % 2 == 0:
-            msg = (
-                f"n_points must be odd (got {self.n_points}). Odd n guarantees"
-                " a grid point exactly at the unconditional mean."
-            )
-            raise GridInitializationError(msg)
-
     @staticmethod
     def _innovation_variance(
-        p1: float | Array,
-        mu1: float | Array,
-        sigma1: float | Array,
-        mu2: float | Array,
-        sigma2: float | Array,
-    ) -> float | Array:
+        p1: float | Float1D,
+        mu1: float | Float1D,
+        sigma1: float | Float1D,
+        mu2: float | Float1D,
+        sigma2: float | Float1D,
+    ) -> float | Float1D:
         """Compute the variance of the mixture innovation."""
         mean_eps = p1 * mu1 + (1 - p1) * mu2
         return p1 * (sigma1**2 + mu1**2) + (1 - p1) * (sigma2**2 + mu2**2) - mean_eps**2
 
-    def compute_gridpoints(self, n_points: int, **kwargs: float | Array) -> Float1D:
+    def compute_gridpoints(self, **kwargs: float | Float1D) -> Float1D:
+        n = self.n_points
         rho, mu = kwargs["rho"], kwargs["mu"]
         n_std = kwargs["n_std"]
         p1, mu1, sigma1 = kwargs["p1"], kwargs["mu1"], kwargs["sigma1"]
@@ -270,11 +260,10 @@ class TauchenNormalMixture(_ShockGridAR1):
         mean_eps = p1 * mu1 + (1 - p1) * mu2
         long_run_mean = (mu + mean_eps) / (1 - rho)
         x_max = n_std * std_y
-        return jnp.linspace(long_run_mean - x_max, long_run_mean + x_max, n_points)
+        return jnp.linspace(long_run_mean - x_max, long_run_mean + x_max, n)
 
-    def compute_transition_probs(
-        self, n_points: int, **kwargs: float | Array
-    ) -> FloatND:
+    def compute_transition_probs(self, **kwargs: float | Float1D) -> FloatND:
+        n = self.n_points
         rho, mu = kwargs["rho"], kwargs["mu"]
         n_std = kwargs["n_std"]
         p1, mu1, sigma1 = kwargs["p1"], kwargs["mu1"], kwargs["sigma1"]
@@ -285,8 +274,8 @@ class TauchenNormalMixture(_ShockGridAR1):
         mean_eps = p1 * mu1 + (1 - p1) * mu2
         long_run_mean = (mu + mean_eps) / (1 - rho)
         x_max = n_std * std_y
-        x = jnp.linspace(long_run_mean - x_max, long_run_mean + x_max, n_points)
-        step = (2 * x_max) / (n_points - 1)
+        x = jnp.linspace(long_run_mean - x_max, long_run_mean + x_max, n)
+        step = (2 * x_max) / (n - 1)
         half_step = 0.5 * step
 
         # z[i, j] = x[j] - mu - rho * x[i]: the innovation needed to reach x[j]

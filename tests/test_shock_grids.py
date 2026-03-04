@@ -13,7 +13,7 @@ import lcm
 from lcm._config import TEST_DATA
 from lcm.exceptions import GridInitializationError
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
-from tests.test_models.shocks import get_model, get_params
+from tests.test_models.shock_grids import get_model, get_params
 
 
 @pytest.mark.skipif(not X64_ENABLED, reason="Not working with 32-Bit because of RNG")
@@ -21,9 +21,7 @@ from tests.test_models.shocks import get_model, get_params
     "distribution_type", ["uniform", "normal", "lognormal", "tauchen", "rouwenhorst"]
 )
 def test_model_with_shock(distribution_type):
-    n_periods = 3
-
-    model = get_model(n_periods, distribution_type)
+    model = get_model(final_age_alive=2, distribution_type=distribution_type)
     params = get_params(distribution_type)
 
     got_solve = model.solve(
@@ -50,7 +48,7 @@ def test_model_with_shock(distribution_type):
         TEST_DATA / "shocks" / f"solution_{distribution_type}.pkl"
     )
     # Compare solution
-    for period in range(n_periods - 1):
+    for period in expected_solve:
         for regime in got_solve[period]:
             aaae(expected_solve[period][regime], got_solve[period][regime], decimal=5)
 
@@ -314,23 +312,33 @@ def test_ar1_draw_shock_unconditional_moments(grid_cls):
 
 
 @pytest.mark.parametrize(
+    "grid_cls",
+    [lcm.shocks.iid.Normal, lcm.shocks.iid.LogNormal, lcm.shocks.ar1.Tauchen],
+    ids=lambda c: c.__name__,
+)
+def test_even_n_points_rejected_for_gauss_hermite(grid_cls):
+    """Gauss-Hermite grids reject even n_points (no node at the mean)."""
+    with pytest.raises(GridInitializationError, match="n_points must be odd"):
+        grid_cls(n_points=4, gauss_hermite=True)
+
+
+@pytest.mark.parametrize(
     "grid_cls_and_kwargs",
     [
-        (lcm.shocks.iid.Normal, {"gauss_hermite": True}),
         (lcm.shocks.iid.Normal, {"gauss_hermite": False, "n_std": 3.0}),
-        (lcm.shocks.iid.LogNormal, {"gauss_hermite": True}),
         (lcm.shocks.iid.LogNormal, {"gauss_hermite": False, "n_std": 3.0}),
-        (lcm.shocks.ar1.Tauchen, {"gauss_hermite": True}),
         (lcm.shocks.ar1.Tauchen, {"gauss_hermite": False, "n_std": 3.0}),
+        (lcm.shocks.iid.Uniform, {}),
         (lcm.shocks.iid.NormalMixture, {}),
+        (lcm.shocks.ar1.Rouwenhorst, {}),
         (lcm.shocks.ar1.TauchenNormalMixture, {}),
     ],
 )
-def test_even_n_points_rejected(grid_cls_and_kwargs):
-    """Grids requiring odd n_points reject even values."""
+def test_even_n_points_accepted_for_non_gauss_hermite(grid_cls_and_kwargs):
+    """Non-GH grids accept even n_points (linspace grids work fine without a node at
+    the mean)."""
     grid_cls, extra_kw = grid_cls_and_kwargs
-    with pytest.raises(GridInitializationError, match="n_points must be odd"):
-        grid_cls(n_points=4, **extra_kw)
+    grid_cls(n_points=4, **extra_kw)  # should not raise
 
 
 @pytest.mark.parametrize(

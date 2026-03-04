@@ -17,7 +17,6 @@ from jax.scipy.stats.norm import cdf as jax_cdf
 from numpy.testing import assert_array_almost_equal as aaae
 
 import lcm
-from lcm.exceptions import GridInitializationError
 from lcm.shocks._base import _mixture_cdf
 from tests.conftest import DECIMAL_PRECISION
 
@@ -276,12 +275,6 @@ def _make_fgp_mixture_grid(n_points=5, rho=0.95, n_std=3.0):
         mu2=FGP_MU2,
         sigma2=FGP_SIGMA2,
     )
-
-
-def test_mixture_even_n_points_rejected():
-    """TauchenNormalMixture rejects even n_points."""
-    with pytest.raises(GridInitializationError, match="n_points must be odd"):
-        lcm.shocks.ar1.TauchenNormalMixture(n_points=4)
 
 
 def test_mixture_grid_span_matches_tauchen_equivalent():

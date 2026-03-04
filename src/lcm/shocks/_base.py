@@ -71,13 +71,11 @@ class _ShockGrid(ContinuousGrid):
         return not self.params_to_pass_at_runtime
 
     @abstractmethod
-    def compute_gridpoints(self, n_points: int, **kwargs: float | Array) -> Float1D:
+    def compute_gridpoints(self, **kwargs: float | Float1D) -> Float1D:
         """Compute discretized gridpoints for the shock distribution."""
 
     @abstractmethod
-    def compute_transition_probs(
-        self, n_points: int, **kwargs: float | Array
-    ) -> FloatND:
+    def compute_transition_probs(self, **kwargs: float | Float1D) -> FloatND:
         """Compute transition probability matrix for the shock distribution."""
 
     def get_gridpoints(self) -> Float1D:
@@ -89,7 +87,7 @@ class _ShockGrid(ContinuousGrid):
         """
         if not self.is_fully_specified:
             return jnp.full(self.n_points, jnp.nan)
-        return self.compute_gridpoints(self.n_points, **self.params)
+        return self.compute_gridpoints(**self.params)
 
     def get_transition_probs(self) -> FloatND:
         """Get the transition probabilities at the gridpoints.
@@ -100,7 +98,7 @@ class _ShockGrid(ContinuousGrid):
         """
         if not self.is_fully_specified:
             return jnp.full((self.n_points, self.n_points), jnp.nan)
-        return self.compute_transition_probs(self.n_points, **self.params)
+        return self.compute_transition_probs(**self.params)
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
@@ -124,21 +122,14 @@ def _validate_gauss_hermite_grid(
     n_points: int,
     gauss_hermite: bool,
     n_std: float | None,
-    mean_label: str = "the mean",
 ) -> None:
     """Validate `n_points` / `gauss_hermite` / `n_std` consistency."""
-    if n_points % 2 == 0:
-        if gauss_hermite:
-            msg = (
-                f"n_points must be odd (got {n_points}). Odd n guarantees"
-                " a quadrature node at the mean (Abramowitz & Stegun, 1972,"
-                " Table 25.10)."
-            )
-        else:
-            msg = (
-                f"n_points must be odd (got {n_points}). Odd n guarantees"
-                f" a grid point exactly at {mean_label}."
-            )
+    if gauss_hermite and n_points % 2 == 0:
+        msg = (
+            f"n_points must be odd (got {n_points}). Odd n guarantees"
+            " a quadrature node at the mean (Abramowitz & Stegun, 1972,"
+            " Table 25.10)."
+        )
         raise GridInitializationError(msg)
     if gauss_hermite and n_std is not None:
         msg = "gauss_hermite=True and n_std are mutually exclusive."
@@ -147,11 +138,11 @@ def _validate_gauss_hermite_grid(
 
 def _mixture_cdf(
     x: FloatND,
-    p1: float | Array,
-    mu1: float | Array,
-    sigma1: float | Array,
-    mu2: float | Array,
-    sigma2: float | Array,
+    p1: float | Float1D,
+    mu1: float | Float1D,
+    sigma1: float | Float1D,
+    mu2: float | Float1D,
+    sigma2: float | Float1D,
 ) -> FloatND:
     """Evaluate the CDF of a two-component normal mixture.
 

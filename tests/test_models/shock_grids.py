@@ -33,7 +33,7 @@ _SHOCK_GRID_KWARGS: dict[str, dict[str, bool]] = {
 
 
 def get_model(
-    n_periods: int,
+    final_age_alive: int,
     distribution_type: Literal[
         "uniform", "normal", "lognormal", "tauchen", "rouwenhorst"
     ],
@@ -45,7 +45,7 @@ def get_model(
         return wealth - consumption
 
     def next_regime(period: int) -> ScalarInt:
-        terminal = period >= n_periods - 1  # is test_term in last period
+        terminal = period >= final_age_alive
         return jnp.where(terminal, RegimeId.test_regime_term, RegimeId.test_regime)
 
     def wealth_constraint(
@@ -61,12 +61,6 @@ def get_model(
     ) -> FloatND:
         return jnp.log(consumption) * (1.0 - (1.0 - health) * 0.3)
 
-    def test_active(age):
-        return age < n_periods
-
-    def test_term_active(age):
-        return age == n_periods
-
     @categorical
     class Health:
         bad: int = 0
@@ -78,7 +72,7 @@ def get_model(
         test_regime_term: int
 
     test_regime = Regime(
-        active=test_active,
+        active=lambda age: age <= final_age_alive,
         states={
             "wealth": LinSpacedGrid(
                 start=1, stop=5, n_points=5, transition=next_wealth
@@ -97,13 +91,13 @@ def get_model(
     )
     test_regime_term = Regime(
         transition=None,
-        active=test_term_active,
+        active=lambda age: age > final_age_alive,
         functions={"utility": lambda: 0.0},
     )
     return Model(
         regimes={"test_regime": test_regime, "test_regime_term": test_regime_term},
         regime_id_class=RegimeId,
-        ages=AgeGrid(start=0, stop=n_periods, step="Y"),
+        ages=AgeGrid(start=0, stop=final_age_alive + 1, step="Y"),
     )
 
 

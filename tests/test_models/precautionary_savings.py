@@ -31,7 +31,7 @@ _SHOCK_GRID_KWARGS: dict[str, dict[str, bool]] = {
 
 
 def get_model(
-    n_periods: int,
+    final_age_alive: int,
     shock_type: Literal["normal_gh", "rouwenhorst"],
 ) -> Model:
     def next_wealth(
@@ -42,7 +42,7 @@ def get_model(
         return wealth - consumption + jnp.exp(income)
 
     def next_regime(period: int) -> ScalarInt:
-        terminal = period >= n_periods - 1
+        terminal = period >= final_age_alive
         return jnp.where(terminal, RegimeId.terminal, RegimeId.alive)
 
     def wealth_constraint(
@@ -54,19 +54,13 @@ def get_model(
     def utility(consumption: ContinuousAction) -> FloatND:
         return jnp.log(consumption)
 
-    def alive_active(age):
-        return age < n_periods
-
-    def terminal_active(age):
-        return age == n_periods
-
     @categorical
     class RegimeId:
         alive: int
         terminal: int
 
     alive = Regime(
-        active=alive_active,
+        active=lambda age: age <= final_age_alive,
         states={
             "wealth": LinSpacedGrid(
                 start=1,
@@ -89,14 +83,14 @@ def get_model(
 
     terminal = Regime(
         transition=None,
-        active=terminal_active,
+        active=lambda age: age > final_age_alive,
         functions={"utility": lambda: 0.0},
     )
 
     return Model(
         regimes={"alive": alive, "terminal": terminal},
         regime_id_class=RegimeId,
-        ages=AgeGrid(start=0, stop=n_periods, step="Y"),
+        ages=AgeGrid(start=0, stop=final_age_alive + 1, step="Y"),
     )
 
 

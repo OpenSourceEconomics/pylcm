@@ -354,18 +354,18 @@ def test_linspaced_coordinates_match_other_grid_types(
     other_grid = _create_equivalent_grid(grid_type, lin_grid)
 
     # Generate test values: grid points, interpolation, and extrapolation
-    grid_points = [float(x) for x in lin_grid.to_jax()]
+    gridpoints = [float(x) for x in lin_grid.to_jax()]
     step = (stop - start) / (n_points - 1)
 
     # Interpolation: midpoints between consecutive grid points
     interpolation_values = [
-        (grid_points[i] + grid_points[i + 1]) / 2 for i in range(n_points - 1)
+        (gridpoints[i] + gridpoints[i + 1]) / 2 for i in range(n_points - 1)
     ]
 
     # Extrapolation: outside the grid range
     extrapolation_values = [start - step, start - 0.1, stop + 0.1, stop + step]
 
-    all_test_values = grid_points + interpolation_values + extrapolation_values
+    all_test_values = gridpoints + interpolation_values + extrapolation_values
 
     # Tolerance depends on precision and grid value magnitude
     base_rtol = 1e-6 if X64_ENABLED else 1e-4
@@ -563,7 +563,7 @@ def test_piecewise_log_spaced_grid_creation():
     assert grid.n_points == 11
 
 
-def test_piecewise_log_spaced_grid_points_are_log_spaced():
+def test_piecewise_log_spaced_gridpoints_are_log_spaced():
     """Points within each piece should be logarithmically spaced."""
     grid = PiecewiseLogSpacedGrid(pieces=(Piece(interval="[1, 100]", n_points=3),))
     points = grid.to_jax()
@@ -629,7 +629,7 @@ def test_piecewise_log_spaced_grid_three_pieces():
     assert float(points[-1]) == pytest.approx(10000.0)
 
 
-def test_piecewise_log_spaced_grid_coordinate_at_grid_points():
+def test_piecewise_log_spaced_grid_coordinate_at_gridpoints():
     """Coordinates at exact grid points should match indices."""
     grid = PiecewiseLogSpacedGrid(pieces=(Piece(interval="[1, 100]", n_points=3),))
     points = grid.to_jax()

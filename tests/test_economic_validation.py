@@ -20,7 +20,7 @@ _DETERMINISTIC_ATOL = 1e-6 if X64_ENABLED else 1e-3
 
 
 def _solve_and_simulate(shock_type, *, sigma, rho=0.0, mu=0.0):
-    model = get_model(_N_PERIODS, shock_type)
+    model = get_model(_N_PERIODS - 1, shock_type)
     params = get_params(shock_type, sigma=sigma, mu=mu, rho=rho)
     unconditional_mean = mu / (1 - rho)
     result = model.solve_and_simulate(
