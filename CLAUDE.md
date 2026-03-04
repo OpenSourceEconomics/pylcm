@@ -94,8 +94,8 @@ continuous grids with `get_coordinate` method. `UniformContinuousGrid(Continuous
 is for grids with start/stop/n_points (LinSpacedGrid, LogSpacedGrid inherit from it).
 Other continuous grids (IrregSpacedGrid, PiecewiseLinSpacedGrid, PiecewiseLogSpacedGrid)
 inherit directly from ContinuousGrid. `_ShockGrid(ContinuousGrid)` is the base for
-stochastic continuous grids. `DiscreteMarkovGrid(DiscreteGrid)` is the base for discrete
-Markov-chain grids.
+stochastic continuous grids. `DiscreteGrid` supports stochastic transitions via
+`MarkovTransition`-wrapped callables.
 
 **State transitions** are attached directly to grid objects via the `transition`
 parameter. A state with no `transition` is fixed (time-invariant) — an identity

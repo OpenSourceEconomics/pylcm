@@ -9,10 +9,10 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm.exceptions import GridInitializationError
 from lcm.grids import (
     DiscreteGrid,
-    DiscreteMarkovGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
+    MarkovTransition,
     Piece,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
@@ -171,36 +171,28 @@ def test_discrete_grid_invalid_category_class():
 
 
 # --------------------------------------------------------------------------------------
-# DiscreteMarkovGrid
+# DiscreteGrid with MarkovTransition
 # --------------------------------------------------------------------------------------
 
 
-def test_markov_grid_basic():
+def test_discrete_grid_with_markov_transition():
     category_class = make_dataclass(
         "Category", [("a", int, 0), ("b", int, 1), ("c", int, 2)]
     )
-    grid = DiscreteMarkovGrid(category_class, transition=lambda: None)
+    grid = DiscreteGrid(category_class, transition=MarkovTransition(lambda: None))
     assert grid.categories == ("a", "b", "c")
     assert grid.codes == (0, 1, 2)
-    assert grid.n_states == 3
-    assert callable(grid.transition)
+    assert isinstance(grid.transition, MarkovTransition)
+    assert callable(grid.transition.func)
     assert np.allclose(grid.to_jax(), np.arange(3))
 
 
-def test_markov_grid_rejects_none_transition():
-    category_class = make_dataclass("Category", [("a", int, 0), ("b", int, 1)])
+def test_markov_transition_rejects_non_callable():
     with pytest.raises(
         GridInitializationError,
-        match="DiscreteMarkovGrid requires a callable transition",
+        match="MarkovTransition requires a callable",
     ):
-        DiscreteMarkovGrid(category_class, transition=None)  # ty: ignore[invalid-argument-type]
-
-
-def test_markov_grid_is_not_discrete_grid():
-    category_class = make_dataclass("Category", [("a", int, 0), ("b", int, 1)])
-    grid = DiscreteMarkovGrid(category_class, transition=lambda: None)
-    assert not isinstance(grid, DiscreteGrid)
-    assert isinstance(grid, DiscreteMarkovGrid)
+        MarkovTransition(func=42)  # ty: ignore[invalid-argument-type]
 
 
 # ======================================================================================

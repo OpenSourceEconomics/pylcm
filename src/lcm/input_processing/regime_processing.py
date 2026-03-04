@@ -11,7 +11,7 @@ from jax import numpy as jnp
 
 from lcm.ages import AgeGrid
 from lcm.grid_helpers import get_irreg_coordinate
-from lcm.grids import DiscreteMarkovGrid, Grid
+from lcm.grids import Grid, MarkovTransition
 from lcm.input_processing.create_regime_params_template import (
     create_regime_params_template,
 )
@@ -246,9 +246,11 @@ def _get_internal_functions(
         **flat_nested_transitions,
     }
 
-    # Compute stochastic state names from grid types
+    # Compute stochastic state names from grid transition types
     markov_state_names = {
-        name for name, grid in gridspecs.items() if isinstance(grid, DiscreteMarkovGrid)
+        name
+        for name, grid in gridspecs.items()
+        if isinstance(getattr(grid, "transition", None), MarkovTransition)
     }
     shock_state_names = set(variable_info.query("is_shock").index.tolist())
     stochastic_transition_names = frozenset(
@@ -333,7 +335,7 @@ def _get_internal_functions(
             if func_name not in excluded_from_functions
         }
     )
-    is_stochastic_regime_transition = regime.stochastic_transition
+    is_stochastic_regime_transition = regime.stochastic_regime_transition
 
     if regime.terminal:
         internal_regime_transition_probs = None
@@ -388,7 +390,11 @@ def _extract_transitions_from_regime(
 
     nested: dict[str, dict[str, UserFunction] | UserFunction] = {}
     # Guaranteed non-None: terminal regimes return early in the caller.
-    nested["next_regime"] = regime.transition  # ty: ignore[invalid-assignment]
+    # Unwrap MarkovTransition to get the bare callable for processing.
+    transition = regime.transition
+    if isinstance(transition, MarkovTransition):
+        transition = transition.func
+    nested["next_regime"] = transition  # ty: ignore[invalid-assignment]
     for target_regime_name, target_regime_state_names in states_per_regime.items():
         if target_regime_state_names <= transitioned_state_names:
             nested[target_regime_name] = {

@@ -10,7 +10,6 @@ from jax import Array
 from lcm.grids import (
     ContinuousGrid,
     DiscreteGrid,
-    DiscreteMarkovGrid,
     Grid,
     IrregSpacedGrid,
 )
@@ -136,9 +135,7 @@ class StateSpaceInfo:
     state_names: tuple[str, ...]
     """Tuple of state variable names."""
 
-    discrete_states: MappingProxyType[
-        str, DiscreteGrid | DiscreteMarkovGrid | _ShockGrid
-    ]
+    discrete_states: MappingProxyType[str, DiscreteGrid | _ShockGrid]
     """Immutable mapping of discrete state names to their grids."""
 
     continuous_states: MappingProxyType[str, ContinuousGrid]
