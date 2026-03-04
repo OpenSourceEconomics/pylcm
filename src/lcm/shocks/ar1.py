@@ -80,7 +80,7 @@ class Tauchen(_ShockGridAR1):
         rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
         if self.gauss_hermite:
             std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
-            return _gauss_hermite_normal(n, mu / (1 - rho), std_y)[0]
+            return _gauss_hermite_normal(n_points=n, mu=mu / (1 - rho), sigma=std_y)[0]
         n_std = kwargs["n_std"]
         std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
         x_max = n_std * std_y
@@ -92,7 +92,7 @@ class Tauchen(_ShockGridAR1):
         rho, sigma = kwargs["rho"], kwargs["sigma"]
         if self.gauss_hermite:
             std_y = jnp.sqrt(sigma**2 / (1 - rho**2))
-            nodes, _weights = _gauss_hermite_normal(n, 0.0, std_y)
+            nodes, _weights = _gauss_hermite_normal(n_points=n, mu=0.0, sigma=std_y)
             # Midpoints between consecutive GH nodes: (n - 1,)
             midpoints = (nodes[:-1] + nodes[1:]) / 2
             # CDF at midpoints for each source state: (n, n - 1)
@@ -238,6 +238,7 @@ class TauchenNormalMixture(_ShockGridAR1):
 
     @staticmethod
     def _innovation_variance(
+        *,
         p1: float,
         mu1: float,
         sigma1: float,
@@ -255,7 +256,9 @@ class TauchenNormalMixture(_ShockGridAR1):
         p1, mu1, sigma1 = kwargs["p1"], kwargs["mu1"], kwargs["sigma1"]
         mu2, sigma2 = kwargs["mu2"], kwargs["sigma2"]
 
-        sigma_eps_sq = self._innovation_variance(p1, mu1, sigma1, mu2, sigma2)
+        sigma_eps_sq = self._innovation_variance(
+            p1=p1, mu1=mu1, sigma1=sigma1, mu2=mu2, sigma2=sigma2
+        )
         std_y = jnp.sqrt(sigma_eps_sq / (1 - rho**2))
         mean_eps = p1 * mu1 + (1 - p1) * mu2
         long_run_mean = (mu + mean_eps) / (1 - rho)
@@ -269,7 +272,9 @@ class TauchenNormalMixture(_ShockGridAR1):
         p1, mu1, sigma1 = kwargs["p1"], kwargs["mu1"], kwargs["sigma1"]
         mu2, sigma2 = kwargs["mu2"], kwargs["sigma2"]
 
-        sigma_eps_sq = self._innovation_variance(p1, mu1, sigma1, mu2, sigma2)
+        sigma_eps_sq = self._innovation_variance(
+            p1=p1, mu1=mu1, sigma1=sigma1, mu2=mu2, sigma2=sigma2
+        )
         std_y = jnp.sqrt(sigma_eps_sq / (1 - rho**2))
         mean_eps = p1 * mu1 + (1 - p1) * mu2
         long_run_mean = (mu + mean_eps) / (1 - rho)
@@ -283,10 +288,10 @@ class TauchenNormalMixture(_ShockGridAR1):
         z = x[None, :] - mu - rho * x[:, None]
 
         upper = _mixture_cdf(
-            z + half_step, p1=p1, mu1=mu1, sigma1=sigma1, mu2=mu2, sigma2=sigma2
+            x=z + half_step, p1=p1, mu1=mu1, sigma1=sigma1, mu2=mu2, sigma2=sigma2
         )
         lower = _mixture_cdf(
-            z - half_step, p1=p1, mu1=mu1, sigma1=sigma1, mu2=mu2, sigma2=sigma2
+            x=z - half_step, p1=p1, mu1=mu1, sigma1=sigma1, mu2=mu2, sigma2=sigma2
         )
         P = upper - lower
         P = P.at[:, 0].set(upper[:, 0])

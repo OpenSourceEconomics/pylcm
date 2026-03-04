@@ -30,37 +30,43 @@ _SHOCK_GRID_KWARGS: dict[str, dict[str, bool]] = {
 }
 
 
+def next_wealth(
+    wealth: ContinuousState,
+    consumption: ContinuousAction,
+    income: ContinuousState,
+) -> FloatND:
+    return wealth - consumption + jnp.exp(income)
+
+
+def next_regime(age: float, final_age_alive: float) -> ScalarInt:
+    return jnp.where(age >= final_age_alive, RegimeId.terminal, RegimeId.alive)
+
+
+def wealth_constraint(
+    consumption: ContinuousAction,
+    wealth: ContinuousState,
+) -> BoolND:
+    return consumption <= wealth
+
+
+def utility(consumption: ContinuousAction) -> FloatND:
+    return jnp.log(consumption)
+
+
+@categorical
+class RegimeId:
+    alive: int
+    terminal: int
+
+
 def get_model(
-    final_age_alive: int,
+    n_periods: int,
     shock_type: Literal["normal_gh", "rouwenhorst"],
 ) -> Model:
-    def next_wealth(
-        wealth: ContinuousState,
-        consumption: ContinuousAction,
-        income: ContinuousState,
-    ) -> FloatND:
-        return wealth - consumption + jnp.exp(income)
-
-    def next_regime(period: int) -> ScalarInt:
-        terminal = period >= final_age_alive
-        return jnp.where(terminal, RegimeId.terminal, RegimeId.alive)
-
-    def wealth_constraint(
-        consumption: ContinuousAction,
-        wealth: ContinuousState,
-    ) -> BoolND:
-        return consumption <= wealth
-
-    def utility(consumption: ContinuousAction) -> FloatND:
-        return jnp.log(consumption)
-
-    @categorical
-    class RegimeId:
-        alive: int
-        terminal: int
+    final_age_alive = n_periods - 2
 
     alive = Regime(
-        active=lambda age: age <= final_age_alive,
+        active=lambda age, n=final_age_alive: age <= n,
         states={
             "wealth": LinSpacedGrid(
                 start=1,
@@ -83,14 +89,15 @@ def get_model(
 
     terminal = Regime(
         transition=None,
-        active=lambda age: age > final_age_alive,
+        active=lambda age, n=final_age_alive: age > n,
         functions={"utility": lambda: 0.0},
     )
 
     return Model(
         regimes={"alive": alive, "terminal": terminal},
         regime_id_class=RegimeId,
-        ages=AgeGrid(start=0, stop=final_age_alive + 1, step="Y"),
+        ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
+        fixed_params={"final_age_alive": final_age_alive},
     )
 
 

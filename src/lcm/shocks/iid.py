@@ -100,7 +100,7 @@ class Normal(_ShockGridIID):
         n = self.n_points
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
-            nodes, _weights = _gauss_hermite_normal(n, mu, sigma)
+            nodes, _weights = _gauss_hermite_normal(n_points=n, mu=mu, sigma=sigma)
             return nodes
         n_std = kwargs["n_std"]
         x_min = mu - n_std * sigma
@@ -111,7 +111,7 @@ class Normal(_ShockGridIID):
         n = self.n_points
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
-            _nodes, weights = _gauss_hermite_normal(n, mu, sigma)
+            _nodes, weights = _gauss_hermite_normal(n_points=n, mu=mu, sigma=sigma)
             return jnp.full((n, n), fill_value=weights)
         n_std = kwargs["n_std"]
         x_min = mu - n_std * sigma
@@ -163,7 +163,7 @@ class LogNormal(_ShockGridIID):
         n = self.n_points
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
-            nodes, _weights = _gauss_hermite_normal(n, mu, sigma)
+            nodes, _weights = _gauss_hermite_normal(n_points=n, mu=mu, sigma=sigma)
             return jnp.exp(nodes)
         n_std = kwargs["n_std"]
         return jnp.exp(jnp.linspace(mu - n_std * sigma, mu + n_std * sigma, n))
@@ -172,7 +172,7 @@ class LogNormal(_ShockGridIID):
         n = self.n_points
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
-            _nodes, weights = _gauss_hermite_normal(n, mu, sigma)
+            _nodes, weights = _gauss_hermite_normal(n_points=n, mu=mu, sigma=sigma)
             return jnp.full((n, n), fill_value=weights)
         n_std = kwargs["n_std"]
         x_min = mu - n_std * sigma
@@ -254,10 +254,10 @@ class NormalMixture(_ShockGridIID):
         half_step = 0.5 * step
 
         upper = _mixture_cdf(
-            x + half_step, p1=p1, mu1=mu1, sigma1=sigma1, mu2=mu2, sigma2=sigma2
+            x=x + half_step, p1=p1, mu1=mu1, sigma1=sigma1, mu2=mu2, sigma2=sigma2
         )
         lower = _mixture_cdf(
-            x - half_step, p1=p1, mu1=mu1, sigma1=sigma1, mu2=mu2, sigma2=sigma2
+            x=x - half_step, p1=p1, mu1=mu1, sigma1=sigma1, mu2=mu2, sigma2=sigma2
         )
         w = upper - lower
         w = w.at[0].set(upper[0])

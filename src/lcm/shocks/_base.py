@@ -15,7 +15,7 @@ from lcm.typing import Float1D, FloatND, ScalarFloat
 
 
 def _gauss_hermite_normal(
-    n_points: int, mu: float | Float1D, sigma: float | Float1D
+    *, n_points: int, mu: float | Float1D, sigma: float | Float1D
 ) -> tuple[Float1D, Float1D]:
     """Compute Gauss-Hermite quadrature nodes and weights for $N(\\mu, \\sigma^2)$.
 
@@ -137,8 +137,8 @@ def _validate_gauss_hermite_grid(
 
 
 def _mixture_cdf(
-    x: FloatND,
     *,
+    x: FloatND,
     p1: float,
     mu1: float,
     sigma1: float,

@@ -21,7 +21,7 @@ from tests.test_models.shock_grids import get_model, get_params
     "distribution_type", ["uniform", "normal", "lognormal", "tauchen", "rouwenhorst"]
 )
 def test_model_with_shock(distribution_type):
-    model = get_model(final_age_alive=2, distribution_type=distribution_type)
+    model = get_model(n_periods=4, distribution_type=distribution_type)
     params = get_params(distribution_type)
 
     got_solve = model.solve(

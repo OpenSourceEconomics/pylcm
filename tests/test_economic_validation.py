@@ -20,7 +20,7 @@ _DETERMINISTIC_ATOL = 1e-6 if X64_ENABLED else 1e-3
 
 
 def _solve_and_simulate(shock_type, *, sigma, rho=0.0, mu=0.0):
-    model = get_model(_N_PERIODS - 1, shock_type)
+    model = get_model(_N_PERIODS, shock_type)
     params = get_params(shock_type, sigma=sigma, mu=mu, rho=rho)
     unconditional_mean = mu / (1 - rho)
     result = model.solve_and_simulate(
@@ -37,7 +37,7 @@ def _solve_and_simulate(shock_type, *, sigma, rho=0.0, mu=0.0):
 
 
 def _mean_wealth_in_final_alive_period(df):
-    rows = df[(df["period"] == _N_PERIODS - 1) & (df["regime"] == "alive")]
+    rows = df[(df["period"] == _N_PERIODS - 2) & (df["regime"] == "alive")]
     assert len(rows) > 0, "No rows in final alive period"
     return rows["wealth"].mean()
 

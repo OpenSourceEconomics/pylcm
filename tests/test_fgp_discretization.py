@@ -316,7 +316,7 @@ def test_mixture_cdf_spot_check():
     """Spot-check mixture CDF against manual scipy-style computation."""
     x = jnp.array([0.0, 0.1, -0.1])
     got = _mixture_cdf(
-        x, p1=FGP_P1, mu1=FGP_MU1, sigma1=FGP_SIGMA1, mu2=FGP_MU2, sigma2=FGP_SIGMA2
+        x=x, p1=FGP_P1, mu1=FGP_MU1, sigma1=FGP_SIGMA1, mu2=FGP_MU2, sigma2=FGP_SIGMA2
     )
 
     expected = FGP_P1 * jax_cdf((x - FGP_MU1) / FGP_SIGMA1) + (1 - FGP_P1) * jax_cdf(
