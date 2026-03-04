@@ -81,7 +81,7 @@ automation. Python 3.14+ is required.
   `transition`.
 - `PiecewiseLogSpacedGrid`: Piecewise logarithmically spaced grid with breakpoints.
   Optional `transition`.
-- `AgeGrid`: Lifecycle age grid (start, stop, step or precise_values)
+- `AgeGrid`: Lifecycle age grid (start, stop, step or exact_values)
 - `@categorical`: Decorator for creating categorical classes with auto-assigned integer
   codes
 - **ShockGrids** (in `src/lcm/shocks/`): `Rouwenhorst`, `Tauchen`, `Normal`, `Uniform`.

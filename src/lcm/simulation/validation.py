@@ -214,9 +214,9 @@ def _collect_structural_errors(
         return errors
 
     # Validate that all age values are representable on the age grid.  Compare
-    # against float64 conversions of AgeGrid.precise_values to avoid float32
+    # against float64 conversions of AgeGrid.exact_values to avoid float32
     # precision issues with sub-annual steps.
-    valid_ages = {float(v) for v in ages.precise_values}
+    valid_ages = {float(v) for v in ages.exact_values}
     age_values = initial_states["age"]
     invalid_ages = sorted({float(a) for a in age_values if float(a) not in valid_ages})
     if invalid_ages:
@@ -227,7 +227,7 @@ def _collect_structural_errors(
     else:
         # Validate that each subject's initial regime is active at their starting age.
         # Only safe to run when all ages are valid (so age_to_period lookup succeeds).
-        age_to_period = {float(v): i for i, v in enumerate(ages.precise_values)}
+        age_to_period = {float(v): i for i, v in enumerate(ages.exact_values)}
         periods = jnp.array([age_to_period[float(a)] for a in age_values])
 
         active_mask = jnp.ones(len(initial_regimes), dtype=bool)
@@ -275,7 +275,7 @@ def _collect_feasibility_errors(
         List of error message strings (empty if everything is feasible).
 
     """
-    age_to_period = {float(v): i for i, v in enumerate(ages.precise_values)}
+    age_to_period = {float(v): i for i, v in enumerate(ages.exact_values)}
 
     errors: list[str] = []
     for regime_name, internal_regime in internal_regimes.items():

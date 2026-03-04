@@ -58,9 +58,9 @@ def test_age_grid_with_int_and_fraction_annual():
     assert ages.n_periods == 4
     np.testing.assert_array_equal(ages.values, [18, 19, 20, 21])
     assert ages.step_size == 1.0
-    assert type(ages.precise_step_size) is int
-    assert isinstance(ages.precise_values, tuple)
-    assert all(isinstance(age, int) for age in ages.precise_values)
+    assert type(ages.exact_step_size) is int
+    assert isinstance(ages.exact_values, tuple)
+    assert all(isinstance(age, int) for age in ages.exact_values)
 
 
 def test_age_grid_with_int_and_fraction_quarterly():
@@ -69,13 +69,13 @@ def test_age_grid_with_int_and_fraction_quarterly():
     assert ages.n_periods == 6
     np.testing.assert_array_equal(ages.values, [20.0, 20.25, 20.5, 20.75, 21.0, 21.25])
     assert ages.step_size == 0.25
-    assert type(ages.precise_step_size) is Fraction
-    assert isinstance(ages.precise_values, tuple)
-    assert all(isinstance(age, Fraction) for age in ages.precise_values)
+    assert type(ages.exact_step_size) is Fraction
+    assert isinstance(ages.exact_values, tuple)
+    assert all(isinstance(age, Fraction) for age in ages.exact_values)
 
 
 def test_age_grid_from_values():
-    ages = AgeGrid(precise_values=(18, 25, 35, 65))
+    ages = AgeGrid(exact_values=(18, 25, 35, 65))
     assert ages.n_periods == 4
     np.testing.assert_array_equal(ages.values, [18, 25, 35, 65])
     assert ages.step_size is None
@@ -105,7 +105,7 @@ def test_age_grid_no_params_raises():
 
 def test_age_grid_values_and_range_raises():
     with pytest.raises(GridInitializationError, match="Cannot specify both"):
-        AgeGrid(start=18, stop=22, step="Y", precise_values=(18, 19))  # ty: ignore[no-matching-overload]
+        AgeGrid(start=18, stop=22, step="Y", exact_values=(18, 19))  # ty: ignore[no-matching-overload]
 
 
 def test_age_grid_start_greater_than_stop_raises():
@@ -115,7 +115,7 @@ def test_age_grid_start_greater_than_stop_raises():
 
 def test_age_grid_non_increasing_values_raises():
     with pytest.raises(GridInitializationError, match="strictly increasing"):
-        AgeGrid(precise_values=(18, 20, 19))
+        AgeGrid(exact_values=(18, 20, 19))
 
 
 def test_age_grid_step_size_not_divisible_raises():
