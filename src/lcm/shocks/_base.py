@@ -71,11 +71,11 @@ class _ShockGrid(ContinuousGrid):
         return not self.params_to_pass_at_runtime
 
     @abstractmethod
-    def compute_gridpoints(self, **kwargs: float | Float1D) -> Float1D:
+    def compute_gridpoints(self, **kwargs: float) -> Float1D:
         """Compute discretized gridpoints for the shock distribution."""
 
     @abstractmethod
-    def compute_transition_probs(self, **kwargs: float | Float1D) -> FloatND:
+    def compute_transition_probs(self, **kwargs: float) -> FloatND:
         """Compute transition probability matrix for the shock distribution."""
 
     def get_gridpoints(self) -> Float1D:
@@ -138,11 +138,12 @@ def _validate_gauss_hermite_grid(
 
 def _mixture_cdf(
     x: FloatND,
-    p1: float | Float1D,
-    mu1: float | Float1D,
-    sigma1: float | Float1D,
-    mu2: float | Float1D,
-    sigma2: float | Float1D,
+    *,
+    p1: float,
+    mu1: float,
+    sigma1: float,
+    mu2: float,
+    sigma2: float,
 ) -> FloatND:
     """Evaluate the CDF of a two-component normal mixture.
 

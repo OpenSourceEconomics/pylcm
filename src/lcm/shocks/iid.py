@@ -42,12 +42,12 @@ class Uniform(_ShockGridIID):
     stop: float | None = None
     """Upper bound of the uniform distribution."""
 
-    def compute_gridpoints(self, **kwargs: float | Float1D) -> Float1D:
+    def compute_gridpoints(self, **kwargs: float) -> Float1D:
         return jnp.linspace(
             start=kwargs["start"], stop=kwargs["stop"], num=self.n_points
         )
 
-    def compute_transition_probs(self, **kwargs: float | Float1D) -> FloatND:  # noqa: ARG002
+    def compute_transition_probs(self, **kwargs: float) -> FloatND:  # noqa: ARG002
         n = self.n_points
         return jnp.full((n, n), fill_value=1 / n)
 
@@ -96,7 +96,7 @@ class Normal(_ShockGridIID):
             exclude.add("n_std")
         return tuple(f.name for f in fields(self) if f.name not in exclude)
 
-    def compute_gridpoints(self, **kwargs: float | Float1D) -> Float1D:
+    def compute_gridpoints(self, **kwargs: float) -> Float1D:
         n = self.n_points
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
@@ -107,7 +107,7 @@ class Normal(_ShockGridIID):
         x_max = mu + n_std * sigma
         return jnp.linspace(start=x_min, stop=x_max, num=n)
 
-    def compute_transition_probs(self, **kwargs: float | Float1D) -> FloatND:
+    def compute_transition_probs(self, **kwargs: float) -> FloatND:
         n = self.n_points
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
@@ -159,7 +159,7 @@ class LogNormal(_ShockGridIID):
             exclude.add("n_std")
         return tuple(f.name for f in fields(self) if f.name not in exclude)
 
-    def compute_gridpoints(self, **kwargs: float | Float1D) -> Float1D:
+    def compute_gridpoints(self, **kwargs: float) -> Float1D:
         n = self.n_points
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
@@ -168,7 +168,7 @@ class LogNormal(_ShockGridIID):
         n_std = kwargs["n_std"]
         return jnp.exp(jnp.linspace(mu - n_std * sigma, mu + n_std * sigma, n))
 
-    def compute_transition_probs(self, **kwargs: float | Float1D) -> FloatND:
+    def compute_transition_probs(self, **kwargs: float) -> FloatND:
         n = self.n_points
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
@@ -225,7 +225,7 @@ class NormalMixture(_ShockGridIID):
     sigma2: float | None = None
     """Standard deviation of the second mixture component."""
 
-    def compute_gridpoints(self, **kwargs: float | Float1D) -> Float1D:
+    def compute_gridpoints(self, **kwargs: float) -> Float1D:
         n = self.n_points
         n_std = kwargs["n_std"]
         p1, mu1, sigma1 = kwargs["p1"], kwargs["mu1"], kwargs["sigma1"]
@@ -238,7 +238,7 @@ class NormalMixture(_ShockGridIID):
         std_eps = jnp.sqrt(var_eps)
         return jnp.linspace(mean_eps - n_std * std_eps, mean_eps + n_std * std_eps, n)
 
-    def compute_transition_probs(self, **kwargs: float | Float1D) -> FloatND:
+    def compute_transition_probs(self, **kwargs: float) -> FloatND:
         n = self.n_points
         n_std = kwargs["n_std"]
         p1, mu1, sigma1 = kwargs["p1"], kwargs["mu1"], kwargs["sigma1"]
@@ -253,8 +253,12 @@ class NormalMixture(_ShockGridIID):
         step = (2 * n_std * std_eps) / (n - 1)
         half_step = 0.5 * step
 
-        upper = _mixture_cdf(x + half_step, p1, mu1, sigma1, mu2, sigma2)
-        lower = _mixture_cdf(x - half_step, p1, mu1, sigma1, mu2, sigma2)
+        upper = _mixture_cdf(
+            x + half_step, p1=p1, mu1=mu1, sigma1=sigma1, mu2=mu2, sigma2=sigma2
+        )
+        lower = _mixture_cdf(
+            x - half_step, p1=p1, mu1=mu1, sigma1=sigma1, mu2=mu2, sigma2=sigma2
+        )
         w = upper - lower
         w = w.at[0].set(upper[0])
         w = w.at[-1].set(1 - lower[-1])

@@ -75,7 +75,7 @@ class Tauchen(_ShockGridAR1):
             exclude.add("n_std")
         return tuple(f.name for f in fields(self) if f.name not in exclude)
 
-    def compute_gridpoints(self, **kwargs: float | Float1D) -> Float1D:
+    def compute_gridpoints(self, **kwargs: float) -> Float1D:
         n = self.n_points
         rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
         if self.gauss_hermite:
@@ -87,7 +87,7 @@ class Tauchen(_ShockGridAR1):
         x = jnp.linspace(-x_max, x_max, n)
         return x + mu / (1 - rho)
 
-    def compute_transition_probs(self, **kwargs: float | Float1D) -> FloatND:
+    def compute_transition_probs(self, **kwargs: float) -> FloatND:
         n = self.n_points
         rho, sigma = kwargs["rho"], kwargs["sigma"]
         if self.gauss_hermite:
@@ -152,14 +152,14 @@ class Rouwenhorst(_ShockGridAR1):
     mu: float | None = None
     """Intercept (drift) of the AR(1) process."""
 
-    def compute_gridpoints(self, **kwargs: float | Float1D) -> Float1D:
+    def compute_gridpoints(self, **kwargs: float) -> Float1D:
         n = self.n_points
         rho, sigma, mu = kwargs["rho"], kwargs["sigma"], kwargs["mu"]
         nu = jnp.sqrt((n - 1) / (1 - rho**2)) * sigma
         long_run_mean = mu / (1.0 - rho)
         return jnp.linspace(long_run_mean - nu, long_run_mean + nu, n)
 
-    def compute_transition_probs(self, **kwargs: float | Float1D) -> FloatND:
+    def compute_transition_probs(self, **kwargs: float) -> FloatND:
         n = self.n_points
         rho = kwargs["rho"]
         q = (rho + 1) / 2
@@ -238,17 +238,17 @@ class TauchenNormalMixture(_ShockGridAR1):
 
     @staticmethod
     def _innovation_variance(
-        p1: float | Float1D,
-        mu1: float | Float1D,
-        sigma1: float | Float1D,
-        mu2: float | Float1D,
-        sigma2: float | Float1D,
-    ) -> float | Float1D:
+        p1: float,
+        mu1: float,
+        sigma1: float,
+        mu2: float,
+        sigma2: float,
+    ) -> float:
         """Compute the variance of the mixture innovation."""
         mean_eps = p1 * mu1 + (1 - p1) * mu2
         return p1 * (sigma1**2 + mu1**2) + (1 - p1) * (sigma2**2 + mu2**2) - mean_eps**2
 
-    def compute_gridpoints(self, **kwargs: float | Float1D) -> Float1D:
+    def compute_gridpoints(self, **kwargs: float) -> Float1D:
         n = self.n_points
         rho, mu = kwargs["rho"], kwargs["mu"]
         n_std = kwargs["n_std"]
@@ -262,7 +262,7 @@ class TauchenNormalMixture(_ShockGridAR1):
         x_max = n_std * std_y
         return jnp.linspace(long_run_mean - x_max, long_run_mean + x_max, n)
 
-    def compute_transition_probs(self, **kwargs: float | Float1D) -> FloatND:
+    def compute_transition_probs(self, **kwargs: float) -> FloatND:
         n = self.n_points
         rho, mu = kwargs["rho"], kwargs["mu"]
         n_std = kwargs["n_std"]
@@ -282,8 +282,12 @@ class TauchenNormalMixture(_ShockGridAR1):
         # from x[i], shifted by -mu to center on the innovation distribution.
         z = x[None, :] - mu - rho * x[:, None]
 
-        upper = _mixture_cdf(z + half_step, p1, mu1, sigma1, mu2, sigma2)
-        lower = _mixture_cdf(z - half_step, p1, mu1, sigma1, mu2, sigma2)
+        upper = _mixture_cdf(
+            z + half_step, p1=p1, mu1=mu1, sigma1=sigma1, mu2=mu2, sigma2=sigma2
+        )
+        lower = _mixture_cdf(
+            z - half_step, p1=p1, mu1=mu1, sigma1=sigma1, mu2=mu2, sigma2=sigma2
+        )
         P = upper - lower
         P = P.at[:, 0].set(upper[:, 0])
         return P.at[:, -1].set(1 - lower[:, -1])

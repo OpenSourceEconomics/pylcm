@@ -474,17 +474,14 @@ def _get_weights_func_for_shock(*, name: str, gridspec: _ShockGrid) -> UserFunct
         }
         args = {name: "ContinuousState", **dict.fromkeys(runtime_param_names, "float")}
 
-        _compute_gridpoints = gridspec.compute_gridpoints
-        _compute_transition_probs = gridspec.compute_transition_probs
-
         @with_signature(args=args, return_annotation="FloatND", enforce=False)
         def weights_func_runtime(*a: Array, **kwargs: Array) -> Float1D:  # noqa: ARG001
-            shock_kw = {
+            shock_kw: dict[str, float] = {  # ty: ignore[invalid-assignment]
                 **fixed_params,
                 **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
             }
-            gridpoints = _compute_gridpoints(**shock_kw)
-            transition_probs = _compute_transition_probs(**shock_kw)
+            gridpoints = gridspec.compute_gridpoints(**shock_kw)
+            transition_probs = gridspec.compute_transition_probs(**shock_kw)
             coord = get_irreg_coordinate(value=kwargs[name], points=gridpoints)
             return map_coordinates(
                 input=transition_probs,

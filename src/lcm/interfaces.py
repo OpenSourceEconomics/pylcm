@@ -22,7 +22,6 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FlatRegimeParams,
-    Float1D,
     InternalUserFunction,
     MaxQOverAFunction,
     NextStateSimulationFunction,
@@ -252,9 +251,11 @@ class InternalRegime:
                 )
                 if not all_present:
                     continue
-                shock_kw: dict[str, float | Float1D] = dict(spec.params)
+                shock_kw: dict[str, float] = dict(spec.params)
                 for p in spec.params_to_pass_at_runtime:
-                    shock_kw[p] = all_params[f"{state_name}__{p}"]
+                    val = all_params[f"{state_name}__{p}"]
+                    assert isinstance(val, float)  # noqa: S101
+                    shock_kw[p] = val
                 replacements[state_name] = spec.compute_gridpoints(**shock_kw)
 
         if not replacements:

@@ -24,7 +24,7 @@ from lcm import (
 )
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
 
-# FGP reference parameters (Section 4, p. 28)
+# FGP reference parameters (Section 4, p. 191)
 SIGMA_EPS = 0.1269  # sqrt(0.0161)
 RHO = 0.95
 R = 0.04

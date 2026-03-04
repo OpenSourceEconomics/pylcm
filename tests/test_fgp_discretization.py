@@ -4,7 +4,7 @@ FGP (*Review of Economic Dynamics*, 2019) compare Tauchen, Adda-Cooper, and
 Rouwenhorst for discretizing non-stationary AR(1) income processes in lifecycle
 models. Rouwenhorst dominates across all configurations.
 
-Reference parameters (FGP Section 4, p. 28):
+Reference parameters (FGP Section 4, p. 191):
     sigma_eps^2 = 0.0161, mu = 0, rho in {0.95, 0.98}, N in {5, 25}.
 
 """
@@ -27,7 +27,7 @@ from tests.conftest import DECIMAL_PRECISION
 SIGMA_EPS_SQ = 0.0161
 SIGMA_EPS = np.sqrt(SIGMA_EPS_SQ)
 
-# Mixture parameters (FGP Section 4.3, p. 28)
+# Mixture parameters (FGP Section 4.3, p. 195)
 FGP_P1 = 0.9
 FGP_MU1 = 0.0089
 FGP_MU2 = -FGP_MU1 * FGP_P1 / (1 - FGP_P1)  # -0.0800 (approx)
@@ -60,8 +60,8 @@ def test_tauchen_grid_span_matches_fgp(rho, n_points):
 
     expected_std_y = SIGMA_EPS / np.sqrt(1 - rho**2)
     expected_span = 2 * n_std * expected_std_y
-    aaae(float(points[-1] - points[0]), expected_span, decimal=10)
-    aaae(float((points[0] + points[-1]) / 2), 0.0, decimal=10)
+    aaae(float(points[-1] - points[0]), expected_span, decimal=DECIMAL_PRECISION)
+    aaae(float((points[0] + points[-1]) / 2), 0.0, decimal=DECIMAL_PRECISION)
 
 
 @pytest.mark.parametrize(
@@ -78,8 +78,8 @@ def test_rouwenhorst_grid_span_matches_fgp(rho, n_points):
 
     expected_std_y = SIGMA_EPS / np.sqrt(1 - rho**2)
     expected_span = 2 * np.sqrt(n_points - 1) * expected_std_y
-    aaae(float(points[-1] - points[0]), expected_span, decimal=10)
-    aaae(float((points[0] + points[-1]) / 2), 0.0, decimal=10)
+    aaae(float(points[-1] - points[0]), expected_span, decimal=DECIMAL_PRECISION)
+    aaae(float((points[0] + points[-1]) / 2), 0.0, decimal=DECIMAL_PRECISION)
 
 
 # ======================================================================================
@@ -145,7 +145,7 @@ def test_rouwenhorst_conditional_mean(rho, n_points):
     # E[y' | y_i] = sum_j P[i,j] * y_j should equal rho * y_i
     conditional_means = P @ points
     expected = rho * points
-    aaae(conditional_means, expected, decimal=10)
+    aaae(conditional_means, expected, decimal=DECIMAL_PRECISION)
 
 
 @pytest.mark.parametrize(
@@ -165,7 +165,7 @@ def test_rouwenhorst_conditional_variance(rho, n_points):
     # Var[y' | y_i] = sum_j P[i,j] * (y_j - E[y'|y_i])^2
     deviations = points[None, :] - conditional_means[:, None]
     conditional_vars = (P * deviations**2).sum(axis=1)
-    aaae(conditional_vars, jnp.full(n_points, SIGMA_EPS_SQ), decimal=10)
+    aaae(conditional_vars, jnp.full(n_points, SIGMA_EPS_SQ), decimal=DECIMAL_PRECISION)
 
 
 # ======================================================================================
@@ -295,7 +295,7 @@ def test_mixture_grid_span_matches_tauchen_equivalent():
 
     grid = _make_fgp_mixture_grid(n_points=n_points, rho=rho, n_std=n_std)
     points = grid.get_gridpoints()
-    aaae(float(points[-1] - points[0]), expected_span, decimal=10)
+    aaae(float(points[-1] - points[0]), expected_span, decimal=DECIMAL_PRECISION)
 
 
 def test_mixture_transition_rows_sum_to_one():
@@ -315,7 +315,9 @@ def test_mixture_transition_probs_nonnegative():
 def test_mixture_cdf_spot_check():
     """Spot-check mixture CDF against manual scipy-style computation."""
     x = jnp.array([0.0, 0.1, -0.1])
-    got = _mixture_cdf(x, FGP_P1, FGP_MU1, FGP_SIGMA1, FGP_MU2, FGP_SIGMA2)
+    got = _mixture_cdf(
+        x, p1=FGP_P1, mu1=FGP_MU1, sigma1=FGP_SIGMA1, mu2=FGP_MU2, sigma2=FGP_SIGMA2
+    )
 
     expected = FGP_P1 * jax_cdf((x - FGP_MU1) / FGP_SIGMA1) + (1 - FGP_P1) * jax_cdf(
         (x - FGP_MU2) / FGP_SIGMA2
