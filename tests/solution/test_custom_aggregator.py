@@ -197,7 +197,7 @@ def test_custom_H_not_overwritten():
 def test_params_template_includes_H():
     """The params template should include H's parameters."""
     model = _make_model()
-    template = model.params_template
+    template = model._params_template
     # Default H has discount_factor parameter
     assert "H" in template["working"]
     assert "discount_factor" in template["working"]["H"]
@@ -206,7 +206,7 @@ def test_params_template_includes_H():
 def test_params_template_custom_H():
     """Custom H params should appear in the template."""
     model = _make_model(custom_H=ces_H)
-    template = model.params_template
+    template = model._params_template
     assert "H" in template["working"]
     assert "discount_factor" in template["working"]["H"]
     assert "ies" in template["working"]["H"]

@@ -80,7 +80,7 @@ def model() -> Model:
 def internal_params(model: Model) -> InternalParams:
     """Process params for the minimal model."""
     return process_params(
-        params={"discount_factor": 0.95}, params_template=model.params_template
+        params={"discount_factor": 0.95}, params_template=model._params_template
     )
 
 
@@ -545,7 +545,7 @@ def test_subject_in_inactive_regime_at_starting_age() -> None:
     """Subject starts in dead at age 0, but dead is only active for age >= 2."""
     model = _make_asymmetric_state_model()
     internal_params = process_params(
-        params={"discount_factor": 0.95}, params_template=model.params_template
+        params={"discount_factor": 0.95}, params_template=model._params_template
     )
 
     with pytest.raises(InvalidInitialConditionsError, match="not active"):
@@ -565,7 +565,7 @@ def test_all_subjects_in_regime_with_fewer_states() -> None:
     """Both subjects start in dead, which only needs wealth — health is not required."""
     model = _make_asymmetric_state_model()
     internal_params = process_params(
-        params={"discount_factor": 0.95}, params_template=model.params_template
+        params={"discount_factor": 0.95}, params_template=model._params_template
     )
 
     validate_initial_conditions(
@@ -587,7 +587,7 @@ def test_mixed_regimes_all_union_states_provided() -> None:
     """
     model = _make_asymmetric_state_model()
     internal_params = process_params(
-        params={"discount_factor": 0.95}, params_template=model.params_template
+        params={"discount_factor": 0.95}, params_template=model._params_template
     )
 
     validate_initial_conditions(
@@ -607,7 +607,7 @@ def test_constraint_not_checked_for_unused_regime() -> None:
     """Subject in dead (no constraint); wealth=40 fine even though alive needs > 50."""
     model = _make_constrained_asymmetric_model()
     internal_params = process_params(
-        params={"discount_factor": 0.95}, params_template=model.params_template
+        params={"discount_factor": 0.95}, params_template=model._params_template
     )
 
     validate_initial_conditions(
@@ -626,7 +626,7 @@ def test_constraint_checked_for_starting_regime() -> None:
     """Subject in alive (has constraint); wealth=40 is infeasible."""
     model = _make_constrained_asymmetric_model()
     internal_params = process_params(
-        params={"discount_factor": 0.95}, params_template=model.params_template
+        params={"discount_factor": 0.95}, params_template=model._params_template
     )
 
     with pytest.raises(InvalidInitialConditionsError, match="infeasible"):
@@ -649,7 +649,7 @@ def test_mixed_regimes_constraint_only_checked_for_starting_regime() -> None:
     """
     model = _make_constrained_asymmetric_model()
     internal_params = process_params(
-        params={"discount_factor": 0.95}, params_template=model.params_template
+        params={"discount_factor": 0.95}, params_template=model._params_template
     )
 
     with pytest.raises(InvalidInitialConditionsError, match="infeasible"):

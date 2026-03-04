@@ -114,7 +114,7 @@ def test_shock_without_params_is_not_fully_specified(grid_cls, extra_kw):
 def test_runtime_shock_in_params_template():
     """Runtime-supplied ShockGrid params appear in params_template."""
     model = _make_model()
-    alive_template = model.params_template["alive"]
+    alive_template = model._params_template["alive"]
     assert "income" in alive_template
     for name in ("rho", "sigma", "mu", "n_std"):
         assert name in alive_template["income"]
@@ -132,7 +132,7 @@ def test_runtime_shock_with_fixed_params():
     """Shock params provided via fixed_params are removed from template."""
     model = _make_model(fixed_params=_TAUCHEN_PARAMS)
 
-    alive_template = model.params_template.get("alive", {})
+    alive_template = model._params_template.get("alive", {})
     income_params = alive_template.get("income", {})
     for name in _TAUCHEN_PARAMS:
         assert name not in income_params

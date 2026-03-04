@@ -137,6 +137,7 @@ per-file-ignores."tests/*" = [
   "PLR2004", # Magic values in comparison
   "S101",    # Use of assert
   "S301",    # Use of pickle
+  "SLF001",  # Private member access
 ]
 per-file-ignores."tests/test_next_state.py" = [
   "ARG001", # Unused function argument

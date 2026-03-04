@@ -264,7 +264,7 @@ initial_regimes = ["working", "working", "retired"]
 
 ### Key Attributes
 
-- `model.params_template` - Template for parameter dictionary structure (dict by regime
+- `model.get_params_template()` - Mutable copy of the parameter template (dict by regime
   name)
 - `model.regimes` - Immutable mapping of regime names to user `Regime` objects
 - `model.internal_regimes` - Immutable mapping of regime names to processed

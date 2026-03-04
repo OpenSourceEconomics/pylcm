@@ -73,7 +73,7 @@ class Model:
     fixed_params: UserParams
     """Parameters fixed at model initialization."""
 
-    params_template: ParamsTemplate
+    _params_template: ParamsTemplate
     """Template for the model parameters."""
 
     def __init__(
@@ -116,7 +116,7 @@ class Model:
             )
         )
         self.regimes = MappingProxyType(dict(regimes))
-        self.internal_regimes, self.params_template = _build_regimes_and_template(
+        self.internal_regimes, self._params_template = _build_regimes_and_template(
             regimes=regimes,
             ages=self.ages,
             regime_names_to_ids=self.regime_names_to_ids,
@@ -128,16 +128,16 @@ class Model:
     def get_params_template(self) -> MutableParamsTemplate:
         """Get a mutable copy of the params template.
 
-        Returns a deep copy of the params_template where all immutable containers
-        (MappingProxyType, tuple, frozenset) are converted to their mutable
-        equivalents (dict, list, set).
+        Returns a deep copy of the internal params template where all immutable
+        containers (MappingProxyType, tuple, frozenset) are converted to their
+        mutable equivalents (dict, list, set).
 
         Returns:
-            A mutable nested dict with the same structure as params_template.
+            A mutable nested dict with the same structure as the params template.
 
         """
         return ensure_containers_are_mutable(  # ty: ignore[invalid-return-type]
-            self.params_template
+            self._params_template
         )
 
     def solve(
@@ -149,7 +149,7 @@ class Model:
         """Solve the model using the pre-computed functions.
 
         Args:
-            params: Model parameters matching the template from self.params_template
+            params: Model parameters matching the template from `get_params_template()`
                 Parameters can be provided at exactly one of three levels:
                 - Model level: {"arg_0": 0.0} - propagates to all functions needing
                   arg_0
@@ -163,7 +163,7 @@ class Model:
             Immutable mapping of period to a value function array for each regime.
         """
         internal_params = process_params(
-            params=params, params_template=self.params_template
+            params=params, params_template=self._params_template
         )
         return solve(
             internal_params=internal_params,
@@ -186,7 +186,7 @@ class Model:
         """Simulate the model forward using pre-computed value functions.
 
         Args:
-            params: Model parameters matching the template from self.params_template.
+            params: Model parameters matching the template from `get_params_template()`.
                 Parameters can be provided at exactly one of three levels:
                 - Model level: {"arg_0": 0.0} - propagates to all functions needing
                   arg_0
@@ -209,7 +209,7 @@ class Model:
 
         """
         internal_params = process_params(
-            params=params, params_template=self.params_template
+            params=params, params_template=self._params_template
         )
         if check_initial_conditions:
             validate_initial_conditions(
@@ -244,7 +244,7 @@ class Model:
         """Solve and then simulate the model in one call.
 
         Args:
-            params: Model parameters matching the template from self.params_template.
+            params: Model parameters matching the template from `get_params_template()`.
                 Parameters can be provided at exactly one of three levels:
                 - Model level: {"arg_0": 0.0} - propagates to all functions needing
                   arg_0
@@ -266,7 +266,7 @@ class Model:
 
         """
         internal_params = process_params(
-            params=params, params_template=self.params_template
+            params=params, params_template=self._params_template
         )
         if check_initial_conditions:
             validate_initial_conditions(

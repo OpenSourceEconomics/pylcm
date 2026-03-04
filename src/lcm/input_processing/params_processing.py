@@ -40,7 +40,7 @@ def process_params(
 
     Args:
         params: User-provided parameters dictionary.
-        params_template: Template from model.params_template.
+        params_template: Template from `model.get_params_template()`.
 
     Returns:
         internal_params as an immutable MappingProxyType with the same structure

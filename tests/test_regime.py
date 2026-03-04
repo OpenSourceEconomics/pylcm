@@ -226,7 +226,7 @@ def test_identity_transition_annotations():
 def test_identity_transition_is_auto_identity():
     """Identity transition is flagged as auto-generated."""
     identity = _IdentityTransition("x", annotation=ContinuousState)
-    assert identity._is_auto_identity is True  # noqa: SLF001
+    assert identity._is_auto_identity is True
 
 
 def test_get_all_functions_includes_identity_for_fixed_discrete_state():
