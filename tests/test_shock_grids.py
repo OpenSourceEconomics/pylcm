@@ -18,7 +18,7 @@ from tests.test_models.shocks import get_model, get_params
 
 @pytest.mark.skipif(not X64_ENABLED, reason="Not working with 32-Bit because of RNG")
 @pytest.mark.parametrize(
-    "distribution_type", ["uniform", "normal", "tauchen", "rouwenhorst"]
+    "distribution_type", ["uniform", "normal", "lognormal", "tauchen", "rouwenhorst"]
 )
 def test_model_with_shock(distribution_type):
     n_periods = 3
@@ -73,8 +73,10 @@ _GRID_CLASSES_WITH_GH_KWARG = [
     (lcm.shocks.iid.Uniform, {}),
     (lcm.shocks.iid.Normal, {"gauss_hermite": True}),
     (lcm.shocks.iid.LogNormal, {"gauss_hermite": True}),
+    (lcm.shocks.iid.NormalMixture, {}),
     (lcm.shocks.ar1.Tauchen, {"gauss_hermite": True}),
     (lcm.shocks.ar1.Rouwenhorst, {}),
+    (lcm.shocks.ar1.TauchenNormalMixture, {}),
 ]
 
 
@@ -118,7 +120,31 @@ def test_shock_grid_correct_shape_without_params(grid_cls, extra_kw):
             lcm.shocks.ar1.Tauchen,
             {"gauss_hermite": False, "rho": 0.9, "sigma": 1.0, "mu": 0.0, "n_std": 2},
         ),
+        (
+            lcm.shocks.iid.NormalMixture,
+            {
+                "n_std": 3.0,
+                "p1": 0.9,
+                "mu1": 0.0,
+                "sigma1": 0.1,
+                "mu2": -0.5,
+                "sigma2": 0.3,
+            },
+        ),
         (lcm.shocks.ar1.Rouwenhorst, {"rho": 0.9, "sigma": 1.0, "mu": 0.0}),
+        (
+            lcm.shocks.ar1.TauchenNormalMixture,
+            {
+                "rho": 0.9,
+                "mu": 1.0,
+                "n_std": 3.0,
+                "p1": 0.9,
+                "mu1": 0.0,
+                "sigma1": 0.1,
+                "mu2": -0.5,
+                "sigma2": 0.3,
+            },
+        ),
     ],
 )
 def test_shock_grid_fully_specified_with_all_params(grid_cls, kwargs):
@@ -291,12 +317,17 @@ def test_ar1_draw_shock_unconditional_moments(grid_cls):
     "grid_cls_and_kwargs",
     [
         (lcm.shocks.iid.Normal, {"gauss_hermite": True}),
+        (lcm.shocks.iid.Normal, {"gauss_hermite": False, "n_std": 3.0}),
         (lcm.shocks.iid.LogNormal, {"gauss_hermite": True}),
+        (lcm.shocks.iid.LogNormal, {"gauss_hermite": False, "n_std": 3.0}),
         (lcm.shocks.ar1.Tauchen, {"gauss_hermite": True}),
+        (lcm.shocks.ar1.Tauchen, {"gauss_hermite": False, "n_std": 3.0}),
+        (lcm.shocks.iid.NormalMixture, {}),
+        (lcm.shocks.ar1.TauchenNormalMixture, {}),
     ],
 )
 def test_even_n_points_rejected(grid_cls_and_kwargs):
-    """Gauss-Hermite grids reject even n_points."""
+    """Grids requiring odd n_points reject even values."""
     grid_cls, extra_kw = grid_cls_and_kwargs
     with pytest.raises(GridInitializationError, match="n_points must be odd"):
         grid_cls(n_points=4, **extra_kw)
@@ -431,6 +462,149 @@ def test_lognormal_gauss_hermite_weights_sum_to_one():
 
 
 # ======================================================================================
+# NormalMixture specific tests
+# ======================================================================================
+
+_NORMAL_MIXTURE_KWARGS = {
+    "n_std": 3.0,
+    "p1": 0.9,
+    "mu1": 0.0,
+    "sigma1": 0.1,
+    "mu2": -0.5,
+    "sigma2": 0.3,
+}
+
+
+def test_normal_mixture_transition_probs_rows_sum_to_one():
+    """NormalMixture transition probability rows sum to 1."""
+    grid = lcm.shocks.iid.NormalMixture(n_points=7, **_NORMAL_MIXTURE_KWARGS)
+    P = grid.get_transition_probs()
+    row_sums = P.sum(axis=1)
+    aaae(row_sums, jnp.ones(7), decimal=DECIMAL_PRECISION)
+
+
+@pytest.mark.parametrize("params_at_init", [True, False])
+def test_draw_shock_normal_mixture(params_at_init):
+    """NormalMixture.draw_shock produces draws with correct mixture moments."""
+    kwargs = _NORMAL_MIXTURE_KWARGS
+    if params_at_init:
+        grid = lcm.shocks.iid.NormalMixture(n_points=5, **kwargs)
+        params = grid.params
+    else:
+        grid = lcm.shocks.iid.NormalMixture(n_points=5)
+        params = MappingProxyType(kwargs)
+    draws = _draw_many(grid, params)
+    p1 = kwargs["p1"]
+    mu1, mu2 = kwargs["mu1"], kwargs["mu2"]
+    sigma1, sigma2 = kwargs["sigma1"], kwargs["sigma2"]
+    expected_mean = p1 * mu1 + (1 - p1) * mu2
+    expected_var = (
+        p1 * (sigma1**2 + mu1**2) + (1 - p1) * (sigma2**2 + mu2**2) - expected_mean**2
+    )
+    aaae(draws.mean(), expected_mean, decimal=1)
+    aaae(draws.var(), expected_var, decimal=1)
+
+
+def test_iid_normal_mixture_stationary_moments():
+    """IID NormalMixture stationary mean and std match mixture moments."""
+    kwargs = _NORMAL_MIXTURE_KWARGS
+    grid = lcm.shocks.iid.NormalMixture(n_points=21, **kwargs)
+    got_mean, got_std = _stationary_moments(
+        grid.get_gridpoints(), grid.get_transition_probs()
+    )
+    p1 = kwargs["p1"]
+    mu1, mu2 = kwargs["mu1"], kwargs["mu2"]
+    sigma1, sigma2 = kwargs["sigma1"], kwargs["sigma2"]
+    expected_mean = p1 * mu1 + (1 - p1) * mu2
+    expected_var = (
+        p1 * (sigma1**2 + mu1**2) + (1 - p1) * (sigma2**2 + mu2**2) - expected_mean**2
+    )
+    aaae(got_mean, expected_mean, decimal=1)
+    aaae(got_std, float(jnp.sqrt(expected_var)), decimal=1)
+
+
+# ======================================================================================
+# TauchenNormalMixture specific tests
+# ======================================================================================
+
+_TAUCHEN_NORMAL_MIXTURE_KWARGS = {
+    "rho": 0.8,
+    "mu": 1.0,
+    "n_std": 3.0,
+    "p1": 0.9,
+    "mu1": 0.0,
+    "sigma1": 0.1,
+    "mu2": -0.5,
+    "sigma2": 0.3,
+}
+
+
+def test_tauchen_normal_mixture_transition_probs_rows_sum_to_one():
+    """TauchenNormalMixture transition probability rows sum to 1."""
+    grid = lcm.shocks.ar1.TauchenNormalMixture(
+        n_points=7, **_TAUCHEN_NORMAL_MIXTURE_KWARGS
+    )
+    P = grid.get_transition_probs()
+    row_sums = P.sum(axis=1)
+    aaae(row_sums, jnp.ones(7), decimal=DECIMAL_PRECISION)
+
+
+def test_tauchen_normal_mixture_centers_on_unconditional_mean():
+    """TauchenNormalMixture gridpoints center on (mu + mean_eps) / (1 - rho)."""
+    kwargs = _TAUCHEN_NORMAL_MIXTURE_KWARGS
+    grid = lcm.shocks.ar1.TauchenNormalMixture(n_points=11, **kwargs)
+    points = grid.get_gridpoints()
+    midpoint = (points[0] + points[-1]) / 2
+    mean_eps = kwargs["p1"] * kwargs["mu1"] + (1 - kwargs["p1"]) * kwargs["mu2"]
+    expected = (kwargs["mu"] + mean_eps) / (1 - kwargs["rho"])
+    aaae(midpoint, expected, decimal=10)
+
+
+@pytest.mark.parametrize("params_at_init", [True, False])
+def test_draw_shock_tauchen_normal_mixture(params_at_init):
+    """TauchenNormalMixture.draw_shock produces yields correct conditional moments."""
+    kwargs = _TAUCHEN_NORMAL_MIXTURE_KWARGS
+    if params_at_init:
+        grid = lcm.shocks.ar1.TauchenNormalMixture(n_points=5, **kwargs)
+        params = grid.params
+    else:
+        grid = lcm.shocks.ar1.TauchenNormalMixture(n_points=5)
+        params = MappingProxyType(kwargs)
+    current_value = 3.0
+    draws = _draw_many(grid, params, current_value=current_value)
+    p1, mu1, mu2 = kwargs["p1"], kwargs["mu1"], kwargs["mu2"]
+    mean_eps = p1 * mu1 + (1 - p1) * mu2
+    expected_mean = kwargs["mu"] + kwargs["rho"] * current_value + mean_eps
+    aaae(draws.mean(), expected_mean, decimal=1)
+
+
+def test_tauchen_normal_mixture_stationary_moments_and_autocorrelation():
+    """TauchenNormalMixture stationary mean, std, and autocorrelation match theory."""
+    kwargs = _TAUCHEN_NORMAL_MIXTURE_KWARGS
+    grid = lcm.shocks.ar1.TauchenNormalMixture(n_points=21, **kwargs)
+    points = grid.get_gridpoints()
+    P = grid.get_transition_probs()
+
+    p1, mu1, sigma1 = kwargs["p1"], kwargs["mu1"], kwargs["sigma1"]
+    mu2, sigma2 = kwargs["mu2"], kwargs["sigma2"]
+    rho = kwargs["rho"]
+
+    mean_eps = p1 * mu1 + (1 - p1) * mu2
+    expected_mean = (kwargs["mu"] + mean_eps) / (1 - rho)
+    sigma_eps_sq = (
+        p1 * (sigma1**2 + mu1**2) + (1 - p1) * (sigma2**2 + mu2**2) - mean_eps**2
+    )
+    expected_std = float(jnp.sqrt(sigma_eps_sq / (1 - rho**2)))
+
+    got_mean, got_std = _stationary_moments(points, P)
+    aaae(got_mean, expected_mean, decimal=1)
+    aaae(got_std, expected_std, decimal=1)
+
+    got_rho = _lag1_autocorrelation(points, P)
+    aaae(got_rho, rho, decimal=1)
+
+
+# ======================================================================================
 # Regression tests against QuantEcon
 # ======================================================================================
 
@@ -452,7 +626,7 @@ ROUWENHORST_CASES = [
 )
 def test_tauchen_matches_quantecon(case):
     """Tauchen (non-GH) gridpoints and transition probs match QuantEcon."""
-    qe = qe_tauchen(case["n"], case["rho"], case["sigma"], case["mu"], case["n_std"])
+    qe = qe_tauchen(**case)
     grid = lcm.shocks.ar1.Tauchen(
         n_points=case["n"],
         gauss_hermite=False,
@@ -470,7 +644,7 @@ def test_tauchen_matches_quantecon(case):
 )
 def test_rouwenhorst_matches_quantecon(case):
     """Rouwenhorst gridpoints and transition probs match QuantEcon."""
-    qe = qe_rouwenhorst(case["n"], case["rho"], case["sigma"], case["mu"])
+    qe = qe_rouwenhorst(**case)
     grid = lcm.shocks.ar1.Rouwenhorst(
         n_points=case["n"],
         rho=case["rho"],

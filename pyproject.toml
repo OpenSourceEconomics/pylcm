@@ -106,6 +106,7 @@ per-file-ignores."docs/**/*" = [
   "D103",   # Missing docstring in public function
   "D104",   # Missing docstring in public package
   "S101",   # Use of assert
+  "PD011",  # Use `.to_numpy()` instead of `.values`
   "T201",   # print found
   "T203",   # pprint found
 ]

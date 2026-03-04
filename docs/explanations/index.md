@@ -16,3 +16,5 @@ hood.
 - [Interpolation and Extrapolation](interpolation.ipynb) — How pylcm's
   coordinate finders and `map_coordinates` handle interpolation and extrapolation across
   grid types.
+- [Approximating Continuous Shocks](approximating_continuous_shocks.ipynb) — Quadrature
+  rules and Markov chain approximations for IID and AR(1) shock processes.

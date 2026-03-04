@@ -4,10 +4,16 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
+from jax import Array
 from jax.scipy.stats.norm import cdf
 
 from lcm.exceptions import GridInitializationError
-from lcm.shocks._base import _gauss_hermite_normal, _ShockGrid
+from lcm.shocks._base import (
+    _gauss_hermite_normal,
+    _mixture_cdf,
+    _ShockGrid,
+    _validate_gauss_hermite_grid,
+)
 from lcm.typing import Float1D, FloatND
 
 
@@ -38,10 +44,14 @@ class Uniform(_ShockGridIID):
     stop: float | None = None
     """Upper bound of the uniform distribution."""
 
-    def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
+    def compute_gridpoints(self, n_points: int, **kwargs: float | Array) -> Float1D:
         return jnp.linspace(start=kwargs["start"], stop=kwargs["stop"], num=n_points)
 
-    def compute_transition_probs(self, n_points: int, **kwargs: float) -> FloatND:  # noqa: ARG002
+    def compute_transition_probs(
+        self,
+        n_points: int,
+        **kwargs: float | Array,  # noqa: ARG002
+    ) -> FloatND:
         return jnp.full((n_points, n_points), fill_value=1 / n_points)
 
     def draw_shock(
@@ -78,16 +88,9 @@ class Normal(_ShockGridIID):
     """Number of standard deviations from the mean to the grid boundary."""
 
     def __post_init__(self) -> None:
-        if self.n_points % 2 == 0:
-            msg = (
-                f"n_points must be odd (got {self.n_points}). Odd n guarantees a"
-                " quadrature node at the mean (Abramowitz & Stegun, 1972,"
-                " Table 25.10)."
-            )
-            raise GridInitializationError(msg)
-        if self.gauss_hermite and self.n_std is not None:
-            msg = "gauss_hermite=True and n_std are mutually exclusive."
-            raise GridInitializationError(msg)
+        _validate_gauss_hermite_grid(
+            n_points=self.n_points, gauss_hermite=self.gauss_hermite, n_std=self.n_std
+        )
 
     @property
     def _param_field_names(self) -> tuple[str, ...]:
@@ -96,7 +99,7 @@ class Normal(_ShockGridIID):
             exclude.add("n_std")
         return tuple(f.name for f in fields(self) if f.name not in exclude)
 
-    def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
+    def compute_gridpoints(self, n_points: int, **kwargs: float | Array) -> Float1D:
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
             nodes, _weights = _gauss_hermite_normal(n_points, mu, sigma)
@@ -106,7 +109,9 @@ class Normal(_ShockGridIID):
         x_max = mu + n_std * sigma
         return jnp.linspace(start=x_min, stop=x_max, num=n_points)
 
-    def compute_transition_probs(self, n_points: int, **kwargs: float) -> FloatND:
+    def compute_transition_probs(
+        self, n_points: int, **kwargs: float | Array
+    ) -> FloatND:
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
             _nodes, weights = _gauss_hermite_normal(n_points, mu, sigma)
@@ -146,16 +151,9 @@ class LogNormal(_ShockGridIID):
     """Number of standard deviations in log-space for the grid boundary."""
 
     def __post_init__(self) -> None:
-        if self.n_points % 2 == 0:
-            msg = (
-                f"n_points must be odd (got {self.n_points}). Odd n guarantees a"
-                " quadrature node at the mean (Abramowitz & Stegun, 1972,"
-                " Table 25.10)."
-            )
-            raise GridInitializationError(msg)
-        if self.gauss_hermite and self.n_std is not None:
-            msg = "gauss_hermite=True and n_std are mutually exclusive."
-            raise GridInitializationError(msg)
+        _validate_gauss_hermite_grid(
+            n_points=self.n_points, gauss_hermite=self.gauss_hermite, n_std=self.n_std
+        )
 
     @property
     def _param_field_names(self) -> tuple[str, ...]:
@@ -164,7 +162,7 @@ class LogNormal(_ShockGridIID):
             exclude.add("n_std")
         return tuple(f.name for f in fields(self) if f.name not in exclude)
 
-    def compute_gridpoints(self, n_points: int, **kwargs: float) -> Float1D:
+    def compute_gridpoints(self, n_points: int, **kwargs: float | Array) -> Float1D:
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
             nodes, _weights = _gauss_hermite_normal(n_points, mu, sigma)
@@ -172,7 +170,9 @@ class LogNormal(_ShockGridIID):
         n_std = kwargs["n_std"]
         return jnp.exp(jnp.linspace(mu - n_std * sigma, mu + n_std * sigma, n_points))
 
-    def compute_transition_probs(self, n_points: int, **kwargs: float) -> FloatND:
+    def compute_transition_probs(
+        self, n_points: int, **kwargs: float | Array
+    ) -> FloatND:
         mu, sigma = kwargs["mu"], kwargs["sigma"]
         if self.gauss_hermite:
             _nodes, weights = _gauss_hermite_normal(n_points, mu, sigma)
@@ -193,3 +193,98 @@ class LogNormal(_ShockGridIID):
         key: FloatND,
     ) -> Float1D:
         return jnp.exp(params["mu"] + params["sigma"] * jax.random.normal(key=key))
+
+
+@dataclass(frozen=True, kw_only=True)
+class NormalMixture(_ShockGridIID):
+    r"""Discretized IID normal-mixture shock.
+
+    The shock is drawn from a two-component normal mixture:
+
+    $\varepsilon \sim p_1 \, N(\mu_1, \sigma_1^2)
+    + (1 - p_1) \, N(\mu_2, \sigma_2^2)$
+
+    Grid points are equally spaced around the mixture mean $\pm n_\text{std}$
+    mixture standard deviations. Transition probabilities use CDF binning with
+    the mixture CDF in place of the normal CDF.
+
+    """
+
+    n_std: float | None = None
+    """Number of mixture standard deviations for the grid boundary."""
+
+    p1: float | None = None
+    """Probability of the first mixture component."""
+
+    mu1: float | None = None
+    """Mean of the first mixture component."""
+
+    sigma1: float | None = None
+    """Standard deviation of the first mixture component."""
+
+    mu2: float | None = None
+    """Mean of the second mixture component."""
+
+    sigma2: float | None = None
+    """Standard deviation of the second mixture component."""
+
+    def __post_init__(self) -> None:
+        if self.n_points % 2 == 0:
+            msg = (
+                f"n_points must be odd (got {self.n_points}). Odd n guarantees"
+                " a grid point exactly at the mixture mean."
+            )
+            raise GridInitializationError(msg)
+
+    def compute_gridpoints(self, n_points: int, **kwargs: float | Array) -> Float1D:
+        n_std = kwargs["n_std"]
+        p1, mu1, sigma1 = kwargs["p1"], kwargs["mu1"], kwargs["sigma1"]
+        mu2, sigma2 = kwargs["mu2"], kwargs["sigma2"]
+
+        mean_eps = p1 * mu1 + (1 - p1) * mu2
+        var_eps = (
+            p1 * (sigma1**2 + mu1**2) + (1 - p1) * (sigma2**2 + mu2**2) - mean_eps**2
+        )
+        std_eps = jnp.sqrt(var_eps)
+        return jnp.linspace(
+            mean_eps - n_std * std_eps, mean_eps + n_std * std_eps, n_points
+        )
+
+    def compute_transition_probs(
+        self, n_points: int, **kwargs: float | Array
+    ) -> FloatND:
+        n_std = kwargs["n_std"]
+        p1, mu1, sigma1 = kwargs["p1"], kwargs["mu1"], kwargs["sigma1"]
+        mu2, sigma2 = kwargs["mu2"], kwargs["sigma2"]
+
+        mean_eps = p1 * mu1 + (1 - p1) * mu2
+        var_eps = (
+            p1 * (sigma1**2 + mu1**2) + (1 - p1) * (sigma2**2 + mu2**2) - mean_eps**2
+        )
+        std_eps = jnp.sqrt(var_eps)
+        x = jnp.linspace(
+            mean_eps - n_std * std_eps, mean_eps + n_std * std_eps, n_points
+        )
+        step = (2 * n_std * std_eps) / (n_points - 1)
+        half_step = 0.5 * step
+
+        upper = _mixture_cdf(x + half_step, p1, mu1, sigma1, mu2, sigma2)
+        lower = _mixture_cdf(x - half_step, p1, mu1, sigma1, mu2, sigma2)
+        w = upper - lower
+        w = w.at[0].set(upper[0])
+        w = w.at[-1].set(1 - lower[-1])
+        return jnp.full((n_points, n_points), fill_value=w)
+
+    def draw_shock(
+        self,
+        params: MappingProxyType[str, float | FloatND],
+        key: FloatND,
+    ) -> Float1D:
+        key1, key2 = jax.random.split(key)
+        component = jax.random.bernoulli(key1, params["p1"])
+        normal = jax.random.normal(key2)
+        return jnp.where(
+            component,
+            params["mu1"] + params["sigma1"] * normal,
+            params["mu2"] + params["sigma2"] * normal,
+        )

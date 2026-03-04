@@ -256,7 +256,7 @@ class InternalRegime:
                     shock_kw[p] = all_params[f"{state_name}__{p}"]
                 replacements[state_name] = spec.compute_gridpoints(
                     spec.n_points,
-                    **shock_kw,  # ty: ignore[invalid-argument-type]
+                    **shock_kw,
                 )
 
         if not replacements:
