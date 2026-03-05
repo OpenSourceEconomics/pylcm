@@ -194,11 +194,9 @@ class Regime:
             Read-only mapping of all regime functions.
 
         """
-        result = (
-            dict(self.functions)
-            | dict(self.constraints)
-            | _collect_state_transitions(self.states, self.state_transitions)
-        )
+        result = dict(self.functions) | dict(self.constraints)
+        if not self.terminal:
+            result |= _collect_state_transitions(self.states, self.state_transitions)
         # Add regime transition (unwrap MarkovTransition to get bare callable)
         if isinstance(self.transition, MarkovTransition):
             result["next_regime"] = self.transition.func
@@ -459,7 +457,14 @@ def _collect_state_transitions(
             transitions[f"next_{name}"] = lambda: None
             continue
 
-        raw = state_transitions.get(name)
+        if name not in state_transitions:
+            msg = (
+                f"State '{name}' has no entry in state_transitions. "
+                "Use None for fixed states."
+            )
+            raise ValueError(msg)
+
+        raw = state_transitions[name]
         if raw is None:
             ann = DiscreteState if isinstance(grid, DiscreteGrid) else ContinuousState
             transitions[f"next_{name}"] = _make_identity_fn(name, annotation=ann)

@@ -5,7 +5,7 @@ from typing import Any, cast
 
 import pandas as pd
 from dags.signature import rename_arguments, with_signature
-from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
+from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import Array
 from jax import numpy as jnp
 
@@ -367,8 +367,8 @@ def _classify_transitions(
     """Split collected transitions into simple and per-target groups.
 
     Qualified names like "next_health__working" (produced by
-    `_collect_state_transitions` for per-target dicts) are split on
-    `QNAME_DELIMITER`.
+    `_collect_state_transitions` for per-target dicts) are decomposed via
+    `tree_path_from_qname`.
 
     Returns:
         Tuple of (simple_transitions, per_target_transitions).
@@ -377,12 +377,12 @@ def _classify_transitions(
     simple: dict[str, UserFunction] = {}
     per_target: dict[str, dict[str, UserFunction]] = {}
     for key, func in state_transitions.items():
-        parts = key.split(QNAME_DELIMITER)
-        if len(parts) == 1:
+        path = tree_path_from_qname(key)
+        if len(path) == 1:
             simple[key] = func
         else:
-            state_key = parts[0]
-            target_name = QNAME_DELIMITER.join(parts[1:])
+            state_key = path[0]
+            target_name = qname_from_tree_path(path[1:])
             per_target.setdefault(state_key, {})[target_name] = func
     return simple, per_target
 
