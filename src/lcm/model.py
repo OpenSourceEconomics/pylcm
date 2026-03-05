@@ -27,10 +27,10 @@ from lcm.solution.solve_brute import solve
 from lcm.typing import (
     FloatND,
     InternalParams,
-    MutableParamsTemplate,
     ParamsTemplate,
     RegimeName,
     RegimeNamesToIds,
+    UserFacingParamsTemplate,
     UserParams,
 )
 from lcm.utils import (
@@ -125,7 +125,7 @@ class Model:
         )
         self.enable_jit = enable_jit
 
-    def get_params_template(self) -> MutableParamsTemplate:
+    def get_params_template(self) -> UserFacingParamsTemplate:
         """Get a human-readable params template.
 
         Return a nested dict showing which parameters each function in each
