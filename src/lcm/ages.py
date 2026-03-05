@@ -54,17 +54,13 @@ class AgeGrid:
         start: int | Fraction,
         stop: int | Fraction,
         step: str,
-        exact_values: None = None,
     ) -> None: ...
 
     @overload
     def __init__(
         self,
         *,
-        exact_values: Iterable[int | Fraction] | None = None,
-        start: None = None,
-        stop: None = None,
-        step: None = None,
+        exact_values: Iterable[int | Fraction],
     ) -> None: ...
 
     def __init__(
@@ -77,15 +73,7 @@ class AgeGrid:
     ) -> None:
         _validate_age_grid(start=start, stop=stop, step=step, exact_values=exact_values)
 
-        if exact_values is not None:
-            self._exact_values = tuple(exact_values)
-            self._values = jnp.array(exact_values)
-            self._step_size = None
-            self._exact_step_size = None
-        else:
-            assert start is not None  # noqa: S101
-            assert stop is not None  # noqa: S101
-            assert step is not None  # noqa: S101
+        if start is not None and stop is not None and step is not None:
             self._exact_step_size = parse_step(step)
             self._step_size = float(self._exact_step_size)
             n_steps = int((stop - start) // self._exact_step_size) + 1
@@ -93,6 +81,14 @@ class AgeGrid:
                 start + i * self._exact_step_size for i in range(n_steps)
             )
             self._values = jnp.array([float(age) for age in self._exact_values])
+        elif exact_values is not None:
+            self._exact_values = tuple(exact_values)
+            self._values = jnp.array(exact_values)
+            self._step_size = None
+            self._exact_step_size = None
+        else:
+            msg = "Must specify 'start/stop/step' or 'exact_values'."
+            raise GridInitializationError(msg)
 
     @property
     def values(self) -> Float1D:

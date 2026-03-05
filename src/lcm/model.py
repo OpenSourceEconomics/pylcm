@@ -126,19 +126,23 @@ class Model:
         self.enable_jit = enable_jit
 
     def get_params_template(self) -> MutableParamsTemplate:
-        """Get a mutable copy of the params template.
+        """Get a human-readable params template.
 
-        Returns a deep copy of the internal params template where all immutable
-        containers (MappingProxyType, tuple, frozenset) are converted to their
-        mutable equivalents (dict, list, set).
-
-        Returns:
-            A mutable nested dict with the same structure as the params template.
+        Return a nested dict showing which parameters each function in each
+        regime expects.
 
         """
-        return ensure_containers_are_mutable(  # ty: ignore[invalid-return-type]
-            self._params_template
-        )
+        mutable = ensure_containers_are_mutable(self._params_template)
+        return {
+            regime: {
+                func: {
+                    param: getattr(typ, "__name__", str(typ))
+                    for param, typ in params.items()
+                }
+                for func, params in funcs.items()
+            }
+            for regime, funcs in mutable.items()
+        }
 
     def solve(
         self,
@@ -149,7 +153,7 @@ class Model:
         """Solve the model using the pre-computed functions.
 
         Args:
-            params: Model parameters matching the template from `get_params_template()`
+            params: Model parameters compatible with `get_params_template()`
                 Parameters can be provided at exactly one of three levels:
                 - Model level: {"arg_0": 0.0} - propagates to all functions needing
                   arg_0
@@ -186,7 +190,7 @@ class Model:
         """Simulate the model forward using pre-computed value functions.
 
         Args:
-            params: Model parameters matching the template from `get_params_template()`.
+            params: Model parameters compatible with `get_params_template()`.
                 Parameters can be provided at exactly one of three levels:
                 - Model level: {"arg_0": 0.0} - propagates to all functions needing
                   arg_0
@@ -244,7 +248,7 @@ class Model:
         """Solve and then simulate the model in one call.
 
         Args:
-            params: Model parameters matching the template from `get_params_template()`.
+            params: Model parameters compatible with `get_params_template()`.
                 Parameters can be provided at exactly one of three levels:
                 - Model level: {"arg_0": 0.0} - propagates to all functions needing
                   arg_0
@@ -442,21 +446,21 @@ def _validate_all_variables_used(regimes: Mapping[str, Regime]) -> list[str]:
 
 def _find_candidates(
     *,
-    key: str,
+    qname: str,
     params_flat: Mapping[str, object],
 ) -> list[str]:
-    """Find candidate matches for a template key at exact, regime, and model levels."""
-    parts = tree_path_from_qname(key)
-    param_name = parts[-1]
+    """Find candidate matches for a template qname at exact / regime / model levels."""
+    tree_path = tree_path_from_qname(qname)
+    param_name = tree_path[-1]
     candidates: list[str] = []
 
-    if key in params_flat:
-        candidates.append(key)
+    if qname in params_flat:
+        candidates.append(qname)
 
-    if len(parts) == 3:  # noqa: PLR2004
-        regime_level_key = qname_from_tree_path((parts[0], param_name))
-        if regime_level_key in params_flat:
-            candidates.append(regime_level_key)
+    if len(tree_path) == 3:  # noqa: PLR2004
+        regime_level_qname = qname_from_tree_path((tree_path[0], param_name))
+        if regime_level_qname in params_flat:
+            candidates.append(regime_level_qname)
 
     if param_name in params_flat:
         candidates.append(param_name)
@@ -481,16 +485,16 @@ def _resolve_fixed_params(
     result_flat: dict[str, object] = {}
     used_keys: set[str] = set()
 
-    for key in template_flat:
-        candidates = _find_candidates(key=key, params_flat=params_flat)
+    for qname in template_flat:
+        candidates = _find_candidates(qname=qname, params_flat=params_flat)
 
         if len(candidates) > 1:
             raise ModelInitializationError(
-                f"Ambiguous fixed_params specification for {key!r}. "
+                f"Ambiguous fixed_params specification for {qname!r}. "
                 f"Found values at: {candidates}"
             )
         if candidates:
-            result_flat[key] = params_flat[candidates[0]]
+            result_flat[qname] = params_flat[candidates[0]]
             used_keys.add(candidates[0])
 
     unknown = set(params_flat) - used_keys
@@ -501,10 +505,10 @@ def _resolve_fixed_params(
 
     # Split by regime
     result: dict[str, dict[str, object]] = {}
-    for key, value in result_flat.items():
-        path = tree_path_from_qname(key)
-        regime_name = path[0]
-        remainder = qname_from_tree_path(path[1:])
+    for qname, value in result_flat.items():
+        tree_path = tree_path_from_qname(qname)
+        regime_name = tree_path[0]
+        remainder = qname_from_tree_path(tree_path[1:])
         result.setdefault(regime_name, {})[remainder] = value
 
     for regime_name in template:

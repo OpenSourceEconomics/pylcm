@@ -100,7 +100,7 @@ def test_age_grid_get_periods_where():
 
 def test_age_grid_no_params_raises():
     with pytest.raises(GridInitializationError):
-        AgeGrid()
+        AgeGrid()  # ty: ignore[no-matching-overload]
 
 
 def test_age_grid_values_and_range_raises():

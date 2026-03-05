@@ -68,8 +68,8 @@ type RegimeParamsTemplate = MappingProxyType[
 ]
 type ParamsTemplate = MappingProxyType[RegimeName, RegimeParamsTemplate]
 
-# Dictionary-templates; returned to users.
-type MutableRegimeParamsTemplate = dict[str, dict[str, type | tuple[int, ...]]]
+# Dictionary-templates; returned to users (types rendered as strings).
+type MutableRegimeParamsTemplate = dict[str, dict[str, str]]
 type MutableParamsTemplate = dict[RegimeName, MutableRegimeParamsTemplate]
 
 # Type aliases for value function arrays
