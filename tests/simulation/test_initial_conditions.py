@@ -52,12 +52,12 @@ def model() -> Model:
     alive = Regime(
         functions={"utility": utility},
         states={
-            "wealth": LinSpacedGrid(
-                start=1, stop=100, n_points=10, transition=lambda wealth: wealth
-            ),
-            "health": DiscreteGrid(
-                category_class=HealthStatus, transition=lambda health: health
-            ),
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
+            "health": DiscreteGrid(HealthStatus),
+        },
+        state_transitions={
+            "wealth": lambda wealth: wealth,
+            "health": lambda health: health,
         },
         transition=next_regime,
         active=lambda age: age < n_periods - 1,
@@ -281,6 +281,7 @@ def _make_constraint_model(wealth_grid) -> Model:
             "consumption": LinSpacedGrid(start=0.5, stop=10, n_points=20),
         },
         states={"wealth": wealth_grid},
+        state_transitions={"wealth": _next_wealth},
         constraints={"borrowing_constraint": borrowing_constraint},
         transition=next_regime,
         functions={"utility": utility},
@@ -304,9 +305,7 @@ def test_infeasible_initial_states_detected():
     wealth=0.25 < min consumption (0.5), so consumption <= wealth is always False.
     """
     model = _make_constraint_model(
-        wealth_grid=LinSpacedGrid(
-            start=2.0, stop=10, n_points=15, transition=_next_wealth
-        )
+        wealth_grid=LinSpacedGrid(start=2.0, stop=10, n_points=15)
     )
     params = {
         "discount_factor": 0.95,
@@ -327,9 +326,7 @@ def test_on_grid_state_but_combination_infeasible():
     so consumption <= wealth is always False.
     """
     model = _make_constraint_model(
-        wealth_grid=LinSpacedGrid(
-            start=0.3, stop=10, n_points=15, transition=_next_wealth
-        )
+        wealth_grid=LinSpacedGrid(start=0.3, stop=10, n_points=15)
     )
     params = {
         "discount_factor": 0.95,
@@ -346,9 +343,7 @@ def test_on_grid_state_but_combination_infeasible():
 def test_extrapolated_initial_states_accepted():
     """wealth=1.0 is above constraint threshold but below grid min — feasible."""
     model = _make_constraint_model(
-        wealth_grid=LinSpacedGrid(
-            start=2.0, stop=10, n_points=15, transition=_next_wealth
-        )
+        wealth_grid=LinSpacedGrid(start=2.0, stop=10, n_points=15)
     )
     params = {
         "discount_factor": 0.95,
@@ -364,9 +359,7 @@ def test_extrapolated_initial_states_accepted():
 def test_on_grid_initial_states_accepted():
     """wealth=5.0 is above grid min — fully on grid, feasible."""
     model = _make_constraint_model(
-        wealth_grid=LinSpacedGrid(
-            start=2.0, stop=10, n_points=15, transition=_next_wealth
-        )
+        wealth_grid=LinSpacedGrid(start=2.0, stop=10, n_points=15)
     )
     params = {
         "discount_factor": 0.95,
@@ -381,9 +374,7 @@ def test_on_grid_initial_states_accepted():
 
 def test_irreg_spaced_grid_with_runtime_points():
     """Feasibility check works when grid points are supplied at runtime via params."""
-    model = _make_constraint_model(
-        wealth_grid=IrregSpacedGrid(n_points=15, transition=_next_wealth)
-    )
+    model = _make_constraint_model(wealth_grid=IrregSpacedGrid(n_points=15))
     params = {
         "discount_factor": 0.95,
         "working": {
@@ -458,9 +449,10 @@ def _make_constrained_asymmetric_model() -> Model:
     alive = Regime(
         functions={"utility": utility},
         states={
-            "wealth": LinSpacedGrid(
-                start=1, stop=100, n_points=10, transition=next_wealth
-            ),
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
+        },
+        state_transitions={
+            "wealth": next_wealth,
         },
         actions={
             "consumption": LinSpacedGrid(start=51, stop=100, n_points=10),
@@ -474,7 +466,7 @@ def _make_constrained_asymmetric_model() -> Model:
         transition=None,
         functions={"utility": lambda wealth: wealth},
         states={
-            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10, transition=None),
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
         },
         active=lambda age: age >= 2,
     )
@@ -514,12 +506,12 @@ def _make_asymmetric_state_model() -> Model:
     alive = Regime(
         functions={"utility": utility},
         states={
-            "wealth": LinSpacedGrid(
-                start=1, stop=100, n_points=10, transition=lambda wealth: wealth
-            ),
-            "health": DiscreteGrid(
-                category_class=HealthStatus, transition=lambda health: health
-            ),
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
+            "health": DiscreteGrid(HealthStatus),
+        },
+        state_transitions={
+            "wealth": lambda wealth: wealth,
+            "health": lambda health: health,
         },
         transition=next_regime,
         active=lambda age: age < 2,
@@ -529,7 +521,7 @@ def _make_asymmetric_state_model() -> Model:
         transition=None,
         functions={"utility": lambda wealth: wealth},
         states={
-            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10, transition=None),
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
         },
         active=lambda age: age >= 2,
     )

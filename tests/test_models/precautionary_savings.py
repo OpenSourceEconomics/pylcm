@@ -72,12 +72,14 @@ def get_model(
                 start=1,
                 stop=20,
                 n_points=7,
-                transition=next_wealth,
             ),
             "income": _SHOCK_GRID_CLASSES[shock_type](
                 n_points=5,
                 **_SHOCK_GRID_KWARGS[shock_type],
             ),
+        },
+        state_transitions={
+            "wealth": next_wealth,
         },
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=5, n_points=7),

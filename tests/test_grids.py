@@ -171,20 +171,8 @@ def test_discrete_grid_invalid_category_class():
 
 
 # --------------------------------------------------------------------------------------
-# DiscreteGrid with MarkovTransition
+# MarkovTransition
 # --------------------------------------------------------------------------------------
-
-
-def test_discrete_grid_with_markov_transition():
-    category_class = make_dataclass(
-        "Category", [("a", int, 0), ("b", int, 1), ("c", int, 2)]
-    )
-    grid = DiscreteGrid(category_class, transition=MarkovTransition(lambda: None))
-    assert grid.categories == ("a", "b", "c")
-    assert grid.codes == (0, 1, 2)
-    assert isinstance(grid.transition, MarkovTransition)
-    assert callable(grid.transition.func)
-    assert np.allclose(grid.to_jax(), np.arange(3))
 
 
 def test_markov_transition_rejects_non_callable():

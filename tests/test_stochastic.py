@@ -24,7 +24,6 @@ from lcm.typing import (
     UserParams,
 )
 from tests.test_models.stochastic import (
-    HealthStatus,
     RegimeId,
     dead,
     get_model,
@@ -115,42 +114,32 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
 
     # Create deterministic model by replacing health grid transition
     working_deterministic = working.replace(
-        states={
-            **working.states,
-            "health": DiscreteGrid(
-                category_class=HealthStatus, transition=next_health_deterministic
-            ),
+        state_transitions={
+            **working.state_transitions,
+            "health": next_health_deterministic,
         },
         active=lambda age: age < n_periods - 1,
     )
     retired_deterministic = retired.replace(
-        states={
-            **retired.states,
-            "health": DiscreteGrid(
-                category_class=HealthStatus, transition=next_health_deterministic
-            ),
+        state_transitions={
+            **retired.state_transitions,
+            "health": next_health_deterministic,
         },
         active=lambda age: age < n_periods - 1,
     )
 
     # Create stochastic model with identity transition function
     working_stochastic = working.replace(
-        states={
-            **working.states,
-            "health": DiscreteGrid(
-                category_class=HealthStatus,
-                transition=MarkovTransition(next_health_stochastic),
-            ),
+        state_transitions={
+            **working.state_transitions,
+            "health": MarkovTransition(next_health_stochastic),
         },
         active=lambda age: age < n_periods - 1,
     )
     retired_stochastic = retired.replace(
-        states={
-            **retired.states,
-            "health": DiscreteGrid(
-                category_class=HealthStatus,
-                transition=MarkovTransition(next_health_stochastic),
-            ),
+        state_transitions={
+            **retired.state_transitions,
+            "health": MarkovTransition(next_health_stochastic),
         },
         active=lambda age: age < n_periods - 1,
     )
@@ -285,12 +274,12 @@ def _make_minimal_stochastic_model(shock_transition_func=None) -> Model:
     working_regime = Regime(
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=20)},
         states={
-            "shock": DiscreteGrid(
-                ShockStatus, transition=MarkovTransition(shock_transition_func)
-            ),
-            "wealth": LinSpacedGrid(
-                start=1, stop=10, n_points=15, transition=next_wealth
-            ),
+            "shock": DiscreteGrid(ShockStatus),
+            "wealth": LinSpacedGrid(start=1, stop=10, n_points=15),
+        },
+        state_transitions={
+            "shock": MarkovTransition(shock_transition_func),
+            "wealth": next_wealth,
         },
         constraints={"borrowing_constraint": borrowing_constraint},
         transition=next_regime,

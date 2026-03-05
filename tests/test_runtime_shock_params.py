@@ -50,10 +50,11 @@ def _make_model(*, fixed_params=None):
     """Create a shock model with all shock params supplied at runtime."""
     alive = Regime(
         states={
-            "wealth": LinSpacedGrid(
-                start=1, stop=10, n_points=5, transition=_next_wealth
-            ),
+            "wealth": LinSpacedGrid(start=1, stop=10, n_points=5),
             "income": lcm.shocks.ar1.Tauchen(n_points=3, gauss_hermite=False),
+        },
+        state_transitions={
+            "wealth": _next_wealth,
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4)},
         functions={"utility": _utility},

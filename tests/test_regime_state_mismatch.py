@@ -87,9 +87,10 @@ def test_discrete_state_different_categories_across_regimes():
     """
     working = Regime(
         states={
-            "health": DiscreteGrid(
-                HealthWorkingLife, transition=hm_next_health_working
-            ),
+            "health": DiscreteGrid(HealthWorkingLife),
+        },
+        state_transitions={
+            "health": hm_next_health_working,
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": hm_utility_working},
@@ -99,7 +100,10 @@ def test_discrete_state_different_categories_across_regimes():
 
     retired = Regime(
         states={
-            "health": DiscreteGrid(HealthRetirement, transition=None),
+            "health": DiscreteGrid(HealthRetirement),
+        },
+        state_transitions={
+            "health": None,
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
         functions={"utility": hm_utility_retired},
@@ -155,9 +159,10 @@ def test_transition_to_state_only_in_target_regime() -> None:
     alive = Regime(
         functions={"utility": lambda wealth: wealth},
         states={
-            "wealth": LinSpacedGrid(
-                start=1, stop=100, n_points=10, transition=lambda wealth: wealth
-            ),
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
+        },
+        state_transitions={
+            "wealth": lambda wealth: wealth,
         },
         transition=next_regime,
         active=lambda age: age < 2,
@@ -167,16 +172,8 @@ def test_transition_to_state_only_in_target_regime() -> None:
         transition=None,
         functions={"utility": lambda wealth, heir_present: wealth * heir_present},
         states={
-            "wealth": LinSpacedGrid(
-                start=1,
-                stop=100,
-                n_points=10,
-                transition=None,
-            ),
-            "heir_present": DiscreteGrid(
-                category_class=HeirPresent,
-                transition=None,
-            ),
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
+            "heir_present": DiscreteGrid(HeirPresent),
         },
         active=lambda age: age >= 2,
     )

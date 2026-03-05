@@ -14,8 +14,9 @@ def test_create_params_without_shocks(binary_category_class):
             "a": DiscreteGrid(binary_category_class),
         },
         states={
-            "b": DiscreteGrid(binary_category_class, transition=lambda b: b),
+            "b": DiscreteGrid(binary_category_class),
         },
+        state_transitions={"b": lambda b: b},
         transition=lambda: 0,
         functions={"utility": lambda a, b, c: None},  # noqa: ARG005
     )
@@ -81,10 +82,9 @@ def test_regular_function_taking_state_as_argument_no_error(binary_category_clas
             "a": DiscreteGrid(binary_category_class),
         },
         states={
-            "wealth": DiscreteGrid(
-                binary_category_class, transition=lambda wealth: wealth
-            ),
+            "wealth": DiscreteGrid(binary_category_class),
         },
+        state_transitions={"wealth": lambda wealth: wealth},
         transition=lambda: 0,
         functions={"utility": lambda a, wealth, risk_aversion: None},  # noqa: ARG005
     )

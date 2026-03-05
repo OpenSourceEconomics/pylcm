@@ -91,8 +91,10 @@ alive_deterministic = Regime(
             start=0,
             stop=2,
             n_points=1,
-            transition=next_wealth,
         ),
+    },
+    state_transitions={
+        "wealth": next_wealth,
     },
     functions={"utility": utility},
     constraints={
@@ -114,8 +116,9 @@ def next_health(health: DiscreteState, health_transition: FloatND) -> FloatND:
 
 
 alive_stochastic = alive_deterministic.replace(
-    states=dict(alive_deterministic.states)
-    | {"health": DiscreteGrid(HealthStatus, transition=MarkovTransition(next_health))},
+    states=dict(alive_deterministic.states) | {"health": DiscreteGrid(HealthStatus)},
+    state_transitions=dict(alive_deterministic.state_transitions)
+    | {"health": MarkovTransition(next_health)},
 )
 
 model_deterministic = Model(

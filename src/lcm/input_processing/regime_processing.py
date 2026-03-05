@@ -5,7 +5,7 @@ from typing import Any, cast
 
 import pandas as pd
 from dags.signature import rename_arguments, with_signature
-from dags.tree import qname_from_tree_path, tree_path_from_qname
+from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
 from jax import Array
 from jax import numpy as jnp
 
@@ -66,9 +66,9 @@ def process_regimes(
 ) -> MappingProxyType[RegimeName, InternalRegime]:
     """Process user regimes into internal regimes.
 
-    Extracts state transitions from grid `transition` attributes and
-    regime transitions from `regime.transition`. For fixed states (grids
-    without a transition), an identity transition is auto-generated. ShockGrid
+    Extracts state transitions from `regime.state_transitions` and
+    regime transitions from `regime.transition`. For fixed states (value `None`
+    in `state_transitions`), an identity transition is auto-generated. ShockGrid
     transitions are generated from the grid's intrinsic transition logic.
 
     Args:
@@ -246,12 +246,15 @@ def _get_internal_functions(
         **flat_nested_transitions,
     }
 
-    # Compute stochastic state names from grid transition types
-    markov_state_names = {
-        name
-        for name, grid in gridspecs.items()
-        if isinstance(getattr(grid, "transition", None), MarkovTransition)
-    }
+    # Compute stochastic state names from regime.state_transitions
+    markov_state_names: set[str] = set()
+    for name in regime.states:
+        raw = regime.state_transitions.get(name)
+        if isinstance(raw, MarkovTransition) or (
+            isinstance(raw, Mapping)
+            and any(isinstance(v, MarkovTransition) for v in raw.values())
+        ):
+            markov_state_names.add(name)
     shock_state_names = set(variable_info.query("is_shock").index.tolist())
     stochastic_transition_names = frozenset(
         f"next_{name}" for name in markov_state_names | shock_state_names
@@ -358,17 +361,44 @@ def _get_internal_functions(
     )
 
 
+def _classify_transitions(
+    state_transitions: dict[str, UserFunction],
+) -> tuple[dict[str, UserFunction], dict[str, dict[str, UserFunction]]]:
+    """Split collected transitions into simple and per-target groups.
+
+    Qualified names like "next_health__working" (produced by
+    `_collect_state_transitions` for per-target dicts) are split on
+    `QNAME_DELIMITER`.
+
+    Returns:
+        Tuple of (simple_transitions, per_target_transitions).
+
+    """
+    simple: dict[str, UserFunction] = {}
+    per_target: dict[str, dict[str, UserFunction]] = {}
+    for key, func in state_transitions.items():
+        parts = key.split(QNAME_DELIMITER)
+        if len(parts) == 1:
+            simple[key] = func
+        else:
+            state_key = parts[0]
+            target_name = QNAME_DELIMITER.join(parts[1:])
+            per_target.setdefault(state_key, {})[target_name] = func
+    return simple, per_target
+
+
 def _extract_transitions_from_regime(
     *,
     regime: Regime,
     states_per_regime: Mapping[str, set[str]],
 ) -> dict[str, dict[str, UserFunction] | UserFunction]:
-    """Extract transitions from grid attributes and auto-generate identity transitions.
+    """Extract transitions from `regime.state_transitions` and regime transition.
 
-    For non-terminal regimes, collects state transitions from grid `transition`
-    attributes and auto-generates identity transitions for fixed states (grids
-    without a transition). ShockGrid transitions are handled separately during
-    internal function processing.
+    For non-terminal regimes, reads state transitions from `regime.state_transitions`
+    and auto-generates identity transitions for fixed states (`None` values).
+    ShockGrid transitions are handled separately during internal function processing.
+
+    For per-target dicts, selects the transition function matching each target regime.
 
     Args:
         regime: The user regime.
@@ -381,26 +411,33 @@ def _extract_transitions_from_regime(
     if regime.terminal:
         return {}
 
-    state_transitions = _collect_state_transitions(regime.states)
-
-    # Build nested format
-    transitioned_state_names = {
-        name.removeprefix("next_") for name in state_transitions
-    }
+    state_transitions = _collect_state_transitions(
+        regime.states, regime.state_transitions
+    )
+    simple_transitions, per_target_transitions = _classify_transitions(
+        state_transitions
+    )
 
     nested: dict[str, dict[str, UserFunction] | UserFunction] = {}
-    # Guaranteed non-None: terminal regimes return early in the caller.
     # Unwrap MarkovTransition to get the bare callable for processing.
     transition = regime.transition
     if isinstance(transition, MarkovTransition):
         transition = transition.func
     nested["next_regime"] = transition  # ty: ignore[invalid-assignment]
+
     for target_regime_name, target_regime_state_names in states_per_regime.items():
-        if target_regime_state_names <= transitioned_state_names:
-            nested[target_regime_name] = {
-                f"next_{state}": state_transitions[f"next_{state}"]
-                for state in target_regime_state_names & transitioned_state_names
-            }
+        target_dict: dict[str, UserFunction] = {}
+        for state_name in target_regime_state_names:
+            next_key = f"next_{state_name}"
+            if next_key in simple_transitions:
+                target_dict[next_key] = simple_transitions[next_key]
+            elif next_key in per_target_transitions:
+                variants = per_target_transitions[next_key]
+                if target_regime_name in variants:
+                    target_dict[next_key] = variants[target_regime_name]
+        if target_dict:
+            nested[target_regime_name] = target_dict
+
     return nested
 
 

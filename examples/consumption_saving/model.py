@@ -127,18 +127,12 @@ working = Regime(
     transition=next_regime,
     active=working_is_active,
     states={
-        "wealth": LinSpacedGrid(
-            start=1,
-            stop=100,
-            n_points=100,
-            transition=next_wealth,
-        ),
-        "health": LinSpacedGrid(
-            start=0,
-            stop=1,
-            n_points=100,
-            transition=next_health,
-        ),
+        "wealth": LinSpacedGrid(start=1, stop=100, n_points=100),
+        "health": LinSpacedGrid(start=0, stop=1, n_points=100),
+    },
+    state_transitions={
+        "wealth": next_wealth,
+        "health": next_health,
     },
     actions={
         "working": DiscreteGrid(WorkingStatus),
@@ -166,18 +160,8 @@ retired = Regime(
     transition=None,
     active=retired_is_active,
     states={
-        "wealth": LinSpacedGrid(
-            start=1,
-            stop=100,
-            n_points=100,
-            transition=None,
-        ),
-        "health": LinSpacedGrid(
-            start=0,
-            stop=1,
-            n_points=100,
-            transition=None,
-        ),
+        "wealth": LinSpacedGrid(start=1, stop=100, n_points=100),
+        "health": LinSpacedGrid(start=0, stop=1, n_points=100),
     },
     functions={"utility": utility_retired},
 )
