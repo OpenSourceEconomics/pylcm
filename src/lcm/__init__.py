@@ -13,14 +13,13 @@ from lcm.grids import (
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
-    MarkovTransition,
     Piece,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
     categorical,
 )
 from lcm.model import Model
-from lcm.regime import Regime
+from lcm.regime import MarkovTransition, Regime
 from lcm.simulation.result import SimulationResult
 
 # Register MappingProxyType as a JAX pytree so it can be used in JIT-traced functions.

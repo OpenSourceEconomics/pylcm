@@ -1,6 +1,6 @@
 import dataclasses
 import inspect
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, TypeAliasType, overload
@@ -8,17 +8,49 @@ from typing import Any, TypeAliasType, overload
 from dags.tree import QNAME_DELIMITER
 
 from lcm.exceptions import RegimeInitializationError, format_messages
-from lcm.grids import DiscreteGrid, Grid, MarkovTransition
+from lcm.grids import DiscreteGrid, Grid
 from lcm.shocks._base import _ShockGrid
 from lcm.typing import (
     ActiveFunction,
     ContinuousState,
     DiscreteState,
+    FloatND,
     UserFunction,
 )
 from lcm.utils import (
     ensure_containers_are_immutable,
 )
+
+
+@dataclass(frozen=True)
+class MarkovTransition:
+    """Wrapper marking a transition function as stochastic (Markov).
+
+    Wrap a transition function in `MarkovTransition` to indicate that it returns
+    a probability distribution over next states (for state transitions) or over
+    next regimes (for regime transitions), rather than a deterministic next value.
+
+    Use at both the state and regime level:
+
+        # Stochastic state transition (in Regime.state_transitions)
+        state_transitions={"health": MarkovTransition(health_probs)}
+
+        # Stochastic regime transition
+        Regime(transition=MarkovTransition(regime_probs), ...)
+
+    A bare callable (without the wrapper) is deterministic at both levels.
+
+    """
+
+    func: Callable[..., FloatND]
+    """The transition function returning a probability distribution."""
+
+    def __post_init__(self) -> None:
+        if not callable(self.func):
+            raise RegimeInitializationError(
+                f"MarkovTransition requires a callable, "
+                f"but got {type(self.func).__name__}: {self.func!r}"
+            )
 
 
 def _default_H(

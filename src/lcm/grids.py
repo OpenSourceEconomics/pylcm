@@ -1,6 +1,6 @@
 import dataclasses
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, is_dataclass
 from typing import overload
 
@@ -12,42 +12,10 @@ from lcm import grid_helpers
 from lcm.exceptions import GridInitializationError, format_messages
 from lcm.typing import (
     Float1D,
-    FloatND,
     Int1D,
     ScalarFloat,
 )
 from lcm.utils import find_duplicates, get_field_names_and_values
-
-
-@dataclass(frozen=True)
-class MarkovTransition:
-    """Wrapper marking a transition function as stochastic (Markov).
-
-    Wrap a transition function in `MarkovTransition` to indicate that it returns
-    a probability distribution over next states (for state transitions) or over
-    next regimes (for regime transitions), rather than a deterministic next value.
-
-    Use at both the state and regime level:
-
-        # Stochastic state transition (in Regime.state_transitions)
-        state_transitions={"health": MarkovTransition(health_probs)}
-
-        # Stochastic regime transition
-        Regime(transition=MarkovTransition(regime_probs), ...)
-
-    A bare callable (without the wrapper) is deterministic at both levels.
-
-    """
-
-    func: Callable[..., FloatND]
-    """The transition function returning a probability distribution."""
-
-    def __post_init__(self) -> None:
-        if not callable(self.func):
-            raise GridInitializationError(
-                f"MarkovTransition requires a callable, "
-                f"but got {type(self.func).__name__}: {self.func!r}"
-            )
 
 
 def categorical[T](cls: type[T]) -> type[T]:

@@ -11,7 +11,7 @@ from jax import numpy as jnp
 
 from lcm.ages import AgeGrid
 from lcm.grid_helpers import get_irreg_coordinate
-from lcm.grids import Grid, MarkovTransition
+from lcm.grids import Grid
 from lcm.input_processing.create_regime_params_template import (
     create_regime_params_template,
 )
@@ -28,7 +28,7 @@ from lcm.input_processing.util import (
 )
 from lcm.interfaces import InternalFunctions, InternalRegime
 from lcm.ndimage import map_coordinates
-from lcm.regime import Regime, _collect_state_transitions
+from lcm.regime import MarkovTransition, Regime, _collect_state_transitions
 from lcm.shocks import _ShockGrid
 from lcm.state_action_space import create_state_action_space, create_state_space_info
 from lcm.typing import (
