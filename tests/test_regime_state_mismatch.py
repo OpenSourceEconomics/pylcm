@@ -12,6 +12,7 @@ from lcm import (
     Regime,
     categorical,
 )
+from lcm.exceptions import ModelInitializationError
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -76,18 +77,6 @@ def hm_next_regime_retired(age: float) -> ScalarInt:
     return jnp.where(age >= 3, RegimeId.dead, RegimeId.retired)
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Validation gap: discrete state with different categories across regimes. "
-        "The per-target dict API (see test_per_target_dict_transitions) provides a "
-        "way to handle this correctly, but when a user forgets to use it and "
-        "supplies a single transition function, the framework should raise a "
-        "validation error for the category mismatch. Currently it silently "
-        "succeeds, producing incorrect results due to JAX's out-of-bounds index "
-        "clipping."
-    ),
-    strict=True,
-)
 def test_discrete_state_different_categories_across_regimes():
     """Single transition for a state with different categories across regimes.
 
@@ -97,9 +86,7 @@ def test_discrete_state_different_categories_across_regimes():
     this (see `test_per_target_dict_transitions`), this test uses a single
     transition function for all targets.
 
-    Model construction or solve should raise a validation error for this
-    category mismatch. Currently it silently succeeds, producing incorrect
-    continuation values because JAX clips out-of-bounds indices.
+    Model construction should raise a validation error for this category mismatch.
     """
     working = Regime(
         states={
@@ -129,17 +116,12 @@ def test_discrete_state_different_categories_across_regimes():
 
     dead = Regime(transition=None, functions={"utility": lambda: 0.0})
 
-    params = {"discount_factor": 0.95}
-
-    # Should raise a validation error because 'health' has incompatible
-    # categories across regimes (3 in working vs 2 in retired).
-    with pytest.raises(ValueError, match="health"):  # noqa: PT012
-        model = Model(
+    with pytest.raises(ModelInitializationError, match="health"):
+        Model(
             regimes={"working": working, "retired": retired, "dead": dead},
             ages=AgeGrid(start=0, stop=4, step="Y"),
             regime_id_class=RegimeId,
         )
-        model.solve(params)
 
 
 # ======================================================================================
@@ -404,3 +386,61 @@ def test_per_target_dict_transitions():
         f"Retired health codes should be in {valid_retired_codes}, "
         f"got {sorted(retired_rows['health'].unique())}"
     )
+
+
+def test_discrete_state_same_count_different_names():
+    """Same number of categories but different names should still raise."""
+
+    @categorical
+    class StatusA:
+        employed: int
+        unemployed: int
+
+    @categorical
+    class StatusB:
+        married: int
+        single: int
+
+    @categorical
+    class _RegimeId:
+        work: int
+        retire: int
+        dead: int
+
+    def next_regime(age: float) -> ScalarInt:
+        return jnp.where(
+            age >= 2,
+            _RegimeId.dead,
+            jnp.where(age >= 1, _RegimeId.retire, _RegimeId.work),
+        )
+
+    work = Regime(
+        states={"status": DiscreteGrid(StatusA)},
+        state_transitions={"status": lambda status: status},
+        actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
+        functions={
+            "utility": lambda consumption, status: jnp.log(consumption) + status
+        },
+        transition=next_regime,
+        active=lambda age: age < 2,
+    )
+
+    retire = Regime(
+        states={"status": DiscreteGrid(StatusB)},
+        state_transitions={"status": None},
+        actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
+        functions={
+            "utility": lambda consumption, status: jnp.log(consumption) + status
+        },
+        transition=lambda age: jnp.where(age >= 2, _RegimeId.dead, _RegimeId.retire),
+        active=lambda age: age < 3,
+    )
+
+    dead = Regime(transition=None, functions={"utility": lambda: 0.0})
+
+    with pytest.raises(ModelInitializationError, match="status"):
+        Model(
+            regimes={"work": work, "retire": retire, "dead": dead},
+            ages=AgeGrid(start=0, stop=3, step="Y"),
+            regime_id_class=_RegimeId,
+        )

@@ -10,8 +10,9 @@ from jax import Array
 from jax import numpy as jnp
 
 from lcm.ages import AgeGrid
+from lcm.exceptions import ModelInitializationError, format_messages
 from lcm.grid_helpers import get_irreg_coordinate
-from lcm.grids import Grid
+from lcm.grids import DiscreteGrid, Grid
 from lcm.input_processing.create_regime_params_template import (
     create_regime_params_template,
 )
@@ -95,6 +96,8 @@ def process_regimes(
             regime=regime,
             states_per_regime=states_per_regime,
         )
+    _validate_discrete_category_counts(regimes)
+
     # ----------------------------------------------------------------------------------
     # Stage 1: Initialize regime components that do not depend on other regimes
     # ----------------------------------------------------------------------------------
@@ -571,3 +574,73 @@ def _get_weights_func_for_shock(*, name: str, gridspec: _ShockGrid) -> UserFunct
         )
 
     return weights_func
+
+
+def _validate_discrete_category_counts(
+    regimes: Mapping[str, Regime],
+) -> None:
+    """Validate that simple transitions don't span mismatched discrete grids.
+
+    When a non-per-target-dict transition is used for a `DiscreteGrid` state, the same
+    function is applied to all target regimes. If a target regime has a different number
+    of categories for that state, JAX silently clips indices producing wrong results.
+
+    Raises:
+        ModelInitializationError: If a category count mismatch is found.
+
+    """
+    error_messages: list[str] = []
+
+    for source_name, source_regime in regimes.items():
+        if source_regime.terminal:
+            continue
+
+        for state_name, raw in source_regime.state_transitions.items():
+            source_grid = _get_simple_transition_discrete_grid(
+                source_regime, state_name, raw
+            )
+            if source_grid is None:
+                continue
+
+            for target_name, target_regime in regimes.items():
+                target_grid = target_regime.states.get(state_name)
+                if not isinstance(target_grid, DiscreteGrid):
+                    continue
+
+                if source_grid.categories != target_grid.categories:
+                    error_messages.append(
+                        f"Discrete state '{state_name}' in regime '{source_name}' "
+                        f"has categories {source_grid.categories}, but regime "
+                        f"'{target_name}' has categories "
+                        f"{target_grid.categories}. A single transition function "
+                        f"cannot map between different category sets — use a "
+                        f"per-target dict in state_transitions to specify the "
+                        f"mapping for each target regime.",
+                    )
+
+    if error_messages:
+        raise ModelInitializationError(format_messages(error_messages))
+
+
+def _get_simple_transition_discrete_grid(
+    regime: Regime,
+    state_name: str,
+    raw: object,
+) -> DiscreteGrid | None:
+    """Return the source DiscreteGrid for a simple transition.
+
+    Returns None if the transition is a per-target dict, None (identity), not a
+    DiscreteGrid, or the state is not present in the source regime.
+
+    """
+    # Per-target dicts handle category differences explicitly
+    if isinstance(raw, Mapping) and not isinstance(raw, MarkovTransition):
+        return None
+    # None means identity (fixed state) — only maps within its own regime
+    if raw is None:
+        return None
+    # Target-only state — no source grid to compare
+    if state_name not in regime.states:
+        return None
+    source_grid = regime.states[state_name]
+    return source_grid if isinstance(source_grid, DiscreteGrid) else None
