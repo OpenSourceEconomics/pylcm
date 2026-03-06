@@ -5,6 +5,7 @@ from lcm.grids import DiscreteGrid
 from lcm.input_processing.create_regime_params_template import (
     create_regime_params_template,
 )
+from lcm.utils import ensure_containers_are_immutable
 from tests.regime_mock import RegimeMock
 
 
@@ -21,12 +22,14 @@ def test_create_params_without_shocks(binary_category_class):
         functions={"utility": lambda a, b, c: None},  # noqa: ARG005
     )
     got = create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
-    assert got == {
-        "H": {"discount_factor": float},
-        "utility": {"c": "no_annotation_found"},
-        "next_b": {},
-        "next_regime": {},
-    }
+    assert got == ensure_containers_are_immutable(
+        {
+            "H": {"discount_factor": "float"},
+            "utility": {"c": "no_annotation_found"},
+            "next_b": {},
+            "next_regime": {},
+        }
+    )
 
 
 def test_create_params_with_custom_H_no_extra_params():
@@ -45,7 +48,9 @@ def test_create_params_with_custom_H_no_extra_params():
         functions={"utility": lambda a, b, c: None, "H": custom_H},  # noqa: ARG005
     )
     got = create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
-    assert got == {"H": {}, "utility": {"c": "no_annotation_found"}}
+    assert got == ensure_containers_are_immutable(
+        {"H": {}, "utility": {"c": "no_annotation_found"}}
+    )
 
 
 def test_default_H_with_state_named_discount_factor_raises():
@@ -89,9 +94,11 @@ def test_regular_function_taking_state_as_argument_no_error(binary_category_clas
         functions={"utility": lambda a, wealth, risk_aversion: None},  # noqa: ARG005
     )
     got = create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
-    assert got == {
-        "H": {"discount_factor": float},
-        "utility": {"risk_aversion": "no_annotation_found"},
-        "next_wealth": {},
-        "next_regime": {},
-    }
+    assert got == ensure_containers_are_immutable(
+        {
+            "H": {"discount_factor": "float"},
+            "utility": {"risk_aversion": "no_annotation_found"},
+            "next_wealth": {},
+            "next_regime": {},
+        }
+    )

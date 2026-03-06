@@ -166,7 +166,7 @@ def test_get_label_translator_wrong_kwarg():
     )
     with pytest.raises(
         InvalidFunctionArgumentsError,
-        match=re.escape("translate_label() got unexpected keyword argument health"),
+        match=re.escape("translate_label got unexpected keyword argument health"),
     ):
         func(health=1)
 

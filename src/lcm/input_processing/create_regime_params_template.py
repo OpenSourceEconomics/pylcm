@@ -1,6 +1,5 @@
 import dags.tree as dt
 from dags.tree import tree_path_from_qname
-from jax import Array
 
 from lcm.exceptions import InvalidNameError
 from lcm.grids import IrregSpacedGrid
@@ -42,7 +41,7 @@ def create_regime_params_template(
         *regime.states,
     }
 
-    function_params: dict[str, dict[str, type]] = {}
+    function_params: dict[str, dict[str, str]] = {}
     # Use dags.tree to discover parameters and their type annotations for each function.
     for name, func in regime.get_all_functions().items():
         tree = dt.create_tree_with_input_types({name: func})
@@ -82,7 +81,7 @@ def create_regime_params_template(
                     f"IrregSpacedGrid state '{state_name}' (with runtime-supplied "
                     f"points) conflicts with a function of the same name in the regime."
                 )
-            function_params[state_name] = {"points": Array}
+            function_params[state_name] = {"points": "Float1D"}
         elif isinstance(grid, _ShockGrid) and grid.params_to_pass_at_runtime:
             if state_name in function_params:
                 raise InvalidNameError(
@@ -90,7 +89,7 @@ def create_regime_params_template(
                     f"conflicts with a function of the same name in the regime."
                 )
             function_params[state_name] = dict.fromkeys(
-                grid.params_to_pass_at_runtime, float
+                grid.params_to_pass_at_runtime, "float"
             )
 
-    return ensure_containers_are_immutable(function_params)
+    return ensure_containers_are_immutable(function_params)  # ty: ignore[invalid-return-type]

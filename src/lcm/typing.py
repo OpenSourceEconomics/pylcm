@@ -64,7 +64,7 @@ type InternalParams = MappingProxyType[RegimeName, FlatRegimeParams]
 
 # Immutable templates, used internally
 type RegimeParamsTemplate = MappingProxyType[
-    str, MappingProxyType[str, type | tuple[int, ...]]
+    str, MappingProxyType[str, str | type | tuple[int, ...]]
 ]
 type ParamsTemplate = MappingProxyType[RegimeName, RegimeParamsTemplate]
 

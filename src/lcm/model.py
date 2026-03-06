@@ -528,10 +528,10 @@ def _remove_fixed_from_template(
     template so users don't need to supply them at solve/simulate time.
 
     """
-    result: dict[str, dict[str, dict[str, type | tuple[int, ...]]]] = {}
+    result: dict[str, dict[str, dict[str, str | type | tuple[int, ...]]]] = {}
     for regime_name, regime_template in template.items():
         regime_fixed = fixed_internal.get(regime_name, MappingProxyType({}))
-        new_regime: dict[str, dict[str, type | tuple[int, ...]]] = {}
+        new_regime: dict[str, dict[str, str | type | tuple[int, ...]]] = {}
         for func_name, func_params in regime_template.items():
             new_func_params = {
                 param_name: param_type

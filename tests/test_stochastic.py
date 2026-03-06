@@ -1,4 +1,4 @@
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 import jax.numpy as jnp
 import pandas as pd
@@ -230,15 +230,8 @@ def test_compare_deterministic_and_stochastic_results_value_function(
 # ======================================================================================
 
 
-def _next_shock(shock: DiscreteState, shock_transition: FloatND) -> FloatND:
-    """Default stochastic transition using a pre-computed transition matrix."""
-    return shock_transition[shock]
-
-
-def _make_minimal_stochastic_model(
-    shock_transition_func: object = _next_shock,
-) -> Model:
-    """Create a minimal stochastic model with a discrete shock state."""
+def _make_minimal_stochastic_model(next_draw: Callable[..., FloatND]) -> Model:
+    """Create a minimal stochastic model with a discrete state `draw`."""
 
     final_age = 1
 
@@ -252,8 +245,8 @@ def _make_minimal_stochastic_model(
         working: int
         dead: int
 
-    def utility(consumption: ContinuousAction, shock: DiscreteState) -> FloatND:
-        bonus = jnp.where(shock == ShockStatus.good, 1.0, 0.0)
+    def utility(consumption: ContinuousAction, draw: DiscreteState) -> FloatND:
+        bonus = jnp.where(draw == ShockStatus.good, 1.0, 0.0)
         return jnp.log(consumption) + bonus
 
     def next_wealth(
@@ -274,11 +267,11 @@ def _make_minimal_stochastic_model(
     working_regime = Regime(
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=20)},
         states={
-            "shock": DiscreteGrid(ShockStatus),
+            "draw": DiscreteGrid(ShockStatus),
             "wealth": LinSpacedGrid(start=1, stop=10, n_points=15),
         },
         state_transitions={
-            "shock": MarkovTransition(shock_transition_func),
+            "draw": MarkovTransition(next_draw),
             "wealth": next_wealth,
         },
         constraints={"borrowing_constraint": borrowing_constraint},
@@ -310,10 +303,10 @@ def test_stochastic_next_function_with_no_arguments():
     one argument, causing a failure.
     """
 
-    def next_shock_no_args() -> FloatND:
+    def next_draw_no_args() -> FloatND:
         return jnp.array([0.5, 0.5])
 
-    model = _make_minimal_stochastic_model(next_shock_no_args)
+    model = _make_minimal_stochastic_model(next_draw_no_args)
     params = {
         "discount_factor": 0.95,
         "working": {"next_regime": {"final_age_alive": 1}},
@@ -329,11 +322,11 @@ def test_stochastic_next_depending_on_continuous_state():
     dependency that was not a discrete state.
     """
 
-    def next_shock_continuous(wealth: ContinuousState) -> FloatND:
+    def next_draw_continuous(wealth: ContinuousState) -> FloatND:
         p_good = jnp.clip(wealth / 10.0, 0.1, 0.9)
         return jnp.array([1.0 - p_good, p_good])
 
-    model = _make_minimal_stochastic_model(next_shock_continuous)
+    model = _make_minimal_stochastic_model(next_draw_continuous)
     params = {
         "discount_factor": 0.95,
         "working": {"next_regime": {"final_age_alive": 1}},
