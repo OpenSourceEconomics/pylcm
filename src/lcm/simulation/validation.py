@@ -10,7 +10,7 @@ from lcm.exceptions import (
     format_messages,
 )
 from lcm.functools import get_union_of_args
-from lcm.grids import DiscreteGrid, DiscreteMarkovGrid
+from lcm.grids import DiscreteGrid
 from lcm.interfaces import InternalRegime
 from lcm.Q_and_F import _get_feasibility
 from lcm.simulation.utils import get_regime_state_names
@@ -324,7 +324,7 @@ def _validate_discrete_state_values(
             "is_state and is_discrete"
         ).index:
             gridspec = internal_regime.gridspecs[state_name]
-            if isinstance(gridspec, DiscreteGrid | DiscreteMarkovGrid):
+            if isinstance(gridspec, DiscreteGrid):
                 discrete_valid_codes[state_name] = set(gridspec.codes)
 
     for state_name, valid_codes in discrete_valid_codes.items():

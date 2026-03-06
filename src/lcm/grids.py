@@ -21,6 +21,37 @@ from lcm.typing import (
 from lcm.utils import Unset, find_duplicates, get_field_names_and_values
 
 
+@dataclass(frozen=True)
+class MarkovTransition:
+    """Wrapper marking a transition function as stochastic (Markov).
+
+    Wrap a transition function in `MarkovTransition` to indicate that it returns
+    a probability distribution over next states (for state transitions) or over
+    next regimes (for regime transitions), rather than a deterministic next value.
+
+    Use at both the state and regime level:
+
+        # Stochastic state transition
+        DiscreteGrid(Health, transition=MarkovTransition(health_probs))
+
+        # Stochastic regime transition
+        Regime(transition=MarkovTransition(regime_probs), ...)
+
+    A bare callable (without the wrapper) is deterministic at both levels.
+
+    """
+
+    func: Callable[..., FloatND]
+    """The transition function returning a probability distribution."""
+
+    def __post_init__(self) -> None:
+        if not callable(self.func):
+            raise GridInitializationError(
+                f"MarkovTransition requires a callable, "
+                f"but got {type(self.func).__name__}: {self.func!r}"
+            )
+
+
 def categorical[T](cls: type[T]) -> type[T]:
     """Decorator to create a categorical class with auto-assigned integer values.
 
@@ -86,12 +117,7 @@ class ContinuousGrid(Grid):
 
 
 class _DiscreteGridBase(Grid):
-    """Base class for discrete grids: categories, codes, and JAX conversion.
-
-    Subclasses (`DiscreteGrid`, `DiscreteMarkovGrid`) add their own `transition`
-    property with the appropriate type.
-
-    """
+    """Base class for discrete grids: categories, codes, and JAX conversion."""
 
     def __init__(self, category_class: type) -> None:
         _validate_discrete_grid(category_class)
@@ -115,14 +141,16 @@ class _DiscreteGridBase(Grid):
 
 
 class DiscreteGrid(_DiscreteGridBase):
-    """A discrete grid with an optional deterministic transition.
+    """A discrete grid with an optional transition.
 
     Args:
         category_class: The category class representing the grid categories. Must
             be a dataclass with fields that have unique int values.
-        transition: Deterministic transition function for time-varying states,
-            or `None` for fixed states. Must be set explicitly when this grid is
-            used as a state in a Regime. Must be left unset when used as an action.
+        transition: Transition function for time-varying states. A bare callable
+            is deterministic; wrap in `MarkovTransition` for stochastic (Markov)
+            transitions that return probability distributions. `None` for fixed
+            states. Must be set explicitly when this grid is used as a state in a
+            Regime. Must be left unset when used as an action.
 
     Raises:
         GridInitializationError: If the `category_class` is not a dataclass with int
@@ -134,52 +162,26 @@ class DiscreteGrid(_DiscreteGridBase):
         self,
         category_class: type,
         *,
-        transition: Callable[..., DiscreteState] | None | Unset = Unset(),
+        transition: Callable[..., DiscreteState]
+        | MarkovTransition
+        | None
+        | Unset = Unset(),
     ) -> None:
         super().__init__(category_class)
         _validate_transition(transition)
         self.__transition = transition
 
     @property
-    def transition(self) -> Callable[..., DiscreteState] | None | Unset:
-        """Return the deterministic state transition function.
-
-        Compute the next discrete state value (`DiscreteState`).
-        `None` for fixed states, `Unset` for action grids.
-        """
-        return self.__transition
-
-
-class DiscreteMarkovGrid(_DiscreteGridBase):
-    """Discrete grid with a stochastic Markov transition."""
-
-    def __init__(
+    def transition(
         self,
-        category_class: type,
-        *,
-        transition: Callable[..., FloatND],
-    ) -> None:
-        if not callable(transition):
-            raise GridInitializationError(
-                f"DiscreteMarkovGrid requires a callable transition, "
-                f"but got {type(transition).__name__}: {transition!r}"
-            )
-        super().__init__(category_class)
-        self.__transition = transition
+    ) -> Callable[..., DiscreteState] | MarkovTransition | None | Unset:
+        """Return the state transition function.
 
-    @property
-    def transition(self) -> Callable[..., FloatND]:
-        """Return the stochastic Markov transition function.
-
-        Compute a probability distribution (`FloatND`) over next
-        discrete states — not the next state value itself.
+        A bare callable computes the next discrete state value (`DiscreteState`).
+        A `MarkovTransition` returns a probability distribution (`FloatND`) over
+        next states. `None` for fixed states, `Unset` for action grids.
         """
         return self.__transition
-
-    @property
-    def n_states(self) -> int:
-        """Return the number of discrete states."""
-        return len(self.codes)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -607,19 +609,24 @@ def _init_piecewise_grid_cache(
 
 
 def _validate_transition(
-    transition: Callable[..., ContinuousState | DiscreteState] | None | Unset,
+    transition: Callable[..., ContinuousState | DiscreteState]
+    | MarkovTransition
+    | None
+    | Unset,
 ) -> None:
-    """Validate that `transition` is callable, None, or UNSET.
+    """Validate that `transition` is callable, `MarkovTransition`, None, or UNSET.
 
     Raises:
-        GridInitializationError: If `transition` is not callable, None, or Unset.
+        GridInitializationError: If `transition` is not a valid type.
 
     """
     if not (
-        isinstance(transition, Unset) or transition is None or callable(transition)
+        isinstance(transition, Unset | MarkovTransition)
+        or transition is None
+        or callable(transition)
     ):
         raise GridInitializationError(
-            f"transition must be a callable or None, "
+            f"transition must be a callable, MarkovTransition, or None, "
             f"but got {type(transition).__name__}: {transition!r}"
         )
 

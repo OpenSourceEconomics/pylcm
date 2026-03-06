@@ -8,7 +8,7 @@ from typing import Any, TypeAliasType, overload
 from dags.tree import QNAME_DELIMITER
 
 from lcm.exceptions import RegimeInitializationError, format_messages
-from lcm.grids import DiscreteGrid, DiscreteMarkovGrid, Grid
+from lcm.grids import DiscreteGrid, Grid, MarkovTransition
 from lcm.shocks._base import _ShockGrid
 from lcm.typing import (
     ActiveFunction,
@@ -78,11 +78,12 @@ class Regime:
 
     """
 
-    transition: UserFunction | None
-    """Regime transition function, or `None` for terminal regimes."""
+    transition: UserFunction | MarkovTransition | None
+    """Regime transition function, or `None` for terminal regimes.
 
-    stochastic_transition: bool = False
-    """Whether the regime transition is stochastic (returns probability array)."""
+    A bare callable is deterministic. Wrap in `MarkovTransition` for stochastic
+    regime transitions that return probability distributions.
+    """
 
     active: ActiveFunction = lambda _age: True
     """Callable that takes age (float) and returns True if regime is active."""
@@ -110,6 +111,11 @@ class Regime:
     def terminal(self) -> bool:
         """Whether this is a terminal regime (derived from transition being None)."""
         return self.transition is None
+
+    @property
+    def stochastic_regime_transition(self) -> bool:
+        """Whether the regime transition is stochastic (MarkovTransition)."""
+        return isinstance(self.transition, MarkovTransition)
 
     def __post_init__(self) -> None:
         _validate_attribute_types(self)
@@ -146,8 +152,10 @@ class Regime:
             | dict(self.constraints)
             | _collect_state_transitions(self.states)
         )
-        # Add regime transition
-        if self.transition is not None:
+        # Add regime transition (unwrap MarkovTransition to get bare callable)
+        if isinstance(self.transition, MarkovTransition):
+            result["next_regime"] = self.transition.func
+        elif self.transition is not None:
             result["next_regime"] = self.transition
         return MappingProxyType(result)
 
@@ -208,10 +216,12 @@ def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
                 "constraints and functions must each be a mapping of callables."
             )
 
-    # Validate regime transition is callable if provided
-    if regime.transition is not None and not callable(regime.transition):
+    # Validate regime transition is callable, MarkovTransition, or None
+    if regime.transition is not None and not (
+        callable(regime.transition) or isinstance(regime.transition, MarkovTransition)
+    ):
         error_messages.append(
-            "transition must be a callable or None, "
+            "transition must be a callable, MarkovTransition, or None, "
             f"but is {type(regime.transition).__name__}."
         )
 
@@ -246,11 +256,6 @@ def _validate_logical_consistency(regime: Regime) -> None:
             f"State and action names cannot contain the reserved separator "
             f"'{QNAME_DELIMITER}'. The following names are invalid: "
             f"{invalid_variable_names}.",
-        )
-
-    if regime.stochastic_transition and regime.terminal:
-        error_messages.append(
-            "Terminal regimes (transition=None) cannot have stochastic_transition=True."
         )
 
     if "utility" not in regime.functions:
@@ -324,7 +329,7 @@ def _collect_state_transitions(
 
     For each state grid, produces an entry `f"next_{name}"` mapped to:
     - A stochastic stub for `_ShockGrid` types,
-    - The grid's `transition` attribute if present, or
+    - The grid's `transition` attribute (unwrapping `MarkovTransition`) if present, or
     - An auto-generated identity transition for fixed states.
 
     """
@@ -332,12 +337,15 @@ def _collect_state_transitions(
     for name, grid in states.items():
         if isinstance(grid, _ShockGrid):
             transitions[f"next_{name}"] = lambda: None
-        elif isinstance(grid, DiscreteMarkovGrid):
-            # DiscreteMarkovGrid.__init__ guarantees transition is callable
-            transitions[f"next_{name}"] = grid.transition
-        elif callable(grid_transition := getattr(grid, "transition", None)):
-            transitions[f"next_{name}"] = grid_transition
         else:
-            ann = DiscreteState if isinstance(grid, DiscreteGrid) else ContinuousState
-            transitions[f"next_{name}"] = _make_identity_fn(name, annotation=ann)
+            raw_transition = getattr(grid, "transition", None)
+            if isinstance(raw_transition, MarkovTransition):
+                transitions[f"next_{name}"] = raw_transition.func
+            elif callable(raw_transition):
+                transitions[f"next_{name}"] = raw_transition
+            else:
+                ann = (
+                    DiscreteState if isinstance(grid, DiscreteGrid) else ContinuousState
+                )
+                transitions[f"next_{name}"] = _make_identity_fn(name, annotation=ann)
     return transitions

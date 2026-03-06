@@ -7,7 +7,7 @@ from jax import Array, vmap
 from jax import numpy as jnp
 
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
-from lcm.grids import DiscreteGrid, DiscreteMarkovGrid
+from lcm.grids import DiscreteGrid
 from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.random import generate_simulation_keys
 from lcm.state_action_space import create_state_action_space
@@ -337,7 +337,7 @@ def convert_initial_states_to_nested(
                 regime_states[state_name] = initial_states[state_name]
             elif isinstance(
                 internal_regime.gridspecs[state_name],
-                DiscreteGrid | DiscreteMarkovGrid,
+                DiscreteGrid,
             ):
                 regime_states[state_name] = jnp.full(
                     n_subjects, MISSING_CAT_CODE, dtype=jnp.int32
