@@ -462,7 +462,7 @@ def _collect_state_transitions(
                 f"State '{name}' has no entry in state_transitions. "
                 "Use None for fixed states."
             )
-            raise ValueError(msg)
+            raise RegimeInitializationError(msg)
 
         raw = state_transitions[name]
         if raw is None:
