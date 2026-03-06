@@ -12,41 +12,41 @@ def test_normalize_with_scalar_values():
     """Test normalization with scalar values (solve phase)."""
     probs = MappingProxyType(
         {
-            "working": jnp.array(0.7),
-            "retired": jnp.array(0.1),
+            "working_life": jnp.array(0.7),
+            "retirement": jnp.array(0.1),
             "unemployed": jnp.array(0.2),
         }
     )
-    active_regimes = ("working", "retired")
+    active_regimes = ("working_life", "retirement")
     got = normalize_regime_transition_probs(
         regime_transition_probs=probs, active_regimes_next_period=active_regimes
     )
     # Should normalize over active regimes only (0.7 + 0.1 = 0.8)
     # Only active regimes are returned
-    assert set(got.keys()) == {"working", "retired"}
-    assert jnp.allclose(got["working"], jnp.array(0.7 / 0.8))
-    assert jnp.allclose(got["retired"], jnp.array(0.1 / 0.8))
+    assert set(got.keys()) == {"working_life", "retirement"}
+    assert jnp.allclose(got["working_life"], jnp.array(0.7 / 0.8))
+    assert jnp.allclose(got["retirement"], jnp.array(0.1 / 0.8))
 
 
 def test_normalize_with_array_values():
     """Test normalization with array values (simulation phase)."""
     probs = MappingProxyType(
         {
-            "working": jnp.array([0.7, 0.6]),
-            "retired": jnp.array([0.1, 0.3]),
+            "working_life": jnp.array([0.7, 0.6]),
+            "retirement": jnp.array([0.1, 0.3]),
             "unemployed": jnp.array([0.2, 0.1]),
         }
     )
-    active_regimes = ("working", "retired")
+    active_regimes = ("working_life", "retirement")
     got = normalize_regime_transition_probs(
         regime_transition_probs=probs, active_regimes_next_period=active_regimes
     )
     # Should normalize over active regimes only
     # Subject 0: 0.7 + 0.1 = 0.8, Subject 1: 0.6 + 0.3 = 0.9
     # Only active regimes are returned
-    assert set(got.keys()) == {"working", "retired"}
-    assert jnp.allclose(got["working"], jnp.array([0.7 / 0.8, 0.6 / 0.9]))
-    assert jnp.allclose(got["retired"], jnp.array([0.1 / 0.8, 0.3 / 0.9]))
+    assert set(got.keys()) == {"working_life", "retirement"}
+    assert jnp.allclose(got["working_life"], jnp.array([0.7 / 0.8, 0.6 / 0.9]))
+    assert jnp.allclose(got["retirement"], jnp.array([0.1 / 0.8, 0.3 / 0.9]))
 
 
 # ======================================================================================
@@ -58,14 +58,14 @@ def test_validate_normalized_probs_passes_for_valid_probs():
     """Test that validation passes for valid normalized probabilities."""
     normalized_probs = MappingProxyType(
         {
-            "working": jnp.array([0.7, 0.6]),
-            "retired": jnp.array([0.3, 0.4]),
+            "working_life": jnp.array([0.7, 0.6]),
+            "retirement": jnp.array([0.3, 0.4]),
         }
     )
     # Should not raise
     validate_normalized_regime_transition_probs(
         normalized_regime_transition_probs=normalized_probs,
-        regime_name="working",
+        regime_name="working_life",
         period=0,
     )
 
@@ -79,8 +79,8 @@ def test_validate_normalized_probs_raises_for_nan_values():
     """
     normalized_probs = MappingProxyType(
         {
-            "working": jnp.array([jnp.nan, 0.5]),
-            "retired": jnp.array([jnp.nan, 0.5]),
+            "working_life": jnp.array([jnp.nan, 0.5]),
+            "retirement": jnp.array([jnp.nan, 0.5]),
         }
     )
     with pytest.raises(
@@ -89,7 +89,7 @@ def test_validate_normalized_probs_raises_for_nan_values():
     ):
         validate_normalized_regime_transition_probs(
             normalized_regime_transition_probs=normalized_probs,
-            regime_name="working",
+            regime_name="working_life",
             period=0,
         )
 
@@ -101,8 +101,8 @@ def test_validate_normalized_probs_raises_for_inf_values():
     """
     normalized_probs = MappingProxyType(
         {
-            "working": jnp.array([jnp.inf, 0.5]),
-            "retired": jnp.array([0.0, 0.5]),
+            "working_life": jnp.array([jnp.inf, 0.5]),
+            "retirement": jnp.array([0.0, 0.5]),
         }
     )
     with pytest.raises(
@@ -111,7 +111,7 @@ def test_validate_normalized_probs_raises_for_inf_values():
     ):
         validate_normalized_regime_transition_probs(
             normalized_regime_transition_probs=normalized_probs,
-            regime_name="working",
+            regime_name="working_life",
             period=0,
         )
 
@@ -120,8 +120,8 @@ def test_validate_normalized_probs_raises_for_probs_not_summing_to_one():
     """Test that validation raises error when probabilities don't sum to 1."""
     normalized_probs = MappingProxyType(
         {
-            "working": jnp.array([0.5, 0.6]),
-            "retired": jnp.array([0.3, 0.4]),  # Sums to 0.8 and 1.0
+            "working_life": jnp.array([0.5, 0.6]),
+            "retirement": jnp.array([0.3, 0.4]),  # Sums to 0.8 and 1.0
         }
     )
     with pytest.raises(
@@ -130,7 +130,7 @@ def test_validate_normalized_probs_raises_for_probs_not_summing_to_one():
     ):
         validate_normalized_regime_transition_probs(
             normalized_regime_transition_probs=normalized_probs,
-            regime_name="working",
+            regime_name="working_life",
             period=0,
         )
 
@@ -144,26 +144,26 @@ def test_normalize_produces_nan_when_all_active_probs_zero():
     """
     probs = MappingProxyType(
         {
-            "working": jnp.array([0.0, 0.5]),
-            "retired": jnp.array([0.0, 0.3]),
+            "working_life": jnp.array([0.0, 0.5]),
+            "retirement": jnp.array([0.0, 0.3]),
             "unemployed": jnp.array(
                 [1.0, 0.2]
             ),  # Only this regime has prob for subject 0
         }
     )
     # But only working and retired are active
-    active_regimes = ("working", "retired")
+    active_regimes = ("working_life", "retirement")
     got = normalize_regime_transition_probs(
         regime_transition_probs=probs, active_regimes_next_period=active_regimes
     )
 
     # Only active regimes are returned
-    assert set(got.keys()) == {"working", "retired"}
+    assert set(got.keys()) == {"working_life", "retirement"}
 
     # First subject has all zeros for active regimes -> NaN after normalization
-    assert jnp.isnan(got["working"][0])
-    assert jnp.isnan(got["retired"][0])
+    assert jnp.isnan(got["working_life"][0])
+    assert jnp.isnan(got["retirement"][0])
 
     # Second subject has valid probabilities
-    assert jnp.allclose(got["working"][1], jnp.array(0.5 / 0.8))
-    assert jnp.allclose(got["retired"][1], jnp.array(0.3 / 0.8))
+    assert jnp.allclose(got["working_life"][1], jnp.array(0.5 / 0.8))
+    assert jnp.allclose(got["retirement"][1], jnp.array(0.3 / 0.8))

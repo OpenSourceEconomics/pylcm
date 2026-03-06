@@ -27,7 +27,7 @@ level is most convenient.
 
 ```python
 params = {
-    "working": {
+    "working_life": {
         "utility": {"risk_aversion": 1.5},
         "earnings": {"wage": 20.0},
     },
@@ -41,7 +41,7 @@ need it:
 
 ```python
 params = {
-    "working": {"risk_aversion": 1.5},
+    "working_life": {"risk_aversion": 1.5},
 }
 ```
 
@@ -64,7 +64,7 @@ You can mix levels freely — just avoid ambiguity:
 params = {
     "discount_factor": 0.95,            # model level
     "interest_rate": 0.03,              # model level
-    "working": {
+    "working_life": {
         "utility": {
             "disutility_of_work": 1.0,  # function level
         },
@@ -78,12 +78,12 @@ params = {
 A parameter cannot appear at multiple levels within the same subtree. pylcm raises an
 error if a parameter value could be resolved from more than one level:
 
-- `"risk_aversion"` at model level **and** `"working" -> "risk_aversion"` at regime level
+- `"risk_aversion"` at model level **and** `"working_life" -> "risk_aversion"` at regime level
   = **error** (ambiguous)
 - `"risk_aversion"` at regime level **and**
-  `"working" -> "utility" -> "risk_aversion"` at function level = **error** (ambiguous)
-- `"risk_aversion"` in `"working"` at regime level **and** `"risk_aversion"` in
-  `"retired"` at regime level = **OK** (different subtrees)
+  `"working_life" -> "utility" -> "risk_aversion"` at function level = **error** (ambiguous)
+- `"risk_aversion"` in `"working_life"` at regime level **and** `"risk_aversion"` in
+  `"retirement"` at regime level = **OK** (different subtrees)
 
 ## Special Parameters
 

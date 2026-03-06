@@ -36,7 +36,7 @@ class LaborSupply:
 
 @categorical
 class RegimeId:
-    working: int
+    working_life: int
     dead: int
 
 
@@ -57,8 +57,8 @@ def labor_income(is_working: BoolND, wage: float | FloatND) -> FloatND:
     return jnp.where(is_working, wage, 0.0)
 
 
-def is_working(labor_supply: DiscreteAction) -> BoolND:
-    return labor_supply == LaborSupply.work
+def is_working(work: DiscreteAction) -> BoolND:
+    return work == LaborSupply.work
 
 
 def wage(age: float) -> float | FloatND:
@@ -81,7 +81,7 @@ def next_regime(age: float, final_age_alive: float) -> ScalarInt:
     return jnp.where(
         age >= final_age_alive,
         RegimeId.dead,
-        RegimeId.working,
+        RegimeId.working_life,
     )
 
 
@@ -104,9 +104,9 @@ DEFAULT_WEALTH_GRID = LinSpacedGrid(
 )
 DEFAULT_CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 
-working = Regime(
+working_life = Regime(
     actions={
-        "labor_supply": DiscreteGrid(LaborSupply),
+        "work": DiscreteGrid(LaborSupply),
         "consumption": DEFAULT_CONSUMPTION_GRID,  # placeholder, will be replaced by get_model()  # noqa: E501
     },
     states={
@@ -146,11 +146,11 @@ def get_model(
     _wealth_grid = dataclasses.replace(wealth_grid, transition=next_wealth)
     return Model(
         regimes={
-            "working": working.replace(
+            "working_life": working_life.replace(
                 active=lambda age: age <= final_age_alive,
                 states={"wealth": _wealth_grid},
                 actions={
-                    "labor_supply": DiscreteGrid(LaborSupply),
+                    "work": DiscreteGrid(LaborSupply),
                     "consumption": consumption_grid,
                 },
             ),
@@ -170,7 +170,7 @@ def get_params(
     final_age_alive = START_AGE + n_periods - 2
     return {
         "discount_factor": discount_factor,
-        "working": {
+        "working_life": {
             "utility": {"disutility_of_work": disutility_of_work},
             "next_wealth": {"interest_rate": interest_rate},
             "next_regime": {"final_age_alive": final_age_alive},

@@ -32,7 +32,7 @@ def test_simulation_with_heterogeneous_initial_ages():
             "age": jnp.array([0.0, 2.0]),
             "wealth": jnp.array([50.0, 50.0]),
         },
-        initial_regimes=["working", "working"],
+        initial_regimes=["working_life", "working_life"],
     )
     df = result.to_dataframe()
 

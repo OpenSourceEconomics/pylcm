@@ -179,7 +179,7 @@ transition function returns a probability vector over grid points:
 from lcm.grids import DiscreteMarkovGrid
 
 states = {
-    "health": DiscreteMarkovGrid(HealthStatus, transition=health_transition_probs),
+    "health": DiscreteMarkovGrid(Health, transition=health_transition_probs),
 }
 ```
 

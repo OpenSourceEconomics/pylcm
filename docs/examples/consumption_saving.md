@@ -18,7 +18,7 @@ calibration. Do not read economic content into the specific functional forms.
 
 An agent lives from age 18 to 24. During working life (ages 18–23) the agent chooses:
 
-- **whether to work** (discrete: working / retired)
+- **whether to work** (discrete: not_working / working)
 - **how much to consume** (continuous)
 - **how much to exercise** (continuous)
 
@@ -32,7 +32,7 @@ remaining wealth and health (no choices).
 
 ## Categorical Variables
 
-The model uses two `@categorical` classes. `WorkingStatus` labels the discrete work
+The model uses two `@categorical` classes. `LaborSupply` labels the discrete work
 action; `RegimeId` maps regime names to integer codes for the regime transition function.
 
 ```python
@@ -40,14 +40,14 @@ from lcm import categorical
 
 
 @categorical
-class WorkingStatus:
-    retired: int
+class LaborSupply:
+    not_working: int
     working: int
 
 
 @categorical
 class RegimeId:
-    working: int
+    working_life: int
     retirement: int
 ```
 
@@ -62,8 +62,8 @@ The working-life utility function combines log consumption, a disutility of work
 (offset by health), and an exercise cost:
 
 ```python
-def utility(consumption, working, health, exercise, disutility_of_work):
-    return jnp.log(consumption) - (disutility_of_work - health) * working - exercise
+def utility(consumption, work, health, exercise, disutility_of_work):
+    return jnp.log(consumption) - (disutility_of_work - health) * work - exercise
 ```
 
 `disutility_of_work` is a **parameter** — it appears in the function signature but is
@@ -72,7 +72,7 @@ not a state or action, so pylcm will look for it in the params dict.
 The retirement utility is simpler — just log wealth scaled by health:
 
 ```python
-def utility_retired(wealth, health):
+def utility_retirement(wealth, health):
     return jnp.log(wealth) * health
 ```
 
@@ -83,8 +83,8 @@ decision. These are registered in `functions` alongside `utility`, so pylcm can
 automatically wire them into other functions that depend on `labor_income`:
 
 ```python
-def labor_income(wage, working):
-    return wage * working
+def labor_income(wage, work):
+    return wage * work
 
 
 def wage(age):
@@ -104,8 +104,8 @@ def next_wealth(wealth, consumption, labor_income, interest_rate):
     return (1 + interest_rate) * (wealth + labor_income - consumption)
 
 
-def next_health(health, exercise, working):
-    return health * (1 + exercise - working / 2)
+def next_health(health, exercise, work):
+    return health * (1 + exercise - work / 2)
 ```
 
 `interest_rate` is a parameter (resolved from the params dict).
@@ -119,7 +119,7 @@ to retirement:
 ```python
 def next_regime(period, n_periods):
     certain_retirement = period >= n_periods - 2
-    return jnp.where(certain_retirement, RegimeId.retirement, RegimeId.working)
+    return jnp.where(certain_retirement, RegimeId.retirement, RegimeId.working_life)
 ```
 
 `n_periods` is supplied as a parameter at solve time.
@@ -147,7 +147,7 @@ constraint:
 ```python
 from lcm import DiscreteGrid, LinSpacedGrid, Regime
 
-working = Regime(
+working_life = Regime(
     transition=next_regime,
     active=lambda age: age < RETIREMENT_AGE,
     states={
@@ -159,7 +159,7 @@ working = Regime(
         ),
     },
     actions={
-        "working": DiscreteGrid(WorkingStatus),
+        "work": DiscreteGrid(LaborSupply),
         "consumption": LinSpacedGrid(start=1, stop=100, n_points=100),
         "exercise": LinSpacedGrid(start=0, stop=1, n_points=200),
     },
@@ -180,14 +180,14 @@ The terminal regime has `transition=None`, no actions, and states with `transiti
 (fixed — no evolution needed since there is no next period):
 
 ```python
-retired = Regime(
+retirement = Regime(
     transition=None,
     active=lambda age: age >= RETIREMENT_AGE,
     states={
         "wealth": LinSpacedGrid(start=1, stop=100, n_points=100, transition=None),
         "health": LinSpacedGrid(start=0, stop=1, n_points=100, transition=None),
     },
-    functions={"utility": utility_retired},
+    functions={"utility": utility_retirement},
 )
 ```
 
@@ -197,7 +197,7 @@ retired = Regime(
 from lcm import AgeGrid, Model
 
 model = Model(
-    regimes={"working": working, "retirement": retired},
+    regimes={"working_life": working_life, "retirement": retirement},
     ages=AgeGrid(start=18, stop=RETIREMENT_AGE, step="Y"),
     regime_id_class=RegimeId,
 )
@@ -209,7 +209,7 @@ The params dict follows the template from `model.params_template` — a top-leve
 ```python
 params = {
     "discount_factor": 0.95,
-    "working": {
+    "working_life": {
         "utility": {"disutility_of_work": 0.05},
         "next_wealth": {"interest_rate": 0.05},
         "next_regime": {"n_periods": model.n_periods},
@@ -228,7 +228,7 @@ import jax.numpy as jnp
 
 result = model.solve_and_simulate(
     params=params,
-    initial_regimes=["working"] * 1_000,
+    initial_regimes=["working_life"] * 1_000,
     initial_states={
         "age": jnp.full(1_000, model.ages.values[0]),
         "wealth": jnp.full(1_000, 1.0),

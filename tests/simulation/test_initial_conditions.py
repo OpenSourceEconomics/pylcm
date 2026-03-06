@@ -27,7 +27,7 @@ def model() -> Model:
     """Minimal model with two states (wealth, health) for initial states tests."""
 
     @dataclass
-    class HealthStatus:
+    class Health:
         healthy: int = 0
         sick: int = 1
 
@@ -56,7 +56,7 @@ def model() -> Model:
                 start=1, stop=100, n_points=10, transition=lambda wealth: wealth
             ),
             "health": DiscreteGrid(
-                category_class=HealthStatus, transition=lambda health: health
+                category_class=Health, transition=lambda health: health
             ),
         },
         transition=next_regime,
@@ -262,7 +262,7 @@ def _make_constraint_model(wealth_grid) -> Model:
 
     @categorical
     class RegimeId:
-        working: int
+        working_life: int
         dead: int
 
     def utility(consumption: ContinuousAction) -> FloatND:
@@ -274,7 +274,7 @@ def _make_constraint_model(wealth_grid) -> Model:
         return consumption <= wealth
 
     def next_regime(age: float, final_age_alive: float) -> ScalarInt:
-        return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.working)
+        return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.working_life)
 
     working_regime = Regime(
         actions={
@@ -292,7 +292,7 @@ def _make_constraint_model(wealth_grid) -> Model:
         active=lambda age: age > final_age,
     )
     return Model(
-        regimes={"working": working_regime, "dead": dead_regime},
+        regimes={"working_life": working_regime, "dead": dead_regime},
         ages=AgeGrid(start=0, stop=final_age + 1, step="Y"),
         regime_id_class=RegimeId,
     )
@@ -310,13 +310,13 @@ def test_infeasible_initial_states_detected():
     )
     params = {
         "discount_factor": 0.95,
-        "working": {"next_regime": {"final_age_alive": 1}},
+        "working_life": {"next_regime": {"final_age_alive": 1}},
     }
     with pytest.raises(InvalidInitialConditionsError):
         model.solve_and_simulate(
             params=params,
             initial_states={"age": jnp.array([0.0]), "wealth": jnp.array([0.25])},
-            initial_regimes=["working"],
+            initial_regimes=["working_life"],
         )
 
 
@@ -333,13 +333,13 @@ def test_on_grid_state_but_combination_infeasible():
     )
     params = {
         "discount_factor": 0.95,
-        "working": {"next_regime": {"final_age_alive": 1}},
+        "working_life": {"next_regime": {"final_age_alive": 1}},
     }
     with pytest.raises(InvalidInitialConditionsError):
         model.solve_and_simulate(
             params=params,
             initial_states={"age": jnp.array([0.0]), "wealth": jnp.array([0.3])},
-            initial_regimes=["working"],
+            initial_regimes=["working_life"],
         )
 
 
@@ -352,12 +352,12 @@ def test_extrapolated_initial_states_accepted():
     )
     params = {
         "discount_factor": 0.95,
-        "working": {"next_regime": {"final_age_alive": 1}},
+        "working_life": {"next_regime": {"final_age_alive": 1}},
     }
     model.solve_and_simulate(
         params=params,
         initial_states={"age": jnp.array([0.0]), "wealth": jnp.array([1.0])},
-        initial_regimes=["working"],
+        initial_regimes=["working_life"],
     )
 
 
@@ -370,12 +370,12 @@ def test_on_grid_initial_states_accepted():
     )
     params = {
         "discount_factor": 0.95,
-        "working": {"next_regime": {"final_age_alive": 1}},
+        "working_life": {"next_regime": {"final_age_alive": 1}},
     }
     model.solve_and_simulate(
         params=params,
         initial_states={"age": jnp.array([0.0]), "wealth": jnp.array([5.0])},
-        initial_regimes=["working"],
+        initial_regimes=["working_life"],
     )
 
 
@@ -386,7 +386,7 @@ def test_irreg_spaced_grid_with_runtime_points():
     )
     params = {
         "discount_factor": 0.95,
-        "working": {
+        "working_life": {
             "wealth": {"points": jnp.linspace(0.3, 10, 15)},
             "next_regime": {"final_age_alive": 1},
         },
@@ -395,7 +395,7 @@ def test_irreg_spaced_grid_with_runtime_points():
         model.solve_and_simulate(
             params=params,
             initial_states={"wealth": jnp.array([0.3])},
-            initial_regimes=["working"],
+            initial_regimes=["working_life"],
         )
 
 
@@ -493,7 +493,7 @@ def _make_asymmetric_state_model() -> Model:
     """
 
     @dataclass
-    class HealthStatus:
+    class Health:
         healthy: int = 0
         sick: int = 1
 
@@ -518,7 +518,7 @@ def _make_asymmetric_state_model() -> Model:
                 start=1, stop=100, n_points=10, transition=lambda wealth: wealth
             ),
             "health": DiscreteGrid(
-                category_class=HealthStatus, transition=lambda health: health
+                category_class=Health, transition=lambda health: health
             ),
         },
         transition=next_regime,

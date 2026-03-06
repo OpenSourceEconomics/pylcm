@@ -24,13 +24,13 @@ from lcm.typing import (
     UserParams,
 )
 from tests.test_models.stochastic import (
-    HealthStatus,
+    Health,
     RegimeId,
     dead,
     get_model,
     get_params,
-    retired,
-    working,
+    retirement,
+    working_life,
 )
 
 # ======================================================================================
@@ -50,12 +50,12 @@ def test_model_solve_and_simulate_with_stochastic_model():
             "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
             "age": jnp.array([0.0, 0.0, 0.0, 0.0]),
         },
-        initial_regimes=["working"] * 4,
+        initial_regimes=["working_life"] * 4,
     )
-    df = result.to_dataframe().query('regime == "working"')
+    df = result.to_dataframe().query('regime == "working_life"')
 
     # Verify expected columns
-    required_cols = {"period", "subject_id", "partner", "labor_supply"}
+    required_cols = {"period", "subject_id", "partner", "work"}
     assert required_cols <= set(df.columns)
     assert len(df) > 0
 
@@ -67,9 +67,7 @@ def test_model_solve_and_simulate_with_stochastic_model():
 
     if len(common) > 0:
         p0, p1 = period_0.loc[common], period_1.loc[common]
-        should_be_single = (p0["labor_supply"] == "work") & (
-            p0["partner"] == "partnered"
-        )
+        should_be_single = (p0["work"] == "work") & (p0["partner"] == "partnered")
         expected = should_be_single.map({True: "single", False: "partnered"})
 
         pd.testing.assert_series_equal(
@@ -114,40 +112,40 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
 
     # Create deterministic model by replacing health grid transition
-    working_deterministic = working.replace(
+    working_deterministic = working_life.replace(
         states={
-            **working.states,
+            **working_life.states,
             "health": DiscreteGrid(
-                category_class=HealthStatus, transition=next_health_deterministic
+                category_class=Health, transition=next_health_deterministic
             ),
         },
         active=lambda age: age < n_periods - 1,
     )
-    retired_deterministic = retired.replace(
+    retirement_deterministic = retirement.replace(
         states={
-            **retired.states,
+            **retirement.states,
             "health": DiscreteGrid(
-                category_class=HealthStatus, transition=next_health_deterministic
+                category_class=Health, transition=next_health_deterministic
             ),
         },
         active=lambda age: age < n_periods - 1,
     )
 
     # Create stochastic model with identity transition function
-    working_stochastic = working.replace(
+    working_stochastic = working_life.replace(
         states={
-            **working.states,
+            **working_life.states,
             "health": DiscreteMarkovGrid(
-                category_class=HealthStatus, transition=next_health_stochastic
+                category_class=Health, transition=next_health_stochastic
             ),
         },
         active=lambda age: age < n_periods - 1,
     )
-    retired_stochastic = retired.replace(
+    retirement_stochastic = retirement.replace(
         states={
-            **retired.states,
+            **retirement.states,
             "health": DiscreteMarkovGrid(
-                category_class=HealthStatus, transition=next_health_stochastic
+                category_class=Health, transition=next_health_stochastic
             ),
         },
         active=lambda age: age < n_periods - 1,
@@ -157,8 +155,8 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
 
     model_deterministic = Model(
         regimes={
-            "working": working_deterministic,
-            "retired": retired_deterministic,
+            "working_life": working_deterministic,
+            "retirement": retirement_deterministic,
             "dead": dead_updated,
         },
         ages=ages,
@@ -167,8 +165,8 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
 
     model_stochastic = Model(
         regimes={
-            "working": working_stochastic,
-            "retired": retired_stochastic,
+            "working_life": working_stochastic,
+            "retirement": retirement_stochastic,
             "dead": dead_updated,
         },
         ages=ages,
@@ -196,8 +194,8 @@ def test_compare_deterministic_and_stochastic_results_value_function(
 
     for period in range(model_deterministic.n_periods - 1):
         assert_array_almost_equal(
-            solution_deterministic[period]["working"],
-            solution_stochastic[period]["working"],
+            solution_deterministic[period]["working_life"],
+            solution_stochastic[period]["working_life"],
             decimal=14,
         )
 
@@ -210,7 +208,7 @@ def test_compare_deterministic_and_stochastic_results_value_function(
         "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
         "age": jnp.array([0.0, 0.0, 0.0, 0.0]),
     }
-    initial_regimes = ["working"] * 4
+    initial_regimes = ["working_life"] * 4
 
     simulation_deterministic = model_deterministic.simulate(
         params,
@@ -225,9 +223,11 @@ def test_compare_deterministic_and_stochastic_results_value_function(
         initial_regimes=initial_regimes,
     )
     df_deterministic = simulation_deterministic.to_dataframe().query(
-        'regime == "working"'
+        'regime == "working_life"'
     )
-    df_stochastic = simulation_stochastic.to_dataframe().query('regime == "working"')
+    df_stochastic = simulation_stochastic.to_dataframe().query(
+        'regime == "working_life"'
+    )
     pd.testing.assert_frame_equal(
         df_deterministic.reset_index(drop=True),
         df_stochastic.reset_index(drop=True),
@@ -258,7 +258,7 @@ def _make_minimal_stochastic_model(shock_transition_func=None) -> Model:
 
     @categorical
     class ShockRegimeId:
-        working: int
+        working_life: int
         dead: int
 
     def utility(consumption: ContinuousAction, shock: DiscreteState) -> FloatND:
@@ -277,7 +277,7 @@ def _make_minimal_stochastic_model(shock_transition_func=None) -> Model:
 
     def next_regime(age: float, final_age_alive: float) -> ScalarInt:
         return jnp.where(
-            age >= final_age_alive, ShockRegimeId.dead, ShockRegimeId.working
+            age >= final_age_alive, ShockRegimeId.dead, ShockRegimeId.working_life
         )
 
     working_regime = Regime(
@@ -299,7 +299,7 @@ def _make_minimal_stochastic_model(shock_transition_func=None) -> Model:
         active=lambda age: age > final_age,
     )
     return Model(
-        regimes={"working": working_regime, "dead": dead_regime},
+        regimes={"working_life": working_regime, "dead": dead_regime},
         ages=AgeGrid(start=0, stop=final_age + 1, step="Y"),
         regime_id_class=ShockRegimeId,
     )
@@ -323,10 +323,12 @@ def test_stochastic_next_function_with_no_arguments():
     model = _make_minimal_stochastic_model(next_shock_no_args)
     params = {
         "discount_factor": 0.95,
-        "working": {"next_regime": {"final_age_alive": 1}},
+        "working_life": {"next_regime": {"final_age_alive": 1}},
     }
     V = model.solve(params)
-    assert all(jnp.all(jnp.isfinite(V[p]["working"])) for p in V if "working" in V[p])
+    assert all(
+        jnp.all(jnp.isfinite(V[p]["working_life"])) for p in V if "working" in V[p]
+    )
 
 
 def test_stochastic_next_depending_on_continuous_state():
@@ -343,7 +345,9 @@ def test_stochastic_next_depending_on_continuous_state():
     model = _make_minimal_stochastic_model(next_shock_continuous)
     params = {
         "discount_factor": 0.95,
-        "working": {"next_regime": {"final_age_alive": 1}},
+        "working_life": {"next_regime": {"final_age_alive": 1}},
     }
     V = model.solve(params)
-    assert all(jnp.all(jnp.isfinite(V[p]["working"])) for p in V if "working" in V[p])
+    assert all(
+        jnp.all(jnp.isfinite(V[p]["working_life"])) for p in V if "working" in V[p]
+    )

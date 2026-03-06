@@ -31,14 +31,14 @@ from tests.test_models.deterministic.regression import (
     dead,
     get_params,
     utility,
-    working,
+    working_life,
 )
 
 
 @pytest.mark.illustrative
 def test_get_Q_and_F_function():
     ages = AgeGrid(start=0, stop=4, step="Y")
-    regimes = {"working": working, "dead": dead}
+    regimes = {"working_life": working_life, "dead": dead}
     regime_names_to_ids = MappingProxyType(
         {name: idx for idx, name in enumerate(regimes.keys())}
     )
@@ -56,26 +56,26 @@ def test_get_Q_and_F_function():
 
     # Compute flat param names for the working regime's regime_params_template
     flat_param_names = frozenset(
-        get_flat_param_names(internal_regimes["working"].regime_params_template)
+        get_flat_param_names(internal_regimes["working_life"].regime_params_template)
     )
 
     # Test terminal period Q_and_F where Q = U (no continuation value)
     Q_and_F = get_Q_and_F_terminal(
-        internal_functions=internal_regimes["working"].internal_functions,
+        internal_functions=internal_regimes["working_life"].internal_functions,
         period=3,
         age=ages.period_to_age(3),
         flat_param_names=flat_param_names,
     )
 
     consumption = jnp.array([10, 20, 30])
-    labor_supply = jnp.array([0, 1, 0])
+    work = jnp.array([0, 1, 0])
     wealth = jnp.array([20, 20, 20])
 
     Q_arr, F_arr = Q_and_F(
         consumption=consumption,
-        labor_supply=labor_supply,
+        work=work,
         wealth=wealth,
-        **internal_params["working"],
+        **internal_params["working_life"],
         next_V_arr=jnp.empty(0),  # Terminal period doesn't use continuation value
     )
 
@@ -83,7 +83,7 @@ def test_get_Q_and_F_function():
         Q_arr,
         utility(
             consumption=consumption,
-            is_working=labor_supply == LaborSupply.work,
+            is_working=work == LaborSupply.work,
             disutility_of_work=0.5,  # matches get_params default
         ),
     )

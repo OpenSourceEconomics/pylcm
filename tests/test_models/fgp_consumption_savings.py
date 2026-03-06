@@ -51,7 +51,7 @@ def next_wealth(
 
 
 def next_regime(age: float, final_age_alive: float) -> ScalarInt:
-    return jnp.where(age >= final_age_alive, RegimeId.terminal, RegimeId.alive)
+    return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.alive)
 
 
 def wealth_constraint(
@@ -68,7 +68,7 @@ def utility(consumption: ContinuousAction) -> FloatND:
 @categorical
 class RegimeId:
     alive: int
-    terminal: int
+    dead: int
 
 
 def get_model(
@@ -99,14 +99,14 @@ def get_model(
         functions={"utility": utility},
     )
 
-    terminal = Regime(
+    dead = Regime(
         transition=None,
         active=lambda age, n=final_age_alive: age > n,
         functions={"utility": lambda: 0.0},
     )
 
     return Model(
-        regimes={"alive": alive, "terminal": terminal},
+        regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
         fixed_params={"final_age_alive": final_age_alive},
@@ -128,5 +128,5 @@ def get_params(
         "alive": {
             "income": shock_params,
         },
-        "terminal": {},
+        "dead": {},
     }

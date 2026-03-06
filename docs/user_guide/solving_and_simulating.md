@@ -76,7 +76,7 @@ initial_states = {
 A list of regime names, one per agent:
 
 ```python
-initial_regimes = ["working", "working", "retired", "working"]
+initial_regimes = ["working_life", "working_life", "retirement", "working_life"]
 ```
 
 ### Optional arguments
@@ -126,7 +126,7 @@ Returns discrete variables as raw integer codes instead of categorical labels.
 ### Metadata
 
 ```python
-result.regime_names   # ['retired', 'working']
+result.regime_names   # ['retirement', 'working_life']
 result.state_names    # ['health', 'wealth']
 result.action_names   # ['consumption', 'work']
 result.n_periods      # 50
@@ -174,7 +174,7 @@ params = {
 result = model.solve_and_simulate(
     params=params,
     initial_states={"wealth": jnp.linspace(1, 50, 100)},
-    initial_regimes=["working"] * 100,
+    initial_regimes=["working_life"] * 100,
 )
 
 # 4. Analyze
