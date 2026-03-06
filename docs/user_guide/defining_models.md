@@ -173,6 +173,7 @@ model = Model(
 
 ## See Also
 
+- [Writing Economics](write_economics.ipynb) — function DAGs and regime design
 - [Regimes](regimes.ipynb) — detailed guide to defining regimes
 - [Parameters](parameters.md) — constructing the params dict
 - [Solving and Simulating](solving_and_simulating.md) — running the model
