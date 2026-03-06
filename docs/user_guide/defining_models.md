@@ -70,7 +70,7 @@ The `stop` value is inclusive if `(stop - start)` is exactly divisible by the st
 ### Exact values
 
 ```python
-ages = AgeGrid(precise_values=[25, 35, 45, 55, 65, 75])
+ages = AgeGrid(exact_values=[25, 35, 45, 55, 65, 75])
 ```
 
 Use this for irregular age spacing.
@@ -103,7 +103,7 @@ model.regimes             # immutable mapping of user Regime objects
 model.internal_regimes    # processed internal representations
 model.n_periods           # number of periods
 model.regime_names_to_ids # name -> integer mapping
-model.params_template     # see Parameters page
+model.get_params_template()  # mutable copy of the parameter template
 ```
 
 Use `model.get_params_template()` to get a mutable copy of the parameter template — see
@@ -147,7 +147,10 @@ def terminal_utility(wealth):
 working = Regime(
     transition=next_regime,
     states={
-        "wealth": LinSpacedGrid(start=1, stop=100, n_points=50, transition=next_wealth),
+        "wealth": LinSpacedGrid(start=1, stop=100, n_points=50),
+    },
+    state_transitions={
+        "wealth": next_wealth,
     },
     actions={
         "consumption": LinSpacedGrid(start=1, stop=50, n_points=30),
@@ -165,7 +168,7 @@ retired = Regime(
 )
 
 model = Model(
-    regimes={"working_life": working_life, "retirement": retirement},
+    regimes={"working": working, "retired": retired},
     ages=AgeGrid(start=25, stop=75, step="Y"),
     regime_id_class=RegimeId,
 )

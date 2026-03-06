@@ -55,16 +55,9 @@ actions = {"work": DiscreteGrid(WorkChoice)}
 Values are integer codes (0, 1, 2, ...) auto-assigned by `@categorical`. In simulation
 output, labels are preserved via pandas Categorical.
 
-When used as a **state**, you must specify a `transition`:
-
-```python
-states = {
-    "education": DiscreteGrid(EduStatus, transition=None),       # fixed state
-    "sector": DiscreteGrid(Sector, transition=next_sector),      # time-varying
-}
-```
-
-When used as an **action**, do not pass `transition`.
+When used as an **action**, no further configuration is needed. When used as a
+**state**, the transition is specified via `state_transitions` on the `Regime` —
+see [State Transitions](#state-transitions) below.
 
 ## Continuous Grids
 
@@ -74,7 +67,7 @@ Evenly spaced points from `start` to `stop` (inclusive). The most common grid ty
 wealth, consumption, and similar variables.
 
 ```python
-LinSpacedGrid(start=0, stop=100, n_points=50, transition=next_wealth)
+LinSpacedGrid(start=0, stop=100, n_points=50)
 ```
 
 ### LogSpacedGrid
@@ -83,7 +76,7 @@ Points concentrated near `start` (logarithmic spacing). Good for variables with
 diminishing marginal effects. `start` must be positive.
 
 ```python
-LogSpacedGrid(start=0.1, stop=100, n_points=50, transition=next_wealth)
+LogSpacedGrid(start=0.1, stop=100, n_points=50)
 ```
 
 ### IrregSpacedGrid
@@ -92,17 +85,14 @@ Explicit point placement. Use when you need specific grid points (e.g., at polic
 kinks):
 
 ```python
-IrregSpacedGrid(
-    points=(0.0, 0.5, 1.0, 5.0, 10.0, 50.0),
-    transition=next_wealth,
-)
+IrregSpacedGrid(points=(0.0, 0.5, 1.0, 5.0, 10.0, 50.0))
 ```
 
 You can also defer points to runtime by specifying only `n_points`. The actual points
 are then supplied via the params dict:
 
 ```python
-IrregSpacedGrid(n_points=4, transition=None)
+IrregSpacedGrid(n_points=4)
 ```
 
 ### PiecewiseLinSpacedGrid
@@ -118,7 +108,6 @@ PiecewiseLinSpacedGrid(
         Piece(interval="[0, 10)", n_points=20),
         Piece(interval="[10, 100]", n_points=10),
     ),
-    transition=next_wealth,
 )
 ```
 
@@ -136,66 +125,74 @@ PiecewiseLogSpacedGrid(
         Piece(interval="[0.1, 10)", n_points=50),
         Piece(interval="[10, 1000]", n_points=30),
     ),
-    transition=next_wealth,
 )
 ```
 
 ## State Transitions
 
 Grids define *what values* a variable can take. **State transitions** define *how* states
-evolve over time. Transitions are attached directly to grids via the `transition`
-parameter.
+evolve over time. Transitions live on the `Regime` via the `state_transitions` dict —
+not on grids.
+
+```python
+from lcm import MarkovTransition
+
+working = Regime(
+    transition=next_regime,
+    states={
+        "wealth": LinSpacedGrid(start=0, stop=100, n_points=50),
+        "education": DiscreteGrid(EduStatus),
+        "health": DiscreteGrid(Health),
+    },
+    state_transitions={
+        "wealth": next_wealth,                              # deterministic
+        "education": None,                                  # fixed state
+        "health": MarkovTransition(health_transition),      # stochastic
+    },
+    ...
+)
+```
 
 ### Deterministic Transitions
 
-A callable that takes current state (and possibly other variables or params) and returns
-the next-period value:
+A callable that returns the next-period value:
 
 ```python
-def next_wealth(wealth, consumption, interest_rate):
-    return (wealth - consumption) * (1 + interest_rate)
-
-states = {"wealth": LinSpacedGrid(start=0, stop=100, n_points=50, transition=next_wealth)}
+state_transitions={"wealth": next_wealth}
 ```
 
-### Fixed States (`transition=None`)
+### Fixed States (`None`)
 
 States that don't change over time. An identity transition is auto-generated internally:
 
 ```python
-states = {"education": DiscreteGrid(EduStatus, transition=None)}
+state_transitions={"education": None}
 ```
 
-:::{important}
-Always pass `transition=None` explicitly for fixed states — never rely on the default.
-:::
+### Stochastic Transitions (`MarkovTransition`)
 
-### Stochastic Transitions (DiscreteMarkovGrid)
-
-For discrete states with stochastic transitions, use `DiscreteMarkovGrid`. The
-transition function returns a probability vector over grid points:
+For states with stochastic transitions, wrap the transition function in
+`MarkovTransition`. The function returns a probability vector over grid points:
 
 ```python
-from lcm.grids import DiscreteMarkovGrid
-
-states = {
-    "health": DiscreteMarkovGrid(Health, transition=health_transition_probs),
-}
+state_transitions={"health": MarkovTransition(health_transition_probs)}
 ```
 
 ### Shock Grids
 
 Shock grids (`Normal`, `Tauchen`, etc.) have **intrinsic transitions** — they manage
-their own transition probabilities. They must not have a `transition` parameter. See
+their own transition probabilities. They must **not** appear in `state_transitions`. See
 [Shocks](shocks.md) for details.
+
+See [Regimes — State Transitions](regimes.ipynb) for the full reference, including
+target-regime-dependent transitions.
 
 ## Grid Hierarchy (advanced)
 
 All grids inherit from the `Grid` base class:
 
 - `Grid` — base class, provides `to_jax()`
-  - `DiscreteGrid` — categorical with optional deterministic transition
-  - `DiscreteMarkovGrid` — categorical with stochastic Markov transition
+  - `DiscreteGrid` — categorical
   - `ContinuousGrid` — base for continuous grids, adds `get_coordinate()`
     - `UniformContinuousGrid` — start/stop/n_points base
       - `LinSpacedGrid`

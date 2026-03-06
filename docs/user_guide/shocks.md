@@ -133,12 +133,15 @@ from lcm import LinSpacedGrid, Regime
 working = Regime(
     transition=next_regime,
     states={
-        "wealth": LinSpacedGrid(start=0, stop=100, n_points=50, transition=next_wealth),
+        "wealth": LinSpacedGrid(start=0, stop=100, n_points=50),
         "income_shock": lcm.shocks.iid.Normal(
             n_points=5, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=2.0,
         ),
     },
-    # income_shock does NOT appear in state transitions on any grid
+    state_transitions={
+        "wealth": next_wealth,
+        # income_shock does NOT appear here — it manages its own transitions
+    },
     actions={...},
     functions={
         "utility": utility,

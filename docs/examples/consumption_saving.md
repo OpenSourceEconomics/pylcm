@@ -96,8 +96,8 @@ function dependencies via a DAG.
 
 ### State Transitions
 
-State transitions are attached to grids via the `transition` parameter. Each transition
-function returns the next-period value of its state:
+State transitions are specified via the `state_transitions` dict on the `Regime`. Each
+transition function returns the next-period value of its state:
 
 ```python
 def next_wealth(wealth, consumption, labor_income, interest_rate):
@@ -151,12 +151,12 @@ working_life = Regime(
     transition=next_regime,
     active=lambda age: age < RETIREMENT_AGE,
     states={
-        "wealth": LinSpacedGrid(
-            start=1, stop=100, n_points=100, transition=next_wealth,
-        ),
-        "health": LinSpacedGrid(
-            start=0, stop=1, n_points=100, transition=next_health,
-        ),
+        "wealth": LinSpacedGrid(start=1, stop=100, n_points=100),
+        "health": LinSpacedGrid(start=0, stop=1, n_points=100),
+    },
+    state_transitions={
+        "wealth": next_wealth,
+        "health": next_health,
     },
     actions={
         "work": DiscreteGrid(LaborSupply),
@@ -176,16 +176,16 @@ See [Regimes](../user_guide/regimes.ipynb) for a detailed guide to `Regime`.
 
 ### Retirement Regime
 
-The terminal regime has `transition=None`, no actions, and states with `transition=None`
-(fixed — no evolution needed since there is no next period):
+The terminal regime has `transition=None`, no actions, and no `state_transitions`
+(there is no next period, so no transitions are needed):
 
 ```python
 retirement = Regime(
     transition=None,
     active=lambda age: age >= RETIREMENT_AGE,
     states={
-        "wealth": LinSpacedGrid(start=1, stop=100, n_points=100, transition=None),
-        "health": LinSpacedGrid(start=0, stop=1, n_points=100, transition=None),
+        "wealth": LinSpacedGrid(start=1, stop=100, n_points=100),
+        "health": LinSpacedGrid(start=0, stop=1, n_points=100),
     },
     functions={"utility": utility_retirement},
 )
@@ -203,7 +203,7 @@ model = Model(
 )
 ```
 
-The params dict follows the template from `model.params_template` — a top-level
+The params dict follows the template from `model.get_params_template()` — a top-level
 `discount_factor` and regime-specific nested dicts:
 
 ```python
