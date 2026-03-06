@@ -47,9 +47,9 @@ def _mean_wealth_in_final_alive_period(df):
 # ======================================================================================
 
 
-@pytest.mark.parametrize("shock_type", ["normal_gh", "rouwenhorst"])
+@pytest.mark.parametrize("shock_type", ["normal_gh", "rouwenhorst", "tauchen"])
 def test_deterministic_when_sigma_zero(shock_type):
-    rho = 0.5 if shock_type == "rouwenhorst" else 0.0
+    rho = 0.5 if shock_type in ("rouwenhorst", "tauchen") else 0.0
     df = _solve_and_simulate(shock_type, sigma=_SIGMA_ZERO, rho=rho)
 
     alive_df = df[df["regime"] == "alive"]
@@ -113,9 +113,9 @@ def test_precautionary_savings_with_nonzero_mu():
 # ======================================================================================
 
 
-@pytest.mark.parametrize("shock_type", ["normal_gh", "rouwenhorst"])
+@pytest.mark.parametrize("shock_type", ["normal_gh", "rouwenhorst", "tauchen"])
 def test_precautionary_savings_versus_deterministic_baseline(shock_type):
-    rho = 0.5 if shock_type == "rouwenhorst" else 0.0
+    rho = 0.5 if shock_type in ("rouwenhorst", "tauchen") else 0.0
     df_det = _solve_and_simulate(shock_type, sigma=_SIGMA_ZERO, rho=rho)
     df_stoch = _solve_and_simulate(shock_type, sigma=0.5, rho=rho)
 
