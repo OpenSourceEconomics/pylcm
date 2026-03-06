@@ -11,7 +11,7 @@ from lcm import DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.grids import IrregSpacedGrid
-from lcm.regime import _collect_state_transitions, _IdentityTransition
+from lcm.regime import MarkovTransition, _collect_state_transitions, _IdentityTransition
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -185,6 +185,14 @@ def test_active_validation_rejects_non_callable():
             active=[0, 1, 2],  # ty: ignore[invalid-argument-type]  # Not a callable
             state_transitions={"wealth": None},
         )
+
+
+def test_markov_transition_rejects_non_callable():
+    with pytest.raises(
+        RegimeInitializationError,
+        match="MarkovTransition requires a callable",
+    ):
+        MarkovTransition(func=42)  # ty: ignore[invalid-argument-type]
 
 
 # ======================================================================================
