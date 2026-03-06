@@ -6,7 +6,7 @@ import portion
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm.exceptions import GridInitializationError, RegimeInitializationError
+from lcm.exceptions import GridInitializationError
 from lcm.grids import (
     DiscreteGrid,
     IrregSpacedGrid,
@@ -19,7 +19,6 @@ from lcm.grids import (
     _validate_discrete_grid,
     validate_category_class,
 )
-from lcm.regime import MarkovTransition
 from lcm.utils import get_field_names_and_values
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 
@@ -168,19 +167,6 @@ def test_discrete_grid_invalid_category_class():
         match="Field values of the category_class can only be int",
     ):
         DiscreteGrid(category_class)
-
-
-# --------------------------------------------------------------------------------------
-# MarkovTransition
-# --------------------------------------------------------------------------------------
-
-
-def test_markov_transition_rejects_non_callable():
-    with pytest.raises(
-        RegimeInitializationError,
-        match="MarkovTransition requires a callable",
-    ):
-        MarkovTransition(func=42)  # ty: ignore[invalid-argument-type]
 
 
 # ======================================================================================
