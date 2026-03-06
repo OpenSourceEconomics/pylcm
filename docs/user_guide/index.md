@@ -4,12 +4,9 @@ title: User Guide
 
 # User Guide
 
-:::{admonition} Under Construction
-:class: warning
-This section is a placeholder. Content will be added in a future update.
-:::
-
-The user guide covers the core concepts and usage patterns for pylcm:
+The user guide covers the core concepts and usage patterns for pylcm. Start with
+[Defining Models](defining_models.md) if you've already seen the
+[Tiny Example](../getting_started/tiny_example.ipynb), or jump to any topic below.
 
 - [Defining Models](defining_models.md)
 - [Parameters](parameters.md)
