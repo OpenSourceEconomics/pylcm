@@ -50,6 +50,7 @@ project:
       children:
         - file: explanations/params_workflow.ipynb
         - file: explanations/function_representation.ipynb
+        - file: explanations/dispatchers.ipynb
         - file: explanations/interpolation.ipynb
         - file: explanations/approximating_continuous_shocks.ipynb
     - file: examples/index.md
