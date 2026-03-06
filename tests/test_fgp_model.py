@@ -44,7 +44,7 @@ def _solve_and_simulate(shock_type):
         initial_states={
             "wealth": jnp.full(_N_SUBJECTS, 5.0),
             "income": jnp.zeros(_N_SUBJECTS),
-            "age": jnp.zeros(_N_SUBJECTS),
+            "age": jnp.full(_N_SUBJECTS, 20.0),
         },
         initial_regimes=["alive"] * _N_SUBJECTS,
         seed=_SEED,

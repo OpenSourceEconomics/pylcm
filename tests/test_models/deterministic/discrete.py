@@ -132,8 +132,8 @@ dead = Regime(
 
 
 def get_model(n_periods: int) -> Model:
-    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
-    final_age_alive = n_periods - 2
+    ages = AgeGrid(start=50, stop=50 + (n_periods - 1) * 10, step="10Y")
+    final_age_alive = 50 + (n_periods - 2) * 10
     return Model(
         regimes={
             "working_life": working_life.replace(
@@ -153,7 +153,7 @@ def get_params(
     interest_rate: float = 0.05,
     wage: float = 10.0,
 ) -> UserParams:
-    final_age_alive = n_periods - 2
+    final_age_alive = 50 + (n_periods - 2) * 10
     return {
         "discount_factor": discount_factor,
         "working_life": {

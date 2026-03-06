@@ -25,11 +25,11 @@ def test_simulation_with_heterogeneous_initial_ages():
     model = get_model(n_periods)
     params = get_params(n_periods)
 
-    # Subject 0 starts at age 0, subject 1 starts at age 2
+    # Subject 0 starts at age 40, subject 1 starts at age 60
     result = model.solve_and_simulate(
         params,
         initial_states={
-            "age": jnp.array([0.0, 2.0]),
+            "age": jnp.array([40.0, 60.0]),
             "wealth": jnp.array([50.0, 50.0]),
         },
         initial_regimes=["working_life", "working_life"],
@@ -38,4 +38,4 @@ def test_simulation_with_heterogeneous_initial_ages():
 
     # Subject 1 should not have data for ages before their starting age
     subject_1_min_age = df.loc[df["_subject_id"] == 1, "age"].min()
-    assert subject_1_min_age == 2.0
+    assert subject_1_min_age == 60.0

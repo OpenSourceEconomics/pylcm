@@ -201,7 +201,7 @@ def test_simulate_with_only_discrete_actions():
         params,
         initial_states={
             "wealth": jnp.array([0, 2]),
-            "age": jnp.array([0.0, 0.0]),
+            "age": jnp.array([50.0, 50.0]),
         },
         initial_regimes=["working_life"] * 2,
     )
@@ -457,7 +457,7 @@ def test_additional_targets_all_with_stochastic_transitions():
             "wealth": jnp.array([20.0, 50.0]),
             "health": jnp.array([Health.good, Health.bad]),
             "partner": jnp.array([PartnerStatus.single, PartnerStatus.partnered]),
-            "age": jnp.array([0.0, 0.0]),
+            "age": jnp.array([40.0, 40.0]),
         },
         initial_regimes=["working_life", "working_life"],
     )

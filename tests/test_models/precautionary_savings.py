@@ -79,7 +79,7 @@ def get_model(
     consumption_n_points: int = 7,
     income_n_points: int = 5,
 ) -> Model:
-    final_age_alive = n_periods - 2
+    final_age_alive = 20 + (n_periods - 2) * 10
 
     wealth_grid_cls = LogSpacedGrid if wealth_grid_type == "log" else LinSpacedGrid
     alive = Regime(
@@ -117,7 +117,7 @@ def get_model(
     return Model(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
-        ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
+        ages=AgeGrid(start=20, stop=20 + (n_periods - 1) * 10, step="10Y"),
         fixed_params={"final_age_alive": final_age_alive},
     )
 

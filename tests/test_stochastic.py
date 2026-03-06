@@ -47,7 +47,7 @@ def test_model_solve_and_simulate_with_stochastic_model():
             "health": jnp.array([1, 1, 0, 0]),
             "partner": jnp.array([0, 0, 1, 0]),
             "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
-            "age": jnp.array([0.0, 0.0, 0.0, 0.0]),
+            "age": jnp.array([40.0, 40.0, 40.0, 40.0]),
         },
         initial_regimes=["working_life"] * 4,
     )
@@ -108,7 +108,8 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
         return health
 
     n_periods = 4
-    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
+    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    last_age = ages.exact_values[-1]
 
     # Create deterministic model by replacing health grid transition
     working_deterministic = working_life.replace(
@@ -116,14 +117,14 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
             **working_life.state_transitions,
             "health": next_health_deterministic,
         },
-        active=lambda age: age < n_periods - 1,
+        active=lambda age, la=last_age: age < la,
     )
     retirement_deterministic = retirement.replace(
         state_transitions={
             **retirement.state_transitions,
             "health": next_health_deterministic,
         },
-        active=lambda age: age < n_periods - 1,
+        active=lambda age, la=last_age: age < la,
     )
 
     # Create stochastic model with identity transition function
@@ -132,17 +133,17 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
             **working_life.state_transitions,
             "health": MarkovTransition(next_health_stochastic),
         },
-        active=lambda age: age < n_periods - 1,
+        active=lambda age, la=last_age: age < la,
     )
     retirement_stochastic = retirement.replace(
         state_transitions={
             **retirement.state_transitions,
             "health": MarkovTransition(next_health_stochastic),
         },
-        active=lambda age: age < n_periods - 1,
+        active=lambda age, la=last_age: age < la,
     )
 
-    dead_updated = dead.replace(active=lambda age: age >= n_periods - 1)
+    dead_updated = dead.replace(active=lambda age, la=last_age: age >= la)
 
     model_deterministic = Model(
         regimes={
@@ -197,7 +198,7 @@ def test_compare_deterministic_and_stochastic_results_value_function(
         "health": jnp.array([1, 1, 0, 0]),
         "partner": jnp.array([0, 0, 0, 0]),
         "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
-        "age": jnp.array([0.0, 0.0, 0.0, 0.0]),
+        "age": jnp.array([40.0, 40.0, 40.0, 40.0]),
     }
     initial_regimes = ["working_life"] * 4
 

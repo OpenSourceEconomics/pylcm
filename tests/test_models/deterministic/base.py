@@ -163,16 +163,15 @@ dead = Regime(
 
 
 def get_model(n_periods: int) -> Model:
-    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
+    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    last_age = ages.exact_values[-1]
     return Model(
         regimes={
             "working_life": working_life.replace(
-                active=lambda age, n=n_periods: age < n - 1
+                active=lambda age, la=last_age: age < la
             ),
-            "retirement": retirement.replace(
-                active=lambda age, n=n_periods: age < n - 1
-            ),
-            "dead": dead.replace(active=lambda age, n=n_periods: age >= n - 1),
+            "retirement": retirement.replace(active=lambda age, la=last_age: age < la),
+            "dead": dead.replace(active=lambda age, la=last_age: age >= la),
         },
         ages=ages,
         regime_id_class=RegimeId,
@@ -186,7 +185,7 @@ def get_params(
     interest_rate=0.05,
     wage=10.0,
 ):
-    final_age_alive = n_periods - 2  # Last age before death transition
+    final_age_alive = 40 + (n_periods - 2) * 10  # Last age before death transition
     return {
         "discount_factor": discount_factor,
         "interest_rate": interest_rate,
