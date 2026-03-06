@@ -96,7 +96,7 @@ def process_regimes(
             regime=regime,
             states_per_regime=states_per_regime,
         )
-    _validate_discrete_category_counts(regimes)
+    _validate_categoricals(regimes)
 
     # ----------------------------------------------------------------------------------
     # Stage 1: Initialize regime components that do not depend on other regimes
@@ -576,7 +576,7 @@ def _get_weights_func_for_shock(*, name: str, gridspec: _ShockGrid) -> UserFunct
     return weights_func
 
 
-def _validate_discrete_category_counts(
+def _validate_categoricals(
     regimes: Mapping[str, Regime],
 ) -> None:
     """Validate that simple transitions don't span mismatched discrete grids.

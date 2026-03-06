@@ -62,46 +62,46 @@ def get_Q_and_F(
     joint_weights_from_marginals = {}
     next_V = {}
 
-    target_regimes = tuple(internal_functions.transitions)
+    target_regime_names = tuple(internal_functions.transitions)
     active_regimes_next_period = tuple(
-        target_name
-        for target_name in target_regimes
-        if period + 1 in regimes_to_active_periods[target_name]
+        target_regime_name
+        for target_regime_name in target_regime_names
+        if period + 1 in regimes_to_active_periods[target_regime_name]
     )
     next_V_extra_param_names: dict[str, frozenset[str]] = {}
 
-    for target_regime in active_regimes_next_period:
+    for target_regime_name in active_regimes_next_period:
         # Transitions from the current regime to the target regime
-        transitions = internal_functions.transitions[target_regime]
+        transitions = internal_functions.transitions[target_regime_name]
 
         # Functions required to calculate the expected continuation values
         # Note: grids is not used for Target.SOLVE, but we pass the full dict for typing
-        state_transitions[target_regime] = get_next_state_function_for_solution(
+        state_transitions[target_regime_name] = get_next_state_function_for_solution(
             functions=internal_functions.functions,
             transitions=transitions,
         )
-        next_stochastic_states_weights[target_regime] = (
+        next_stochastic_states_weights[target_regime_name] = (
             get_next_stochastic_weights_function(
-                regime_name=target_regime,
+                regime_name=target_regime_name,
                 functions=internal_functions.functions,
                 transitions=transitions,
                 stochastic_transition_names=stochastic_transition_names,
             )
         )
-        joint_weights_from_marginals[target_regime] = _get_joint_weights_function(
-            regime_name=target_regime,
+        joint_weights_from_marginals[target_regime_name] = _get_joint_weights_function(
+            regime_name=target_regime_name,
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
         )
         _scalar_next_V = get_value_function_representation(
-            next_state_space_infos[target_regime]
+            next_state_space_infos[target_regime_name]
         )
         # Determine extra kwargs needed by next_V beyond next_states and next_V_arr
         # (e.g. wealth__points for IrregSpacedGrid with runtime-supplied points).
-        next_V_extra_param_names[target_regime] = frozenset(
+        next_V_extra_param_names[target_regime_name] = frozenset(
             get_union_of_args([_scalar_next_V]) - set(transitions) - {"next_V_arr"}
         )
-        next_V[target_regime] = productmap(
+        next_V[target_regime_name] = productmap(
             func=_scalar_next_V,
             variables=tuple(
                 key for key in transitions if key in stochastic_transition_names
