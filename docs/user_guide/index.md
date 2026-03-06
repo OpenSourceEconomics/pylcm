@@ -5,11 +5,13 @@ title: User Guide
 # User Guide
 
 The user guide covers the core concepts and usage patterns for pylcm. Start with
-[Defining Models](defining_models.md) if you've already seen the
+[Write Economics, Not Glue Code](write_economics.ipynb) if you've already seen the
 [Tiny Example](../getting_started/tiny_example.ipynb), or jump to any topic below.
 
+- [Write Economics, Not Glue Code](write_economics.ipynb)
+- [Regimes](regimes.ipynb)
 - [Defining Models](defining_models.md)
-- [Parameters](parameters.md)
 - [Grids](grids.md)
+- [Parameters](parameters.md)
 - [Shocks](shocks.md)
 - [Solving and Simulating](solving_and_simulating.md)

@@ -38,6 +38,8 @@ project:
     - file: user_guide/index.md
       title: User Guide
       children:
+        - file: user_guide/write_economics.ipynb
+        - file: user_guide/regimes.ipynb
         - file: user_guide/defining_models.md
         - file: user_guide/grids.md
         - file: user_guide/solving_and_simulating.md
