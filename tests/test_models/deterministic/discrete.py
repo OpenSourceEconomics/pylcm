@@ -36,13 +36,13 @@ from tests.test_models.deterministic.regression import (
 # Categorical variables
 # --------------------------------------------------------------------------------------
 @categorical
-class DiscreteConsumption:
+class ConsumptionChoice:
     low: int
     high: int
 
 
 @categorical
-class DiscreteWealth:
+class WealthStatus:
     low: int
     medium: int
     high: int
@@ -50,7 +50,7 @@ class DiscreteWealth:
 
 @categorical
 class RegimeId:
-    working_life: int
+    working: int
     dead: int
 
 
@@ -64,7 +64,7 @@ def utility_discrete(
 ) -> FloatND:
     # In the discrete model, consumption is defined as "low" or "high". This can be
     # translated to the levels 1 and 2.
-    consumption_level = 1 + (consumption == DiscreteConsumption.high)
+    consumption_level = 1 + (consumption == ConsumptionChoice.high)
     return utility(consumption_level, is_working, disutility_of_work)
 
 
@@ -80,16 +80,16 @@ def next_wealth_discrete(
     # For discrete state variables, we need to assure that the next state is also a
     # valid state, i.e., it is a member of the discrete grid.
     continuous = next_wealth(wealth, consumption, labor_income, interest_rate)
-    return jnp.clip(
-        jnp.rint(continuous), DiscreteWealth.low, DiscreteWealth.high
-    ).astype(jnp.int32)
+    return jnp.clip(jnp.rint(continuous), WealthStatus.low, WealthStatus.high).astype(
+        jnp.int32
+    )
 
 
 def next_regime(age: float, final_age_alive: float) -> ScalarInt:
     return jnp.where(
         age >= final_age_alive,
         RegimeId.dead,
-        RegimeId.working_life,
+        RegimeId.working,
     )
 
 
@@ -100,15 +100,16 @@ def borrowing_constraint(consumption: DiscreteAction, wealth: DiscreteState) -> 
 # ======================================================================================
 # Regime specifications
 # ======================================================================================
-working_life = Regime(
+working = Regime(
     actions={
-        "work": DiscreteGrid(LaborSupply),
-        "consumption": DiscreteGrid(DiscreteConsumption),
+        "labor_supply": DiscreteGrid(LaborSupply),
+        "consumption": DiscreteGrid(ConsumptionChoice),
     },
     states={
-        "wealth": DiscreteGrid(
-            category_class=DiscreteWealth, transition=next_wealth_discrete
-        ),
+        "wealth": DiscreteGrid(WealthStatus),
+    },
+    state_transitions={
+        "wealth": next_wealth_discrete,
     },
     constraints={
         "borrowing_constraint": borrowing_constraint,
@@ -135,9 +136,7 @@ def get_model(n_periods: int) -> Model:
     final_age_alive = n_periods - 2
     return Model(
         regimes={
-            "working_life": working_life.replace(
-                active=lambda age: age <= final_age_alive
-            ),
+            "working": working.replace(active=lambda age: age <= final_age_alive),
             "dead": dead.replace(active=lambda age: age > final_age_alive),
         },
         ages=ages,
@@ -155,7 +154,7 @@ def get_params(
     final_age_alive = n_periods - 2
     return {
         "discount_factor": discount_factor,
-        "working_life": {
+        "working": {
             "utility": {"disutility_of_work": disutility_of_work},
             "next_wealth": {"interest_rate": interest_rate},
             "next_regime": {"final_age_alive": final_age_alive},

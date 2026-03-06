@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, cast
 
-from dags.tree import QNAME_DELIMITER
+from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
 
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.interfaces import InternalRegime
@@ -40,7 +40,7 @@ def process_params(
 
     Args:
         params: User-provided parameters dictionary.
-        params_template: Template from model.params_template.
+        params_template: Template from `model.get_params_template()`.
 
     Returns:
         internal_params as an immutable MappingProxyType with the same structure
@@ -57,24 +57,24 @@ def process_params(
     result_flat = {}
     used_keys: set[str] = set()
 
-    for key in template_flat:
-        parts = key.split(QNAME_DELIMITER)
-        param_name = parts[-1]
+    for qname in template_flat:
+        tree_path = tree_path_from_qname(qname)
+        param_name = tree_path[-1]
 
         candidates = []
 
         # 1. Exact match (e.g. regime__function__param or regime__param)
-        if key in params_flat:
-            candidates.append(key)
+        if qname in params_flat:
+            candidates.append(qname)
 
-        # 2. Regime level (if key is function level: regime__function__param)
+        # 2. Regime level (if qname is function level: regime__function__param)
         # We want to check for regime__param
-        if len(parts) == _NUM_PARTS_FUNCTION_PARAM:
-            regime = parts[0]
-            regime_level_key = f"{regime}{QNAME_DELIMITER}{param_name}"
-            # Check if this regime-level key was provided in params
-            if regime_level_key in params_flat:
-                candidates.append(regime_level_key)
+        if len(tree_path) == _NUM_PARTS_FUNCTION_PARAM:
+            regime = tree_path[0]
+            regime_level_qname = qname_from_tree_path((regime, param_name))
+            # Check if this regime-level qname was provided in params
+            if regime_level_qname in params_flat:
+                candidates.append(regime_level_qname)
 
         # 3. Model level (Global: param)
         if param_name in params_flat:
@@ -83,16 +83,16 @@ def process_params(
         # Check for ambiguity
         if len(candidates) > 1:
             raise InvalidNameError(
-                f"Ambiguous parameter specification for {key!r}. "
+                f"Ambiguous parameter specification for {qname!r}. "
                 f"Found values at: {candidates}"
             )
 
         if not candidates:
-            raise InvalidParamsError(f"Missing required parameter: {key!r}")
+            raise InvalidParamsError(f"Missing required parameter: {qname!r}")
 
-        chosen_key = candidates[0]
-        result_flat[key] = params_flat[chosen_key]
-        used_keys.add(chosen_key)
+        chosen_qname = candidates[0]
+        result_flat[qname] = params_flat[chosen_qname]
+        used_keys.add(chosen_qname)
 
     # Check for unknown keys
     # Keys in params that were not used to satisfy any template requirement
@@ -102,8 +102,10 @@ def process_params(
 
     # Split flat keys into per-regime dicts and ensure all regimes are present
     result = {name: {} for name in params_template}
-    for key, value in result_flat.items():
-        regime_name, remainder = key.split(QNAME_DELIMITER, 1)
+    for qname, value in result_flat.items():
+        tree_path = tree_path_from_qname(qname)
+        regime_name = tree_path[0]
+        remainder = qname_from_tree_path(tree_path[1:])
         result[regime_name][remainder] = value
 
     return cast("InternalParams", ensure_containers_are_immutable(result))
@@ -202,5 +204,5 @@ def get_flat_param_names(regime_params_template: RegimeParamsTemplate) -> set[st
     for key, value in regime_params_template.items():
         if isinstance(value, Mapping):
             for param_name in value:
-                result.add(f"{key}{QNAME_DELIMITER}{param_name}")
+                result.add(qname_from_tree_path((key, param_name)))
     return result

@@ -71,22 +71,18 @@ automation. Python 3.14+ is required.
 
 **Grid System (`src/lcm/grids.py`)**
 
-- `DiscreteGrid`: Categorical variables with string labels. Optional `transition`
-  parameter for state transitions.
-- `LinSpacedGrid`: Linearly spaced grid (start, stop, n_points). Optional `transition`.
-- `LogSpacedGrid`: Logarithmically spaced grid (start, stop, n_points). Optional
-  `transition`.
-- `IrregSpacedGrid`: Irregularly spaced grid (points tuple). Optional `transition`.
-- `PiecewiseLinSpacedGrid`: Piecewise linearly spaced grid with breakpoints. Optional
-  `transition`.
+- `DiscreteGrid`: Categorical variables with string labels (pure outcome space).
+- `LinSpacedGrid`: Linearly spaced grid (start, stop, n_points).
+- `LogSpacedGrid`: Logarithmically spaced grid (start, stop, n_points).
+- `IrregSpacedGrid`: Irregularly spaced grid (points tuple).
+- `PiecewiseLinSpacedGrid`: Piecewise linearly spaced grid with breakpoints.
 - `PiecewiseLogSpacedGrid`: Piecewise logarithmically spaced grid with breakpoints.
-  Optional `transition`.
-- `AgeGrid`: Lifecycle age grid (start, stop, step or precise_values)
+- `AgeGrid`: Lifecycle age grid (start, stop, step or exact_values)
 - `@categorical`: Decorator for creating categorical classes with auto-assigned integer
   codes
 - **ShockGrids** (in `src/lcm/shocks/`): `Rouwenhorst`, `Tauchen`, `Normal`, `Uniform`.
-  These have intrinsic transitions — do NOT accept a `transition` parameter. Import as
-  modules (`import lcm.shocks.iid`) and use qualified access
+  These have intrinsic transitions — do NOT accept entries in `state_transitions`.
+  Import as modules (`import lcm.shocks.iid`) and use qualified access
   (`lcm.shocks.iid.Uniform(...)`), never `from lcm.shocks.iid import Uniform`.
 
 Grid class hierarchy: `Grid` is the base class. `ContinuousGrid(Grid)` is the base for
@@ -94,12 +90,14 @@ continuous grids with `get_coordinate` method. `UniformContinuousGrid(Continuous
 is for grids with start/stop/n_points (LinSpacedGrid, LogSpacedGrid inherit from it).
 Other continuous grids (IrregSpacedGrid, PiecewiseLinSpacedGrid, PiecewiseLogSpacedGrid)
 inherit directly from ContinuousGrid. `_ShockGrid(ContinuousGrid)` is the base for
-stochastic continuous grids. `DiscreteMarkovGrid(DiscreteGrid)` is the base for discrete
-Markov-chain grids.
+stochastic continuous grids. `DiscreteGrid` supports stochastic transitions via
+`MarkovTransition`-wrapped callables in `state_transitions`.
 
-**State transitions** are attached directly to grid objects via the `transition`
-parameter. A state with no `transition` is fixed (time-invariant) — an identity
-transition is auto-generated during preprocessing.
+Grids are pure outcome-space definitions — they define what values a variable can take.
+**State transitions** live on the `Regime` via the `state_transitions` field, which maps
+state names to transition functions (or `None` for fixed states). Wrap in
+`MarkovTransition` for stochastic transitions. Per-target dicts map target regime names
+to transition functions for target-dependent transitions.
 
 ### Processing Pipeline
 
@@ -139,9 +137,13 @@ the key in the `regimes` dict passed to `Model`:
 Regime(
     transition=next_regime_func,                  # Required: regime transition function (None → terminal)
     active=lambda age: 25 <= age < 65,           # Optional: age-based predicate (default: always True)
-    states={                                     # State grids with optional transitions
-        "wealth": LinSpacedGrid(..., transition=next_wealth),  # Time-varying state
-        "education": DiscreteGrid(EduStatus, transition=None),   # Fixed state
+    states={                                     # Pure outcome-space grids
+        "wealth": LinSpacedGrid(...),
+        "education": DiscreteGrid(EduStatus),
+    },
+    state_transitions={                          # How states evolve over time
+        "wealth": next_wealth,                   # Deterministic transition
+        "education": None,                       # Fixed state (identity auto-generated)
     },
     actions={"action_name": Grid, ...},          # Action grids (can be empty)
     functions={                                  # Must include "utility"; other functions optional
@@ -151,11 +153,24 @@ Regime(
     constraints={"name": constraint_func, ...},  # Optional: constraint functions
 )
 
-# Terminal regime (transition=None)
+# Terminal regime (transition=None, no state_transitions)
 Regime(
     transition=None,
     functions={"utility": terminal_utility},
     states={"wealth": LinSpacedGrid(...)},
+)
+
+# Target-dependent transitions (keyed by target regime name)
+Regime(
+    transition=next_regime_func,
+    states={"health": DiscreteGrid(Health)},
+    state_transitions={
+        "health": {
+            "working": MarkovTransition(health_probs_working),
+            "retired": MarkovTransition(health_probs_retired),
+        },
+    },
+    ...
 )
 ```
 
@@ -165,11 +180,14 @@ Regime(
   regimes. `terminal` is a derived property (`self.transition is None`).
 - `active` is optional; defaults to `lambda _age: True` (always active)
 - `functions` must contain a `"utility"` entry (the utility function)
-- State transitions live on grids via the `transition` parameter. States without a
-  `transition` are fixed (time-invariant) — an identity transition is auto-generated.
-- ShockGrids have intrinsic transitions and do not need a `transition` parameter.
-- Fixed states (no transition) must always pass `transition=None` explicitly — never
-  rely on the default.
+- `state_transitions` maps state names to transition functions. Every non-shock state in
+  a non-terminal regime must have an entry. `None` marks a fixed state (identity
+  auto-generated). Wrap in `MarkovTransition` for stochastic transitions.
+- Per-target dicts in `state_transitions` map target regime names to transition
+  functions — every reachable target must be listed. Within a per-target dict,
+  stochasticity must be consistent (all `MarkovTransition` or none).
+- ShockGrids have intrinsic transitions and must NOT appear in `state_transitions`.
+- Terminal regimes must have empty `state_transitions`.
 - Regime names (dict keys) cannot contain the reserved separator `__`
 
 ### Model Creation
@@ -264,7 +282,7 @@ initial_regimes = ["working", "working", "retired"]
 
 ### Key Attributes
 
-- `model.params_template` - Template for parameter dictionary structure (dict by regime
+- `model.get_params_template()` - Mutable copy of the parameter template (dict by regime
   name)
 - `model.regimes` - Immutable mapping of regime names to user `Regime` objects
 - `model.internal_regimes` - Immutable mapping of regime names to processed

@@ -27,7 +27,7 @@ def model() -> Model:
     """Minimal model with two states (wealth, health) for initial states tests."""
 
     @dataclass
-    class Health:
+    class HealthStatus:
         healthy: int = 0
         sick: int = 1
 
@@ -52,12 +52,12 @@ def model() -> Model:
     alive = Regime(
         functions={"utility": utility},
         states={
-            "wealth": LinSpacedGrid(
-                start=1, stop=100, n_points=10, transition=lambda wealth: wealth
-            ),
-            "health": DiscreteGrid(
-                category_class=Health, transition=lambda health: health
-            ),
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
+            "health": DiscreteGrid(HealthStatus),
+        },
+        state_transitions={
+            "wealth": lambda wealth: wealth,
+            "health": lambda health: health,
         },
         transition=next_regime,
         active=lambda age: age < n_periods - 1,
@@ -80,7 +80,7 @@ def model() -> Model:
 def internal_params(model: Model) -> InternalParams:
     """Process params for the minimal model."""
     return process_params(
-        params={"discount_factor": 0.95}, params_template=model.params_template
+        params={"discount_factor": 0.95}, params_template=model._params_template
     )
 
 
@@ -262,7 +262,7 @@ def _make_constraint_model(wealth_grid) -> Model:
 
     @categorical
     class RegimeId:
-        working_life: int
+        working: int
         dead: int
 
     def utility(consumption: ContinuousAction) -> FloatND:
@@ -274,13 +274,14 @@ def _make_constraint_model(wealth_grid) -> Model:
         return consumption <= wealth
 
     def next_regime(age: float, final_age_alive: float) -> ScalarInt:
-        return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.working_life)
+        return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.working)
 
     working_regime = Regime(
         actions={
             "consumption": LinSpacedGrid(start=0.5, stop=10, n_points=20),
         },
         states={"wealth": wealth_grid},
+        state_transitions={"wealth": _next_wealth},
         constraints={"borrowing_constraint": borrowing_constraint},
         transition=next_regime,
         functions={"utility": utility},
@@ -292,7 +293,7 @@ def _make_constraint_model(wealth_grid) -> Model:
         active=lambda age: age > final_age,
     )
     return Model(
-        regimes={"working_life": working_regime, "dead": dead_regime},
+        regimes={"working": working_regime, "dead": dead_regime},
         ages=AgeGrid(start=0, stop=final_age + 1, step="Y"),
         regime_id_class=RegimeId,
     )
@@ -304,19 +305,17 @@ def test_infeasible_initial_states_detected():
     wealth=0.25 < min consumption (0.5), so consumption <= wealth is always False.
     """
     model = _make_constraint_model(
-        wealth_grid=LinSpacedGrid(
-            start=2.0, stop=10, n_points=15, transition=_next_wealth
-        )
+        wealth_grid=LinSpacedGrid(start=2.0, stop=10, n_points=15)
     )
     params = {
         "discount_factor": 0.95,
-        "working_life": {"next_regime": {"final_age_alive": 1}},
+        "working": {"next_regime": {"final_age_alive": 1}},
     }
     with pytest.raises(InvalidInitialConditionsError):
         model.solve_and_simulate(
             params=params,
             initial_states={"age": jnp.array([0.0]), "wealth": jnp.array([0.25])},
-            initial_regimes=["working_life"],
+            initial_regimes=["working"],
         )
 
 
@@ -327,66 +326,58 @@ def test_on_grid_state_but_combination_infeasible():
     so consumption <= wealth is always False.
     """
     model = _make_constraint_model(
-        wealth_grid=LinSpacedGrid(
-            start=0.3, stop=10, n_points=15, transition=_next_wealth
-        )
+        wealth_grid=LinSpacedGrid(start=0.3, stop=10, n_points=15)
     )
     params = {
         "discount_factor": 0.95,
-        "working_life": {"next_regime": {"final_age_alive": 1}},
+        "working": {"next_regime": {"final_age_alive": 1}},
     }
     with pytest.raises(InvalidInitialConditionsError):
         model.solve_and_simulate(
             params=params,
             initial_states={"age": jnp.array([0.0]), "wealth": jnp.array([0.3])},
-            initial_regimes=["working_life"],
+            initial_regimes=["working"],
         )
 
 
 def test_extrapolated_initial_states_accepted():
     """wealth=1.0 is above constraint threshold but below grid min — feasible."""
     model = _make_constraint_model(
-        wealth_grid=LinSpacedGrid(
-            start=2.0, stop=10, n_points=15, transition=_next_wealth
-        )
+        wealth_grid=LinSpacedGrid(start=2.0, stop=10, n_points=15)
     )
     params = {
         "discount_factor": 0.95,
-        "working_life": {"next_regime": {"final_age_alive": 1}},
+        "working": {"next_regime": {"final_age_alive": 1}},
     }
     model.solve_and_simulate(
         params=params,
         initial_states={"age": jnp.array([0.0]), "wealth": jnp.array([1.0])},
-        initial_regimes=["working_life"],
+        initial_regimes=["working"],
     )
 
 
 def test_on_grid_initial_states_accepted():
     """wealth=5.0 is above grid min — fully on grid, feasible."""
     model = _make_constraint_model(
-        wealth_grid=LinSpacedGrid(
-            start=2.0, stop=10, n_points=15, transition=_next_wealth
-        )
+        wealth_grid=LinSpacedGrid(start=2.0, stop=10, n_points=15)
     )
     params = {
         "discount_factor": 0.95,
-        "working_life": {"next_regime": {"final_age_alive": 1}},
+        "working": {"next_regime": {"final_age_alive": 1}},
     }
     model.solve_and_simulate(
         params=params,
         initial_states={"age": jnp.array([0.0]), "wealth": jnp.array([5.0])},
-        initial_regimes=["working_life"],
+        initial_regimes=["working"],
     )
 
 
 def test_irreg_spaced_grid_with_runtime_points():
     """Feasibility check works when grid points are supplied at runtime via params."""
-    model = _make_constraint_model(
-        wealth_grid=IrregSpacedGrid(n_points=15, transition=_next_wealth)
-    )
+    model = _make_constraint_model(wealth_grid=IrregSpacedGrid(n_points=15))
     params = {
         "discount_factor": 0.95,
-        "working_life": {
+        "working": {
             "wealth": {"points": jnp.linspace(0.3, 10, 15)},
             "next_regime": {"final_age_alive": 1},
         },
@@ -395,7 +386,7 @@ def test_irreg_spaced_grid_with_runtime_points():
         model.solve_and_simulate(
             params=params,
             initial_states={"wealth": jnp.array([0.3])},
-            initial_regimes=["working_life"],
+            initial_regimes=["working"],
         )
 
 
@@ -458,9 +449,10 @@ def _make_constrained_asymmetric_model() -> Model:
     alive = Regime(
         functions={"utility": utility},
         states={
-            "wealth": LinSpacedGrid(
-                start=1, stop=100, n_points=10, transition=next_wealth
-            ),
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
+        },
+        state_transitions={
+            "wealth": next_wealth,
         },
         actions={
             "consumption": LinSpacedGrid(start=51, stop=100, n_points=10),
@@ -474,7 +466,7 @@ def _make_constrained_asymmetric_model() -> Model:
         transition=None,
         functions={"utility": lambda wealth: wealth},
         states={
-            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10, transition=None),
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
         },
         active=lambda age: age >= 2,
     )
@@ -493,7 +485,7 @@ def _make_asymmetric_state_model() -> Model:
     """
 
     @dataclass
-    class Health:
+    class HealthStatus:
         healthy: int = 0
         sick: int = 1
 
@@ -514,12 +506,12 @@ def _make_asymmetric_state_model() -> Model:
     alive = Regime(
         functions={"utility": utility},
         states={
-            "wealth": LinSpacedGrid(
-                start=1, stop=100, n_points=10, transition=lambda wealth: wealth
-            ),
-            "health": DiscreteGrid(
-                category_class=Health, transition=lambda health: health
-            ),
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
+            "health": DiscreteGrid(HealthStatus),
+        },
+        state_transitions={
+            "wealth": lambda wealth: wealth,
+            "health": lambda health: health,
         },
         transition=next_regime,
         active=lambda age: age < 2,
@@ -529,7 +521,7 @@ def _make_asymmetric_state_model() -> Model:
         transition=None,
         functions={"utility": lambda wealth: wealth},
         states={
-            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10, transition=None),
+            "wealth": LinSpacedGrid(start=1, stop=100, n_points=10),
         },
         active=lambda age: age >= 2,
     )
@@ -545,7 +537,7 @@ def test_subject_in_inactive_regime_at_starting_age() -> None:
     """Subject starts in dead at age 0, but dead is only active for age >= 2."""
     model = _make_asymmetric_state_model()
     internal_params = process_params(
-        params={"discount_factor": 0.95}, params_template=model.params_template
+        params={"discount_factor": 0.95}, params_template=model._params_template
     )
 
     with pytest.raises(InvalidInitialConditionsError, match="not active"):
@@ -565,7 +557,7 @@ def test_all_subjects_in_regime_with_fewer_states() -> None:
     """Both subjects start in dead, which only needs wealth — health is not required."""
     model = _make_asymmetric_state_model()
     internal_params = process_params(
-        params={"discount_factor": 0.95}, params_template=model.params_template
+        params={"discount_factor": 0.95}, params_template=model._params_template
     )
 
     validate_initial_conditions(
@@ -587,7 +579,7 @@ def test_mixed_regimes_all_union_states_provided() -> None:
     """
     model = _make_asymmetric_state_model()
     internal_params = process_params(
-        params={"discount_factor": 0.95}, params_template=model.params_template
+        params={"discount_factor": 0.95}, params_template=model._params_template
     )
 
     validate_initial_conditions(
@@ -607,7 +599,7 @@ def test_constraint_not_checked_for_unused_regime() -> None:
     """Subject in dead (no constraint); wealth=40 fine even though alive needs > 50."""
     model = _make_constrained_asymmetric_model()
     internal_params = process_params(
-        params={"discount_factor": 0.95}, params_template=model.params_template
+        params={"discount_factor": 0.95}, params_template=model._params_template
     )
 
     validate_initial_conditions(
@@ -626,7 +618,7 @@ def test_constraint_checked_for_starting_regime() -> None:
     """Subject in alive (has constraint); wealth=40 is infeasible."""
     model = _make_constrained_asymmetric_model()
     internal_params = process_params(
-        params={"discount_factor": 0.95}, params_template=model.params_template
+        params={"discount_factor": 0.95}, params_template=model._params_template
     )
 
     with pytest.raises(InvalidInitialConditionsError, match="infeasible"):
@@ -649,7 +641,7 @@ def test_mixed_regimes_constraint_only_checked_for_starting_regime() -> None:
     """
     model = _make_constrained_asymmetric_model()
     internal_params = process_params(
-        params={"discount_factor": 0.95}, params_template=model.params_template
+        params={"discount_factor": 0.95}, params_template=model._params_template
     )
 
     with pytest.raises(InvalidInitialConditionsError, match="infeasible"):

@@ -10,7 +10,6 @@ from lcm import shocks
 from lcm.ages import AgeGrid
 from lcm.grids import (
     DiscreteGrid,
-    DiscreteMarkovGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
@@ -20,7 +19,7 @@ from lcm.grids import (
     categorical,
 )
 from lcm.model import Model
-from lcm.regime import Regime
+from lcm.regime import MarkovTransition, Regime
 from lcm.simulation.result import SimulationResult
 
 # Register MappingProxyType as a JAX pytree so it can be used in JIT-traced functions.
@@ -34,10 +33,10 @@ jax.tree_util.register_pytree_node(
 __all__ = [
     "AgeGrid",
     "DiscreteGrid",
-    "DiscreteMarkovGrid",
     "IrregSpacedGrid",
     "LinSpacedGrid",
     "LogSpacedGrid",
+    "MarkovTransition",
     "Model",
     "Piece",
     "PiecewiseLinSpacedGrid",

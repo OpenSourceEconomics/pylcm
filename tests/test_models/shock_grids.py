@@ -4,9 +4,9 @@ from jax import numpy as jnp
 
 import lcm
 from lcm.ages import AgeGrid
-from lcm.grids import DiscreteMarkovGrid, LinSpacedGrid, categorical
+from lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
 from lcm.model import Model
-from lcm.regime import Regime
+from lcm.regime import MarkovTransition, Regime
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -86,13 +86,15 @@ def get_model(
     alive = Regime(
         active=lambda age, n=final_age_alive: age <= n,
         states={
-            "wealth": LinSpacedGrid(
-                start=1, stop=5, n_points=5, transition=next_wealth
-            ),
+            "wealth": LinSpacedGrid(start=1, stop=5, n_points=5),
             "income": _SHOCK_GRID_CLASSES[distribution_type](
                 n_points=5, **_SHOCK_GRID_KWARGS[distribution_type]
             ),
-            "health": DiscreteMarkovGrid(Health, transition=next_health),
+            "health": DiscreteGrid(Health),
+        },
+        state_transitions={
+            "wealth": next_wealth,
+            "health": MarkovTransition(next_health),
         },
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),

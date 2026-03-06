@@ -21,8 +21,8 @@ import lcm
 from lcm import (
     AgeGrid,
     DiscreteGrid,
-    DiscreteMarkovGrid,
     LinSpacedGrid,
+    MarkovTransition,
     Model,
     Regime,
     categorical,
@@ -79,9 +79,9 @@ def calc_savingsgrid(x: Float1D) -> Float1D:
 
 @categorical
 class LaborSupply:
-    not_working: int
-    part_time: int
-    full_time: int
+    retired: int
+    part: int
+    full: int
 
 
 @categorical
@@ -146,13 +146,13 @@ def utility(
 
 
 def disutil(
-    work: DiscreteAction,
+    working: DiscreteAction,
     health: DiscreteState,
     education: DiscreteState,
     period: Period,
     phigrid: FloatND,
 ) -> FloatND:
-    return phigrid[period, education, health] * ((work / 2) ** (2)) / 2
+    return phigrid[period, education, health] * ((working / 2) ** (2)) / 2
 
 
 def scaled_adjustment_cost(
@@ -213,7 +213,7 @@ def scaled_productivity_shock(
 
 
 def income(
-    work: DiscreteAction,
+    working: DiscreteAction,
     period: Period,
     health: DiscreteState,
     education: DiscreteState,
@@ -223,7 +223,7 @@ def income(
 ) -> FloatND:
     return (
         income_grid[period, health, education]
-        * (work / 2)
+        * (working / 2)
         * theta_val[productivity]
         * jnp.exp(scaled_productivity_shock)
     )
@@ -233,8 +233,8 @@ def taxed_income(income: FloatND) -> FloatND:
     return lamda * (income ** (1.0 - taul)) * (avrgearn**taul)
 
 
-def benefits(period: Period, health: DiscreteState, work: DiscreteAction) -> FloatND:
-    eligible = jnp.logical_and(health == 0, work == 0)
+def benefits(period: Period, health: DiscreteState, working: DiscreteAction) -> FloatND:
+    eligible = jnp.logical_and(health == 0, working == 0)
     return jnp.where(
         jnp.logical_and(eligible, period <= retirement_age), tt0 * avrgearn, 0
     )
@@ -294,8 +294,8 @@ def next_regime(
 # --------------------------------------------------------------------------------------
 # Constraints
 # --------------------------------------------------------------------------------------
-def retirement_constraint(period: Period, work: DiscreteAction) -> BoolND:
-    return jnp.logical_not(jnp.logical_and(period > retirement_age, work > 0))
+def retirement_constraint(period: Period, working: DiscreteAction) -> BoolND:
+    return jnp.logical_not(jnp.logical_and(period > retirement_age, working > 0))
 
 
 def savings_constraint(
@@ -322,21 +322,28 @@ def dead_is_active(age: float, initial_age: float) -> bool:
 prod_shock_grid = lcm.shocks.ar1.Rouwenhorst(n_points=5, rho=rho, mu=0, sigma=1)
 
 ALIVE_REGIME = Regime(
-    transition=next_regime,
-    stochastic_transition=True,
+    transition=MarkovTransition(next_regime),
     active=partial(alive_is_active, final_age_alive=ages.values[-2]),
     states={
-        "wealth": LinSpacedGrid(start=0, stop=49, n_points=50, transition=next_wealth),
-        "health": DiscreteMarkovGrid(Health, transition=next_health),
+        "wealth": LinSpacedGrid(start=0, stop=49, n_points=50),
+        "health": DiscreteGrid(Health),
         "productivity_shock": prod_shock_grid,
-        "effort_t_1": DiscreteGrid(Effort, transition=next_effort_t_1),
+        "effort_t_1": DiscreteGrid(Effort),
         "adjustment_cost": lcm.shocks.iid.Uniform(n_points=5, start=0, stop=1),
-        "education": DiscreteGrid(Education, transition=None),
-        "productivity": DiscreteGrid(ProductivityType, transition=None),
-        "health_type": DiscreteGrid(HealthType, transition=None),
+        "education": DiscreteGrid(Education),
+        "productivity": DiscreteGrid(ProductivityType),
+        "health_type": DiscreteGrid(HealthType),
+    },
+    state_transitions={
+        "wealth": next_wealth,
+        "health": MarkovTransition(next_health),
+        "effort_t_1": next_effort_t_1,
+        "education": None,
+        "productivity": None,
+        "health_type": None,
     },
     actions={
-        "work": DiscreteGrid(LaborSupply),
+        "working": DiscreteGrid(LaborSupply),
         "saving": LinSpacedGrid(start=0, stop=49, n_points=50),
         "effort": DiscreteGrid(Effort),
     },

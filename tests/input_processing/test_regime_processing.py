@@ -28,8 +28,9 @@ def test_get_variable_info(binary_category_class):
             "a": DiscreteGrid(binary_category_class),
         },
         states={
-            "c": DiscreteGrid(binary_category_class, transition=next_c),
+            "c": DiscreteGrid(binary_category_class),
         },
+        state_transitions={"c": next_c},
         functions={"utility": utility},
     )
 
@@ -59,8 +60,9 @@ def test_get_gridspecs(binary_category_class):
             "a": DiscreteGrid(binary_category_class),
         },
         states={
-            "c": DiscreteGrid(binary_category_class, transition=next_c),
+            "c": DiscreteGrid(binary_category_class),
         },
+        state_transitions={"c": next_c},
         functions={"utility": lambda _c: None},
     )
 
@@ -83,8 +85,9 @@ def test_get_grids(binary_category_class):
             "a": DiscreteGrid(binary_category_class),
         },
         states={
-            "c": DiscreteGrid(binary_category_class, transition=next_c),
+            "c": DiscreteGrid(binary_category_class),
         },
+        state_transitions={"c": next_c},
         functions={"utility": lambda _c: None},
     )
 

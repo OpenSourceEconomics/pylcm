@@ -115,8 +115,10 @@ working_life = Regime(
             start=1,
             stop=400,
             n_points=100,
-            transition=next_wealth,
         ),
+    },
+    state_transitions={
+        "wealth": next_wealth,
     },
     constraints={
         "borrowing_constraint": borrowing_constraint,
@@ -138,8 +140,10 @@ retirement = Regime(
             start=1,
             stop=400,
             n_points=100,
-            transition=next_wealth,
         ),
+    },
+    state_transitions={
+        "wealth": next_wealth,
     },
     constraints={
         "borrowing_constraint": borrowing_constraint,

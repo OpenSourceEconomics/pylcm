@@ -14,8 +14,8 @@ import jax.numpy as jnp
 from lcm import (
     AgeGrid,
     DiscreteGrid,
-    DiscreteMarkovGrid,
     LinSpacedGrid,
+    MarkovTransition,
     Model,
     Regime,
     categorical,
@@ -40,7 +40,7 @@ from lcm.typing import (
 # Categorical variables
 # --------------------------------------------------------------------------------------
 @categorical
-class Health:
+class HealthStatus:
     bad: int
     good: int
 
@@ -59,8 +59,8 @@ class LaborSupply:
 
 @categorical
 class RegimeId:
-    working_life: int
-    retirement: int
+    working: int
+    retired: int
     dead: int
 
 
@@ -78,7 +78,7 @@ def utility_working(
     return jnp.log(consumption) - (1 - health / 2) * work_disutility
 
 
-def utility_retirement(
+def utility_retired(
     consumption: ContinuousAction,
     health: DiscreteState,  # noqa: ARG001
     partner: DiscreteState,  # noqa: ARG001
@@ -93,8 +93,8 @@ def labor_income(is_working: BoolND, wage: FloatND) -> FloatND:
     return jnp.where(is_working, wage, 0.0)
 
 
-def is_working(work: DiscreteAction) -> BoolND:
-    return work == LaborSupply.work
+def is_working(labor_supply: DiscreteAction) -> BoolND:
+    return labor_supply == LaborSupply.work
 
 
 # --------------------------------------------------------------------------------------
@@ -111,7 +111,7 @@ def next_wealth(
 
 
 def next_regime_from_working(
-    work: DiscreteAction,
+    labor_supply: DiscreteAction,
     age: float,
     final_age_alive: float,
 ) -> ScalarInt:
@@ -119,18 +119,18 @@ def next_regime_from_working(
         age >= final_age_alive,
         RegimeId.dead,
         jnp.where(
-            work == LaborSupply.retire,
-            RegimeId.retirement,
-            RegimeId.working_life,
+            labor_supply == LaborSupply.retire,
+            RegimeId.retired,
+            RegimeId.working,
         ),
     )
 
 
-def next_regime_from_retirement(age: float, final_age_alive: float) -> ScalarInt:
+def next_regime_from_retired(age: float, final_age_alive: float) -> ScalarInt:
     return jnp.where(
         age >= final_age_alive,
         RegimeId.dead,
-        RegimeId.retirement,
+        RegimeId.retired,
     )
 
 
@@ -140,7 +140,7 @@ def next_regime_from_retirement(age: float, final_age_alive: float) -> ScalarInt
 def next_health(health: DiscreteState, partner: DiscreteState) -> FloatND:
     """Stochastic transition with JIT-calculated markov transition probabilities."""
     return jnp.where(
-        health == Health.bad,
+        health == HealthStatus.bad,
         jnp.where(
             partner == PartnerStatus.single,
             jnp.array([0.9, 0.1]),
@@ -156,12 +156,12 @@ def next_health(health: DiscreteState, partner: DiscreteState) -> FloatND:
 
 def next_partner(
     period: Period,
-    work: DiscreteAction,
+    labor_supply: DiscreteAction,
     partner: DiscreteState,
     partner_transition: FloatND,
 ) -> FloatND:
     """Stochastic transition using pre-calculated markov transition probabilities."""
-    return partner_transition[period, work, partner]
+    return partner_transition[period, labor_supply, partner]
 
 
 # --------------------------------------------------------------------------------------
@@ -177,9 +177,9 @@ def borrowing_constraint(
 # Model specification
 # ======================================================================================
 
-working_life = Regime(
+working = Regime(
     actions={
-        "work": DiscreteGrid(LaborSupply),
+        "labor_supply": DiscreteGrid(LaborSupply),
         "consumption": LinSpacedGrid(
             start=1,
             stop=100,
@@ -187,14 +187,18 @@ working_life = Regime(
         ),
     },
     states={
-        "health": DiscreteMarkovGrid(Health, transition=next_health),
-        "partner": DiscreteMarkovGrid(PartnerStatus, transition=next_partner),
+        "health": DiscreteGrid(HealthStatus),
+        "partner": DiscreteGrid(PartnerStatus),
         "wealth": LinSpacedGrid(
             start=1,
             stop=100,
             n_points=100,
-            transition=next_wealth,
         ),
+    },
+    state_transitions={
+        "health": MarkovTransition(next_health),
+        "partner": MarkovTransition(next_partner),
+        "wealth": next_wealth,
     },
     constraints={
         "borrowing_constraint": borrowing_constraint,
@@ -209,24 +213,28 @@ working_life = Regime(
 )
 
 
-retirement = Regime(
+retired = Regime(
     actions={"consumption": LinSpacedGrid(start=1, stop=100, n_points=200)},
     states={
-        "health": DiscreteMarkovGrid(Health, transition=next_health),
-        "partner": DiscreteMarkovGrid(PartnerStatus, transition=next_partner),
+        "health": DiscreteGrid(HealthStatus),
+        "partner": DiscreteGrid(PartnerStatus),
         "wealth": LinSpacedGrid(
             start=1,
             stop=100,
             n_points=100,
-            transition=next_wealth,
         ),
+    },
+    state_transitions={
+        "health": MarkovTransition(next_health),
+        "partner": MarkovTransition(next_partner),
+        "wealth": next_wealth,
     },
     constraints={
         "borrowing_constraint": borrowing_constraint,
     },
-    transition=next_regime_from_retirement,
+    transition=next_regime_from_retired,
     functions={
-        "utility": utility_retirement,
+        "utility": utility_retired,
     },
     active=lambda _age: True,  # Placeholder, overridden at model creation
 )
@@ -243,12 +251,8 @@ def get_model(n_periods: int) -> Model:
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     return Model(
         regimes={
-            "working_life": working_life.replace(
-                active=lambda age, n=n_periods: age < n - 1
-            ),
-            "retirement": retirement.replace(
-                active=lambda age, n=n_periods: age < n - 1
-            ),
+            "working": working.replace(active=lambda age, n=n_periods: age < n - 1),
+            "retired": retired.replace(active=lambda age, n=n_periods: age < n - 1),
             "dead": dead.replace(active=lambda age, n=n_periods: age >= n - 1),
         },
         ages=ages,
@@ -308,17 +312,17 @@ def get_params(
     final_age_alive = n_periods - 2
     return {
         "discount_factor": discount_factor,
-        "working_life": {
+        "working": {
             "utility": {"disutility_of_work": disutility_of_work},
             "next_wealth": {"interest_rate": interest_rate},
             "next_partner": {"partner_transition": partner_transition},
             "next_regime": {"final_age_alive": final_age_alive},
             "labor_income": {"wage": wage},
         },
-        "retirement": {
+        "retired": {
             "next_wealth": {"interest_rate": interest_rate, "labor_income": 0.0},
             "next_partner": {
-                "work": LaborSupply.retire,
+                "labor_supply": LaborSupply.retire,
                 "partner_transition": partner_transition,
             },
             "next_regime": {"final_age_alive": final_age_alive},

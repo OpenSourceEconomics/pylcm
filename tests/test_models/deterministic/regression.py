@@ -1,5 +1,3 @@
-import dataclasses
-
 import jax.numpy as jnp
 
 from lcm import (
@@ -99,9 +97,7 @@ def borrowing_constraint(
 # ======================================================================================
 
 START_AGE = 18
-DEFAULT_WEALTH_GRID = LinSpacedGrid(
-    start=1, stop=400, n_points=100, transition=next_wealth
-)
+DEFAULT_WEALTH_GRID = LinSpacedGrid(start=1, stop=400, n_points=100)
 DEFAULT_CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 
 working_life = Regime(
@@ -111,6 +107,9 @@ working_life = Regime(
     },
     states={
         "wealth": DEFAULT_WEALTH_GRID,  # placeholder, will be replaced by get_model()
+    },
+    state_transitions={
+        "wealth": next_wealth,
     },
     constraints={"borrowing_constraint": borrowing_constraint},
     transition=next_regime,
@@ -143,12 +142,11 @@ def get_model(
     | PiecewiseLogSpacedGrid = DEFAULT_CONSUMPTION_GRID,
 ) -> Model:
     final_age_alive = START_AGE + n_periods - 2
-    _wealth_grid = dataclasses.replace(wealth_grid, transition=next_wealth)
     return Model(
         regimes={
             "working_life": working_life.replace(
                 active=lambda age: age <= final_age_alive,
-                states={"wealth": _wealth_grid},
+                states={"wealth": wealth_grid},
                 actions={
                     "work": DiscreteGrid(LaborSupply),
                     "consumption": consumption_grid,

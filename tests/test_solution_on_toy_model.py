@@ -12,8 +12,8 @@ from pandas.testing import assert_frame_equal
 from lcm import (
     AgeGrid,
     DiscreteGrid,
-    DiscreteMarkovGrid,
     LinSpacedGrid,
+    MarkovTransition,
     Model,
     Regime,
     categorical,
@@ -33,19 +33,19 @@ from tests.conftest import DECIMAL_PRECISION
 # Model specification
 # ======================================================================================
 @categorical
-class DiscreteConsumption:
+class ConsumptionChoice:
     low: int
     high: int
 
 
 @categorical
-class LaborSupply:
-    not_working: int
+class WorkingStatus:
+    retired: int
     working: int
 
 
 @categorical
-class Health:
+class HealthStatus:
     bad: int
     good: int
 
@@ -58,17 +58,17 @@ class RegimeId:
 
 def utility(
     consumption: DiscreteAction,
-    work: DiscreteAction,
+    working: DiscreteAction,
     wealth: ContinuousState,  # noqa: ARG001
     health: DiscreteState,
 ) -> FloatND:
-    return jnp.log(1.0 + health * consumption) - 0.5 * work
+    return jnp.log(1.0 + health * consumption) - 0.5 * working
 
 
 def next_wealth(
-    wealth: ContinuousState, consumption: DiscreteAction, work: DiscreteAction
+    wealth: ContinuousState, consumption: DiscreteAction, working: DiscreteAction
 ) -> ContinuousState:
-    return wealth - consumption + work
+    return wealth - consumption + working
 
 
 def next_regime(age: float, final_age_alive: float) -> ScalarInt:
@@ -83,16 +83,18 @@ def borrowing_constraint(
 
 alive_deterministic = Regime(
     actions={
-        "consumption": DiscreteGrid(DiscreteConsumption),
-        "work": DiscreteGrid(LaborSupply),
+        "consumption": DiscreteGrid(ConsumptionChoice),
+        "working": DiscreteGrid(WorkingStatus),
     },
     states={
         "wealth": LinSpacedGrid(
             start=0,
             stop=2,
             n_points=1,
-            transition=next_wealth,
         ),
+    },
+    state_transitions={
+        "wealth": next_wealth,
     },
     functions={"utility": utility},
     constraints={
@@ -114,8 +116,9 @@ def next_health(health: DiscreteState, health_transition: FloatND) -> FloatND:
 
 
 alive_stochastic = alive_deterministic.replace(
-    states=dict(alive_deterministic.states)
-    | {"health": DiscreteMarkovGrid(Health, transition=next_health)},
+    states=dict(alive_deterministic.states) | {"health": DiscreteGrid(HealthStatus)},
+    state_transitions=dict(alive_deterministic.state_transitions)
+    | {"health": MarkovTransition(next_health)},
 )
 
 model_deterministic = Model(
@@ -142,13 +145,13 @@ def value_second_period_deterministic(wealth):
 def policy_second_period_deterministic(wealth):
     """Policy function in the second (last) period. Computed using pen and paper.
 
-    First column corresponds to consumption choice, second to work choice.
+    First column corresponds to consumption choice, second to working choice.
 
     """
     policy = np.column_stack(
         (np.minimum(1, np.floor(wealth)), np.zeros_like(wealth)),
     ).astype(int)
-    return matrix_to_dict_of_vectors(policy, col_names=["consumption", "work"])
+    return matrix_to_dict_of_vectors(policy, col_names=["consumption", "working"])
 
 
 def value_first_period_deterministic(wealth, params):
@@ -176,7 +179,7 @@ def policy_first_period_deterministic(wealth, params):
         dtype=int,
     )
     policy = policies[index]
-    return matrix_to_dict_of_vectors(policy, col_names=["consumption", "work"])
+    return matrix_to_dict_of_vectors(policy, col_names=["consumption", "working"])
 
 
 def analytical_solve_deterministic(wealth_grid, params):
@@ -189,7 +192,7 @@ def analytical_simulate_deterministic(initial_wealth, params):
     """Compute analytical simulation results in the same format as to_dataframe().
 
     Returns DataFrame with columns: period, subject_id, regime, value, wealth,
-    consumption, work. Sorted by (subject_id, period).
+    consumption, working. Sorted by (subject_id, period).
     Uses categorical dtypes for discrete variables to match to_dataframe() output.
     """
     n_subjects = len(initial_wealth)
@@ -208,7 +211,9 @@ def analytical_simulate_deterministic(initial_wealth, params):
     consumption_codes = np.concatenate(
         [policy_0["consumption"], policy_1["consumption"]]
     ).astype(int)
-    work_codes = np.concatenate([policy_0["work"], policy_1["work"]]).astype(int)
+    working_codes = np.concatenate([policy_0["working"], policy_1["working"]]).astype(
+        int
+    )
 
     df = pd.DataFrame(
         {
@@ -225,9 +230,9 @@ def analytical_simulate_deterministic(initial_wealth, params):
                 consumption_codes.tolist(),
                 categories=pd.Index(["low", "high"]),
             ),
-            "work": pd.Categorical.from_codes(
-                work_codes.tolist(),
-                categories=pd.Index(["not_working", "working"]),
+            "working": pd.Categorical.from_codes(
+                working_codes.tolist(),
+                categories=pd.Index(["retired", "working"]),
             ),
         }
     )
@@ -258,13 +263,13 @@ def value_second_period_stochastic(wealth, health):
 def policy_second_period_stochastic(wealth, health):
     """Policy function in the second (last) period. Computed using pen and paper.
 
-    First column corresponds to consumption choice, second to work choice.
+    First column corresponds to consumption choice, second to working choice.
 
     """
     policy = np.column_stack(
         (np.minimum(1, np.floor(wealth)) * health, np.zeros_like(wealth)),
     ).astype(int)
-    return matrix_to_dict_of_vectors(policy, col_names=["consumption", "work"])
+    return matrix_to_dict_of_vectors(policy, col_names=["consumption", "working"])
 
 
 def value_first_period_stochastic(wealth, health, params):
@@ -328,7 +333,7 @@ def policy_first_period_stochastic(wealth, health, params):
 
     _health = health.reshape(-1, 1)
     policies = _health * policy_health_1 + (1 - _health) * policy_health_0
-    return matrix_to_dict_of_vectors(policies, col_names=["consumption", "work"])
+    return matrix_to_dict_of_vectors(policies, col_names=["consumption", "working"])
 
 
 def analytical_solve_stochastic(wealth_grid, health_grid, params):
@@ -345,7 +350,7 @@ def analytical_simulate_stochastic(initial_wealth, initial_health, health_1, par
     """Compute analytical simulation results in the same format as to_dataframe().
 
     Returns DataFrame with columns: period, subject_id, regime, value, health, wealth,
-    consumption, work. Sorted by (subject_id, period).
+    consumption, working. Sorted by (subject_id, period).
     Uses categorical dtypes for discrete variables to match to_dataframe() output.
     """
     n_subjects = len(initial_wealth)
@@ -369,7 +374,9 @@ def analytical_simulate_stochastic(initial_wealth, initial_health, health_1, par
     consumption_codes = np.concatenate(
         [policy_0["consumption"], policy_1["consumption"]]
     ).astype(int)
-    work_codes = np.concatenate([policy_0["work"], policy_1["work"]]).astype(int)
+    working_codes = np.concatenate([policy_0["working"], policy_1["working"]]).astype(
+        int
+    )
 
     df = pd.DataFrame(
         {
@@ -390,9 +397,9 @@ def analytical_simulate_stochastic(initial_wealth, initial_health, health_1, par
                 consumption_codes.tolist(),
                 categories=pd.Index(["low", "high"]),
             ),
-            "work": pd.Categorical.from_codes(
-                work_codes.tolist(),
-                categories=pd.Index(["not_working", "working"]),
+            "working": pd.Categorical.from_codes(
+                working_codes.tolist(),
+                categories=pd.Index(["retired", "working"]),
             ),
         }
     )

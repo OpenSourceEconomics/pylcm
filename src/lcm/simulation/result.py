@@ -13,13 +13,13 @@ from typing import Any, Literal
 import jax.numpy as jnp
 import pandas as pd
 from dags import concatenate_functions
-from dags.tree import QNAME_DELIMITER
+from dags.tree import tree_path_from_qname
 from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
-from lcm.grids import DiscreteGrid, DiscreteMarkovGrid
+from lcm.grids import DiscreteGrid
 from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
 from lcm.typing import (
     FlatRegimeParams,
@@ -299,10 +299,7 @@ def _compute_metadata(
 
         # Extract categories from discrete grids
         for var_name, grid in regime.gridspecs.items():
-            if (
-                isinstance(grid, DiscreteGrid | DiscreteMarkovGrid)
-                and var_name not in discrete_categories
-            ):
+            if isinstance(grid, DiscreteGrid) and var_name not in discrete_categories:
                 discrete_categories[var_name] = grid.categories
 
     n_periods = len(raw_results[regime_names[0]])
@@ -401,7 +398,7 @@ def _get_stochastic_weight_function_names(regime: InternalRegime) -> set[str]:
     return {
         f"weight_{name}"
         for name in flat_transitions
-        if name.split(QNAME_DELIMITER)[-1] in stochastic_transition_names
+        if tree_path_from_qname(name)[-1] in stochastic_transition_names
     }
 
 
@@ -769,6 +766,7 @@ def _atomic_dump(obj: SimulationResult, path: str | Path, *, protocol: int) -> P
         # one, never a partially-written file. (Temp file is closed already, which
         # matters on Windows.)
         tmp.replace(p)
+        tmp = None
         return p
     finally:
         # If anything failed before the replace succeeded, delete the temp file. We used

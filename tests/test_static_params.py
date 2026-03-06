@@ -44,9 +44,10 @@ def _make_model(n_periods=3, *, extra_fixed_params=None):
     alive = Regime(
         functions={"utility": _utility},
         states={
-            "wealth": LinSpacedGrid(
-                start=1, stop=10, n_points=5, transition=_next_wealth
-            ),
+            "wealth": LinSpacedGrid(start=1, stop=10, n_points=5),
+        },
+        state_transitions={
+            "wealth": _next_wealth,
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},
@@ -80,7 +81,7 @@ def test_fixed_param_removed_from_template():
         extra_fixed_params={"interest_rate": 0.05},
     )
     # interest_rate should NOT be in the template
-    alive_template = model.params_template.get("alive", {})
+    alive_template = model._params_template.get("alive", {})
     all_param_names = set()
     for func_params in alive_template.values():
         all_param_names.update(func_params.keys())
@@ -143,7 +144,7 @@ def test_regime_level_fixed_param():
         extra_fixed_params={"alive": {"interest_rate": 0.05}},
     )
     # interest_rate should be removed from alive's template
-    alive_template = model.params_template.get("alive", {})
+    alive_template = model._params_template.get("alive", {})
     all_param_names = set()
     for func_params in alive_template.values():
         all_param_names.update(func_params.keys())
@@ -160,7 +161,7 @@ def test_all_params_fixed():
         extra_fixed_params={"interest_rate": 0.05, "discount_factor": 0.95},
     )
     # All regime templates should be empty
-    for regime_template in model.params_template.values():
+    for regime_template in model._params_template.values():
         assert len(regime_template) == 0
 
     # Solve with empty params
