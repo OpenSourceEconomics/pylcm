@@ -235,7 +235,9 @@ def _next_shock(shock: DiscreteState, shock_transition: FloatND) -> FloatND:
     return shock_transition[shock]
 
 
-def _make_minimal_stochastic_model(shock_transition_func=_next_shock) -> Model:
+def _make_minimal_stochastic_model(
+    shock_transition_func: object = _next_shock,
+) -> Model:
     """Create a minimal stochastic model with a discrete shock state."""
 
     final_age = 1

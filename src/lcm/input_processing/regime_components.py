@@ -43,7 +43,6 @@ from lcm.utils import flatten_regime_namespace
 
 def build_Q_and_F_functions(
     *,
-    regime_name: str,
     regime: Regime,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     internal_functions: InternalFunctions,
@@ -64,7 +63,6 @@ def build_Q_and_F_functions(
             )
         else:
             Q_and_F = get_Q_and_F(
-                regime_name=regime_name,
                 regimes_to_active_periods=regimes_to_active_periods,
                 period=period,
                 age=age,

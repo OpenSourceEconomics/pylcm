@@ -29,7 +29,6 @@ from lcm.utils import normalize_regime_transition_probs
 
 def get_Q_and_F(
     *,
-    regime_name: str,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     period: int,
     age: float,
@@ -40,7 +39,6 @@ def get_Q_and_F(
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
     Args:
-        regime_name: The name of the regime.
         regimes_to_active_periods: Mapping regime names to their active periods.
         period: The current period.
         age: The age corresponding to the current period.
@@ -84,14 +82,14 @@ def get_Q_and_F(
         )
         next_stochastic_states_weights[target_regime] = (
             get_next_stochastic_weights_function(
-                regime_name=regime_name,
+                regime_name=target_regime,
                 functions=internal_functions.functions,
                 transitions=transitions,
                 stochastic_transition_names=stochastic_transition_names,
             )
         )
         joint_weights_from_marginals[target_regime] = _get_joint_weights_function(
-            regime_name=regime_name,
+            regime_name=target_regime,
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
         )

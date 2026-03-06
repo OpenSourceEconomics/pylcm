@@ -184,7 +184,7 @@ class Regime:
     def get_all_functions(self) -> MappingProxyType[str, UserFunction]:
         """Get all regime functions including utility, constraints, and transitions.
 
-        Collects functions from three sources:
+        Collects functions from four sources:
         - `self.functions` (utility, helpers, H)
         - `self.constraints`
         - State transitions from `self.state_transitions`
@@ -343,12 +343,16 @@ def _validate_state_transitions(regime: Regime) -> list[str]:
     }
     non_shock_names = set(regime.states) - shock_names
 
-    # Keys must be a subset of state names
+    # Keys not in states are allowed only with actual transitions (not None).
+    # None means identity, which requires the state to exist in this regime.
     extra_keys = set(regime.state_transitions) - set(regime.states)
-    if extra_keys:
-        error_messages.append(
-            f"state_transitions contains keys not in states: {extra_keys}.",
-        )
+    for key in extra_keys:
+        value = regime.state_transitions[key]
+        if value is None:
+            error_messages.append(
+                f"state_transitions['{key}'] is None but '{key}' is not in states. "
+                "Identity transitions require the state to exist in this regime.",
+            )
 
     # ShockGrid names must NOT appear in state_transitions
     shock_in_transitions = shock_names & set(regime.state_transitions)
@@ -430,6 +434,31 @@ def _make_identity_fn(
     return _IdentityTransition(state_name, annotation=annotation)
 
 
+def _add_raw_transition(
+    transitions: dict[str, UserFunction],
+    name: str,
+    raw: UserFunction
+    | MarkovTransition
+    | Mapping[str, UserFunction | MarkovTransition],
+) -> None:
+    """Add a single raw transition entry to the transitions dict.
+
+    Handles callables, MarkovTransition, and per-target dicts.
+
+    """
+    if isinstance(raw, MarkovTransition):
+        transitions[f"next_{name}"] = raw.func
+    elif callable(raw):
+        transitions[f"next_{name}"] = raw
+    elif isinstance(raw, Mapping):
+        for target_name, target_value in raw.items():
+            key = f"next_{name}{QNAME_DELIMITER}{target_name}"
+            if isinstance(target_value, MarkovTransition):
+                transitions[key] = target_value.func
+            else:
+                transitions[key] = target_value
+
+
 def _collect_state_transitions(
     states: Mapping[str, Grid],
     state_transitions: Mapping[
@@ -450,6 +479,10 @@ def _collect_state_transitions(
     - Per-target dict → ALL variants with qualified names
       (e.g., `next_health__working`, `next_health__retired`)
 
+    Target-only states (in `state_transitions` but not in `states`) are also
+    collected. These have no grid in the source regime; `None` is rejected by
+    validation, so only callables, MarkovTransition, and per-target dicts remain.
+
     """
     transitions: dict[str, UserFunction] = {}
     for name, grid in states.items():
@@ -468,16 +501,12 @@ def _collect_state_transitions(
         if raw is None:
             ann = DiscreteState if isinstance(grid, DiscreteGrid) else ContinuousState
             transitions[f"next_{name}"] = _make_identity_fn(name, annotation=ann)
-        elif isinstance(raw, MarkovTransition):
-            transitions[f"next_{name}"] = raw.func
-        elif callable(raw):
-            transitions[f"next_{name}"] = raw
-        elif isinstance(raw, Mapping):
-            # Per-target dict: include all variants with qualified names
-            for target_name, target_value in raw.items():
-                key = f"next_{name}{QNAME_DELIMITER}{target_name}"
-                if isinstance(target_value, MarkovTransition):
-                    transitions[key] = target_value.func
-                else:
-                    transitions[key] = target_value
+        else:
+            _add_raw_transition(transitions, name, raw)
+
+    # Second pass: target-only states (in state_transitions but not in states).
+    for name, raw in state_transitions.items():
+        if name not in states and raw is not None:
+            _add_raw_transition(transitions, name, raw)
+
     return transitions

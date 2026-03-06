@@ -1,4 +1,5 @@
 import dags.tree as dt
+from dags.tree import tree_path_from_qname
 from jax import Array
 
 from lcm.exceptions import InvalidNameError
@@ -41,14 +42,24 @@ def create_regime_params_template(
         *regime.states,
     }
 
-    function_params = {}
+    function_params: dict[str, dict[str, type]] = {}
     # Use dags.tree to discover parameters and their type annotations for each function.
     for name, func in regime.get_all_functions().items():
         tree = dt.create_tree_with_input_types({name: func})
         excl = H_variables if name == "H" else variables
         # Filter out variables to get only the parameters
         params = {k: v for k, v in sorted(tree.items()) if k not in excl}
-        function_params[name] = params
+
+        # Per-target dict transitions produce qualified names like
+        # "next_health__working". Convert to "to_working_next_health" so each
+        # target variant gets its own template key (no __ in keys).
+        path = tree_path_from_qname(name)
+        template_key = f"to_{path[1]}_{path[0]}" if len(path) > 1 else name
+
+        if template_key in function_params:
+            function_params[template_key] |= params
+        else:
+            function_params[template_key] = params
 
     # Validate that no discovered parameter shadows a state or action name.
     # In practice, only H can trigger this since other functions already exclude

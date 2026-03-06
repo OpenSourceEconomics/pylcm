@@ -144,7 +144,6 @@ def process_regimes(
         )
 
         Q_and_F_functions = build_Q_and_F_functions(
-            regime_name=name,
             regime=regime,
             regimes_to_active_periods=regimes_to_active_periods,
             internal_functions=internal_functions,
@@ -246,10 +245,17 @@ def _get_internal_functions(
         **flat_nested_transitions,
     }
 
+    # Compute per-target next names for param key extraction
+    per_target_next_names = frozenset(
+        f"next_{name}"
+        for name, raw in regime.state_transitions.items()
+        if isinstance(raw, Mapping) and not isinstance(raw, MarkovTransition)
+    )
+
     # Compute stochastic state names from regime.state_transitions
     markov_state_names: set[str] = set()
-    for name in regime.states:
-        raw = regime.state_transitions.get(name)
+    for name in regime.state_transitions:
+        raw = regime.state_transitions[name]
         if isinstance(raw, MarkovTransition) or (
             isinstance(raw, Mapping)
             and any(isinstance(v, MarkovTransition) for v in raw.values())
@@ -291,7 +297,7 @@ def _get_internal_functions(
         )
 
     for func_name, func in deterministic_transition_functions.items():
-        param_key = _extract_param_key(func_name)
+        param_key = _extract_param_key(func_name, per_target_next_names)
         functions[func_name] = _rename_params_to_qnames(
             func=func,
             regime_params_template=regime_params_template,
@@ -302,7 +308,7 @@ def _get_internal_functions(
         # The user-specified next function is the weighting function for the
         # stochastic transition. For the solution, we must also define a next function
         # that returns the whole grid of possible values.
-        param_key = _extract_param_key(func_name)
+        param_key = _extract_param_key(func_name, per_target_next_names)
         functions[f"weight_{func_name}"] = _rename_params_to_qnames(
             func=func,
             regime_params_template=regime_params_template,
@@ -441,16 +447,24 @@ def _extract_transitions_from_regime(
     return nested
 
 
-def _extract_param_key(func_name: str) -> str:
+def _extract_param_key(
+    func_name: str,
+    per_target_next_names: frozenset[str] = frozenset(),
+) -> str:
     """Extract the param template key from a possibly prefixed function name.
 
     For prefixed names like "work__next_wealth", returns "next_wealth".
+    For per-target transitions like "work__next_health" where "next_health" is in
+    `per_target_next_names`, returns "to_work_next_health" to match the template key.
     For unprefixed names like "next_regime", returns the name unchanged.
 
     """
     path = tree_path_from_qname(func_name)
     if len(path) > 1:
-        return qname_from_tree_path(path[1:])
+        suffix = qname_from_tree_path(path[1:])
+        if suffix in per_target_next_names:
+            return f"to_{path[0]}_{suffix}"
+        return suffix
     return func_name
 
 
