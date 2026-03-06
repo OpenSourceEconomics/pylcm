@@ -1,3 +1,5 @@
+from types import MappingProxyType
+
 import dags.tree as dt
 from dags.tree import tree_path_from_qname
 
@@ -6,12 +8,9 @@ from lcm.grids import IrregSpacedGrid
 from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
 from lcm.typing import RegimeParamsTemplate
-from lcm.utils import ensure_containers_are_immutable
 
 
-def create_regime_params_template(
-    regime: Regime,
-) -> RegimeParamsTemplate:
+def create_regime_params_template(regime: Regime) -> RegimeParamsTemplate:
     """Create parameter template from a regime specification.
 
     Uses dags.tree.create_tree_with_input_types() to discover parameters and their
@@ -92,4 +91,6 @@ def create_regime_params_template(
                 grid.params_to_pass_at_runtime, "float"
             )
 
-    return ensure_containers_are_immutable(function_params)  # ty: ignore[invalid-return-type]
+    return MappingProxyType(
+        {k: MappingProxyType(v) for k, v in function_params.items()}
+    )
