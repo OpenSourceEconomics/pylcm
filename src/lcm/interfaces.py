@@ -2,6 +2,7 @@ import dataclasses
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
+from typing import cast
 
 import pandas as pd
 from jax import Array
@@ -9,7 +10,6 @@ from jax import Array
 from lcm.grids import (
     ContinuousGrid,
     DiscreteGrid,
-    DiscreteMarkovGrid,
     Grid,
     IrregSpacedGrid,
 )
@@ -135,9 +135,7 @@ class StateSpaceInfo:
     state_names: tuple[str, ...]
     """Tuple of state variable names."""
 
-    discrete_states: MappingProxyType[
-        str, DiscreteGrid | DiscreteMarkovGrid | _ShockGrid
-    ]
+    discrete_states: MappingProxyType[str, DiscreteGrid | _ShockGrid]
     """Immutable mapping of discrete state names to their grids."""
 
     continuous_states: MappingProxyType[str, ContinuousGrid]
@@ -253,9 +251,7 @@ class InternalRegime:
                     continue
                 shock_kw: dict[str, float] = dict(spec.params)
                 for p in spec.params_to_pass_at_runtime:
-                    val = all_params[f"{state_name}__{p}"]
-                    assert isinstance(val, int | float)  # noqa: S101
-                    shock_kw[p] = val
+                    shock_kw[p] = cast("float", all_params[f"{state_name}__{p}"])
                 replacements[state_name] = spec.compute_gridpoints(**shock_kw)
 
         if not replacements:

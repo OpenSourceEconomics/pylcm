@@ -106,7 +106,7 @@ def test_runtime_grid_in_params_template():
     model = _make_model(
         wealth_grid=IrregSpacedGrid(n_points=5),
     )
-    alive_template = model.params_template["alive"]
+    alive_template = model._params_template["alive"]
     assert "wealth" in alive_template
     assert "points" in alive_template["wealth"]
 

@@ -2,12 +2,12 @@ from collections.abc import Mapping
 from types import MappingProxyType
 
 import jax
-from dags.tree import QNAME_DELIMITER
+from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import Array, vmap
 from jax import numpy as jnp
 
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
-from lcm.grids import DiscreteGrid, DiscreteMarkovGrid
+from lcm.grids import DiscreteGrid
 from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.random import generate_simulation_keys
 from lcm.state_action_space import create_state_action_space
@@ -51,7 +51,6 @@ def create_regime_state_action_space(
     Args:
         internal_regime: The internal regime instance.
         states: The current states of all subjects.
-        subject_ids_in_regime: Indices of subjects in the current regime.
 
     Returns:
         The state-action space for the subjects in the regime.
@@ -111,7 +110,7 @@ def calculate_next_states(
     stochastic_next_function_names = [
         next_func_name
         for next_func_name in flatten_regime_namespace(internal_regime.transitions)
-        if next_func_name.split(QNAME_DELIMITER)[-1] in stochastic_transition_names
+        if tree_path_from_qname(next_func_name)[-1] in stochastic_transition_names
     ]
     # There is a bug that sometimes changes the order of the names,
     # sorting fixes this
@@ -291,8 +290,9 @@ def _update_states_for_subjects(
     updated_states = dict(all_states)
     for next_state_name, next_state_values in computed_next_states.items():
         # State names may be prefixed with regime (e.g., "working__next_wealth")
-        # We need to replace "next_" with "" to get "working__wealth"
-        state_name = next_state_name.replace("next_", "")
+        # We need to strip "next_" from the final component to get "working__wealth"
+        path = tree_path_from_qname(next_state_name)
+        state_name = qname_from_tree_path((*path[:-1], path[-1].removeprefix("next_")))
         updated_states[state_name] = jnp.where(
             subject_indices,
             next_state_values,
@@ -337,7 +337,7 @@ def convert_initial_states_to_nested(
                 regime_states[state_name] = initial_states[state_name]
             elif isinstance(
                 internal_regime.gridspecs[state_name],
-                DiscreteGrid | DiscreteMarkovGrid,
+                DiscreteGrid,
             ):
                 regime_states[state_name] = jnp.full(
                     n_subjects, MISSING_CAT_CODE, dtype=jnp.int32

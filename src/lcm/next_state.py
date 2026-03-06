@@ -7,7 +7,7 @@ import jax
 import pandas as pd
 from dags import concatenate_functions
 from dags.signature import with_signature
-from dags.tree import QNAME_DELIMITER
+from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import Array
 
 from lcm.grids import Grid
@@ -161,14 +161,14 @@ def _extend_transitions_for_simulation(
     discrete_stochastic_targets = [
         func_name
         for func_name in transitions
-        if func_name.split(QNAME_DELIMITER)[-1] in stochastic_transition_names
-        and func_name.split(QNAME_DELIMITER)[-1].replace("next_", "") not in shock_names
+        if tree_path_from_qname(func_name)[-1] in stochastic_transition_names
+        and tree_path_from_qname(func_name)[-1].replace("next_", "") not in shock_names
     ]
     continuous_stochastic_targets = [
         func_name
         for func_name in transitions
-        if func_name.split(QNAME_DELIMITER)[-1] in stochastic_transition_names
-        and func_name.split(QNAME_DELIMITER)[-1].replace("next_", "") in shock_names
+        if tree_path_from_qname(func_name)[-1] in stochastic_transition_names
+        and tree_path_from_qname(func_name)[-1].replace("next_", "") in shock_names
     ]
     # Handle stochastic next states functions
     # ----------------------------------------------------------------------------------
@@ -262,7 +262,7 @@ def _create_ar1_next_func(
 ) -> StochasticNextFunction:
     fixed_params = dict(gridspec.params)
     runtime_param_names = {
-        f"{prev_state_name}{QNAME_DELIMITER}{p}": p
+        qname_from_tree_path((prev_state_name, p)): p
         for p in gridspec.params_to_pass_at_runtime
     }
     args: dict[str, str] = {
@@ -294,7 +294,7 @@ def _create_iid_next_func(
 ) -> StochasticNextFunction:
     fixed_params = dict(gridspec.params)
     runtime_param_names = {
-        f"{prev_state_name}{QNAME_DELIMITER}{p}": p
+        qname_from_tree_path((prev_state_name, p)): p
         for p in gridspec.params_to_pass_at_runtime
     }
     args: dict[str, str] = {

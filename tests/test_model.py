@@ -1,7 +1,15 @@
 import jax.numpy as jnp
 import pytest
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    LinSpacedGrid,
+    MarkovTransition,
+    Model,
+    Regime,
+    categorical,
+)
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.typing import (
     BoolND,
@@ -146,7 +154,7 @@ def test_regime_transition_must_be_callable():
     """Regime rejects non-callable transition."""
     with pytest.raises(
         RegimeInitializationError,
-        match="transition must be a callable or None",
+        match="transition must be a callable, MarkovTransition, or None",
     ):
         Regime(
             states={},
@@ -172,8 +180,7 @@ def test_model_requires_terminal_regime(binary_category_class):
         },
         actions={},
         functions={"utility": lambda health: health},
-        transition=lambda: jnp.array([1.0]),
-        stochastic_transition=True,
+        transition=MarkovTransition(lambda: jnp.array([1.0])),
         active=lambda age: age < 1,
     )
     with pytest.raises(ModelInitializationError, match="at least one terminal regime"):
@@ -232,8 +239,7 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
             ),
         },
         functions={"utility": lambda health: health},
-        transition=lambda: jnp.array([0.8, 0.1, 0.1]),
-        stochastic_transition=True,
+        transition=MarkovTransition(lambda: jnp.array([0.8, 0.1, 0.1])),
         active=lambda age: age < 1,
     )
     dead1 = Regime(
@@ -280,8 +286,7 @@ def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):
             ),
         },
         functions={"utility": lambda health: health},
-        transition=lambda: jnp.array([0.5, 0.5]),
-        stochastic_transition=True,
+        transition=MarkovTransition(lambda: jnp.array([0.5, 0.5])),
         active=lambda age: age < 1,
     )
     dead = Regime(
@@ -319,8 +324,7 @@ def test_model_regime_name_validation(binary_category_class):
             ),
         },
         functions={"utility": lambda health: health},
-        transition=lambda: jnp.array([0.5, 0.5]),
-        stochastic_transition=True,
+        transition=MarkovTransition(lambda: jnp.array([0.5, 0.5])),
         active=lambda age: age < 1,
     )
     dead = Regime(
@@ -373,8 +377,7 @@ def test_unused_state_raises_error():
             "unused_state": DiscreteGrid(UnusedState, transition=None),
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=10)},
-        transition=lambda: jnp.array([0.9, 0.1]),
-        stochastic_transition=True,
+        transition=MarkovTransition(lambda: jnp.array([0.9, 0.1])),
         active=lambda age: age < 5,
     )
 
@@ -430,8 +433,7 @@ def test_unused_action_raises_error():
                 category_class=UnusedAction
             ),  # Not used anywhere!
         },
-        transition=lambda: jnp.array([0.9, 0.1]),
-        stochastic_transition=True,
+        transition=MarkovTransition(lambda: jnp.array([0.9, 0.1])),
         active=lambda age: age < 5,
     )
 
@@ -459,13 +461,10 @@ def test_unused_action_raises_error():
 
 
 def test_constraint_depending_on_transition_output():
-    """Test that constraints can depend on transition outputs like next_assets.
+    """Regression guard for GitHub issue #230.
 
-    Previously this worked, but now fails with:
-    ValueError: list.index(x): x not in list
-
-    The workaround is to rewrite the constraint to use raw states/actions instead
-    of transition outputs.
+    Constraint depending on a transition output (next_assets) used to raise
+    `ValueError: list.index(x): x not in list`.
     """
 
     @categorical
@@ -509,7 +508,6 @@ def test_constraint_depending_on_transition_output():
             EmploymentLastPeriod.unemployed,
         )
 
-    # This constraint depends on transition output - used to work, now fails
     def borrowing_constraint(next_assets: ContinuousState) -> BoolND:
         return next_assets >= 0.0
 
@@ -536,7 +534,6 @@ def test_constraint_depending_on_transition_output():
         functions={"utility": dead_utility},
     )
 
-    # This should work but currently raises ValueError
     Model(
         regimes={"alive": alive_regime, "dead": dead_regime},
         ages=AgeGrid(start=59, stop=61, step="Y"),
@@ -545,13 +542,10 @@ def test_constraint_depending_on_transition_output():
 
 
 def test_state_only_used_in_transitions():
-    """Test that states can be used only in transitions, not in utility/constraints.
+    """Regression guard for GitHub issue #230.
 
-    Previously this worked, but now fails with:
-    ValueError: list.index(x): x not in list
-
-    The state 'assets' is only used in the next_assets transition, not directly
-    in utility or constraints.
+    State used only in transitions (not in utility/constraints) used to raise
+    `ValueError: list.index(x): x not in list`.
     """
 
     @categorical
@@ -619,7 +613,6 @@ def test_state_only_used_in_transitions():
         functions={"utility": dead_utility},
     )
 
-    # This should work but currently raises ValueError
     Model(
         regimes={"alive": alive_regime, "dead": dead_regime},
         ages=AgeGrid(start=59, stop=61, step="Y"),

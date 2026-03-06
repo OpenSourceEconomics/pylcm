@@ -8,8 +8,8 @@ from numpy.testing import assert_array_almost_equal
 from lcm import (
     AgeGrid,
     DiscreteGrid,
-    DiscreteMarkovGrid,
     LinSpacedGrid,
+    MarkovTransition,
     Model,
     Regime,
     categorical,
@@ -137,8 +137,9 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
     working_stochastic = working.replace(
         states={
             **working.states,
-            "health": DiscreteMarkovGrid(
-                category_class=HealthStatus, transition=next_health_stochastic
+            "health": DiscreteGrid(
+                category_class=HealthStatus,
+                transition=MarkovTransition(next_health_stochastic),
             ),
         },
         active=lambda age: age < n_periods - 1,
@@ -146,8 +147,9 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
     retired_stochastic = retired.replace(
         states={
             **retired.states,
-            "health": DiscreteMarkovGrid(
-                category_class=HealthStatus, transition=next_health_stochastic
+            "health": DiscreteGrid(
+                category_class=HealthStatus,
+                transition=MarkovTransition(next_health_stochastic),
             ),
         },
         active=lambda age: age < n_periods - 1,
@@ -283,7 +285,9 @@ def _make_minimal_stochastic_model(shock_transition_func=None) -> Model:
     working_regime = Regime(
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=20)},
         states={
-            "shock": DiscreteMarkovGrid(ShockStatus, transition=shock_transition_func),
+            "shock": DiscreteGrid(
+                ShockStatus, transition=MarkovTransition(shock_transition_func)
+            ),
             "wealth": LinSpacedGrid(
                 start=1, stop=10, n_points=15, transition=next_wealth
             ),

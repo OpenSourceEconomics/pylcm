@@ -14,8 +14,8 @@ import jax.numpy as jnp
 from lcm import (
     AgeGrid,
     DiscreteGrid,
-    DiscreteMarkovGrid,
     LinSpacedGrid,
+    MarkovTransition,
     Model,
     Regime,
     categorical,
@@ -187,8 +187,10 @@ working = Regime(
         ),
     },
     states={
-        "health": DiscreteMarkovGrid(HealthStatus, transition=next_health),
-        "partner": DiscreteMarkovGrid(PartnerStatus, transition=next_partner),
+        "health": DiscreteGrid(HealthStatus, transition=MarkovTransition(next_health)),
+        "partner": DiscreteGrid(
+            PartnerStatus, transition=MarkovTransition(next_partner)
+        ),
         "wealth": LinSpacedGrid(
             start=1,
             stop=100,
@@ -212,8 +214,10 @@ working = Regime(
 retired = Regime(
     actions={"consumption": LinSpacedGrid(start=1, stop=100, n_points=200)},
     states={
-        "health": DiscreteMarkovGrid(HealthStatus, transition=next_health),
-        "partner": DiscreteMarkovGrid(PartnerStatus, transition=next_partner),
+        "health": DiscreteGrid(HealthStatus, transition=MarkovTransition(next_health)),
+        "partner": DiscreteGrid(
+            PartnerStatus, transition=MarkovTransition(next_partner)
+        ),
         "wealth": LinSpacedGrid(
             start=1,
             stop=100,

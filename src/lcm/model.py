@@ -6,7 +6,7 @@ import inspect
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
 
-from dags.tree import QNAME_DELIMITER
+from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
 from jax import Array
 
 from lcm.ages import AgeGrid
@@ -27,10 +27,10 @@ from lcm.solution.solve_brute import solve
 from lcm.typing import (
     FloatND,
     InternalParams,
-    MutableParamsTemplate,
     ParamsTemplate,
     RegimeName,
     RegimeNamesToIds,
+    UserFacingParamsTemplate,
     UserParams,
 )
 from lcm.utils import (
@@ -44,31 +44,37 @@ from lcm.utils import (
 class Model:
     """A model which is created from a regime.
 
-    Upon initialization, an internal regime will be created which contains all
+    Upon initialization, internal regimes will be created which contain all
     the functions needed to solve and simulate the model.
-
-    Attributes:
-        description: Description of the model.
-        n_periods: Number of periods in the model.
-        enable_jit: Whether to jit the functions of the internal regime.
-        regime_names_to_ids: Mapping from regime names to integer indices.
-        regimes: The user provided regimes that contain the information
-            about the model's regimes.
-        internal_regimes: The internal regime instances created by LCM, which allow
-            to solve and simulate the model.
-        params_template: Template for the model parameters.
 
     """
 
     description: str | None = None
+    """Description of the model."""
+
     ages: AgeGrid
+    """Age grid for the model."""
+
     n_periods: int
+    """Number of periods in the model."""
+
     regime_names_to_ids: RegimeNamesToIds
+    """Immutable mapping from regime names to integer indices."""
+
     regimes: MappingProxyType[str, Regime]
+    """Immutable mapping of regime names to user `Regime` instances."""
+
     internal_regimes: MappingProxyType[RegimeName, InternalRegime]
+    """Immutable mapping of regime names to internal regime instances."""
+
     enable_jit: bool = True
+    """Whether to JIT-compile the functions of the internal regime."""
+
     fixed_params: UserParams
-    params_template: ParamsTemplate
+    """Parameters fixed at model initialization."""
+
+    _params_template: ParamsTemplate
+    """Template for the model parameters."""
 
     def __init__(
         self,
@@ -110,7 +116,7 @@ class Model:
             )
         )
         self.regimes = MappingProxyType(dict(regimes))
-        self.internal_regimes, self.params_template = _build_regimes_and_template(
+        self.internal_regimes, self._params_template = _build_regimes_and_template(
             regimes=regimes,
             ages=self.ages,
             regime_names_to_ids=self.regime_names_to_ids,
@@ -119,20 +125,24 @@ class Model:
         )
         self.enable_jit = enable_jit
 
-    def get_params_template(self) -> MutableParamsTemplate:
-        """Get a mutable copy of the params template.
+    def get_params_template(self) -> UserFacingParamsTemplate:
+        """Get a human-readable params template.
 
-        Returns a deep copy of the params_template where all immutable containers
-        (MappingProxyType, tuple, frozenset) are converted to their mutable
-        equivalents (dict, list, set).
-
-        Returns:
-            A mutable nested dict with the same structure as params_template.
+        Return a nested dict showing which parameters each function in each
+        regime expects.
 
         """
-        return ensure_containers_are_mutable(  # ty: ignore[invalid-return-type]
-            self.params_template
-        )
+        mutable = ensure_containers_are_mutable(self._params_template)
+        return {
+            regime: {
+                func: {
+                    param: getattr(typ, "__name__", str(typ))
+                    for param, typ in params.items()
+                }
+                for func, params in funcs.items()
+            }
+            for regime, funcs in mutable.items()
+        }
 
     def solve(
         self,
@@ -143,7 +153,7 @@ class Model:
         """Solve the model using the pre-computed functions.
 
         Args:
-            params: Model parameters matching the template from self.params_template
+            params: Model parameters compatible with `get_params_template()`
                 Parameters can be provided at exactly one of three levels:
                 - Model level: {"arg_0": 0.0} - propagates to all functions needing
                   arg_0
@@ -157,7 +167,7 @@ class Model:
             Immutable mapping of period to a value function array for each regime.
         """
         internal_params = process_params(
-            params=params, params_template=self.params_template
+            params=params, params_template=self._params_template
         )
         return solve(
             internal_params=internal_params,
@@ -180,7 +190,7 @@ class Model:
         """Simulate the model forward using pre-computed value functions.
 
         Args:
-            params: Model parameters matching the template from self.params_template.
+            params: Model parameters compatible with `get_params_template()`.
                 Parameters can be provided at exactly one of three levels:
                 - Model level: {"arg_0": 0.0} - propagates to all functions needing
                   arg_0
@@ -203,7 +213,7 @@ class Model:
 
         """
         internal_params = process_params(
-            params=params, params_template=self.params_template
+            params=params, params_template=self._params_template
         )
         if check_initial_conditions:
             validate_initial_conditions(
@@ -238,7 +248,7 @@ class Model:
         """Solve and then simulate the model in one call.
 
         Args:
-            params: Model parameters matching the template from self.params_template.
+            params: Model parameters compatible with `get_params_template()`.
                 Parameters can be provided at exactly one of three levels:
                 - Model level: {"arg_0": 0.0} - propagates to all functions needing
                   arg_0
@@ -260,7 +270,7 @@ class Model:
 
         """
         internal_params = process_params(
-            params=params, params_template=self.params_template
+            params=params, params_template=self._params_template
         )
         if check_initial_conditions:
             validate_initial_conditions(
@@ -371,7 +381,7 @@ def _validate_model_inputs(
     regime_names = sorted(regimes.keys())
     if regime_id_fields != regime_names:
         error_messages.append(
-            f"regime_id_cls fields must match regime names.\n Got:"
+            f"regime_id_cls fields must match regime names.\nGot:\n"
             "regime_id_cls fields:\n"
             f"    {regime_id_fields}\n"
             "regime names:\n"
@@ -436,21 +446,21 @@ def _validate_all_variables_used(regimes: Mapping[str, Regime]) -> list[str]:
 
 def _find_candidates(
     *,
-    key: str,
+    qname: str,
     params_flat: Mapping[str, object],
 ) -> list[str]:
-    """Find candidate matches for a template key at exact, regime, and model levels."""
-    parts = key.split(QNAME_DELIMITER)
-    param_name = parts[-1]
+    """Find candidate matches for a template qname at exact / regime / model levels."""
+    tree_path = tree_path_from_qname(qname)
+    param_name = tree_path[-1]
     candidates: list[str] = []
 
-    if key in params_flat:
-        candidates.append(key)
+    if qname in params_flat:
+        candidates.append(qname)
 
-    if len(parts) == 3:  # noqa: PLR2004
-        regime_level_key = f"{parts[0]}{QNAME_DELIMITER}{param_name}"
-        if regime_level_key in params_flat:
-            candidates.append(regime_level_key)
+    if len(tree_path) == 3:  # noqa: PLR2004
+        regime_level_qname = qname_from_tree_path((tree_path[0], param_name))
+        if regime_level_qname in params_flat:
+            candidates.append(regime_level_qname)
 
     if param_name in params_flat:
         candidates.append(param_name)
@@ -475,16 +485,16 @@ def _resolve_fixed_params(
     result_flat: dict[str, object] = {}
     used_keys: set[str] = set()
 
-    for key in template_flat:
-        candidates = _find_candidates(key=key, params_flat=params_flat)
+    for qname in template_flat:
+        candidates = _find_candidates(qname=qname, params_flat=params_flat)
 
         if len(candidates) > 1:
             raise ModelInitializationError(
-                f"Ambiguous fixed_params specification for {key!r}. "
+                f"Ambiguous fixed_params specification for {qname!r}. "
                 f"Found values at: {candidates}"
             )
         if candidates:
-            result_flat[key] = params_flat[candidates[0]]
+            result_flat[qname] = params_flat[candidates[0]]
             used_keys.add(candidates[0])
 
     unknown = set(params_flat) - used_keys
@@ -495,8 +505,10 @@ def _resolve_fixed_params(
 
     # Split by regime
     result: dict[str, dict[str, object]] = {}
-    for key, value in result_flat.items():
-        regime_name, remainder = key.split(QNAME_DELIMITER, 1)
+    for qname, value in result_flat.items():
+        tree_path = tree_path_from_qname(qname)
+        regime_name = tree_path[0]
+        remainder = qname_from_tree_path(tree_path[1:])
         result.setdefault(regime_name, {})[remainder] = value
 
     for regime_name in template:
@@ -524,7 +536,7 @@ def _remove_fixed_from_template(
             new_func_params = {
                 param_name: param_type
                 for param_name, param_type in func_params.items()
-                if f"{func_name}{QNAME_DELIMITER}{param_name}" not in regime_fixed
+                if qname_from_tree_path((func_name, param_name)) not in regime_fixed
             }
             if new_func_params:
                 new_regime[func_name] = new_func_params

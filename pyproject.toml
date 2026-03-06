@@ -105,6 +105,7 @@ per-file-ignores."docs/**/*" = [
   "D100",   # Missing docstring in public module
   "D103",   # Missing docstring in public function
   "D104",   # Missing docstring in public package
+  "PD011",  # Use `.to_numpy()` — false positive on JAX .values
   "S101",   # Use of assert
   "PD011",  # Use `.to_numpy()` instead of `.values`
   "RUF001", # Ambiguous Unicode characters (Greek letters in plot titles)
@@ -136,6 +137,7 @@ per-file-ignores."tests/*" = [
   "PLR2004", # Magic values in comparison
   "S101",    # Use of assert
   "S301",    # Use of pickle
+  "SLF001",  # Private member access
 ]
 per-file-ignores."tests/test_next_state.py" = [
   "ARG001", # Unused function argument

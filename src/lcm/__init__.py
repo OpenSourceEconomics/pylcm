@@ -10,10 +10,10 @@ from lcm import shocks
 from lcm.ages import AgeGrid
 from lcm.grids import (
     DiscreteGrid,
-    DiscreteMarkovGrid,
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
+    MarkovTransition,
     Piece,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
@@ -34,10 +34,10 @@ jax.tree_util.register_pytree_node(
 __all__ = [
     "AgeGrid",
     "DiscreteGrid",
-    "DiscreteMarkovGrid",
     "IrregSpacedGrid",
     "LinSpacedGrid",
     "LogSpacedGrid",
+    "MarkovTransition",
     "Model",
     "Piece",
     "PiecewiseLinSpacedGrid",

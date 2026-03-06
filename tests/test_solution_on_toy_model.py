@@ -12,8 +12,8 @@ from pandas.testing import assert_frame_equal
 from lcm import (
     AgeGrid,
     DiscreteGrid,
-    DiscreteMarkovGrid,
     LinSpacedGrid,
+    MarkovTransition,
     Model,
     Regime,
     categorical,
@@ -115,7 +115,7 @@ def next_health(health: DiscreteState, health_transition: FloatND) -> FloatND:
 
 alive_stochastic = alive_deterministic.replace(
     states=dict(alive_deterministic.states)
-    | {"health": DiscreteMarkovGrid(HealthStatus, transition=next_health)},
+    | {"health": DiscreteGrid(HealthStatus, transition=MarkovTransition(next_health))},
 )
 
 model_deterministic = Model(

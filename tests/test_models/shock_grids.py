@@ -4,7 +4,7 @@ from jax import numpy as jnp
 
 import lcm
 from lcm.ages import AgeGrid
-from lcm.grids import DiscreteMarkovGrid, LinSpacedGrid, categorical
+from lcm.grids import DiscreteGrid, LinSpacedGrid, MarkovTransition, categorical
 from lcm.model import Model
 from lcm.regime import Regime
 from lcm.typing import (
@@ -92,7 +92,7 @@ def get_model(
             "income": _SHOCK_GRID_CLASSES[distribution_type](
                 n_points=5, **_SHOCK_GRID_KWARGS[distribution_type]
             ),
-            "health": DiscreteMarkovGrid(Health, transition=next_health),
+            "health": DiscreteGrid(Health, transition=MarkovTransition(next_health)),
         },
         actions={
             "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=4),

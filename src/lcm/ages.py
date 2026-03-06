@@ -54,17 +54,13 @@ class AgeGrid:
         start: int | Fraction,
         stop: int | Fraction,
         step: str,
-        precise_values: None = None,
     ) -> None: ...
 
     @overload
     def __init__(
         self,
         *,
-        precise_values: Iterable[int | Fraction] | None = None,
-        start: None = None,
-        stop: None = None,
-        step: None = None,
+        exact_values: Iterable[int | Fraction],
     ) -> None: ...
 
     def __init__(
@@ -73,26 +69,26 @@ class AgeGrid:
         start: int | Fraction | None = None,
         stop: int | Fraction | None = None,
         step: str | None = None,
-        precise_values: Iterable[int | Fraction] | None = None,
+        exact_values: Iterable[int | Fraction] | None = None,
     ) -> None:
-        _validate_age_grid(
-            start=start, stop=stop, step=step, precise_values=precise_values
-        )
+        _validate_age_grid(start=start, stop=stop, step=step, exact_values=exact_values)
 
-        if precise_values is not None:
-            self._precise_values = tuple(precise_values)
-            self._values = jnp.array(precise_values)
-            self._step_size = None
-            self._precise_step_size = None
-        else:
-            self._precise_step_size = parse_step(step)  # ty: ignore[invalid-argument-type]
-            self._step_size = float(self._precise_step_size)
-            n_steps = int((stop - start) // self._precise_step_size) + 1  # ty: ignore[unsupported-operator]
-            self._precise_values = tuple(
-                start + i * self._precise_step_size  # ty: ignore[unsupported-operator]
-                for i in range(n_steps)
+        if start is not None and stop is not None and step is not None:
+            self._exact_step_size = parse_step(step)
+            self._step_size = float(self._exact_step_size)
+            n_steps = int((stop - start) // self._exact_step_size) + 1
+            self._exact_values = tuple(
+                start + i * self._exact_step_size for i in range(n_steps)
             )
-            self._values = jnp.array([float(age) for age in self._precise_values])
+            self._values = jnp.array([float(age) for age in self._exact_values])
+        elif exact_values is not None:
+            self._exact_values = tuple(exact_values)
+            self._values = jnp.array(exact_values)
+            self._step_size = None
+            self._exact_step_size = None
+        else:
+            msg = "Must specify 'start/stop/step' or 'exact_values'."
+            raise GridInitializationError(msg)
 
     @property
     def values(self) -> Float1D:
@@ -100,15 +96,15 @@ class AgeGrid:
         return self._values
 
     @property
-    def precise_values(self) -> tuple[int | Fraction, ...]:
-        """Precise ages; indexed by period.
+    def exact_values(self) -> tuple[int | Fraction, ...]:
+        """Exact ages; indexed by period.
 
         Could be:
         - An int if all ages are multiples of one year.
         - A Fraction if the ages are sub-annual.
 
         """
-        return self._precise_values
+        return self._exact_values
 
     @property
     def n_periods(self) -> int:
@@ -121,8 +117,8 @@ class AgeGrid:
         return self._step_size
 
     @property
-    def precise_step_size(self) -> int | Fraction | None:
-        """Precise step size.
+    def exact_step_size(self) -> int | Fraction | None:
+        """Exact step size.
 
         Could be:
         - An int if the step size is a multiple of one year.
@@ -130,7 +126,7 @@ class AgeGrid:
         - None if using custom age values.
 
         """
-        return self._precise_step_size
+        return self._exact_step_size
 
     def period_to_age(self, period: int) -> float:
         """Convert a period index to the corresponding age.
@@ -178,17 +174,17 @@ def _validate_age_grid(
     start: int | Fraction | None,
     stop: int | Fraction | None,
     step: str | None,
-    precise_values: Iterable[int | Fraction] | None,
+    exact_values: Iterable[int | Fraction] | None,
 ) -> None:
     error_messages: list[str] = []
 
     has_range = start is not None or stop is not None or step is not None
-    has_values = precise_values is not None
+    has_values = exact_values is not None
 
     if has_values and has_range:
         error_messages.append("Cannot specify both 'values' and 'start/stop/step'.")
-    elif has_values:
-        error_messages.extend(_validate_values(precise_values))  # ty: ignore[invalid-argument-type]
+    elif exact_values is not None:
+        error_messages.extend(_validate_values(exact_values))
     elif has_range:
         if start is None or stop is None or step is None:
             error_messages.append(
@@ -215,15 +211,15 @@ def _validate_range(
         errors.append(f"'start' must be non-negative, got {start}.")
 
     try:
-        precise_step_size = parse_step(step)
+        exact_step_size = parse_step(step)
     except GridInitializationError as e:
         errors.append(str(e))
         return errors
 
     step_fraction = (
-        Fraction(precise_step_size)
-        if isinstance(precise_step_size, int)
-        else precise_step_size
+        Fraction(exact_step_size)
+        if isinstance(exact_step_size, int)
+        else exact_step_size
     )
     range_fraction = Fraction(stop) - Fraction(start)
     n_steps = range_fraction / step_fraction + 1

@@ -5,13 +5,13 @@ from typing import Any, cast
 
 import pandas as pd
 from dags.signature import rename_arguments, with_signature
-from dags.tree import QNAME_DELIMITER
+from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import Array
 from jax import numpy as jnp
 
 from lcm.ages import AgeGrid
 from lcm.grid_helpers import get_irreg_coordinate
-from lcm.grids import DiscreteMarkovGrid, Grid
+from lcm.grids import Grid, MarkovTransition
 from lcm.input_processing.create_regime_params_template import (
     create_regime_params_template,
 )
@@ -246,9 +246,11 @@ def _get_internal_functions(
         **flat_nested_transitions,
     }
 
-    # Compute stochastic state names from grid types
+    # Compute stochastic state names from grid transition types
     markov_state_names = {
-        name for name, grid in gridspecs.items() if isinstance(grid, DiscreteMarkovGrid)
+        name
+        for name, grid in gridspecs.items()
+        if isinstance(getattr(grid, "transition", None), MarkovTransition)
     }
     shock_state_names = set(variable_info.query("is_shock").index.tolist())
     stochastic_transition_names = frozenset(
@@ -258,7 +260,7 @@ def _get_internal_functions(
     stochastic_transition_functions = {
         func_name: func
         for func_name, func in flat_nested_transitions.items()
-        if func_name.split(QNAME_DELIMITER)[-1] in stochastic_transition_names
+        if tree_path_from_qname(func_name)[-1] in stochastic_transition_names
         and func_name != "next_regime"
     }
 
@@ -333,7 +335,7 @@ def _get_internal_functions(
             if func_name not in excluded_from_functions
         }
     )
-    is_stochastic_regime_transition = regime.stochastic_transition
+    is_stochastic_regime_transition = regime.stochastic_regime_transition
 
     if regime.terminal:
         internal_regime_transition_probs = None
@@ -388,7 +390,11 @@ def _extract_transitions_from_regime(
 
     nested: dict[str, dict[str, UserFunction] | UserFunction] = {}
     # Guaranteed non-None: terminal regimes return early in the caller.
-    nested["next_regime"] = regime.transition  # ty: ignore[invalid-assignment]
+    # Unwrap MarkovTransition to get the bare callable for processing.
+    transition = regime.transition
+    if isinstance(transition, MarkovTransition):
+        transition = transition.func
+    nested["next_regime"] = transition  # ty: ignore[invalid-assignment]
     for target_regime_name, target_regime_state_names in states_per_regime.items():
         if target_regime_state_names <= transitioned_state_names:
             nested[target_regime_name] = {
@@ -405,8 +411,9 @@ def _extract_param_key(func_name: str) -> str:
     For unprefixed names like "next_regime", returns the name unchanged.
 
     """
-    if QNAME_DELIMITER in func_name:
-        return func_name.split(QNAME_DELIMITER, 1)[1]
+    path = tree_path_from_qname(func_name)
+    if len(path) > 1:
+        return qname_from_tree_path(path[1:])
     return func_name
 
 
@@ -432,7 +439,7 @@ def _rename_params_to_qnames(
     param_names = list(regime_params_template[param_key])
     if not param_names:
         return cast("InternalUserFunction", func)
-    mapper = {p: f"{param_key}{QNAME_DELIMITER}{p}" for p in param_names}
+    mapper = {p: qname_from_tree_path((param_key, p)) for p in param_names}
     return cast("InternalUserFunction", rename_arguments(func, mapper=mapper))
 
 
@@ -470,7 +477,8 @@ def _get_weights_func_for_shock(*, name: str, gridspec: _ShockGrid) -> UserFunct
         n_points = gridspec.n_points
         fixed_params = dict(gridspec.params)
         runtime_param_names = {
-            f"{name}{QNAME_DELIMITER}{p}": p for p in gridspec.params_to_pass_at_runtime
+            qname_from_tree_path((name, p)): p
+            for p in gridspec.params_to_pass_at_runtime
         }
         args = {name: "ContinuousState", **dict.fromkeys(runtime_param_names, "float")}
 
