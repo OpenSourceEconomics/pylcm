@@ -30,7 +30,7 @@ def test_model_with_shock(distribution_type):
 
     got_simulate = model.simulate(
         params=params,
-        initial_regimes=["test_regime"] * 2,
+        initial_regimes=["alive"] * 2,
         initial_states={
             "health": jnp.asarray([0, 0]),
             "income": jnp.asarray([0, 0]),

@@ -25,7 +25,7 @@ class LaborSupply:
 
 @categorical
 class RegimeId:
-    working: int
+    working_life: int
     dead: int
 
 
@@ -41,8 +41,8 @@ def labor_income(is_working: BoolND) -> FloatND:
     return jnp.where(is_working, 1.5, 0.0)
 
 
-def is_working(labor_supply: DiscreteAction) -> BoolND:
-    return labor_supply == LaborSupply.work
+def is_working(work: DiscreteAction) -> BoolND:
+    return work == LaborSupply.work
 
 
 def next_wealth(
@@ -54,7 +54,7 @@ def next_wealth(
 
 
 def next_regime(age: float, final_age_alive: float) -> ScalarInt:
-    return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.working)
+    return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.working_life)
 
 
 def borrowing_constraint(
@@ -93,9 +93,9 @@ def _make_model(custom_H=None):
     if custom_H is not None:
         functions["H"] = custom_H
 
-    working_regime = Regime(
+    working_life_regime = Regime(
         actions={
-            "labor_supply": DiscreteGrid(LaborSupply),
+            "work": DiscreteGrid(LaborSupply),
             "consumption": LinSpacedGrid(start=0.5, stop=10, n_points=50),
         },
         states={
@@ -117,7 +117,7 @@ def _make_model(custom_H=None):
     )
 
     return Model(
-        regimes={"working": working_regime, "dead": dead_regime},
+        regimes={"working_life": working_life_regime, "dead": dead_regime},
         ages=AgeGrid(start=START_AGE, stop=FINAL_AGE_ALIVE + 1, step="Y"),
         regime_id_class=RegimeId,
     )
@@ -130,13 +130,13 @@ def test_custom_ces_aggregator_differs_from_default():
 
     params_default = {
         "discount_factor": 0.95,
-        "working": {
+        "working_life": {
             "utility": {"disutility_of_work": 0.5},
             "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
         },
     }
     params_ces = {
-        "working": {
+        "working_life": {
             "H": {"discount_factor": 0.95, "ies": 0.5},
             "utility": {"disutility_of_work": 0.5},
             "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
@@ -200,17 +200,17 @@ def test_params_template_includes_H():
     model = _make_model()
     template = model._params_template
     # Default H has discount_factor parameter
-    assert "H" in template["working"]
-    assert "discount_factor" in template["working"]["H"]
+    assert "H" in template["working_life"]
+    assert "discount_factor" in template["working_life"]["H"]
 
 
 def test_params_template_custom_H():
     """Custom H params should appear in the template."""
     model = _make_model(custom_H=ces_H)
     template = model._params_template
-    assert "H" in template["working"]
-    assert "discount_factor" in template["working"]["H"]
-    assert "ies" in template["working"]["H"]
+    assert "H" in template["working_life"]
+    assert "discount_factor" in template["working_life"]["H"]
+    assert "ies" in template["working_life"]["H"]
 
 
 def test_terminal_regime_value_unchanged_by_H():
@@ -220,13 +220,13 @@ def test_terminal_regime_value_unchanged_by_H():
 
     params_default = {
         "discount_factor": 0.95,
-        "working": {
+        "working_life": {
             "utility": {"disutility_of_work": 0.5},
             "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},
         },
     }
     params_ces = {
-        "working": {
+        "working_life": {
             "H": {"discount_factor": 0.95, "ies": 0.5},
             "utility": {"disutility_of_work": 0.5},
             "next_regime": {"final_age_alive": FINAL_AGE_ALIVE},

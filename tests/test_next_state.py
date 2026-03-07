@@ -18,12 +18,12 @@ from lcm.typing import (
     FloatND,
     InternalUserFunction,
 )
-from tests.test_models.deterministic.regression import dead, working
+from tests.test_models.deterministic.regression import dead, working_life
 
 
 def test_get_next_state_function_with_solve_target():
     ages = AgeGrid(start=0, stop=4, step="Y")
-    regimes = {"working": working, "dead": dead}
+    regimes = {"working_life": working_life, "dead": dead}
     regime_names_to_ids = MappingProxyType(
         {name: idx for idx, name in enumerate(regimes.keys())}
     )
@@ -34,10 +34,10 @@ def test_get_next_state_function_with_solve_target():
         enable_jit=True,
     )
 
-    internal_working = internal_regimes["working"]
+    internal_working = internal_regimes["working_life"]
 
     got_func = get_next_state_function_for_solution(
-        transitions=internal_working.transitions["working"],
+        transitions=internal_working.transitions["working_life"],
         functions=internal_working.functions,
     )
 
@@ -46,7 +46,7 @@ def test_get_next_state_function_with_solve_target():
         "utility__disutility_of_work": 1.0,
         "next_wealth__interest_rate": 0.05,
     }
-    action = {"labor_supply": 1, "consumption": 10}
+    action = {"work": 1, "consumption": 10}
     state = {"wealth": 20}
 
     got = got_func(

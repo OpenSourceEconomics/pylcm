@@ -153,7 +153,7 @@ def test_regime_transition_must_be_callable():
     """Regime rejects non-callable transition."""
     with pytest.raises(
         RegimeInitializationError,
-        match="transition must be a callable, MarkovTransition, or None",
+        match="transition must be callable or None",
     ):
         Regime(
             states={},
@@ -336,8 +336,8 @@ def test_unused_state_raises_error():
 
     @categorical
     class RegimeId:
-        working: int
-        retired: int
+        working_life: int
+        retirement: int
 
     @categorical
     class UnusedState:
@@ -346,7 +346,7 @@ def test_unused_state_raises_error():
         high: int
 
     # Define a regime where 'unused_state' is not used in any function
-    working = Regime(
+    working_life = Regime(
         functions={
             "utility": lambda wealth, consumption: (
                 jnp.log(consumption) + wealth * 0.001
@@ -369,7 +369,7 @@ def test_unused_state_raises_error():
         active=lambda age: age < 5,
     )
 
-    retired = Regime(
+    retirement = Regime(
         transition=None,
         functions={"utility": lambda wealth: wealth * 0.5},
         states={
@@ -382,7 +382,7 @@ def test_unused_state_raises_error():
     # Should raise error about unused_state
     with pytest.raises(ModelInitializationError, match="unused_state"):
         Model(
-            regimes={"working": working, "retired": retired},
+            regimes={"working_life": working_life, "retirement": retirement},
             ages=AgeGrid(start=0, stop=5, step="Y"),
             regime_id_class=RegimeId,
         )
@@ -393,15 +393,15 @@ def test_unused_action_raises_error():
 
     @categorical
     class RegimeId:
-        working: int
-        retired: int
+        working_life: int
+        retirement: int
 
     @categorical
     class UnusedAction:
         option_a: int
         option_b: int
 
-    working = Regime(
+    working_life = Regime(
         functions={
             "utility": lambda wealth, consumption: (
                 jnp.log(consumption) + wealth * 0.001
@@ -425,7 +425,7 @@ def test_unused_action_raises_error():
         active=lambda age: age < 5,
     )
 
-    retired = Regime(
+    retirement = Regime(
         transition=None,
         functions={"utility": lambda wealth: wealth * 0.5},
         states={
@@ -437,7 +437,7 @@ def test_unused_action_raises_error():
     # Should raise error about unused_action
     with pytest.raises(ModelInitializationError, match="unused_action"):
         Model(
-            regimes={"working": working, "retired": retired},
+            regimes={"working_life": working_life, "retirement": retirement},
             ages=AgeGrid(start=0, stop=5, step="Y"),
             regime_id_class=RegimeId,
         )

@@ -42,6 +42,7 @@ project:
         - file: user_guide/defining_models.md
         - file: user_guide/regimes.ipynb
         - file: user_guide/grids.md
+        - file: user_guide/transitions.ipynb
         - file: user_guide/solving_and_simulating.md
         - file: user_guide/parameters.md
         - file: user_guide/shocks.md
@@ -50,6 +51,7 @@ project:
       children:
         - file: explanations/params_workflow.ipynb
         - file: explanations/function_representation.ipynb
+        - file: explanations/dispatchers.ipynb
         - file: explanations/interpolation.ipynb
         - file: explanations/approximating_continuous_shocks.ipynb
     - file: examples/index.md

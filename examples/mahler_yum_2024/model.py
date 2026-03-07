@@ -78,14 +78,14 @@ def calc_savingsgrid(x: Float1D) -> Float1D:
 
 
 @categorical
-class WorkingStatus:
+class LaborSupply:
     retired: int
     part: int
     full: int
 
 
 @categorical
-class EducationStatus:
+class Education:
     low: int
     high: int
 
@@ -96,7 +96,7 @@ Effort = make_dataclass(
 
 
 @categorical
-class HealthStatus:
+class Health:
     bad: int
     good: int
 
@@ -326,11 +326,11 @@ ALIVE_REGIME = Regime(
     active=partial(alive_is_active, final_age_alive=ages.values[-2]),
     states={
         "wealth": LinSpacedGrid(start=0, stop=49, n_points=50),
-        "health": DiscreteGrid(HealthStatus),
+        "health": DiscreteGrid(Health),
         "productivity_shock": prod_shock_grid,
         "effort_t_1": DiscreteGrid(Effort),
         "adjustment_cost": lcm.shocks.iid.Uniform(n_points=5, start=0, stop=1),
-        "education": DiscreteGrid(EducationStatus),
+        "education": DiscreteGrid(Education),
         "productivity": DiscreteGrid(ProductivityType),
         "health_type": DiscreteGrid(HealthType),
     },
@@ -343,7 +343,7 @@ ALIVE_REGIME = Regime(
         "health_type": None,
     },
     actions={
-        "working": DiscreteGrid(WorkingStatus),
+        "working": DiscreteGrid(LaborSupply),
         "saving": LinSpacedGrid(start=0, stop=49, n_points=50),
         "effort": DiscreteGrid(Effort),
     },

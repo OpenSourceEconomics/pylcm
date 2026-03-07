@@ -31,14 +31,14 @@ from lcm.typing import (
 # Categorical variables and regime ID
 # --------------------------------------------------------------------------------------
 @categorical
-class WorkingStatus:
-    retired: int
+class LaborSupply:
+    not_working: int
     working: int
 
 
 @categorical
 class RegimeId:
-    working: int
+    working_life: int
     retirement: int
 
 
@@ -47,15 +47,15 @@ class RegimeId:
 # --------------------------------------------------------------------------------------
 def utility(
     consumption: ContinuousAction,
-    working: DiscreteAction,
+    work: DiscreteAction,
     health: ContinuousState,
     exercise: ContinuousAction,
     disutility_of_work: ContinuousAction,
 ) -> FloatND:
-    return jnp.log(consumption) - (disutility_of_work - health) * working - exercise
+    return jnp.log(consumption) - (disutility_of_work - health) * work - exercise
 
 
-def utility_retired(
+def utility_retirement(
     wealth: ContinuousState,
     health: ContinuousState,
 ) -> FloatND:
@@ -65,8 +65,8 @@ def utility_retired(
 # --------------------------------------------------------------------------------------
 # Auxiliary variables
 # --------------------------------------------------------------------------------------
-def labor_income(wage: float | FloatND, working: DiscreteAction) -> FloatND:
-    return wage * working
+def labor_income(wage: float | FloatND, work: DiscreteAction) -> FloatND:
+    return wage * work
 
 
 def wage(age: float) -> float | FloatND:
@@ -88,14 +88,14 @@ def next_wealth(
 def next_health(
     health: ContinuousState,
     exercise: ContinuousAction,
-    working: DiscreteAction,
+    work: DiscreteAction,
 ) -> ContinuousState:
-    return health * (1 + exercise - working / 2)
+    return health * (1 + exercise - work / 2)
 
 
 def next_regime(period: int, n_periods: int) -> ScalarInt:
     certain_retirement = period >= n_periods - 2
-    return jnp.where(certain_retirement, RegimeId.retirement, RegimeId.working)
+    return jnp.where(certain_retirement, RegimeId.retirement, RegimeId.working_life)
 
 
 # --------------------------------------------------------------------------------------
@@ -119,11 +119,11 @@ def working_is_active(age: float) -> bool:
     return age < RETIREMENT_AGE
 
 
-def retired_is_active(age: float) -> bool:
+def retirement_is_active(age: float) -> bool:
     return age >= RETIREMENT_AGE
 
 
-working = Regime(
+working_life = Regime(
     transition=next_regime,
     active=working_is_active,
     states={
@@ -135,7 +135,7 @@ working = Regime(
         "health": next_health,
     },
     actions={
-        "working": DiscreteGrid(WorkingStatus),
+        "work": DiscreteGrid(LaborSupply),
         "consumption": LinSpacedGrid(
             start=1,
             stop=100,
@@ -156,21 +156,21 @@ working = Regime(
 )
 
 
-retired = Regime(
+retirement = Regime(
     transition=None,
-    active=retired_is_active,
+    active=retirement_is_active,
     states={
         "wealth": LinSpacedGrid(start=1, stop=100, n_points=100),
         "health": LinSpacedGrid(start=0, stop=1, n_points=100),
     },
-    functions={"utility": utility_retired},
+    functions={"utility": utility_retirement},
 )
 
 
 model = Model(
     regimes={
-        "working": working,
-        "retirement": retired,
+        "working_life": working_life,
+        "retirement": retirement,
     },
     ages=AgeGrid(start=18, stop=RETIREMENT_AGE, step="Y"),
     regime_id_class=RegimeId,
@@ -178,7 +178,7 @@ model = Model(
 
 params = {
     "discount_factor": 0.95,
-    "working": {
+    "working_life": {
         "utility": {"disutility_of_work": 0.05},
         "next_wealth": {"interest_rate": 0.05},
         "next_regime": {"n_periods": model.n_periods},
@@ -195,7 +195,7 @@ if __name__ == "__main__":
 
     simulation_result = model.solve_and_simulate(
         params=params,
-        initial_regimes=["working"] * n_simulation_subjects,
+        initial_regimes=["working_life"] * n_simulation_subjects,
         initial_states={
             "age": jnp.full(n_simulation_subjects, model.ages.values[0]),
             "wealth": jnp.full(n_simulation_subjects, 1),

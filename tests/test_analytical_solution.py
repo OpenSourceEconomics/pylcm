@@ -71,11 +71,11 @@ def test_analytical_solution(model_name, model_and_params):
     V_arr_dict_list = [V_arr_dict[period] for period in sorted(V_arr_dict.keys())]
 
     v_arr_worker = np.stack(
-        [v_arr_dict["working"] for v_arr_dict in V_arr_dict_list[:-1]]
+        [v_arr_dict["working_life"] for v_arr_dict in V_arr_dict_list[:-1]]
     )
 
     v_arr_retired = np.stack(
-        [v_arr_dict["retired"] for v_arr_dict in V_arr_dict_list[:-1]]
+        [v_arr_dict["retirement"] for v_arr_dict in V_arr_dict_list[:-1]]
     )
 
     numerical = {

@@ -40,7 +40,7 @@ from lcm.typing import (
 # Categorical variables
 # --------------------------------------------------------------------------------------
 @categorical
-class HealthStatus:
+class Health:
     bad: int
     good: int
 
@@ -59,8 +59,8 @@ class LaborSupply:
 
 @categorical
 class RegimeId:
-    working: int
-    retired: int
+    working_life: int
+    retirement: int
     dead: int
 
 
@@ -78,7 +78,7 @@ def utility_working(
     return jnp.log(consumption) - (1 - health / 2) * work_disutility
 
 
-def utility_retired(
+def utility_retirement(
     consumption: ContinuousAction,
     health: DiscreteState,  # noqa: ARG001
     partner: DiscreteState,  # noqa: ARG001
@@ -93,8 +93,8 @@ def labor_income(is_working: BoolND, wage: FloatND) -> FloatND:
     return jnp.where(is_working, wage, 0.0)
 
 
-def is_working(labor_supply: DiscreteAction) -> BoolND:
-    return labor_supply == LaborSupply.work
+def is_working(work: DiscreteAction) -> BoolND:
+    return work == LaborSupply.work
 
 
 # --------------------------------------------------------------------------------------
@@ -111,7 +111,7 @@ def next_wealth(
 
 
 def next_regime_from_working(
-    labor_supply: DiscreteAction,
+    work: DiscreteAction,
     age: float,
     final_age_alive: float,
 ) -> ScalarInt:
@@ -119,18 +119,18 @@ def next_regime_from_working(
         age >= final_age_alive,
         RegimeId.dead,
         jnp.where(
-            labor_supply == LaborSupply.retire,
-            RegimeId.retired,
-            RegimeId.working,
+            work == LaborSupply.retire,
+            RegimeId.retirement,
+            RegimeId.working_life,
         ),
     )
 
 
-def next_regime_from_retired(age: float, final_age_alive: float) -> ScalarInt:
+def next_regime_from_retirement(age: float, final_age_alive: float) -> ScalarInt:
     return jnp.where(
         age >= final_age_alive,
         RegimeId.dead,
-        RegimeId.retired,
+        RegimeId.retirement,
     )
 
 
@@ -140,7 +140,7 @@ def next_regime_from_retired(age: float, final_age_alive: float) -> ScalarInt:
 def next_health(health: DiscreteState, partner: DiscreteState) -> FloatND:
     """Stochastic transition with JIT-calculated markov transition probabilities."""
     return jnp.where(
-        health == HealthStatus.bad,
+        health == Health.bad,
         jnp.where(
             partner == PartnerStatus.single,
             jnp.array([0.9, 0.1]),
@@ -156,12 +156,12 @@ def next_health(health: DiscreteState, partner: DiscreteState) -> FloatND:
 
 def next_partner(
     period: Period,
-    labor_supply: DiscreteAction,
+    work: DiscreteAction,
     partner: DiscreteState,
     partner_transition: FloatND,
 ) -> FloatND:
     """Stochastic transition using pre-calculated markov transition probabilities."""
-    return partner_transition[period, labor_supply, partner]
+    return partner_transition[period, work, partner]
 
 
 # --------------------------------------------------------------------------------------
@@ -177,9 +177,9 @@ def borrowing_constraint(
 # Model specification
 # ======================================================================================
 
-working = Regime(
+working_life = Regime(
     actions={
-        "labor_supply": DiscreteGrid(LaborSupply),
+        "work": DiscreteGrid(LaborSupply),
         "consumption": LinSpacedGrid(
             start=1,
             stop=100,
@@ -187,7 +187,7 @@ working = Regime(
         ),
     },
     states={
-        "health": DiscreteGrid(HealthStatus),
+        "health": DiscreteGrid(Health),
         "partner": DiscreteGrid(PartnerStatus),
         "wealth": LinSpacedGrid(
             start=1,
@@ -213,10 +213,10 @@ working = Regime(
 )
 
 
-retired = Regime(
+retirement = Regime(
     actions={"consumption": LinSpacedGrid(start=1, stop=100, n_points=200)},
     states={
-        "health": DiscreteGrid(HealthStatus),
+        "health": DiscreteGrid(Health),
         "partner": DiscreteGrid(PartnerStatus),
         "wealth": LinSpacedGrid(
             start=1,
@@ -232,9 +232,9 @@ retired = Regime(
     constraints={
         "borrowing_constraint": borrowing_constraint,
     },
-    transition=next_regime_from_retired,
+    transition=next_regime_from_retirement,
     functions={
-        "utility": utility_retired,
+        "utility": utility_retirement,
     },
     active=lambda _age: True,  # Placeholder, overridden at model creation
 )
@@ -248,12 +248,15 @@ dead = Regime(
 
 
 def get_model(n_periods: int) -> Model:
-    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
+    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    last_age = ages.exact_values[-1]
     return Model(
         regimes={
-            "working": working.replace(active=lambda age, n=n_periods: age < n - 1),
-            "retired": retired.replace(active=lambda age, n=n_periods: age < n - 1),
-            "dead": dead.replace(active=lambda age, n=n_periods: age >= n - 1),
+            "working_life": working_life.replace(
+                active=lambda age, la=last_age: age < la
+            ),
+            "retirement": retirement.replace(active=lambda age, la=last_age: age < la),
+            "dead": dead.replace(active=lambda age, la=last_age: age >= la),
         },
         ages=ages,
         regime_id_class=RegimeId,
@@ -309,20 +312,20 @@ def get_params(
     if partner_transition is None:
         partner_transition = default_partner_transition
 
-    final_age_alive = n_periods - 2
+    final_age_alive = 40 + (n_periods - 2) * 10
     return {
         "discount_factor": discount_factor,
-        "working": {
+        "working_life": {
             "utility": {"disutility_of_work": disutility_of_work},
             "next_wealth": {"interest_rate": interest_rate},
             "next_partner": {"partner_transition": partner_transition},
             "next_regime": {"final_age_alive": final_age_alive},
             "labor_income": {"wage": wage},
         },
-        "retired": {
+        "retirement": {
             "next_wealth": {"interest_rate": interest_rate, "labor_income": 0.0},
             "next_partner": {
-                "labor_supply": LaborSupply.retire,
+                "work": LaborSupply.retire,
                 "partner_transition": partner_transition,
             },
             "next_regime": {"final_age_alive": final_age_alive},
