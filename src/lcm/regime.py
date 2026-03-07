@@ -387,7 +387,7 @@ def _validate_state_transitions(regime: Regime) -> list[str]:
 
     # Validate each value type
     for name, value in regime.state_transitions.items():
-        if value is None or callable(value) or isinstance(value, MarkovTransition):
+        if value is None or callable(value):
             continue
         if isinstance(value, Mapping):
             error_messages.extend(_validate_per_target_dict(name, value))
@@ -453,7 +453,7 @@ def _add_raw_transition(
     Handles callables, MarkovTransition, and per-target dicts.
 
     """
-    if isinstance(raw, MarkovTransition) or callable(raw):
+    if callable(raw):
         transitions[f"next_{name}"] = raw
     elif isinstance(raw, Mapping):
         for target_name, target_value in raw.items():
