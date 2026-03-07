@@ -57,7 +57,7 @@ output, labels are preserved via pandas Categorical.
 
 When used as an **action**, no further configuration is needed. When used as a
 **state**, the transition is specified via `state_transitions` on the `Regime` —
-see [State Transitions](#state-transitions) below.
+see [Transitions](transitions.ipynb).
 
 ## Continuous Grids
 
@@ -128,65 +128,6 @@ PiecewiseLogSpacedGrid(
 )
 ```
 
-## State Transitions
-
-Grids define *what values* a variable can take. **State transitions** define *how* states
-evolve over time. Transitions live on the `Regime` via the `state_transitions` dict —
-not on grids.
-
-```python
-from lcm import MarkovTransition
-
-working = Regime(
-    transition=next_regime,
-    states={
-        "wealth": LinSpacedGrid(start=0, stop=100, n_points=50),
-        "education": DiscreteGrid(EduStatus),
-        "health": DiscreteGrid(Health),
-    },
-    state_transitions={
-        "wealth": next_wealth,                              # deterministic
-        "education": None,                                  # fixed state
-        "health": MarkovTransition(health_transition),      # stochastic
-    },
-    ...
-)
-```
-
-### Deterministic Transitions
-
-A callable that returns the next-period value:
-
-```python
-state_transitions={"wealth": next_wealth}
-```
-
-### Fixed States (`None`)
-
-States that don't change over time. An identity transition is auto-generated internally:
-
-```python
-state_transitions={"education": None}
-```
-
-### Stochastic Transitions (`MarkovTransition`)
-
-For states with stochastic transitions, wrap the transition function in
-`MarkovTransition`. The function returns a probability vector over grid points:
-
-```python
-state_transitions={"health": MarkovTransition(health_transition_probs)}
-```
-
-### Shock Grids
-
-Shock grids (`Normal`, `Tauchen`, etc.) have **intrinsic transitions** — they manage
-their own transition probabilities. They must **not** appear in `state_transitions`. See
-[Shocks](shocks.md) for details.
-
-See [Regimes — State Transitions](regimes.ipynb) for the full reference, including
-target-regime-dependent transitions.
-
 ## Grid Hierarchy (advanced)
 
 All grids inherit from the `Grid` base class:
@@ -209,6 +150,7 @@ provide `get_coordinate()` for mapping values to grid coordinates, used in
 ## See Also
 
 - [Regimes](regimes.ipynb) — how grids are used in regime definitions
+- [Transitions](transitions.ipynb) — state and regime transitions
 - [Shocks](shocks.md) — stochastic shock grids
 - [Interpolation](../explanations/interpolation.ipynb) — coordinate math for continuous
   grids
