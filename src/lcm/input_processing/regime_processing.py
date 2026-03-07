@@ -427,8 +427,7 @@ def _extract_transitions_from_regime(
         state_transitions
     )
 
-    nested: dict[str, dict[str, UserFunction] | UserFunction] = {}
-    nested["next_regime"] = regime.transition  # ty: ignore[invalid-assignment]
+    nested = {"next_regime": regime.transition}
 
     for target_regime_name, target_regime_state_names in states_per_regime.items():
         target_dict: dict[str, UserFunction] = {}
@@ -443,7 +442,7 @@ def _extract_transitions_from_regime(
         if target_dict:
             nested[target_regime_name] = target_dict
 
-    return nested
+    return cast("dict[str, dict[str, UserFunction] | UserFunction]", nested)
 
 
 def _extract_param_key(

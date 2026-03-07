@@ -245,7 +245,7 @@ tests-32bit = "pytest tests --precision=32"
 tests-with-cov = "pytest tests --cov-report=xml --cov=./"
 ty = "ty check"
 [tool.pixi.pypi-dependencies]
-dags = { git = "https://github.com/OpenSourceEconomics/dags.git", branch = "improve-error-message" }
+dags = { git = "https://github.com/OpenSourceEconomics/dags.git", branch = "main" }
 pdbp = "*"
 pylcm = { path = ".", editable = true }
 [tool.pixi.workspace]
