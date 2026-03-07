@@ -153,7 +153,7 @@ def test_regime_transition_must_be_callable():
     """Regime rejects non-callable transition."""
     with pytest.raises(
         RegimeInitializationError,
-        match="transition must be a callable, MarkovTransition, or None",
+        match="transition must be callable or None",
     ):
         Regime(
             states={},

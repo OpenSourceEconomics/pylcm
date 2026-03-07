@@ -205,9 +205,8 @@ class Regime:
 
         """
         result = dict(self.functions) | dict(self.constraints)
-        if not self.terminal:
+        if callable(self.transition):
             result |= _collect_state_transitions(self.states, self.state_transitions)
-        if self.transition is not None:
             result["next_regime"] = self.transition
         return MappingProxyType(result)
 
@@ -272,12 +271,10 @@ def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
     if not isinstance(regime.state_transitions, Mapping):
         error_messages.append("state_transitions must be a mapping.")
 
-    # Validate regime transition is callable, MarkovTransition, or None
-    if regime.transition is not None and not (
-        callable(regime.transition) or isinstance(regime.transition, MarkovTransition)
-    ):
+    # Validate regime transition is callable or None
+    if not regime.terminal and not callable(regime.transition):
         error_messages.append(
-            "transition must be a callable, MarkovTransition, or None, "
+            "transition must be callable or None, "
             f"but is {type(regime.transition).__name__}."
         )
 
