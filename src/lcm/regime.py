@@ -51,6 +51,16 @@ class MarkovTransition:
                 f"MarkovTransition requires a callable, "
                 f"but got {type(self.func).__name__}: {self.func!r}"
             )
+        # Copy __wrapped__ and __annotations__ from the wrapped function so
+        # that inspect.signature and dags see the original signature. We use
+        # object.__setattr__ because the dataclass is frozen.
+        object.__setattr__(self, "__wrapped__", self.func)
+        object.__setattr__(
+            self, "__annotations__", getattr(self.func, "__annotations__", {})
+        )
+
+    def __call__(self, *args: Any, **kwargs: Any) -> FloatND:  # noqa: ANN401
+        return self.func(*args, **kwargs)
 
 
 def _default_H(
@@ -195,12 +205,8 @@ class Regime:
 
         """
         result = dict(self.functions) | dict(self.constraints)
-        if not self.terminal:
+        if callable(self.transition):
             result |= _collect_state_transitions(self.states, self.state_transitions)
-        # Add regime transition (unwrap MarkovTransition to get bare callable)
-        if isinstance(self.transition, MarkovTransition):
-            result["next_regime"] = self.transition.func
-        elif self.transition is not None:
             result["next_regime"] = self.transition
         return MappingProxyType(result)
 
@@ -265,12 +271,10 @@ def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
     if not isinstance(regime.state_transitions, Mapping):
         error_messages.append("state_transitions must be a mapping.")
 
-    # Validate regime transition is callable, MarkovTransition, or None
-    if regime.transition is not None and not (
-        callable(regime.transition) or isinstance(regime.transition, MarkovTransition)
-    ):
+    # Validate regime transition is callable or None
+    if not regime.terminal and not callable(regime.transition):
         error_messages.append(
-            "transition must be a callable, MarkovTransition, or None, "
+            "transition must be callable or None, "
             f"but is {type(regime.transition).__name__}."
         )
 
@@ -380,7 +384,7 @@ def _validate_state_transitions(regime: Regime) -> list[str]:
 
     # Validate each value type
     for name, value in regime.state_transitions.items():
-        if value is None or callable(value) or isinstance(value, MarkovTransition):
+        if value is None or callable(value):
             continue
         if isinstance(value, Mapping):
             error_messages.extend(_validate_per_target_dict(name, value))
@@ -446,17 +450,12 @@ def _add_raw_transition(
     Handles callables, MarkovTransition, and per-target dicts.
 
     """
-    if isinstance(raw, MarkovTransition):
-        transitions[f"next_{name}"] = raw.func
-    elif callable(raw):
+    if callable(raw):
         transitions[f"next_{name}"] = raw
     elif isinstance(raw, Mapping):
         for target_name, target_value in raw.items():
             key = f"next_{name}{QNAME_DELIMITER}{target_name}"
-            if isinstance(target_value, MarkovTransition):
-                transitions[key] = target_value.func
-            else:
-                transitions[key] = target_value
+            transitions[key] = target_value
 
 
 def _collect_state_transitions(
@@ -475,7 +474,7 @@ def _collect_state_transitions(
     - ShockGrid → stub `lambda: None`
     - `None` → auto-generated identity transition
     - Callable → used directly
-    - `MarkovTransition` → unwrapped `.func`
+    - `MarkovTransition` → used directly (callable via `__call__`)
     - Per-target dict → ALL variants with qualified names
       (e.g., `next_health__working`, `next_health__retired`)
 
