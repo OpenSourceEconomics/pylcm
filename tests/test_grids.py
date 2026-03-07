@@ -12,7 +12,6 @@ from lcm.grids import (
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
-    MarkovTransition,
     Piece,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
@@ -168,31 +167,6 @@ def test_discrete_grid_invalid_category_class():
         match="Field values of the category_class can only be int",
     ):
         DiscreteGrid(category_class)
-
-
-# --------------------------------------------------------------------------------------
-# DiscreteGrid with MarkovTransition
-# --------------------------------------------------------------------------------------
-
-
-def test_discrete_grid_with_markov_transition():
-    category_class = make_dataclass(
-        "Category", [("a", int, 0), ("b", int, 1), ("c", int, 2)]
-    )
-    grid = DiscreteGrid(category_class, transition=MarkovTransition(lambda: None))
-    assert grid.categories == ("a", "b", "c")
-    assert grid.codes == (0, 1, 2)
-    assert isinstance(grid.transition, MarkovTransition)
-    assert callable(grid.transition.func)
-    assert np.allclose(grid.to_jax(), np.arange(3))
-
-
-def test_markov_transition_rejects_non_callable():
-    with pytest.raises(
-        GridInitializationError,
-        match="MarkovTransition requires a callable",
-    ):
-        MarkovTransition(func=42)  # ty: ignore[invalid-argument-type]
 
 
 # ======================================================================================

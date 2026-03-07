@@ -63,18 +63,12 @@ def regimes_and_ages(n_periods: int) -> tuple[dict[str, Regime], AgeGrid]:
             ),
         },
         states={
-            "wealth": LinSpacedGrid(
-                start=1,
-                stop=2,
-                n_points=3,
-                transition=next_wealth,
-            ),
-            "health": LinSpacedGrid(
-                start=0,
-                stop=1,
-                n_points=3,
-                transition=next_health,
-            ),
+            "wealth": LinSpacedGrid(start=1, stop=2, n_points=3),
+            "health": LinSpacedGrid(start=0, stop=1, n_points=3),
+        },
+        state_transitions={
+            "wealth": next_wealth,
+            "health": next_health,
         },
         functions={"utility": utility},
         constraints={

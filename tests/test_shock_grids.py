@@ -650,6 +650,7 @@ def test_tauchen_matches_quantecon(case):
 @pytest.mark.parametrize(
     "case", ROUWENHORST_CASES, ids=lambda c: f"rho={c['rho']}_n={c['n']}"
 )
+@pytest.mark.filterwarnings("ignore:The API of rouwenhorst has changed:UserWarning")
 def test_rouwenhorst_matches_quantecon(case):
     """Rouwenhorst gridpoints and transition probs match QuantEcon."""
     qe = qe_rouwenhorst(**case)

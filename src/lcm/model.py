@@ -5,6 +5,7 @@ import functools
 import inspect
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
+from typing import cast
 
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
 from jax import Array
@@ -514,7 +515,10 @@ def _resolve_fixed_params(
     for regime_name in template:
         result.setdefault(regime_name, {})
 
-    return ensure_containers_are_immutable(result)  # ty: ignore[invalid-return-type]
+    return cast(
+        "InternalParams",
+        MappingProxyType({k: MappingProxyType(v) for k, v in result.items()}),
+    )
 
 
 def _remove_fixed_from_template(
@@ -528,10 +532,10 @@ def _remove_fixed_from_template(
     template so users don't need to supply them at solve/simulate time.
 
     """
-    result: dict[str, dict[str, dict[str, type | tuple[int, ...]]]] = {}
+    result: dict[str, dict[str, dict[str, str]]] = {}
     for regime_name, regime_template in template.items():
         regime_fixed = fixed_internal.get(regime_name, MappingProxyType({}))
-        new_regime: dict[str, dict[str, type | tuple[int, ...]]] = {}
+        new_regime: dict[str, dict[str, str]] = {}
         for func_name, func_params in regime_template.items():
             new_func_params = {
                 param_name: param_type
@@ -545,7 +549,17 @@ def _remove_fixed_from_template(
         else:
             # Keep regime key even if empty (needed by process_params)
             result[regime_name] = {}
-    return ensure_containers_are_immutable(result)  # ty: ignore[invalid-return-type]
+    return MappingProxyType(
+        {
+            regime_name: MappingProxyType(
+                {
+                    func_name: MappingProxyType(func_params)
+                    for func_name, func_params in regime.items()
+                }
+            )
+            for regime_name, regime in result.items()
+        }
+    )
 
 
 def _partial_fixed_params_into_regimes(

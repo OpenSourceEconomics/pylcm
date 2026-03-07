@@ -10,8 +10,9 @@ from jax import Array
 from jax import numpy as jnp
 
 from lcm.ages import AgeGrid
+from lcm.exceptions import ModelInitializationError, format_messages
 from lcm.grid_helpers import get_irreg_coordinate
-from lcm.grids import Grid, MarkovTransition
+from lcm.grids import DiscreteGrid, Grid
 from lcm.input_processing.create_regime_params_template import (
     create_regime_params_template,
 )
@@ -28,7 +29,7 @@ from lcm.input_processing.util import (
 )
 from lcm.interfaces import InternalFunctions, InternalRegime
 from lcm.ndimage import map_coordinates
-from lcm.regime import Regime, _collect_state_transitions
+from lcm.regime import MarkovTransition, Regime, _collect_state_transitions
 from lcm.shocks import _ShockGrid
 from lcm.state_action_space import create_state_action_space, create_state_space_info
 from lcm.typing import (
@@ -66,9 +67,9 @@ def process_regimes(
 ) -> MappingProxyType[RegimeName, InternalRegime]:
     """Process user regimes into internal regimes.
 
-    Extracts state transitions from grid `transition` attributes and
-    regime transitions from `regime.transition`. For fixed states (grids
-    without a transition), an identity transition is auto-generated. ShockGrid
+    Extracts state transitions from `regime.state_transitions` and
+    regime transitions from `regime.transition`. For fixed states (value `None`
+    in `state_transitions`), an identity transition is auto-generated. ShockGrid
     transitions are generated from the grid's intrinsic transition logic.
 
     Args:
@@ -95,6 +96,8 @@ def process_regimes(
             regime=regime,
             states_per_regime=states_per_regime,
         )
+    _validate_categoricals(regimes)
+
     # ----------------------------------------------------------------------------------
     # Stage 1: Initialize regime components that do not depend on other regimes
     # ----------------------------------------------------------------------------------
@@ -144,7 +147,6 @@ def process_regimes(
         )
 
         Q_and_F_functions = build_Q_and_F_functions(
-            regime_name=name,
             regime=regime,
             regimes_to_active_periods=regimes_to_active_periods,
             internal_functions=internal_functions,
@@ -246,12 +248,22 @@ def _get_internal_functions(
         **flat_nested_transitions,
     }
 
-    # Compute stochastic state names from grid transition types
-    markov_state_names = {
-        name
-        for name, grid in gridspecs.items()
-        if isinstance(getattr(grid, "transition", None), MarkovTransition)
-    }
+    # Compute per-target next names for param key extraction
+    per_target_next_names = frozenset(
+        f"next_{name}"
+        for name, raw in regime.state_transitions.items()
+        if isinstance(raw, Mapping) and not isinstance(raw, MarkovTransition)
+    )
+
+    # Compute stochastic state names from regime.state_transitions
+    markov_state_names: set[str] = set()
+    for name in regime.state_transitions:
+        raw = regime.state_transitions[name]
+        if isinstance(raw, MarkovTransition) or (
+            isinstance(raw, Mapping)
+            and any(isinstance(v, MarkovTransition) for v in raw.values())
+        ):
+            markov_state_names.add(name)
     shock_state_names = set(variable_info.query("is_shock").index.tolist())
     stochastic_transition_names = frozenset(
         f"next_{name}" for name in markov_state_names | shock_state_names
@@ -288,7 +300,7 @@ def _get_internal_functions(
         )
 
     for func_name, func in deterministic_transition_functions.items():
-        param_key = _extract_param_key(func_name)
+        param_key = _extract_param_key(func_name, per_target_next_names)
         functions[func_name] = _rename_params_to_qnames(
             func=func,
             regime_params_template=regime_params_template,
@@ -299,7 +311,7 @@ def _get_internal_functions(
         # The user-specified next function is the weighting function for the
         # stochastic transition. For the solution, we must also define a next function
         # that returns the whole grid of possible values.
-        param_key = _extract_param_key(func_name)
+        param_key = _extract_param_key(func_name, per_target_next_names)
         functions[f"weight_{func_name}"] = _rename_params_to_qnames(
             func=func,
             regime_params_template=regime_params_template,
@@ -358,17 +370,44 @@ def _get_internal_functions(
     )
 
 
+def _classify_transitions(
+    state_transitions: dict[str, UserFunction],
+) -> tuple[dict[str, UserFunction], dict[str, dict[str, UserFunction]]]:
+    """Split collected transitions into simple and per-target groups.
+
+    Qualified names like "next_health__working" (produced by
+    `_collect_state_transitions` for per-target dicts) are decomposed via
+    `tree_path_from_qname`.
+
+    Returns:
+        Tuple of (simple_transitions, per_target_transitions).
+
+    """
+    simple: dict[str, UserFunction] = {}
+    per_target: dict[str, dict[str, UserFunction]] = {}
+    for key, func in state_transitions.items():
+        path = tree_path_from_qname(key)
+        if len(path) == 1:
+            simple[key] = func
+        else:
+            state_key = path[0]
+            target_name = qname_from_tree_path(path[1:])
+            per_target.setdefault(state_key, {})[target_name] = func
+    return simple, per_target
+
+
 def _extract_transitions_from_regime(
     *,
     regime: Regime,
     states_per_regime: Mapping[str, set[str]],
 ) -> dict[str, dict[str, UserFunction] | UserFunction]:
-    """Extract transitions from grid attributes and auto-generate identity transitions.
+    """Extract transitions from `regime.state_transitions` and regime transition.
 
-    For non-terminal regimes, collects state transitions from grid `transition`
-    attributes and auto-generates identity transitions for fixed states (grids
-    without a transition). ShockGrid transitions are handled separately during
-    internal function processing.
+    For non-terminal regimes, reads state transitions from `regime.state_transitions`
+    and auto-generates identity transitions for fixed states (`None` values).
+    ShockGrid transitions are handled separately during internal function processing.
+
+    For per-target dicts, selects the transition function matching each target regime.
 
     Args:
         regime: The user regime.
@@ -381,39 +420,49 @@ def _extract_transitions_from_regime(
     if regime.terminal:
         return {}
 
-    state_transitions = _collect_state_transitions(regime.states)
+    state_transitions = _collect_state_transitions(
+        regime.states, regime.state_transitions
+    )
+    simple_transitions, per_target_transitions = _classify_transitions(
+        state_transitions
+    )
 
-    # Build nested format
-    transitioned_state_names = {
-        name.removeprefix("next_") for name in state_transitions
-    }
+    nested = {"next_regime": regime.transition}
 
-    nested: dict[str, dict[str, UserFunction] | UserFunction] = {}
-    # Guaranteed non-None: terminal regimes return early in the caller.
-    # Unwrap MarkovTransition to get the bare callable for processing.
-    transition = regime.transition
-    if isinstance(transition, MarkovTransition):
-        transition = transition.func
-    nested["next_regime"] = transition  # ty: ignore[invalid-assignment]
     for target_regime_name, target_regime_state_names in states_per_regime.items():
-        if target_regime_state_names <= transitioned_state_names:
-            nested[target_regime_name] = {
-                f"next_{state}": state_transitions[f"next_{state}"]
-                for state in target_regime_state_names & transitioned_state_names
-            }
-    return nested
+        target_dict: dict[str, UserFunction] = {}
+        for state_name in target_regime_state_names:
+            next_key = f"next_{state_name}"
+            if next_key in simple_transitions:
+                target_dict[next_key] = simple_transitions[next_key]
+            elif next_key in per_target_transitions:
+                variants = per_target_transitions[next_key]
+                if target_regime_name in variants:
+                    target_dict[next_key] = variants[target_regime_name]
+        if target_dict:
+            nested[target_regime_name] = target_dict
+
+    return cast("dict[str, dict[str, UserFunction] | UserFunction]", nested)
 
 
-def _extract_param_key(func_name: str) -> str:
+def _extract_param_key(
+    func_name: str,
+    per_target_next_names: frozenset[str] = frozenset(),
+) -> str:
     """Extract the param template key from a possibly prefixed function name.
 
     For prefixed names like "work__next_wealth", returns "next_wealth".
+    For per-target transitions like "work__next_health" where "next_health" is in
+    `per_target_next_names`, returns "to_work_next_health" to match the template key.
     For unprefixed names like "next_regime", returns the name unchanged.
 
     """
     path = tree_path_from_qname(func_name)
     if len(path) > 1:
-        return qname_from_tree_path(path[1:])
+        suffix = qname_from_tree_path(path[1:])
+        if suffix in per_target_next_names:
+            return f"to_{path[0]}_{suffix}"
+        return suffix
     return func_name
 
 
@@ -520,3 +569,73 @@ def _get_weights_func_for_shock(*, name: str, gridspec: _ShockGrid) -> UserFunct
         )
 
     return weights_func
+
+
+def _validate_categoricals(
+    regimes: Mapping[str, Regime],
+) -> None:
+    """Validate that simple transitions don't span mismatched discrete grids.
+
+    When a non-per-target-dict transition is used for a `DiscreteGrid` state, the same
+    function is applied to all target regimes. If a target regime has a different number
+    of categories for that state, JAX silently clips indices producing wrong results.
+
+    Raises:
+        ModelInitializationError: If a category count mismatch is found.
+
+    """
+    error_messages: list[str] = []
+
+    for source_name, source_regime in regimes.items():
+        if source_regime.terminal:
+            continue
+
+        for state_name, raw in source_regime.state_transitions.items():
+            source_grid = _get_simple_transition_discrete_grid(
+                source_regime, state_name, raw
+            )
+            if source_grid is None:
+                continue
+
+            for target_name, target_regime in regimes.items():
+                target_grid = target_regime.states.get(state_name)
+                if not isinstance(target_grid, DiscreteGrid):
+                    continue
+
+                if source_grid.categories != target_grid.categories:
+                    error_messages.append(
+                        f"Discrete state '{state_name}' in regime '{source_name}' "
+                        f"has categories {source_grid.categories}, but regime "
+                        f"'{target_name}' has categories "
+                        f"{target_grid.categories}. A single transition function "
+                        f"cannot map between different category sets — use a "
+                        f"per-target dict in state_transitions to specify the "
+                        f"mapping for each target regime.",
+                    )
+
+    if error_messages:
+        raise ModelInitializationError(format_messages(error_messages))
+
+
+def _get_simple_transition_discrete_grid(
+    regime: Regime,
+    state_name: str,
+    raw: object,
+) -> DiscreteGrid | None:
+    """Return the source DiscreteGrid for a simple transition.
+
+    Returns None if the transition is a per-target dict, None (identity), not a
+    DiscreteGrid, or the state is not present in the source regime.
+
+    """
+    # Per-target dicts handle category differences explicitly
+    if isinstance(raw, Mapping) and not isinstance(raw, MarkovTransition):
+        return None
+    # None means identity (fixed state) — only maps within its own regime
+    if raw is None:
+        return None
+    # Target-only state — no source grid to compare
+    if state_name not in regime.states:
+        return None
+    source_grid = regime.states[state_name]
+    return source_grid if isinstance(source_grid, DiscreteGrid) else None

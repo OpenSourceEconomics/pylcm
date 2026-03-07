@@ -1,17 +1,16 @@
+from types import MappingProxyType
+
 import dags.tree as dt
-from jax import Array
+from dags.tree import tree_path_from_qname
 
 from lcm.exceptions import InvalidNameError
 from lcm.grids import IrregSpacedGrid
 from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
 from lcm.typing import RegimeParamsTemplate
-from lcm.utils import ensure_containers_are_immutable
 
 
-def create_regime_params_template(
-    regime: Regime,
-) -> RegimeParamsTemplate:
+def create_regime_params_template(regime: Regime) -> RegimeParamsTemplate:
     """Create parameter template from a regime specification.
 
     Uses dags.tree.create_tree_with_input_types() to discover parameters and their
@@ -41,14 +40,24 @@ def create_regime_params_template(
         *regime.states,
     }
 
-    function_params = {}
+    function_params: dict[str, dict[str, str]] = {}
     # Use dags.tree to discover parameters and their type annotations for each function.
     for name, func in regime.get_all_functions().items():
         tree = dt.create_tree_with_input_types({name: func})
         excl = H_variables if name == "H" else variables
         # Filter out variables to get only the parameters
         params = {k: v for k, v in sorted(tree.items()) if k not in excl}
-        function_params[name] = params
+
+        # Per-target dict transitions produce qualified names like
+        # "next_health__working". Convert to "to_working_next_health" so each
+        # target variant gets its own template key (no __ in keys).
+        path = tree_path_from_qname(name)
+        template_key = f"to_{path[1]}_{path[0]}" if len(path) > 1 else name
+
+        if template_key in function_params:
+            function_params[template_key] |= params
+        else:
+            function_params[template_key] = params
 
     # Validate that no discovered parameter shadows a state or action name.
     # In practice, only H can trigger this since other functions already exclude
@@ -71,7 +80,7 @@ def create_regime_params_template(
                     f"IrregSpacedGrid state '{state_name}' (with runtime-supplied "
                     f"points) conflicts with a function of the same name in the regime."
                 )
-            function_params[state_name] = {"points": Array}
+            function_params[state_name] = {"points": "Float1D"}
         elif isinstance(grid, _ShockGrid) and grid.params_to_pass_at_runtime:
             if state_name in function_params:
                 raise InvalidNameError(
@@ -79,7 +88,9 @@ def create_regime_params_template(
                     f"conflicts with a function of the same name in the regime."
                 )
             function_params[state_name] = dict.fromkeys(
-                grid.params_to_pass_at_runtime, float
+                grid.params_to_pass_at_runtime, "float"
             )
 
-    return ensure_containers_are_immutable(function_params)
+    return MappingProxyType(
+        {k: MappingProxyType(v) for k, v in function_params.items()}
+    )

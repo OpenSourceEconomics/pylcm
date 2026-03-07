@@ -1,4 +1,4 @@
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 import jax.numpy as jnp
 import pandas as pd
@@ -24,7 +24,6 @@ from lcm.typing import (
     UserParams,
 )
 from tests.test_models.stochastic import (
-    HealthStatus,
     RegimeId,
     dead,
     get_model,
@@ -115,42 +114,32 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
 
     # Create deterministic model by replacing health grid transition
     working_deterministic = working.replace(
-        states={
-            **working.states,
-            "health": DiscreteGrid(
-                category_class=HealthStatus, transition=next_health_deterministic
-            ),
+        state_transitions={
+            **working.state_transitions,
+            "health": next_health_deterministic,
         },
         active=lambda age: age < n_periods - 1,
     )
     retired_deterministic = retired.replace(
-        states={
-            **retired.states,
-            "health": DiscreteGrid(
-                category_class=HealthStatus, transition=next_health_deterministic
-            ),
+        state_transitions={
+            **retired.state_transitions,
+            "health": next_health_deterministic,
         },
         active=lambda age: age < n_periods - 1,
     )
 
     # Create stochastic model with identity transition function
     working_stochastic = working.replace(
-        states={
-            **working.states,
-            "health": DiscreteGrid(
-                category_class=HealthStatus,
-                transition=MarkovTransition(next_health_stochastic),
-            ),
+        state_transitions={
+            **working.state_transitions,
+            "health": MarkovTransition(next_health_stochastic),
         },
         active=lambda age: age < n_periods - 1,
     )
     retired_stochastic = retired.replace(
-        states={
-            **retired.states,
-            "health": DiscreteGrid(
-                category_class=HealthStatus,
-                transition=MarkovTransition(next_health_stochastic),
-            ),
+        state_transitions={
+            **retired.state_transitions,
+            "health": MarkovTransition(next_health_stochastic),
         },
         active=lambda age: age < n_periods - 1,
     )
@@ -241,15 +230,8 @@ def test_compare_deterministic_and_stochastic_results_value_function(
 # ======================================================================================
 
 
-def _next_shock(shock: DiscreteState, shock_transition: FloatND) -> FloatND:
-    """Default stochastic transition using a pre-computed transition matrix."""
-    return shock_transition[shock]
-
-
-def _make_minimal_stochastic_model(shock_transition_func=None) -> Model:
-    """Create a minimal stochastic model with a discrete shock state."""
-    if shock_transition_func is None:
-        shock_transition_func = _next_shock
+def _make_minimal_stochastic_model(next_draw: Callable[..., FloatND]) -> Model:
+    """Create a minimal stochastic model with a discrete state `draw`."""
 
     final_age = 1
 
@@ -263,8 +245,8 @@ def _make_minimal_stochastic_model(shock_transition_func=None) -> Model:
         working: int
         dead: int
 
-    def utility(consumption: ContinuousAction, shock: DiscreteState) -> FloatND:
-        bonus = jnp.where(shock == ShockStatus.good, 1.0, 0.0)
+    def utility(consumption: ContinuousAction, draw: DiscreteState) -> FloatND:
+        bonus = jnp.where(draw == ShockStatus.good, 1.0, 0.0)
         return jnp.log(consumption) + bonus
 
     def next_wealth(
@@ -285,12 +267,12 @@ def _make_minimal_stochastic_model(shock_transition_func=None) -> Model:
     working_regime = Regime(
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=20)},
         states={
-            "shock": DiscreteGrid(
-                ShockStatus, transition=MarkovTransition(shock_transition_func)
-            ),
-            "wealth": LinSpacedGrid(
-                start=1, stop=10, n_points=15, transition=next_wealth
-            ),
+            "draw": DiscreteGrid(ShockStatus),
+            "wealth": LinSpacedGrid(start=1, stop=10, n_points=15),
+        },
+        state_transitions={
+            "draw": MarkovTransition(next_draw),
+            "wealth": next_wealth,
         },
         constraints={"borrowing_constraint": borrowing_constraint},
         transition=next_regime,
@@ -321,10 +303,10 @@ def test_stochastic_next_function_with_no_arguments():
     one argument, causing a failure.
     """
 
-    def next_shock_no_args() -> FloatND:
+    def next_draw_no_args() -> FloatND:
         return jnp.array([0.5, 0.5])
 
-    model = _make_minimal_stochastic_model(next_shock_no_args)
+    model = _make_minimal_stochastic_model(next_draw_no_args)
     params = {
         "discount_factor": 0.95,
         "working": {"next_regime": {"final_age_alive": 1}},
@@ -340,11 +322,11 @@ def test_stochastic_next_depending_on_continuous_state():
     dependency that was not a discrete state.
     """
 
-    def next_shock_continuous(wealth: ContinuousState) -> FloatND:
+    def next_draw_continuous(wealth: ContinuousState) -> FloatND:
         p_good = jnp.clip(wealth / 10.0, 0.1, 0.9)
         return jnp.array([1.0 - p_good, p_good])
 
-    model = _make_minimal_stochastic_model(next_shock_continuous)
+    model = _make_minimal_stochastic_model(next_draw_continuous)
     params = {
         "discount_factor": 0.95,
         "working": {"next_regime": {"final_age_alive": 1}},

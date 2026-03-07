@@ -1,4 +1,3 @@
-import re
 from dataclasses import make_dataclass
 from functools import partial
 from types import MappingProxyType
@@ -166,7 +165,7 @@ def test_get_label_translator_wrong_kwarg():
     )
     with pytest.raises(
         InvalidFunctionArgumentsError,
-        match=re.escape("translate_label() got unexpected keyword argument health"),
+        match="translate_label got unexpected keyword argument health",
     ):
         func(health=1)
 

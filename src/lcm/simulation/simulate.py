@@ -83,7 +83,10 @@ def simulate(
     # The following variables are updated during the forward simulation
     states = MappingProxyType(flatten_regime_namespace(nested_initial_states))
     subject_regime_ids = jnp.asarray(
-        [regime_names_to_ids[initial_regime] for initial_regime in initial_regimes]
+        [
+            regime_names_to_ids[initial_regime_name]
+            for initial_regime_name in initial_regimes
+        ]
     )
 
     # Forward simulation

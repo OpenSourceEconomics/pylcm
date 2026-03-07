@@ -44,9 +44,10 @@ def _make_model(n_periods=3, *, extra_fixed_params=None):
     alive = Regime(
         functions={"utility": _utility},
         states={
-            "wealth": LinSpacedGrid(
-                start=1, stop=10, n_points=5, transition=_next_wealth
-            ),
+            "wealth": LinSpacedGrid(start=1, stop=10, n_points=5),
+        },
+        state_transitions={
+            "wealth": _next_wealth,
         },
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
         constraints={"borrowing_constraint": _borrowing_constraint},

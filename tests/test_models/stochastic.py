@@ -187,16 +187,18 @@ working = Regime(
         ),
     },
     states={
-        "health": DiscreteGrid(HealthStatus, transition=MarkovTransition(next_health)),
-        "partner": DiscreteGrid(
-            PartnerStatus, transition=MarkovTransition(next_partner)
-        ),
+        "health": DiscreteGrid(HealthStatus),
+        "partner": DiscreteGrid(PartnerStatus),
         "wealth": LinSpacedGrid(
             start=1,
             stop=100,
             n_points=100,
-            transition=next_wealth,
         ),
+    },
+    state_transitions={
+        "health": MarkovTransition(next_health),
+        "partner": MarkovTransition(next_partner),
+        "wealth": next_wealth,
     },
     constraints={
         "borrowing_constraint": borrowing_constraint,
@@ -214,16 +216,18 @@ working = Regime(
 retired = Regime(
     actions={"consumption": LinSpacedGrid(start=1, stop=100, n_points=200)},
     states={
-        "health": DiscreteGrid(HealthStatus, transition=MarkovTransition(next_health)),
-        "partner": DiscreteGrid(
-            PartnerStatus, transition=MarkovTransition(next_partner)
-        ),
+        "health": DiscreteGrid(HealthStatus),
+        "partner": DiscreteGrid(PartnerStatus),
         "wealth": LinSpacedGrid(
             start=1,
             stop=100,
             n_points=100,
-            transition=next_wealth,
         ),
+    },
+    state_transitions={
+        "health": MarkovTransition(next_health),
+        "partner": MarkovTransition(next_partner),
+        "wealth": next_wealth,
     },
     constraints={
         "borrowing_constraint": borrowing_constraint,

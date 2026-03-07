@@ -1,6 +1,6 @@
 import dataclasses
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, is_dataclass
 from typing import overload
 
@@ -11,45 +11,11 @@ from jax import Array
 from lcm import grid_helpers
 from lcm.exceptions import GridInitializationError, format_messages
 from lcm.typing import (
-    ContinuousState,
-    DiscreteState,
     Float1D,
-    FloatND,
     Int1D,
     ScalarFloat,
 )
-from lcm.utils import Unset, find_duplicates, get_field_names_and_values
-
-
-@dataclass(frozen=True)
-class MarkovTransition:
-    """Wrapper marking a transition function as stochastic (Markov).
-
-    Wrap a transition function in `MarkovTransition` to indicate that it returns
-    a probability distribution over next states (for state transitions) or over
-    next regimes (for regime transitions), rather than a deterministic next value.
-
-    Use at both the state and regime level:
-
-        # Stochastic state transition
-        DiscreteGrid(Health, transition=MarkovTransition(health_probs))
-
-        # Stochastic regime transition
-        Regime(transition=MarkovTransition(regime_probs), ...)
-
-    A bare callable (without the wrapper) is deterministic at both levels.
-
-    """
-
-    func: Callable[..., FloatND]
-    """The transition function returning a probability distribution."""
-
-    def __post_init__(self) -> None:
-        if not callable(self.func):
-            raise GridInitializationError(
-                f"MarkovTransition requires a callable, "
-                f"but got {type(self.func).__name__}: {self.func!r}"
-            )
+from lcm.utils import find_duplicates, get_field_names_and_values
 
 
 def categorical[T](cls: type[T]) -> type[T]:
@@ -141,16 +107,11 @@ class _DiscreteGridBase(Grid):
 
 
 class DiscreteGrid(_DiscreteGridBase):
-    """A discrete grid with an optional transition.
+    """A discrete grid defining the outcome space of a categorical variable.
 
     Args:
         category_class: The category class representing the grid categories. Must
             be a dataclass with fields that have unique int values.
-        transition: Transition function for time-varying states. A bare callable
-            is deterministic; wrap in `MarkovTransition` for stochastic (Markov)
-            transitions that return probability distributions. `None` for fixed
-            states. Must be set explicitly when this grid is used as a state in a
-            Regime. Must be left unset when used as an action.
 
     Raises:
         GridInitializationError: If the `category_class` is not a dataclass with int
@@ -158,30 +119,8 @@ class DiscreteGrid(_DiscreteGridBase):
 
     """
 
-    def __init__(
-        self,
-        category_class: type,
-        *,
-        transition: Callable[..., DiscreteState]
-        | MarkovTransition
-        | None
-        | Unset = Unset(),
-    ) -> None:
+    def __init__(self, category_class: type) -> None:
         super().__init__(category_class)
-        _validate_transition(transition)
-        self.__transition = transition
-
-    @property
-    def transition(
-        self,
-    ) -> Callable[..., DiscreteState] | MarkovTransition | None | Unset:
-        """Return the state transition function.
-
-        A bare callable computes the next discrete state value (`DiscreteState`).
-        A `MarkovTransition` returns a probability distribution (`FloatND`) over
-        next states. `None` for fixed states, `Unset` for action grids.
-        """
-        return self.__transition
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -197,20 +136,12 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
     n_points: int
     """The number of points in the grid."""
 
-    transition: Callable[..., ContinuousState] | None | Unset = Unset()
-    """Deterministic transition for state evolution.
-
-    Compute the next continuous state value (`ContinuousState`).
-    `None` for fixed states. `Unset` for action grids.
-    """
-
     def __post_init__(self) -> None:
         _validate_continuous_grid(
             start=self.start,
             stop=self.stop,
             n_points=self.n_points,
         )
-        _validate_transition(self.transition)
 
     @abstractmethod
     def to_jax(self) -> Float1D:
@@ -317,15 +248,7 @@ class IrregSpacedGrid(ContinuousGrid):
     n_points: int | None = None
     """Number of points. Derived from `len(points)` when points are given."""
 
-    transition: Callable[..., ContinuousState] | None | Unset = Unset()
-    """Deterministic transition for state evolution.
-
-    Compute the next continuous state value (`ContinuousState`).
-    `None` for fixed states. `Unset` for action grids.
-    """
-
     def __post_init__(self) -> None:
-        _validate_transition(self.transition)
         if self.points is not None:
             _validate_irreg_spaced_grid(self.points)
             # Derive n_points from points if not explicitly set
@@ -412,13 +335,6 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
     pieces: tuple[Piece, ...]
     """Tuple of Piece objects defining each segment. Pieces must be adjacent."""
 
-    transition: Callable[..., ContinuousState] | None | Unset = Unset()
-    """Deterministic transition for state evolution.
-
-    Compute the next continuous state value (`ContinuousState`).
-    `None` for fixed states. `Unset` for action grids.
-    """
-
     # Cached JAX arrays for efficient coordinate computation (set in __post_init__)
     _breakpoints: Float1D = dataclasses.field(init=False, repr=False)
     _piece_starts: Float1D = dataclasses.field(init=False, repr=False)
@@ -428,7 +344,6 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
 
     def __post_init__(self) -> None:
         _validate_piecewise_lin_spaced_grid(self.pieces)
-        _validate_transition(self.transition)
         _init_piecewise_grid_cache(self)
 
     @property
@@ -487,13 +402,6 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
     pieces: tuple[Piece, ...]
     """Tuple of Piece objects defining each segment. All boundaries must be positive."""
 
-    transition: Callable[..., ContinuousState] | None | Unset = Unset()
-    """Deterministic transition for state evolution.
-
-    Compute the next continuous state value (`ContinuousState`).
-    `None` for fixed states. `Unset` for action grids.
-    """
-
     # Cached JAX arrays for efficient coordinate computation (set in __post_init__)
     _breakpoints: Float1D = dataclasses.field(init=False, repr=False)
     _piece_starts: Float1D = dataclasses.field(init=False, repr=False)
@@ -503,7 +411,6 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
 
     def __post_init__(self) -> None:
         _validate_piecewise_log_spaced_grid(self.pieces)
-        _validate_transition(self.transition)
         _init_piecewise_grid_cache(self)
 
     @property
@@ -606,29 +513,6 @@ def _init_piecewise_grid_cache(
 # ======================================================================================
 # Validate user input
 # ======================================================================================
-
-
-def _validate_transition(
-    transition: Callable[..., ContinuousState | DiscreteState]
-    | MarkovTransition
-    | None
-    | Unset,
-) -> None:
-    """Validate that `transition` is callable, `MarkovTransition`, None, or UNSET.
-
-    Raises:
-        GridInitializationError: If `transition` is not a valid type.
-
-    """
-    if not (
-        isinstance(transition, Unset | MarkovTransition)
-        or transition is None
-        or callable(transition)
-    ):
-        raise GridInitializationError(
-            f"transition must be a callable, MarkovTransition, or None, "
-            f"but got {type(transition).__name__}: {transition!r}"
-        )
 
 
 def _validate_discrete_grid(category_class: type) -> None:

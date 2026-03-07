@@ -99,9 +99,10 @@ def _make_model(custom_H=None):
             "consumption": LinSpacedGrid(start=0.5, stop=10, n_points=50),
         },
         states={
-            "wealth": LinSpacedGrid(
-                start=0.5, stop=10, n_points=30, transition=next_wealth
-            ),
+            "wealth": LinSpacedGrid(start=0.5, stop=10, n_points=30),
+        },
+        state_transitions={
+            "wealth": next_wealth,
         },
         constraints={"borrowing_constraint": borrowing_constraint},
         transition=next_regime,

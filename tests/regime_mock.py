@@ -17,6 +17,7 @@ class RegimeMock:
     n_periods: int | None = None
     actions: dict[str, Grid | None] | None = None
     states: dict[str, Grid | None] | None = None
+    state_transitions: dict[str, UserFunction | None] = field(default_factory=dict)
     constraints: dict[str, UserFunction] = field(default_factory=dict)
     transition: UserFunction | None = None
     functions: dict[str, UserFunction] = field(default_factory=dict)
@@ -35,6 +36,7 @@ class RegimeMock:
         if self.states:
             result |= _collect_state_transitions(
                 {k: v for k, v in self.states.items() if v is not None},
+                self.state_transitions,
             )
         if self.transition:
             result["next_regime"] = self.transition
