@@ -428,11 +428,7 @@ def _extract_transitions_from_regime(
     )
 
     nested: dict[str, dict[str, UserFunction] | UserFunction] = {}
-    # Unwrap MarkovTransition to get the bare callable for processing.
-    transition = regime.transition
-    if isinstance(transition, MarkovTransition):
-        transition = transition.func
-    nested["next_regime"] = transition  # ty: ignore[invalid-assignment]
+    nested["next_regime"] = regime.transition  # ty: ignore[invalid-assignment]
 
     for target_regime_name, target_regime_state_names in states_per_regime.items():
         target_dict: dict[str, UserFunction] = {}
