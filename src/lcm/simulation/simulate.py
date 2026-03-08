@@ -350,8 +350,14 @@ def _compute_starting_periods(
     age_values = jnp.asarray(ages.values)
     starting_periods = jnp.searchsorted(age_values, initial_ages)
 
-    # Validate that all initial ages are actual grid points
-    valid = age_values[starting_periods] == initial_ages
+    # Clamp indices to valid range before accessing age_values. searchsorted can
+    # return len(age_values) for ages beyond the grid maximum.
+    safe_idx = jnp.clip(starting_periods, 0, len(age_values) - 1)
+
+    # Validate that all initial ages are actual grid points. Use isclose instead
+    # of strict equality to handle floating-point representation of sub-annual ages.
+    in_bounds = starting_periods < len(age_values)
+    valid = in_bounds & jnp.isclose(age_values[safe_idx], initial_ages)
     if not jnp.all(valid):
         invalid_ages = initial_ages[~valid]
         msg = (
