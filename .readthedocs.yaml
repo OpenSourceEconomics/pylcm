@@ -18,5 +18,5 @@ build:
       - mkdir --parents $READTHEDOCS_OUTPUT/html/
       - >-
         BASE_URL="/$READTHEDOCS_LANGUAGE/$READTHEDOCS_VERSION"
-        pixi run -e docs build docs
+        pixi run -e docs build-docs
       - cp -a docs/_build/html/. "$READTHEDOCS_OUTPUT/html" && rm -r docs/_build
