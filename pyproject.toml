@@ -222,7 +222,7 @@ jax = { version = ">=0.8", extras = [ "cuda13" ] }
 jupyter-book = ">=2.0"
 mystmd = "*"
 [tool.pixi.feature.docs.tasks]
-docs = { cmd = "jupyter book build --html --execute", cwd = "docs", env = { JAX_PLATFORMS = "cpu" } }
+build-docs = { cmd = "jupyter book build --html --execute", cwd = "docs", env = { JAX_PLATFORMS = "cpu" } }
 view-docs = { cmd = "jupyter book start --execute", cwd = "docs", env = { JAX_PLATFORMS = "cpu" } }
 [tool.pixi.feature.tests.dependencies]
 matplotlib = "*"  # required because of pandas

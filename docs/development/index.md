@@ -57,7 +57,7 @@ prek run --all-files
 
 ```bash
 # Build docs
-pixi run -e docs docs
+pixi run -e docs build-docs
 
 # Live preview
 pixi run -e docs view-docs

@@ -30,7 +30,7 @@ automation. Python 3.14+ is required.
 
 ### Documentation
 
-- `pixi run -e docs docs` - Build documentation
+- `pixi run -e docs build-docs` - Build documentation
 - `pixi run -e docs view-docs` - Live preview documentation
 
 ### Environment Setup
