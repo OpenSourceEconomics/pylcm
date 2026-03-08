@@ -304,7 +304,7 @@ def test_passing_same_params_to_regimes_with_different_templates():
         "discount_factor": float,
         "utility": {"beta_mean": float, "beta_std": float},
         "cons_util": {"sigma": float, "bb": float, "kappa": float},
-        "next_health": {"health_transition": float},
+        "next_health": {"probs_array": float},
     }
 
     # Template for a terminal regime - empty (no H, no transitions)
@@ -320,7 +320,7 @@ def test_passing_same_params_to_regimes_with_different_templates():
         "discount_factor": 1.0,
         "utility": {"beta_mean": 0.95, "beta_std": 0.02},
         "cons_util": {"sigma": 2.0, "bb": 13.0, "kappa": 0.87},
-        "next_health": {"health_transition": 0.5},
+        "next_health": {"probs_array": 0.5},
     }
 
     # This is what the user might do - pass same params to both regimes

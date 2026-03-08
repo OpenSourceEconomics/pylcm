@@ -111,8 +111,8 @@ dead = Regime(
 )
 
 
-def next_health(health: DiscreteState, health_transition: FloatND) -> FloatND:
-    return health_transition[health]
+def next_health(health: DiscreteState, probs_array: FloatND) -> FloatND:
+    return probs_array[health]
 
 
 alive_stochastic = alive_deterministic.replace(
@@ -272,22 +272,22 @@ def policy_second_period_stochastic(wealth, health):
 
 def value_first_period_stochastic(wealth, health, params):
     """Value function in the first period. Computed using pen and paper."""
-    health_transition = params["next_health"]["health_transition"]
+    probs_array = params["next_health"]["probs_array"]
 
     index = (wealth < 1).astype(int)  # map wealth to indices 0 and 1
 
     _values = np.array(
         [
-            params["discount_factor"] * health_transition[0, 1] * np.log(2),
+            params["discount_factor"] * probs_array[0, 1] * np.log(2),
             np.maximum(
-                0, params["discount_factor"] * health_transition[0, 1] * np.log(2) - 0.5
+                0, params["discount_factor"] * probs_array[0, 1] * np.log(2) - 0.5
             ),
         ],
     )
     value_health_0 = _values[index]
 
     new_discount_factor = (
-        params["discount_factor"] * params["next_health"]["health_transition"][1, 1]
+        params["discount_factor"] * params["next_health"]["probs_array"][1, 1]
     )
     value_health_1 = value_first_period_deterministic(
         wealth, params={"discount_factor": new_discount_factor}
@@ -299,7 +299,7 @@ def value_first_period_stochastic(wealth, health, params):
 
 def policy_first_period_stochastic(wealth, health, params):
     """Policy function in the first period. Computed using pen and paper."""
-    health_transition = params["next_health"]["health_transition"]
+    probs_array = params["next_health"]["probs_array"]
 
     index = (wealth < 1).astype(int)  # map wealth to indices 0 and 1
     _policies = np.array(
@@ -310,8 +310,7 @@ def policy_first_period_stochastic(wealth, health, params):
                 np.argmax(
                     (
                         0,
-                        params["discount_factor"] * health_transition[0, 1] * np.log(2)
-                        - 0.5,
+                        params["discount_factor"] * probs_array[0, 1] * np.log(2) - 0.5,
                     ),
                 ),
             ],
@@ -320,7 +319,7 @@ def policy_first_period_stochastic(wealth, health, params):
     policy_health_0 = _policies[index]
 
     new_discount_factor = (
-        params["discount_factor"] * params["next_health"]["health_transition"][1, 1]
+        params["discount_factor"] * params["next_health"]["probs_array"][1, 1]
     )
     _policy_health_1 = policy_first_period_deterministic(
         wealth,
@@ -525,8 +524,8 @@ HEALTH_TRANSITION = [
 
 @pytest.mark.parametrize("discount_factor", [0, 0.5, 0.9, 1.0])
 @pytest.mark.parametrize("n_wealth_points", [100, 1_000])
-@pytest.mark.parametrize("health_transition", HEALTH_TRANSITION)
-def test_stochastic_solve(discount_factor, n_wealth_points, health_transition):
+@pytest.mark.parametrize("probs_array", HEALTH_TRANSITION)
+def test_stochastic_solve(discount_factor, n_wealth_points, probs_array):
     # Update model
     # ==================================================================================
     n_periods = 3
@@ -549,7 +548,7 @@ def test_stochastic_solve(discount_factor, n_wealth_points, health_transition):
     # Solve model using LCM
     # ==================================================================================
     params = {
-        "next_health": {"health_transition": health_transition},
+        "next_health": {"probs_array": probs_array},
         "next_regime": {"final_age_alive": model.n_periods - 2},
     }
     got = model.solve(params={"discount_factor": discount_factor, "alive": params})
@@ -591,8 +590,8 @@ def test_stochastic_solve(discount_factor, n_wealth_points, health_transition):
 
 @pytest.mark.parametrize("discount_factor", [0, 0.5, 0.9, 1.0])
 @pytest.mark.parametrize("n_wealth_points", [100, 1_000])
-@pytest.mark.parametrize("health_transition", HEALTH_TRANSITION)
-def test_stochastic_simulate(discount_factor, n_wealth_points, health_transition):
+@pytest.mark.parametrize("probs_array", HEALTH_TRANSITION)
+def test_stochastic_simulate(discount_factor, n_wealth_points, probs_array):
     # Update model
     # ==================================================================================
     n_periods = 3
@@ -615,7 +614,7 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, health_transition
     # Simulate model using LCM
     # ==================================================================================
     params_alive = {
-        "next_health": {"health_transition": health_transition},
+        "next_health": {"probs_array": probs_array},
         "next_regime": {"final_age_alive": model.n_periods - 2},
     }
     initial_states = {

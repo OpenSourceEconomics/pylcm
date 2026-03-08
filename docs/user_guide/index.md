@@ -15,3 +15,4 @@ The user guide covers the core concepts and usage patterns for pylcm. Start with
 - [Parameters](parameters.md)
 - [Shocks](shocks.md)
 - [Solving and Simulating](solving_and_simulating.md)
+- [Pandas Interop](pandas_interop.md)

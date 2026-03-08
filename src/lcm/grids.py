@@ -2,7 +2,7 @@ import dataclasses
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, is_dataclass
-from typing import overload
+from typing import TYPE_CHECKING, overload
 
 import jax.numpy as jnp
 import portion
@@ -16,6 +16,9 @@ from lcm.typing import (
     ScalarFloat,
 )
 from lcm.utils import find_duplicates, get_field_names_and_values
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 def categorical[T](cls: type[T]) -> type[T]:
@@ -52,6 +55,16 @@ def categorical[T](cls: type[T]) -> type[T]:
     # Assign sequential integers as defaults
     for i, name in enumerate(annotations):
         setattr(cls, name, i)
+
+    @classmethod
+    def _to_categorical_dtype(cls: type) -> pd.CategoricalDtype:
+        """Return a `pd.CategoricalDtype` with the category names of this class."""
+        import pandas as pd  # noqa: PLC0415
+
+        names = [f.name for f in dataclasses.fields(cls)]
+        return pd.CategoricalDtype(categories=names, ordered=False)
+
+    cls.to_categorical_dtype = _to_categorical_dtype  # ty: ignore[unresolved-attribute]
 
     # Apply dataclass decorator
     return dataclass(frozen=True)(cls)

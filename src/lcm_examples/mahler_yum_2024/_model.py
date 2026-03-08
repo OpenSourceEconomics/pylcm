@@ -268,9 +268,9 @@ def next_health(
     effort_t_1: DiscreteState,
     education: DiscreteState,
     health_type: DiscreteState,
-    health_transition: FloatND,
+    probs_array: FloatND,
 ) -> FloatND:
-    return health_transition[period, health, effort, effort_t_1, education, health_type]
+    return probs_array[period, health, effort, effort_t_1, education, health_type]
 
 
 def next_effort_t_1(effort: DiscreteAction) -> DiscreteState:
@@ -284,10 +284,10 @@ def next_regime(
     period: Period,
     education: DiscreteState,
     health: DiscreteState,
-    regime_transition: FloatND,
+    probs_array: FloatND,
 ) -> FloatND:
     """Return probability array [P(alive), P(dead)] indexed by RegimeId."""
-    survival_prob = regime_transition[period, education, health]
+    survival_prob = probs_array[period, education, health]
     return jnp.array([survival_prob, 1 - survival_prob])
 
 
@@ -630,8 +630,8 @@ def create_inputs(
         "pension": {"income_grid": income_grid, "penre": penre},
         "scaled_adjustment_cost": {"chimaxgrid": chimax_grid},
         "scaled_productivity_shock": {"sigx": jnp.sqrt(income_process["sigx"])},  # ty: ignore[invalid-argument-type]
-        "next_health": {"health_transition": tr2yp_grid},
-        "next_regime": {"regime_transition": regime_transition},
+        "next_health": {"probs_array": tr2yp_grid},
+        "next_regime": {"probs_array": regime_transition},
     }
 
     # Create initial states for the simulation

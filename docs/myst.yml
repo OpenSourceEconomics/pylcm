@@ -44,6 +44,7 @@ project:
         - file: user_guide/grids.md
         - file: user_guide/transitions.ipynb
         - file: user_guide/solving_and_simulating.md
+        - file: user_guide/pandas_interop.md
         - file: user_guide/parameters.md
         - file: user_guide/shocks.md
     - file: explanations/index.md
