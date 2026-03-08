@@ -1,19 +1,10 @@
-"""Reproducer: heterogeneous initial ages in simulation."""
+"""Test heterogeneous initial ages in simulation."""
 
 import jax.numpy as jnp
-import pytest
 
 from tests.test_models.deterministic.base import get_model, get_params
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Simulation does not support heterogeneous initial ages. All subjects "
-        "are forced to start at period 0 (ages.minimum). The simulation loop "
-        "does not yet use the per-subject age from initial_states."
-    ),
-    strict=True,
-)
 def test_simulation_with_heterogeneous_initial_ages():
     """Subjects should be able to start simulation at different ages.
 
@@ -37,5 +28,5 @@ def test_simulation_with_heterogeneous_initial_ages():
     df = result.to_dataframe()
 
     # Subject 1 should not have data for ages before their starting age
-    subject_1_min_age = df.loc[df["_subject_id"] == 1, "age"].min()
+    subject_1_min_age = df.loc[df["subject_id"] == 1, "age"].min()
     assert subject_1_min_age == 60.0
