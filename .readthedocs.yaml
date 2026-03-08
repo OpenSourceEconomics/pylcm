@@ -16,5 +16,7 @@ build:
       # Jupyter Book 2.0 builds site content to _build/html.
       # For ReadTheDocs, we build and then copy to the expected output location.
       - mkdir --parents $READTHEDOCS_OUTPUT/html/
-      - BASE_URL="/$READTHEDOCS_LANGUAGE/$READTHEDOCS_VERSION" pixi run -e docs docs
+      - >-
+        BASE_URL="/$READTHEDOCS_LANGUAGE/$READTHEDOCS_VERSION"
+        pixi run -e docs build docs
       - cp -a docs/_build/html/. "$READTHEDOCS_OUTPUT/html" && rm -r docs/_build

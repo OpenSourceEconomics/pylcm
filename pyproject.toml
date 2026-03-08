@@ -112,10 +112,6 @@ per-file-ignores."docs/**/*" = [
   "T201",   # print found
   "T203",   # pprint found
 ]
-per-file-ignores."examples/*" = [
-  "E402",   # Module level import not at top of file
-  "INP001", # Implicit namespace package
-]
 per-file-ignores."explanations/*" = [
   "ANN",    # Annotations
   "E402",   # Module level import not at top of file
@@ -187,7 +183,7 @@ unused-ignore-comment = "error"
 useless-overload-body = "error"
 [tool.ty.src]
 exclude = [ "docs/**/*.ipynb" ]
-include = [ "src/", "tests/", "examples/" ]
+include = [ "src/", "tests/" ]
 
 [tool.pixi.dependencies]
 python = "~=3.14.0"

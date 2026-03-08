@@ -1,3 +1,9 @@
+"""Regression test model — 2-regime subset of the mortality model.
+
+Extends the mortality model with an age-dependent wage function and supports
+configurable grid types for testing various grid classes.
+"""
+
 import jax.numpy as jnp
 
 from lcm import (
@@ -13,66 +19,33 @@ from lcm import (
 )
 from lcm.grids import UniformContinuousGrid
 from lcm.typing import (
-    BoolND,
-    ContinuousAction,
-    ContinuousState,
-    DiscreteAction,
     FloatND,
     ScalarInt,
     UserParams,
 )
+from lcm_examples.mortality import (
+    LaborSupply,
+    borrowing_constraint,
+    is_working,
+    labor_income,
+    next_wealth,
+)
+from lcm_examples.mortality import (
+    utility_working as utility,
+)
 
 
 # --------------------------------------------------------------------------------------
-# Categorical variables and constants
+# Regression-specific: RegimeId (2 regimes) and wage function
 # --------------------------------------------------------------------------------------
-@categorical
-class LaborSupply:
-    work: int
-    retire: int
-
-
 @categorical
 class RegimeId:
     working_life: int
     dead: int
 
 
-# --------------------------------------------------------------------------------------
-# Utility functions
-# --------------------------------------------------------------------------------------
-def utility(
-    consumption: ContinuousAction, is_working: BoolND, disutility_of_work: float
-) -> FloatND:
-    work_disutility = jnp.where(is_working, disutility_of_work, 0.0)
-    return jnp.log(consumption) - work_disutility
-
-
-# --------------------------------------------------------------------------------------
-# Auxiliary variables
-# --------------------------------------------------------------------------------------
-def labor_income(is_working: BoolND, wage: float | FloatND) -> FloatND:
-    return jnp.where(is_working, wage, 0.0)
-
-
-def is_working(work: DiscreteAction) -> BoolND:
-    return work == LaborSupply.work
-
-
 def wage(age: float) -> float | FloatND:
     return 1 + 0.1 * age
-
-
-# --------------------------------------------------------------------------------------
-# State and regime transitions
-# --------------------------------------------------------------------------------------
-def next_wealth(
-    wealth: ContinuousState,
-    consumption: ContinuousAction,
-    labor_income: FloatND,
-    interest_rate: float,
-) -> ContinuousState:
-    return (1 + interest_rate) * (wealth - consumption) + labor_income
 
 
 def next_regime(age: float, final_age_alive: float) -> ScalarInt:
@@ -81,15 +54,6 @@ def next_regime(age: float, final_age_alive: float) -> ScalarInt:
         RegimeId.dead,
         RegimeId.working_life,
     )
-
-
-# --------------------------------------------------------------------------------------
-# Constraints
-# --------------------------------------------------------------------------------------
-def borrowing_constraint(
-    consumption: ContinuousAction, wealth: ContinuousState
-) -> BoolND:
-    return consumption <= wealth
 
 
 # ======================================================================================
@@ -103,10 +67,10 @@ DEFAULT_CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 working_life = Regime(
     actions={
         "work": DiscreteGrid(LaborSupply),
-        "consumption": DEFAULT_CONSUMPTION_GRID,  # placeholder, will be replaced by get_model()  # noqa: E501
+        "consumption": DEFAULT_CONSUMPTION_GRID,
     },
     states={
-        "wealth": DEFAULT_WEALTH_GRID,  # placeholder, will be replaced by get_model()
+        "wealth": DEFAULT_WEALTH_GRID,
     },
     state_transitions={
         "wealth": next_wealth,
@@ -119,14 +83,14 @@ working_life = Regime(
         "is_working": is_working,
         "wage": wage,
     },
-    active=lambda _age: True,  # placeholder, will be replaced by get_model()
+    active=lambda _age: True,
 )
 
 
 dead = Regime(
     transition=None,
     functions={"utility": lambda: 0.0},
-    active=lambda _age: True,  # placeholder, will be replaced by get_model()
+    active=lambda _age: True,
 )
 
 

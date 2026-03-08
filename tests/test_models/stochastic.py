@@ -238,6 +238,7 @@ def get_params(
     final_age_alive = 40 + (n_periods - 2) * 10
     return {
         "discount_factor": discount_factor,
+        "survival_prob": 0.97,
         "working_life": {
             "utility": {"disutility_of_work": disutility_of_work},
             "next_wealth": {"interest_rate": interest_rate},

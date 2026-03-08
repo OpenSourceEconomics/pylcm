@@ -57,7 +57,11 @@ project:
     - file: examples/index.md
       title: Examples
       children:
-        - file: examples/consumption_saving.md
+        - file: examples/tiny.md
+        - file: examples/mortality.md
+        - file: examples/precautionary_savings.md
+        - file: examples/precautionary_savings_health.md
+        - file: examples/mahler_yum_2024.md
     - file: development/index.md
       title: Development
   error_rules:

@@ -1,14 +1,12 @@
-"""Example specification for a consumption-savings model with health and exercise.
+"""Consumption-savings model with health and exercise.
 
-People work for n-1 periods and are retired in the last period.
+People work for n-1 periods and are retired in the last period. The agent chooses
+whether to work, how much to consume, and how much to exercise. Two continuous states
+(wealth, health) evolve over time.
 
-Note that the parameterization of the model does not make a whole lot of sense, so don't
-look too closely inside the functions as opposed to their interfaces.
+Note that the parameterization is chosen to showcase pylcm's features, not to match any
+empirical calibration.
 """
-
-import jax
-
-jax.config.update("jax_enable_x64", val=True)
 
 import jax.numpy as jnp
 
@@ -23,13 +21,10 @@ from lcm.typing import (
 )
 
 # ======================================================================================
-# Model functions
+# Categorical variables and regime ID
 # ======================================================================================
 
 
-# --------------------------------------------------------------------------------------
-# Categorical variables and regime ID
-# --------------------------------------------------------------------------------------
 @categorical
 class LaborSupply:
     not_working: int
@@ -42,9 +37,11 @@ class RegimeId:
     retirement: int
 
 
-# --------------------------------------------------------------------------------------
-# Utility function
-# --------------------------------------------------------------------------------------
+# ======================================================================================
+# Model functions
+# ======================================================================================
+
+
 def utility(
     consumption: ContinuousAction,
     work: DiscreteAction,
@@ -62,9 +59,6 @@ def utility_retirement(
     return jnp.log(wealth) * health
 
 
-# --------------------------------------------------------------------------------------
-# Auxiliary variables
-# --------------------------------------------------------------------------------------
 def labor_income(wage: float | FloatND, work: DiscreteAction) -> FloatND:
     return wage * work
 
@@ -73,9 +67,6 @@ def wage(age: float) -> float | FloatND:
     return 1 + 0.1 * age
 
 
-# --------------------------------------------------------------------------------------
-# State and regime transitions
-# --------------------------------------------------------------------------------------
 def next_wealth(
     wealth: ContinuousState,
     consumption: ContinuousAction,
@@ -98,9 +89,6 @@ def next_regime(period: int, n_periods: int) -> ScalarInt:
     return jnp.where(certain_retirement, RegimeId.retirement, RegimeId.working_life)
 
 
-# --------------------------------------------------------------------------------------
-# Constraints
-# --------------------------------------------------------------------------------------
 def borrowing_constraint(
     consumption: ContinuousAction,
     wealth: ContinuousState,
@@ -110,22 +98,14 @@ def borrowing_constraint(
 
 
 # ======================================================================================
-# Model specification and parameters
+# Default regime objects
 # ======================================================================================
-RETIREMENT_AGE = 24
 
-
-def working_is_active(age: float) -> bool:
-    return age < RETIREMENT_AGE
-
-
-def retirement_is_active(age: float) -> bool:
-    return age >= RETIREMENT_AGE
-
+_DEFAULT_RETIREMENT_AGE = 24
 
 working_life = Regime(
     transition=next_regime,
-    active=working_is_active,
+    active=lambda age: age < _DEFAULT_RETIREMENT_AGE,
     states={
         "wealth": LinSpacedGrid(start=1, stop=100, n_points=100),
         "health": LinSpacedGrid(start=0, stop=1, n_points=100),
@@ -158,7 +138,7 @@ working_life = Regime(
 
 retirement = Regime(
     transition=None,
-    active=retirement_is_active,
+    active=lambda age: age >= _DEFAULT_RETIREMENT_AGE,
     states={
         "wealth": LinSpacedGrid(start=1, stop=100, n_points=100),
         "health": LinSpacedGrid(start=0, stop=1, n_points=100),
@@ -167,38 +147,55 @@ retirement = Regime(
 )
 
 
-model = Model(
-    regimes={
-        "working_life": working_life,
-        "retirement": retirement,
-    },
-    ages=AgeGrid(start=18, stop=RETIREMENT_AGE, step="Y"),
-    regime_id_class=RegimeId,
-)
-
-params = {
-    "discount_factor": 0.95,
-    "working_life": {
-        "utility": {"disutility_of_work": 0.05},
-        "next_wealth": {"interest_rate": 0.05},
-        "next_regime": {"n_periods": model.n_periods},
-    },
-    "retirement": {},
-}
-
 # ======================================================================================
-# Solve and simulate the model
+# Factories
 # ======================================================================================
 
-if __name__ == "__main__":
-    n_simulation_subjects = 1_000
 
-    simulation_result = model.solve_and_simulate(
-        params=params,
-        initial_regimes=["working_life"] * n_simulation_subjects,
-        initial_states={
-            "age": jnp.full(n_simulation_subjects, model.ages.values[0]),
-            "wealth": jnp.full(n_simulation_subjects, 1),
-            "health": jnp.full(n_simulation_subjects, 1),
-        },
+def get_model(retirement_age: int = 24) -> Model:
+    """Create the consumption-savings model with health and exercise.
+
+    Args:
+        retirement_age: Age at which the agent retires (default 24).
+
+    Returns:
+        A configured Model instance.
+
+    """
+    wl = working_life.replace(
+        active=lambda age, _ra=retirement_age: age < _ra,
     )
+    ret = retirement.replace(
+        active=lambda age, _ra=retirement_age: age >= _ra,
+    )
+
+    return Model(
+        regimes={
+            "working_life": wl,
+            "retirement": ret,
+        },
+        ages=AgeGrid(start=18, stop=retirement_age, step="Y"),
+        regime_id_class=RegimeId,
+    )
+
+
+def get_params(retirement_age: int = 24) -> dict:
+    """Get default parameters for the health model.
+
+    Args:
+        retirement_age: Age at which the agent retires (must match get_model).
+
+    Returns:
+        Parameter dict ready for model.solve().
+
+    """
+    model = get_model(retirement_age=retirement_age)
+    return {
+        "discount_factor": 0.95,
+        "working_life": {
+            "utility": {"disutility_of_work": 0.05},
+            "next_wealth": {"interest_rate": 0.05},
+            "next_regime": {"n_periods": model.n_periods},
+        },
+        "retirement": {},
+    }

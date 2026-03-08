@@ -1,7 +1,8 @@
 """A three-regime consumption-savings model with mortality.
 
 Working life, retirement, and death. The agent chooses labor supply and consumption.
-Log utility with work disutility. Mortality occurs after a configurable final age.
+Log utility with work disutility. Death is certain at the final age; from the second
+period onwards it can also occur randomly with age-dependent survival probabilities.
 
 Based on tests/test_models/deterministic/base.py.
 """
@@ -12,6 +13,7 @@ from lcm import (
     AgeGrid,
     DiscreteGrid,
     LinSpacedGrid,
+    MarkovTransition,
     Model,
     Regime,
     categorical,
@@ -22,7 +24,6 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     FloatND,
-    ScalarInt,
 )
 
 # ---------------------------------------------------------------------------
@@ -80,23 +81,42 @@ def next_regime_from_working(
     work: DiscreteAction,
     age: float,
     final_age_alive: float,
-) -> ScalarInt:
+    survival_prob: float,
+) -> FloatND:
+    """Return regime transition probabilities [P(working), P(retired), P(dead)].
+
+    At the final age alive, death is certain. Otherwise the agent survives with
+    probability `survival_prob` and, conditional on survival, transitions to
+    retirement if they chose to retire.
+
+    """
+    retire_choice = work == LaborSupply.retire
     return jnp.where(
         age >= final_age_alive,
-        RegimeId.dead,
+        jnp.array([0.0, 0.0, 1.0]),
         jnp.where(
-            work == LaborSupply.retire,
-            RegimeId.retirement,
-            RegimeId.working_life,
+            retire_choice,
+            jnp.array([0.0, survival_prob, 1 - survival_prob]),
+            jnp.array([survival_prob, 0.0, 1 - survival_prob]),
         ),
     )
 
 
-def next_regime_from_retirement(age: float, final_age_alive: float) -> ScalarInt:
+def next_regime_from_retirement(
+    age: float,
+    final_age_alive: float,
+    survival_prob: float,
+) -> FloatND:
+    """Return regime transition probabilities [P(working), P(retired), P(dead)].
+
+    At the final age alive, death is certain. Otherwise the agent survives with
+    probability `survival_prob`.
+
+    """
     return jnp.where(
         age >= final_age_alive,
-        RegimeId.dead,
-        RegimeId.retirement,
+        jnp.array([0.0, 0.0, 1.0]),
+        jnp.array([0.0, survival_prob, 1 - survival_prob]),
     )
 
 
@@ -125,7 +145,7 @@ working_life = Regime(
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth},
     constraints={"borrowing_constraint": borrowing_constraint},
-    transition=next_regime_from_working,
+    transition=MarkovTransition(next_regime_from_working),
     functions={
         "utility": utility_working,
         "labor_income": labor_income,
@@ -135,7 +155,7 @@ working_life = Regime(
 )
 
 retirement = Regime(
-    transition=next_regime_from_retirement,
+    transition=MarkovTransition(next_regime_from_retirement),
     actions={"consumption": CONSUMPTION_GRID},
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth},
@@ -187,6 +207,7 @@ def get_params(
     disutility_of_work: float = 0.5,
     interest_rate: float = 0.05,
     wage: float = 10.0,
+    survival_prob: float = 0.97,
 ) -> dict:
     """Get default parameters for the mortality model.
 
@@ -196,6 +217,7 @@ def get_params(
         disutility_of_work: Disutility of work.
         interest_rate: Interest rate.
         wage: Wage.
+        survival_prob: Per-period survival probability (default 0.97).
 
     Returns:
         Parameter dict ready for model.solve().
@@ -206,6 +228,7 @@ def get_params(
         "discount_factor": discount_factor,
         "interest_rate": interest_rate,
         "final_age_alive": final_age_alive,
+        "survival_prob": survival_prob,
         "working_life": {
             "utility": {"disutility_of_work": disutility_of_work},
             "labor_income": {"wage": wage},

@@ -6,12 +6,10 @@ Wealth-Health Gaps in Germany" by Lukas Mahler and Minchul Yum (Econometrica, 20
 
 from dataclasses import make_dataclass
 from functools import partial
+from pathlib import Path
 from typing import Any
 
 import jax
-
-jax.config.update("jax_enable_x64", val=False)
-
 import jax.numpy as jnp
 import numpy as np
 from jax import random
@@ -40,6 +38,8 @@ from lcm.typing import (
     Period,
     RegimeName,
 )
+
+_DATA_DIR = Path(__file__).parent / "data"
 
 # ======================================================================================
 # Parameters
@@ -590,8 +590,8 @@ tr2yp_grid = tr2yp_grid.at[:, :, :, :, :, :, 0].set(
 
 
 def create_regime_transition_grid() -> FloatND:
-    surv_hs: FloatND = jnp.array(np.loadtxt("data/surv_hs.txt", skiprows=1))
-    surv_cl: FloatND = jnp.array(np.loadtxt("data/surv_cl.txt", skiprows=1))
+    surv_hs: FloatND = jnp.array(np.loadtxt(_DATA_DIR / "surv_hs.txt", skiprows=1))
+    surv_cl: FloatND = jnp.array(np.loadtxt(_DATA_DIR / "surv_cl.txt", skiprows=1))
     spgrid: FloatND = jnp.zeros((38, 2, 2))
     spgrid = spgrid.at[:, 0, 0].set(surv_hs[:, 1])
     spgrid = spgrid.at[:, 1, 0].set(surv_cl[:, 1])
@@ -650,7 +650,9 @@ def create_inputs(
                 prod = prod.at[index + 8].set(j - 1)
                 ht = ht.at[index + 8].set(1 - (k - 1))
                 ed = ed.at[index + 8].set(1)
-    init_distr_2b2t2h = jnp.array(np.loadtxt("data/init_distr_2b2t2h.txt", skiprows=1))
+    init_distr_2b2t2h = jnp.array(
+        np.loadtxt(_DATA_DIR / "init_distr_2b2t2h.txt", skiprows=1)
+    )
     initial_dists = jnp.diff(init_distr_2b2t2h[:, 0], prepend=0)
     eff_grid = jnp.linspace(0, 1, 40)
     key = random.key(seed)
@@ -689,74 +691,3 @@ def create_inputs(
         "productivity": initial_productivity,
     }
     return params, initial_states, discount_factor_type
-
-
-# ======================================================================================
-# Solve and simulate the model
-# ======================================================================================
-
-if __name__ == "__main__":
-    import logging
-    import time
-
-    logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger("lcm")
-
-    # Discount-factor heterogeneity: solve separate models per type.
-    # Each type gets beta = beta_mean +/- beta_std.
-    beta_mean = START_PARAMS["beta"]["mean"]
-    beta_std = START_PARAMS["beta"]["std"]
-
-    # Build common inputs (everything except discount_factor).
-    start_params_without_beta = {k: v for k, v in START_PARAMS.items() if k != "beta"}
-    common_params, initial_states, discount_factor_types = create_inputs(
-        seed=7235,
-        n_simulation_subjects=1_000,
-        **start_params_without_beta,  # ty: ignore[invalid-argument-type]
-    )
-
-    selected_ids_high = jnp.flatnonzero(discount_factor_types)
-    selected_ids_low = jnp.flatnonzero(1 - discount_factor_types)
-
-    discount_factors = {
-        "low": beta_mean - beta_std,
-        "high": beta_mean + beta_std,
-    }
-
-    initial_states_split = {
-        "low": {
-            state: values[selected_ids_low] for state, values in initial_states.items()
-        },
-        "high": {
-            state: values[selected_ids_high] for state, values in initial_states.items()
-        },
-    }
-
-    initial_regimes_split = {
-        "low": ["alive" for i in range(selected_ids_low.shape[0])],
-        "high": ["alive" for i in range(selected_ids_high.shape[0])],
-    }
-
-    timings: list[float] = []
-    for i in range(3):
-        t0 = time.perf_counter()
-        for name, beta in discount_factors.items():
-            simulation_result = MAHLER_YUM_MODEL.solve_and_simulate(
-                params={
-                    "alive": {
-                        "discount_factor": beta,
-                        **common_params,
-                    },
-                },
-                initial_states=initial_states_split[name],
-                initial_regimes=initial_regimes_split[name],
-                seed=8295,
-            )
-
-        elapsed = time.perf_counter() - t0
-        timings.append(elapsed)
-        logger.info("Run %d: %.3fs", i + 1, elapsed)
-
-    logger.info("Timing summary:")
-    for i, t in enumerate(timings):
-        logger.info("  Run %d: %.3fs", i + 1, t)
