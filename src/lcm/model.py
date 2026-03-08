@@ -11,6 +11,7 @@ from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qnam
 from jax import Array
 
 from lcm.ages import AgeGrid
+from lcm.error_handling import validate_regime_transitions_all_periods
 from lcm.exceptions import ModelInitializationError, format_messages
 from lcm.input_processing.params_processing import (
     create_params_template,
@@ -170,6 +171,11 @@ class Model:
         internal_params = process_params(
             params=params, params_template=self._params_template
         )
+        validate_regime_transitions_all_periods(
+            internal_regimes=self.internal_regimes,
+            internal_params=internal_params,
+            ages=self.ages,
+        )
         return solve(
             internal_params=internal_params,
             ages=self.ages,
@@ -281,6 +287,11 @@ class Model:
                 internal_params=internal_params,
                 ages=self.ages,
             )
+        validate_regime_transitions_all_periods(
+            internal_regimes=self.internal_regimes,
+            internal_params=internal_params,
+            ages=self.ages,
+        )
         V_arr_dict = solve(
             internal_params=internal_params,
             ages=self.ages,

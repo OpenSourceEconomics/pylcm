@@ -3,8 +3,8 @@ from types import MappingProxyType
 import jax.numpy as jnp
 import pytest
 
+from lcm.error_handling import validate_regime_transition_probs
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
-from lcm.simulation.utils import validate_regime_transition_probs
 
 # ======================================================================================
 # Tests for validate_regime_transition_probs

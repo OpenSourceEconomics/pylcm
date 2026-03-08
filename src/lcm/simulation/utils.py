@@ -6,7 +6,7 @@ from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import Array, vmap
 from jax import numpy as jnp
 
-from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
+from lcm.error_handling import validate_regime_transition_probs
 from lcm.grids import DiscreteGrid
 from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.random import generate_simulation_keys
@@ -346,54 +346,3 @@ def convert_initial_states_to_nested(
         nested[regime_name] = regime_states
 
     return nested
-
-
-def validate_regime_transition_probs(
-    *,
-    regime_transition_probs: MappingProxyType[str, Array],
-    active_regimes_next_period: tuple[str, ...],
-    regime_name: str,
-    period: int,
-) -> None:
-    """Validate regime transition probabilities.
-
-    Checks that probabilities are finite, sum to 1 across all regimes, and that
-    inactive regimes have zero probability.
-
-    Args:
-        regime_transition_probs: Immutable mapping of regime names to probability
-            arrays.
-        active_regimes_next_period: Tuple of regime names active in the next period.
-        regime_name: Name of the source regime (for error messages).
-        period: Current period (for error messages).
-
-    Raises:
-        InvalidRegimeTransitionProbabilitiesError: If probabilities are non-finite,
-            don't sum to 1, or assign positive probability to inactive regimes.
-
-    """
-    all_probs = jnp.stack(list(regime_transition_probs.values()))
-
-    if jnp.any(~jnp.isfinite(all_probs)):
-        raise InvalidRegimeTransitionProbabilitiesError(
-            f"Non-finite values in regime transition probabilities from "
-            f"'{regime_name}' in period {period}. Check the 'next_regime' function "
-            f"of the '{regime_name}' regime."
-        )
-
-    sum_all = jnp.sum(all_probs, axis=0)
-    if not jnp.allclose(sum_all, 1.0):
-        raise InvalidRegimeTransitionProbabilitiesError(
-            f"Regime transition probabilities from '{regime_name}' in period {period} "
-            f"sum to {sum_all} instead of 1.0. Check the 'next_regime' function "
-            f"of the '{regime_name}' regime."
-        )
-
-    inactive = set(regime_transition_probs) - set(active_regimes_next_period)
-    for r in inactive:
-        if jnp.any(regime_transition_probs[r] > 0):
-            raise InvalidRegimeTransitionProbabilitiesError(
-                f"Regime '{r}' is inactive in period {period + 1} but has positive "
-                f"transition probability from '{regime_name}' in period {period}. "
-                f"Either make '{r}' active or ensure its probability is 0."
-            )

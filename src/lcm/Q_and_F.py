@@ -152,7 +152,7 @@ def get_Q_and_F(
             age=age,
         )
         # Filter to active regimes only — inactive regimes must have 0
-        # probability (validated during simulation).
+        # probability (validated before solve).
         active_regime_probs = MappingProxyType(
             {r: regime_transition_probs[r] for r in active_regimes_next_period}
         )
