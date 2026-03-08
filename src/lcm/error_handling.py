@@ -58,7 +58,8 @@ def validate_regime_transition_probs(
 
     Raises:
         InvalidRegimeTransitionProbabilitiesError: If probabilities are non-finite,
-            don't sum to 1, or assign positive probability to inactive regimes.
+            outside [0, 1], don't sum to 1, or assign positive probability to inactive
+            regimes.
 
     """
     all_probs = jnp.stack(list(regime_transition_probs.values()))
@@ -67,6 +68,13 @@ def validate_regime_transition_probs(
         raise InvalidRegimeTransitionProbabilitiesError(
             f"Non-finite values in regime transition probabilities from "
             f"'{regime_name}' in period {period}. Check the 'next_regime' function "
+            f"of the '{regime_name}' regime."
+        )
+
+    if jnp.any(all_probs < 0) or jnp.any(all_probs > 1):
+        raise InvalidRegimeTransitionProbabilitiesError(
+            f"Regime transition probabilities from '{regime_name}' in period {period} "
+            f"contain values outside [0, 1]. Check the 'next_regime' function "
             f"of the '{regime_name}' regime."
         )
 
@@ -131,7 +139,7 @@ def validate_regime_transitions_all_periods(
             state_action_space = internal_regime.state_action_space(
                 regime_params=internal_params[name],
             )
-            point: dict[str, object] = {}
+            point: dict[str, Array | float] = {}
             for var_name, arr in state_action_space.states.items():
                 point[var_name] = arr[0]
             for var_name, arr in state_action_space.actions.items():
@@ -143,7 +151,7 @@ def validate_regime_transitions_all_periods(
                 k: v for k, v in internal_params[name].items() if k in accepted_params
             }
 
-            regime_transition_probs: MappingProxyType[str, Array] = (
+            regime_transition_probs: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
                 regime_transition_func(
                     **point,
                     **filtered_params,

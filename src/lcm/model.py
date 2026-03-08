@@ -230,6 +230,11 @@ class Model:
                 internal_params=internal_params,
                 ages=self.ages,
             )
+        validate_regime_transitions_all_periods(
+            internal_regimes=self.internal_regimes,
+            internal_params=internal_params,
+            ages=self.ages,
+        )
         return simulate(
             internal_params=internal_params,
             initial_states=initial_states,
