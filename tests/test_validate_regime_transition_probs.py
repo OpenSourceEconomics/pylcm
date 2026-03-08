@@ -3,8 +3,18 @@ from types import MappingProxyType
 import jax.numpy as jnp
 import pytest
 
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    LinSpacedGrid,
+    MarkovTransition,
+    Model,
+    Regime,
+    categorical,
+)
 from lcm.error_handling import validate_regime_transition_probs
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
+from lcm.typing import DiscreteAction, FloatND
 from lcm_examples.mortality import get_model, get_params
 
 # ======================================================================================
@@ -24,7 +34,8 @@ def test_valid_probs_all_active():
         regime_transition_probs=probs,
         active_regimes_next_period=("working_life", "retirement"),
         regime_name="working_life",
-        period=0,
+        age=25.0,
+        next_age=26.0,
     )
 
 
@@ -41,27 +52,29 @@ def test_valid_probs_with_inactive_regime_at_zero():
         regime_transition_probs=probs,
         active_regimes_next_period=("working_life", "retirement"),
         regime_name="working_life",
-        period=0,
+        age=25.0,
+        next_age=26.0,
     )
 
 
 def test_raises_for_probs_not_summing_to_one():
-    """Probabilities that don't sum to 1 raise an error."""
+    """Per-subject probabilities that don't sum to 1 show a DataFrame summary."""
     probs = MappingProxyType(
         {
-            "working_life": jnp.array([0.5, 0.6]),
-            "retirement": jnp.array([0.3, 0.4]),
+            "working_life": jnp.array([0.5, 0.6, 0.7]),
+            "retirement": jnp.array([0.3, 0.3, 0.3]),
         }
     )
     with pytest.raises(
         InvalidRegimeTransitionProbabilitiesError,
-        match=r"sum to .* instead of 1\.0",
+        match=r"2 of 3 probability vectors do not sum to 1\.0",
     ):
         validate_regime_transition_probs(
             regime_transition_probs=probs,
             active_regimes_next_period=("working_life", "retirement"),
             regime_name="working_life",
-            period=0,
+            age=25.0,
+            next_age=26.0,
         )
 
 
@@ -76,13 +89,14 @@ def test_raises_for_positive_probability_on_inactive_regime():
     )
     with pytest.raises(
         InvalidRegimeTransitionProbabilitiesError,
-        match="'dead' is inactive",
+        match=r"'dead' is inactive at age 26\.0",
     ):
         validate_regime_transition_probs(
             regime_transition_probs=probs,
             active_regimes_next_period=("working_life", "retirement"),
             regime_name="working_life",
-            period=0,
+            age=25.0,
+            next_age=26.0,
         )
 
 
@@ -102,7 +116,8 @@ def test_raises_for_out_of_bounds_values():
             regime_transition_probs=probs,
             active_regimes_next_period=("working_life", "retirement"),
             regime_name="working_life",
-            period=0,
+            age=25.0,
+            next_age=26.0,
         )
 
 
@@ -116,13 +131,14 @@ def test_raises_for_nan_values():
     )
     with pytest.raises(
         InvalidRegimeTransitionProbabilitiesError,
-        match="Non-finite values",
+        match=r"Non-finite values.*between ages 25\.0 and 26\.0",
     ):
         validate_regime_transition_probs(
             regime_transition_probs=probs,
             active_regimes_next_period=("working_life", "retirement"),
             regime_name="working_life",
-            period=0,
+            age=25.0,
+            next_age=26.0,
         )
 
 
@@ -142,13 +158,75 @@ def test_raises_for_inf_values():
             regime_transition_probs=probs,
             active_regimes_next_period=("working_life", "retirement"),
             regime_name="working_life",
-            period=0,
+            age=25.0,
+            next_age=26.0,
         )
 
 
 # ======================================================================================
 # Integration tests via public Model methods
 # ======================================================================================
+
+
+@categorical
+class _Action:
+    stay: int
+    leave: int
+
+
+@categorical
+class _RegimeId:
+    active: int
+    terminal: int
+
+
+def _next_regime_only_fails_for_leave(action: DiscreteAction) -> FloatND:
+    """Transition function that is valid for action=0 but invalid for action=1.
+
+    When action=stay (0): returns [1.0, 0.0] — valid.
+    When action=leave (1): returns [1.5, -0.5] — out of bounds.
+
+    """
+    return jnp.where(
+        action == _Action.leave,
+        jnp.array([1.5, -0.5]),
+        jnp.array([1.0, 0.0]),
+    )
+
+
+def _build_action_dependent_model() -> tuple[Model, dict]:
+    """Build a minimal model whose transition bug only shows for the second action."""
+    active = Regime(
+        transition=MarkovTransition(_next_regime_only_fails_for_leave),
+        actions={
+            "action": DiscreteGrid(_Action),
+            "consumption": LinSpacedGrid(start=1, stop=10, n_points=5),
+        },
+        states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
+        state_transitions={"wealth": lambda wealth, consumption: wealth - consumption},
+        constraints={"budget": lambda consumption, wealth: consumption <= wealth},
+        functions={"utility": lambda consumption: jnp.log(consumption)},  # noqa: PLW0108
+    )
+    terminal = Regime(
+        transition=None,
+        states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
+        functions={"utility": lambda wealth: jnp.log(wealth)},  # noqa: PLW0108
+    )
+    model = Model(
+        regimes={"active": active, "terminal": terminal},
+        ages=AgeGrid(start=25, stop=27, step="Y"),
+        regime_id_class=_RegimeId,
+    )
+    params: dict = {"discount_factor": 0.95}
+    return model, params
+
+
+def test_solve_catches_transition_bug_hidden_at_first_grid_point():
+    """Pre-solve validation catches invalid probs even if first action value is ok."""
+    model, params = _build_action_dependent_model()
+    with pytest.raises(InvalidRegimeTransitionProbabilitiesError, match="outside"):
+        model.solve(params)
+
 
 N_PERIODS = 4
 
