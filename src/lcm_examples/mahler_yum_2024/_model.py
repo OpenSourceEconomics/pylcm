@@ -315,10 +315,6 @@ def alive_is_active(age: float, final_age_alive: float) -> bool:
     return age <= final_age_alive
 
 
-def dead_is_active(age: float, initial_age: float) -> bool:
-    return age > initial_age
-
-
 prod_shock_grid = lcm.shocks.ar1.Rouwenhorst(n_points=5, rho=rho, mu=0, sigma=1)
 
 ALIVE_REGIME = Regime(
@@ -369,7 +365,6 @@ ALIVE_REGIME = Regime(
 
 DEAD_REGIME = Regime(
     transition=None,
-    active=partial(dead_is_active, initial_age=ages.values[0]),
     functions={"utility": lambda: 0.0},
 )
 

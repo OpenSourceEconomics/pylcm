@@ -105,7 +105,6 @@ def get_model(
     )
     dead = Regime(
         transition=None,
-        active=lambda age, n=final_age_alive: age > n,
         functions={"utility": lambda: 0.0},
     )
     return Model(

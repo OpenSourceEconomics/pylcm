@@ -24,7 +24,6 @@ from lcm.typing import (
     QAndFFunction,
     RegimeName,
 )
-from lcm.utils import normalize_regime_transition_probs
 
 
 def get_Q_and_F(
@@ -152,10 +151,10 @@ def get_Q_and_F(
             period=period,
             age=age,
         )
-        # Normalize probabilities over active regimes
-        normalized_regime_transition_probs = normalize_regime_transition_probs(
-            regime_transition_probs=regime_transition_probs,
-            active_regimes_next_period=active_regimes_next_period,
+        # Filter to active regimes only — inactive regimes must have 0
+        # probability (validated during simulation).
+        active_regime_probs = MappingProxyType(
+            {r: regime_transition_probs[r] for r in active_regimes_next_period}
         )
 
         continuation_value = jnp.zeros_like(U_arr)
@@ -197,8 +196,7 @@ def get_Q_and_F(
             )
             continuation_value = (
                 continuation_value
-                + normalized_regime_transition_probs[target_regime_name]
-                * next_V_expected_arr
+                + active_regime_probs[target_regime_name] * next_V_expected_arr
             )
 
         H_kwargs = {

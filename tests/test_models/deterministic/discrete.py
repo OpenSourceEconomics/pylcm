@@ -139,7 +139,7 @@ def get_model(n_periods: int) -> Model:
             "working_life": working_life.replace(
                 active=lambda age: age <= final_age_alive
             ),
-            "dead": dead.replace(active=lambda age: age > final_age_alive),
+            "dead": dead,
         },
         ages=ages,
         regime_id_class=RegimeId,
