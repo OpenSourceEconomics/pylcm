@@ -124,7 +124,9 @@ def vmap_1d(
         # argument of func, indicating whether the argument should be mapped over or
         # not. None means that the argument should not be mapped over, 0 means that it
         # should be mapped over the leading axis of the input.
-        in_axes_for_vmap = [None] * len(parameters)  # type: list[int | None]
+        in_axes_for_vmap: list[int | None] = cast(
+            "list[int | None]", [None] * len(parameters)
+        )
         for p in positions:
             in_axes_for_vmap[p] = 0
 
@@ -210,7 +212,7 @@ def _base_productmap(
     # We iterate in reverse order such that the output dimensions are in the same order
     # as the input dimensions.
     for pos in reversed(positions):
-        spec: list[int | None] = [None] * len(parameters)
+        spec: list[int | None] = cast("list[int | None]", [None] * len(parameters))
         spec[pos] = 0
         vmap_specs.append(spec)
 
