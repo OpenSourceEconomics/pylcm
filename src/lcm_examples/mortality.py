@@ -1,8 +1,8 @@
 """A three-regime consumption-savings model with mortality.
 
 Working life, retirement, and death. The agent chooses labor supply and consumption.
-Log utility with work disutility. Death is certain at the final age; from the second
-period onwards it can also occur randomly with age-dependent survival probabilities.
+Log utility with work disutility. Mortality is age-dependent: a vector of survival
+probabilities (one per period, last entry = 0.0) governs the transition to death.
 
 Based on tests/test_models/deterministic/base.py.
 """
@@ -24,6 +24,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteAction,
     FloatND,
+    Period,
 )
 
 # ---------------------------------------------------------------------------
@@ -79,45 +80,37 @@ def next_wealth(
 
 def next_regime_from_working(
     work: DiscreteAction,
-    age: float,
-    final_age_alive: float,
-    survival_prob: float,
+    period: Period,
+    survival_probs: FloatND,
 ) -> FloatND:
     """Return regime transition probabilities [P(working), P(retired), P(dead)].
 
-    At the final age alive, death is certain. Otherwise the agent survives with
-    probability `survival_prob` and, conditional on survival, transitions to
-    retirement if they chose to retire.
+    The survival probability is looked up from `survival_probs` by period. The last
+    entry must be 0.0 (certain death). Conditional on survival, the agent transitions
+    to retirement if they chose to retire.
 
     """
+    sp = survival_probs[period]
     retire_choice = work == LaborSupply.retire
     return jnp.where(
-        age >= final_age_alive,
-        jnp.array([0.0, 0.0, 1.0]),
-        jnp.where(
-            retire_choice,
-            jnp.array([0.0, survival_prob, 1 - survival_prob]),
-            jnp.array([survival_prob, 0.0, 1 - survival_prob]),
-        ),
+        retire_choice,
+        jnp.array([0.0, sp, 1 - sp]),
+        jnp.array([sp, 0.0, 1 - sp]),
     )
 
 
 def next_regime_from_retirement(
-    age: float,
-    final_age_alive: float,
-    survival_prob: float,
+    period: Period,
+    survival_probs: FloatND,
 ) -> FloatND:
     """Return regime transition probabilities [P(working), P(retired), P(dead)].
 
-    At the final age alive, death is certain. Otherwise the agent survives with
-    probability `survival_prob`.
+    The survival probability is looked up from `survival_probs` by period. The last
+    entry must be 0.0 (certain death).
 
     """
-    return jnp.where(
-        age >= final_age_alive,
-        jnp.array([0.0, 0.0, 1.0]),
-        jnp.array([0.0, survival_prob, 1 - survival_prob]),
-    )
+    sp = survival_probs[period]
+    return jnp.array([0.0, sp, 1 - sp])
 
 
 def borrowing_constraint(
@@ -201,13 +194,32 @@ def get_model(n_periods: int) -> Model:
     )
 
 
+def _default_survival_probs(n_periods: int) -> FloatND:
+    """Build a default survival probability vector with `n_periods - 1` entries.
+
+    Broadly plausible 10-year survival probabilities for ages 40+. The first entry
+    uses 0.98, the second-to-last uses 0.82, with linear interpolation in between.
+    The last entry is always 0.0 (certain death at the penultimate period).
+
+    The vector is indexed by period; entry `i` gives the probability of surviving from
+    period `i` to period `i + 1`.
+
+    """
+    if n_periods <= 2:  # noqa: PLR2004
+        return jnp.array([0.0])
+    if n_periods == 3:  # noqa: PLR2004
+        return jnp.array([0.98, 0.0])
+    probs = jnp.linspace(0.98, 0.82, n_periods - 2)
+    return jnp.concatenate([probs, jnp.array([0.0])])
+
+
 def get_params(
     n_periods: int,
     discount_factor: float = 0.95,
     disutility_of_work: float = 0.5,
     interest_rate: float = 0.05,
     wage: float = 10.0,
-    survival_prob: float = 0.97,
+    survival_probs: FloatND | None = None,
 ) -> dict:
     """Get default parameters for the mortality model.
 
@@ -217,18 +229,19 @@ def get_params(
         disutility_of_work: Disutility of work.
         interest_rate: Interest rate.
         wage: Wage.
-        survival_prob: Per-period survival probability (default 0.97).
+        survival_probs: Per-period survival probabilities (last entry must be 0.0).
+            If None, a default schedule is generated.
 
     Returns:
         Parameter dict ready for model.solve().
 
     """
-    final_age_alive = 40 + (n_periods - 2) * 10
+    if survival_probs is None:
+        survival_probs = _default_survival_probs(n_periods)
     return {
         "discount_factor": discount_factor,
         "interest_rate": interest_rate,
-        "final_age_alive": final_age_alive,
-        "survival_prob": survival_prob,
+        "survival_probs": survival_probs,
         "working_life": {
             "utility": {"disutility_of_work": disutility_of_work},
             "labor_income": {"wage": wage},

@@ -33,12 +33,8 @@ from lcm_examples.mortality import (
     dead,
     is_working,
 )
-from lcm_examples.mortality import (
-    retirement as _base_retirement,
-)
-from lcm_examples.mortality import (
-    working_life as _base_working_life,
-)
+from lcm_examples.mortality import retirement as _base_retirement
+from lcm_examples.mortality import working_life as _base_working_life
 
 # ======================================================================================
 # Additional categorical variables
@@ -129,14 +125,16 @@ def next_partner(
 # Model specification (extend base regimes via .replace())
 # ======================================================================================
 
-_stoch_wealth_grid = LinSpacedGrid(start=1, stop=100, n_points=100)
-_stoch_consumption_grid = LinSpacedGrid(start=1, stop=100, n_points=200)
+# Smaller grids than the base mortality model to keep solve time manageable with the
+# additional stochastic states (health, partner).
+WEALTH_GRID = LinSpacedGrid(start=1, stop=100, n_points=100)
+CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=100, n_points=200)
 
 working_life = _base_working_life.replace(
     states={
         "health": DiscreteGrid(Health),
         "partner": DiscreteGrid(PartnerStatus),
-        "wealth": _stoch_wealth_grid,
+        "wealth": WEALTH_GRID,
     },
     state_transitions={
         "health": MarkovTransition(next_health),
@@ -145,7 +143,7 @@ working_life = _base_working_life.replace(
     },
     actions={
         "work": DiscreteGrid(LaborSupply),
-        "consumption": _stoch_consumption_grid,
+        "consumption": CONSUMPTION_GRID,
     },
     functions={
         "utility": utility_working,
@@ -158,14 +156,14 @@ retirement = _base_retirement.replace(
     states={
         "health": DiscreteGrid(Health),
         "partner": DiscreteGrid(PartnerStatus),
-        "wealth": _stoch_wealth_grid,
+        "wealth": WEALTH_GRID,
     },
     state_transitions={
         "health": MarkovTransition(next_health),
         "partner": MarkovTransition(next_partner),
         "wealth": next_wealth,
     },
-    actions={"consumption": _stoch_consumption_grid},
+    actions={"consumption": CONSUMPTION_GRID},
     functions={"utility": utility_retirement},
 )
 
@@ -235,15 +233,18 @@ def get_params(
     if partner_transition is None:
         partner_transition = default_partner_transition
 
-    final_age_alive = 40 + (n_periods - 2) * 10
     return {
         "discount_factor": discount_factor,
-        "survival_prob": 0.97,
+        "survival_probs": jnp.concatenate(
+            [
+                jnp.full(n_periods - 2, 0.97),
+                jnp.array([0.0]),
+            ]
+        ),
         "working_life": {
             "utility": {"disutility_of_work": disutility_of_work},
             "next_wealth": {"interest_rate": interest_rate},
             "next_partner": {"partner_transition": partner_transition},
-            "next_regime": {"final_age_alive": final_age_alive},
             "labor_income": {"wage": wage},
         },
         "retirement": {
@@ -252,6 +253,5 @@ def get_params(
                 "work": LaborSupply.retire,
                 "partner_transition": partner_transition,
             },
-            "next_regime": {"final_age_alive": final_age_alive},
         },
     }

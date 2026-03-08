@@ -6,9 +6,9 @@ title: Mortality
 
 A three-regime consumption-savings model with stochastic mortality: working life,
 retirement, and death. The agent chooses labor supply and consumption. Log utility
-with work disutility and a borrowing constraint. Death is certain at the final age;
-from the second period onwards it can also occur randomly with configurable survival
-probability (default 0.97 per period).
+with work disutility and a borrowing constraint. Mortality is age-dependent: a vector
+of per-period survival probabilities (last entry = 0.0 for certain death) governs the
+transition to the dead regime.
 
 [View source on GitHub](https://github.com/OpenSourceEconomics/pylcm/blob/main/src/lcm_examples/mortality.py)
 
