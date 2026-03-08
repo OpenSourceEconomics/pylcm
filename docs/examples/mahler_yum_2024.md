@@ -41,7 +41,14 @@ common_params, initial_states, discount_factor_types = create_inputs(
 beta_mean = START_PARAMS["beta"]["mean"]
 beta_std = START_PARAMS["beta"]["std"]
 
-# Solve and simulate for one discount factor type
+# Select initial states with high discount factor type
+selected_ids_high = jnp.flatnonzero(discount_factor_types)
+initial_states_high =   {
+                        state: values[selected_ids_high] for state, values
+                        in initial_states.items()
+                        }
+
+# Solve and simulate for high discount factor type
 result = MAHLER_YUM_MODEL.solve_and_simulate(
     params={
         "alive": {
@@ -49,8 +56,8 @@ result = MAHLER_YUM_MODEL.solve_and_simulate(
             **common_params,
         },
     },
-    initial_states=initial_states,
-    initial_regimes=["alive"] * 1_000,
+    initial_states=initial_states_high,
+    initial_regimes=["alive" for i in range(selected_ids_high.shape[0])],
     seed=8295,
 )
 ```

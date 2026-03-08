@@ -79,7 +79,7 @@ def calc_savingsgrid(x: Float1D) -> Float1D:
 
 @categorical
 class LaborSupply:
-    retired: int
+    not_working: int
     part: int
     full: int
 
