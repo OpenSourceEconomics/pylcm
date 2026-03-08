@@ -15,6 +15,7 @@ from lcm.interfaces import (
 from lcm.random import draw_random_seed
 from lcm.simulation.result import SimulationResult
 from lcm.simulation.utils import (
+    MISSING_CAT_CODE,
     calculate_next_regime_membership,
     calculate_next_states,
     convert_initial_states_to_nested,
@@ -82,12 +83,16 @@ def simulate(
 
     # The following variables are updated during the forward simulation
     states = MappingProxyType(flatten_regime_namespace(nested_initial_states))
-    subject_regime_ids = jnp.asarray(
+    initial_regime_ids = jnp.asarray(
         [
             regime_names_to_ids[initial_regime_name]
             for initial_regime_name in initial_regimes
         ]
     )
+    starting_periods = _compute_starting_periods(
+        initial_ages=initial_states["age"], ages=ages
+    )
+    subject_regime_ids = jnp.full_like(initial_regime_ids, MISSING_CAT_CODE)
 
     # Forward simulation
     # ----------------------------------------------------------------------------------
@@ -96,6 +101,13 @@ def simulate(
     }
     for period, age in enumerate(ages.values):
         logger.info("Age: %s", age)
+
+        # Activate subjects whose starting period matches the current period
+        subject_regime_ids = jnp.where(
+            starting_periods == period,
+            initial_regime_ids,
+            subject_regime_ids,
+        )
 
         new_subject_regime_ids = subject_regime_ids
 
@@ -315,3 +327,37 @@ def _lookup_values_from_indices(
 # vmap jnp.unravel_index over the first axis of the `indices` argument, while holding
 # the `shape` argument constant (in_axes = (0, None)).
 vmapped_unravel_index = vmap(jnp.unravel_index, in_axes=(0, None))
+
+
+def _compute_starting_periods(
+    *,
+    initial_ages: Array,
+    ages: AgeGrid,
+) -> Int1D:
+    """Convert per-subject initial ages to starting period indices.
+
+    Args:
+        initial_ages: Array of initial ages for each subject.
+        ages: AgeGrid defining the lifecycle.
+
+    Returns:
+        Array of starting period indices (one per subject).
+
+    Raises:
+        ValueError: If any initial age is not a valid age grid point.
+
+    """
+    age_values = jnp.asarray(ages.values)
+    starting_periods = jnp.searchsorted(age_values, initial_ages)
+
+    # Validate that all initial ages are actual grid points
+    valid = age_values[starting_periods] == initial_ages
+    if not jnp.all(valid):
+        invalid_ages = initial_ages[~valid]
+        msg = (
+            f"Initial ages {invalid_ages.tolist()} are not valid age grid points. "
+            f"Valid ages: {ages.values}."
+        )
+        raise ValueError(msg)
+
+    return starting_periods
