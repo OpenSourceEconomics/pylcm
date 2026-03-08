@@ -86,6 +86,26 @@ initial_regimes = ["working_life", "working_life", "retirement", "working_life"]
 - `seed=None`: Random seed for stochastic simulations (int).
 - `debug_mode=True`: Same as for `solve()`.
 
+### Heterogeneous initial ages
+
+`"age"` must always be provided in `initial_states`. Each value must be a valid point on
+the model's `AgeGrid`, and each subject's initial regime must be active at their starting
+age. The most common case is that all subjects start at the initial age — just pass a
+constant array.
+
+Subjects can start at different ages:
+
+```python
+initial_states = {
+    "age": jnp.array([40.0, 60.0]),
+    "wealth": jnp.array([50.0, 50.0]),
+}
+initial_regimes = ["working_life", "working_life"]
+```
+
+In the resulting DataFrame, each subject appears only from their starting age onward —
+earlier periods are omitted, not filled with placeholders.
+
 ## Working with SimulationResult
 
 ### Converting to DataFrame
