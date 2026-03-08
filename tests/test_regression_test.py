@@ -49,9 +49,9 @@ def test_regression_test():
         initial_regimes=["working_life"] * 4,
     ).to_dataframe()
 
-    # Compare solution
-    for period in range(n_periods - 1):
-        for regime in got_solve[period]:
+    # Compare solution (iterate over expected regimes — got may have additional ones)
+    for period in expected_solve:
+        for regime in expected_solve[period]:
             aaae(expected_solve[period][regime], got_solve[period][regime], decimal=5)
 
     # Compare simulation (use tolerance to match solution comparison precision)

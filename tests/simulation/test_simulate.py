@@ -41,8 +41,7 @@ def simulate_inputs():
         },
         active=lambda age: age <= final_age_alive,
     )
-    updated_dead = dead.replace(active=lambda age: age > final_age_alive)
-    regimes = {"working_life": updated_working_life, "dead": updated_dead}
+    regimes = {"working_life": updated_working_life, "dead": dead}
     regime_names_to_ids = MappingProxyType(
         {name: idx for idx, name in enumerate(regimes.keys())}
     )
@@ -122,13 +121,11 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
             functions=updated_functions,
             active=lambda age: age <= final_age_alive,
         )
-        updated_dead = dead.replace(active=lambda age: age > final_age_alive)
-
         params = get_params(n_periods=n_periods)
         # Since wage function is removed, wage becomes a parameter for labor_income
         params["working_life"]["labor_income"] = {"wage": 1.5}  # ty: ignore[invalid-assignment]
         model = Model(
-            regimes={"working_life": updated_working_life, "dead": updated_dead},
+            regimes={"working_life": updated_working_life, "dead": dead},
             ages=ages,
             regime_id_class=RegimeId,
         )

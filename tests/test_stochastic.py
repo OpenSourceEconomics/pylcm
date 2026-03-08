@@ -143,13 +143,11 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
         active=lambda age, la=last_age: age < la,
     )
 
-    dead_updated = dead.replace(active=lambda age, la=last_age: age >= la)
-
     model_deterministic = Model(
         regimes={
             "working_life": working_deterministic,
             "retirement": retirement_deterministic,
-            "dead": dead_updated,
+            "dead": dead,
         },
         ages=ages,
         regime_id_class=RegimeId,
@@ -159,13 +157,20 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
         regimes={
             "working_life": working_stochastic,
             "retirement": retirement_stochastic,
-            "dead": dead_updated,
+            "dead": dead,
         },
         ages=ages,
         regime_id_class=RegimeId,
     )
 
-    return model_deterministic, model_stochastic, get_params(n_periods=n_periods)
+    # Use survival_probs=1.0 for all but the last period so no subject dies early.
+    # This test focuses on health transition equivalence, not mortality.
+    params = get_params(n_periods=n_periods)
+    params["survival_probs"] = jnp.concatenate(
+        [jnp.full(n_periods - 2, 1.0), jnp.array([0.0])]
+    )
+
+    return model_deterministic, model_stochastic, params
 
 
 def test_compare_deterministic_and_stochastic_results_value_function(
@@ -283,7 +288,6 @@ def _make_minimal_stochastic_model(next_draw: Callable[..., FloatND]) -> Model:
     dead_regime = Regime(
         transition=None,
         functions={"utility": lambda: 0.0},
-        active=lambda age: age > final_age,
     )
     return Model(
         regimes={"working_life": working_regime, "dead": dead_regime},

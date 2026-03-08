@@ -143,7 +143,7 @@ def test_model_with_quarterly_steps():
                 active=lambda age: age <= final_age_alive
             ),
             "retirement": retirement.replace(active=lambda age: age <= final_age_alive),
-            "dead": dead.replace(active=lambda age: age > final_age_alive),
+            "dead": dead,
         },
         ages=ages,
         regime_id_class=RegimeId,

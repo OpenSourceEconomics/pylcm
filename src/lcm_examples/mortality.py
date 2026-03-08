@@ -187,7 +187,7 @@ def get_model(n_periods: int) -> Model:
                 active=lambda age, la=last_age: age < la
             ),
             "retirement": retirement.replace(active=lambda age, la=last_age: age < la),
-            "dead": dead.replace(active=lambda age, la=last_age: age >= la),
+            "dead": dead,
         },
         ages=ages,
         regime_id_class=RegimeId,

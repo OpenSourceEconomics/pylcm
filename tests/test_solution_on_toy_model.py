@@ -423,7 +423,7 @@ def test_deterministic_solve(discount_factor, n_wealth_points):
             "alive": alive_deterministic.replace(
                 states=new_states, active=lambda age: age < n_periods - 1
             ),
-            "dead": dead.replace(active=lambda age: age >= n_periods - 1),
+            "dead": dead,
         },
         ages=ages,
         regime_id_class=RegimeId,
@@ -477,7 +477,7 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
             "alive": alive_deterministic.replace(
                 states=new_states, active=lambda age: age < n_periods - 1
             ),
-            "dead": dead.replace(active=lambda age: age >= n_periods - 1),
+            "dead": dead,
         },
         ages=ages,
         regime_id_class=RegimeId,
@@ -540,7 +540,7 @@ def test_stochastic_solve(discount_factor, n_wealth_points, health_transition):
             "alive": alive_stochastic.replace(
                 states=new_states, active=lambda age: age < n_periods - 1
             ),
-            "dead": dead.replace(active=lambda age: age >= n_periods - 1),
+            "dead": dead,
         },
         ages=ages,
         regime_id_class=RegimeId,
@@ -606,7 +606,7 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, health_transition
             "alive": alive_stochastic.replace(
                 states=new_states, active=lambda age: age < n_periods - 1
             ),
-            "dead": dead.replace(active=lambda age: age >= n_periods - 1),
+            "dead": dead,
         },
         ages=ages,
         regime_id_class=RegimeId,

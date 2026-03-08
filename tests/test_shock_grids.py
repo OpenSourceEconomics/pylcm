@@ -47,9 +47,9 @@ def test_model_with_shock(distribution_type):
     expected_solve = pd.read_pickle(
         TEST_DATA / "shocks" / f"solution_{distribution_type}.pkl"
     )
-    # Compare solution
+    # Compare solution (iterate over expected regimes — got may have additional ones)
     for period in expected_solve:
-        for regime in got_solve[period]:
+        for regime in expected_solve[period]:
             aaae(expected_solve[period][regime], got_solve[period][regime], decimal=5)
 
     # Compare simulation (use tolerance to match solution comparison precision)

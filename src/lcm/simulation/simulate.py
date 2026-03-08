@@ -123,6 +123,9 @@ def simulate(
             if period + 1 in regime.active_periods
         )
 
+        next_age = (
+            float(ages.values[period + 1]) if period + 1 < ages.n_periods else age
+        )
         for regime_name, internal_regime in active_regimes.items():
             result, new_states, new_subject_regime_ids, key = (
                 _simulate_regime_in_period(
@@ -130,6 +133,7 @@ def simulate(
                     internal_regime=internal_regime,
                     period=period,
                     age=age,
+                    next_age=next_age,
                     states=states,
                     subject_regime_ids=subject_regime_ids,
                     new_subject_regime_ids=new_subject_regime_ids,
@@ -168,6 +172,7 @@ def _simulate_regime_in_period(
     internal_regime: InternalRegime,
     period: int,
     age: float,
+    next_age: float,
     states: MappingProxyType[str, Array],
     subject_regime_ids: Int1D,
     new_subject_regime_ids: Int1D,
@@ -187,6 +192,7 @@ def _simulate_regime_in_period(
         internal_regime: Internal representation of the regime.
         period: Current period (0-indexed).
         age: Age corresponding to current period.
+        next_age: Age corresponding to next period.
         states: Current states for all subjects (namespaced by regime).
         subject_regime_ids: Current regime membership for all subjects.
         new_subject_regime_ids: Array to populate with next period's regime memberships.
@@ -283,6 +289,7 @@ def _simulate_regime_in_period(
             optimal_actions=optimal_actions,
             period=period,
             age=age,
+            next_age=next_age,
             regime_params=internal_params[regime_name],
             regime_names_to_ids=regime_names_to_ids,
             new_subject_regime_ids=new_subject_regime_ids,

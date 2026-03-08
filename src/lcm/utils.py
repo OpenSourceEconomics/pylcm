@@ -5,9 +5,7 @@ from itertools import chain
 from types import MappingProxyType
 from typing import Any, TypeVar, cast
 
-import jax.numpy as jnp
 from dags.tree import flatten_to_qnames, unflatten_from_qnames
-from jax import Array
 
 from lcm.params import MappingLeaf
 from lcm.params.sequence_leaf import SequenceLeaf
@@ -148,20 +146,3 @@ def flatten_regime_namespace(d: Mapping[RegimeName, Any]) -> MappingProxyType[st
 
 def unflatten_regime_namespace(d: dict[str, Any]) -> dict[RegimeName, Any]:
     return unflatten_from_qnames(d)  # ty: ignore[invalid-return-type]
-
-
-def normalize_regime_transition_probs(
-    *,
-    regime_transition_probs: MappingProxyType[str, Array],
-    active_regimes_next_period: tuple[str, ...],
-) -> MappingProxyType[str, Array]:
-    """Normalize regime transition probabilities over active regimes only."""
-    if not active_regimes_next_period:
-        return MappingProxyType({})
-    active_probs = jnp.stack(
-        [regime_transition_probs[r] for r in active_regimes_next_period]
-    )
-    total = jnp.sum(active_probs, axis=0)
-    return MappingProxyType(
-        {r: regime_transition_probs[r] / total for r in active_regimes_next_period}
-    )
