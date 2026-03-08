@@ -62,6 +62,7 @@ A flat dictionary mapping state names to JAX arrays, one value per agent:
 
 ```python
 initial_states = {
+    "age": jnp.array([25.0, 25.0, 25.0, 25.0]),
     "wealth": jnp.array([1.0, 5.0, 10.0, 20.0]),
     "health": jnp.array([0, 1, 1, 0]),  # integer codes for discrete states
 }
@@ -193,7 +194,10 @@ params = {
 # 3. Solve and simulate
 result = model.solve_and_simulate(
     params=params,
-    initial_states={"wealth": jnp.linspace(1, 50, 100)},
+    initial_states={
+        "age": jnp.full(100, model.ages.values[0]),
+        "wealth": jnp.linspace(1, 50, 100),
+    },
     initial_regimes=["working_life"] * 100,
 )
 

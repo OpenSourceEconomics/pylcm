@@ -23,7 +23,7 @@ All models live in the `lcm_examples` package and can be imported directly.
 
 5. **[Mahler & Yum (2024)](mahler_yum_2024.md)** — `lcm_examples.mahler_yum_2024`
    Full Econometrica replication. 8 states, stochastic transitions, data files,
-   discount-factor heterogeneity.
+   discount-factor heterogeneity. **Requires GPU.**
 
 ## Customizing models
 

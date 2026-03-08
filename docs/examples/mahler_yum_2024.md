@@ -13,6 +13,11 @@ stochastic health and regime transitions, AR(1) productivity shocks, and
 discount-factor heterogeneity. Ships with calibrated data files for survival
 probabilities and initial distributions.
 
+::::{important}
+This model is computationally intensive and requires GPU acceleration. Run it in a CUDA
+environment (e.g., `pixi run -e cuda13 python your_script.py`).
+::::
+
 [View source on GitHub](https://github.com/OpenSourceEconomics/pylcm/blob/main/src/lcm_examples/mahler_yum_2024/_model.py)
 
 ## Usage

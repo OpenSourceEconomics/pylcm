@@ -46,8 +46,11 @@ JAX runs on CPU. For GPU acceleration, install the appropriate JAX variant:
 ### Linux (CUDA)
 
 ```bash
-pip install jax[cuda12]
+pip install jax[cuda13]
 ```
+
+For CUDA 12, use `jax[cuda12]` instead. When using pixi, the `cuda13` and `cuda12`
+environments handle this automatically.
 
 See the [JAX installation guide](https://jax.readthedocs.io/en/latest/installation.html)
 for details on CUDA toolkit requirements.
