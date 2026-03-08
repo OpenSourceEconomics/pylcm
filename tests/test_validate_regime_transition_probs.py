@@ -12,7 +12,7 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.error_handling import validate_regime_transition_probs
+from lcm.error_handling import _format_sum_violation, validate_regime_transition_probs
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import DiscreteAction, FloatND
 from lcm_examples.mortality import get_model, get_params
@@ -161,6 +161,27 @@ def test_raises_for_inf_values():
             age=25.0,
             next_age=26.0,
         )
+
+
+# ======================================================================================
+# Tests for _format_sum_violation with 0-d array inputs
+# ======================================================================================
+
+
+def test_format_sum_violation_with_scalar_input():
+    """A 0-d array (scalar) input does not raise IndexError."""
+    result = _format_sum_violation(jnp.array(0.5))
+    assert "1 of 1 probability vectors do not sum to 1.0" in result
+
+
+def test_format_sum_violation_with_scalar_input_and_state_action_values():
+    """0-d inputs for both sum_all and state_action_values work correctly."""
+    result = _format_sum_violation(
+        jnp.array(0.5),
+        state_action_values=MappingProxyType({"wealth": jnp.array(10.0)}),
+    )
+    assert "1 of 1 probability vectors do not sum to 1.0" in result
+    assert "wealth" in result
 
 
 # ======================================================================================

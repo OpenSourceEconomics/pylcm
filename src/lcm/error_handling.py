@@ -123,6 +123,11 @@ def _format_sum_violation(
         Formatted string describing which sums violate the sum-to-1 constraint.
 
     """
+    sum_all = jnp.atleast_1d(sum_all)
+    if state_action_values is not None:
+        state_action_values = MappingProxyType(
+            {name: jnp.atleast_1d(arr) for name, arr in state_action_values.items()}
+        )
     failing_mask = ~jnp.isclose(sum_all, 1.0)
     failing_indices = jnp.where(failing_mask)[0]
     failing_sums = sum_all[failing_mask]
