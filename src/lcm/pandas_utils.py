@@ -157,7 +157,7 @@ def transition_probs_from_series(
     )
 
     # 6. Place values into the n-dim array
-    result = np.empty(shape, dtype=float)
+    result = np.zeros(shape, dtype=float)
     result[tuple(index_arrays)] = series.to_numpy()
 
     return jnp.array(result)
@@ -303,7 +303,9 @@ def _map_labels_to_codes(
                 raise ValueError(msg) from None
             index_arrays.append(mapped)
         else:
-            index_arrays.append(np.array(level_values, dtype=int))
+            unique_sorted = sorted(set(level_values))
+            label_to_code = {v: i for i, v in enumerate(unique_sorted)}
+            index_arrays.append(np.array([label_to_code[v] for v in level_values]))
     return index_arrays
 
 
