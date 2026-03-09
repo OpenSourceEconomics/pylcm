@@ -12,8 +12,8 @@ from lcm.exceptions import GridInitializationError
 from tests.test_models.deterministic.base import (
     RegimeId,
     dead,
-    retired,
-    working,
+    retirement,
+    working_life,
 )
 
 # ======================================================================================
@@ -139,9 +139,11 @@ def test_model_with_quarterly_steps():
 
     model = Model(
         regimes={
-            "working": working.replace(active=lambda age: age <= final_age_alive),
-            "retired": retired.replace(active=lambda age: age <= final_age_alive),
-            "dead": dead.replace(active=lambda age: age > final_age_alive),
+            "working_life": working_life.replace(
+                active=lambda age: age <= final_age_alive
+            ),
+            "retirement": retirement.replace(active=lambda age: age <= final_age_alive),
+            "dead": dead,
         },
         ages=ages,
         regime_id_class=RegimeId,
@@ -150,12 +152,12 @@ def test_model_with_quarterly_steps():
     params = {
         "discount_factor": 0.99,
         "final_age_alive": final_age_alive,
-        "working": {
+        "working_life": {
             "utility": {"disutility_of_work": 0.5},
             "next_wealth": {"interest_rate": 0.01},
             "labor_income": {"wage": 5.0},
         },
-        "retired": {
+        "retirement": {
             "next_wealth": {"interest_rate": 0.01, "labor_income": 0.0},
         },
     }
@@ -167,7 +169,7 @@ def test_model_with_quarterly_steps():
             "wealth": jnp.array([50.0, 100.0, 150.0]),
             "age": jnp.array([18.0, 18.0, 18.0]),
         },
-        initial_regimes=["working"] * 3,
+        initial_regimes=["working_life"] * 3,
     )
 
     df = result.to_dataframe()

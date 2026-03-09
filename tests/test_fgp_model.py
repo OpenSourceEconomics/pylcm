@@ -9,26 +9,42 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tests.test_models.fgp_consumption_savings import (
-    RHO,
-    SIGMA_EPS,
-    get_model,
-    get_params,
-)
+from tests.test_models.precautionary_savings import get_model, get_params
+
+# FGP reference parameters (Section 4, p. 191)
+SIGMA_EPS = 0.1269  # sqrt(0.0161)
+RHO = 0.95
+R = 0.04
+BETA = 0.96
+N_PERIODS = 10
 
 _N_SUBJECTS = 100
 _SEED = 42
 
 
 def _solve_and_simulate(shock_type):
-    model = get_model(shock_type)
-    params = get_params(shock_type)
+    model = get_model(
+        N_PERIODS,
+        shock_type,
+        wealth_grid_type="log",
+        wealth_start=0.5,
+        wealth_stop=50.0,
+        wealth_n_points=50,
+        consumption_n_points=20,
+    )
+    params = get_params(
+        shock_type,
+        sigma=SIGMA_EPS,
+        rho=RHO,
+        interest_rate=R,
+        discount_factor=BETA,
+    )
     result = model.solve_and_simulate(
         params=params,
         initial_states={
             "wealth": jnp.full(_N_SUBJECTS, 5.0),
             "income": jnp.zeros(_N_SUBJECTS),
-            "age": jnp.zeros(_N_SUBJECTS),
+            "age": jnp.full(_N_SUBJECTS, 20.0),
         },
         initial_regimes=["alive"] * _N_SUBJECTS,
         seed=_SEED,
@@ -39,8 +55,22 @@ def _solve_and_simulate(shock_type):
 @pytest.mark.parametrize("shock_type", ["rouwenhorst", "tauchen"])
 def test_model_solves(shock_type):
     """Model solves without error."""
-    model = get_model(shock_type)
-    params = get_params(shock_type)
+    model = get_model(
+        N_PERIODS,
+        shock_type,
+        wealth_grid_type="log",
+        wealth_start=0.5,
+        wealth_stop=50.0,
+        wealth_n_points=50,
+        consumption_n_points=20,
+    )
+    params = get_params(
+        shock_type,
+        sigma=SIGMA_EPS,
+        rho=RHO,
+        interest_rate=R,
+        discount_factor=BETA,
+    )
     V = model.solve(params=params)
     assert V is not None
     # Value functions include all periods (n_periods + 1 ages from AgeGrid)

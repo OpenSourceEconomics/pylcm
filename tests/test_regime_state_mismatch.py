@@ -37,8 +37,8 @@ class HealthRetirement:
 
 @categorical
 class RegimeId:
-    working: int
-    retired: int
+    working_life: int
+    retirement: int
     dead: int
 
 
@@ -46,7 +46,9 @@ def hm_utility_working(consumption: ContinuousAction, health: DiscreteState) -> 
     return jnp.log(consumption) + health * 0.1
 
 
-def hm_utility_retired(consumption: ContinuousAction, health: DiscreteState) -> FloatND:
+def hm_utility_retirement(
+    consumption: ContinuousAction, health: DiscreteState
+) -> FloatND:
     return jnp.log(consumption) + health * 0.05
 
 
@@ -67,14 +69,14 @@ def hm_next_regime_working(age: float) -> ScalarInt:
         RegimeId.dead,
         jnp.where(
             age >= 2,
-            RegimeId.retired,
-            RegimeId.working,
+            RegimeId.retirement,
+            RegimeId.working_life,
         ),
     )
 
 
 def hm_next_regime_retired(age: float) -> ScalarInt:
-    return jnp.where(age >= 3, RegimeId.dead, RegimeId.retired)
+    return jnp.where(age >= 3, RegimeId.dead, RegimeId.retirement)
 
 
 def test_discrete_state_different_categories_across_regimes():
@@ -109,7 +111,7 @@ def test_discrete_state_different_categories_across_regimes():
             "health": None,
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
-        functions={"utility": hm_utility_retired},
+        functions={"utility": hm_utility_retirement},
         transition=hm_next_regime_retired,
         active=lambda age: age < 4,
     )
@@ -118,7 +120,7 @@ def test_discrete_state_different_categories_across_regimes():
 
     with pytest.raises(ModelInitializationError, match="health"):
         Model(
-            regimes={"working": working, "retired": retired, "dead": dead},
+            regimes={"working_life": working, "retirement": retired, "dead": dead},
             ages=AgeGrid(start=0, stop=4, step="Y"),
             regime_id_class=RegimeId,
         )
@@ -321,8 +323,8 @@ def test_per_target_dict_transitions():
         },
         state_transitions={
             "health": {
-                "working": hm_next_health_working,
-                "retired": map_working_health_to_retired,
+                "working_life": hm_next_health_working,
+                "retirement": map_working_health_to_retired,
                 "dead": hm_next_health_working,
             },
         },
@@ -340,7 +342,7 @@ def test_per_target_dict_transitions():
             "health": None,
         },
         actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
-        functions={"utility": hm_utility_retired},
+        functions={"utility": hm_utility_retirement},
         transition=hm_next_regime_retired,
         active=lambda age: age < 4,
     )
@@ -348,7 +350,7 @@ def test_per_target_dict_transitions():
     dead = Regime(transition=None, functions={"utility": lambda: 0.0})
 
     model = Model(
-        regimes={"working": working, "retired": retired, "dead": dead},
+        regimes={"working_life": working, "retirement": retired, "dead": dead},
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=RegimeId,
     )
@@ -374,12 +376,12 @@ def test_per_target_dict_transitions():
             "age": jnp.zeros(n_subjects),
             "health": initial_health,
         },
-        initial_regimes=["working"] * n_subjects,
+        initial_regimes=["working_life"] * n_subjects,
         V_arr_dict=V_arr_dict,
     )
     df = result.to_dataframe(use_labels=False)
 
-    retired_rows = df[df["regime"] == "retired"]
+    retired_rows = df[df["regime"] == "retirement"]
     valid_retired_codes = {float(HealthRetirement.bad), float(HealthRetirement.good)}
     assert not retired_rows.empty, "Expected some rows in the retired regime"
     assert retired_rows["health"].isin(valid_retired_codes).all(), (

@@ -344,7 +344,7 @@ def test_shock_params_via_regular_params():
     """
     # Template includes ShockGrid params under the state name
     params_template = {
-        "working": {
+        "working_life": {
             "discount_factor": float,
             "utility": {"param": float},
             "adjustment_cost": {"start": float, "stop": float},
@@ -352,7 +352,7 @@ def test_shock_params_via_regular_params():
     }
 
     params = {
-        "working": {
+        "working_life": {
             "discount_factor": 1.0,
             "utility": {"param": 0.5},
             "adjustment_cost": {
@@ -363,5 +363,5 @@ def test_shock_params_via_regular_params():
     }
 
     result = process_params(params=params, params_template=params_template)  # ty: ignore[invalid-argument-type]
-    assert result["working"]["adjustment_cost__start"] == 0
-    assert result["working"]["adjustment_cost__stop"] == 1
+    assert result["working_life"]["adjustment_cost__start"] == 0
+    assert result["working_life"]["adjustment_cost__stop"] == 1

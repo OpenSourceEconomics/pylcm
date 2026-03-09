@@ -43,8 +43,8 @@ def next_wealth(consumption: ContinuousAction, wealth: ContinuousState) -> Float
 def next_regime(age: float, final_age_alive: float) -> ScalarInt:
     return jnp.where(
         age >= final_age_alive,
-        RegimeId.test_regime_term,
-        RegimeId.test_regime,
+        RegimeId.dead,
+        RegimeId.alive,
     )
 
 
@@ -71,8 +71,8 @@ class Health:
 
 @categorical
 class RegimeId:
-    test_regime: int
-    test_regime_term: int
+    alive: int
+    dead: int
 
 
 def get_model(
@@ -83,7 +83,7 @@ def get_model(
 ):
     final_age_alive = n_periods - 2
 
-    test_regime = Regime(
+    alive = Regime(
         active=lambda age, n=final_age_alive: age <= n,
         states={
             "wealth": LinSpacedGrid(start=1, stop=5, n_points=5),
@@ -103,13 +103,12 @@ def get_model(
         constraints={"wealth_constraint": wealth_constraint},
         functions={"utility": utility},
     )
-    test_regime_term = Regime(
+    dead = Regime(
         transition=None,
-        active=lambda age, n=final_age_alive: age > n,
         functions={"utility": lambda: 0.0},
     )
     return Model(
-        regimes={"test_regime": test_regime, "test_regime_term": test_regime_term},
+        regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
         ages=AgeGrid(start=0, stop=n_periods - 1, step="Y"),
         fixed_params={"final_age_alive": final_age_alive},
@@ -131,10 +130,10 @@ def get_params(
     ] = "tauchen",
 ):
     return {
-        "test_regime": {
+        "alive": {
             "discount_factor": 1,
             "next_health": {"health_transition": jnp.full((2, 2), fill_value=0.5)},
             "income": _SHOCK_PARAMS[distribution_type],
         },
-        "test_regime_term": {},
+        "dead": {},
     }

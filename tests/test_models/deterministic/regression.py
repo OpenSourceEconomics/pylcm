@@ -1,3 +1,9 @@
+"""Regression test model — 2-regime subset of the mortality model.
+
+Extends the mortality model with an age-dependent wage function and supports
+configurable grid types for testing various grid classes.
+"""
+
 import jax.numpy as jnp
 
 from lcm import (
@@ -13,83 +19,41 @@ from lcm import (
 )
 from lcm.grids import UniformContinuousGrid
 from lcm.typing import (
-    BoolND,
-    ContinuousAction,
-    ContinuousState,
-    DiscreteAction,
     FloatND,
     ScalarInt,
     UserParams,
 )
+from lcm_examples.mortality import (
+    LaborSupply,
+    borrowing_constraint,
+    is_working,
+    labor_income,
+    next_wealth,
+)
+from lcm_examples.mortality import (
+    utility_working as utility,
+)
 
 
 # --------------------------------------------------------------------------------------
-# Categorical variables and constants
+# Regression-specific: RegimeId (2 regimes) and wage function
 # --------------------------------------------------------------------------------------
-@categorical
-class LaborSupply:
-    work: int
-    retire: int
-
-
 @categorical
 class RegimeId:
-    working: int
+    working_life: int
     dead: int
-
-
-# --------------------------------------------------------------------------------------
-# Utility functions
-# --------------------------------------------------------------------------------------
-def utility(
-    consumption: ContinuousAction, is_working: BoolND, disutility_of_work: float
-) -> FloatND:
-    work_disutility = jnp.where(is_working, disutility_of_work, 0.0)
-    return jnp.log(consumption) - work_disutility
-
-
-# --------------------------------------------------------------------------------------
-# Auxiliary variables
-# --------------------------------------------------------------------------------------
-def labor_income(is_working: BoolND, wage: float | FloatND) -> FloatND:
-    return jnp.where(is_working, wage, 0.0)
-
-
-def is_working(labor_supply: DiscreteAction) -> BoolND:
-    return labor_supply == LaborSupply.work
 
 
 def wage(age: float) -> float | FloatND:
     return 1 + 0.1 * age
 
 
-# --------------------------------------------------------------------------------------
-# State and regime transitions
-# --------------------------------------------------------------------------------------
-def next_wealth(
-    wealth: ContinuousState,
-    consumption: ContinuousAction,
-    labor_income: FloatND,
-    interest_rate: float,
-) -> ContinuousState:
-    return (1 + interest_rate) * (wealth - consumption) + labor_income
-
-
 def next_regime(age: float, final_age_alive: float) -> ScalarInt:
     return jnp.where(
         age >= final_age_alive,
         RegimeId.dead,
-        RegimeId.working,
+        RegimeId.working_life,
     )
-
-
-# --------------------------------------------------------------------------------------
-# Constraints
-# --------------------------------------------------------------------------------------
-def borrowing_constraint(
-    consumption: ContinuousAction, wealth: ContinuousState
-) -> BoolND:
-    return consumption <= wealth
 
 
 # ======================================================================================
@@ -100,13 +64,13 @@ START_AGE = 18
 DEFAULT_WEALTH_GRID = LinSpacedGrid(start=1, stop=400, n_points=100)
 DEFAULT_CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 
-working = Regime(
+working_life = Regime(
     actions={
-        "labor_supply": DiscreteGrid(LaborSupply),
-        "consumption": DEFAULT_CONSUMPTION_GRID,  # placeholder, will be replaced by get_model()  # noqa: E501
+        "work": DiscreteGrid(LaborSupply),
+        "consumption": DEFAULT_CONSUMPTION_GRID,
     },
     states={
-        "wealth": DEFAULT_WEALTH_GRID,  # placeholder, will be replaced by get_model()
+        "wealth": DEFAULT_WEALTH_GRID,
     },
     state_transitions={
         "wealth": next_wealth,
@@ -119,14 +83,14 @@ working = Regime(
         "is_working": is_working,
         "wage": wage,
     },
-    active=lambda _age: True,  # placeholder, will be replaced by get_model()
+    active=lambda _age: True,
 )
 
 
 dead = Regime(
     transition=None,
     functions={"utility": lambda: 0.0},
-    active=lambda _age: True,  # placeholder, will be replaced by get_model()
+    active=lambda _age: True,
 )
 
 
@@ -144,15 +108,15 @@ def get_model(
     final_age_alive = START_AGE + n_periods - 2
     return Model(
         regimes={
-            "working": working.replace(
+            "working_life": working_life.replace(
                 active=lambda age: age <= final_age_alive,
                 states={"wealth": wealth_grid},
                 actions={
-                    "labor_supply": DiscreteGrid(LaborSupply),
+                    "work": DiscreteGrid(LaborSupply),
                     "consumption": consumption_grid,
                 },
             ),
-            "dead": dead.replace(active=lambda age: age > final_age_alive),
+            "dead": dead,
         },
         ages=AgeGrid(start=START_AGE, stop=final_age_alive + 1, step="Y"),
         regime_id_class=RegimeId,
@@ -168,7 +132,7 @@ def get_params(
     final_age_alive = START_AGE + n_periods - 2
     return {
         "discount_factor": discount_factor,
-        "working": {
+        "working_life": {
             "utility": {"disutility_of_work": disutility_of_work},
             "next_wealth": {"interest_rate": interest_rate},
             "next_regime": {"final_age_alive": final_age_alive},

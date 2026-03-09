@@ -13,7 +13,7 @@ from lcm.input_processing.regime_processing import (
 )
 from lcm.input_processing.util import get_grids, get_gridspecs, get_variable_info
 from tests.regime_mock import RegimeMock
-from tests.test_models.deterministic.base import dead, working
+from tests.test_models.deterministic.base import dead, working_life
 
 
 def test_get_variable_info(binary_category_class):
@@ -98,7 +98,7 @@ def test_get_grids(binary_category_class):
 
 def test_process_regimes():
     ages = AgeGrid(start=0, stop=4, step="Y")
-    regimes = {"working": working, "dead": dead}
+    regimes = {"working_life": working_life, "dead": dead}
     regime_names_to_ids = MappingProxyType(
         {name: idx for idx, name in enumerate(regimes.keys())}
     )
@@ -108,7 +108,7 @@ def test_process_regimes():
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=True,
     )
-    internal_working_regime = internal_regimes["working"]
+    internal_working_regime = internal_regimes["working_life"]
 
     # Variable Info
     assert (
@@ -122,30 +122,30 @@ def test_process_regimes():
     ).all()
 
     # Gridspecs — compare the grid objects (which now include transition attributes)
-    assert internal_working_regime.gridspecs["wealth"] == working.states["wealth"]
+    assert internal_working_regime.gridspecs["wealth"] == working_life.states["wealth"]
     assert (
         internal_working_regime.gridspecs["consumption"]
-        == working.actions["consumption"]
+        == working_life.actions["consumption"]
     )
 
-    assert isinstance(internal_working_regime.gridspecs["labor_supply"], DiscreteGrid)
-    assert internal_working_regime.gridspecs["labor_supply"].categories == (
+    assert isinstance(internal_working_regime.gridspecs["work"], DiscreteGrid)
+    assert internal_working_regime.gridspecs["work"].categories == (
         "work",
         "retire",
     )
-    assert internal_working_regime.gridspecs["labor_supply"].codes == (0, 1)
+    assert internal_working_regime.gridspecs["work"].codes == (0, 1)
 
     # Grids
     assert_array_equal(
         internal_working_regime.grids["consumption"],
-        working.actions["consumption"].to_jax(),
+        working_life.actions["consumption"].to_jax(),
     )
     assert_array_equal(
         internal_working_regime.grids["wealth"],
-        working.states["wealth"].to_jax(),
+        working_life.states["wealth"].to_jax(),
     )
 
-    assert (internal_working_regime.grids["labor_supply"] == jnp.array([0, 1])).all()
+    assert (internal_working_regime.grids["work"] == jnp.array([0, 1])).all()
 
     # Functions
     assert internal_working_regime.transitions is not None
@@ -157,8 +157,9 @@ def test_variable_info_with_continuous_constraint_has_unique_index():
     def wealth_constraint(wealth):
         return wealth > 200
 
-    working_copy = working.replace(
-        constraints=dict(working.constraints) | {"wealth_constraint": wealth_constraint}
+    working_copy = working_life.replace(
+        constraints=dict(working_life.constraints)
+        | {"wealth_constraint": wealth_constraint}
     )
 
     got = get_variable_info(working_copy)

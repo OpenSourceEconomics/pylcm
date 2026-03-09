@@ -1,71 +1,41 @@
+"""Deterministic base model — extends lcm_examples.mortality with deterministic regime
+transitions (no stochastic mortality).
+"""
+
 import jax.numpy as jnp
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import DiscreteGrid, Regime, categorical
 from lcm.typing import (
-    BoolND,
-    ContinuousAction,
-    ContinuousState,
     DiscreteAction,
-    FloatND,
     ScalarInt,
 )
+from lcm_examples.mortality import (
+    CONSUMPTION_GRID,
+    WEALTH_GRID,
+    LaborSupply,
+    borrowing_constraint,
+    dead,
+    is_working,
+    labor_income,
+    next_wealth,
+    utility_retirement,
+    utility_working,
+)
 
-
-# --------------------------------------------------------------------------------------
-# Categorical variables and constants
-# --------------------------------------------------------------------------------------
-@categorical
-class LaborSupply:
-    work: int
-    retire: int
+# ---------------------------------------------------------------------------
+# Deterministic regime transitions (override the stochastic ones)
+# ---------------------------------------------------------------------------
 
 
 @categorical
 class RegimeId:
-    working: int
-    retired: int
+    working_life: int
+    retirement: int
     dead: int
 
 
-# --------------------------------------------------------------------------------------
-# Utility functions
-# --------------------------------------------------------------------------------------
-def utility_working(
-    consumption: ContinuousAction, is_working: BoolND, disutility_of_work: float
-) -> FloatND:
-    work_disutility = jnp.where(is_working, disutility_of_work, 0.0)
-    return jnp.log(consumption) - work_disutility
-
-
-def utility_retired(consumption: ContinuousAction) -> FloatND:
-    return jnp.log(consumption)
-
-
-# --------------------------------------------------------------------------------------
-# Auxiliary variables
-# --------------------------------------------------------------------------------------
-def labor_income(is_working: BoolND, wage: float | FloatND) -> FloatND:
-    return jnp.where(is_working, wage, 0.0)
-
-
-def is_working(labor_supply: DiscreteAction) -> BoolND:
-    return labor_supply == LaborSupply.work
-
-
-# --------------------------------------------------------------------------------------
-# State and regime transitions
-# --------------------------------------------------------------------------------------
-def next_wealth(
-    wealth: ContinuousState,
-    consumption: ContinuousAction,
-    labor_income: FloatND,
-    interest_rate: float,
-) -> ContinuousState:
-    return (1 + interest_rate) * (wealth - consumption) + labor_income
-
-
 def next_regime_from_working(
-    labor_supply: DiscreteAction,
+    work: DiscreteAction,
     age: float,
     final_age_alive: float,
 ) -> ScalarInt:
@@ -73,102 +43,70 @@ def next_regime_from_working(
         age >= final_age_alive,
         RegimeId.dead,
         jnp.where(
-            labor_supply == LaborSupply.retire,
-            RegimeId.retired,
-            RegimeId.working,
+            work == LaborSupply.retire,
+            RegimeId.retirement,
+            RegimeId.working_life,
         ),
     )
 
 
-def next_regime_from_retired(age: float, final_age_alive: float) -> ScalarInt:
+def next_regime_from_retirement(age: float, final_age_alive: float) -> ScalarInt:
     return jnp.where(
         age >= final_age_alive,
         RegimeId.dead,
-        RegimeId.retired,
+        RegimeId.retirement,
     )
 
 
-# --------------------------------------------------------------------------------------
-# Constraints
-# --------------------------------------------------------------------------------------
-def borrowing_constraint(
-    consumption: ContinuousAction, wealth: ContinuousState
-) -> BoolND:
-    return consumption <= wealth
+# ---------------------------------------------------------------------------
+# Deterministic regime objects
+# ---------------------------------------------------------------------------
 
-
-# ======================================================================================
-# Regime specifications
-# ======================================================================================
-
-working = Regime(
+working_life = Regime(
     actions={
-        "labor_supply": DiscreteGrid(LaborSupply),
-        "consumption": LinSpacedGrid(
-            start=1,
-            stop=400,
-            n_points=500,
-        ),
+        "work": DiscreteGrid(LaborSupply),
+        "consumption": CONSUMPTION_GRID,
     },
-    states={
-        "wealth": LinSpacedGrid(
-            start=1,
-            stop=400,
-            n_points=100,
-        ),
-    },
-    state_transitions={
-        "wealth": next_wealth,
-    },
-    constraints={
-        "borrowing_constraint": borrowing_constraint,
-    },
+    states={"wealth": WEALTH_GRID},
+    state_transitions={"wealth": next_wealth},
+    constraints={"borrowing_constraint": borrowing_constraint},
     transition=next_regime_from_working,
     functions={
         "utility": utility_working,
         "labor_income": labor_income,
         "is_working": is_working,
     },
-    active=lambda _age: True,  # Placeholder, overridden at model creation
+    active=lambda _age: True,
 )
 
-retired = Regime(
-    transition=next_regime_from_retired,
-    actions={"consumption": LinSpacedGrid(start=1, stop=400, n_points=500)},
-    states={
-        "wealth": LinSpacedGrid(
-            start=1,
-            stop=400,
-            n_points=100,
-        ),
-    },
-    state_transitions={
-        "wealth": next_wealth,
-    },
-    constraints={
-        "borrowing_constraint": borrowing_constraint,
-    },
-    functions={
-        "utility": utility_retired,
-    },
-    active=lambda _age: True,  # Placeholder, overridden at model creation
+retirement = Regime(
+    transition=next_regime_from_retirement,
+    actions={"consumption": CONSUMPTION_GRID},
+    states={"wealth": WEALTH_GRID},
+    state_transitions={"wealth": next_wealth},
+    constraints={"borrowing_constraint": borrowing_constraint},
+    functions={"utility": utility_retirement},
+    active=lambda _age: True,
 )
 
 
-dead = Regime(
-    transition=None,
-    functions={"utility": lambda: 0.0},
-    active=lambda _age: True,  # Placeholder, overridden at model creation
-)
+# ---------------------------------------------------------------------------
+# Factories
+# ---------------------------------------------------------------------------
+
+from lcm import AgeGrid, Model  # noqa: E402
 
 
 def get_model(n_periods: int) -> Model:
-    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
+    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    last_age = ages.exact_values[-1]
     return Model(
         regimes={
-            "working": working.replace(active=lambda age, n=n_periods: age < n - 1),
-            "retired": retired.replace(active=lambda age, n=n_periods: age < n - 1),
-            "dead": dead.replace(active=lambda age, n=n_periods: age >= n - 1),
+            "working_life": working_life.replace(
+                active=lambda age, la=last_age: age < la
+            ),
+            "retirement": retirement.replace(active=lambda age, la=last_age: age < la),
+            "dead": dead,
         },
         ages=ages,
         regime_id_class=RegimeId,
@@ -176,22 +114,43 @@ def get_model(n_periods: int) -> Model:
 
 
 def get_params(
-    n_periods,
-    discount_factor=0.95,
-    disutility_of_work=0.5,
-    interest_rate=0.05,
-    wage=10.0,
-):
-    final_age_alive = n_periods - 2  # Last age before death transition
+    n_periods: int,
+    discount_factor: float = 0.95,
+    disutility_of_work: float = 0.5,
+    interest_rate: float = 0.05,
+    wage: float = 10.0,
+) -> dict:
+    final_age_alive = 40 + (n_periods - 2) * 10
     return {
         "discount_factor": discount_factor,
         "interest_rate": interest_rate,
         "final_age_alive": final_age_alive,
-        "working": {
+        "working_life": {
             "utility": {"disutility_of_work": disutility_of_work},
             "labor_income": {"wage": wage},
         },
-        "retired": {
+        "retirement": {
             "next_wealth": {"labor_income": 0.0},
         },
     }
+
+
+__all__ = [
+    "CONSUMPTION_GRID",
+    "WEALTH_GRID",
+    "LaborSupply",
+    "RegimeId",
+    "borrowing_constraint",
+    "dead",
+    "get_model",
+    "get_params",
+    "is_working",
+    "labor_income",
+    "next_regime_from_retirement",
+    "next_regime_from_working",
+    "next_wealth",
+    "retirement",
+    "utility_retirement",
+    "utility_working",
+    "working_life",
+]

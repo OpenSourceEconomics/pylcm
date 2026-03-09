@@ -46,12 +46,12 @@ def test_regression_test():
             "wealth": jnp.array([5.0, 20, 40, 70]),
             "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
         },
-        initial_regimes=["working"] * 4,
+        initial_regimes=["working_life"] * 4,
     ).to_dataframe()
 
-    # Compare solution
-    for period in range(n_periods - 1):
-        for regime in got_solve[period]:
+    # Compare solution (iterate over expected regimes — got may have additional ones)
+    for period in expected_solve:
+        for regime in expected_solve[period]:
             aaae(expected_solve[period][regime], got_solve[period][regime], decimal=5)
 
     # Compare simulation (use tolerance to match solution comparison precision)
@@ -153,7 +153,7 @@ def test_model_with_different_grid_types(grid_type: str):
             "wealth": jnp.array([5.0, 20, 40, 70]),
             "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
         },
-        initial_regimes=["working"] * 4,
+        initial_regimes=["working_life"] * 4,
     )
     df = result.to_dataframe()
 

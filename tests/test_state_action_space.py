@@ -114,7 +114,7 @@ def test_state_action_space_replace_method():
 
 def test_create_state_space_info():
     @dataclass
-    class HealthStatus:
+    class Health:
         good: int = 0
         bad: int = 1
 
@@ -123,7 +123,7 @@ def test_create_state_space_info():
         functions={"utility": lambda wealth: wealth},
         states={
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
-            "health": DiscreteGrid(HealthStatus),
+            "health": DiscreteGrid(Health),
         },
         state_transitions={
             "wealth": lambda wealth: wealth,

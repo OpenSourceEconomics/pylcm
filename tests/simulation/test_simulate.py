@@ -22,7 +22,7 @@ from tests.test_models.deterministic.regression import (
     dead,
     get_model,
     get_params,
-    working,
+    working_life,
 )
 
 # ======================================================================================
@@ -34,15 +34,14 @@ from tests.test_models.deterministic.regression import (
 def simulate_inputs():
     ages = AgeGrid(start=0, stop=1, step="Y")
     final_age_alive = 0
-    updated_working = working.replace(
+    updated_working_life = working_life.replace(
         actions={
-            **working.actions,
-            "consumption": working.actions["consumption"].replace(stop=100),  # ty: ignore[unresolved-attribute]
+            **working_life.actions,
+            "consumption": working_life.actions["consumption"].replace(stop=100),  # ty: ignore[unresolved-attribute]
         },
         active=lambda age: age <= final_age_alive,
     )
-    updated_dead = dead.replace(active=lambda age: age > final_age_alive)
-    regimes = {"working": updated_working, "dead": updated_dead}
+    regimes = {"working_life": updated_working_life, "dead": dead}
     regime_names_to_ids = MappingProxyType(
         {name: idx for idx, name in enumerate(regimes.keys())}
     )
@@ -63,7 +62,7 @@ def simulate_inputs():
 def test_simulate_using_raw_inputs(simulate_inputs):
     internal_params = MappingProxyType(
         {
-            "working": MappingProxyType(
+            "working_life": MappingProxyType(
                 {
                     "H__discount_factor": 1.0,
                     "utility__disutility_of_work": 1.0,
@@ -79,21 +78,25 @@ def test_simulate_using_raw_inputs(simulate_inputs):
         internal_params=internal_params,
         V_arr_dict=MappingProxyType(
             {
-                0: MappingProxyType({"working": jnp.zeros(100), "dead": jnp.zeros(2)}),
-                1: MappingProxyType({"working": jnp.zeros(100), "dead": jnp.zeros(2)}),
+                0: MappingProxyType(
+                    {"working_life": jnp.zeros(100), "dead": jnp.zeros(2)}
+                ),
+                1: MappingProxyType(
+                    {"working_life": jnp.zeros(100), "dead": jnp.zeros(2)}
+                ),
             }
         ),
         initial_states={
             "wealth": jnp.array([1.0, 50.400803]),
             "age": jnp.array([0.0, 0.0]),
         },
-        initial_regimes=["working"] * 2,
+        initial_regimes=["working_life"] * 2,
         logger=get_logger(debug_mode=False),
         **simulate_inputs,
     )
-    got = result.to_dataframe().query('regime == "working"')
+    got = result.to_dataframe().query('regime == "working_life"')
 
-    assert (got["labor_supply"] == "retire").all()
+    assert (got["work"] == "retire").all()
     assert_array_almost_equal(got["consumption"], [1.0, 50.400803])
 
 
@@ -107,22 +110,22 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
     def _model_solution(n_periods):
         # remove wage function so that wage becomes a parameter
         updated_functions = {
-            name: func for name, func in working.functions.items() if name != "wage"
+            name: func
+            for name, func in working_life.functions.items()
+            if name != "wage"
         }
         stop_age = START_AGE + n_periods - 1
         final_age_alive = stop_age - 1
         ages = AgeGrid(start=START_AGE, stop=stop_age, step="Y")
-        updated_working = working.replace(
+        updated_working_life = working_life.replace(
             functions=updated_functions,
             active=lambda age: age <= final_age_alive,
         )
-        updated_dead = dead.replace(active=lambda age: age > final_age_alive)
-
         params = get_params(n_periods=n_periods)
         # Since wage function is removed, wage becomes a parameter for labor_income
-        params["working"]["labor_income"] = {"wage": 1.5}  # ty: ignore[invalid-assignment]
+        params["working_life"]["labor_income"] = {"wage": 1.5}  # ty: ignore[invalid-assignment]
         model = Model(
-            regimes={"working": updated_working, "dead": updated_dead},
+            regimes={"working_life": updated_working_life, "dead": dead},
             ages=ages,
             regime_id_class=RegimeId,
         )
@@ -147,18 +150,18 @@ def test_simulate_using_model_methods(
             "wealth": jnp.array([20.0, 150, 250, 320]),
             "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
         },
-        initial_regimes=["working"] * 4,
+        initial_regimes=["working_life"] * 4,
     )
     df = result.to_dataframe(
         additional_targets=["utility", "borrowing_constraint"]
-    ).query('regime == "working"')
+    ).query('regime == "working_life"')
 
     # Check expected columns
     expected_cols = {
         "period",
         "age",
         "value",
-        "labor_supply",
+        "work",
         "consumption",
         "wealth",
         "utility",
@@ -169,7 +172,7 @@ def test_simulate_using_model_methods(
     assert expected_cols == set(df.columns)
 
     # Everyone retires in the last period
-    assert (df.loc[df["period"] == n_periods - 1, "labor_supply"] == "retire").all()
+    assert (df.loc[df["period"] == n_periods - 1, "work"] == "retire").all()
 
     # Higher wealth leads to higher consumption and value in each period
     # (data is sorted by subject_id which corresponds to increasing initial wealth)
@@ -195,11 +198,11 @@ def test_simulate_with_only_discrete_actions():
         params,
         initial_states={
             "wealth": jnp.array([0, 2]),
-            "age": jnp.array([0.0, 0.0]),
+            "age": jnp.array([50.0, 50.0]),
         },
-        initial_regimes=["working"] * 2,
+        initial_regimes=["working_life"] * 2,
     )
-    got = result.to_dataframe().query('regime == "working"')
+    got = result.to_dataframe().query('regime == "working_life"')
 
     # Expected: sorted by (subject_id, period)
     # Subject 0: wealth=low -> works, low consumption; wealth=high -> retires, high
@@ -209,15 +212,15 @@ def test_simulate_with_only_discrete_actions():
             "subject_id": [0, 0, 1, 1],
             "period": [0, 1, 0, 1],
             "wealth": ["low", "high", "high", "medium"],
-            "labor_supply": ["work", "retire", "retire", "retire"],
+            "work": ["work", "retire", "retire", "retire"],
             "consumption": ["low", "high", "high", "high"],
         }
     )
 
     assert_frame_equal(
-        got[
-            ["subject_id", "period", "wealth", "labor_supply", "consumption"]
-        ].reset_index(drop=True),
+        got[["subject_id", "period", "wealth", "work", "consumption"]].reset_index(
+            drop=True
+        ),
         expected,
         check_dtype=False,
         check_categorical=False,
@@ -265,10 +268,10 @@ def test_effect_of_discount_factor_on_last_period():
                 "wealth": initial_wealth,
                 "age": jnp.array([18.0, 18.0, 18.0]),
             },
-            initial_regimes=["working"] * 3,
+            initial_regimes=["working_life"] * 3,
         )
         .to_dataframe()
-        .query('regime == "working"')
+        .query('regime == "working_life"')
     )
 
     df_high = (
@@ -278,10 +281,10 @@ def test_effect_of_discount_factor_on_last_period():
                 "wealth": initial_wealth,
                 "age": jnp.array([18.0, 18.0, 18.0]),
             },
-            initial_regimes=["working"] * 3,
+            initial_regimes=["working_life"] * 3,
         )
         .to_dataframe()
-        .query('regime == "working"')
+        .query('regime == "working_life"')
     )
 
     # Higher beta (more patient) should lead to higher value in later periods
@@ -328,10 +331,10 @@ def test_effect_of_disutility_of_work():
                 "wealth": initial_wealth,
                 "age": jnp.array([18.0, 18.0, 18.0]),
             },
-            initial_regimes=["working"] * 3,
+            initial_regimes=["working_life"] * 3,
         )
         .to_dataframe()
-        .query('regime == "working"')
+        .query('regime == "working_life"')
     )
 
     df_high = (
@@ -341,10 +344,10 @@ def test_effect_of_disutility_of_work():
                 "wealth": initial_wealth,
                 "age": jnp.array([18.0, 18.0, 18.0]),
             },
-            initial_regimes=["working"] * 3,
+            initial_regimes=["working_life"] * 3,
         )
         .to_dataframe()
-        .query('regime == "working"')
+        .query('regime == "working_life"')
     )
 
     # Merge results for easy comparison
@@ -357,8 +360,8 @@ def test_effect_of_disutility_of_work():
 
     # Lower disutility -> retire later (work=0, retire=1, lower code = more work)
     assert (
-        merged["labor_supply_low"].cat.codes.to_numpy()
-        <= merged["labor_supply_high"].cat.codes.to_numpy()
+        merged["work_low"].cat.codes.to_numpy()
+        <= merged["work_high"].cat.codes.to_numpy()
     ).all()
 
 
@@ -378,19 +381,19 @@ def test_to_dataframe_use_labels_parameter():
             "wealth": jnp.array([20.0, 50.0]),
             "age": jnp.array([18.0, 18.0]),
         },
-        initial_regimes=["working"] * 2,
+        initial_regimes=["working_life"] * 2,
     )
 
     # use_labels=True (default): discrete columns are Categorical with string labels
     df_labels = result.to_dataframe()
-    for col in ["regime", "labor_supply"]:
+    for col in ["regime", "work"]:
         assert df_labels[col].dtype.name == "category", f"{col} should be categorical"
-    assert set(df_labels["labor_supply"].cat.categories) == {"work", "retire"}
+    assert set(df_labels["work"].cat.categories) == {"work", "retire"}
 
     # use_labels=False: discrete columns have numeric codes
     df_codes = result.to_dataframe(use_labels=False)
-    assert df_codes["labor_supply"].dtype.kind in "iuf"  # integer/unsigned/float
-    assert set(df_codes["labor_supply"].dropna().unique()).issubset({0, 1})
+    assert df_codes["work"].dtype.kind in "iuf"  # integer/unsigned/float
+    assert set(df_codes["work"].dropna().unique()).issubset({0, 1})
 
 
 # ======================================================================================
@@ -410,7 +413,7 @@ def regression_simulation_result():
             "wealth": jnp.array([20.0, 50.0]),
             "age": jnp.array([18.0, 18.0]),
         },
-        initial_regimes=["working"] * 2,
+        initial_regimes=["working_life"] * 2,
     )
 
 
@@ -436,7 +439,7 @@ def test_additional_targets_all_with_stochastic_transitions():
     causing additional_targets='all' to fail.
     """
     from tests.test_models.stochastic import (  # noqa: PLC0415
-        HealthStatus,
+        Health,
         PartnerStatus,
         get_model,
         get_params,
@@ -449,11 +452,11 @@ def test_additional_targets_all_with_stochastic_transitions():
         params,
         initial_states={
             "wealth": jnp.array([20.0, 50.0]),
-            "health": jnp.array([HealthStatus.good, HealthStatus.bad]),
+            "health": jnp.array([Health.good, Health.bad]),
             "partner": jnp.array([PartnerStatus.single, PartnerStatus.partnered]),
-            "age": jnp.array([0.0, 0.0]),
+            "age": jnp.array([40.0, 40.0]),
         },
-        initial_regimes=["working", "working"],
+        initial_regimes=["working_life", "working_life"],
     )
 
     # Stochastic weight functions should NOT be in available_targets
@@ -500,7 +503,7 @@ def test_simulation_result_pickle_roundtrip(tmp_path: Path):
             "wealth": jnp.array([20.0, 50.0]),
             "age": jnp.array([18.0, 18.0]),
         },
-        initial_regimes=["working"] * 2,
+        initial_regimes=["working_life"] * 2,
     )
 
     # Pickle and unpickle

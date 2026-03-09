@@ -5,8 +5,7 @@ endogenous grid method for discrete-continuous dynamic action models with (or wi
 taste shocks" by Fedor Iskhakov, Thomas H. Jørgensen, John Rust and Bertel Schjerning
 (2017, https://doi.org/10.3982/QE643).
 
-See also the specifications in tests/test_models/deterministic.py.
-
+Extends the deterministic mortality model with Health and PartnerStatus states.
 """
 
 import jax.numpy as jnp
@@ -17,7 +16,6 @@ from lcm import (
     LinSpacedGrid,
     MarkovTransition,
     Model,
-    Regime,
     categorical,
 )
 from lcm.typing import (
@@ -28,19 +26,23 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     Period,
-    ScalarInt,
 )
+from lcm_examples.mortality import (
+    LaborSupply,
+    RegimeId,
+    dead,
+    is_working,
+)
+from lcm_examples.mortality import retirement as _base_retirement
+from lcm_examples.mortality import working_life as _base_working_life
 
 # ======================================================================================
-# Model functions
+# Additional categorical variables
 # ======================================================================================
 
 
-# --------------------------------------------------------------------------------------
-# Categorical variables
-# --------------------------------------------------------------------------------------
 @categorical
-class HealthStatus:
+class Health:
     bad: int
     good: int
 
@@ -51,22 +53,11 @@ class PartnerStatus:
     partnered: int
 
 
-@categorical
-class LaborSupply:
-    work: int
-    retire: int
+# ======================================================================================
+# Stochastic model functions (different signatures due to health/partner)
+# ======================================================================================
 
 
-@categorical
-class RegimeId:
-    working: int
-    retired: int
-    dead: int
-
-
-# --------------------------------------------------------------------------------------
-# Utility function
-# --------------------------------------------------------------------------------------
 def utility_working(
     consumption: ContinuousAction,
     is_working: BoolND,
@@ -78,7 +69,7 @@ def utility_working(
     return jnp.log(consumption) - (1 - health / 2) * work_disutility
 
 
-def utility_retired(
+def utility_retirement(
     consumption: ContinuousAction,
     health: DiscreteState,  # noqa: ARG001
     partner: DiscreteState,  # noqa: ARG001
@@ -86,20 +77,10 @@ def utility_retired(
     return jnp.log(consumption)
 
 
-# --------------------------------------------------------------------------------------
-# Auxiliary variables
-# --------------------------------------------------------------------------------------
 def labor_income(is_working: BoolND, wage: FloatND) -> FloatND:
     return jnp.where(is_working, wage, 0.0)
 
 
-def is_working(labor_supply: DiscreteAction) -> BoolND:
-    return labor_supply == LaborSupply.work
-
-
-# --------------------------------------------------------------------------------------
-# Deterministic state and regime transitions
-# --------------------------------------------------------------------------------------
 def next_wealth(
     wealth: ContinuousState,
     consumption: ContinuousAction,
@@ -110,37 +91,13 @@ def next_wealth(
     return (1 + interest_rate) * (wealth - consumption) + labor_income + partner
 
 
-def next_regime_from_working(
-    labor_supply: DiscreteAction,
-    age: float,
-    final_age_alive: float,
-) -> ScalarInt:
-    return jnp.where(
-        age >= final_age_alive,
-        RegimeId.dead,
-        jnp.where(
-            labor_supply == LaborSupply.retire,
-            RegimeId.retired,
-            RegimeId.working,
-        ),
-    )
-
-
-def next_regime_from_retired(age: float, final_age_alive: float) -> ScalarInt:
-    return jnp.where(
-        age >= final_age_alive,
-        RegimeId.dead,
-        RegimeId.retired,
-    )
-
-
 # --------------------------------------------------------------------------------------
 # Stochastic state transitions
 # --------------------------------------------------------------------------------------
 def next_health(health: DiscreteState, partner: DiscreteState) -> FloatND:
     """Stochastic transition with JIT-calculated markov transition probabilities."""
     return jnp.where(
-        health == HealthStatus.bad,
+        health == Health.bad,
         jnp.where(
             partner == PartnerStatus.single,
             jnp.array([0.9, 0.1]),
@@ -156,104 +113,71 @@ def next_health(health: DiscreteState, partner: DiscreteState) -> FloatND:
 
 def next_partner(
     period: Period,
-    labor_supply: DiscreteAction,
+    work: DiscreteAction,
     partner: DiscreteState,
     partner_transition: FloatND,
 ) -> FloatND:
     """Stochastic transition using pre-calculated markov transition probabilities."""
-    return partner_transition[period, labor_supply, partner]
-
-
-# --------------------------------------------------------------------------------------
-# Constraints
-# --------------------------------------------------------------------------------------
-def borrowing_constraint(
-    consumption: ContinuousAction, wealth: ContinuousState
-) -> BoolND:
-    return consumption <= wealth
+    return partner_transition[period, work, partner]
 
 
 # ======================================================================================
-# Model specification
+# Model specification (extend base regimes via .replace())
 # ======================================================================================
 
-working = Regime(
-    actions={
-        "labor_supply": DiscreteGrid(LaborSupply),
-        "consumption": LinSpacedGrid(
-            start=1,
-            stop=100,
-            n_points=200,
-        ),
-    },
+# Smaller grids than the base mortality model to keep solve time manageable with the
+# additional stochastic states (health, partner).
+WEALTH_GRID = LinSpacedGrid(start=1, stop=100, n_points=100)
+CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=100, n_points=200)
+
+working_life = _base_working_life.replace(
     states={
-        "health": DiscreteGrid(HealthStatus),
+        "health": DiscreteGrid(Health),
         "partner": DiscreteGrid(PartnerStatus),
-        "wealth": LinSpacedGrid(
-            start=1,
-            stop=100,
-            n_points=100,
-        ),
+        "wealth": WEALTH_GRID,
     },
     state_transitions={
         "health": MarkovTransition(next_health),
         "partner": MarkovTransition(next_partner),
         "wealth": next_wealth,
     },
-    constraints={
-        "borrowing_constraint": borrowing_constraint,
+    actions={
+        "work": DiscreteGrid(LaborSupply),
+        "consumption": CONSUMPTION_GRID,
     },
-    transition=next_regime_from_working,
     functions={
         "utility": utility_working,
         "labor_income": labor_income,
         "is_working": is_working,
     },
-    active=lambda _age: True,  # Placeholder, overridden at model creation
 )
 
-
-retired = Regime(
-    actions={"consumption": LinSpacedGrid(start=1, stop=100, n_points=200)},
+retirement = _base_retirement.replace(
     states={
-        "health": DiscreteGrid(HealthStatus),
+        "health": DiscreteGrid(Health),
         "partner": DiscreteGrid(PartnerStatus),
-        "wealth": LinSpacedGrid(
-            start=1,
-            stop=100,
-            n_points=100,
-        ),
+        "wealth": WEALTH_GRID,
     },
     state_transitions={
         "health": MarkovTransition(next_health),
         "partner": MarkovTransition(next_partner),
         "wealth": next_wealth,
     },
-    constraints={
-        "borrowing_constraint": borrowing_constraint,
-    },
-    transition=next_regime_from_retired,
-    functions={
-        "utility": utility_retired,
-    },
-    active=lambda _age: True,  # Placeholder, overridden at model creation
-)
-
-
-dead = Regime(
-    transition=None,
-    functions={"utility": lambda: 0.0},
-    active=lambda _age: True,  # Placeholder, overridden at model creation
+    actions={"consumption": CONSUMPTION_GRID},
+    functions={"utility": utility_retirement},
 )
 
 
 def get_model(n_periods: int) -> Model:
-    ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
+    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    last_age = ages.exact_values[-1]
     return Model(
         regimes={
-            "working": working.replace(active=lambda age, n=n_periods: age < n - 1),
-            "retired": retired.replace(active=lambda age, n=n_periods: age < n - 1),
-            "dead": dead.replace(active=lambda age, n=n_periods: age >= n - 1),
+            "working_life": working_life.replace(
+                active=lambda age, la=last_age: age < la
+            ),
+            "retirement": retirement.replace(active=lambda age, la=last_age: age < la),
+            "dead": dead,
         },
         ages=ages,
         regime_id_class=RegimeId,
@@ -309,22 +233,25 @@ def get_params(
     if partner_transition is None:
         partner_transition = default_partner_transition
 
-    final_age_alive = n_periods - 2
     return {
         "discount_factor": discount_factor,
-        "working": {
+        "survival_probs": jnp.concatenate(
+            [
+                jnp.full(n_periods - 2, 0.97),
+                jnp.array([0.0]),
+            ]
+        ),
+        "working_life": {
             "utility": {"disutility_of_work": disutility_of_work},
             "next_wealth": {"interest_rate": interest_rate},
             "next_partner": {"partner_transition": partner_transition},
-            "next_regime": {"final_age_alive": final_age_alive},
             "labor_income": {"wage": wage},
         },
-        "retired": {
+        "retirement": {
             "next_wealth": {"interest_rate": interest_rate, "labor_income": 0.0},
             "next_partner": {
-                "labor_supply": LaborSupply.retire,
+                "work": LaborSupply.retire,
                 "partner_transition": partner_transition,
             },
-            "next_regime": {"final_age_alive": final_age_alive},
         },
     }

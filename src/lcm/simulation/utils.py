@@ -6,7 +6,7 @@ from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import Array, vmap
 from jax import numpy as jnp
 
-from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
+from lcm.error_handling import validate_regime_transition_probs
 from lcm.grids import DiscreteGrid
 from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.random import generate_simulation_keys
@@ -18,7 +18,7 @@ from lcm.typing import (
     RegimeName,
     RegimeNamesToIds,
 )
-from lcm.utils import flatten_regime_namespace, normalize_regime_transition_probs
+from lcm.utils import flatten_regime_namespace
 
 # Sentinel for categorical states not in initial conditions.  Using int32 min
 # instead of -1 so that JAX indexing produces obviously wrong values rather than
@@ -153,6 +153,7 @@ def calculate_next_regime_membership(
     optimal_actions: MappingProxyType[str, Array],
     period: int,
     age: float,
+    next_age: float,
     regime_params: FlatRegimeParams,
     regime_names_to_ids: MappingProxyType[RegimeName, int],
     new_subject_regime_ids: Int1D,
@@ -171,6 +172,7 @@ def calculate_next_regime_membership(
         optimal_actions: Optimal actions computed for these subjects.
         period: Current period.
         age: Age corresponding to current period.
+        next_age: Age corresponding to next period.
         regime_params: Flat regime parameters.
         regime_names_to_ids: Mapping from regime names to integer IDs.
         new_subject_regime_ids: Array to update with next regime assignments.
@@ -196,15 +198,19 @@ def calculate_next_regime_membership(
             **regime_params,
         )
     )
-    normalized_regime_transition_probs = normalize_regime_transition_probs(
+    state_action_values = MappingProxyType(
+        {**state_action_space.states, **optimal_actions},
+    )
+    validate_regime_transition_probs(
         regime_transition_probs=regime_transition_probs,
         active_regimes_next_period=active_regimes_next_period,
-    )
-
-    validate_normalized_regime_transition_probs(
-        normalized_regime_transition_probs=normalized_regime_transition_probs,
         regime_name=internal_regime.name,
-        period=period,
+        age=age,
+        next_age=next_age,
+        state_action_values=state_action_values,
+    )
+    active_regime_probs = MappingProxyType(
+        {r: regime_transition_probs[r] for r in active_regimes_next_period}
     )
 
     # Generate random keys and draw next regimes
@@ -216,7 +222,7 @@ def calculate_next_regime_membership(
     )
 
     next_regime_ids = draw_key_from_dict(
-        d=normalized_regime_transition_probs,
+        d=active_regime_probs,
         regime_names_to_ids=regime_names_to_ids,
         keys=regime_transition_key["key_regime_transition"],
     )
@@ -347,27 +353,3 @@ def convert_initial_states_to_nested(
         nested[regime_name] = regime_states
 
     return nested
-
-
-def validate_normalized_regime_transition_probs(
-    *,
-    normalized_regime_transition_probs: MappingProxyType[str, Array],
-    regime_name: str,
-    period: int,
-) -> None:
-    probs = jnp.array(list(normalized_regime_transition_probs.values()))
-    sum_probs = jnp.sum(probs, axis=0)
-    if not jnp.allclose(sum_probs, 1.0):
-        raise InvalidRegimeTransitionProbabilitiesError(
-            f"Regime transition probabilities from '{regime_name}' in period {period} "
-            "do not sum to 1 after normalization. This indicates an error in the "
-            "'next_regime' function of the regime."
-        )
-    if jnp.any(~jnp.isfinite(probs)):
-        raise InvalidRegimeTransitionProbabilitiesError(
-            f"Non-finite values in regime transition probabilities from "
-            f"'{regime_name}' in period {period} after normalization. This usually "
-            "means no active regime can be reached. Check that the 'next_regime' "
-            f"function of the '{regime_name}' regime assigns positive probability to "
-            "regimes that are active in the next period."
-        )

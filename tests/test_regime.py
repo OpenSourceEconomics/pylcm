@@ -397,7 +397,7 @@ def test_regime_with_fixed_states_only():
 
     @categorical
     class FixedRegimeId:
-        working: int
+        working_life: int
         dead: int
 
     def fixed_utility(
@@ -412,7 +412,7 @@ def test_regime_with_fixed_states_only():
 
     def fixed_next_regime(age: float, final_age_alive: float) -> ScalarInt:
         dead = FixedRegimeId.dead
-        working = FixedRegimeId.working
+        working = FixedRegimeId.working_life
         return jnp.where(age >= final_age_alive, dead, working)
 
     final_age = 1
@@ -434,14 +434,16 @@ def test_regime_with_fixed_states_only():
         active=lambda age: age > final_age,
     )
     model = Model(
-        regimes={"working": working_regime, "dead": dead_regime},
+        regimes={"working_life": working_regime, "dead": dead_regime},
         ages=AgeGrid(start=0, stop=final_age + 1, step="Y"),
         regime_id_class=FixedRegimeId,
     )
     V = model.solve(
         {
             "discount_factor": 0.95,
-            "working": {"next_regime": {"final_age_alive": final_age}},
+            "working_life": {"next_regime": {"final_age_alive": final_age}},
         }
     )
-    assert all(jnp.all(jnp.isfinite(V[p]["working"])) for p in V if "working" in V[p])
+    assert all(
+        jnp.all(jnp.isfinite(V[p]["working_life"])) for p in V if "working_life" in V[p]
+    )
