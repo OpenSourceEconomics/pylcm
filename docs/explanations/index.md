@@ -17,3 +17,5 @@ hood.
   grid types.
 - [Approximating Continuous Shocks](approximating_continuous_shocks.ipynb) — Quadrature
   rules and Markov chain approximations for IID and AR(1) shock processes.
+- [Dispatchers](dispatchers.ipynb) — How `productmap`, `vmap_1d`, and
+  `simulation_spacemap` evaluate scalar functions on structured spaces.

@@ -18,9 +18,13 @@ Performs backward induction using dynamic programming. Returns an immutable mapp
 
 ### Debug mode
 
-- `debug_mode=True` (default): Runs without JIT compilation for better error messages.
-  Use this while developing.
-- `debug_mode=False`: Full JIT compilation for speed. Use for production runs.
+- `debug_mode=True` (default): Enables period-by-period logging so you can track
+  progress and diagnose issues. Use this while developing.
+- `debug_mode=False`: Disables debug logging. Use for production runs.
+
+JIT compilation is controlled separately via `enable_jit` in the `Model` constructor.
+Setting `enable_jit=False` gives clearer error tracebacks when debugging, but makes
+solving and simulating **much** slower.
 
 ```python
 V_arr_dict = model.solve(params, debug_mode=False)

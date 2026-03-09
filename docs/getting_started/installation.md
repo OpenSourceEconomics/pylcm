@@ -6,51 +6,61 @@ title: Installation
 
 ## Prerequisites
 
-pylcm requires **Python 3.14+**. You can download the latest Python release from
-[python.org](https://www.python.org/downloads/).
+pylcm requires **Python 3.14+**. We recommend [pixi](https://pixi.sh/) or
+[uv](https://docs.astral.sh/uv/) for environment management.
 
-We recommend [pixi](https://pixi.sh/) for environment management, as it handles Python
-version pinning and dependency resolution automatically.
-
-## Install with pixi (recommended)
-
-Add pylcm to your `pixi.toml`:
-
-```toml
-[dependencies]
-pylcm = "*"
-```
-
-Then install:
+## Install with pixi
 
 ```bash
-pixi install
+pixi add pylcm
 ```
 
-## Install with pip
+## Install with uv
 
 ```bash
-pip install pylcm
+uv add pylcm
 ```
 
-:::{note}
-pylcm depends on `dags`, which may be installed from GitHub. Ensure you have `git`
-installed on your system.
-:::
+## Install from GitHub
 
-## GPU Acceleration (optional)
+If you require features not yet in a released version, install from GitHub:
+
+```bash
+# pixi
+pixi add pylcm --pypi --git https://github.com/OpenSourceEconomics/pylcm.git --rev main
+
+# uv
+uv add pylcm --git https://github.com/OpenSourceEconomics/pylcm.git --rev main
+```
+
+## GPU Acceleration (optional, but then this is the whole point of it)
 
 pylcm uses [JAX](https://jax.readthedocs.io/) for numerical computation. By default,
-JAX runs on CPU. For GPU acceleration, install the appropriate JAX variant:
+JAX runs on CPU. For GPU acceleration, install the appropriate JAX variant.
 
 ### Linux (CUDA)
 
-```bash
-pip install jax[cuda13]
+If you use pixi, add a CUDA feature to your `pyproject.toml`:
+
+```toml
+[tool.pixi.feature.cuda13]
+platforms = ["linux-64"]
+system-requirements = {cuda = "13"}
+
+[tool.pixi.feature.cuda13.target.linux-64.dependencies]
+cuda-nvcc = "~=13.0"
+
+[tool.pixi.feature.cuda13.target.linux-64.pypi-dependencies]
+jax = {version = ">=0.8", extras = ["cuda13"]}
 ```
 
-For CUDA 12, use `jax[cuda12]` instead. When using pixi, the `cuda13` and `cuda12`
-environments handle this automatically.
+For CUDA 12, replace `cuda13` with `cuda12` throughout.
+
+If you use uv:
+
+```bash
+uv add "jax[cuda13]"
+```
 
 See the [JAX installation guide](https://jax.readthedocs.io/en/latest/installation.html)
 for details on CUDA toolkit requirements.
@@ -58,7 +68,11 @@ for details on CUDA toolkit requirements.
 ### macOS (Metal)
 
 ```bash
-pip install jax-metal
+# pixi
+pixi add jax-metal --pypi
+
+# uv
+uv add jax-metal
 ```
 
 This requires Apple Silicon (M1 or later).
@@ -82,5 +96,3 @@ smaller models.
 - **JAX GPU not detected**: Ensure the CUDA toolkit (Linux) or jax-metal (macOS) is
   properly installed. See the
   [JAX installation guide](https://jax.readthedocs.io/en/latest/installation.html).
-- **Import errors from `dags`**: Ensure `git` is installed and accessible from your
-  terminal, as `dags` may be fetched from GitHub during installation.

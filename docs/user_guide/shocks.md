@@ -59,7 +59,8 @@ Same parameters as `Normal`. Grid points are `exp()` of the underlying normal gr
 
 ### Uniform
 
-Discretized uniform distribution $U(\text{start}, \text{stop})$.
+Discretized uniform distribution $U(\text{start}, \text{stop})$ (includes `start` and
+`stop`).
 
 ```python
 lcm.shocks.iid.Uniform(n_points=5, start=0.0, stop=1.0)
@@ -84,7 +85,8 @@ Grid spans the mixture mean $\pm n_\text{std}$ mixture standard deviations.
 
 Shocks with serial correlation. Import: `import lcm.shocks.ar1`
 
-The process is $y_t = \mu + \rho \, y_{t-1} + \varepsilon_t$.
+The process is $y_t = \mu + \rho \, y_{t-1} + \varepsilon_t$, where $\varepsilon_t \sim
+N(0, \sigma^2)$ (or a mixture of two normals for `TauchenNormalMixture`).
 
 ### Tauchen
 
@@ -184,3 +186,15 @@ params = {
   — theory behind Tauchen, Rouwenhorst, and quadrature methods
 - [Grids](grids.md) — deterministic grid types
 - [Parameters](parameters.md) — how to supply runtime shock parameters
+
+## References
+
+- Tauchen, G. (1986). Finite State Markov-Chain Approximations to Univariate and Vector
+  Autoregressions. *Economics Letters*, 20(2), 177–181.
+- Rouwenhorst, K. G. (1995). Asset Pricing Implications of Equilibrium Business Cycle
+  Models. In T. F. Cooley (Ed.), *Frontiers of Business Cycle Research* (pp. 294–330).
+  Princeton University Press.
+- Kopecky, K. A. & Suen, R. M. H. (2010). Finite State Markov-Chain Approximations to
+  Highly Persistent Processes. *Review of Economic Dynamics*, 13(3), 701–714.
+- Fella, G., Gallipoli, G. & Pan, J. (2019). Markov-Chain Approximations for
+  Life-Cycle Models. *Review of Economic Dynamics*, 34, 183–201.
