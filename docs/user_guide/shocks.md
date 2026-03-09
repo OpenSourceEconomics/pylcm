@@ -90,7 +90,7 @@ N(0, \sigma^2)$ (or a mixture of two normals for `TauchenNormalMixture`).
 
 ### Tauchen
 
-Discretization via Tauchen (1986). Uses CDF-based transition probabilities.
+Discretization via @tauchen1986. Uses CDF-based transition probabilities.
 
 ```python
 lcm.shocks.ar1.Tauchen(
@@ -104,7 +104,7 @@ lcm.shocks.ar1.Tauchen(
 
 ### Rouwenhorst
 
-Discretization via Rouwenhorst (1995) / Kopecky & Suen (2010). Better for highly
+Discretization via @rouwenhorst1995 / @kopecky2010. Better for highly
 persistent processes ($\rho$ close to 1).
 
 ```python
@@ -113,8 +113,8 @@ lcm.shocks.ar1.Rouwenhorst(n_points=7, rho=0.95, sigma=0.1, mu=0.0)
 
 ### TauchenNormalMixture
 
-AR(1) with mixture-of-normals innovations, discretized via Tauchen. Following Fella,
-Gallipoli & Pan (2019).
+AR(1) with mixture-of-normals innovations, discretized via Tauchen. Following
+@fella2019.
 
 ```python
 lcm.shocks.ar1.TauchenNormalMixture(
@@ -186,15 +186,3 @@ params = {
   — theory behind Tauchen, Rouwenhorst, and quadrature methods
 - [Grids](grids.md) — deterministic grid types
 - [Parameters](parameters.md) — how to supply runtime shock parameters
-
-## References
-
-- Tauchen, G. (1986). Finite State Markov-Chain Approximations to Univariate and Vector
-  Autoregressions. *Economics Letters*, 20(2), 177–181.
-- Rouwenhorst, K. G. (1995). Asset Pricing Implications of Equilibrium Business Cycle
-  Models. In T. F. Cooley (Ed.), *Frontiers of Business Cycle Research* (pp. 294–330).
-  Princeton University Press.
-- Kopecky, K. A. & Suen, R. M. H. (2010). Finite State Markov-Chain Approximations to
-  Highly Persistent Processes. *Review of Economic Dynamics*, 13(3), 701–714.
-- Fella, G., Gallipoli, G. & Pan, J. (2019). Markov-Chain Approximations for
-  Life-Cycle Models. *Review of Economic Dynamics*, 34, 183–201.

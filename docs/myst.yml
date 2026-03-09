@@ -27,6 +27,8 @@ project:
     - economics
     - jax
   github: https://github.com/OpenSourceEconomics/pylcm
+  bibliography:
+    - references.bib
   jupyter: true
   toc:
     - file: index.md

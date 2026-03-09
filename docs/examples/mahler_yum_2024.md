@@ -4,8 +4,7 @@ title: Mahler & Yum (2024)
 
 # Mahler & Yum (2024)
 
-Full replication of the lifecycle model from "Lifestyle Behaviors and Wealth-Health
-Gaps in Germany" by Lukas Mahler and Minchul Yum (Econometrica, 2024).
+Full replication of the lifecycle model from @mahler2024.
 
 Two regimes (alive/dead), 8 states including health, education, productivity type,
 and health type. Three actions: labor supply, saving, and health effort. Features
