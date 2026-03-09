@@ -214,5 +214,5 @@ df.groupby("period")["wealth"].mean()
 
 - [Defining Models](defining_models.md) — constructing the `Model`
 - [Parameters](parameters.md) — preparing the params dict
-- [A Tiny Example](../getting_started/tiny_example.ipynb) — complete walkthrough
+- [A Tiny Example](tiny_example.ipynb) — complete walkthrough
 - [Examples](../examples/index.md) — full worked examples

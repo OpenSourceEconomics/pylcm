@@ -17,6 +17,9 @@ git clone https://github.com/OpenSourceEconomics/pylcm.git
 cd pylcm
 ```
 
+The first `pixi run` command will install dependencies automatically, but you can run
+`pixi install` explicitly if you prefer.
+
 Install pre-commit hooks (requires [prek](https://github.com/hmgaudecker/prek)):
 
 ```bash
@@ -34,10 +37,10 @@ pixi run tests
 pixi run tests-with-cov
 
 # Specific test file
-pixi run tests tests/test_specific_module.py
+pixi run pytest tests/test_specific_module.py
 
 # Specific test function
-pixi run tests tests/test_specific_module.py::test_function_name
+pixi run pytest tests/test_specific_module.py::test_function_name
 ```
 
 ## Code Quality
@@ -56,7 +59,7 @@ prek run --all-files
 # Build docs
 pixi run build-docs
 
-# Live preview
+# Live preview (watches for changes)
 pixi run view-docs
 ```
 

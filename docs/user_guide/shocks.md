@@ -4,26 +4,27 @@ title: Shocks
 
 # Shocks
 
-Shock grids represent stochastic variables with intrinsic transition rules. Unlike
-regular grids, they compute their own grid points and transition probabilities — you
-don't need to specify a `transition` parameter.
+Shock grids represent stochastic variables that define their own transition probabilities
+(based on the discretization method). Unlike regular grids, they compute their own grid
+points and transition matrices — you don't specify them in `state_transitions`.
 
 ## Import Convention
 
-Shock grids **must** be imported as modules and accessed with qualified names:
+We recommend importing shock modules and using qualified names:
 
 ```python
 import lcm.shocks.iid
 import lcm.shocks.ar1
 
-# Correct
+# Recommended
 shock = lcm.shocks.iid.Normal(n_points=5, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=2.0)
 
-# WRONG — never do this
+# Not recommended — can cause name collisions (e.g., Normal from scipy)
 from lcm.shocks.iid import Normal  # noqa
 ```
 
-This convention avoids name collisions and makes the shock origin explicit.
+Qualified access makes the shock's origin clear in code review and avoids collisions
+with common names like `Normal` from other libraries.
 
 ## IID Shocks
 
@@ -59,8 +60,8 @@ Same parameters as `Normal`. Grid points are `exp()` of the underlying normal gr
 
 ### Uniform
 
-Discretized uniform distribution $U(\text{start}, \text{stop})$ (includes `start` and
-`stop`).
+Discretized uniform distribution $U(\text{start}, \text{stop})$. Both endpoints are
+included in the grid.
 
 ```python
 lcm.shocks.iid.Uniform(n_points=5, start=0.0, stop=1.0)
@@ -85,8 +86,11 @@ Grid spans the mixture mean $\pm n_\text{std}$ mixture standard deviations.
 
 Shocks with serial correlation. Import: `import lcm.shocks.ar1`
 
-The process is $y_t = \mu + \rho \, y_{t-1} + \varepsilon_t$, where $\varepsilon_t \sim
-N(0, \sigma^2)$ (or a mixture of two normals for `TauchenNormalMixture`).
+The process is $y_t = \mu + \rho \, y_{t-1} + \varepsilon_t$. The innovation
+distribution depends on the method:
+
+- **Tauchen** and **Rouwenhorst**: $\varepsilon_t \sim N(0, \sigma^2)$
+- **TauchenNormalMixture**: $\varepsilon_t \sim p_1 \, N(\mu_1, \sigma_1^2) + (1 - p_1) \, N(\mu_2, \sigma_2^2)$
 
 ### Tauchen
 

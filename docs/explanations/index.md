@@ -8,8 +8,6 @@ These are developer-focused explanations of internal pylcm mechanisms. They are 
 for contributors and advanced users who want to understand how pylcm works under the
 hood.
 
-- [Parameters Workflow](params_workflow.ipynb) — How to specify parameters at model,
-  regime, and function levels.
 - [Function Representation](function_representation.ipynb) — What the function
   representation does and how it works.
 - [Interpolation and Extrapolation](interpolation.ipynb) — How pylcm's

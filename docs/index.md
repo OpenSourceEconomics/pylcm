@@ -14,7 +14,7 @@ models using JAX for fast numerical computation with GPU support.
 
 :::{grid-item-card} Getting Started
 :link: getting_started/index
-Learn how to install pylcm and build your first model.
+Learn how to install pylcm.
 :::
 
 :::{grid-item-card} User Guide

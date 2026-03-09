@@ -36,10 +36,10 @@ project:
       title: Getting Started
       children:
         - file: getting_started/installation.md
-        - file: getting_started/tiny_example.ipynb
     - file: user_guide/index.md
       title: User Guide
       children:
+        - file: user_guide/tiny_example.ipynb
         - file: user_guide/write_economics.ipynb
         - file: user_guide/defining_models.md
         - file: user_guide/regimes.ipynb
@@ -51,7 +51,6 @@ project:
     - file: explanations/index.md
       title: Explanations
       children:
-        - file: explanations/params_workflow.ipynb
         - file: explanations/function_representation.ipynb
         - file: explanations/dispatchers.ipynb
         - file: explanations/interpolation.ipynb
