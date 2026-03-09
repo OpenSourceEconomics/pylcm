@@ -27,31 +27,29 @@ project:
     - economics
     - jax
   github: https://github.com/OpenSourceEconomics/pylcm
+  bibliography:
+    - references.bib
   jupyter: true
   toc:
     - file: index.md
-    - file: getting_started/index.md
-      title: Getting Started
-      children:
-        - file: getting_started/installation.md
-        - file: getting_started/tiny_example.ipynb
     - file: user_guide/index.md
       title: User Guide
       children:
+        - file: user_guide/tiny_example.ipynb
+        - file: user_guide/installation.md
         - file: user_guide/write_economics.ipynb
         - file: user_guide/defining_models.md
         - file: user_guide/regimes.ipynb
         - file: user_guide/grids.md
         - file: user_guide/transitions.ipynb
+        - file: user_guide/shocks.md
+        - file: user_guide/parameters.md
         - file: user_guide/solving_and_simulating.md
         - file: user_guide/pandas_interop.md
-        - file: user_guide/parameters.md
         - file: user_guide/debugging.md
-        - file: user_guide/shocks.md
     - file: explanations/index.md
       title: Explanations
       children:
-        - file: explanations/params_workflow.ipynb
         - file: explanations/function_representation.ipynb
         - file: explanations/dispatchers.ipynb
         - file: explanations/interpolation.ipynb

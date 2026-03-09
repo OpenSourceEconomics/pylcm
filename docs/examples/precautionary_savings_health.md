@@ -43,7 +43,7 @@ df = result.to_dataframe(additional_targets="all")
 
 ## See Also
 
-- [A Tiny Example](../getting_started/tiny_example.ipynb) — simpler three-period model
+- [A Tiny Example](../user_guide/tiny_example.ipynb) — simpler three-period model
 - [Writing Economics](../user_guide/write_economics.ipynb) — function DAGs and regime
   design
 - [Grids](../user_guide/grids.md) — grid types and transitions

@@ -4,26 +4,27 @@ title: Shocks
 
 # Shocks
 
-Shock grids represent stochastic variables with intrinsic transition rules. Unlike
-regular grids, they compute their own grid points and transition probabilities — you
-don't need to specify a `transition` parameter.
+Shock grids represent stochastic variables that define their own transition probabilities
+(based on the discretization method). Unlike regular grids, they compute their own grid
+points and transition matrices — you don't specify them in `state_transitions`.
 
 ## Import Convention
 
-Shock grids **must** be imported as modules and accessed with qualified names:
+We recommend importing shock modules and using qualified names:
 
 ```python
 import lcm.shocks.iid
 import lcm.shocks.ar1
 
-# Correct
+# Recommended
 shock = lcm.shocks.iid.Normal(n_points=5, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=2.0)
 
-# WRONG — never do this
+# Not recommended — can cause name collisions (e.g., Normal from scipy)
 from lcm.shocks.iid import Normal  # noqa
 ```
 
-This convention avoids name collisions and makes the shock origin explicit.
+Qualified access makes the shock's origin clear in code review and avoids collisions
+with common names like `Normal` from other libraries.
 
 ## IID Shocks
 
@@ -59,7 +60,8 @@ Same parameters as `Normal`. Grid points are `exp()` of the underlying normal gr
 
 ### Uniform
 
-Discretized uniform distribution $U(\text{start}, \text{stop})$.
+Discretized uniform distribution $U(\text{start}, \text{stop})$. Both endpoints are
+included in the grid.
 
 ```python
 lcm.shocks.iid.Uniform(n_points=5, start=0.0, stop=1.0)
@@ -84,11 +86,15 @@ Grid spans the mixture mean $\pm n_\text{std}$ mixture standard deviations.
 
 Shocks with serial correlation. Import: `import lcm.shocks.ar1`
 
-The process is $y_t = \mu + \rho \, y_{t-1} + \varepsilon_t$.
+The process is $y_t = \mu + \rho \, y_{t-1} + \varepsilon_t$. The innovation
+distribution depends on the method:
+
+- **Tauchen** and **Rouwenhorst**: $\varepsilon_t \sim N(0, \sigma^2)$
+- **TauchenNormalMixture**: $\varepsilon_t \sim p_1 \, N(\mu_1, \sigma_1^2) + (1 - p_1) \, N(\mu_2, \sigma_2^2)$
 
 ### Tauchen
 
-Discretization via Tauchen (1986). Uses CDF-based transition probabilities.
+Discretization via @tauchen1986. Uses CDF-based transition probabilities.
 
 ```python
 lcm.shocks.ar1.Tauchen(
@@ -102,7 +108,7 @@ lcm.shocks.ar1.Tauchen(
 
 ### Rouwenhorst
 
-Discretization via Rouwenhorst (1995) / Kopecky & Suen (2010). Better for highly
+Discretization via @rouwenhorst1995 / @kopecky2010. Better for highly
 persistent processes ($\rho$ close to 1).
 
 ```python
@@ -111,8 +117,8 @@ lcm.shocks.ar1.Rouwenhorst(n_points=7, rho=0.95, sigma=0.1, mu=0.0)
 
 ### TauchenNormalMixture
 
-AR(1) with mixture-of-normals innovations, discretized via Tauchen. Following Fella,
-Gallipoli & Pan (2019).
+AR(1) with mixture-of-normals innovations, discretized via Tauchen. Following
+@fella2019.
 
 ```python
 lcm.shocks.ar1.TauchenNormalMixture(

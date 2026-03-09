@@ -18,6 +18,9 @@ This returns a mutable nested dict showing every parameter the model expects, or
 as `{regime_name: {function_name: {param_name: type_name}}}`. Use it as a starting point
 to see what values you need to provide.
 
+Only *free* parameters appear in the template — arguments that are states, actions, or
+outputs of other functions in the DAG are resolved automatically and do not show up here.
+
 ## Parameter Structure
 
 Parameters follow a three-level hierarchy. You can specify a parameter at whichever
@@ -56,6 +59,24 @@ params = {
 }
 ```
 
+### All parameters at model level
+
+When every parameter has a single value across all regimes and functions, you can
+specify everything at the top level:
+
+```python
+params = {
+    "discount_factor": 0.95,
+    "risk_aversion": 1.5,
+    "wage": 20.0,
+    "interest_rate": 0.03,
+    "consumption_floor": 2.0,
+    "tax_rate": 0.2,
+    "disutility_of_work": 1.0,
+    "last_working_age": 45,
+}
+```
+
 ## Mixing Levels
 
 You can mix levels freely — just avoid ambiguity:
@@ -76,7 +97,7 @@ params = {
 ## The Ambiguity Rule
 
 A parameter cannot appear at multiple levels within the same subtree. pylcm raises an
-error if a parameter value could be resolved from more than one level:
+`InvalidNameError` if a parameter value could be resolved from more than one level:
 
 - `"risk_aversion"` at model level **and** `"working_life" -> "risk_aversion"` at regime level
   = **error** (ambiguous)
@@ -119,6 +140,29 @@ model = Model(
 Fixed parameters are partialled into compiled functions and removed from the template.
 You don't need to supply them at `solve()` / `simulate()` time.
 
+**Recommended workflow for estimation:** In estimation contexts, `fixed_params` should
+contain everything except the parameters you are estimating. This avoids passing a large
+params dict on every likelihood evaluation and makes the estimated parameter set explicit.
+
+```python
+# During estimation, only risk_aversion and disutility_of_work are free
+model = Model(
+    ...,
+    fixed_params={
+        "discount_factor": 0.95,
+        "interest_rate": 0.03,
+        "wage": 20.0,
+        "consumption_floor": 2.0,
+        "tax_rate": 0.2,
+        "last_working_age": 45,
+    },
+)
+
+# The solve/simulate calls only need the estimated parameters
+params = {"risk_aversion": 1.5, "disutility_of_work": 1.0}
+result = model.solve_and_simulate(params, ...)
+```
+
 ## What Counts as a Parameter?
 
 pylcm inspects function signatures and classifies each argument:
@@ -132,7 +176,5 @@ pylcm inspects function signatures and classifies each argument:
 
 ## See Also
 
-- [Parameters Workflow](../explanations/params_workflow.ipynb) — deep dive with error
-  examples and edge cases
 - [Defining Models](defining_models.md) — the `Model` constructor and `fixed_params`
 - [Shocks](shocks.md) — runtime shock parameters
