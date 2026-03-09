@@ -24,6 +24,7 @@ from lcm.pandas_utils import (
     transition_probs_from_series,
     validate_transition_probs,
 )
+from lcm.persistence import load_solution, save_solution
 from lcm.regime import MarkovTransition, Regime
 from lcm.simulation.result import SimulationResult
 
@@ -50,6 +51,8 @@ __all__ = [
     "SimulationResult",
     "categorical",
     "initial_states_from_dataframe",
+    "load_solution",
+    "save_solution",
     "shocks",
     "transition_probs_from_series",
     "validate_transition_probs",

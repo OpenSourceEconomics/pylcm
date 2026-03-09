@@ -60,7 +60,9 @@ def solve(
                 **internal_params[name],
             )
 
-            validate_value_function_array(V_arr=V_arr, age=ages.values[period])
+            validate_value_function_array(
+                V_arr=V_arr, age=ages.values[period], regime_name=name
+            )
             period_solution[name] = V_arr
 
         next_V_arr = MappingProxyType(period_solution)

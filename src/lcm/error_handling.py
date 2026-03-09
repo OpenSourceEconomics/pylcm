@@ -15,7 +15,9 @@ from lcm.interfaces import InternalRegime
 from lcm.typing import FlatRegimeParams, InternalParams, RegimeName, ScalarFloat
 
 
-def validate_value_function_array(*, V_arr: Array, age: ScalarFloat) -> None:
+def validate_value_function_array(
+    *, V_arr: Array, age: ScalarFloat, regime_name: str | None = None
+) -> None:
     """Validate the value function array for NaN values.
 
     This function checks the value function array for any NaN values. If any such values
@@ -24,15 +26,20 @@ def validate_value_function_array(*, V_arr: Array, age: ScalarFloat) -> None:
     Args:
         V_arr: The value function array to validate.
         age: The age for which the value function is being validated.
+        regime_name: Name of the regime (for error messages).
 
     Raises:
         InvalidValueFunctionError: If the value function array contains NaN values.
 
     """
     if jnp.any(jnp.isnan(V_arr)):
+        n_nan = int(jnp.sum(jnp.isnan(V_arr)))
+        total = int(V_arr.size)
+        regime_part = f" in regime '{regime_name}'" if regime_name else ""
         raise InvalidValueFunctionError(
-            f"The value function array at age {age} contains NaN values. This "
-            "may be due to various reasons:\n"
+            f"The value function array at age {age}{regime_part} contains NaN values "
+            f"({n_nan} of {total} values are NaN). This may be due to various "
+            "reasons:\n"
             "- The user-defined functions returned invalid values.\n"
             "- It is impossible to reach an active regime, resulting in NaN regime\n"
             "  transition probabilities."

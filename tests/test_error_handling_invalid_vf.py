@@ -209,3 +209,17 @@ def test_simulate_model_with_inf_value_function_array_does_not_raise_error(
     inf_value_model.solve_and_simulate(
         params, initial_states=initial_states, initial_regimes=["non_terminal"] * 2
     )
+
+
+def test_nan_error_includes_regime_name(
+    nan_value_model: Model, params: UserParams
+) -> None:
+    with pytest.raises(InvalidValueFunctionError, match="non_terminal"):
+        nan_value_model.solve(params)
+
+
+def test_nan_error_includes_nan_count(
+    nan_value_model: Model, params: UserParams
+) -> None:
+    with pytest.raises(InvalidValueFunctionError, match=r"\d+ of \d+ values are NaN"):
+        nan_value_model.solve(params)

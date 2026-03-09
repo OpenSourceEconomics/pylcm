@@ -4,6 +4,7 @@ import dataclasses
 import functools
 import inspect
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from types import MappingProxyType
 from typing import cast
 
@@ -21,6 +22,7 @@ from lcm.input_processing.regime_processing import InternalRegime, process_regim
 from lcm.input_processing.util import get_variable_info
 from lcm.interfaces import PhaseVariantContainer
 from lcm.logging import get_logger
+from lcm.persistence import save_solution
 from lcm.regime import Regime
 from lcm.simulation.result import SimulationResult
 from lcm.simulation.simulate import simulate
@@ -150,7 +152,9 @@ class Model:
         self,
         params: UserParams,
         *,
-        debug_mode: bool = True,
+        debug: bool = True,
+        debug_path: str | Path | None = None,
+        keep_n_latest: int = 3,
     ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
         """Solve the model using the pre-computed functions.
 
@@ -163,10 +167,14 @@ class Model:
                   regime_0
                 - Function level: {"regime_0": {"func": {"arg_0": 0.0}}} - direct
                   specification
-            debug_mode: Whether to enable debug logging
+            debug: Whether to enable debug logging.
+            debug_path: Directory for persisting debug artifacts. Only used when
+                `debug=True`.
+            keep_n_latest: Maximum number of debug snapshots to keep on disk.
 
         Returns:
             Immutable mapping of period to a value function array for each regime.
+
         """
         internal_params = process_params(
             params=params, params_template=self._params_template
@@ -176,12 +184,19 @@ class Model:
             internal_params=internal_params,
             ages=self.ages,
         )
-        return solve(
+        V_arr_dict = solve(
             internal_params=internal_params,
             ages=self.ages,
             internal_regimes=self.internal_regimes,
-            logger=get_logger(debug_mode=debug_mode),
+            logger=get_logger(debug=debug),
         )
+        if debug and debug_path is not None:
+            _persist_solution(
+                V_arr_dict=V_arr_dict,
+                debug_path=Path(debug_path),
+                keep_n_latest=keep_n_latest,
+            )
+        return V_arr_dict
 
     def simulate(
         self,
@@ -192,7 +207,9 @@ class Model:
         *,
         check_initial_conditions: bool = True,
         seed: int | None = None,
-        debug_mode: bool = True,
+        debug: bool = True,
+        debug_path: str | Path | None = None,
+        keep_n_latest: int = 3,
     ) -> SimulationResult:
         """Simulate the model forward using pre-computed value functions.
 
@@ -212,7 +229,10 @@ class Model:
             V_arr_dict: Value function arrays from solve().
             check_initial_conditions: Whether to validate initial states and regimes.
             seed: Random seed.
-            debug_mode: Whether to enable debug logging.
+            debug: Whether to enable debug logging.
+            debug_path: Directory for persisting debug artifacts. Only used when
+                `debug=True`.
+            keep_n_latest: Maximum number of debug snapshots to keep on disk.
 
         Returns:
             SimulationResult object. Call .to_dataframe() to get a pandas DataFrame,
@@ -235,17 +255,24 @@ class Model:
             internal_params=internal_params,
             ages=self.ages,
         )
-        return simulate(
+        result = simulate(
             internal_params=internal_params,
             initial_states=initial_states,
             initial_regimes=initial_regimes,
             internal_regimes=self.internal_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
-            logger=get_logger(debug_mode=debug_mode),
+            logger=get_logger(debug=debug),
             V_arr_dict=V_arr_dict,
             ages=self.ages,
             seed=seed,
         )
+        if debug and debug_path is not None:
+            _persist_simulation_result(
+                result=result,
+                debug_path=Path(debug_path),
+                keep_n_latest=keep_n_latest,
+            )
+        return result
 
     def solve_and_simulate(
         self,
@@ -255,7 +282,9 @@ class Model:
         *,
         check_initial_conditions: bool = True,
         seed: int | None = None,
-        debug_mode: bool = True,
+        debug: bool = True,
+        debug_path: str | Path | None = None,
+        keep_n_latest: int = 3,
     ) -> SimulationResult:
         """Solve and then simulate the model in one call.
 
@@ -274,7 +303,10 @@ class Model:
             initial_regimes: List of regime names the subjects start in.
             check_initial_conditions: Whether to validate initial states and regimes.
             seed: Random seed.
-            debug_mode: Whether to enable debug logging.
+            debug: Whether to enable debug logging.
+            debug_path: Directory for persisting debug artifacts. Only used when
+                `debug=True`.
+            keep_n_latest: Maximum number of debug snapshots to keep on disk.
 
         Returns:
             SimulationResult object. Call .to_dataframe() to get a pandas DataFrame,
@@ -297,23 +329,37 @@ class Model:
             internal_params=internal_params,
             ages=self.ages,
         )
+        logger = get_logger(debug=debug)
         V_arr_dict = solve(
             internal_params=internal_params,
             ages=self.ages,
             internal_regimes=self.internal_regimes,
-            logger=get_logger(debug_mode=debug_mode),
+            logger=logger,
         )
-        return simulate(
+        if debug and debug_path is not None:
+            _persist_solution(
+                V_arr_dict=V_arr_dict,
+                debug_path=Path(debug_path),
+                keep_n_latest=keep_n_latest,
+            )
+        result = simulate(
             internal_params=internal_params,
             initial_states=initial_states,
             initial_regimes=initial_regimes,
             internal_regimes=self.internal_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
-            logger=get_logger(debug_mode=debug_mode),
+            logger=logger,
             V_arr_dict=V_arr_dict,
             ages=self.ages,
             seed=seed,
         )
+        if debug and debug_path is not None:
+            _persist_simulation_result(
+                result=result,
+                debug_path=Path(debug_path),
+                keep_n_latest=keep_n_latest,
+            )
+        return result
 
 
 def _build_regimes_and_template(
@@ -665,3 +711,60 @@ def _filter_kwargs_for_func(
     if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
         return kwargs
     return {k: v for k, v in kwargs.items() if k in params}
+
+
+# ======================================================================================
+# Debug persistence helpers
+# ======================================================================================
+
+
+def _persist_solution(
+    *,
+    V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
+    debug_path: Path,
+    keep_n_latest: int,
+) -> None:
+    """Save V_arr_dict to debug_path and enforce file retention."""
+    debug_path.mkdir(parents=True, exist_ok=True)
+    counter = _next_counter(debug_path, prefix="solution")
+    save_solution(
+        V_arr_dict=V_arr_dict,
+        path=debug_path / f"solution_{counter:03d}.pkl",
+    )
+    _enforce_retention(debug_path, prefix="solution", keep_n_latest=keep_n_latest)
+
+
+def _persist_simulation_result(
+    *,
+    result: SimulationResult,
+    debug_path: Path,
+    keep_n_latest: int,
+) -> None:
+    """Save SimulationResult to debug_path and enforce file retention."""
+    debug_path.mkdir(parents=True, exist_ok=True)
+    counter = _next_counter(debug_path, prefix="simulation_result")
+    result.to_pickle(debug_path / f"simulation_result_{counter:03d}.pkl")
+    _enforce_retention(
+        debug_path, prefix="simulation_result", keep_n_latest=keep_n_latest
+    )
+
+
+def _next_counter(debug_path: Path, prefix: str) -> int:
+    """Compute the next monotonic counter for debug files with the given prefix."""
+    existing = sorted(debug_path.glob(f"{prefix}_*.pkl"))
+    if not existing:
+        return 1
+    # Extract counter from the last file name, e.g. "solution_003.pkl" -> 3
+    last = existing[-1].stem  # "solution_003"
+    try:
+        return int(last.rsplit("_", 1)[1]) + 1
+    except IndexError, ValueError:
+        return len(existing) + 1
+
+
+def _enforce_retention(debug_path: Path, prefix: str, *, keep_n_latest: int) -> None:
+    """Delete oldest files so that at most keep_n_latest remain."""
+    existing = sorted(debug_path.glob(f"{prefix}_*.pkl"))
+    if len(existing) > keep_n_latest:
+        for f in existing[: len(existing) - keep_n_latest]:
+            f.unlink()

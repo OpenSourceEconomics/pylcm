@@ -1,15 +1,14 @@
 """Simulation result object with deferred DataFrame computation."""
 
-import contextlib
 import inspect
 import pickle
-import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal
 
+import cloudpickle
 import jax.numpy as jnp
 import pandas as pd
 from dags import concatenate_functions
@@ -21,6 +20,7 @@ from lcm.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.grids import DiscreteGrid
 from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
+from lcm.persistence import _atomic_dump
 from lcm.typing import (
     FlatRegimeParams,
     FloatND,
@@ -29,12 +29,6 @@ from lcm.typing import (
     UserFunction,
 )
 from lcm.utils import flatten_regime_namespace
-
-CLOUDPICKLE_IMPORT_ERROR_MSG = (
-    "Pickling SimulationResult objects requires the optional dependency 'cloudpickle'. "
-    "Install it with: `pixi/uv add cloudpickle` (or add it to your project deps)."
-)
-
 
 # ======================================================================================
 # Main result class
@@ -184,8 +178,6 @@ class SimulationResult:
     ) -> Path:
         """Serialize the SimulationResult to a file.
 
-        Note: This requires the optional dependency 'cloudpickle'.
-
         Args:
             path: File path to save the pickle.
             protocol: Int which indicates which protocol should be used by the pickler,
@@ -202,8 +194,6 @@ class SimulationResult:
     def from_pickle(cls, path: str | Path) -> SimulationResult:
         """Deserialize a SimulationResult from a pickle file.
 
-        Note: This requires the optional dependency 'cloudpickle'.
-
         Args:
             path: File path to read the pickle from.
 
@@ -211,11 +201,6 @@ class SimulationResult:
             The unpickled SimulationResult object.
 
         """
-        try:
-            import cloudpickle  # noqa: PLC0415
-        except ModuleNotFoundError as e:
-            raise ModuleNotFoundError(CLOUDPICKLE_IMPORT_ERROR_MSG) from e
-
         p = Path(path)
         with p.open("rb") as f:
             obj = cloudpickle.load(f)
@@ -736,53 +721,3 @@ def _get_function_variables(
 ) -> tuple[str, ...]:
     """Get variable names from signature, excluding flat param names."""
     return tuple(p for p in inspect.signature(func).parameters if p not in param_names)
-
-
-# ======================================================================================
-# IO operations
-# ======================================================================================
-
-
-def _atomic_dump(obj: SimulationResult, path: str | Path, *, protocol: int) -> Path:
-    """Serialize `obj` to `path` in an atomic (all-or-nothing) way.
-
-    Args:
-        obj: SimulationResult to serialize.
-        path: File path to save the pickle.
-        protocol: Int which indicates which protocol should be used by the pickler.
-            The possible values are 0, 1, 2, 3, 4, 5. See
-            https://docs.python.org/3/library/pickle.html.
-
-    Returns:
-        The path where the object was saved.
-
-    """
-    try:
-        import cloudpickle  # noqa: PLC0415
-    except ModuleNotFoundError as e:
-        raise ModuleNotFoundError(CLOUDPICKLE_IMPORT_ERROR_MSG) from e
-
-    p = Path(path)
-    if not p.parent.is_dir():
-        raise FileNotFoundError(f"Parent directory does not exist: {p.parent}")
-
-    tmp: Path | None = None
-    try:
-        # Write to a uniquely-named temp file in the *same directory* as the target.
-        with tempfile.NamedTemporaryFile(mode="wb", dir=p.parent, delete=False) as f:
-            tmp = Path(f.name)
-            cloudpickle.dump(obj, f, protocol=protocol)
-
-        # Atomic replace: after this line, readers either see the old file or the new
-        # one, never a partially-written file. (Temp file is closed already, which
-        # matters on Windows.)
-        tmp.replace(p)
-        tmp = None
-        return p
-    finally:
-        # If anything failed before the replace succeeded, delete the temp file. We used
-        # delete=False so we can close the file before replacing (needed on Windows), so
-        # the context manager will not auto-delete it for us.
-        if tmp is not None:
-            with contextlib.suppress(OSError):
-                tmp.unlink()

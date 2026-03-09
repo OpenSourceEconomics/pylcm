@@ -1,11 +1,11 @@
 import logging
 
 
-def get_logger(*, debug_mode: bool) -> logging.Logger:
+def get_logger(*, debug: bool) -> logging.Logger:
     """Get a logger that logs to stdout.
 
     Args:
-        debug_mode: Whether to log debug messages.
+        debug: Whether to log debug messages.
 
     Returns:
         Logger that logs to stdout.
@@ -14,7 +14,7 @@ def get_logger(*, debug_mode: bool) -> logging.Logger:
     logging.basicConfig(level=logging.WARNING)
     logger = logging.getLogger("lcm")
 
-    if debug_mode:
+    if debug:
         logger.setLevel(logging.DEBUG)
 
     return logger

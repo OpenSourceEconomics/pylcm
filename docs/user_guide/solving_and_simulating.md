@@ -18,13 +18,20 @@ Performs backward induction using dynamic programming. Returns an immutable mapp
 
 ### Debug mode
 
-- `debug_mode=True` (default): Runs without JIT compilation for better error messages.
-  Use this while developing.
-- `debug_mode=False`: Full JIT compilation for speed. Use for production runs.
+- `debug=True` (default): Enables debug logging. Use this while developing.
+- `debug=False`: No logging. Use for production runs.
 
 ```python
-V_arr_dict = model.solve(params, debug_mode=False)
+V_arr_dict = model.solve(params, debug=False)
 ```
+
+You can also auto-persist intermediate results to disk by providing a `debug_path`:
+
+```python
+V_arr_dict = model.solve(params, debug=True, debug_path="./debug/")
+```
+
+See [Debugging](debugging.md) for details.
 
 ## Simulating
 
@@ -85,7 +92,7 @@ initial_regimes = ["working_life", "working_life", "retirement", "working_life"]
 - `check_initial_conditions=True`: Validates that initial states are on-grid and regimes
   are valid. Set to `False` to skip validation.
 - `seed=None`: Random seed for stochastic simulations (int).
-- `debug_mode=True`: Same as for `solve()`.
+- `debug=True`: Same as for `solve()`.
 
 ### Heterogeneous initial ages
 

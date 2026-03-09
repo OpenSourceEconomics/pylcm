@@ -29,6 +29,7 @@ classifiers = [
 ]
 dynamic = [ "version" ]
 dependencies = [
+  "cloudpickle>=3.1.2,<4",
   # "dags>=0.5.0",
   "jax>=0.8",
   "jaxtyping>=0.3.2",
