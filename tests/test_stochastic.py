@@ -117,14 +117,14 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
             **working_life.state_transitions,
             "health": next_health_deterministic,
         },
-        active=lambda age, la=last_age: age < la,
+        active=lambda age: age < last_age,
     )
     retirement_deterministic = retirement.replace(
         state_transitions={
             **retirement.state_transitions,
             "health": next_health_deterministic,
         },
-        active=lambda age, la=last_age: age < la,
+        active=lambda age: age < last_age,
     )
 
     # Create stochastic model with identity transition function
@@ -133,14 +133,14 @@ def models_and_params() -> tuple[Model, Model, UserParams]:
             **working_life.state_transitions,
             "health": MarkovTransition(next_health_stochastic),
         },
-        active=lambda age, la=last_age: age < la,
+        active=lambda age: age < last_age,
     )
     retirement_stochastic = retirement.replace(
         state_transitions={
             **retirement.state_transitions,
             "health": MarkovTransition(next_health_stochastic),
         },
-        active=lambda age, la=last_age: age < la,
+        active=lambda age: age < last_age,
     )
 
     model_deterministic = Model(
