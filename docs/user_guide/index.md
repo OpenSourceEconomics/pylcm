@@ -10,6 +10,7 @@ The user guide covers the core concepts and usage patterns for pylcm. Start with
 philosophy. The remaining pages cover individual topics in depth.
 
 - [A Tiny Example](tiny_example.ipynb)
+- [Installation](installation.md)
 - [Write Economics, Not Glue Code](write_economics.ipynb)
 - [Defining Models](defining_models.md)
 - [Regimes](regimes.ipynb)

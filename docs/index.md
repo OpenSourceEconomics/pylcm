@@ -12,14 +12,10 @@ models using JAX for fast numerical computation with GPU support.
 
 ::::{grid} 1 2 2 2
 
-:::{grid-item-card} Getting Started
-:link: getting_started/index
-Learn how to install pylcm.
-:::
-
 :::{grid-item-card} User Guide
 :link: user_guide/index
-In-depth guides on defining models, grids, shocks, and parameters.
+Installation, a tiny example, and in-depth guides on defining models, grids, shocks, and
+parameters.
 :::
 
 :::{grid-item-card} Explanations
