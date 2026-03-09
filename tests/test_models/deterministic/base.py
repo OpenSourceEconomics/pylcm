@@ -27,7 +27,7 @@ from lcm_examples.mortality import (
 # ---------------------------------------------------------------------------
 
 
-@categorical
+@categorical(ordered=False)
 class RegimeId:
     working_life: int
     retirement: int

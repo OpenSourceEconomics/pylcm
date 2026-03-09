@@ -17,13 +17,13 @@ from lcm.typing import (
 # --------------------------------------------------------------------------------------
 # Shared model components
 # --------------------------------------------------------------------------------------
-@categorical
+@categorical(ordered=False)
 class LaborSupply:
     work: int
     retire: int
 
 
-@categorical
+@categorical(ordered=False)
 class RegimeId:
     working_life: int
     dead: int

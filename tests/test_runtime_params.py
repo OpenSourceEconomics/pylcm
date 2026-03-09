@@ -13,7 +13,7 @@ from lcm.typing import ContinuousAction, ContinuousState, FloatND
 # ======================================================================================
 
 
-@categorical
+@categorical(ordered=False)
 class RegimeId:
     alive: int
     dead: int

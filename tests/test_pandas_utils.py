@@ -28,19 +28,19 @@ from lcm.typing import DiscreteAction, DiscreteState, FloatND, Period
 # ======================================================================================
 
 
-@categorical
+@categorical(ordered=False)
 class Health:
     bad: int
     good: int
 
 
-@categorical
+@categorical(ordered=False)
 class Occupation:
     blue_collar: int
     white_collar: int
 
 
-@categorical
+@categorical(ordered=False)
 class _RegimeId:
     working: int
     retired: int
@@ -113,6 +113,18 @@ def test_to_categorical_dtype_is_not_ordered():
     assert result.ordered is False
 
 
+def test_to_categorical_dtype_ordered():
+    @categorical(ordered=True)
+    class Severity:
+        mild: int
+        moderate: int
+        severe: int
+
+    result = Severity.to_categorical_dtype()  # ty: ignore[unresolved-attribute]
+    assert result.ordered is True
+    assert list(result.categories) == ["mild", "moderate", "severe"]
+
+
 # ======================================================================================
 # _build_discrete_grid_lookup tests
 # ======================================================================================
@@ -148,7 +160,7 @@ def test_build_discrete_grid_lookup_ignores_continuous():
 
 
 def test_build_discrete_grid_lookup_inconsistent_raises():
-    @categorical
+    @categorical(ordered=False)
     class HealthAlt:
         sick: int
         healthy: int
@@ -312,19 +324,19 @@ def test_round_trip_with_discrete_model():
 # ======================================================================================
 
 
-@categorical
+@categorical(ordered=False)
 class _PartnerStatus:
     single: int
     partnered: int
 
 
-@categorical
+@categorical(ordered=False)
 class _LaborSupply:
     work: int
     retire: int
 
 
-@categorical
+@categorical(ordered=False)
 class _StochasticRegimeId:
     working_life: int
     retirement: int

@@ -189,13 +189,13 @@ def test_format_sum_violation_with_scalar_input_and_state_action_values():
 # ======================================================================================
 
 
-@categorical
+@categorical(ordered=False)
 class _Action:
     stay: int
     leave: int
 
 
-@categorical
+@categorical(ordered=False)
 class _RegimeId:
     active: int
     terminal: int

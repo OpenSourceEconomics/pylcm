@@ -38,7 +38,7 @@ from lcm_examples.mortality import (
 # --------------------------------------------------------------------------------------
 # Regression-specific: RegimeId (2 regimes) and wage function
 # --------------------------------------------------------------------------------------
-@categorical
+@categorical(ordered=False)
 class RegimeId:
     working_life: int
     dead: int

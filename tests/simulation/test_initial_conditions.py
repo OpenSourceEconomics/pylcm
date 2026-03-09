@@ -260,7 +260,7 @@ def _make_constraint_model(wealth_grid) -> Model:
     """Create a constraint model with the given wealth grid."""
     final_age = 1
 
-    @categorical
+    @categorical(ordered=False)
     class RegimeId:
         working_life: int
         dead: int
@@ -425,7 +425,7 @@ def _make_constrained_asymmetric_model() -> Model:
     Ages 0, 1, 2. alive is active for age < 2, dead is active for age >= 2.
     """
 
-    @categorical
+    @categorical(ordered=False)
     class RegimeId:
         alive: int
         dead: int
@@ -489,7 +489,7 @@ def _make_asymmetric_state_model() -> Model:
         healthy: int = 0
         sick: int = 1
 
-    @categorical
+    @categorical(ordered=False)
     class RegimeId:
         alive: int
         dead: int

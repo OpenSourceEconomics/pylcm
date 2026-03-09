@@ -44,7 +44,7 @@ categories:
 ```python
 from lcm import DiscreteGrid, categorical
 
-@categorical
+@categorical(ordered=False)
 class WorkChoice:
     no: int
     yes: int

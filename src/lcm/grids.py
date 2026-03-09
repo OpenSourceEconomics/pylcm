@@ -1,6 +1,6 @@
 import dataclasses
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, is_dataclass
 from typing import TYPE_CHECKING, overload
 
@@ -21,14 +21,14 @@ if TYPE_CHECKING:
     import pandas as pd
 
 
-def categorical[T](cls: type[T]) -> type[T]:
-    """Decorator to create a categorical class with auto-assigned integer values.
+def categorical[T](*, ordered: bool) -> Callable[[type[T]], type[T]]:
+    """Create a categorical class with auto-assigned integer values.
 
     Transforms a class with int annotations into a frozen dataclass where each
     field is assigned a consecutive integer value starting from 0.
 
     Example:
-        @categorical
+        @categorical(ordered=False)
         class LaborSupply:
             work: int
             retire: int
@@ -44,30 +44,37 @@ def categorical[T](cls: type[T]) -> type[T]:
         LaborSupply.retire # 1
 
     Args:
-        cls: The class to decorate.
+        ordered: Whether the categories have a meaningful ordering. Must be
+            explicitly specified.
 
     Returns:
-        A frozen dataclass with auto-assigned integer values.
+        A decorator that creates a frozen dataclass with auto-assigned integer values.
 
     """
-    annotations = getattr(cls, "__annotations__", {})
 
-    # Assign sequential integers as defaults
-    for i, name in enumerate(annotations):
-        setattr(cls, name, i)
+    def decorator(cls: type[T]) -> type[T]:
+        annotations = getattr(cls, "__annotations__", {})
 
-    @classmethod
-    def _to_categorical_dtype(cls: type) -> pd.CategoricalDtype:
-        """Return a `pd.CategoricalDtype` with the category names of this class."""
-        import pandas as pd  # noqa: PLC0415
+        # Assign sequential integers as defaults
+        for i, name in enumerate(annotations):
+            setattr(cls, name, i)
 
-        names = [f.name for f in dataclasses.fields(cls)]
-        return pd.CategoricalDtype(categories=names, ordered=False)
+        cls._ordered = ordered  # ty: ignore[unresolved-attribute]
 
-    cls.to_categorical_dtype = _to_categorical_dtype  # ty: ignore[unresolved-attribute]
+        @classmethod
+        def _to_categorical_dtype(cls: type) -> pd.CategoricalDtype:
+            """Return a `pd.CategoricalDtype` with the category names of this class."""
+            import pandas as pd  # noqa: PLC0415
 
-    # Apply dataclass decorator
-    return dataclass(frozen=True)(cls)
+            names = [f.name for f in dataclasses.fields(cls)]
+            return pd.CategoricalDtype(categories=names, ordered=cls._ordered)  # ty: ignore[unresolved-attribute]
+
+        cls.to_categorical_dtype = _to_categorical_dtype  # ty: ignore[unresolved-attribute]
+
+        # Apply dataclass decorator
+        return dataclass(frozen=True)(cls)
+
+    return decorator
 
 
 class Grid(ABC):
@@ -103,6 +110,7 @@ class _DiscreteGridBase(Grid):
         names_and_values = get_field_names_and_values(category_class)
         self.__categories = tuple(names_and_values.keys())
         self.__codes = tuple(names_and_values.values())
+        self.__ordered: bool = getattr(category_class, "_ordered", False)
 
     @property
     def categories(self) -> tuple[str, ...]:
@@ -113,6 +121,11 @@ class _DiscreteGridBase(Grid):
     def codes(self) -> tuple[int, ...]:
         """Return the list of category codes."""
         return self.__codes
+
+    @property
+    def ordered(self) -> bool:
+        """Return whether the categories have a meaningful ordering."""
+        return self.__ordered
 
     def to_jax(self) -> Int1D:
         """Convert the grid to a Jax array."""

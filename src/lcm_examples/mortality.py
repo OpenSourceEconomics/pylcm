@@ -32,13 +32,13 @@ from lcm.typing import (
 # ---------------------------------------------------------------------------
 
 
-@categorical
+@categorical(ordered=False)
 class LaborSupply:
     work: int
     retire: int
 
 
-@categorical
+@categorical(ordered=False)
 class RegimeId:
     working_life: int
     retirement: int

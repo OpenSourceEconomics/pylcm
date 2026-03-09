@@ -32,25 +32,25 @@ from tests.conftest import DECIMAL_PRECISION
 # ======================================================================================
 # Model specification
 # ======================================================================================
-@categorical
+@categorical(ordered=False)
 class DiscreteConsumption:
     low: int
     high: int
 
 
-@categorical
+@categorical(ordered=False)
 class LaborSupply:
     not_working: int
     working: int
 
 
-@categorical
+@categorical(ordered=False)
 class Health:
     bad: int
     good: int
 
 
-@categorical
+@categorical(ordered=False)
 class RegimeId:
     alive: int
     dead: int

@@ -13,6 +13,7 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
+from lcm.input_processing.regime_processing import _merge_ordered_categories
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -22,20 +23,20 @@ from lcm.typing import (
 )
 
 
-@categorical
+@categorical(ordered=False)
 class HealthWorkingLife:
     disabled: int
     bad: int
     good: int
 
 
-@categorical
+@categorical(ordered=False)
 class HealthRetirement:
     bad: int
     good: int
 
 
-@categorical
+@categorical(ordered=False)
 class RegimeId:
     working_life: int
     retirement: int
@@ -139,12 +140,12 @@ def test_deterministic_target_only_state() -> None:
     wealth (never mind the reverse causality).
     """
 
-    @categorical
+    @categorical(ordered=False)
     class HeirPresent:
         no: int
         yes: int
 
-    @categorical
+    @categorical(ordered=False)
     class _RegimeId:
         alive: int
         dead: int
@@ -217,12 +218,12 @@ def test_stochastic_target_only_state() -> None:
     stochastically: wealthier individuals are more likely to have an heir.
     """
 
-    @categorical
+    @categorical(ordered=False)
     class HeirPresent:
         no: int
         yes: int
 
-    @categorical
+    @categorical(ordered=False)
     class _RegimeId:
         alive: int
         dead: int
@@ -393,17 +394,17 @@ def test_per_target_dict_transitions():
 def test_discrete_state_same_count_different_names():
     """Same number of categories but different names should still raise."""
 
-    @categorical
+    @categorical(ordered=False)
     class StatusA:
         employed: int
         unemployed: int
 
-    @categorical
+    @categorical(ordered=False)
     class StatusB:
         married: int
         single: int
 
-    @categorical
+    @categorical(ordered=False)
     class _RegimeId:
         work: int
         retire: int
@@ -446,3 +447,132 @@ def test_discrete_state_same_count_different_names():
             ages=AgeGrid(start=0, stop=3, step="Y"),
             regime_id_class=_RegimeId,
         )
+
+
+# ======================================================================================
+# Ordered flag validation tests
+# ======================================================================================
+
+
+def test_mixed_ordered_flags_raises():
+    """Mixed ordered flags (True in one regime, False in another) should raise."""
+
+    @categorical(ordered=True)
+    class HealthOrdered:
+        bad: int
+        good: int
+
+    @categorical(ordered=False)
+    class HealthUnordered:
+        bad: int
+        good: int
+
+    @categorical(ordered=False)
+    class _RegimeId:
+        a: int
+        b: int
+        dead: int
+
+    def next_regime() -> ScalarInt:
+        return _RegimeId.dead
+
+    a = Regime(
+        states={"health": DiscreteGrid(HealthOrdered)},
+        state_transitions={"health": None},
+        functions={"utility": lambda health: health},
+        transition=next_regime,
+    )
+    b = Regime(
+        states={"health": DiscreteGrid(HealthUnordered)},
+        state_transitions={"health": None},
+        functions={"utility": lambda health: health},
+        transition=next_regime,
+    )
+    dead = Regime(transition=None, functions={"utility": lambda: 0.0})
+
+    with pytest.raises(ModelInitializationError, match="inconsistent ordered flags"):
+        Model(
+            regimes={"a": a, "b": b, "dead": dead},
+            ages=AgeGrid(start=0, stop=2, step="Y"),
+            regime_id_class=_RegimeId,
+        )
+
+
+def test_both_ordered_same_categories_passes():
+    """Both ordered with same categories should pass without error."""
+
+    @categorical(ordered=True)
+    class HealthA:
+        bad: int
+        good: int
+
+    @categorical(ordered=True)
+    class HealthB:
+        bad: int
+        good: int
+
+    @categorical(ordered=False)
+    class _RegimeId:
+        a: int
+        b: int
+        dead: int
+
+    def next_regime() -> ScalarInt:
+        return _RegimeId.dead
+
+    a = Regime(
+        states={"health": DiscreteGrid(HealthA)},
+        state_transitions={"health": None},
+        functions={"utility": lambda health: health},
+        transition=next_regime,
+    )
+    b = Regime(
+        states={"health": DiscreteGrid(HealthB)},
+        state_transitions={"health": None},
+        functions={"utility": lambda health: health},
+        transition=next_regime,
+    )
+    dead = Regime(transition=None, functions={"utility": lambda: 0.0})
+
+    # Should not raise
+    Model(
+        regimes={"a": a, "b": b, "dead": dead},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=_RegimeId,
+    )
+
+
+def test_both_ordered_different_categories_ambiguous_raises():
+    """Both ordered with ambiguous merge should raise."""
+    # p < r and q < r — p vs q ordering is undetermined
+    result = _merge_ordered_categories(
+        [
+            ("regime_a", ("p", "r")),
+            ("regime_b", ("q", "r")),
+        ]
+    )
+    assert result is None
+
+
+def test_both_ordered_different_categories_unique_merge():
+    """Both ordered with unique topological merge should succeed."""
+    # p < q from regime_a, q < r from regime_b → p < q < r
+    result = _merge_ordered_categories(
+        [
+            ("regime_a", ("p", "q")),
+            ("regime_b", ("q", "r")),
+        ]
+    )
+    assert result == ("p", "q", "r")
+
+
+def test_both_ordered_contradictory_raises():
+    """Contradictory orderings (cycle) should fail merge."""
+    # a < b from regime_a, b < a from regime_b → cycle
+    result = _merge_ordered_categories(
+        [
+            ("regime_a", ("a", "b")),
+            ("regime_b", ("b", "a")),
+        ]
+    )
+    assert result is None

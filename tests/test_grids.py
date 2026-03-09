@@ -17,6 +17,7 @@ from lcm.grids import (
     PiecewiseLogSpacedGrid,
     _validate_continuous_grid,
     _validate_discrete_grid,
+    categorical,
     validate_category_class,
 )
 from lcm.utils import get_field_names_and_values
@@ -167,6 +168,32 @@ def test_discrete_grid_invalid_category_class():
         match="Field values of the category_class can only be int",
     ):
         DiscreteGrid(category_class)
+
+
+# --------------------------------------------------------------------------------------
+# DiscreteGrid.ordered
+# --------------------------------------------------------------------------------------
+
+
+def test_discrete_grid_ordered_true():
+    @categorical(ordered=True)
+    class OrderedCat:
+        low: int
+        medium: int
+        high: int
+
+    grid = DiscreteGrid(OrderedCat)
+    assert grid.ordered is True
+
+
+def test_discrete_grid_ordered_false():
+    @categorical(ordered=False)
+    class UnorderedCat:
+        a: int
+        b: int
+
+    grid = DiscreteGrid(UnorderedCat)
+    assert grid.ordered is False
 
 
 # ======================================================================================

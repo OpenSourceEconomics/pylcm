@@ -20,7 +20,7 @@ def n_periods() -> int:
     return 2
 
 
-@categorical
+@categorical(ordered=False)
 class RegimeId:
     non_terminal: int
     terminal: int

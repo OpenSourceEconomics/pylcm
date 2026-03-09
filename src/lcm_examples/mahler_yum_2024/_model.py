@@ -77,14 +77,14 @@ def calc_savingsgrid(x: Float1D) -> Float1D:
 # ======================================================================================
 
 
-@categorical
+@categorical(ordered=False)
 class LaborSupply:
     not_working: int
     part: int
     full: int
 
 
-@categorical
+@categorical(ordered=False)
 class Education:
     low: int
     high: int
@@ -95,25 +95,25 @@ Effort = make_dataclass(
 )
 
 
-@categorical
+@categorical(ordered=False)
 class Health:
     bad: int
     good: int
 
 
-@categorical
+@categorical(ordered=False)
 class ProductivityType:
     low: int
     high: int
 
 
-@categorical
+@categorical(ordered=False)
 class HealthType:
     low: int
     high: int
 
 
-@categorical
+@categorical(ordered=False)
 class ProductivityShock:
     val0: int
     val1: int
@@ -122,7 +122,7 @@ class ProductivityShock:
     val4: int
 
 
-@categorical
+@categorical(ordered=False)
 class RegimeId:
     alive: int
     dead: int

@@ -41,13 +41,13 @@ from lcm_examples.mortality import working_life as _base_working_life
 # ======================================================================================
 
 
-@categorical
+@categorical(ordered=False)
 class Health:
     bad: int
     good: int
 
 
-@categorical
+@categorical(ordered=False)
 class PartnerStatus:
     single: int
     partnered: int

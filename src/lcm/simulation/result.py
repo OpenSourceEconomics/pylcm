@@ -271,6 +271,9 @@ class SimulationMetadata:
     discrete_categories: MappingProxyType[str, tuple[str, ...]]
     """Immutable mapping of discrete variable names to their category labels."""
 
+    discrete_ordered: MappingProxyType[str, bool]
+    """Immutable mapping of discrete variable names to their ordered flag."""
+
 
 def _compute_metadata(
     *,
@@ -287,6 +290,7 @@ def _compute_metadata(
     regime_to_states: dict[str, tuple[str, ...]] = {}
     regime_to_actions: dict[str, tuple[str, ...]] = {}
     discrete_categories: dict[str, tuple[str, ...]] = {}
+    discrete_ordered: dict[str, bool] = {}
 
     for regime_name, regime in internal_regimes.items():
         vi = regime.variable_info
@@ -297,10 +301,11 @@ def _compute_metadata(
         all_states.update(states)
         all_actions.update(actions)
 
-        # Extract categories from discrete grids
+        # Extract categories and ordered flag from discrete grids
         for var_name, grid in regime.gridspecs.items():
             if isinstance(grid, DiscreteGrid) and var_name not in discrete_categories:
                 discrete_categories[var_name] = grid.categories
+                discrete_ordered[var_name] = grid.ordered
 
     n_periods = len(raw_results[regime_names[0]])
     n_subjects = _get_n_subjects(raw_results)
@@ -314,6 +319,7 @@ def _compute_metadata(
         regime_to_states=MappingProxyType(regime_to_states),
         regime_to_actions=MappingProxyType(regime_to_actions),
         discrete_categories=MappingProxyType(discrete_categories),
+        discrete_ordered=MappingProxyType(discrete_ordered),
     )
 
 
@@ -619,7 +625,9 @@ def _convert_to_categorical(
     for var_name, categories in metadata.discrete_categories.items():
         if var_name in df.columns:
             df[var_name] = _codes_to_categorical(
-                codes=df[var_name], categories=categories
+                codes=df[var_name],
+                categories=categories,
+                ordered=metadata.discrete_ordered[var_name],
             )
 
     return df
@@ -629,6 +637,7 @@ def _codes_to_categorical(
     *,
     codes: pd.Series,
     categories: tuple[str, ...],
+    ordered: bool = False,
 ) -> pd.Categorical | pd.Series:
     """Convert integer codes to Categorical, handling NaN and out-of-range values.
 
@@ -654,11 +663,13 @@ def _codes_to_categorical(
         return pd.Categorical.from_codes(
             int_codes,
             categories=pd.Index(categories),
+            ordered=ordered,
         )
 
     return pd.Categorical.from_codes(
         codes_array.astype(int),
         categories=pd.Index(categories),
+        ordered=ordered,
     )
 
 

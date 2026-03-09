@@ -63,13 +63,13 @@ def utility(
     return jnp.log(consumption) * (1.0 - (1.0 - health) * 0.3)
 
 
-@categorical
+@categorical(ordered=False)
 class Health:
     bad: int = 0
     good: int = 1
 
 
-@categorical
+@categorical(ordered=False)
 class RegimeId:
     alive: int
     dead: int

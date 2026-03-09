@@ -78,8 +78,8 @@ automation. Python 3.14+ is required.
 - `PiecewiseLinSpacedGrid`: Piecewise linearly spaced grid with breakpoints.
 - `PiecewiseLogSpacedGrid`: Piecewise logarithmically spaced grid with breakpoints.
 - `AgeGrid`: Lifecycle age grid (start, stop, step or exact_values)
-- `@categorical`: Decorator for creating categorical classes with auto-assigned integer
-  codes
+- `@categorical(ordered=...)`: Decorator factory for creating categorical classes with
+  auto-assigned integer codes. Requires explicit `ordered=True` or `ordered=False`.
 - **ShockGrids** (in `src/lcm/shocks/`): `Rouwenhorst`, `Tauchen`, `Normal`, `Uniform`.
   These have intrinsic transitions — do NOT accept entries in `state_transitions`.
   Import as modules (`import lcm.shocks.iid`) and use qualified access
@@ -196,7 +196,7 @@ Regime(
 from lcm import AgeGrid, categorical
 
 
-@categorical
+@categorical(ordered=False)
 class RegimeId:
     working: int
     retired: int

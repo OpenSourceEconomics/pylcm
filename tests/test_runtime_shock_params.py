@@ -18,7 +18,7 @@ from lcm.typing import ContinuousAction, ContinuousState, FloatND
 # ======================================================================================
 
 
-@categorical
+@categorical(ordered=False)
 class RegimeIdShock:
     alive: int
     dead: int

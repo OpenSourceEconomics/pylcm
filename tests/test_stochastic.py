@@ -241,12 +241,12 @@ def _make_minimal_stochastic_model(next_draw: Callable[..., FloatND]) -> Model:
 
     final_age = 1
 
-    @categorical
+    @categorical(ordered=False)
     class ShockStatus:
         bad: int
         good: int
 
-    @categorical
+    @categorical(ordered=False)
     class ShockRegimeId:
         working_life: int
         dead: int

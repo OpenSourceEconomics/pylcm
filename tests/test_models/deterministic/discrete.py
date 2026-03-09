@@ -35,20 +35,20 @@ from tests.test_models.deterministic.regression import (
 # --------------------------------------------------------------------------------------
 # Categorical variables
 # --------------------------------------------------------------------------------------
-@categorical
+@categorical(ordered=False)
 class DiscreteConsumption:
     low: int
     high: int
 
 
-@categorical
+@categorical(ordered=False)
 class DiscreteWealth:
     low: int
     medium: int
     high: int
 
 
-@categorical
+@categorical(ordered=False)
 class RegimeId:
     working_life: int
     dead: int

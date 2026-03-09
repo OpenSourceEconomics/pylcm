@@ -33,7 +33,7 @@ decorator to create it:
 ```python
 from lcm import categorical
 
-@categorical
+@categorical(ordered=False)
 class RegimeId:
     retired: int
     working: int
@@ -116,13 +116,13 @@ import jax.numpy as jnp
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 
 
-@categorical
+@categorical(ordered=False)
 class RegimeId:
     retired: int
     working: int
 
 
-@categorical
+@categorical(ordered=False)
 class WorkChoice:
     no: int
     yes: int
