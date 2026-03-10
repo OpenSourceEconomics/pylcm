@@ -1,6 +1,7 @@
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 
+import jax
 import pandas as pd
 from jax import Array
 from jax import numpy as jnp
@@ -276,8 +277,6 @@ def _collect_feasibility_errors(
         List of error message strings (empty if everything is feasible).
 
     """
-    age_to_period = {float(v): i for i, v in enumerate(ages.exact_values)}
-
     errors: list[str] = []
     for regime_name, internal_regime in internal_regimes.items():
         subject_indices = [i for i, r in enumerate(initial_regimes) if r == regime_name]
@@ -295,7 +294,7 @@ def _collect_feasibility_errors(
             initial_states=initial_states,
             subject_indices=subject_indices,
             regime_params=regime_params,
-            age_to_period=age_to_period,
+            ages=ages,
         )
         if msg is not None:
             errors.append(msg)
@@ -341,6 +340,53 @@ def _validate_discrete_state_values(
             )
 
 
+# Target ~256 MB peak memory for the vmapped intermediate tensor.
+# Each subject produces n_action_combos booleans (1 byte each) during the vmap,
+# so batch_size ≈ 256 MB / n_action_combos.
+_TARGET_BATCH_BYTES = 256 * 1024 * 1024
+
+
+def _batched_feasibility_check(
+    *,
+    feasibility_func: Callable[..., Array],
+    subject_states: dict[str, Array],
+    fixed_kwargs: dict[str, object],
+    flat_actions: dict[str, Array],
+) -> Array:
+    """Check feasibility for all subjects, batching to avoid OOM.
+
+    Args:
+        feasibility_func: Feasibility function for this regime.
+        subject_states: Per-subject state arrays (shape ``(n_subjects,)`` each).
+        fixed_kwargs: Actions and params shared across all subjects.
+        flat_actions: Flat action grid arrays (used to compute batch size).
+
+    Returns:
+        Boolean array of shape ``(n_subjects,)`` — True where at least one action is
+        feasible.
+
+    """
+
+    def _is_any_action_feasible(per_subject_kwargs: dict[str, Array]) -> Array:
+        return jnp.any(feasibility_func(**per_subject_kwargs, **fixed_kwargs))
+
+    vmapped_check = jax.vmap(_is_any_action_feasible)
+
+    n_subjects = len(next(iter(subject_states.values())))
+    n_action_combos = max(len(v) for v in flat_actions.values())
+    batch_size = max(1, _TARGET_BATCH_BYTES // max(n_action_combos, 1))
+
+    if n_subjects <= batch_size:
+        return vmapped_check(subject_states)
+
+    results: list[Array] = []
+    for start in range(0, n_subjects, batch_size):
+        end = min(start + batch_size, n_subjects)
+        batch = {k: v[start:end] for k, v in subject_states.items()}
+        results.append(vmapped_check(batch))
+    return jnp.concatenate(results)
+
+
 def _check_regime_feasibility(
     *,
     internal_regime: InternalRegime,
@@ -348,7 +394,7 @@ def _check_regime_feasibility(
     initial_states: Mapping[str, Array],
     subject_indices: list[int],
     regime_params: Mapping[str, object],
-    age_to_period: dict[float, int],
+    ages: AgeGrid,
 ) -> str | None:
     """Check whether all subjects in a regime have at least one feasible action.
 
@@ -358,7 +404,7 @@ def _check_regime_feasibility(
         initial_states: Mapping of state names to arrays (includes "age").
         subject_indices: Indices of subjects starting in this regime.
         regime_params: Merged fixed and runtime parameters for this regime.
-        age_to_period: Mapping from float age values to period indices.
+        ages: AgeGrid for the model.
 
     Returns:
         An error message string if any subjects are infeasible, or None.
@@ -380,24 +426,43 @@ def _check_regime_feasibility(
     needs_age = "age" in accepted
     needs_period = "period" in accepted
 
-    infeasible_indices: list[int] = []
-    for idx in subject_indices:
-        kwargs: dict[str, Array | float | int] = {}
-        for sn in state_names:
-            if sn in accepted:
-                kwargs[sn] = initial_states[sn][idx]
-        kwargs.update({k: v for k, v in flat_actions.items() if k in accepted})
-        kwargs.update(filtered_params)  # ty: ignore[no-matching-overload]
+    # Build per-subject state arrays
+    idx_arr = jnp.array(subject_indices)
+    subject_states: dict[str, Array] = {}
+    for sn in state_names:
+        if sn in accepted:
+            subject_states[sn] = initial_states[sn][idx_arr]
 
-        subject_age = float(initial_states["age"][idx])
-        if needs_age:
-            kwargs["age"] = subject_age
-        if needs_period:
-            kwargs["period"] = age_to_period[subject_age]
+    if needs_age:
+        subject_states["age"] = initial_states["age"][idx_arr]
+    if needs_period:
+        age_array = jnp.asarray(ages.exact_values)
+        subject_states["period"] = jnp.searchsorted(
+            age_array, initial_states["age"][idx_arr]
+        )
 
-        result = feasibility_func(**kwargs)
-        if not jnp.any(result):
-            infeasible_indices.append(idx)
+    # Fixed kwargs (actions + params) — not vmapped over
+    fixed_kwargs = {k: v for k, v in flat_actions.items() if k in accepted}
+    fixed_kwargs.update(filtered_params)  # ty: ignore[no-matching-overload]
+
+    if subject_states:
+        any_feasible = _batched_feasibility_check(
+            feasibility_func=feasibility_func,
+            subject_states=subject_states,
+            fixed_kwargs=fixed_kwargs,
+            flat_actions=flat_actions,
+        )
+        import numpy as np
+
+        infeasible_mask = np.asarray(~any_feasible)
+        infeasible_indices = np.asarray(idx_arr)[infeasible_mask].tolist()
+    else:
+        # No per-subject varying states: feasibility is identical for all subjects.
+        result = feasibility_func(**fixed_kwargs)
+        if jnp.any(result):
+            infeasible_indices = []
+        else:
+            infeasible_indices = subject_indices
 
     if not infeasible_indices:
         return None
