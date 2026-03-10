@@ -1,6 +1,7 @@
 from collections.abc import Mapping
 from types import MappingProxyType
 
+import pandas as pd
 from jax import Array
 from jax import numpy as jnp
 
@@ -401,16 +402,72 @@ def _check_regime_feasibility(
     if not infeasible_indices:
         return None
 
-    state_values = {
-        name: [float(initial_states[name][i]) for i in infeasible_indices]
-        for name in state_names
-        if name in initial_states
-    }
+    return _format_infeasibility_message(
+        infeasible_indices=infeasible_indices,
+        internal_regime=internal_regime,
+        regime_name=regime_name,
+        initial_states=initial_states,
+        state_names=state_names,
+    )
+
+
+def _format_infeasibility_message(
+    *,
+    infeasible_indices: list[int],
+    internal_regime: InternalRegime,
+    regime_name: str,
+    initial_states: Mapping[str, Array],
+    state_names: list[str],
+) -> str:
+    """Format an error message for infeasible subjects.
+
+    Args:
+        infeasible_indices: Indices of subjects with no feasible action.
+        internal_regime: The internal regime instance.
+        regime_name: Name of the regime.
+        initial_states: Mapping of state names to arrays.
+        state_names: List of state variable names.
+
+    Returns:
+        Formatted error message string.
+
+    """
+    # Build DataFrame of infeasible subjects' states
+    state_df = pd.DataFrame(
+        {
+            name: [float(initial_states[name][i]) for i in infeasible_indices]
+            for name in state_names
+            if name in initial_states
+        },
+        index=infeasible_indices,
+    )
+    state_df.index.name = "subject"
+
+    # Convert discrete codes to labels
+    for name, gridspec in internal_regime.gridspecs.items():
+        if isinstance(gridspec, DiscreteGrid) and name in state_df.columns:
+            state_df[name] = [gridspec.categories[int(v)] for v in state_df[name]]
+
+    # Constraint names
+    constraint_names = list(internal_regime.constraints.keys())
+    constraints_str = "\n".join(f"  - {name}" for name in constraint_names)
+
+    # Truncate for large groups
+    n = len(infeasible_indices)
+    max_show = 10
+    if n > max_show:
+        table_str = state_df.head(max_show).to_string()
+        table_str += f"\n  ... and {n - max_show} more"
+    else:
+        table_str = state_df.to_string()
+
     return (
-        f"All actions are infeasible for subject(s) at indices "
-        f"{infeasible_indices} in regime '{regime_name}'. "
-        f"State values: {state_values}. No action combination satisfies "
-        f"the model's constraints for these initial states."
+        f"All actions are infeasible for {n} subject(s) "
+        f"in regime '{regime_name}'.\n\n"
+        f"Active constraints:\n{constraints_str}\n\n"
+        f"Infeasible subjects:\n{table_str}\n\n"
+        f"No action combination satisfies all constraints for these "
+        f"initial states."
     )
 
 
