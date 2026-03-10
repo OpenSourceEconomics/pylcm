@@ -7,7 +7,7 @@ from lcm.persistence import load_solution, save_solution
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 
-@categorical
+@categorical(ordered=False)
 class _RegimeId:
     working: int
     retired: int
