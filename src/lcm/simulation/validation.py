@@ -2,6 +2,7 @@ from collections.abc import Callable, Mapping
 from types import MappingProxyType
 
 import jax
+import numpy as np
 import pandas as pd
 from jax import Array
 from jax import numpy as jnp
@@ -340,17 +341,18 @@ def _validate_discrete_state_values(
             )
 
 
-# Target ~256 MB peak memory for the vmapped intermediate tensor.
-# Each subject produces n_action_combos booleans (1 byte each) during the vmap,
-# so batch_size ≈ 256 MB / n_action_combos.
+# Target peak memory budget for the vmapped feasibility computation.
+# The feasibility function produces float32 intermediate arrays of size n_action_combos
+# per subject, so: batch_size ≈ target_bytes / (n_action_combos * 4 bytes).
 _TARGET_BATCH_BYTES = 256 * 1024 * 1024
+_BYTES_PER_ACTION_ELEMENT = 4  # float32 intermediates, not just the final bool
 
 
 def _batched_feasibility_check(
     *,
     feasibility_func: Callable[..., Array],
     subject_states: dict[str, Array],
-    fixed_kwargs: dict[str, object],
+    fixed_kwargs: dict[str, Array],
     flat_actions: dict[str, Array],
 ) -> Array:
     """Check feasibility for all subjects, batching to avoid OOM.
@@ -374,7 +376,10 @@ def _batched_feasibility_check(
 
     n_subjects = len(next(iter(subject_states.values())))
     n_action_combos = max(len(v) for v in flat_actions.values())
-    batch_size = max(1, _TARGET_BATCH_BYTES // max(n_action_combos, 1))
+    batch_size = max(
+        1,
+        _TARGET_BATCH_BYTES // max(n_action_combos * _BYTES_PER_ACTION_ELEMENT, 1),
+    )
 
     if n_subjects <= batch_size:
         return vmapped_check(subject_states)
@@ -442,7 +447,9 @@ def _check_regime_feasibility(
         )
 
     # Fixed kwargs (actions + params) — not vmapped over
-    fixed_kwargs = {k: v for k, v in flat_actions.items() if k in accepted}
+    fixed_kwargs: dict[str, Array] = {
+        k: v for k, v in flat_actions.items() if k in accepted
+    }
     fixed_kwargs.update(filtered_params)  # ty: ignore[no-matching-overload]
 
     if subject_states:
@@ -452,17 +459,12 @@ def _check_regime_feasibility(
             fixed_kwargs=fixed_kwargs,
             flat_actions=flat_actions,
         )
-        import numpy as np
-
         infeasible_mask = np.asarray(~any_feasible)
         infeasible_indices = np.asarray(idx_arr)[infeasible_mask].tolist()
     else:
         # No per-subject varying states: feasibility is identical for all subjects.
         result = feasibility_func(**fixed_kwargs)
-        if jnp.any(result):
-            infeasible_indices = []
-        else:
-            infeasible_indices = subject_indices
+        infeasible_indices = [] if jnp.any(result) else subject_indices
 
     if not infeasible_indices:
         return None
