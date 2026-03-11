@@ -352,15 +352,21 @@ def _batched_feasibility_check(
     *,
     feasibility_func: Callable[..., Array],
     subject_states: dict[str, Array],
-    fixed_kwargs: dict[str, Array],
+    action_kwargs: dict[str, Array],
+    filtered_params: dict[str, object],
     flat_actions: dict[str, Array],
 ) -> Array:
     """Check feasibility for all subjects, batching to avoid OOM.
 
+    Vmaps over action combos individually (like solve/simulate do) so each
+    feasibility call receives scalar actions that broadcast naturally with
+    MappingLeaf parameters.
+
     Args:
         feasibility_func: Feasibility function for this regime.
         subject_states: Per-subject state arrays (shape ``(n_subjects,)`` each).
-        fixed_kwargs: Actions and params shared across all subjects.
+        action_kwargs: Action arrays from the flat action grid, keyed by name.
+        filtered_params: Parameter values accepted by the feasibility function.
         flat_actions: Flat action grid arrays (used to compute batch size).
 
     Returns:
@@ -368,9 +374,25 @@ def _batched_feasibility_check(
         feasible.
 
     """
+    if action_kwargs:
 
-    def _is_any_action_feasible(per_subject_kwargs: dict[str, Array]) -> Array:
-        return jnp.any(feasibility_func(**per_subject_kwargs, **fixed_kwargs))
+        def _is_combo_feasible(
+            action_kw: dict[str, Array],
+            subject_kw: dict[str, Array],
+        ) -> Array:
+            return feasibility_func(**action_kw, **subject_kw, **filtered_params)
+
+        def _is_any_action_feasible(per_subject_kwargs: dict[str, Array]) -> Array:
+            per_combo = jax.vmap(_is_combo_feasible, in_axes=(0, None))(
+                action_kwargs,
+                per_subject_kwargs,
+            )
+            return jnp.any(per_combo)
+
+    else:
+
+        def _is_any_action_feasible(per_subject_kwargs: dict[str, Array]) -> Array:
+            return jnp.any(feasibility_func(**per_subject_kwargs, **filtered_params))
 
     vmapped_check = jax.vmap(_is_any_action_feasible)
 
@@ -446,24 +468,31 @@ def _check_regime_feasibility(
             age_array, initial_states["age"][idx_arr]
         )
 
-    # Fixed kwargs (actions + params) — not vmapped over
-    fixed_kwargs: dict[str, Array] = {
+    # Split actions and params — actions are vmapped over, params are not
+    action_kwargs: dict[str, Array] = {
         k: v for k, v in flat_actions.items() if k in accepted
     }
-    fixed_kwargs.update(filtered_params)  # ty: ignore[no-matching-overload]
 
     if subject_states:
         any_feasible = _batched_feasibility_check(
             feasibility_func=feasibility_func,
             subject_states=subject_states,
-            fixed_kwargs=fixed_kwargs,
+            action_kwargs=action_kwargs,
+            filtered_params=filtered_params,
             flat_actions=flat_actions,
         )
         infeasible_mask = np.asarray(~any_feasible)
         infeasible_indices = np.asarray(idx_arr)[infeasible_mask].tolist()
     else:
         # No per-subject varying states: feasibility is identical for all subjects.
-        result = feasibility_func(**fixed_kwargs)
+        if action_kwargs:
+
+            def _check_combo(action_kw: dict[str, Array]) -> Array:
+                return feasibility_func(**action_kw, **filtered_params)  # ty: ignore[invalid-argument-type]
+
+            result = jax.vmap(_check_combo)(action_kwargs)
+        else:
+            result = feasibility_func(**filtered_params)  # ty: ignore[invalid-argument-type]
         infeasible_indices = [] if jnp.any(result) else subject_indices
 
     if not infeasible_indices:
