@@ -7,8 +7,7 @@ from typing import Any
 
 import jax
 import pandas as pd
-from dags import concatenate_functions, get_annotations
-from dags.signature import with_signature
+from dags import concatenate_functions, get_annotations, with_signature
 from jax import Array
 
 from lcm.ages import AgeGrid
