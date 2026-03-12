@@ -3,12 +3,13 @@ import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, TypeAliasType, overload
+from typing import Any, TypeAliasType, cast, overload
 
 from dags.tree import QNAME_DELIMITER
 
 from lcm.exceptions import RegimeInitializationError, format_messages
 from lcm.grids import DiscreteGrid, Grid
+from lcm.interfaces import PhaseVariant
 from lcm.shocks._base import _ShockGrid
 from lcm.typing import (
     ActiveFunction,
@@ -63,10 +64,8 @@ class MarkovTransition:
         return self.func(*args, **kwargs)
 
 
-def _default_H(
-    utility: float, continuation_value: float, discount_factor: float
-) -> float:
-    return utility + discount_factor * continuation_value
+def _default_H(utility: float, E_next_V: float, discount_factor: float) -> float:
+    return utility + discount_factor * E_next_V
 
 
 class _IdentityTransition:
@@ -182,7 +181,7 @@ class Regime:
             object.__setattr__(self, name, value)
 
         # Inject default aggregation function H if not provided by user.
-        # Terminal regimes don't need H since Q = U directly (no continuation value).
+        # Terminal regimes don't need H since Q = U directly (no E_next_V).
         if not self.terminal and "H" not in self.functions:
             object.__setattr__(self, "functions", {**self.functions, "H": _default_H})
         make_immutable("functions")
@@ -200,11 +199,19 @@ class Regime:
         - State transitions from `self.state_transitions`
         - The regime transition (`self.transition`, keyed as `"next_regime"`)
 
+        For `PhaseVariant` entries, the solve variant is used as the representative
+        for signature discovery.
+
         Returns:
             Read-only mapping of all regime functions.
 
         """
-        result = dict(self.functions) | dict(self.constraints)
+        result: dict[str, UserFunction] = {}
+        for name, func in self.functions.items():
+            result[name] = cast(
+                "UserFunction", func.solve if isinstance(func, PhaseVariant) else func
+            )
+        result |= dict(self.constraints)
         if callable(self.transition):
             result |= _collect_state_transitions(self.states, self.state_transitions)
             result["next_regime"] = self.transition
@@ -258,7 +265,7 @@ def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
                     error_messages.append(
                         f"function keys must be a strings, but is {k}."
                     )
-                if not callable(v):
+                if not callable(v) and not isinstance(v, PhaseVariant):
                     error_messages.append(
                         f"function values must be a callable, but is {v}."
                     )

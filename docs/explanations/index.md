@@ -15,5 +15,7 @@ hood.
   grid types.
 - [Approximating Continuous Shocks](approximating_continuous_shocks.ipynb) — Quadrature
   rules and Markov chain approximations for IID and AR(1) shock processes.
+- [Beta-Delta (Quasi-Hyperbolic) Discounting](beta_delta.ipynb) — How to use the plugin
+  system to model consumers with this particular form of time-inconsistent preferences.
 - [Dispatchers](dispatchers.ipynb) — How `productmap`, `vmap_1d`, and
   `simulation_spacemap` evaluate scalar functions on structured spaces.
