@@ -153,37 +153,47 @@ extend-immutable-calls = [ "lcm.utils.Unset", "Unset" ]
 column_width = 88
 max_supported_python = "3.14"
 table_format = "long"
-collapse_tables = [ "tool.hatch" ]
+collapse_tables = [ "tool.hatch", "tool.pytest", "tool.pytask", "tool.ty" ]
+expand_tables = [
+  "tool.pixi.dependencies",
+  "tool.pixi.environments",
+  "tool.pixi.feature.tests.pypi-dependencies",
+  "tool.pixi.feature.tests.tasks",
+  "tool.pixi.feature.type-checking.dependencies",
+  "tool.pixi.feature.type-checking.tasks",
+  "tool.pixi.pypi-dependencies",
+  "tool.pixi.tasks",
+  "tool.pixi.workspace",
+]
 
-[tool.pytest.ini_options]
-addopts = [ "--pdbcls=pdbp:Pdb" ]
-filterwarnings = []
-markers = [
+[tool.pytest]
+ini_options.addopts = [ "--pdbcls=pdbp:Pdb" ]
+ini_options.filterwarnings = []
+ini_options.markers = [
   "illustrative: Tests are designed for illustrative purposes",
 ]
-norecursedirs = [ "docs" ]
+ini_options.norecursedirs = [ "docs" ]
 
-[tool.ty.rules]
-ambiguous-protocol-member = "error"
-deprecated = "error"
-division-by-zero = "error"
-ignore-comment-unknown-rule = "error"
-invalid-argument-type = "error"
-invalid-ignore-comment = "error"
-invalid-return-type = "error"
-possibly-missing-attribute = "error"
-possibly-missing-implicit-call = "error"
-possibly-missing-import = "error"
-possibly-unresolved-reference = "error"
-redundant-cast = "error"
-undefined-reveal = "error"
-unresolved-global = "error"
-unsupported-base = "error"
-unused-ignore-comment = "error"
-useless-overload-body = "error"
-[tool.ty.src]
-exclude = [ "docs/**/*.ipynb" ]
-include = [ "src/", "tests/" ]
+[tool.ty]
+rules.ambiguous-protocol-member = "error"
+rules.deprecated = "error"
+rules.division-by-zero = "error"
+rules.ignore-comment-unknown-rule = "error"
+rules.invalid-argument-type = "error"
+rules.invalid-ignore-comment = "error"
+rules.invalid-return-type = "error"
+rules.possibly-missing-attribute = "error"
+rules.possibly-missing-implicit-call = "error"
+rules.possibly-missing-import = "error"
+rules.possibly-unresolved-reference = "error"
+rules.redundant-cast = "error"
+rules.undefined-reveal = "error"
+rules.unresolved-global = "error"
+rules.unsupported-base = "error"
+rules.unused-ignore-comment = "error"
+rules.useless-overload-body = "error"
+src.exclude = [ "docs/**/*.ipynb" ]
+src.include = [ "src/", "tests/" ]
 
 [tool.pixi.dependencies]
 python = "~=3.14.0"

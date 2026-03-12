@@ -62,11 +62,11 @@ jobs:
           pixi-version: v0.63.2
           cache: true
           cache-write: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
-          environments: tests-cpu
+          environments: type-checking
           frozen: true
       - name: Run ty
         shell: bash {0}
-        run: pixi run -e tests-cpu ty
+        run: pixi run ty
   run-tests-gpu:
     name: Run tests on GPU
     # Config:
