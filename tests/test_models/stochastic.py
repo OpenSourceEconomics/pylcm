@@ -8,6 +8,8 @@ taste shocks" by Fedor Iskhakov, Thomas H. Jørgensen, John Rust and Bertel Schj
 Extends the deterministic mortality model with Health and PartnerStatus states.
 """
 
+import functools
+
 import jax.numpy as jnp
 
 from lcm import (
@@ -168,6 +170,7 @@ retirement = _base_retirement.replace(
 )
 
 
+@functools.cache
 def get_model(n_periods: int) -> Model:
     ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]

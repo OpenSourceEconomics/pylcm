@@ -1,3 +1,4 @@
+import functools
 from typing import Literal
 
 from jax import numpy as jnp
@@ -75,6 +76,7 @@ class RegimeId:
     dead: int
 
 
+@functools.cache
 def get_model(
     n_periods: int,
     distribution_type: Literal[
