@@ -1,17 +1,18 @@
 ---
-title: Pandas Interop
+title: Working with DataFrames and Series
 ---
 
-# Pandas Interop
+# Working with DataFrames and Series
 
-pylcm works with JAX arrays internally, but real-world data often lives in pandas. The
-`lcm.pandas_utils` module provides utilities that bridge the gap — converting DataFrames
-to initial conditions and labeled Series to transition probability arrays.
+pylcm accepts initial conditions as a pandas DataFrame — the natural format when your
+data comes from a survey, an external dataset, or a scenario table. Simulation results
+come back as a DataFrame too, so the typical workflow is DataFrame in, DataFrame out.
 
 ## Initial States from a DataFrame
 
 Convert a pandas DataFrame into the `initial_states` dict and `initial_regimes` list
-expected by `model.simulate()` and `model.solve_and_simulate()`.
+expected by `model.simulate()` and `model.solve_and_simulate()`. This is the standard
+way to supply initial conditions.
 
 ```python
 from lcm import initial_states_from_dataframe

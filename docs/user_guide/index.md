@@ -18,5 +18,5 @@ philosophy. The remaining pages cover individual topics in depth.
 - [Transitions](transitions.ipynb)
 - [Shocks](shocks.md)
 - [Parameters](parameters.md)
+- [Working with DataFrames and Series](pandas_interop.md)
 - [Solving and Simulating](solving_and_simulating.md)
-- [Pandas Interop](pandas_interop.md)
