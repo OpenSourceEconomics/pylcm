@@ -219,6 +219,7 @@ def _build_action_dependent_model() -> tuple[Model, dict]:
     """Build a minimal model whose transition bug only shows for the second action."""
     active = Regime(
         transition=MarkovTransition(_next_regime_only_fails_for_leave),
+        active=lambda age: age < 27,
         actions={
             "action": DiscreteGrid(_Action),
             "consumption": LinSpacedGrid(start=1, stop=10, n_points=5),

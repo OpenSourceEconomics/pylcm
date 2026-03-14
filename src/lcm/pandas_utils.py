@@ -3,6 +3,7 @@
 import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
@@ -135,7 +136,9 @@ def state_transition_probs_from_series(
     state_grid = all_grids[state_name]
     outcome = _OutcomeMapping(
         level_name=f"next_{state_name}",
-        label_to_code=dict(zip(state_grid.categories, state_grid.codes, strict=True)),
+        label_to_code=MappingProxyType(
+            dict(zip(state_grid.categories, state_grid.codes, strict=True))
+        ),
         n_outcomes=len(state_grid.categories),
     )
 
@@ -188,7 +191,7 @@ def regime_transition_probs_from_series(
 
     outcome = _OutcomeMapping(
         level_name="next_regime",
-        label_to_code=dict(model.regime_names_to_ids),
+        label_to_code=MappingProxyType(dict(model.regime_names_to_ids)),
         n_outcomes=len(model.regime_names_to_ids),
     )
 
@@ -202,8 +205,8 @@ class _OutcomeMapping:
     level_name: str
     """Level name in the MultiIndex (e.g., ``"next_health"`` or ``"next_regime"``)."""
 
-    label_to_code: dict[str, int]
-    """Map from string labels to integer codes."""
+    label_to_code: MappingProxyType[str, int]
+    """Immutable mapping from string labels to integer codes."""
 
     n_outcomes: int
     """Number of outcome categories."""
