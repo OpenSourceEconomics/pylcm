@@ -4,7 +4,7 @@ transitions (no stochastic mortality).
 
 import jax.numpy as jnp
 
-from lcm import DiscreteGrid, Regime, categorical
+from lcm import AgeGrid, DiscreteGrid, Regime, categorical
 from lcm.typing import (
     DiscreteAction,
     ScalarInt,
@@ -58,6 +58,9 @@ def next_regime_from_retirement(age: float, final_age_alive: float) -> ScalarInt
     )
 
 
+_DEFAULT_AGE_GRID = AgeGrid(start=40, stop=70, step="10Y")  # 4 periods
+_DEFAULT_LAST_AGE = _DEFAULT_AGE_GRID.exact_values[-1]
+
 # ---------------------------------------------------------------------------
 # Deterministic regime objects
 # ---------------------------------------------------------------------------
@@ -76,7 +79,7 @@ working_life = Regime(
         "labor_income": labor_income,
         "is_working": is_working,
     },
-    active=lambda _age: True,
+    active=lambda age: age < _DEFAULT_LAST_AGE,
 )
 
 retirement = Regime(
@@ -86,7 +89,7 @@ retirement = Regime(
     state_transitions={"wealth": next_wealth},
     constraints={"borrowing_constraint": borrowing_constraint},
     functions={"utility": utility_retirement},
-    active=lambda _age: True,
+    active=lambda age: age < _DEFAULT_LAST_AGE,
 )
 
 
@@ -94,7 +97,7 @@ retirement = Regime(
 # Factories
 # ---------------------------------------------------------------------------
 
-from lcm import AgeGrid, Model  # noqa: E402
+from lcm import Model  # noqa: E402
 
 
 def get_model(n_periods: int) -> Model:

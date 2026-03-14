@@ -352,12 +352,11 @@ def test_stochastic_regime_transition_active_at_last_period_raises():
     """
     from lcm_examples import mortality  # noqa: PLC0415
 
-    # Default mortality regimes have active=lambda _age: True, i.e. active at ALL
-    # ages including the last — exactly the bug this test guards against.
+    # Deliberately set active=always to trigger the validation error.
     model = Model(
         regimes={
-            "working_life": mortality.working_life,
-            "retirement": mortality.retirement,
+            "working_life": mortality.working_life.replace(active=lambda _age: True),
+            "retirement": mortality.retirement.replace(active=lambda _age: True),
             "dead": mortality.dead,
         },
         ages=AgeGrid(start=40, stop=70, step="10Y"),
