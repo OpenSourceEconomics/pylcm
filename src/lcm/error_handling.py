@@ -191,10 +191,10 @@ def validate_regime_transitions_all_periods(
     if non_terminal_active_at_last:
         raise InvalidRegimeTransitionProbabilitiesError(
             f"Non-terminal regime(s) {non_terminal_active_at_last} are active at the "
-            f"last period (age {ages.values[last_period]}). Non-terminal regimes must "  # noqa: PD011
-            f"not be active at the last period because there is no next period to "
-            f"transition to. Adjust the 'active' function on these regimes to exclude "
-            f"the last age."
+            f"last period (age {ages.exact_values[last_period]}). Non-terminal regimes "
+            "must not be active at the last period because there is no next period to "
+            "transition to. Adjust the 'active' function on these regimes to exclude "
+            "the last age."
         )
 
     for period in range(ages.n_periods - 1):

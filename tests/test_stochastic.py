@@ -348,81 +348,24 @@ def test_stochastic_next_depending_on_continuous_state():
 def test_stochastic_regime_transition_active_at_last_period_raises():
     """Non-terminal regimes active at the last period must raise an error.
 
-    When a non-terminal regime with a stochastic (MarkovTransition) regime transition
-    is active at the last period, there is no next period to transition to. The
-    active_regime_probs dict becomes empty, causing draw_key_from_dict to fail with
-    a vmap size mismatch. We validate this upfront with a clear error message.
-
     See https://github.com/OpenSourceEconomics/pylcm/issues/276.
     """
+    from lcm_examples import mortality  # noqa: PLC0415
 
-    @categorical(ordered=False)
-    class Health276:
-        bad: int
-        good: int
-
-    @categorical(ordered=False)
-    class RegimeId276:
-        working: int
-        dead: int
-
-    def utility(consumption: ContinuousAction, health: DiscreteState) -> FloatND:
-        bonus = jnp.where(health == Health276.good, 1.0, 0.0)
-        return jnp.log(consumption) + bonus
-
-    def next_wealth(
-        wealth: ContinuousState, consumption: ContinuousAction
-    ) -> ContinuousState:
-        return wealth - consumption + 2.0
-
-    def next_health(health: DiscreteState) -> FloatND:
-        return jnp.where(
-            health == Health276.bad,
-            jnp.array([0.8, 0.2]),
-            jnp.array([0.3, 0.7]),
-        )
-
-    def borrowing_constraint(
-        consumption: ContinuousAction, wealth: ContinuousState
-    ) -> BoolND:
-        return consumption <= wealth
-
-    def next_regime(age: float, final_age: float) -> ScalarInt:
-        return jnp.where(age >= final_age, RegimeId276.dead, RegimeId276.working)
-
-    working = Regime(
-        transition=next_regime,
-        active=lambda _age: True,  # Bug: active at ALL ages including last
-        states={
-            "health": DiscreteGrid(Health276),
-            "wealth": LinSpacedGrid(start=1, stop=10, n_points=10),
-        },
-        state_transitions={
-            "health": MarkovTransition(next_health),
-            "wealth": next_wealth,
-        },
-        actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=10)},
-        functions={"utility": utility},
-        constraints={"borrowing": borrowing_constraint},
-    )
-    dead_regime = Regime(
-        transition=None,
-        functions={"utility": lambda: 0.0},
-    )
-
+    # Default mortality regimes have active=lambda _age: True, i.e. active at ALL
+    # ages including the last — exactly the bug this test guards against.
     model = Model(
-        regimes={"working": working, "dead": dead_regime},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
-        regime_id_class=RegimeId276,
+        regimes={
+            "working_life": mortality.working_life,
+            "retirement": mortality.retirement,
+            "dead": mortality.dead,
+        },
+        ages=AgeGrid(start=40, stop=70, step="10Y"),
+        regime_id_class=mortality.RegimeId,
     )
-
-    params = {
-        "discount_factor": 0.95,
-        "working": {"next_regime": {"final_age": 1}},
-    }
 
     with pytest.raises(
         InvalidRegimeTransitionProbabilitiesError,
         match=r"Non-terminal regime.*active at the last period",
     ):
-        model.solve(params)
+        model.solve(mortality.get_params(n_periods=4))
