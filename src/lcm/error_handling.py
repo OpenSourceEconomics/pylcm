@@ -337,7 +337,7 @@ def validate_transition_probs(
             )
             raise TypeError(msg)
         func = raw_transition.func
-        all_grids = _build_all_grids(model, regime)
+        all_grids = _build_all_grids(regime)
         n_outcomes = len(all_grids[state_name].categories)
     else:
         if not isinstance(regime.transition, MarkovTransition):
@@ -347,7 +347,7 @@ def validate_transition_probs(
             )
             raise TypeError(msg)
         func = regime.transition.func
-        all_grids = _build_all_grids(model, regime)
+        all_grids = _build_all_grids(regime)
         n_outcomes = len(model.regime_names_to_ids)
 
     indexing_params = _get_indexing_params(func)
@@ -369,20 +369,13 @@ def validate_transition_probs(
         raise ValueError(msg)
 
 
-def _build_all_grids(
-    model: Model,
-    regime: Regime,
-) -> dict[str, DiscreteGrid]:
-    """Collect all DiscreteGrid instances from model states and regime actions."""
-    lookup: dict[str, DiscreteGrid] = {}
-    for r in model.regimes.values():
-        for state_name, grid in r.states.items():
-            if isinstance(grid, DiscreteGrid) and state_name not in lookup:
-                lookup[state_name] = grid
-    for name, grid in regime.actions.items():
-        if isinstance(grid, DiscreteGrid):
-            lookup[name] = grid
-    return lookup
+def _build_all_grids(regime: Regime) -> dict[str, DiscreteGrid]:
+    """Collect all DiscreteGrid instances from regime states and actions."""
+    return {
+        name: grid
+        for name, grid in (*regime.states.items(), *regime.actions.items())
+        if isinstance(grid, DiscreteGrid)
+    }
 
 
 def _get_indexing_params(func: Callable) -> list[str]:
