@@ -29,7 +29,7 @@ classifiers = [
 ]
 dynamic = [ "version" ]
 dependencies = [
-  # "dags>=0.5.0",
+  "dags>=0.5.1",
   "jax>=0.9",
   "jaxtyping>=0.3.2",
   "pandas",
@@ -263,7 +263,6 @@ ty = "*"
 [tool.pixi.feature.type-checking.tasks]
 ty = "ty check"
 [tool.pixi.pypi-dependencies]
-dags = { git = "https://github.com/OpenSourceEconomics/dags.git", branch = "main" }
 jax = ">=0.9"
 pdbp = "*"
 pylcm = { path = ".", editable = true }

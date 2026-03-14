@@ -1,8 +1,7 @@
 from collections.abc import Callable
 
 import jax.numpy as jnp
-from dags import concatenate_functions
-from dags.signature import with_signature
+from dags import concatenate_functions, with_signature
 from dags.tree import qname_from_tree_path
 from jax import Array
 

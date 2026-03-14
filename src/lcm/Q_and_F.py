@@ -3,8 +3,7 @@ from types import MappingProxyType
 from typing import Any, cast
 
 import jax.numpy as jnp
-from dags import concatenate_functions
-from dags.signature import with_signature
+from dags import concatenate_functions, with_signature
 from dags.tree import QNAME_DELIMITER
 from jax import Array
 
