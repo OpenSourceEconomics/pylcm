@@ -30,7 +30,7 @@ classifiers = [
 dynamic = [ "version" ]
 dependencies = [
   "cloudpickle>=3.1.2,<4",
-  # "dags>=0.5.0",
+  "dags>=0.5.1",
   "jax>=0.9",
   "jaxtyping>=0.3.2",
   "pandas",
@@ -180,19 +180,13 @@ rules.ambiguous-protocol-member = "error"
 rules.deprecated = "error"
 rules.division-by-zero = "error"
 rules.ignore-comment-unknown-rule = "error"
-rules.invalid-argument-type = "error"
+rules.ineffective-final = "error"
+rules.invalid-enum-member-annotation = "error"
 rules.invalid-ignore-comment = "error"
-rules.invalid-return-type = "error"
-rules.possibly-missing-attribute = "error"
-rules.possibly-missing-implicit-call = "error"
-rules.possibly-missing-import = "error"
-rules.possibly-unresolved-reference = "error"
+rules.invalid-legacy-positional-parameter = "error"
 rules.redundant-cast = "error"
-rules.undefined-reveal = "error"
-rules.unresolved-global = "error"
-rules.unsupported-base = "error"
+rules.unused-awaitable = "error"
 rules.unused-ignore-comment = "error"
-rules.useless-overload-body = "error"
 src.exclude = [ "docs/**/*.ipynb" ]
 src.include = [ "src/", "tests/" ]
 
@@ -264,7 +258,6 @@ ty = "*"
 [tool.pixi.feature.type-checking.tasks]
 ty = "ty check"
 [tool.pixi.pypi-dependencies]
-dags = { git = "https://github.com/OpenSourceEconomics/dags.git", branch = "main" }
 jax = ">=0.9"
 pdbp = "*"
 pylcm = { path = ".", editable = true }
