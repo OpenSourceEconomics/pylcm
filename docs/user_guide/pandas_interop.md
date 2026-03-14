@@ -1,17 +1,18 @@
 ---
-title: Pandas Interop
+title: Working with DataFrames and Series
 ---
 
-# Pandas Interop
+# Working with DataFrames and Series
 
-pylcm works with JAX arrays internally, but real-world data often lives in pandas. The
-`lcm.pandas_utils` module provides utilities that bridge the gap — converting DataFrames
-to initial conditions and labeled Series to transition probability arrays.
+pylcm accepts initial conditions as a pandas DataFrame — the natural format when your
+data comes from a survey, an external dataset, or a scenario table. Simulation results
+come back as a DataFrame too, so the typical workflow is DataFrame in, DataFrame out.
 
 ## Initial States from a DataFrame
 
 Convert a pandas DataFrame into the `initial_states` dict and `initial_regimes` list
-expected by `model.simulate()` and `model.solve_and_simulate()`.
+expected by `model.simulate()` and `model.solve_and_simulate()`. This is the standard
+way to supply initial conditions.
 
 ```python
 from lcm import initial_states_from_dataframe
@@ -67,17 +68,29 @@ probs = pd.Series(
 )
 
 health_probs = transition_probs_from_series(
-    probs,
+    series=probs,
     model=model,
     regime_name="working",
     state_name="health",
 )
 ```
 
+The same function works for regime transitions — omit `state_name` and use
+`"next_regime"` as the outcome level:
+
+```python
+regime_probs = transition_probs_from_series(
+    series=regime_series,
+    model=model,
+    regime_name="alive",
+)
+```
+
 The MultiIndex level names must match the indexing parameters of the transition function
-(in any order) plus `"next_{state_name}"` for the outcome axis. The function reorders
-levels to match the declaration order automatically, so you don't need to worry about
-getting the level order right.
+(in any order) plus the outcome level (`"next_{state_name}"` for state transitions,
+`"next_regime"` for regime transitions). The function reorders levels to match the
+declaration order automatically, so you don't need to worry about getting the level order
+right.
 
 Discrete state and action labels are mapped to integer codes using the same grids defined
 in the model. The `"period"` level uses integer values directly.

@@ -563,6 +563,17 @@ def _rename_params_to_qnames(
     if not param_names:
         return cast("InternalUserFunction", func)
     mapper = {p: qname_from_tree_path((param_key, p)) for p in param_names}
+
+    # Work around dags double-partial bug in rename_arguments: when func is a
+    # functools.partial, dags wraps the renamed wrapper in another partial with the
+    # same bound args, causing them to be passed twice. Unwrap before renaming, then
+    # re-wrap afterward.
+    if isinstance(func, functools.partial):
+        renamed = rename_arguments(func.func, mapper=mapper)
+        return cast(
+            "InternalUserFunction",
+            functools.partial(renamed, *func.args, **func.keywords),
+        )
     return cast("InternalUserFunction", rename_arguments(func, mapper=mapper))
 
 

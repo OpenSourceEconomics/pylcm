@@ -14,6 +14,7 @@ from lcm import (
     Regime,
     categorical,
 )
+from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -342,3 +343,28 @@ def test_stochastic_next_depending_on_continuous_state():
     assert all(
         jnp.all(jnp.isfinite(V[p]["working_life"])) for p in V if "working_life" in V[p]
     )
+
+
+def test_stochastic_regime_transition_active_at_last_period_raises():
+    """Non-terminal regimes active at the last period must raise an error.
+
+    See https://github.com/OpenSourceEconomics/pylcm/issues/276.
+    """
+    from lcm_examples import mortality  # noqa: PLC0415
+
+    # Deliberately set active=always to trigger the validation error.
+    model = Model(
+        regimes={
+            "working_life": mortality.working_life.replace(active=lambda _age: True),
+            "retirement": mortality.retirement.replace(active=lambda _age: True),
+            "dead": mortality.dead,
+        },
+        ages=AgeGrid(start=40, stop=70, step="10Y"),
+        regime_id_class=mortality.RegimeId,
+    )
+
+    with pytest.raises(
+        InvalidRegimeTransitionProbabilitiesError,
+        match=r"Non-terminal regime.*active at the last period",
+    ):
+        model.solve(mortality.get_params(n_periods=4))

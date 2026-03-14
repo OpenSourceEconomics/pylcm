@@ -308,6 +308,21 @@ initial_regimes = ["working", "working", "retired"]
 - Pre-commit hooks ensure code quality
 - Never use `from __future__ import annotations` — this project requires Python 3.14+
 
+### Module Layout
+
+Write "deep" modules: important public function(s) at the top, private helpers below.
+Readers should see the API first without scrolling past implementation details.
+
+Never add decorative section-separator comments like:
+
+```python
+# ---------------------------------------------------------------------------
+# Section name
+# ---------------------------------------------------------------------------
+```
+
+Code structure should be self-evident from function names and ordering.
+
 ### Naming and Docstring Conventions
 
 - **No unnecessary parameter aliases.** When a function has a single (or very few) call

@@ -63,9 +63,34 @@ arrays.
 
 ## Initial Conditions
 
-### Initial states
+### From a DataFrame
 
-A flat dictionary mapping state names to JAX arrays, one value per agent:
+The standard way to supply initial conditions is as a pandas DataFrame with one row per
+agent. Use `initial_states_from_dataframe` to convert it to the format expected by
+`simulate()` and `solve_and_simulate()`:
+
+```python
+import pandas as pd
+from lcm import initial_states_from_dataframe
+
+df = pd.DataFrame({
+    "regime": ["working_life", "working_life", "retirement", "working_life"],
+    "age": [25.0, 25.0, 25.0, 25.0],
+    "wealth": [1.0, 5.0, 10.0, 20.0],
+    "health": ["good", "bad", "bad", "good"],  # string labels, auto-converted
+})
+
+initial_states, initial_regimes = initial_states_from_dataframe(df, model=model)
+```
+
+Discrete states (those backed by a `DiscreteGrid`) are mapped from string labels to
+integer codes automatically. See [Working with DataFrames and Series](pandas_interop.md) for
+details.
+
+### As JAX arrays
+
+You can also pass initial conditions directly as JAX arrays — useful for programmatic
+setups like grid searches or tests:
 
 ```python
 initial_states = {
@@ -73,19 +98,12 @@ initial_states = {
     "wealth": jnp.array([1.0, 5.0, 10.0, 20.0]),
     "health": jnp.array([0, 1, 1, 0]),  # integer codes for discrete states
 }
+initial_regimes = ["working_life", "working_life", "retirement", "working_life"]
 ```
 
 - Every non-shock state must have an entry.
 - All arrays must have the same length (= number of agents).
 - Shock states are drawn automatically.
-
-### Initial regimes
-
-A list of regime names, one per agent:
-
-```python
-initial_regimes = ["working_life", "working_life", "retirement", "working_life"]
-```
 
 ### Optional arguments
 
@@ -185,8 +203,9 @@ result.V_arr_dict       # value function arrays from solve()
 ## Typical Workflow
 
 ```python
-import jax.numpy as jnp
-from lcm import Model
+import numpy as np
+import pandas as pd
+from lcm import Model, initial_states_from_dataframe
 
 # 1. Define model (see previous pages)
 model = Model(regimes={...}, ages=..., regime_id_class=...)
@@ -198,17 +217,22 @@ params = {
     ...
 }
 
-# 3. Solve and simulate
+# 3. Prepare initial conditions
+initial_df = pd.DataFrame({
+    "regime": "working_life",
+    "age": model.ages.values[0],
+    "wealth": np.linspace(1, 50, 100),
+})
+initial_states, initial_regimes = initial_states_from_dataframe(initial_df, model=model)
+
+# 4. Solve and simulate
 result = model.solve_and_simulate(
     params=params,
-    initial_states={
-        "age": jnp.full(100, model.ages.values[0]),
-        "wealth": jnp.linspace(1, 50, 100),
-    },
-    initial_regimes=["working_life"] * 100,
+    initial_states=initial_states,
+    initial_regimes=initial_regimes,
 )
 
-# 4. Analyze
+# 5. Analyze
 df = result.to_dataframe(additional_targets="all")
 df.groupby("period")["wealth"].mean()
 ```
@@ -217,5 +241,6 @@ df.groupby("period")["wealth"].mean()
 
 - [Defining Models](defining_models.md) — constructing the `Model`
 - [Parameters](parameters.md) — preparing the params dict
+- [Working with DataFrames and Series](pandas_interop.md) — DataFrame conversion utilities
 - [A Tiny Example](tiny_example.ipynb) — complete walkthrough
 - [Examples](../examples/index.md) — full worked examples

@@ -2,9 +2,10 @@ import dataclasses
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, is_dataclass
-from typing import TYPE_CHECKING, overload
+from typing import overload
 
 import jax.numpy as jnp
+import pandas as pd
 import portion
 from jax import Array
 
@@ -16,9 +17,6 @@ from lcm.typing import (
     ScalarFloat,
 )
 from lcm.utils import find_duplicates, get_field_names_and_values
-
-if TYPE_CHECKING:
-    import pandas as pd
 
 
 def categorical[T](*, ordered: bool) -> Callable[[type[T]], type[T]]:

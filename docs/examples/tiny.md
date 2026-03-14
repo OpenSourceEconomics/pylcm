@@ -16,19 +16,26 @@ learning the pylcm API.
 ## Usage
 
 ```python
-import jax.numpy as jnp
+import numpy as np
+import pandas as pd
+from lcm import initial_states_from_dataframe
 from lcm_examples.tiny import get_model, get_params
 
 model = get_model()
 params = get_params()
 
+initial_df = pd.DataFrame({
+    "regime": "working_life",
+    "age": model.ages.values[0],
+    "wealth": np.linspace(1, 20, 100),
+})
+
+initial_states, initial_regimes = initial_states_from_dataframe(initial_df, model=model)
+
 result = model.solve_and_simulate(
     params=params,
-    initial_regimes=["working_life"] * 100,
-    initial_states={
-        "age": jnp.full(100, model.ages.values[0]),
-        "wealth": jnp.linspace(1, 20, 100),
-    },
+    initial_states=initial_states,
+    initial_regimes=initial_regimes,
 )
 
 df = result.to_dataframe(additional_targets="all")
