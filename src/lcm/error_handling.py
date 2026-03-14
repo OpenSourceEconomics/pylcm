@@ -182,6 +182,21 @@ def validate_regime_transitions_all_periods(
             positive transition probability.
 
     """
+    last_period = ages.n_periods - 1
+    non_terminal_active_at_last = [
+        name
+        for name, regime in internal_regimes.items()
+        if not regime.terminal and last_period in regime.active_periods
+    ]
+    if non_terminal_active_at_last:
+        raise InvalidRegimeTransitionProbabilitiesError(
+            f"Non-terminal regime(s) {non_terminal_active_at_last} are active at the "
+            f"last period (age {ages.values[last_period]}). Non-terminal regimes must "  # noqa: PD011
+            f"not be active at the last period because there is no next period to "
+            f"transition to. Adjust the 'active' function on these regimes to exclude "
+            f"the last age."
+        )
+
     for period in range(ages.n_periods - 1):
         active_regimes_next_period = tuple(
             name
