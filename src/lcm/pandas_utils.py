@@ -1,21 +1,19 @@
 """Utilities for converting between pandas and LCM data structures."""
 
-import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import overload
 
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 from jax import Array
 
+from lcm.error_handling import _get_indexing_params
 from lcm.grids import DiscreteGrid
+from lcm.model import Model
 from lcm.regime import MarkovTransition, Regime
-
-if TYPE_CHECKING:
-    from lcm.model import Model
 
 
 def initial_states_from_dataframe(
@@ -86,114 +84,94 @@ def initial_states_from_dataframe(
     return initial_states, initial_regimes
 
 
-def state_transition_probs_from_series(
+@overload
+def transition_probs_from_series(
     *,
     series: pd.Series,
     model: Model,
     regime_name: str,
     state_name: str,
+) -> Array: ...
+
+
+@overload
+def transition_probs_from_series(
+    *,
+    series: pd.Series,
+    model: Model,
+    regime_name: str,
+) -> Array: ...
+
+
+def transition_probs_from_series(
+    *,
+    series: pd.Series,
+    model: Model,
+    regime_name: str,
+    state_name: str | None = None,
 ) -> Array:
-    """Convert a labeled pandas Series to a state transition probability array.
+    """Convert a labeled pandas Series to a transition probability array.
 
     Build a transition probability array from a Series with a named MultiIndex,
-    eliminating manual array construction with opaque axis ordering.
+    eliminating manual array construction with opaque axis ordering. Works for
+    both state transitions (pass `state_name`) and regime transitions (omit
+    `state_name`).
 
     Args:
         series: Series with a named MultiIndex. Level names must match the
-            indexing parameters of the transition function plus
-            `"next_{state_name}"` for the outcome level.
+            indexing parameters of the transition function plus the outcome
+            level (`"next_{state_name}"` or `"next_regime"`).
         model: The LCM Model instance.
-        regime_name: Name of the regime containing the state transition.
-        state_name: Name of the state with a `MarkovTransition`.
+        regime_name: Name of the regime containing the transition.
+        state_name: Name of the state with a `MarkovTransition`. Omit for
+            regime transitions.
 
     Returns:
         JAX array with axes corresponding to the indexing parameters in
         declaration order, followed by the outcome axis.
 
     Raises:
-        TypeError: If the state transition is not a `MarkovTransition`.
+        TypeError: If the transition is not a `MarkovTransition`.
         ValueError: If level names don't match or labels are invalid.
 
     """
     regime = model.regimes[regime_name]
-
-    # 1. Look up the MarkovTransition
-    raw_transition = regime.state_transitions[state_name]
-    if not isinstance(raw_transition, MarkovTransition):
-        msg = (
-            f"State '{state_name}' in regime '{regime_name}' is not a "
-            f"MarkovTransition. Got {type(raw_transition).__name__}."
-        )
-        raise TypeError(msg)
-
-    func = raw_transition.func
-
-    # 2. Build grid lookup and outcome mapping
     discrete_lookup = _build_discrete_grid_lookup(model.regimes)
     action_lookup = _build_discrete_action_lookup(regime)
     all_grids = {**discrete_lookup, **action_lookup}
 
-    state_grid = all_grids[state_name]
-    outcome = _OutcomeMapping(
-        level_name=f"next_{state_name}",
-        label_to_code=MappingProxyType(
-            dict(zip(state_grid.categories, state_grid.codes, strict=True))
-        ),
-        n_outcomes=len(state_grid.categories),
-    )
+    if state_name is not None:
+        raw_transition = regime.state_transitions[state_name]
+        if not isinstance(raw_transition, MarkovTransition):
+            msg = (
+                f"State '{state_name}' in regime '{regime_name}' is not a "
+                f"MarkovTransition. Got {type(raw_transition).__name__}."
+            )
+            raise TypeError(msg)
 
-    return _build_probs_array(func, outcome, all_grids, model, series)
-
-
-def regime_transition_probs_from_series(
-    *,
-    series: pd.Series,
-    model: Model,
-    regime_name: str,
-) -> Array:
-    """Convert a labeled pandas Series to a regime transition probability array.
-
-    Build a regime transition probability array from a Series with a named
-    MultiIndex, eliminating manual array construction with opaque axis ordering.
-
-    Args:
-        series: Series with a named MultiIndex. Level names must match the
-            indexing parameters of the transition function plus `"next_regime"`
-            for the outcome level.
-        model: The LCM Model instance.
-        regime_name: Name of the regime with a stochastic regime transition.
-
-    Returns:
-        JAX array with axes corresponding to the indexing parameters in
-        declaration order, followed by the regime outcome axis.
-
-    Raises:
-        TypeError: If the regime transition is not a `MarkovTransition`.
-        ValueError: If level names don't match or labels are invalid.
-
-    """
-    regime = model.regimes[regime_name]
-
-    # 1. Look up the MarkovTransition
-    if not isinstance(regime.transition, MarkovTransition):
-        msg = (
-            f"Regime '{regime_name}' does not have a stochastic regime transition. "
-            f"Got {type(regime.transition).__name__}."
+        func = raw_transition.func
+        state_grid = all_grids[state_name]
+        outcome = _OutcomeMapping(
+            level_name=f"next_{state_name}",
+            label_to_code=MappingProxyType(
+                dict(zip(state_grid.categories, state_grid.codes, strict=True))
+            ),
+            n_outcomes=len(state_grid.categories),
         )
-        raise TypeError(msg)
+    else:
+        if not isinstance(regime.transition, MarkovTransition):
+            msg = (
+                f"Regime '{regime_name}' does not have a stochastic regime "
+                f"transition. Got {type(regime.transition).__name__}."
+            )
+            raise TypeError(msg)
 
-    func = regime.transition.func
-
-    # 2. Build grid lookup and outcome mapping
-    discrete_lookup = _build_discrete_grid_lookup(model.regimes)
-    action_lookup = _build_discrete_action_lookup(regime)
-    all_grids = {**discrete_lookup, **action_lookup}
-
-    outcome = _OutcomeMapping(
-        level_name="next_regime",
-        label_to_code=MappingProxyType(dict(model.regime_names_to_ids)),
-        n_outcomes=len(model.regime_names_to_ids),
-    )
+        func = regime.transition.func
+        outcome = _OutcomeMapping(
+            level_name="next_regime",
+            label_to_code=MappingProxyType(dict(model.regime_names_to_ids)),
+            n_outcomes=len(model.regime_names_to_ids),
+        )
 
     return _build_probs_array(func, outcome, all_grids, model, series)
 
@@ -305,33 +283,6 @@ def _map_labels_to_codes(
             raise ValueError(msg) from None
         index_arrays.append(mapped)
     return index_arrays
-
-
-def _get_indexing_params(func: Callable) -> list[str]:
-    """Return indexing parameter names from a transition function signature.
-
-    All parameters except `probs_array` are indexing params, returned in
-    declaration order.
-
-    Args:
-        func: The transition function.
-
-    Returns:
-        List of indexing parameter names.
-
-    Raises:
-        ValueError: If `probs_array` is not found in the signature.
-
-    """
-    sig = inspect.signature(func)
-    param_names = list(sig.parameters.keys())
-    if "probs_array" not in param_names:
-        msg = (
-            f"Transition function '{func.__name__}' must have a parameter named "  # ty: ignore[unresolved-attribute]
-            f"'probs_array'. Found parameters: {param_names}."
-        )
-        raise ValueError(msg)
-    return [name for name in param_names if name != "probs_array"]
 
 
 def _build_discrete_grid_lookup(

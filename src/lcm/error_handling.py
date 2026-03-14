@@ -24,6 +24,9 @@ from lcm.typing import (
     ScalarFloat,
 )
 
+# Genuine circular import: model.py imports from this module at module level.
+# Safe because Model is only used at runtime in validate_transition_probs,
+# which is never called during module initialisation.
 if TYPE_CHECKING:
     from lcm.model import Model
 
@@ -297,6 +300,13 @@ def _validate_regime_transition_single(
     )
 
 
+def _get_indexing_params(func: Callable) -> list[str]:
+    """Return indexing parameter names (all except `probs_array`)."""
+    sig = inspect.signature(func)
+    param_names = list(sig.parameters.keys())
+    return [name for name in param_names if name != "probs_array"]
+
+
 @overload
 def validate_transition_probs(
     *,
@@ -391,13 +401,6 @@ def _build_all_grids(regime: Regime) -> dict[str, DiscreteGrid]:
         for name, grid in (*regime.states.items(), *regime.actions.items())
         if isinstance(grid, DiscreteGrid)
     }
-
-
-def _get_indexing_params(func: Callable) -> list[str]:
-    """Return indexing parameter names (all except ``probs_array``)."""
-    sig = inspect.signature(func)
-    param_names = list(sig.parameters.keys())
-    return [name for name in param_names if name != "probs_array"]
 
 
 def _build_expected_shape(
