@@ -24,6 +24,9 @@ from lcm.typing import (
     ScalarFloat,
 )
 
+# Genuine circular import: model.py imports from this module at module level.
+# Safe because Model is only used at runtime in validate_transition_probs,
+# which is never called during module initialisation.
 if TYPE_CHECKING:
     from lcm.model import Model
 
@@ -189,6 +192,21 @@ def validate_regime_transitions_all_periods(
             positive transition probability.
 
     """
+    last_period = ages.n_periods - 1
+    non_terminal_active_at_last = [
+        name
+        for name, regime in internal_regimes.items()
+        if not regime.terminal and last_period in regime.active_periods
+    ]
+    if non_terminal_active_at_last:
+        raise InvalidRegimeTransitionProbabilitiesError(
+            f"Non-terminal regime(s) {non_terminal_active_at_last} are active at the "
+            f"last period (age {ages.exact_values[last_period]}). Non-terminal regimes "
+            "must not be active at the last period because there is no next period to "
+            "transition to. Adjust the 'active' function on these regimes to exclude "
+            "the last age."
+        )
+
     for period in range(ages.n_periods - 1):
         active_regimes_next_period = tuple(
             name
@@ -289,6 +307,13 @@ def _validate_regime_transition_single(
     )
 
 
+def _get_indexing_params(func: Callable) -> list[str]:
+    """Return indexing parameter names (all except `probs_array`)."""
+    sig = inspect.signature(func)
+    param_names = list(sig.parameters.keys())
+    return [name for name in param_names if name != "probs_array"]
+
+
 @overload
 def validate_transition_probs(
     *,
@@ -383,13 +408,6 @@ def _build_all_grids(regime: Regime) -> dict[str, DiscreteGrid]:
         for name, grid in (*regime.states.items(), *regime.actions.items())
         if isinstance(grid, DiscreteGrid)
     }
-
-
-def _get_indexing_params(func: Callable) -> list[str]:
-    """Return indexing parameter names (all except ``probs_array``)."""
-    sig = inspect.signature(func)
-    param_names = list(sig.parameters.keys())
-    return [name for name in param_names if name != "probs_array"]
 
 
 def _build_expected_shape(

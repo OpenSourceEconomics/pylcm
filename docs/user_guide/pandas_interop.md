@@ -68,17 +68,29 @@ probs = pd.Series(
 )
 
 health_probs = transition_probs_from_series(
-    probs,
+    series=probs,
     model=model,
     regime_name="working",
     state_name="health",
 )
 ```
 
+The same function works for regime transitions — omit `state_name` and use
+`"next_regime"` as the outcome level:
+
+```python
+regime_probs = transition_probs_from_series(
+    series=regime_series,
+    model=model,
+    regime_name="alive",
+)
+```
+
 The MultiIndex level names must match the indexing parameters of the transition function
-(in any order) plus `"next_{state_name}"` for the outcome axis. The function reorders
-levels to match the declaration order automatically, so you don't need to worry about
-getting the level order right.
+(in any order) plus the outcome level (`"next_{state_name}"` for state transitions,
+`"next_regime"` for regime transitions). The function reorders levels to match the
+declaration order automatically, so you don't need to worry about getting the level order
+right.
 
 Discrete state and action labels are mapped to integer codes using the same grids defined
 in the model. The `"period"` level uses integer values directly.

@@ -5,8 +5,7 @@ from types import MappingProxyType
 
 import jax
 import pandas as pd
-from dags import concatenate_functions
-from dags.signature import with_signature
+from dags import concatenate_functions, with_signature
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import Array
 

@@ -99,6 +99,9 @@ def borrowing_constraint(consumption: DiscreteAction, wealth: DiscreteState) -> 
     return consumption <= wealth
 
 
+_DEFAULT_N_PERIODS = 4
+_DEFAULT_LAST_ACTIVE_AGE = 50 + (_DEFAULT_N_PERIODS - 2) * 10
+
 # ======================================================================================
 # Regime specifications
 # ======================================================================================
@@ -122,14 +125,13 @@ working_life = Regime(
         "labor_income": labor_income,
         "is_working": is_working,
     },
-    active=lambda _age: True,  # Placeholder, will be replaced by get_model()
+    active=lambda age: age <= _DEFAULT_LAST_ACTIVE_AGE,
 )
 
 
 dead = Regime(
     transition=None,
     functions={"utility": lambda: 0.0},
-    active=lambda _age: True,  # Placeholder, will be replaced by get_model()
 )
 
 

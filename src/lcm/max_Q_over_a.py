@@ -3,7 +3,7 @@ from collections.abc import Callable
 from types import MappingProxyType
 
 import jax.numpy as jnp
-from dags.signature import with_signature
+from dags import with_signature
 from jax import Array
 
 from lcm.argmax import argmax_and_max
