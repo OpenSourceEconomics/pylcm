@@ -1,5 +1,7 @@
 import inspect
+from collections.abc import Callable
 from types import MappingProxyType
+from typing import TYPE_CHECKING, overload
 
 import jax
 import jax.numpy as jnp
@@ -11,8 +13,19 @@ from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
     InvalidValueFunctionError,
 )
+from lcm.grids import DiscreteGrid
 from lcm.interfaces import InternalRegime
-from lcm.typing import FlatRegimeParams, InternalParams, RegimeName, ScalarFloat
+from lcm.regime import MarkovTransition, Regime
+from lcm.typing import (
+    FlatRegimeParams,
+    FloatND,
+    InternalParams,
+    RegimeName,
+    ScalarFloat,
+)
+
+if TYPE_CHECKING:
+    from lcm.model import Model
 
 
 def validate_value_function_array(*, V_arr: Array, age: ScalarFloat) -> None:
@@ -267,3 +280,136 @@ def _validate_regime_transition_single(
         next_age=ages.values[period + 1],  # noqa: PD011
         state_action_values=MappingProxyType(point),
     )
+
+
+@overload
+def validate_transition_probs(
+    *,
+    probs: FloatND,
+    model: Model,
+    regime_name: str,
+    state_name: str,
+) -> None: ...
+
+
+@overload
+def validate_transition_probs(
+    *,
+    probs: FloatND,
+    model: Model,
+    regime_name: str,
+) -> None: ...
+
+
+def validate_transition_probs(
+    *,
+    probs: FloatND,
+    model: Model,
+    regime_name: str,
+    state_name: str | None = None,
+) -> None:
+    """Validate a transition probability array for shape, values, and row sums.
+
+    When ``state_name`` is provided, validate a state transition probability array.
+    When omitted, validate a regime transition probability array.
+
+    Args:
+        probs: The transition probability array to validate.
+        model: The LCM Model instance.
+        regime_name: Name of the regime.
+        state_name: Name of the state with a `MarkovTransition`. If ``None``,
+            validate a regime transition instead.
+
+    Raises:
+        TypeError: If the transition is not a `MarkovTransition`.
+        ValueError: If the shape is wrong, values are outside [0, 1], or rows
+            don't sum to 1.
+
+    """
+    regime = model.regimes[regime_name]
+
+    if state_name is not None:
+        raw_transition = regime.state_transitions[state_name]
+        if not isinstance(raw_transition, MarkovTransition):
+            msg = (
+                f"State '{state_name}' in regime '{regime_name}' is not a "
+                f"MarkovTransition. Got {type(raw_transition).__name__}."
+            )
+            raise TypeError(msg)
+        func = raw_transition.func
+        all_grids = _build_all_grids(model, regime)
+        n_outcomes = len(all_grids[state_name].categories)
+    else:
+        if not isinstance(regime.transition, MarkovTransition):
+            msg = (
+                f"Regime '{regime_name}' does not have a stochastic regime "
+                f"transition. Got {type(regime.transition).__name__}."
+            )
+            raise TypeError(msg)
+        func = regime.transition.func
+        all_grids = _build_all_grids(model, regime)
+        n_outcomes = len(model.regime_names_to_ids)
+
+    indexing_params = _get_indexing_params(func)
+    expected_shape = _build_expected_shape(
+        indexing_params, n_outcomes, all_grids, model
+    )
+
+    if probs.shape != expected_shape:
+        msg = f"Expected shape {expected_shape} but got {probs.shape}."
+        raise ValueError(msg)
+
+    if jnp.any(probs < 0) or jnp.any(probs > 1):
+        msg = "All values must be in [0, 1]."
+        raise ValueError(msg)
+
+    row_sums = jnp.sum(probs, axis=-1)
+    if not jnp.allclose(row_sums, 1.0, atol=1e-6):
+        msg = "Rows must sum to 1 along the last axis."
+        raise ValueError(msg)
+
+
+def _build_all_grids(
+    model: Model,
+    regime: Regime,
+) -> dict[str, DiscreteGrid]:
+    """Collect all DiscreteGrid instances from model states and regime actions."""
+    lookup: dict[str, DiscreteGrid] = {}
+    for r in model.regimes.values():
+        for state_name, grid in r.states.items():
+            if isinstance(grid, DiscreteGrid) and state_name not in lookup:
+                lookup[state_name] = grid
+    for name, grid in regime.actions.items():
+        if isinstance(grid, DiscreteGrid):
+            lookup[name] = grid
+    return lookup
+
+
+def _get_indexing_params(func: Callable) -> list[str]:
+    """Return indexing parameter names (all except ``probs_array``)."""
+    sig = inspect.signature(func)
+    param_names = list(sig.parameters.keys())
+    return [name for name in param_names if name != "probs_array"]
+
+
+def _build_expected_shape(
+    indexing_params: list[str],
+    n_outcomes: int,
+    all_grids: dict[str, DiscreteGrid],
+    model: Model,
+) -> tuple[int, ...]:
+    """Compute expected shape for a transition probability array."""
+    shape: list[int] = []
+    for param_name in indexing_params:
+        if param_name == "period":
+            shape.append(model.n_periods)
+        elif param_name in all_grids:
+            shape.append(len(all_grids[param_name].categories))
+        else:
+            msg = (
+                f"Cannot determine expected size for parameter '{param_name}'. "
+                f"It is not 'period' and not a DiscreteGrid state or action."
+            )
+            raise ValueError(msg)
+    shape.append(n_outcomes)
+    return tuple(shape)

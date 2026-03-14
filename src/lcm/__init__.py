@@ -8,6 +8,7 @@ with contextlib.suppress(ImportError):
 
 from lcm import shocks
 from lcm.ages import AgeGrid
+from lcm.error_handling import validate_transition_probs
 from lcm.grids import (
     DiscreteGrid,
     IrregSpacedGrid,
@@ -21,8 +22,8 @@ from lcm.grids import (
 from lcm.model import Model
 from lcm.pandas_utils import (
     initial_states_from_dataframe,
-    transition_probs_from_series,
-    validate_transition_probs,
+    regime_transition_probs_from_series,
+    state_transition_probs_from_series,
 )
 from lcm.regime import MarkovTransition, Regime
 from lcm.simulation.result import SimulationResult
@@ -50,7 +51,8 @@ __all__ = [
     "SimulationResult",
     "categorical",
     "initial_states_from_dataframe",
+    "regime_transition_probs_from_series",
     "shocks",
-    "transition_probs_from_series",
+    "state_transition_probs_from_series",
     "validate_transition_probs",
 ]
