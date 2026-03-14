@@ -52,6 +52,7 @@ project:
         - file: explanations/function_representation.ipynb
         - file: explanations/dispatchers.ipynb
         - file: explanations/interpolation.ipynb
+        - file: explanations/stochastic_transitions.ipynb
         - file: explanations/approximating_continuous_shocks.ipynb
     - file: examples/index.md
       title: Examples
