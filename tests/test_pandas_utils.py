@@ -15,11 +15,12 @@ from lcm import (
     categorical,
 )
 from lcm.ages import AgeGrid
+from lcm.error_handling import validate_transition_probs
 from lcm.pandas_utils import (
     _build_discrete_grid_lookup,
     initial_states_from_dataframe,
-    transition_probs_from_series,
-    validate_transition_probs,
+    regime_transition_probs_from_series,
+    state_transition_probs_from_series,
 )
 from lcm.typing import DiscreteAction, DiscreteState, FloatND, Period
 
@@ -436,7 +437,7 @@ def _array_to_series(arr, model):
 
 
 # ======================================================================================
-# transition_probs_from_series tests
+# state_transition_probs_from_series tests
 # ======================================================================================
 
 
@@ -444,8 +445,8 @@ def test_transition_probs_basic_round_trip():
     model = _make_stochastic_model()
     arr = _make_partner_probs_array()
     series = _array_to_series(arr, model)
-    result = transition_probs_from_series(
-        series, model=model, regime_name="working_life", state_name="partner"
+    result = state_transition_probs_from_series(
+        series=series, model=model, regime_name="working_life", state_name="partner"
     )
     np.testing.assert_allclose(result, arr, atol=1e-7)
 
@@ -454,8 +455,8 @@ def test_transition_probs_categorical_labels():
     model = _make_stochastic_model()
     arr = _make_partner_probs_array()
     series = _array_to_series(arr, model)
-    result = transition_probs_from_series(
-        series, model=model, regime_name="working_life", state_name="partner"
+    result = state_transition_probs_from_series(
+        series=series, model=model, regime_name="working_life", state_name="partner"
     )
     # Verify specific values by label
     assert float(result[0, 0, 0, 1]) == pytest.approx(
@@ -472,8 +473,8 @@ def test_transition_probs_reordered_levels():
     series = _array_to_series(arr, model)
     # Reorder levels: put next_partner first, then partner, work, period
     series = series.reorder_levels(["next_partner", "partner", "work", "period"])
-    result = transition_probs_from_series(
-        series, model=model, regime_name="working_life", state_name="partner"
+    result = state_transition_probs_from_series(
+        series=series, model=model, regime_name="working_life", state_name="partner"
     )
     np.testing.assert_allclose(result, arr, atol=1e-7)
 
@@ -481,8 +482,8 @@ def test_transition_probs_reordered_levels():
 def test_transition_probs_not_markov_raises():
     model = _make_model()  # health transition is None (fixed), not MarkovTransition
     with pytest.raises(TypeError, match="not a MarkovTransition"):
-        transition_probs_from_series(
-            pd.Series(), model=model, regime_name="working", state_name="health"
+        state_transition_probs_from_series(
+            series=pd.Series(), model=model, regime_name="working", state_name="health"
         )
 
 
@@ -493,8 +494,8 @@ def test_transition_probs_wrong_level_names_raises():
     # Rename a level to something wrong
     series.index = series.index.set_names(["period", "work", "partner", "wrong_name"])
     with pytest.raises(ValueError, match="level names"):
-        transition_probs_from_series(
-            series, model=model, regime_name="working_life", state_name="partner"
+        state_transition_probs_from_series(
+            series=series, model=model, regime_name="working_life", state_name="partner"
         )
 
 
@@ -506,8 +507,8 @@ def test_transition_probs_invalid_label_raises():
     new_index = series.index.set_levels(["single", "INVALID"], level="partner")
     series.index = new_index
     with pytest.raises(ValueError, match="Invalid labels"):
-        transition_probs_from_series(
-            series, model=model, regime_name="working_life", state_name="partner"
+        state_transition_probs_from_series(
+            series=series, model=model, regime_name="working_life", state_name="partner"
         )
 
 
@@ -520,7 +521,7 @@ def test_validate_transition_probs_valid():
     model = _make_stochastic_model()
     arr = _make_partner_probs_array()
     validate_transition_probs(
-        arr, model=model, regime_name="working_life", state_name="partner"
+        probs=arr, model=model, regime_name="working_life", state_name="partner"
     )
 
 
@@ -529,7 +530,7 @@ def test_validate_transition_probs_wrong_shape():
     arr = jnp.ones((2, 2, 2)) / 2  # wrong shape
     with pytest.raises(ValueError, match="shape"):
         validate_transition_probs(
-            arr, model=model, regime_name="working_life", state_name="partner"
+            probs=arr, model=model, regime_name="working_life", state_name="partner"
         )
 
 
@@ -540,7 +541,7 @@ def test_validate_transition_probs_values_out_of_range():
     bad_arr = arr.at[0, 0, 0, 0].set(-0.1)  # noqa: PD008
     with pytest.raises(ValueError, match="\\[0, 1\\]"):
         validate_transition_probs(
-            bad_arr, model=model, regime_name="working_life", state_name="partner"
+            probs=bad_arr, model=model, regime_name="working_life", state_name="partner"
         )
 
 
@@ -549,5 +550,152 @@ def test_validate_transition_probs_rows_dont_sum_to_one():
     arr = jnp.ones((3, 2, 2, 2)) * 0.3  # rows sum to 0.6, not 1
     with pytest.raises(ValueError, match="sum to 1"):
         validate_transition_probs(
-            arr, model=model, regime_name="working_life", state_name="partner"
+            probs=arr, model=model, regime_name="working_life", state_name="partner"
         )
+
+
+@categorical(ordered=False)
+class _MarkovRegimeId:
+    alive: int
+    dead: int
+
+
+def _next_regime_probs(
+    period: Period,
+    health: DiscreteState,
+    probs_array: FloatND,
+) -> FloatND:
+    return probs_array[period, health]
+
+
+def _make_regime_markov_model():
+    """Create a model with MarkovTransition on regime transitions."""
+    alive = Regime(
+        transition=MarkovTransition(_next_regime_probs),
+        states={
+            "health": DiscreteGrid(Health),
+            "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
+        },
+        state_transitions={
+            "health": None,
+            "wealth": lambda wealth: wealth,
+        },
+        functions={"utility": lambda wealth, health: wealth + health},
+        active=lambda _age: True,
+    )
+    dead = Regime(
+        transition=None,
+        functions={"utility": lambda: 0.0},
+        active=lambda _age: True,
+    )
+    return Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=60, stop=62, step="Y"),
+        regime_id_class=_MarkovRegimeId,
+    )
+
+
+def _make_regime_probs_array():
+    """Build a (n_periods=3, n_health=2, n_regimes=2) array."""
+    return jnp.array(
+        [
+            [[0.95, 0.05], [0.98, 0.02]],  # period 0: bad=95%, good=98%
+            [[0.90, 0.10], [0.96, 0.04]],  # period 1
+            [[0.0, 1.0], [0.0, 1.0]],  # period 2: certain death
+        ]
+    )
+
+
+def _regime_array_to_series(arr, model):
+    """Convert a regime probs array to a labeled Series."""
+    health_labels = ("bad", "good")
+    regime_labels = ("alive", "dead")
+
+    records = []
+    for period_idx in range(model.n_periods):
+        for h_idx, h_label in enumerate(health_labels):
+            for r_idx, r_label in enumerate(regime_labels):
+                records.append(
+                    (
+                        (period_idx, h_label, r_label),
+                        float(arr[period_idx, h_idx, r_idx]),
+                    )
+                )
+
+    index = pd.MultiIndex.from_tuples(
+        [r[0] for r in records],
+        names=["period", "health", "next_regime"],
+    )
+    return pd.Series([r[1] for r in records], index=index)
+
+
+def test_regime_transition_probs_basic_round_trip():
+    model = _make_regime_markov_model()
+    arr = _make_regime_probs_array()
+    series = _regime_array_to_series(arr, model)
+    result = regime_transition_probs_from_series(
+        series=series, model=model, regime_name="alive"
+    )
+    np.testing.assert_allclose(result, arr, atol=1e-7)
+
+
+def test_regime_transition_probs_reordered_levels():
+    model = _make_regime_markov_model()
+    arr = _make_regime_probs_array()
+    series = _regime_array_to_series(arr, model)
+    series = series.reorder_levels(["next_regime", "health", "period"])
+    result = regime_transition_probs_from_series(
+        series=series, model=model, regime_name="alive"
+    )
+    np.testing.assert_allclose(result, arr, atol=1e-7)
+
+
+def test_regime_transition_probs_not_markov_raises():
+    model = _make_model()  # deterministic regime transition
+    with pytest.raises(TypeError, match="stochastic regime transition"):
+        regime_transition_probs_from_series(
+            series=pd.Series(), model=model, regime_name="working"
+        )
+
+
+def test_regime_transition_probs_wrong_level_names_raises():
+    model = _make_regime_markov_model()
+    arr = _make_regime_probs_array()
+    series = _regime_array_to_series(arr, model)
+    series.index = series.index.set_names(["period", "health", "wrong_name"])
+    with pytest.raises(ValueError, match="level names"):
+        regime_transition_probs_from_series(
+            series=series, model=model, regime_name="alive"
+        )
+
+
+def test_regime_transition_probs_invalid_label_raises():
+    model = _make_regime_markov_model()
+    arr = _make_regime_probs_array()
+    series = _regime_array_to_series(arr, model)
+    new_index = series.index.set_levels(["alive", "INVALID"], level="next_regime")
+    series.index = new_index
+    with pytest.raises(ValueError, match="Invalid labels"):
+        regime_transition_probs_from_series(
+            series=series, model=model, regime_name="alive"
+        )
+
+
+def test_validate_regime_transition_probs_valid():
+    model = _make_regime_markov_model()
+    arr = _make_regime_probs_array()
+    validate_transition_probs(probs=arr, model=model, regime_name="alive")
+
+
+def test_validate_regime_transition_probs_wrong_shape():
+    model = _make_regime_markov_model()
+    arr = jnp.ones((2, 2)) / 2
+    with pytest.raises(ValueError, match="shape"):
+        validate_transition_probs(probs=arr, model=model, regime_name="alive")
+
+
+def test_validate_regime_transition_probs_not_markov_raises():
+    model = _make_model()
+    arr = jnp.ones((3, 2)) / 2
+    with pytest.raises(TypeError, match="stochastic regime transition"):
+        validate_transition_probs(probs=arr, model=model, regime_name="working")

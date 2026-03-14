@@ -12805,6 +12805,18 @@ packages:
   - pandas
   - portion>=2.6
   requires_python: '>=3.14'
+- pypi: ./
+  name: pylcm
+  version: 0.0.2.dev171+g8c382fdf5
+  sha256: 897b005865915000cffbd84e49bebf2e57634d145505131cf06921a0b988f740
+  requires_dist:
+  - cloudpickle>=3.1.2,<4
+  - dags>=0.5.1
+  - jax>=0.9
+  - jaxtyping>=0.3.2
+  - pandas
+  - portion>=2.6
+  requires_python: '>=3.14'
 - conda: https://conda.anaconda.org/conda-forge/osx-arm64/pyobjc-core-12.1-py314h3a4d195_0.conda
   sha256: df5af268c5a74b7160d772c263ece6f43257faff571783443e34b5f1d5a61cf2
   md5: 75a84fc8337557347252cc4fd3ba2a93
@@ -14070,7 +14082,7 @@ packages:
   license: MIT
   license_family: MIT
   purls:
-  - pkg:pypi/ty?source=compressed-mapping
+  - pkg:pypi/ty?source=hash-mapping
   size: 9159914
   timestamp: 1772782312231
 - conda: https://conda.anaconda.org/conda-forge/noarch/types-pytz-2026.1.1.20260304-pyhd8ed1ab_0.conda

@@ -6,7 +6,6 @@ from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import Array, vmap
 from jax import numpy as jnp
 
-from lcm.error_handling import validate_regime_transition_probs
 from lcm.grids import DiscreteGrid
 from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.random import generate_simulation_keys
@@ -153,7 +152,6 @@ def calculate_next_regime_membership(
     optimal_actions: MappingProxyType[str, Array],
     period: int,
     age: float,
-    next_age: float,
     regime_params: FlatRegimeParams,
     regime_names_to_ids: MappingProxyType[RegimeName, int],
     new_subject_regime_ids: Int1D,
@@ -172,7 +170,6 @@ def calculate_next_regime_membership(
         optimal_actions: Optimal actions computed for these subjects.
         period: Current period.
         age: Age corresponding to current period.
-        next_age: Age corresponding to next period.
         regime_params: Flat regime parameters.
         regime_names_to_ids: Mapping from regime names to integer IDs.
         new_subject_regime_ids: Array to update with next regime assignments.
@@ -197,17 +194,6 @@ def calculate_next_regime_membership(
             age=age,
             **regime_params,
         )
-    )
-    state_action_values = MappingProxyType(
-        {**state_action_space.states, **optimal_actions},
-    )
-    validate_regime_transition_probs(
-        regime_transition_probs=regime_transition_probs,
-        active_regimes_next_period=active_regimes_next_period,
-        regime_name=internal_regime.name,
-        age=age,
-        next_age=next_age,
-        state_action_values=state_action_values,
     )
     active_regime_probs = MappingProxyType(
         {r: regime_transition_probs[r] for r in active_regimes_next_period}
