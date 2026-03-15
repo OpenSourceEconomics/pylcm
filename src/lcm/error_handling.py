@@ -1,4 +1,7 @@
+import ast
 import inspect
+import textwrap
+import warnings
 from collections.abc import Callable
 from types import MappingProxyType
 from typing import TYPE_CHECKING, overload
@@ -307,6 +310,108 @@ def _get_indexing_params(func: Callable) -> list[str]:
     return [name for name in param_names if name != "probs_array"]
 
 
+def _validate_probs_array_indexing(func: Callable) -> None:
+    """Check that `probs_array[...]` indexing order matches parameter order.
+
+    Handles two cases reliably:
+
+    - Single index: `probs_array[health]`
+    - Tuple of bare names: `probs_array[period, health]`
+
+    For computed indices (`probs_array[period - 1, health]`), variable aliasing,
+    or multiple subscripts in different branches, a warning is emitted instead.
+
+    Args:
+        func: The transition function to inspect.
+
+    Raises:
+        ValueError: If bare-name indices don't match the expected parameter order.
+
+    """
+    sig = inspect.signature(func)
+    if "probs_array" not in sig.parameters:
+        return
+
+    try:
+        source = textwrap.dedent(inspect.getsource(func))
+        tree = ast.parse(source)
+    except OSError, TypeError:
+        return
+
+    expected = _get_indexing_params(func)
+
+    subscripts = _collect_probs_array_subscripts(tree)
+
+    if not subscripts:
+        warnings.warn(
+            f"Function '{func.__name__}' has a `probs_array` parameter but no "
+            f"`probs_array[...]` subscript was found. Cannot validate indexing order.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return
+
+    if len(subscripts) > 1:
+        warnings.warn(
+            f"Function '{func.__name__}' has multiple `probs_array[...]` subscripts. "
+            f"Cannot validate indexing order automatically.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return
+
+    index_names = _extract_bare_names(subscripts[0])
+
+    if index_names is None:
+        warnings.warn(
+            f"Function '{func.__name__}' uses computed indices in "
+            f"`probs_array[...]`. Cannot validate indexing order automatically.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return
+
+    if index_names != expected:
+        msg = (
+            f"In function '{func.__name__}', `probs_array` is indexed as "
+            f"`probs_array[{', '.join(index_names)}]` but the expected order "
+            f"(from the function signature) is "
+            f"`probs_array[{', '.join(expected)}]`."
+        )
+        raise ValueError(msg)
+
+
+def _collect_probs_array_subscripts(tree: ast.Module) -> list[ast.expr]:
+    """Find all `probs_array[...]` subscript slice nodes in an AST."""
+    return [
+        node.slice
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Subscript)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "probs_array"
+    ]
+
+
+def _extract_bare_names(slice_node: ast.expr) -> list[str] | None:
+    """Extract bare variable names from a subscript slice.
+
+    Return ``None`` if any index element is not a bare `ast.Name` (e.g. a
+    `BinOp` or `Call`).
+    """
+    if isinstance(slice_node, ast.Name):
+        return [slice_node.id]
+
+    if isinstance(slice_node, ast.Tuple):
+        names: list[str] = []
+        for elt in slice_node.elts:
+            if not isinstance(elt, ast.Name):
+                return None
+            names.append(elt.id)
+        return names
+
+    return None
+
+
 @overload
 def validate_transition_probs(
     *,
@@ -374,6 +479,8 @@ def validate_transition_probs(
         func = regime.transition.func
         all_grids = _build_all_grids(regime)
         n_outcomes = len(model.regime_names_to_ids)
+
+    _validate_probs_array_indexing(func)
 
     indexing_params = _get_indexing_params(func)
     expected_shape = _build_expected_shape(
