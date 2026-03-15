@@ -61,6 +61,8 @@ def simulate(
         logger: Logger that logs to stdout.
         V_arr_dict: Immutable mapping of periods to regime value function arrays.
         ages: AgeGrid for the model, used to convert periods to ages.
+        simulation_output_dtypes: Mapping of variable name to `pd.CategoricalDtype`,
+            used for building simulation metadata.
         seed: Random number seed; will be passed to `jax.random.key`. If not provided,
             a random seed will be generated.
 

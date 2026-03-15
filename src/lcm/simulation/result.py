@@ -285,7 +285,7 @@ def _compute_metadata(
     ],
     simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
 ) -> SimulationMetadata:
-    """Compute metadata from internal regimes and raw results."""
+    """Compute metadata from internal regimes, raw results, and output dtypes."""
     regime_names = list(internal_regimes.keys())
 
     all_states: set[str] = set()
@@ -617,7 +617,7 @@ def _convert_to_categorical(
 
     Converts:
     - regime column: uses regime_names as categories
-    - discrete state/action columns: uses categories from DiscreteGrid
+    - discrete state/action columns: uses categories from simulation metadata
 
     """
     df = df.copy()

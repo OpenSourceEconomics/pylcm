@@ -23,15 +23,6 @@ from lcm.grids import (
 from lcm.utils import get_field_names_and_values
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 
-# ======================================================================================
-# Tests for DiscreteGrid and category class helpers
-# ======================================================================================
-
-
-# --------------------------------------------------------------------------------------
-# get_field_names_and_values
-# --------------------------------------------------------------------------------------
-
 
 def test_get_fields_with_defaults():
     category_class = make_dataclass("Category", [("a", int, 1), ("b", int, 2)])
@@ -51,11 +42,6 @@ def test_get_fields_instance():
 def test_get_fields_empty():
     category_class = make_dataclass("Category", [])
     assert get_field_names_and_values(category_class) == {}
-
-
-# --------------------------------------------------------------------------------------
-# _validate_discrete_grid
-# --------------------------------------------------------------------------------------
 
 
 def test_validate_discrete_grid_empty():
@@ -106,11 +92,6 @@ def test_validate_discrete_grid_non_consecutive_jumps():
         _validate_discrete_grid(category_class)
 
 
-# --------------------------------------------------------------------------------------
-# validate_category_class (reusable validation)
-# --------------------------------------------------------------------------------------
-
-
 def test_validate_category_class_valid():
     """Valid category class should return empty error list."""
     category_class = make_dataclass("Category", [("a", int, 0), ("b", int, 1)])
@@ -146,11 +127,6 @@ def test_validate_category_class_not_starting_at_zero():
     assert "consecutive integers starting from 0" in errors[0]
 
 
-# --------------------------------------------------------------------------------------
-# DiscreteGrid
-# --------------------------------------------------------------------------------------
-
-
 def test_discrete_grid_creation():
     category_class = make_dataclass(
         "Category", [("a", int, 0), ("b", int, 1), ("c", int, 2)]
@@ -168,11 +144,6 @@ def test_discrete_grid_invalid_category_class():
         match="Field values of the category_class can only be int",
     ):
         DiscreteGrid(category_class)
-
-
-# --------------------------------------------------------------------------------------
-# DiscreteGrid.ordered
-# --------------------------------------------------------------------------------------
 
 
 def test_discrete_grid_ordered_true():
@@ -194,16 +165,6 @@ def test_discrete_grid_ordered_false():
 
     grid = DiscreteGrid(UnorderedCat)
     assert grid.ordered is False
-
-
-# ======================================================================================
-# Tests for continuous grids (LinSpacedGrid, LogSpacedGrid)
-# ======================================================================================
-
-
-# --------------------------------------------------------------------------------------
-# _validate_continuous_grid
-# --------------------------------------------------------------------------------------
 
 
 def test_validate_continuous_grid_invalid_start():
@@ -236,11 +197,6 @@ def test_validate_continuous_grid_start_greater_than_stop():
         _validate_continuous_grid(start=2, stop=1, n_points=10)
 
 
-# --------------------------------------------------------------------------------------
-# LinSpacedGrid
-# --------------------------------------------------------------------------------------
-
-
 def test_linspace_grid_creation():
     grid = LinSpacedGrid(start=1, stop=5, n_points=5)
     assert np.allclose(grid.to_jax(), np.linspace(1, 5, 5))
@@ -249,11 +205,6 @@ def test_linspace_grid_creation():
 def test_linspace_grid_invalid_start():
     with pytest.raises(GridInitializationError, match="start must be less than stop"):
         LinSpacedGrid(start=1, stop=0, n_points=10)
-
-
-# --------------------------------------------------------------------------------------
-# LogSpacedGrid
-# --------------------------------------------------------------------------------------
 
 
 def test_logspace_grid_creation():
@@ -266,22 +217,12 @@ def test_logspace_grid_invalid_start():
         LogSpacedGrid(start=1, stop=0, n_points=10)
 
 
-# --------------------------------------------------------------------------------------
-# ReplaceMixin
-# --------------------------------------------------------------------------------------
-
-
 def test_replace_mixin():
     grid = LinSpacedGrid(start=1, stop=5, n_points=5)
     new_grid = grid.replace(start=0)
     assert new_grid.start == 0
     assert new_grid.stop == 5
     assert new_grid.n_points == 5
-
-
-# ======================================================================================
-# Tests for IrregSpacedGrid
-# ======================================================================================
 
 
 def test_irreg_spaced_grid_creation():
@@ -303,11 +244,6 @@ def test_irreg_spaced_grid_invalid_non_numeric():
 def test_irreg_spaced_grid_invalid_not_ascending():
     with pytest.raises(GridInitializationError, match="strictly ascending order"):
         IrregSpacedGrid(points=(1.0, 3.0, 2.0))
-
-
-# ======================================================================================
-# Tests for coordinate equivalence between LinSpacedGrid and other grid types
-# ======================================================================================
 
 
 def _create_equivalent_grid(
@@ -373,11 +309,6 @@ def test_linspaced_coordinates_match_other_grid_types(
             f"({start}, {stop}, {n_points}): "
             f"LinSpacedGrid={lin_coord}, {grid_type}={other_coord}"
         )
-
-
-# ======================================================================================
-# Tests for PiecewiseLinSpacedGrid
-# ======================================================================================
 
 
 def test_piecewise_lin_spaced_grid_creation_with_strings():
@@ -540,11 +471,6 @@ def test_piecewise_lin_spaced_grid_three_pieces():
     assert float(points[-1]) == 10.0
 
 
-# ======================================================================================
-# Tests for PiecewiseLogSpacedGrid
-# ======================================================================================
-
-
 def test_piecewise_log_spaced_grid_creation():
     """PiecewiseLogSpacedGrid can be created with valid positive intervals."""
     grid = PiecewiseLogSpacedGrid(
@@ -643,11 +569,6 @@ def test_piecewise_log_spaced_grid_coordinate_multi_piece():
     assert float(grid.get_coordinate(100.0)) == pytest.approx(3.0)
 
 
-# ======================================================================================
-# Tests for piecewise grid boundary conditions (searchsorted correctness)
-# ======================================================================================
-
-
 def _create_boundary_test_grid(grid_cls, boundary_style: str):
     """Create a piecewise grid for boundary testing."""
     if grid_cls == PiecewiseLinSpacedGrid:
@@ -723,11 +644,6 @@ def test_piecewise_single_piece():
     assert float(grid.get_coordinate(0.0)) == pytest.approx(0.0)
     assert float(grid.get_coordinate(5.0)) == pytest.approx(5.0)
     assert float(grid.get_coordinate(10.0)) == pytest.approx(10.0)
-
-
-# ======================================================================================
-# get_coordinate with Array values
-# ======================================================================================
 
 
 def test_lin_spaced_grid_get_coordinate_with_array():

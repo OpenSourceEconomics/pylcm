@@ -14,6 +14,7 @@ from lcm.error_handling import _extract_markov_transition, _get_indexing_params
 from lcm.grids import DiscreteGrid
 from lcm.model import Model
 from lcm.regime import MarkovTransition, Regime
+from lcm.shocks import _ShockGrid
 
 
 def initial_states_from_dataframe(
@@ -408,7 +409,9 @@ def _collect_all_state_names(
     state_names: set[str] = set()
     for regime_name in set(initial_regimes):
         regime = regimes[regime_name]
-        state_names.update(regime.states.keys())
+        for name, grid in regime.states.items():
+            if not isinstance(grid, _ShockGrid):
+                state_names.add(name)
     # Always include age
     state_names.add("age")
     return state_names
@@ -423,7 +426,7 @@ def _build_discrete_grid_lookup(
         regimes: Mapping of regime names to Regime instances.
 
     Returns:
-        Dict mapping state name to DiscreteGrid.
+        dict mapping state name to DiscreteGrid.
 
     Raises:
         ValueError: If two regimes define the same state with different categories.
@@ -454,7 +457,7 @@ def _build_discrete_action_lookup(regime: Regime) -> dict[str, DiscreteGrid]:
         regime: The Regime instance.
 
     Returns:
-        Dict mapping action name to DiscreteGrid.
+        dict mapping action name to DiscreteGrid.
 
     """
     return {

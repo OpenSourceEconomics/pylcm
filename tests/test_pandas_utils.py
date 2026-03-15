@@ -632,12 +632,11 @@ def _make_regime_markov_model():
             "wealth": lambda wealth: wealth,
         },
         functions={"utility": lambda wealth, health: wealth + health},
-        active=lambda _age: True,
+        active=lambda age: age < 62,
     )
     dead = Regime(
         transition=None,
         functions={"utility": lambda: 0.0},
-        active=lambda _age: True,
     )
     return Model(
         regimes={"alive": alive, "dead": dead},
