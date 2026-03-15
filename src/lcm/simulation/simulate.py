@@ -1,4 +1,5 @@
 import logging
+import time
 from collections.abc import Mapping
 from types import MappingProxyType
 
@@ -70,6 +71,8 @@ def simulate(
         seed = draw_random_seed()
 
     logger.info("Starting simulation")
+    has_multiple_regimes = len(internal_regimes) > 1
+    total_start = time.monotonic()
 
     # Convert flat initial_states to nested format
     # ----------------------------------------------------------------------------------
@@ -99,8 +102,11 @@ def simulate(
     simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
         regime_name: {} for regime_name in internal_regimes
     }
+    # Build reverse lookup for regime transition logging
+    ids_to_names: dict[int, str] = {v: k for k, v in regime_names_to_ids.items()}
+
     for period, age in enumerate(ages.values):
-        logger.info("Age: %s", age)
+        period_start = time.monotonic()
 
         # Activate subjects whose starting period matches the current period
         subject_regime_ids = jnp.where(
@@ -109,6 +115,7 @@ def simulate(
             subject_regime_ids,
         )
 
+        prev_regime_ids = subject_regime_ids
         new_subject_regime_ids = subject_regime_ids
 
         active_regimes = {
@@ -143,7 +150,36 @@ def simulate(
             states = new_states
             simulation_results[regime_name][period] = result
 
+            # Check for NaN/Inf in V_arr
+            if jnp.any(jnp.isnan(result.V_arr)) or jnp.any(jnp.isinf(result.V_arr)):
+                logger.warning(
+                    "NaN/Inf in V_arr for regime '%s' at age %s", regime_name, age
+                )
+
         subject_regime_ids = new_subject_regime_ids
+
+        # Log regime transition counts at debug level
+        if has_multiple_regimes and logger.isEnabledFor(logging.DEBUG):
+            _log_regime_transitions(
+                logger=logger,
+                prev_regime_ids=prev_regime_ids,
+                new_regime_ids=subject_regime_ids,
+                ids_to_names=ids_to_names,
+            )
+
+        elapsed = time.monotonic() - period_start
+        if has_multiple_regimes:
+            logger.info(
+                "Age: %s  regimes=%d  (%.1fs)",
+                age,
+                len(active_regimes),
+                elapsed,
+            )
+        else:
+            logger.info("Age: %s  (%.1fs)", age, elapsed)
+
+    total_elapsed = time.monotonic() - total_start
+    logger.info("Simulation complete  (%.1fs)", total_elapsed)
 
     # Wrap results in MappingProxyType for immutability
     wrapped_results = MappingProxyType(
@@ -367,3 +403,24 @@ def _compute_starting_periods(
         raise ValueError(msg)
 
     return starting_periods
+
+
+def _log_regime_transitions(
+    *,
+    logger: logging.Logger,
+    prev_regime_ids: Int1D,
+    new_regime_ids: Int1D,
+    ids_to_names: dict[int, str],
+) -> None:
+    """Log regime transition counts at debug level."""
+    parts: list[str] = []
+    for from_id, from_name in sorted(ids_to_names.items()):
+        mask = prev_regime_ids == from_id
+        if not jnp.any(mask):
+            continue
+        for to_id, to_name in sorted(ids_to_names.items()):
+            count = int(jnp.sum(mask & (new_regime_ids == to_id)))
+            if count > 0:
+                parts.append(f"{from_name}\u2192{to_name}={count}")
+    if parts:
+        logger.debug("  transitions: %s", " ".join(parts))

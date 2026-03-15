@@ -106,7 +106,7 @@ def test_validation_vmaps_over_action_combos():
             "age": jnp.array([0.0, 0.0]),
         },
         initial_regimes=["alive", "alive"],
-        debug=False,
+        log_level="off",
     )
 
     df = result.to_dataframe()

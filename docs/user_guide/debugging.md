@@ -25,56 +25,134 @@ model = Model(
 This does not affect correctness --- the same functions run, just without compilation.
 Re-enable JIT once the issue is resolved.
 
-## Auto-persist intermediate results
+## Log levels
 
-When `debug=True` (the default) and a `debug_path` is provided, pylcm automatically
-saves intermediate results to disk:
+The `log_level` parameter controls both console output and disk persistence:
+
+| Level | Output | Persistence |
+|-------|--------|-------------|
+| `"off"` | Nothing (good for HPC batch jobs) | No |
+| `"warning"` | NaN/Inf warnings in value functions | No |
+| `"progress"` (default) | Progress and timing per period, total elapsed time | No |
+| `"debug"` | All above + V_arr statistics per regime, regime transition counts | Yes, requires `log_path` |
 
 ```python
-# Solve: saves value function arrays
-V_arr_dict = model.solve(params, debug=True, debug_path="./debug/")
-# Creates: ./debug/solution_001.pkl
+# Silent — no console output at all
+V_arr_dict = model.solve(params, log_level="off")
 
-# Simulate: saves the SimulationResult
+# Warnings only — alerts on NaN/Inf but no progress output
+V_arr_dict = model.solve(params, log_level="warning")
+
+# Progress (default) — timing per period
+V_arr_dict = model.solve(params)  # log_level="progress"
+
+# Debug — full diagnostics + snapshot persistence
+V_arr_dict = model.solve(params, log_level="debug", log_path="./debug/")
+```
+
+Using `log_level="debug"` without providing `log_path` raises a `ValueError`.
+
+## Debug snapshots
+
+When `log_level="debug"` and `log_path` is provided, pylcm saves a **snapshot
+directory** containing all inputs and outputs. This lets you reconstruct a failed run on
+a different machine.
+
+### What's saved
+
+Each snapshot is a directory (e.g. `solve_snapshot_001/`) containing:
+
+| File | Contents |
+|------|----------|
+| `arrays.h5` | Value function arrays in HDF5 (datasets at `/V_arr/{period}/{regime}`) |
+| `model.pkl` | The Model instance (cloudpickle) |
+| `params.pkl` | User parameters (cloudpickle) |
+| `initial_states.pkl` | Initial state arrays (simulate/solve_and_simulate only) |
+| `initial_regimes.pkl` | Initial regime assignments (simulate/solve_and_simulate only) |
+| `result.pkl` | SimulationResult (simulate/solve_and_simulate only) |
+| `metadata.json` | Snapshot type, platform string, field manifest |
+| `pixi.lock` | Lock file from the project root |
+| `pyproject.toml` | Project file from the project root |
+| `REPRODUCE.md` | Step-by-step reconstruction recipe |
+
+### Creating snapshots
+
+```python
+# Solve snapshot
+V_arr_dict = model.solve(
+    params, log_level="debug", log_path="./debug/"
+)
+# Creates: ./debug/solve_snapshot_001/
+
+# Simulate snapshot
 result = model.simulate(
     params, initial_states, initial_regimes, V_arr_dict,
-    debug=True, debug_path="./debug/",
+    log_level="debug", log_path="./debug/",
 )
-# Creates: ./debug/simulation_result_001.pkl
+# Creates: ./debug/simulate_snapshot_001/
 
-# solve_and_simulate: saves both
+# Solve-and-simulate snapshot (includes everything)
 result = model.solve_and_simulate(
     params, initial_states, initial_regimes,
-    debug=True, debug_path="./debug/",
+    log_level="debug", log_path="./debug/",
 )
-# Creates: ./debug/solution_001.pkl and ./debug/simulation_result_001.pkl
+# Creates: ./debug/solve_and_simulate_snapshot_001/
 ```
 
-### Loading persisted results
+### Loading snapshots
 
 ```python
-from lcm import load_solution, SimulationResult
+from lcm import load_snapshot
 
-# Load value function arrays
-V_arr_dict = load_solution(path="./debug/solution_001.pkl")
+# Load the full snapshot
+snapshot = load_snapshot("./debug/solve_snapshot_001")
+snapshot.model       # the Model instance
+snapshot.params      # the user parameters
+snapshot.V_arr_dict  # value function arrays (loaded from HDF5)
 
-# Load simulation result
-result = SimulationResult.from_pickle("./debug/simulation_result_001.pkl")
-df = result.to_dataframe()
+# Re-run the solve to reproduce the result
+V_arr_dict = snapshot.model.solve(snapshot.params)
 ```
 
-### File retention
+For large snapshots, skip fields you don't need:
 
-When running inside a numerical optimization loop, debug files can accumulate quickly.
-The `keep_n_latest` parameter (default 3) limits how many snapshots are kept:
+```python
+# Load without the (potentially large) value function arrays
+snapshot = load_snapshot("./debug/solve_snapshot_001", exclude=["V_arr_dict"])
+snapshot.V_arr_dict  # None
+snapshot.model       # still available
+```
+
+### Platform mismatch
+
+Each snapshot records the platform it was created on (e.g. `x86_64-Linux`).
+When loading on a different platform, a warning is emitted:
+
+```text
+WARNING  Snapshot created on x86_64-Linux but loading on arm64-Darwin
+         — environment may not match
+```
+
+To reproduce the environment exactly, use the bundled lock file:
+
+```bash
+cp ./debug/solve_snapshot_001/pixi.lock .
+cp ./debug/solve_snapshot_001/pyproject.toml .
+pixi install --frozen
+```
+
+## Snapshot retention
+
+Snapshots accumulate when running inside an optimization loop. The `log_keep_n_latest`
+parameter (default 3) limits how many snapshot directories are kept per type:
 
 ```python
 V_arr_dict = model.solve(
-    params, debug=True, debug_path="./debug/", keep_n_latest=5
+    params, log_level="debug", log_path="./debug/", log_keep_n_latest=5
 )
 ```
 
-After each write, the oldest files beyond the limit are deleted automatically.
+After each write, the oldest directories beyond the limit are deleted automatically.
 
 ## Recipe: Debugging NaN in parameter estimation with optimagic
 

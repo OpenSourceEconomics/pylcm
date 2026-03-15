@@ -16,22 +16,22 @@ V_arr_dict = model.solve(params)
 Performs backward induction using dynamic programming. Returns an immutable mapping of
 `period -> regime_name -> value_function_array`.
 
-### Debug mode
+### Log levels
 
-- `debug=True` (default): Enables debug logging. Use this while developing.
-- `debug=False`: No logging. Use for production runs.
-
-```python
-V_arr_dict = model.solve(params, debug=False)
-```
-
-You can also auto-persist intermediate results to disk by providing a `debug_path`:
+Control console output and snapshot persistence with `log_level`:
 
 ```python
-V_arr_dict = model.solve(params, debug=True, debug_path="./debug/")
+# Default: progress + timing
+V_arr_dict = model.solve(params)
+
+# Silent
+V_arr_dict = model.solve(params, log_level="off")
+
+# Full diagnostics + disk snapshots
+V_arr_dict = model.solve(params, log_level="debug", log_path="./debug/")
 ```
 
-See [Debugging](debugging.md) for details.
+See [Debugging](debugging.md) for details on log levels and debug snapshots.
 
 ## Simulating
 
@@ -110,7 +110,9 @@ initial_regimes = ["working_life", "working_life", "retirement", "working_life"]
 - `check_initial_conditions=True`: Validates that initial states are on-grid and regimes
   are valid. Set to `False` to skip validation.
 - `seed=None`: Random seed for stochastic simulations (int).
-- `debug=True`: Same as for `solve()`.
+- `log_level="progress"`: Controls logging verbosity (same options as `solve()`).
+- `log_path=None`: Directory for debug snapshots (when `log_level="debug"`).
+- `log_keep_n_latest=3`: Maximum snapshot directories to retain.
 
 ### Heterogeneous initial ages
 

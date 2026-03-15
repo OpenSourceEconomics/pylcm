@@ -57,7 +57,7 @@ def _build_tiny_model():
 @pytest.fixture
 def solved():
     model, params = _build_tiny_model()
-    return model.solve(params, debug=False)
+    return model.solve(params, log_level="off")
 
 
 def test_save_and_load_solution_roundtrip(tmp_path, solved):

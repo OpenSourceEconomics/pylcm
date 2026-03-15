@@ -120,7 +120,7 @@ def test_solve_with_runtime_grid():
         "interest_rate": 0.05,
         "alive": {"wealth": {"points": jnp.linspace(1, 10, 5)}},
     }
-    V_arr_dict = model.solve(params, debug=False)
+    V_arr_dict = model.solve(params, log_level="off")
     assert len(V_arr_dict) > 0
 
 
@@ -133,7 +133,7 @@ def test_runtime_grid_matches_fixed():
         wealth_grid=IrregSpacedGrid(points=list(points.tolist())),
     )
     params_fixed = {"discount_factor": 0.95, "interest_rate": 0.05}
-    V_fixed = model_fixed.solve(params_fixed, debug=False)
+    V_fixed = model_fixed.solve(params_fixed, log_level="off")
 
     # Runtime-points model
     model_runtime = _make_model(
@@ -144,7 +144,7 @@ def test_runtime_grid_matches_fixed():
         "interest_rate": 0.05,
         "alive": {"wealth": {"points": points}},
     }
-    V_runtime = model_runtime.solve(params_runtime, debug=False)
+    V_runtime = model_runtime.solve(params_runtime, log_level="off")
 
     # V_arr for period 0, regime "alive" should match
     for period in V_fixed:

@@ -91,7 +91,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
             "age": jnp.array([0.0, 0.0]),
         },
         initial_regimes=["working_life"] * 2,
-        logger=get_logger(debug=False),
+        logger=get_logger(log_level="off"),
         **simulate_inputs,
     )
     got = result.to_dataframe().query('regime == "working_life"')

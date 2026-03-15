@@ -1,8 +1,22 @@
+import json
+import logging
+from unittest.mock import patch
+
 import jax.numpy as jnp
 import pytest
 
-from lcm import AgeGrid, LinSpacedGrid, Model, Regime, SimulationResult, categorical
-from lcm.persistence import load_solution
+from lcm import (
+    AgeGrid,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    SimulateSnapshot,
+    SolveAndSimulateSnapshot,
+    SolveSnapshot,
+    categorical,
+    load_snapshot,
+)
+from lcm.persistence import _get_platform
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 
@@ -67,24 +81,26 @@ def _initial_conditions():
     return initial_states, initial_regimes
 
 
-def test_solve_debug_persists_solution(tmp_path, model_and_params):
+def test_solve_debug_persists_snapshot(tmp_path, model_and_params):
     model, params = model_and_params
-    V_arr_dict = model.solve(params, debug=True, debug_path=tmp_path)
+    V_arr_dict = model.solve(params, log_level="debug", log_path=tmp_path)
 
-    files = list(tmp_path.glob("solution_*.pkl"))
-    assert len(files) == 1
+    dirs = sorted(tmp_path.glob("solve_snapshot_*/"))
+    assert len(dirs) == 1
 
-    loaded = load_solution(path=files[0])
+    snapshot = load_snapshot(dirs[0])
+    assert isinstance(snapshot, SolveSnapshot)
     for period in V_arr_dict:
         for regime_name in V_arr_dict[period]:
             assert jnp.allclose(
-                loaded[period][regime_name], V_arr_dict[period][regime_name]
+                snapshot.V_arr_dict[period][regime_name],
+                V_arr_dict[period][regime_name],
             )
 
 
-def test_simulate_debug_persists_result(tmp_path, model_and_params):
+def test_simulate_debug_persists_snapshot(tmp_path, model_and_params):
     model, params = model_and_params
-    V_arr_dict = model.solve(params, debug=False)
+    V_arr_dict = model.solve(params, log_level="off")
 
     initial_states, initial_regimes = _initial_conditions()
     model.simulate(
@@ -92,18 +108,19 @@ def test_simulate_debug_persists_result(tmp_path, model_and_params):
         initial_states=initial_states,
         initial_regimes=initial_regimes,
         V_arr_dict=V_arr_dict,
-        debug=True,
-        debug_path=tmp_path,
+        log_level="debug",
+        log_path=tmp_path,
     )
 
-    files = list(tmp_path.glob("simulation_result_*.pkl"))
-    assert len(files) == 1
+    dirs = sorted(tmp_path.glob("simulate_snapshot_*/"))
+    assert len(dirs) == 1
 
-    loaded = SimulationResult.from_pickle(files[0])
-    assert loaded.n_subjects == 2
+    snapshot = load_snapshot(dirs[0])
+    assert isinstance(snapshot, SimulateSnapshot)
+    assert snapshot.result is not None
 
 
-def test_solve_and_simulate_debug_persists_both(tmp_path, model_and_params):
+def test_solve_and_simulate_debug_persists_snapshot(tmp_path, model_and_params):
     model, params = model_and_params
     initial_states, initial_regimes = _initial_conditions()
 
@@ -111,24 +128,29 @@ def test_solve_and_simulate_debug_persists_both(tmp_path, model_and_params):
         params,
         initial_states=initial_states,
         initial_regimes=initial_regimes,
-        debug=True,
-        debug_path=tmp_path,
+        log_level="debug",
+        log_path=tmp_path,
     )
 
-    assert len(list(tmp_path.glob("solution_*.pkl"))) == 1
-    assert len(list(tmp_path.glob("simulation_result_*.pkl"))) == 1
+    dirs = sorted(tmp_path.glob("solve_and_simulate_snapshot_*/"))
+    assert len(dirs) == 1
+
+    snapshot = load_snapshot(dirs[0])
+    assert isinstance(snapshot, SolveAndSimulateSnapshot)
+    assert snapshot.V_arr_dict is not None
+    assert snapshot.result is not None
 
 
-def test_solve_debug_false_no_persistence(tmp_path, model_and_params):
+def test_solve_no_persistence_when_not_debug(tmp_path, model_and_params):
     model, params = model_and_params
-    model.solve(params, debug=False, debug_path=tmp_path)
+    model.solve(params, log_level="progress", log_path=tmp_path)
 
-    assert len(list(tmp_path.glob("*.pkl"))) == 0
+    assert len(list(tmp_path.iterdir())) == 0
 
 
-def test_simulate_debug_false_no_persistence(tmp_path, model_and_params):
+def test_simulate_no_persistence_when_not_debug(tmp_path, model_and_params):
     model, params = model_and_params
-    V_arr_dict = model.solve(params, debug=False)
+    V_arr_dict = model.solve(params, log_level="off")
 
     initial_states, initial_regimes = _initial_conditions()
     model.simulate(
@@ -136,22 +158,112 @@ def test_simulate_debug_false_no_persistence(tmp_path, model_and_params):
         initial_states=initial_states,
         initial_regimes=initial_regimes,
         V_arr_dict=V_arr_dict,
-        debug=False,
-        debug_path=tmp_path,
+        log_level="warning",
+        log_path=tmp_path,
     )
 
-    assert len(list(tmp_path.glob("*.pkl"))) == 0
+    assert len(list(tmp_path.iterdir())) == 0
 
 
-def test_keep_n_latest_deletes_old_files(tmp_path, model_and_params):
+def test_debug_without_log_path_raises(model_and_params):
+    model, params = model_and_params
+    with pytest.raises(ValueError, match="log_path is required"):
+        model.solve(params, log_level="debug")
+
+
+def test_log_keep_n_latest_deletes_old_snapshots(tmp_path, model_and_params):
     model, params = model_and_params
 
     for _ in range(5):
-        model.solve(params, debug=True, debug_path=tmp_path, keep_n_latest=3)
+        model.solve(params, log_level="debug", log_path=tmp_path, log_keep_n_latest=3)
 
-    files = sorted(tmp_path.glob("solution_*.pkl"))
-    assert len(files) == 3
-    # The remaining files should be the 3 most recent (003, 004, 005)
-    assert files[0].name == "solution_003.pkl"
-    assert files[1].name == "solution_004.pkl"
-    assert files[2].name == "solution_005.pkl"
+    dirs = sorted(tmp_path.glob("solve_snapshot_*/"))
+    assert len(dirs) == 3
+    assert dirs[0].name == "solve_snapshot_003"
+    assert dirs[1].name == "solve_snapshot_004"
+    assert dirs[2].name == "solve_snapshot_005"
+
+
+def test_snapshot_contains_environment_files(tmp_path, model_and_params):
+    model, params = model_and_params
+    model.solve(params, log_level="debug", log_path=tmp_path)
+
+    snap_dir = sorted(tmp_path.glob("solve_snapshot_*/"))[0]
+
+    assert (snap_dir / "metadata.json").exists()
+    assert (snap_dir / "REPRODUCE.md").exists()
+
+    with (snap_dir / "metadata.json").open() as fh:
+        metadata = json.load(fh)
+    assert metadata["snapshot_type"] == "solve"
+    assert "platform" in metadata
+    assert "fields" in metadata
+
+    reproduce = (snap_dir / "REPRODUCE.md").read_text()
+    assert _get_platform() in reproduce
+    assert "pixi install --frozen" in reproduce
+
+
+def test_snapshot_contains_pixi_lock_and_pyproject(tmp_path, model_and_params):
+    model, params = model_and_params
+    model.solve(params, log_level="debug", log_path=tmp_path)
+
+    snap_dir = sorted(tmp_path.glob("solve_snapshot_*/"))[0]
+
+    # These files should exist if the project root was found
+    assert (snap_dir / "pyproject.toml").exists()
+    assert (snap_dir / "pixi.lock").exists()
+
+
+def test_snapshot_contains_h5_arrays(tmp_path, model_and_params):
+    model, params = model_and_params
+    model.solve(params, log_level="debug", log_path=tmp_path)
+
+    snap_dir = sorted(tmp_path.glob("solve_snapshot_*/"))[0]
+    assert (snap_dir / "arrays.h5").exists()
+    assert (snap_dir / "model.pkl").exists()
+    assert (snap_dir / "params.pkl").exists()
+
+
+def test_load_snapshot_warns_on_platform_mismatch(tmp_path, model_and_params, caplog):
+    model, params = model_and_params
+    model.solve(params, log_level="debug", log_path=tmp_path)
+
+    snap_dir = sorted(tmp_path.glob("solve_snapshot_*/"))[0]
+
+    with (
+        patch("lcm.persistence._get_platform", return_value="fake_arch-FakeOS"),
+        caplog.at_level(logging.WARNING, logger="lcm.persistence"),
+    ):
+        load_snapshot(snap_dir)
+    assert "environment may not match" in caplog.text
+
+
+def test_load_snapshot_with_exclude(tmp_path, model_and_params):
+    model, params = model_and_params
+    model.solve(params, log_level="debug", log_path=tmp_path)
+
+    snap_dir = sorted(tmp_path.glob("solve_snapshot_*/"))[0]
+
+    snapshot = load_snapshot(snap_dir, exclude=["V_arr_dict"])
+    assert isinstance(snapshot, SolveSnapshot)
+    assert snapshot.V_arr_dict is None
+    assert snapshot.model is not None
+    assert snapshot.params is not None
+
+
+def test_solve_snapshot_round_trip(tmp_path, model_and_params):
+    model, params = model_and_params
+    V_arr_dict = model.solve(params, log_level="debug", log_path=tmp_path)
+
+    snap_dir = sorted(tmp_path.glob("solve_snapshot_*/"))[0]
+    snapshot = load_snapshot(snap_dir)
+
+    # Verify the loaded model can re-solve
+    V_arr_dict_2 = snapshot.model.solve(snapshot.params, log_level="off")
+    for period in V_arr_dict:
+        for regime_name in V_arr_dict[period]:
+            assert jnp.allclose(
+                V_arr_dict_2[period][regime_name],
+                V_arr_dict[period][regime_name],
+            )
