@@ -23,10 +23,6 @@ from lcm.pandas_utils import (
 )
 from lcm.typing import DiscreteAction, DiscreteState, FloatND, Period
 
-# ======================================================================================
-# Fixtures
-# ======================================================================================
-
 
 @categorical(ordered=False)
 class Health:
@@ -88,11 +84,6 @@ def _make_model():
     )
 
 
-# ======================================================================================
-# to_categorical_dtype tests
-# ======================================================================================
-
-
 def test_to_categorical_dtype_returns_correct_type():
     result = Health.to_categorical_dtype()  # ty: ignore[unresolved-attribute]
     assert isinstance(result, CategoricalDtype)
@@ -123,11 +114,6 @@ def test_to_categorical_dtype_ordered():
     result = Severity.to_categorical_dtype()  # ty: ignore[unresolved-attribute]
     assert result.ordered is True
     assert list(result.categories) == ["mild", "moderate", "severe"]
-
-
-# ======================================================================================
-# _build_discrete_grid_lookup tests
-# ======================================================================================
 
 
 def test_build_discrete_grid_lookup_basic():
@@ -181,16 +167,12 @@ def test_build_discrete_grid_lookup_inconsistent_raises():
         _build_discrete_grid_lookup(regimes)
 
 
-# ======================================================================================
-# initial_states_from_dataframe tests
-# ======================================================================================
-
-
 def test_continuous_states_and_age():
     model = _make_model()
     df = pd.DataFrame(
         {
             "regime": ["working", "working"],
+            "health": ["bad", "good"],
             "wealth": [10.0, 50.0],
             "age": [25.0, 35.0],
         }
@@ -208,6 +190,7 @@ def test_categorical_string_labels():
             "regime": ["working", "retired"],
             "health": ["bad", "good"],
             "wealth": [10.0, 50.0],
+            "age": [25.0, 25.0],
         }
     )
     states, regimes = initial_states_from_dataframe(df, model=model)
@@ -223,6 +206,7 @@ def test_categorical_pd_categorical_column():
             "regime": ["working", "working"],
             "health": pd.Categorical(["good", "bad"], dtype=health_dtype),
             "wealth": [10.0, 50.0],
+            "age": [25.0, 25.0],
         }
     )
     states, _ = initial_states_from_dataframe(df, model=model)
@@ -236,6 +220,7 @@ def test_multi_regime():
             "regime": ["working", "retired", "working"],
             "health": ["good", "bad", "good"],
             "wealth": [10.0, 50.0, 30.0],
+            "age": [25.0, 25.0, 25.0],
         }
     )
     states, regimes = initial_states_from_dataframe(df, model=model)
@@ -269,9 +254,47 @@ def test_invalid_category_label_raises():
             "regime": ["working"],
             "health": ["excellent"],
             "wealth": [10.0],
+            "age": [25.0],
         }
     )
     with pytest.raises(ValueError, match="Invalid labels"):
+        initial_states_from_dataframe(df, model=model)
+
+
+def test_empty_dataframe_raises():
+    model = _make_model()
+    df = pd.DataFrame(
+        {"regime": pd.Series([], dtype=str), "wealth": pd.Series([], dtype=float)}
+    )
+    with pytest.raises(ValueError, match="empty"):
+        initial_states_from_dataframe(df, model=model)
+
+
+def test_unknown_column_raises():
+    model = _make_model()
+    df = pd.DataFrame(
+        {
+            "regime": ["working"],
+            "health": ["bad"],
+            "wealth": [10.0],
+            "age": [25.0],
+            "subject_id": [42],
+        }
+    )
+    with pytest.raises(ValueError, match="Unknown columns"):
+        initial_states_from_dataframe(df, model=model)
+
+
+def test_missing_state_column_raises():
+    model = _make_model()
+    df = pd.DataFrame(
+        {
+            "regime": ["working"],
+            "age": [25.0],
+            # missing "health" and "wealth"
+        }
+    )
+    with pytest.raises(ValueError, match="Missing required"):
         initial_states_from_dataframe(df, model=model)
 
 
@@ -317,11 +340,6 @@ def test_round_trip_with_discrete_model():
     df_raw = result_raw.to_dataframe()
     df_from_df = result_df.to_dataframe()
     pd.testing.assert_frame_equal(df_raw, df_from_df)
-
-
-# ======================================================================================
-# Fixtures for transition_probs tests
-# ======================================================================================
 
 
 @categorical(ordered=False)
@@ -412,9 +430,10 @@ def _make_partner_probs_array():
 
 
 def _array_to_series(arr, model):
-    """Convert a probs array to a labeled Series with named MultiIndex."""
+    """Convert a probs array to a labeled Series with named MultiIndex using ages."""
     partner_labels = ("single", "partnered")
     work_labels = ("work", "retire")
+    ages = model.ages.values  # noqa: PD011
 
     records = []
     for p in range(model.n_periods):
@@ -423,21 +442,16 @@ def _array_to_series(arr, model):
                 for ns_idx, ns_label in enumerate(partner_labels):
                     records.append(
                         (
-                            (p, w_label, s_label, ns_label),
+                            (float(ages[p]), w_label, s_label, ns_label),
                             float(arr[p, w_idx, s_idx, ns_idx]),
                         )
                     )
 
     index = pd.MultiIndex.from_tuples(
         [r[0] for r in records],
-        names=["period", "work", "partner", "next_partner"],
+        names=["age", "work", "partner", "next_partner"],
     )
     return pd.Series([r[1] for r in records], index=index)
-
-
-# ======================================================================================
-# transition_probs_from_series tests
-# ======================================================================================
 
 
 def test_transition_probs_basic_round_trip():
@@ -460,18 +474,18 @@ def test_transition_probs_categorical_labels():
     # Verify specific values by label
     assert float(result[0, 0, 0, 1]) == pytest.approx(
         0.7
-    )  # period=0, work, single→partnered
+    )  # age=40, work, single→partnered
     assert float(result[1, 1, 1, 0]) == pytest.approx(
         0.7
-    )  # period=1, retire, partnered→single
+    )  # age=41, retire, partnered→single
 
 
 def test_transition_probs_reordered_levels():
     model = _make_stochastic_model()
     arr = _make_partner_probs_array()
     series = _array_to_series(arr, model)
-    # Reorder levels: put next_partner first, then partner, work, period
-    series = series.reorder_levels(["next_partner", "partner", "work", "period"])
+    # Reorder levels: put next_partner first, then partner, work, age
+    series = series.reorder_levels(["next_partner", "partner", "work", "age"])
     result = transition_probs_from_series(
         series=series, model=model, regime_name="working_life", state_name="partner"
     )
@@ -491,7 +505,7 @@ def test_transition_probs_wrong_level_names_raises():
     arr = _make_partner_probs_array()
     series = _array_to_series(arr, model)
     # Rename a level to something wrong
-    series.index = series.index.set_names(["period", "work", "partner", "wrong_name"])
+    series.index = series.index.set_names(["age", "work", "partner", "wrong_name"])
     with pytest.raises(ValueError, match="level names"):
         transition_probs_from_series(
             series=series, model=model, regime_name="working_life", state_name="partner"
@@ -511,9 +525,47 @@ def test_transition_probs_invalid_label_raises():
         )
 
 
-# ======================================================================================
-# validate_transition_probs tests
-# ======================================================================================
+def test_transition_probs_period_level_raises():
+    """Using 'period' instead of 'age' should raise a clear error."""
+    model = _make_stochastic_model()
+    index = pd.MultiIndex.from_tuples(
+        [(0, "work", "single", "single")],
+        names=["period", "work", "partner", "next_partner"],
+    )
+    series = pd.Series([1.0], index=index)
+    with pytest.raises(ValueError, match="age"):
+        transition_probs_from_series(
+            series=series, model=model, regime_name="working_life", state_name="partner"
+        )
+
+
+def test_transition_probs_duplicate_level_names_raises():
+    """Duplicate MultiIndex level names should raise."""
+    model = _make_stochastic_model()
+    index = pd.MultiIndex.from_tuples(
+        [(40.0, "work", "single", "single")],
+        names=["age", "work", "work", "next_partner"],
+    )
+    series = pd.Series([1.0], index=index)
+    with pytest.raises(ValueError, match="duplicate"):
+        transition_probs_from_series(
+            series=series, model=model, regime_name="working_life", state_name="partner"
+        )
+
+
+def test_transition_probs_invalid_age_raises():
+    """Age values not on the model's AgeGrid should raise."""
+    model = _make_stochastic_model()
+    arr = _make_partner_probs_array()
+    series = _array_to_series(arr, model)
+    # Replace age level with invalid values
+    series.index = series.index.set_codes([0] * len(series), level="age").set_levels(
+        [999.0], level="age"
+    )
+    with pytest.raises(ValueError, match="Invalid age"):
+        transition_probs_from_series(
+            series=series, model=model, regime_name="working_life", state_name="partner"
+        )
 
 
 def test_validate_transition_probs_valid():
@@ -598,17 +650,18 @@ def _make_regime_probs_array():
     """Build a (n_periods=3, n_health=2, n_regimes=2) array."""
     return jnp.array(
         [
-            [[0.95, 0.05], [0.98, 0.02]],  # period 0: bad=95%, good=98%
-            [[0.90, 0.10], [0.96, 0.04]],  # period 1
-            [[0.0, 1.0], [0.0, 1.0]],  # period 2: certain death
+            [[0.95, 0.05], [0.98, 0.02]],  # age 60: bad=95%, good=98%
+            [[0.90, 0.10], [0.96, 0.04]],  # age 61
+            [[0.0, 1.0], [0.0, 1.0]],  # age 62: certain death
         ]
     )
 
 
 def _regime_array_to_series(arr, model):
-    """Convert a regime probs array to a labeled Series."""
+    """Convert a regime probs array to a labeled Series using ages."""
     health_labels = ("bad", "good")
     regime_labels = ("alive", "dead")
+    ages = model.ages.values  # noqa: PD011
 
     records = []
     for period_idx in range(model.n_periods):
@@ -616,14 +669,14 @@ def _regime_array_to_series(arr, model):
             for r_idx, r_label in enumerate(regime_labels):
                 records.append(
                     (
-                        (period_idx, h_label, r_label),
+                        (float(ages[period_idx]), h_label, r_label),
                         float(arr[period_idx, h_idx, r_idx]),
                     )
                 )
 
     index = pd.MultiIndex.from_tuples(
         [r[0] for r in records],
-        names=["period", "health", "next_regime"],
+        names=["age", "health", "next_regime"],
     )
     return pd.Series([r[1] for r in records], index=index)
 
@@ -642,7 +695,7 @@ def test_regime_transition_probs_reordered_levels():
     model = _make_regime_markov_model()
     arr = _make_regime_probs_array()
     series = _regime_array_to_series(arr, model)
-    series = series.reorder_levels(["next_regime", "health", "period"])
+    series = series.reorder_levels(["next_regime", "health", "age"])
     result = transition_probs_from_series(
         series=series, model=model, regime_name="alive"
     )
@@ -661,7 +714,7 @@ def test_regime_transition_probs_wrong_level_names_raises():
     model = _make_regime_markov_model()
     arr = _make_regime_probs_array()
     series = _regime_array_to_series(arr, model)
-    series.index = series.index.set_names(["period", "health", "wrong_name"])
+    series.index = series.index.set_names(["age", "health", "wrong_name"])
     with pytest.raises(ValueError, match="level names"):
         transition_probs_from_series(series=series, model=model, regime_name="alive")
 

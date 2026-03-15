@@ -49,21 +49,21 @@ replacing manual array construction where axis ordering is error-prone.
 ```python
 from lcm import transition_probs_from_series
 
-# Series with named MultiIndex levels matching the transition function signature
+# Series with named MultiIndex levels — use "age" (not "period")
 probs = pd.Series(
     [0.9, 0.1, 0.3, 0.7, 0.8, 0.2, 0.4, 0.6],
     index=pd.MultiIndex.from_tuples(
         [
-            (0, "good", "good"),
-            (0, "good", "bad"),
-            (0, "bad", "good"),
-            (0, "bad", "bad"),
-            (1, "good", "good"),
-            (1, "good", "bad"),
-            (1, "bad", "good"),
-            (1, "bad", "bad"),
+            (25, "good", "good"),
+            (25, "good", "bad"),
+            (25, "bad", "good"),
+            (25, "bad", "bad"),
+            (35, "good", "good"),
+            (35, "good", "bad"),
+            (35, "bad", "good"),
+            (35, "bad", "bad"),
         ],
-        names=["period", "health", "next_health"],
+        names=["age", "health", "next_health"],
     ),
 )
 
@@ -88,12 +88,13 @@ regime_probs = transition_probs_from_series(
 
 The MultiIndex level names must match the indexing parameters of the transition function
 (in any order) plus the outcome level (`"next_{state_name}"` for state transitions,
-`"next_regime"` for regime transitions). The function reorders levels to match the
-declaration order automatically, so you don't need to worry about getting the level order
-right.
+`"next_regime"` for regime transitions). Use `"age"` with actual age values from the
+model's `AgeGrid` for the age dimension (not `"period"`). The function reorders levels to
+match the declaration order automatically, so you don't need to worry about getting the
+level order right.
 
 Discrete state and action labels are mapped to integer codes using the same grids defined
-in the model. The `"period"` level uses integer values directly.
+in the model. Age values are converted to period indices automatically.
 
 ## Validating Transition Probabilities
 
@@ -104,7 +105,7 @@ rows that sum to 1 before passing it to `model.solve()`.
 from lcm import validate_transition_probs
 
 validate_transition_probs(
-    health_probs,
+    probs=health_probs,
     model=model,
     regime_name="working",
     state_name="health",

@@ -32,12 +32,17 @@ def initial_states_from_dataframe(
         initial_regimes list of regime name strings).
 
     Raises:
-        ValueError: If the "regime" column is missing, contains invalid regime names,
-            or categorical columns contain invalid labels.
+        ValueError: If the DataFrame is empty, the "regime" column is missing,
+            contains invalid regime names, has unknown columns, is missing required
+            states, or categorical columns contain invalid labels.
 
     """
     if "regime" not in df.columns:
         msg = "DataFrame must contain a 'regime' column."
+        raise ValueError(msg)
+
+    if len(df) == 0:
+        msg = "DataFrame must not be empty."
         raise ValueError(msg)
 
     # Validate regime names
@@ -51,6 +56,9 @@ def initial_states_from_dataframe(
         raise ValueError(msg)
 
     initial_regimes = df["regime"].tolist()
+
+    state_columns = {col for col in df.columns if col != "regime"}
+    _validate_state_columns(state_columns, model.regimes, initial_regimes)
 
     discrete_lookup = _build_discrete_grid_lookup(model.regimes)
 
@@ -117,10 +125,14 @@ def transition_probs_from_series(
     both state transitions (pass `state_name`) and regime transitions (omit
     `state_name`).
 
+    The MultiIndex must use `"age"` (with actual age values from the model's
+    `AgeGrid`) for the age/period dimension — not `"period"`.
+
     Args:
         series: Series with a named MultiIndex. Level names must match the
-            indexing parameters of the transition function plus the outcome
-            level (`"next_{state_name}"` or `"next_regime"`).
+            indexing parameters of the transition function (with `"period"`
+            replaced by `"age"`) plus the outcome level
+            (`"next_{state_name}"` or `"next_regime"`).
         model: The LCM Model instance.
         regime_name: Name of the regime containing the transition.
         state_name: Name of the state with a `MarkovTransition`. Omit for
@@ -197,14 +209,33 @@ def _build_probs_array(
     model: Model,
     series: pd.Series,
 ) -> Array:
-    """Build a probability array from a transition function and labeled Series."""
+    """Build a probability array from a transition function and labeled Series.
+
+    Args:
+        func: The transition function whose signature defines the axis order.
+        outcome: Metadata for the outcome (last) axis.
+        all_grids: Dict of discrete grid names to `DiscreteGrid` instances.
+        model: The LCM Model instance (used for age-to-period mapping).
+        series: Series with a named MultiIndex containing the probability values.
+
+    Returns:
+        JAX array with axes matching the function's indexing parameters (in
+        declaration order) followed by the outcome axis.
+
+    """
     indexing_params = _get_indexing_params(func)
-    expected_levels = [*indexing_params, outcome.level_name]
+    # Replace internal "period" param with user-facing "age" level name
+    expected_levels = [
+        "age" if param == "period" else param for param in indexing_params
+    ]
+    expected_levels.append(outcome.level_name)
 
     series = _validate_and_reorder_levels(series, expected_levels)
 
-    shape = _compute_shape(expected_levels, outcome, all_grids, model, series)
-    index_arrays = _map_labels_to_codes(expected_levels, outcome, all_grids, series)
+    shape = _compute_shape(expected_levels, outcome, all_grids, model)
+    index_arrays = _map_labels_to_codes(
+        expected_levels, outcome, all_grids, model, series
+    )
 
     result = np.zeros(shape, dtype=float)
     result[tuple(index_arrays)] = series.to_numpy()
@@ -217,14 +248,30 @@ def _validate_and_reorder_levels(
     expected_levels: list[str],
 ) -> pd.Series:
     """Validate MultiIndex level names and reorder to match expected order."""
-    if series.index.names is None or set(series.index.names) != set(expected_levels):
+    actual_names = list(series.index.names)
+
+    if "period" in actual_names:
         msg = (
-            f"Series MultiIndex level names must be {expected_levels}, "
-            f"but got {list(series.index.names)}."
+            "Use 'age' (with actual age values) as the MultiIndex level name "
+            "instead of 'period'."
         )
         raise ValueError(msg)
 
-    if list(series.index.names) != expected_levels:
+    if len(actual_names) != len(set(actual_names)):
+        msg = (
+            f"Series MultiIndex has duplicate level names: {actual_names}. "
+            f"All level names must be unique."
+        )
+        raise ValueError(msg)
+
+    if set(actual_names) != set(expected_levels):
+        msg = (
+            f"Series MultiIndex level names must be {expected_levels}, "
+            f"but got {actual_names}."
+        )
+        raise ValueError(msg)
+
+    if actual_names != expected_levels:
         series = series.reorder_levels(expected_levels)  # ty: ignore[invalid-argument-type]
 
     return series
@@ -235,19 +282,23 @@ def _compute_shape(
     outcome: _OutcomeMapping,
     all_grids: dict[str, DiscreteGrid],
     model: Model,
-    series: pd.Series,
 ) -> list[int]:
     """Compute the expected array shape from grid sizes."""
     shape: list[int] = []
     for level_name in expected_levels:
-        if level_name == "period":
+        if level_name == "age":
             shape.append(model.n_periods)
         elif level_name == outcome.level_name:
             shape.append(outcome.n_outcomes)
         elif level_name in all_grids:
             shape.append(len(all_grids[level_name].categories))
         else:
-            shape.append(len(series.index.get_level_values(level_name).unique()))
+            msg = (
+                f"Unrecognised level name '{level_name}'. Expected 'age', "
+                f"a discrete grid name ({sorted(all_grids)}), or the outcome "
+                f"level '{outcome.level_name}'."
+            )
+            raise ValueError(msg)
     return shape
 
 
@@ -255,6 +306,7 @@ def _map_labels_to_codes(
     expected_levels: list[str],
     outcome: _OutcomeMapping,
     all_grids: dict[str, DiscreteGrid],
+    model: Model,
     series: pd.Series,
 ) -> list[np.ndarray]:
     """Map string labels in MultiIndex levels to integer codes."""
@@ -262,14 +314,35 @@ def _map_labels_to_codes(
     for level_name in expected_levels:
         level_values = series.index.get_level_values(level_name)
 
+        if level_name == "age":
+            age_values = model.ages.values  # noqa: PD011
+            age_to_period: dict[float, int] = {
+                float(age): idx for idx, age in enumerate(age_values)
+            }
+            try:
+                mapped = np.array([age_to_period[float(v)] for v in level_values])
+            except KeyError:
+                invalid = {float(v) for v in level_values} - set(age_to_period)
+                valid_ages = sorted(age_to_period)
+                msg = (
+                    f"Invalid age values: {sorted(invalid)}. Valid ages: {valid_ages}."
+                )
+                raise ValueError(msg) from None
+            index_arrays.append(mapped)
+            continue
+
         if level_name == outcome.level_name:
             label_to_code = outcome.label_to_code
         elif level_name in all_grids:
             grid = all_grids[level_name]
             label_to_code = dict(zip(grid.categories, grid.codes, strict=True))
         else:
-            unique_sorted = sorted(set(level_values))
-            label_to_code = {v: i for i, v in enumerate(unique_sorted)}
+            msg = (
+                f"Unrecognised level name '{level_name}'. Expected 'age', "
+                f"a discrete grid name ({sorted(all_grids)}), or the outcome "
+                f"level '{outcome.level_name}'."
+            )
+            raise ValueError(msg)
 
         try:
             mapped = np.array([label_to_code[v] for v in level_values])
@@ -285,6 +358,45 @@ def _map_labels_to_codes(
     return index_arrays
 
 
+def _validate_state_columns(
+    state_columns: set[str],
+    regimes: Mapping[str, Regime],
+    initial_regimes: list[str],
+) -> None:
+    """Validate that DataFrame columns match model states."""
+    all_states = _collect_all_state_names(regimes, initial_regimes)
+
+    unknown = state_columns - all_states
+    if unknown:
+        msg = (
+            f"Unknown columns not matching any model state: {sorted(unknown)}. "
+            f"Expected states: {sorted(all_states)}."
+        )
+        raise ValueError(msg)
+
+    missing = all_states - state_columns
+    if missing:
+        msg = (
+            f"Missing required state columns: {sorted(missing)}. "
+            f"All non-shock states must be provided."
+        )
+        raise ValueError(msg)
+
+
+def _collect_all_state_names(
+    regimes: Mapping[str, Regime],
+    initial_regimes: list[str],
+) -> set[str]:
+    """Collect all non-shock state names from regimes present in initial_regimes."""
+    state_names: set[str] = set()
+    for regime_name in set(initial_regimes):
+        regime = regimes[regime_name]
+        state_names.update(regime.states.keys())
+    # Always include age
+    state_names.add("age")
+    return state_names
+
+
 def _build_discrete_grid_lookup(
     regimes: Mapping[str, Regime],
 ) -> dict[str, DiscreteGrid]:
@@ -294,7 +406,7 @@ def _build_discrete_grid_lookup(
         regimes: Mapping of regime names to Regime instances.
 
     Returns:
-        Mapping from state name to DiscreteGrid.
+        Dict mapping state name to DiscreteGrid.
 
     Raises:
         ValueError: If two regimes define the same state with different categories.
@@ -325,7 +437,7 @@ def _build_discrete_action_lookup(regime: Regime) -> dict[str, DiscreteGrid]:
         regime: The Regime instance.
 
     Returns:
-        Mapping from action name to DiscreteGrid.
+        Dict mapping action name to DiscreteGrid.
 
     """
     return {
