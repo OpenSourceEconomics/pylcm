@@ -44,13 +44,13 @@ def test_model_solve_and_simulate_with_stochastic_model():
 
     result = model.solve_and_simulate(
         params=params,
-        initial_states={
+        initial_conditions={
             "health": jnp.array([1, 1, 0, 0]),
             "partner": jnp.array([0, 0, 1, 0]),
             "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
             "age": jnp.array([40.0, 40.0, 40.0, 40.0]),
+            "regime_id": jnp.array([RegimeId.working_life] * 4),
         },
-        initial_regimes=["working_life"] * 4,
     )
     df = result.to_dataframe().query('regime == "working_life"')
 
@@ -200,25 +200,23 @@ def test_compare_deterministic_and_stochastic_results_value_function(
     # ==================================================================================
     # Compare simulation results
     # ==================================================================================
-    initial_states = {
+    initial_conditions = {
         "health": jnp.array([1, 1, 0, 0]),
         "partner": jnp.array([0, 0, 0, 0]),
         "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
         "age": jnp.array([40.0, 40.0, 40.0, 40.0]),
+        "regime_id": jnp.array([RegimeId.working_life] * 4),
     }
-    initial_regimes = ["working_life"] * 4
 
     simulation_deterministic = model_deterministic.simulate(
         params,
         V_arr_dict=solution_deterministic,
-        initial_states=initial_states,
-        initial_regimes=initial_regimes,
+        initial_conditions=initial_conditions,
     )
     simulation_stochastic = model_stochastic.simulate(
         params,
         V_arr_dict=solution_stochastic,
-        initial_states=initial_states,
-        initial_regimes=initial_regimes,
+        initial_conditions=initial_conditions,
     )
     df_deterministic = simulation_deterministic.to_dataframe().query(
         'regime == "working_life"'

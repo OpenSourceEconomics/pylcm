@@ -15,6 +15,7 @@ from lcm import (
 from lcm.error_handling import _format_sum_violation, validate_regime_transition_probs
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import DiscreteAction, FloatND
+from lcm_examples.mortality import RegimeId as MortalityRegimeId
 from lcm_examples.mortality import get_model, get_params
 
 # ======================================================================================
@@ -275,13 +276,15 @@ def test_simulate_raises_for_invalid_regime_transition_probs():
     bad_params = get_params(
         N_PERIODS, survival_probs=_invalid_survival_probs(N_PERIODS)
     )
-    initial_states = {"age": jnp.array([40.0]), "wealth": jnp.array([10.0])}
-    initial_regimes = ["working_life"]
+    initial_conditions = {
+        "age": jnp.array([40.0]),
+        "wealth": jnp.array([10.0]),
+        "regime_id": jnp.array([MortalityRegimeId.working_life]),
+    }
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
         model.simulate(
             params=bad_params,
-            initial_states=initial_states,
-            initial_regimes=initial_regimes,
+            initial_conditions=initial_conditions,
             V_arr_dict=V_arr_dict,
         )
 
@@ -290,11 +293,13 @@ def test_solve_and_simulate_raises_for_invalid_regime_transition_probs():
     """model.solve_and_simulate() raises for out-of-bounds regime transition probs."""
     model = get_model(N_PERIODS)
     params = get_params(N_PERIODS, survival_probs=_invalid_survival_probs(N_PERIODS))
-    initial_states = {"age": jnp.array([40.0]), "wealth": jnp.array([10.0])}
-    initial_regimes = ["working_life"]
+    initial_conditions = {
+        "age": jnp.array([40.0]),
+        "wealth": jnp.array([10.0]),
+        "regime_id": jnp.array([MortalityRegimeId.working_life]),
+    }
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
         model.solve_and_simulate(
             params=params,
-            initial_states=initial_states,
-            initial_regimes=initial_regimes,
+            initial_conditions=initial_conditions,
         )

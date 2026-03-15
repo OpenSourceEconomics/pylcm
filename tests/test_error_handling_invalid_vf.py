@@ -179,17 +179,17 @@ def test_solve_model_with_inf_value_function_does_not_raise_error(
 def test_simulate_model_with_nan_value_function_array_raises_error(
     nan_value_model: Model, params: UserParams
 ) -> None:
-    initial_states = {
+    initial_conditions = {
         "wealth": jnp.array([0.9, 1.0]),
         "health": jnp.array([1.0, 1.0]),
         "age": jnp.array([0.0, 0.0]),
+        "regime_id": jnp.array([RegimeId.non_terminal] * 2),
     }
 
     with pytest.raises(InvalidValueFunctionError):
         nan_value_model.solve_and_simulate(
             params,
-            initial_states=initial_states,
-            initial_regimes=["non_terminal"] * 2,
+            initial_conditions=initial_conditions,
             check_initial_conditions=False,
         )
 
@@ -197,18 +197,17 @@ def test_simulate_model_with_nan_value_function_array_raises_error(
 def test_simulate_model_with_inf_value_function_array_does_not_raise_error(
     inf_value_model: Model, params: UserParams
 ) -> None:
-    initial_states = {
+    initial_conditions = {
         "wealth": jnp.array([1.5, 2.0]),
         "health": jnp.array([1.0, 1.0]),
         "age": jnp.array([0.0, 0.0]),
+        "regime_id": jnp.array([RegimeId.non_terminal] * 2),
     }
 
     # This should not raise an error. Subject 1 (wealth=2.0, health=1.0) triggers the
     # +inf utility term (wealth > 1.9 AND health > 0.9), but the simulation should
     # still complete without error.
-    inf_value_model.solve_and_simulate(
-        params, initial_states=initial_states, initial_regimes=["non_terminal"] * 2
-    )
+    inf_value_model.solve_and_simulate(params, initial_conditions=initial_conditions)
 
 
 def test_nan_error_includes_regime_name(

@@ -1,4 +1,5 @@
 import logging
+import time
 from types import MappingProxyType
 
 import jax.numpy as jnp
@@ -35,9 +36,12 @@ def solve(
     )
 
     logger.info("Starting solution")
+    has_multiple_regimes = len(internal_regimes) > 1
+    total_start = time.monotonic()
 
     # backwards induction loop
     for period in reversed(range(ages.n_periods)):
+        period_start = time.monotonic()
         period_solution: dict[RegimeName, FloatND] = {}
 
         active_regimes = {
@@ -60,6 +64,21 @@ def solve(
                 **internal_params[name],
             )
 
+            if jnp.any(jnp.isnan(V_arr)) or jnp.any(jnp.isinf(V_arr)):
+                logger.warning(
+                    "NaN/Inf in V_arr for regime '%s' at age %s",
+                    name,
+                    ages.values[period],
+                )
+
+            logger.debug(
+                "  regime '%s': V min=%.3g max=%.3g mean=%.3g",
+                name,
+                float(jnp.min(V_arr)),
+                float(jnp.max(V_arr)),
+                float(jnp.mean(V_arr)),
+            )
+
             validate_value_function_array(
                 V_arr=V_arr, age=ages.values[period], regime_name=name
             )
@@ -67,6 +86,19 @@ def solve(
 
         next_V_arr = MappingProxyType(period_solution)
         solution[period] = next_V_arr
-        logger.info("Age: %s", ages.values[period])
+
+        elapsed = time.monotonic() - period_start
+        if has_multiple_regimes:
+            logger.info(
+                "Age: %s  regimes=%d  (%.1fs)",
+                ages.values[period],
+                len(active_regimes),
+                elapsed,
+            )
+        else:
+            logger.info("Age: %s  (%.1fs)", ages.values[period], elapsed)
+
+    total_elapsed = time.monotonic() - total_start
+    logger.info("Solution complete  (%.1fs)", total_elapsed)
 
     return MappingProxyType(solution)

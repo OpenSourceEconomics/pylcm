@@ -125,7 +125,7 @@ def test_solve_with_runtime_shock():
     """Solve should work with runtime-supplied shock params."""
     model = _make_model()
     params = {"discount_factor": 1.0, **_TAUCHEN_PARAMS}
-    V_arr_dict = model.solve(params, debug=False)
+    V_arr_dict = model.solve(params, log_level="off")
     assert len(V_arr_dict) > 0
 
 
@@ -139,5 +139,5 @@ def test_runtime_shock_with_fixed_params():
         assert name not in income_params
 
     params = {"discount_factor": 1.0}
-    V_arr_dict = model.solve(params, debug=False)
+    V_arr_dict = model.solve(params, log_level="off")
     assert len(V_arr_dict) > 0

@@ -118,7 +118,7 @@ def test_solve_brute():
         internal_params=MappingProxyType({"default": internal_params}),
         ages=AgeGrid(start=0, stop=2, step="Y"),
         internal_regimes={"default": internal_regime},  # ty: ignore[invalid-argument-type]
-        logger=get_logger(debug=False),
+        logger=get_logger(log_level="off"),
     )
 
     # Solution is now MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
@@ -174,7 +174,7 @@ def test_solve_brute_single_period_Qc_arr():
         internal_params=MappingProxyType({"default": MappingProxyType({})}),
         ages=AgeGrid(start=0, stop=2, step="Y"),
         internal_regimes={"default": internal_regime},  # ty: ignore[invalid-argument-type]
-        logger=get_logger(debug=False),
+        logger=get_logger(log_level="off"),
     )
 
     # Solution is now dict[int, dict[RegimeName, FloatND]], need to extract the V_arr

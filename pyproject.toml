@@ -31,6 +31,7 @@ dynamic = [ "version" ]
 dependencies = [
   "cloudpickle>=3.1.2,<4",
   "dags>=0.5.1",
+  "h5py>=3.12",
   "jax>=0.9",
   "jaxtyping>=0.3.2",
   "pandas",
@@ -193,6 +194,7 @@ src.include = [ "src/", "tests/" ]
 [tool.pixi.dependencies]
 python = "~=3.14.0"
 cloudpickle = ">=3.1.2,<4"
+h5py = ">=3.12"
 jupyterlab = "*"
 memory_profiler = "*"
 numpy = ">=2.4"

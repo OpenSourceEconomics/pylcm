@@ -1,9 +1,11 @@
 import logging
+import time
 from collections.abc import Mapping
 from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
+import pandas as pd
 from jax import Array, vmap
 
 from lcm.ages import AgeGrid
@@ -35,30 +37,31 @@ from lcm.utils import flatten_regime_namespace
 def simulate(
     *,
     internal_params: InternalParams,
-    initial_states: Mapping[str, Array],
-    initial_regimes: list[RegimeName],
+    initial_conditions: Mapping[str, Array],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_names_to_ids: RegimeNamesToIds,
     logger: logging.Logger,
     V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
     ages: AgeGrid,
+    simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     seed: int | None = None,
 ) -> SimulationResult:
     """Simulate the model forward in time given pre-computed value function arrays.
 
     Args:
         internal_params: Immutable mapping of regime names to flat parameter mappings.
-        initial_states: Flat mapping of state names to arrays. All arrays must have
-            the same length (number of subjects). Each state name should correspond to
-            a state variable defined in at least one regime.
-            Example: {"wealth": jnp.array([10.0, 50.0]), "health": jnp.array([0, 1])}
+        initial_conditions: Flat mapping of state names (plus `"regime_id"`) to arrays.
+            All arrays must have the same length (number of subjects). The `"regime_id"`
+            entry must contain integer regime codes.
+            Example: {"wealth": jnp.array([10.0, 50.0]), "regime_id": jnp.array([0, 0])}
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
         regime_names_to_ids: Immutable mapping of regime names to integer indices.
-        initial_regimes: List of regime names the subjects start in.
         logger: Logger that logs to stdout.
         V_arr_dict: Immutable mapping of periods to regime value function arrays.
         ages: AgeGrid for the model, used to convert periods to ages.
+        simulation_output_dtypes: Mapping of variable name to `pd.CategoricalDtype`,
+            used for building simulation metadata.
         seed: Random number seed; will be passed to `jax.random.key`. If not provided,
             a random seed will be generated.
 
@@ -70,25 +73,23 @@ def simulate(
         seed = draw_random_seed()
 
     logger.info("Starting simulation")
+    has_multiple_regimes = len(internal_regimes) > 1
+    total_start = time.monotonic()
+
+    # Separate regime_id from state arrays
+    initial_regime_ids = initial_conditions["regime_id"]
+    initial_states = {k: v for k, v in initial_conditions.items() if k != "regime_id"}
 
     # Convert flat initial_states to nested format
-    # ----------------------------------------------------------------------------------
     nested_initial_states = convert_initial_states_to_nested(
         initial_states=initial_states, internal_regimes=internal_regimes
     )
 
     # Preparations
-    # ----------------------------------------------------------------------------------
     key = jax.random.key(seed=seed)
 
     # The following variables are updated during the forward simulation
     states = MappingProxyType(flatten_regime_namespace(nested_initial_states))
-    initial_regime_ids = jnp.asarray(
-        [
-            regime_names_to_ids[initial_regime_name]
-            for initial_regime_name in initial_regimes
-        ]
-    )
     starting_periods = _compute_starting_periods(
         initial_ages=initial_states["age"], ages=ages
     )
@@ -99,8 +100,11 @@ def simulate(
     simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
         regime_name: {} for regime_name in internal_regimes
     }
+    # Build reverse lookup for regime transition logging
+    ids_to_names: dict[int, str] = {v: k for k, v in regime_names_to_ids.items()}
+
     for period, age in enumerate(ages.values):
-        logger.info("Age: %s", age)
+        period_start = time.monotonic()
 
         # Activate subjects whose starting period matches the current period
         subject_regime_ids = jnp.where(
@@ -109,6 +113,7 @@ def simulate(
             subject_regime_ids,
         )
 
+        prev_regime_ids = subject_regime_ids
         new_subject_regime_ids = subject_regime_ids
 
         active_regimes = {
@@ -143,7 +148,36 @@ def simulate(
             states = new_states
             simulation_results[regime_name][period] = result
 
+            # Check for NaN/Inf in V_arr
+            if jnp.any(jnp.isnan(result.V_arr)) or jnp.any(jnp.isinf(result.V_arr)):
+                logger.warning(
+                    "NaN/Inf in V_arr for regime '%s' at age %s", regime_name, age
+                )
+
         subject_regime_ids = new_subject_regime_ids
+
+        # Log regime transition counts at debug level
+        if has_multiple_regimes and logger.isEnabledFor(logging.DEBUG):
+            _log_regime_transitions(
+                logger=logger,
+                prev_regime_ids=prev_regime_ids,
+                new_regime_ids=subject_regime_ids,
+                ids_to_names=ids_to_names,
+            )
+
+        elapsed = time.monotonic() - period_start
+        if has_multiple_regimes:
+            logger.info(
+                "Age: %s  regimes=%d  (%.1fs)",
+                age,
+                len(active_regimes),
+                elapsed,
+            )
+        else:
+            logger.info("Age: %s  (%.1fs)", age, elapsed)
+
+    total_elapsed = time.monotonic() - total_start
+    logger.info("Simulation complete  (%.1fs)", total_elapsed)
 
     # Wrap results in MappingProxyType for immutability
     wrapped_results = MappingProxyType(
@@ -159,6 +193,7 @@ def simulate(
         internal_params=internal_params,
         V_arr_dict=V_arr_dict,
         ages=ages,
+        simulation_output_dtypes=simulation_output_dtypes,
     )
 
 
@@ -362,8 +397,29 @@ def _compute_starting_periods(
         invalid_ages = initial_ages[~valid]
         msg = (
             f"Initial ages {invalid_ages.tolist()} are not valid age grid points. "
-            f"Valid ages: {ages.values}."
+            f"Valid ages: {ages.values}."  # noqa: PD011
         )
         raise ValueError(msg)
 
     return starting_periods
+
+
+def _log_regime_transitions(
+    *,
+    logger: logging.Logger,
+    prev_regime_ids: Int1D,
+    new_regime_ids: Int1D,
+    ids_to_names: dict[int, str],
+) -> None:
+    """Log regime transition counts at debug level."""
+    parts: list[str] = []
+    for from_id, from_name in sorted(ids_to_names.items()):
+        mask = prev_regime_ids == from_id
+        if not jnp.any(mask):
+            continue
+        for to_id, to_name in sorted(ids_to_names.items()):
+            count = int(jnp.sum(mask & (new_regime_ids == to_id)))
+            if count > 0:
+                parts.append(f"{from_name}\u2192{to_name}={count}")
+    if parts:
+        logger.debug("  transitions: %s", " ".join(parts))

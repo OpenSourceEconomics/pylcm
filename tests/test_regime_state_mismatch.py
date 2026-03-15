@@ -189,11 +189,11 @@ def test_deterministic_target_only_state() -> None:
     V_arr_dict = model.solve(params)
     result = model.simulate(
         params=params,
-        initial_states={
+        initial_conditions={
             "age": jnp.array([0.0, 0.0]),
             "wealth": jnp.array([20.0, 80.0]),
+            "regime_id": jnp.array([_RegimeId.alive] * 2),
         },
-        initial_regimes=["alive", "alive"],
         V_arr_dict=V_arr_dict,
     )
     df = result.to_dataframe(use_labels=False)
@@ -281,11 +281,11 @@ def test_stochastic_target_only_state() -> None:
     V_arr_dict = model.solve(params)
     result = model.simulate(
         params=params,
-        initial_states={
+        initial_conditions={
             "age": jnp.array([0.0, 0.0]),
             "wealth": jnp.array([20.0, 80.0]),
+            "regime_id": jnp.array([_RegimeId.alive] * 2),
         },
-        initial_regimes=["alive", "alive"],
         V_arr_dict=V_arr_dict,
     )
     df = result.to_dataframe(use_labels=False)
@@ -373,11 +373,11 @@ def test_per_target_dict_transitions():
 
     result = model.simulate(
         params=params,
-        initial_states={
+        initial_conditions={
             "age": jnp.zeros(n_subjects),
             "health": initial_health,
+            "regime_id": jnp.array([RegimeId.working_life] * n_subjects),
         },
-        initial_regimes=["working_life"] * n_subjects,
         V_arr_dict=V_arr_dict,
     )
     df = result.to_dataframe(use_labels=False)

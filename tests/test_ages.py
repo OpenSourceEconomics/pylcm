@@ -165,11 +165,11 @@ def test_model_with_quarterly_steps():
     # Solve and simulate
     result = model.solve_and_simulate(
         params=params,
-        initial_states={
+        initial_conditions={
             "wealth": jnp.array([50.0, 100.0, 150.0]),
             "age": jnp.array([18.0, 18.0, 18.0]),
+            "regime_id": jnp.array([RegimeId.working_life] * 3),
         },
-        initial_regimes=["working_life"] * 3,
     )
 
     df = result.to_dataframe()

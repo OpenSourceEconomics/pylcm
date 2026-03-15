@@ -1,4 +1,4 @@
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 
 import jax
@@ -20,31 +20,32 @@ from lcm.simulation.utils import get_regime_state_names
 from lcm.typing import (
     InternalParams,
     RegimeName,
+    RegimeNamesToIds,
 )
 
 
 def validate_initial_conditions(
     *,
-    initial_states: Mapping[str, Array],
-    initial_regimes: list[RegimeName],
+    initial_conditions: Mapping[str, Array],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    regime_names_to_ids: RegimeNamesToIds,
     internal_params: InternalParams,
     ages: AgeGrid,
 ) -> None:
     """Validate initial conditions (regimes, states, and feasibility).
 
     Checks that:
-    1. initial_regimes is non-empty and contains only valid regime names
+    1. `"regime_id"` is present, non-empty, and contains only valid regime IDs
     2. All required state names (across all regimes) are provided, with no extras
-    3. All state arrays have the same length
+    3. All arrays have the same length
     4. Discrete state values are valid codes
     5. Each subject has at least one feasible action combination
 
     Args:
-        initial_states: Mapping of state names to arrays.
-        initial_regimes: List of regime names the subjects start in.
+        initial_conditions: Mapping of state names (plus `"regime_id"`) to arrays.
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
+        regime_names_to_ids: Immutable mapping of regime names to integer IDs.
         internal_params: Immutable mapping of regime names to flat parameter mappings.
         ages: AgeGrid for the model.
 
@@ -52,6 +53,21 @@ def validate_initial_conditions(
         InvalidInitialConditionsError: If any validation check fails.
 
     """
+    # Build reverse lookup from regime IDs to names
+    ids_to_regime_names: dict[int, RegimeName] = {
+        v: k for k, v in regime_names_to_ids.items()
+    }
+
+    # Extract regime_id and derive initial_regimes list for internal helpers
+    regime_id_arr = initial_conditions.get("regime_id")
+    if regime_id_arr is None:
+        raise InvalidInitialConditionsError(
+            format_messages(["'regime_id' must be provided in initial_conditions."])
+        )
+
+    initial_states = {k: v for k, v in initial_conditions.items() if k != "regime_id"}
+    initial_regimes = _regime_ids_to_names(regime_id_arr, ids_to_regime_names)
+
     # Validate regime names and state names/shapes first; early-exit on errors so that
     # downstream checks (discrete codes, feasibility) can assume correct names.
     structural_errors = _collect_structural_errors(
@@ -78,6 +94,29 @@ def validate_initial_conditions(
     )
     if feasibility_errors:
         raise InvalidInitialConditionsError(format_messages(feasibility_errors))
+
+
+def _regime_ids_to_names(
+    regime_id_arr: Array,
+    ids_to_regime_names: dict[int, RegimeName],
+) -> list[RegimeName]:
+    """Convert an array of regime IDs to a list of regime names.
+
+    Args:
+        regime_id_arr: Array of integer regime IDs.
+        ids_to_regime_names: Mapping from integer IDs to regime names.
+
+    Returns:
+        List of regime name strings.
+
+    """
+    valid_ids = set(ids_to_regime_names)
+    return [
+        ids_to_regime_names.get(int(rid), f"<invalid:{int(rid)}>")
+        if int(rid) in valid_ids
+        else f"<invalid:{int(rid)}>"
+        for rid in regime_id_arr
+    ]
 
 
 def _format_missing_states_message(missing: set[str], required: set[str]) -> str:
@@ -342,19 +381,19 @@ def _validate_discrete_state_values(
 
 
 # Target peak memory budget for the vmapped feasibility computation.
-# The feasibility function produces float32 intermediate arrays of size n_action_combos
-# per subject, so: batch_size ≈ target_bytes / (n_action_combos * 4 bytes).
+# Assumes float32 intermediates (JAX default); doubles under x64 mode, but this is
+# a heuristic — being off by 2x just means larger batches, not correctness issues.
 _TARGET_BATCH_BYTES = 256 * 1024 * 1024
-_BYTES_PER_ACTION_ELEMENT = 4  # float32 intermediates, not just the final bool
+_BYTES_PER_ACTION_ELEMENT = 4
 
 
 def _batched_feasibility_check(
     *,
     feasibility_func: Callable[..., Array],
-    subject_states: dict[str, Array],
-    action_kwargs: dict[str, Array],
-    filtered_params: dict[str, object],
-    flat_actions: dict[str, Array],
+    subject_states: Mapping[str, Array],
+    action_kwargs: Mapping[str, Array],
+    filtered_params: Mapping[str, object],
+    flat_actions: Mapping[str, Array],
 ) -> Array:
     """Check feasibility for all subjects, batching to avoid OOM.
 
@@ -364,13 +403,14 @@ def _batched_feasibility_check(
 
     Args:
         feasibility_func: Feasibility function for this regime.
-        subject_states: Per-subject state arrays (shape ``(n_subjects,)`` each).
+        subject_states: Per-subject state arrays (shape `(n_subjects,)` each).
         action_kwargs: Action arrays from the flat action grid, keyed by name.
         filtered_params: Parameter values accepted by the feasibility function.
-        flat_actions: Flat action grid arrays (used to compute batch size).
+        flat_actions: Mapping of action names to flat grid arrays (used to compute
+            batch size).
 
     Returns:
-        Boolean array of shape ``(n_subjects,)`` — True where at least one action is
+        Boolean array of shape `(n_subjects,)` — True where at least one action is
         feasible.
 
     """
@@ -463,9 +503,9 @@ def _check_regime_feasibility(
     if needs_age:
         subject_states["age"] = initial_states["age"][idx_arr]
     if needs_period:
-        age_array = jnp.asarray(ages.exact_values)
-        subject_states["period"] = jnp.searchsorted(
-            age_array, initial_states["age"][idx_arr]
+        age_to_period = {float(v): i for i, v in enumerate(ages.exact_values)}
+        subject_states["period"] = jnp.array(
+            [age_to_period[float(a)] for a in initial_states["age"][idx_arr]]
         )
 
     # Split actions and params — actions are vmapped over, params are not
@@ -509,11 +549,11 @@ def _check_regime_feasibility(
 
 def _format_infeasibility_message(
     *,
-    infeasible_indices: list[int],
+    infeasible_indices: Sequence[int],
     internal_regime: InternalRegime,
     regime_name: str,
     initial_states: Mapping[str, Array],
-    state_names: list[str],
+    state_names: Sequence[str],
 ) -> str:
     """Format an error message for infeasible subjects.
 
@@ -535,7 +575,7 @@ def _format_infeasibility_message(
             for name in state_names
             if name in initial_states
         },
-        index=infeasible_indices,
+        index=list(infeasible_indices),
     )
     state_df.index.name = "subject"
 
