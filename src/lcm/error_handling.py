@@ -2,7 +2,7 @@ import ast
 import inspect
 import textwrap
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import TYPE_CHECKING, overload
 
@@ -339,12 +339,13 @@ def _validate_probs_array_indexing(func: Callable) -> None:
         return
 
     expected = _get_indexing_params(func)
+    func_name = getattr(func, "__name__", "<unknown>")
 
     subscripts = _collect_probs_array_subscripts(tree)
 
     if not subscripts:
         warnings.warn(
-            f"Function '{func.__name__}' has a `probs_array` parameter but no "
+            f"Function '{func_name}' has a `probs_array` parameter but no "
             f"`probs_array[...]` subscript was found. Cannot validate indexing order.",
             UserWarning,
             stacklevel=2,
@@ -353,7 +354,7 @@ def _validate_probs_array_indexing(func: Callable) -> None:
 
     if len(subscripts) > 1:
         warnings.warn(
-            f"Function '{func.__name__}' has multiple `probs_array[...]` subscripts. "
+            f"Function '{func_name}' has multiple `probs_array[...]` subscripts. "
             f"Cannot validate indexing order automatically.",
             UserWarning,
             stacklevel=2,
@@ -364,7 +365,7 @@ def _validate_probs_array_indexing(func: Callable) -> None:
 
     if index_names is None:
         warnings.warn(
-            f"Function '{func.__name__}' uses computed indices in "
+            f"Function '{func_name}' uses computed indices in "
             f"`probs_array[...]`. Cannot validate indexing order automatically.",
             UserWarning,
             stacklevel=2,
@@ -373,7 +374,7 @@ def _validate_probs_array_indexing(func: Callable) -> None:
 
     if index_names != expected:
         msg = (
-            f"In function '{func.__name__}', `probs_array` is indexed as "
+            f"In function '{func_name}', `probs_array` is indexed as "
             f"`probs_array[{', '.join(index_names)}]` but the expected order "
             f"(from the function signature) is "
             f"`probs_array[{', '.join(expected)}]`."
@@ -530,7 +531,7 @@ def _extract_markov_transition(
     if isinstance(raw_transition, MarkovTransition):
         return raw_transition
 
-    if isinstance(raw_transition, (dict, MappingProxyType)):
+    if isinstance(raw_transition, Mapping):
         if target_regime_name is None:
             targets = sorted(raw_transition.keys())
             msg = (
@@ -545,7 +546,7 @@ def _extract_markov_transition(
                 f"Available targets: {sorted(raw_transition.keys())}."
             )
             raise ValueError(msg)
-        entry = raw_transition[target_regime_name]
+        entry = raw_transition[target_regime_name]  # ty: ignore[invalid-argument-type]
         if not isinstance(entry, MarkovTransition):
             msg = (
                 f"Per-target transition for '{target_regime_name}' in state "

@@ -309,7 +309,7 @@ def _compute_metadata(
         if var_name == "regime":
             continue
         discrete_categories[var_name] = tuple(dtype.categories)
-        discrete_ordered[var_name] = dtype.ordered
+        discrete_ordered[var_name] = bool(dtype.ordered)
 
     n_periods = len(raw_results[regime_names[0]])
     n_subjects = _get_n_subjects(raw_results)
