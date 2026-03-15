@@ -11,6 +11,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
+from typing import Any
 
 import cloudpickle
 import h5py
@@ -30,7 +31,7 @@ class SolveSnapshot:
     model: object
     """The Model instance."""
 
-    params: UserParams
+    params: UserParams | None
     """User parameters passed to solve."""
 
     V_arr_dict: VArrMapping | None
@@ -47,7 +48,7 @@ class SimulateSnapshot:
     model: object
     """The Model instance."""
 
-    params: UserParams
+    params: UserParams | None
     """User parameters passed to simulate."""
 
     initial_conditions: Mapping[str, Array] | None
@@ -70,7 +71,7 @@ class SolveAndSimulateSnapshot:
     model: object
     """The Model instance."""
 
-    params: UserParams
+    params: UserParams | None
     """User parameters passed to solve_and_simulate."""
 
     initial_conditions: Mapping[str, Array] | None
@@ -119,7 +120,7 @@ def load_snapshot(
 
     fields = metadata["fields"]
 
-    loaded: dict[str, object] = {"platform": saved_platform}
+    loaded: dict[str, Any] = {"platform": saved_platform}
 
     # Load pickle fields
     for field_name in fields:

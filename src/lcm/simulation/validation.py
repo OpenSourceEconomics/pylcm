@@ -381,10 +381,10 @@ def _validate_discrete_state_values(
 
 
 # Target peak memory budget for the vmapped feasibility computation.
-# The feasibility function produces float32 intermediate arrays of size n_action_combos
-# per subject, so: batch_size ≈ target_bytes / (n_action_combos * 4 bytes).
+# Assumes float32 intermediates (JAX default); doubles under x64 mode, but this is
+# a heuristic — being off by 2x just means larger batches, not correctness issues.
 _TARGET_BATCH_BYTES = 256 * 1024 * 1024
-_BYTES_PER_ACTION_ELEMENT = 4  # float32 intermediates, not just the final bool
+_BYTES_PER_ACTION_ELEMENT = 4
 
 
 def _batched_feasibility_check(
@@ -575,7 +575,7 @@ def _format_infeasibility_message(
             for name in state_names
             if name in initial_states
         },
-        index=infeasible_indices,
+        index=list(infeasible_indices),
     )
     state_df.index.name = "subject"
 

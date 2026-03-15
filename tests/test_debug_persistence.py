@@ -89,6 +89,7 @@ def test_solve_debug_persists_snapshot(tmp_path, model_and_params):
 
     snapshot = load_snapshot(dirs[0])
     assert isinstance(snapshot, SolveSnapshot)
+    assert snapshot.V_arr_dict is not None
     for period in V_arr_dict:
         for regime_name in V_arr_dict[period]:
             assert jnp.allclose(
@@ -252,6 +253,8 @@ def test_solve_snapshot_round_trip(tmp_path, model_and_params):
     snapshot = load_snapshot(snap_dir)
 
     # Verify the loaded model can re-solve
+    assert isinstance(snapshot.model, Model)
+    assert snapshot.params is not None
     V_arr_dict_2 = snapshot.model.solve(snapshot.params, log_level="off")
     for period in V_arr_dict:
         for regime_name in V_arr_dict[period]:
