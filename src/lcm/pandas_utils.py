@@ -17,20 +17,21 @@ from lcm.regime import MarkovTransition, Regime
 from lcm.shocks import _ShockGrid
 
 
-def initial_states_from_dataframe(
+def initial_conditions_from_dataframe(
     df: pd.DataFrame,
     *,
     model: Model,
-) -> tuple[dict[str, Array], list[str]]:
-    """Convert a DataFrame of initial conditions to LCM initial states format.
+) -> dict[str, Array]:
+    """Convert a DataFrame of initial conditions to LCM initial conditions format.
 
     Args:
         df: DataFrame with columns for states and a "regime" column.
         model: The LCM Model instance.
 
     Returns:
-        Tuple of (initial_states dict mapping state names to JAX arrays,
-        initial_regimes list of regime name strings).
+        Dict mapping state names (plus `"regime_id"`) to JAX arrays. The
+        `"regime_id"` entry contains integer codes derived from the `"regime"`
+        column via `model.regime_names_to_ids`.
 
     Raises:
         ValueError: If the DataFrame is empty, the "regime" column is missing,
@@ -56,14 +57,14 @@ def initial_states_from_dataframe(
         )
         raise ValueError(msg)
 
-    initial_regimes = df["regime"].tolist()
+    regime_names = df["regime"].tolist()
 
     state_columns = {col for col in df.columns if col != "regime"}
-    _validate_state_columns(state_columns, model.regimes, initial_regimes)
+    _validate_state_columns(state_columns, model.regimes, regime_names)
 
     discrete_lookup = _build_discrete_grid_lookup(model.regimes)
 
-    initial_states: dict[str, Array] = {}
+    initial_conditions: dict[str, Array] = {}
     for col in df.columns:
         if col == "regime":
             continue
@@ -86,11 +87,16 @@ def initial_states_from_dataframe(
                 )
                 raise ValueError(msg)
 
-            initial_states[col] = jnp.array([label_to_code[v] for v in values])
+            initial_conditions[col] = jnp.array([label_to_code[v] for v in values])
         else:
-            initial_states[col] = jnp.array(df[col].values)
+            initial_conditions[col] = jnp.array(df[col].values)
 
-    return initial_states, initial_regimes
+    # Convert regime names to integer codes
+    initial_conditions["regime_id"] = jnp.array(
+        [model.regime_names_to_ids[name] for name in regime_names]
+    )
+
+    return initial_conditions
 
 
 @overload

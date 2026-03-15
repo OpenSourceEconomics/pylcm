@@ -490,11 +490,11 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
     }
     result = model.solve_and_simulate(
         params={"discount_factor": discount_factor, "alive": params_alive},
-        initial_states={
+        initial_conditions={
             "wealth": jnp.array([0.25, 0.75, 1.25, 1.75]),
             "age": jnp.array([0.0, 0.0, 0.0, 0.0]),
+            "regime_id": jnp.array([RegimeId.alive] * 4),
         },
-        initial_regimes=["alive"] * 4,
     )
     # Filter to alive regime only (dead regime has trivial values)
     got = (
@@ -617,15 +617,15 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, probs_array):
         "next_health": {"probs_array": probs_array},
         "next_regime": {"final_age_alive": model.n_periods - 2},
     }
-    initial_states = {
+    initial_conditions = {
         "wealth": jnp.array([0.25, 0.75, 1.25, 1.75, 2.0]),
         "health": jnp.array([0, 1, 0, 1, 1]),
         "age": jnp.array([0.0, 0.0, 0.0, 0.0, 0.0]),
+        "regime_id": jnp.array([RegimeId.alive] * 5),
     }
     result = model.solve_and_simulate(
         params={"discount_factor": discount_factor, "alive": params_alive},
-        initial_states=initial_states,
-        initial_regimes=["alive"] * 5,
+        initial_conditions=initial_conditions,
     )
     # Filter to alive regime only (dead regime has trivial values)
     got = result.to_dataframe().query('regime == "alive"').reset_index(drop=True)
@@ -637,8 +637,8 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, probs_array):
 
     analytical_params = {"discount_factor": discount_factor, **params_alive}
     expected = analytical_simulate_stochastic(
-        initial_wealth=initial_states["wealth"],
-        initial_health=initial_states["health"],
+        initial_wealth=initial_conditions["wealth"],
+        initial_health=initial_conditions["health"],
         health_1=health_1,
         params=analytical_params,
     )

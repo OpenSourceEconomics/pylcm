@@ -17,31 +17,32 @@ from lcm.simulation.utils import get_regime_state_names
 from lcm.typing import (
     InternalParams,
     RegimeName,
+    RegimeNamesToIds,
 )
 
 
 def validate_initial_conditions(
     *,
-    initial_states: Mapping[str, Array],
-    initial_regimes: list[RegimeName],
+    initial_conditions: Mapping[str, Array],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    regime_names_to_ids: RegimeNamesToIds,
     internal_params: InternalParams,
     ages: AgeGrid,
 ) -> None:
     """Validate initial conditions (regimes, states, and feasibility).
 
     Checks that:
-    1. initial_regimes is non-empty and contains only valid regime names
+    1. `"regime_id"` is present, non-empty, and contains only valid regime IDs
     2. All required state names (across all regimes) are provided, with no extras
-    3. All state arrays have the same length
+    3. All arrays have the same length
     4. Discrete state values are valid codes
     5. Each subject has at least one feasible action combination
 
     Args:
-        initial_states: Mapping of state names to arrays.
-        initial_regimes: List of regime names the subjects start in.
+        initial_conditions: Mapping of state names (plus `"regime_id"`) to arrays.
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
+        regime_names_to_ids: Immutable mapping of regime names to integer IDs.
         internal_params: Immutable mapping of regime names to flat parameter mappings.
         ages: AgeGrid for the model.
 
@@ -49,6 +50,21 @@ def validate_initial_conditions(
         InvalidInitialConditionsError: If any validation check fails.
 
     """
+    # Build reverse lookup from regime IDs to names
+    ids_to_regime_names: dict[int, RegimeName] = {
+        v: k for k, v in regime_names_to_ids.items()
+    }
+
+    # Extract regime_id and derive initial_regimes list for internal helpers
+    regime_id_arr = initial_conditions.get("regime_id")
+    if regime_id_arr is None:
+        raise InvalidInitialConditionsError(
+            format_messages(["'regime_id' must be provided in initial_conditions."])
+        )
+
+    initial_states = {k: v for k, v in initial_conditions.items() if k != "regime_id"}
+    initial_regimes = _regime_ids_to_names(regime_id_arr, ids_to_regime_names)
+
     # Validate regime names and state names/shapes first; early-exit on errors so that
     # downstream checks (discrete codes, feasibility) can assume correct names.
     structural_errors = _collect_structural_errors(
@@ -75,6 +91,29 @@ def validate_initial_conditions(
     )
     if feasibility_errors:
         raise InvalidInitialConditionsError(format_messages(feasibility_errors))
+
+
+def _regime_ids_to_names(
+    regime_id_arr: Array,
+    ids_to_regime_names: dict[int, RegimeName],
+) -> list[RegimeName]:
+    """Convert an array of regime IDs to a list of regime names.
+
+    Args:
+        regime_id_arr: Array of integer regime IDs.
+        ids_to_regime_names: Mapping from integer IDs to regime names.
+
+    Returns:
+        List of regime name strings.
+
+    """
+    valid_ids = set(ids_to_regime_names)
+    return [
+        ids_to_regime_names.get(int(rid), f"<invalid:{int(rid)}>")
+        if int(rid) in valid_ids
+        else f"<invalid:{int(rid)}>"
+        for rid in regime_id_arr
+    ]
 
 
 def _format_missing_states_message(missing: set[str], required: set[str]) -> str:

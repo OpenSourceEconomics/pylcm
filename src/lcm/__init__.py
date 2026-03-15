@@ -21,7 +21,7 @@ from lcm.grids import (
 )
 from lcm.model import Model
 from lcm.pandas_utils import (
-    initial_states_from_dataframe,
+    initial_conditions_from_dataframe,
     transition_probs_from_series,
 )
 from lcm.regime import MarkovTransition, Regime
@@ -49,7 +49,7 @@ __all__ = [
     "Regime",
     "SimulationResult",
     "categorical",
-    "initial_states_from_dataframe",
+    "initial_conditions_from_dataframe",
     "shocks",
     "transition_probs_from_series",
     "validate_transition_probs",

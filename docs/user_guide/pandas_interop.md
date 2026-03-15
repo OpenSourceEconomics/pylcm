@@ -8,14 +8,15 @@ pylcm accepts initial conditions as a pandas DataFrame — the natural format wh
 data comes from a survey, an external dataset, or a scenario table. Simulation results
 come back as a DataFrame too, so the typical workflow is DataFrame in, DataFrame out.
 
-## Initial States from a DataFrame
+## Initial Conditions from a DataFrame
 
-Convert a pandas DataFrame into the `initial_states` dict and `initial_regimes` list
-expected by `model.simulate()` and `model.solve_and_simulate()`. This is the standard
-way to supply initial conditions.
+Convert a pandas DataFrame into the `initial_conditions` dict expected by
+`model.simulate()` and `model.solve_and_simulate()`. This is the standard way to supply
+initial conditions. The returned dict includes all state arrays plus a `"regime_id"`
+array with integer codes.
 
 ```python
-from lcm import initial_states_from_dataframe
+from lcm import initial_conditions_from_dataframe
 
 df = pd.DataFrame({
     "regime": ["working", "working", "retired"],
@@ -24,12 +25,11 @@ df = pd.DataFrame({
     "age": [25.0, 25.0, 25.0],
 })
 
-initial_states, initial_regimes = initial_states_from_dataframe(df, model=model)
+initial_conditions = initial_conditions_from_dataframe(df, model=model)
 
 result = model.solve_and_simulate(
     params=params,
-    initial_states=initial_states,
-    initial_regimes=initial_regimes,
+    initial_conditions=initial_conditions,
 )
 ```
 
@@ -124,7 +124,6 @@ mistakes early.
 
 ## See Also
 
-- [Solving and Simulating](solving_and_simulating.md) — the `initial_states` and
-  `initial_regimes` format
+- [Solving and Simulating](solving_and_simulating.md) — the `initial_conditions` format
 - [Parameters](parameters.md) — where transition probability arrays go in the params dict
 - [Regimes](regimes.ipynb) — defining `MarkovTransition` state transitions

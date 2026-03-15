@@ -18,7 +18,7 @@ from lcm.ages import AgeGrid
 from lcm.error_handling import validate_transition_probs
 from lcm.pandas_utils import (
     _build_discrete_grid_lookup,
-    initial_states_from_dataframe,
+    initial_conditions_from_dataframe,
     transition_probs_from_series,
 )
 from lcm.typing import DiscreteAction, DiscreteState, FloatND, Period
@@ -177,10 +177,13 @@ def test_continuous_states_and_age():
             "age": [25.0, 35.0],
         }
     )
-    states, regimes = initial_states_from_dataframe(df, model=model)
-    assert regimes == ["working", "working"]
-    assert jnp.allclose(states["wealth"], jnp.array([10.0, 50.0]))
-    assert jnp.allclose(states["age"], jnp.array([25.0, 35.0]))
+    conditions = initial_conditions_from_dataframe(df, model=model)
+    assert jnp.array_equal(
+        conditions["regime_id"],
+        jnp.array([_RegimeId.working, _RegimeId.working]),
+    )
+    assert jnp.allclose(conditions["wealth"], jnp.array([10.0, 50.0]))
+    assert jnp.allclose(conditions["age"], jnp.array([25.0, 35.0]))
 
 
 def test_categorical_string_labels():
@@ -193,9 +196,12 @@ def test_categorical_string_labels():
             "age": [25.0, 25.0],
         }
     )
-    states, regimes = initial_states_from_dataframe(df, model=model)
-    assert regimes == ["working", "retired"]
-    assert jnp.array_equal(states["health"], jnp.array([Health.bad, Health.good]))
+    conditions = initial_conditions_from_dataframe(df, model=model)
+    assert jnp.array_equal(
+        conditions["regime_id"],
+        jnp.array([_RegimeId.working, _RegimeId.retired]),
+    )
+    assert jnp.array_equal(conditions["health"], jnp.array([Health.bad, Health.good]))
 
 
 def test_categorical_pd_categorical_column():
@@ -209,8 +215,8 @@ def test_categorical_pd_categorical_column():
             "age": [25.0, 25.0],
         }
     )
-    states, _ = initial_states_from_dataframe(df, model=model)
-    assert jnp.array_equal(states["health"], jnp.array([Health.good, Health.bad]))
+    conditions = initial_conditions_from_dataframe(df, model=model)
+    assert jnp.array_equal(conditions["health"], jnp.array([Health.good, Health.bad]))
 
 
 def test_multi_regime():
@@ -223,16 +229,19 @@ def test_multi_regime():
             "age": [25.0, 25.0, 25.0],
         }
     )
-    states, regimes = initial_states_from_dataframe(df, model=model)
-    assert regimes == ["working", "retired", "working"]
-    assert len(states["wealth"]) == 3
+    conditions = initial_conditions_from_dataframe(df, model=model)
+    assert jnp.array_equal(
+        conditions["regime_id"],
+        jnp.array([_RegimeId.working, _RegimeId.retired, _RegimeId.working]),
+    )
+    assert len(conditions["wealth"]) == 3
 
 
 def test_missing_regime_column_raises():
     model = _make_model()
     df = pd.DataFrame({"wealth": [10.0]})
     with pytest.raises(ValueError, match="'regime' column"):
-        initial_states_from_dataframe(df, model=model)
+        initial_conditions_from_dataframe(df, model=model)
 
 
 def test_invalid_regime_name_raises():
@@ -244,7 +253,7 @@ def test_invalid_regime_name_raises():
         }
     )
     with pytest.raises(ValueError, match="Invalid regime names"):
-        initial_states_from_dataframe(df, model=model)
+        initial_conditions_from_dataframe(df, model=model)
 
 
 def test_invalid_category_label_raises():
@@ -258,7 +267,7 @@ def test_invalid_category_label_raises():
         }
     )
     with pytest.raises(ValueError, match="Invalid labels"):
-        initial_states_from_dataframe(df, model=model)
+        initial_conditions_from_dataframe(df, model=model)
 
 
 def test_empty_dataframe_raises():
@@ -267,7 +276,7 @@ def test_empty_dataframe_raises():
         {"regime": pd.Series([], dtype=str), "wealth": pd.Series([], dtype=float)}
     )
     with pytest.raises(ValueError, match="empty"):
-        initial_states_from_dataframe(df, model=model)
+        initial_conditions_from_dataframe(df, model=model)
 
 
 def test_unknown_column_raises():
@@ -282,7 +291,7 @@ def test_unknown_column_raises():
         }
     )
     with pytest.raises(ValueError, match="Unknown columns"):
-        initial_states_from_dataframe(df, model=model)
+        initial_conditions_from_dataframe(df, model=model)
 
 
 def test_missing_state_column_raises():
@@ -295,13 +304,14 @@ def test_missing_state_column_raises():
         }
     )
     with pytest.raises(ValueError, match="Missing required"):
-        initial_states_from_dataframe(df, model=model)
+        initial_conditions_from_dataframe(df, model=model)
 
 
 def test_round_trip_with_discrete_model():
     """Verify DataFrame-based initial states match raw arrays."""
     from tests.test_models.deterministic.discrete import (  # noqa: PLC0415
         DiscreteWealth,
+        RegimeId,
         get_model,
         get_params,
     )
@@ -311,15 +321,14 @@ def test_round_trip_with_discrete_model():
     params = get_params(n_periods)
 
     # Raw array approach
-    raw_states = {
+    raw_conditions = {
         "wealth": jnp.array([DiscreteWealth.low, DiscreteWealth.high]),
         "age": jnp.array([50.0, 50.0]),
+        "regime_id": jnp.array([RegimeId.working_life, RegimeId.working_life]),
     }
-    raw_regimes = ["working_life", "working_life"]
     result_raw = model.solve_and_simulate(
         params=params,
-        initial_states=raw_states,
-        initial_regimes=raw_regimes,
+        initial_conditions=raw_conditions,
     )
 
     # DataFrame approach
@@ -330,11 +339,10 @@ def test_round_trip_with_discrete_model():
             "age": [50.0, 50.0],
         }
     )
-    df_states, df_regimes = initial_states_from_dataframe(df, model=model)
+    df_conditions = initial_conditions_from_dataframe(df, model=model)
     result_df = model.solve_and_simulate(
         params=params,
-        initial_states=df_states,
-        initial_regimes=df_regimes,
+        initial_conditions=df_conditions,
     )
 
     df_raw = result_raw.to_dataframe()

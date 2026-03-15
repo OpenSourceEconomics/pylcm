@@ -13,7 +13,7 @@ import lcm
 from lcm._config import TEST_DATA
 from lcm.exceptions import GridInitializationError
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
-from tests.test_models.shock_grids import get_model, get_params
+from tests.test_models.shock_grids import RegimeId, get_model, get_params
 
 
 @pytest.mark.skipif(not X64_ENABLED, reason="Not working with 32-Bit because of RNG")
@@ -30,12 +30,12 @@ def test_model_with_shock(distribution_type):
 
     got_simulate = model.simulate(
         params=params,
-        initial_regimes=["alive"] * 2,
-        initial_states={
+        initial_conditions={
             "health": jnp.asarray([0, 0]),
             "income": jnp.asarray([0, 0]),
             "wealth": jnp.asarray([1, 1]),
             "age": jnp.asarray([0.0, 0.0]),
+            "regime_id": jnp.array([RegimeId.alive] * 2),
         },
         V_arr_dict=got_solve,
         seed=42,

@@ -35,8 +35,7 @@ V_arr_dict = model.solve(params, debug_mode=False)
 ```python
 result = model.simulate(
     params=params,
-    initial_states=initial_states,
-    initial_regimes=initial_regimes,
+    initial_conditions=initial_conditions,
     V_arr_dict=V_arr_dict,
 )
 ```
@@ -50,8 +49,7 @@ object.
 ```python
 result = model.solve_and_simulate(
     params=params,
-    initial_states=initial_states,
-    initial_regimes=initial_regimes,
+    initial_conditions=initial_conditions,
 )
 ```
 
@@ -63,12 +61,12 @@ arrays.
 ### From a DataFrame
 
 The standard way to supply initial conditions is as a pandas DataFrame with one row per
-agent. Use `initial_states_from_dataframe` to convert it to the format expected by
+agent. Use `initial_conditions_from_dataframe` to convert it to the format expected by
 `simulate()` and `solve_and_simulate()`:
 
 ```python
 import pandas as pd
-from lcm import initial_states_from_dataframe
+from lcm import initial_conditions_from_dataframe
 
 df = pd.DataFrame({
     "regime": ["working_life", "working_life", "retirement", "working_life"],
@@ -77,7 +75,7 @@ df = pd.DataFrame({
     "health": ["good", "bad", "bad", "good"],  # string labels, auto-converted
 })
 
-initial_states, initial_regimes = initial_states_from_dataframe(df, model=model)
+initial_conditions = initial_conditions_from_dataframe(df, model=model)
 ```
 
 Discrete states (those backed by a `DiscreteGrid`) are mapped from string labels to
@@ -90,15 +88,19 @@ You can also pass initial conditions directly as JAX arrays — useful for progr
 setups like grid searches or tests:
 
 ```python
-initial_states = {
+initial_conditions = {
     "age": jnp.array([25.0, 25.0, 25.0, 25.0]),
     "wealth": jnp.array([1.0, 5.0, 10.0, 20.0]),
     "health": jnp.array([0, 1, 1, 0]),  # integer codes for discrete states
+    "regime_id": jnp.array([
+        RegimeId.working_life, RegimeId.working_life,
+        RegimeId.retirement, RegimeId.working_life,
+    ]),
 }
-initial_regimes = ["working_life", "working_life", "retirement", "working_life"]
 ```
 
 - Every non-shock state must have an entry.
+- `"regime_id"` must be included, with integer codes from the `regime_id_class`.
 - All arrays must have the same length (= number of agents).
 - Shock states are drawn automatically.
 
@@ -111,7 +113,7 @@ initial_regimes = ["working_life", "working_life", "retirement", "working_life"]
 
 ### Heterogeneous initial ages
 
-`"age"` must always be provided in `initial_states`. Each value must be a valid point on
+`"age"` must always be provided in `initial_conditions`. Each value must be a valid point on
 the model's `AgeGrid`, and each subject's initial regime must be active at their starting
 age. The most common case is that all subjects start at the initial age — just pass a
 constant array.
@@ -119,11 +121,14 @@ constant array.
 Subjects can start at different ages:
 
 ```python
-initial_states = {
+initial_conditions = {
     "age": jnp.array([40.0, 60.0]),
     "wealth": jnp.array([50.0, 50.0]),
+    "regime_id": jnp.array([
+        model.regime_names_to_ids["working_life"],
+        model.regime_names_to_ids["working_life"],
+    ]),
 }
-initial_regimes = ["working_life", "working_life"]
 ```
 
 In the resulting DataFrame, each subject appears only from their starting age onward —
@@ -202,7 +207,7 @@ result.V_arr_dict       # value function arrays from solve()
 ```python
 import numpy as np
 import pandas as pd
-from lcm import Model, initial_states_from_dataframe
+from lcm import Model, initial_conditions_from_dataframe
 
 # 1. Define model (see previous pages)
 model = Model(regimes={...}, ages=..., regime_id_class=...)
@@ -220,13 +225,12 @@ initial_df = pd.DataFrame({
     "age": model.ages.values[0],
     "wealth": np.linspace(1, 50, 100),
 })
-initial_states, initial_regimes = initial_states_from_dataframe(initial_df, model=model)
+initial_conditions = initial_conditions_from_dataframe(initial_df, model=model)
 
 # 4. Solve and simulate
 result = model.solve_and_simulate(
     params=params,
-    initial_states=initial_states,
-    initial_regimes=initial_regimes,
+    initial_conditions=initial_conditions,
 )
 
 # 5. Analyze
@@ -238,6 +242,7 @@ df.groupby("period")["wealth"].mean()
 
 - [Defining Models](defining_models.md) — constructing the `Model`
 - [Parameters](parameters.md) — preparing the params dict
-- [Working with DataFrames and Series](pandas_interop.md) — DataFrame conversion utilities
+- [Working with DataFrames and Series](pandas_interop.md) — DataFrame conversion
+  utilities
 - [A Tiny Example](tiny_example.ipynb) — complete walkthrough
 - [Examples](../examples/index.md) — full worked examples

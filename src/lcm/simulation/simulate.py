@@ -36,8 +36,7 @@ from lcm.utils import flatten_regime_namespace
 def simulate(
     *,
     internal_params: InternalParams,
-    initial_states: Mapping[str, Array],
-    initial_regimes: list[RegimeName],
+    initial_conditions: Mapping[str, Array],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_names_to_ids: RegimeNamesToIds,
     logger: logging.Logger,
@@ -50,14 +49,13 @@ def simulate(
 
     Args:
         internal_params: Immutable mapping of regime names to flat parameter mappings.
-        initial_states: Flat mapping of state names to arrays. All arrays must have
-            the same length (number of subjects). Each state name should correspond to
-            a state variable defined in at least one regime.
-            Example: {"wealth": jnp.array([10.0, 50.0]), "health": jnp.array([0, 1])}
+        initial_conditions: Flat mapping of state names (plus `"regime_id"`) to arrays.
+            All arrays must have the same length (number of subjects). The `"regime_id"`
+            entry must contain integer regime codes.
+            Example: {"wealth": jnp.array([10.0, 50.0]), "regime_id": jnp.array([0, 0])}
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
         regime_names_to_ids: Immutable mapping of regime names to integer indices.
-        initial_regimes: List of regime names the subjects start in.
         logger: Logger that logs to stdout.
         V_arr_dict: Immutable mapping of periods to regime value function arrays.
         ages: AgeGrid for the model, used to convert periods to ages.
@@ -75,24 +73,20 @@ def simulate(
 
     logger.info("Starting simulation")
 
+    # Separate regime_id from state arrays
+    initial_regime_ids = jnp.asarray(initial_conditions["regime_id"])
+    initial_states = {k: v for k, v in initial_conditions.items() if k != "regime_id"}
+
     # Convert flat initial_states to nested format
-    # ----------------------------------------------------------------------------------
     nested_initial_states = convert_initial_states_to_nested(
         initial_states=initial_states, internal_regimes=internal_regimes
     )
 
     # Preparations
-    # ----------------------------------------------------------------------------------
     key = jax.random.key(seed=seed)
 
     # The following variables are updated during the forward simulation
     states = MappingProxyType(flatten_regime_namespace(nested_initial_states))
-    initial_regime_ids = jnp.asarray(
-        [
-            regime_names_to_ids[initial_regime_name]
-            for initial_regime_name in initial_regimes
-        ]
-    )
     starting_periods = _compute_starting_periods(
         initial_ages=initial_states["age"], ages=ages
     )
