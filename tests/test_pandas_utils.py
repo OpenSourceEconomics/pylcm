@@ -9,79 +9,32 @@ from pandas.api.types import CategoricalDtype
 from lcm import (
     DiscreteGrid,
     LinSpacedGrid,
-    MarkovTransition,
-    Model,
     Regime,
     categorical,
 )
-from lcm.ages import AgeGrid
 from lcm.error_handling import validate_transition_probs
 from lcm.pandas_utils import (
     _build_discrete_grid_lookup,
     initial_conditions_from_dataframe,
     transition_probs_from_series,
 )
-from lcm.typing import DiscreteAction, DiscreteState, FloatND, Period
-
-
-@categorical(ordered=False)
-class Health:
-    bad: int
-    good: int
+from tests.test_models.basic_discrete import (
+    Health,
+)
+from tests.test_models.basic_discrete import (
+    RegimeId as BasicRegimeId,
+)
+from tests.test_models.basic_discrete import (
+    get_model as get_basic_model,
+)
+from tests.test_models.regime_markov import get_model as get_regime_markov_model
+from tests.test_models.stochastic import get_model as get_stochastic_model
 
 
 @categorical(ordered=False)
 class Occupation:
     blue_collar: int
     white_collar: int
-
-
-@categorical(ordered=False)
-class _RegimeId:
-    working: int
-    retired: int
-    dead: int
-
-
-def _next_regime() -> int:
-    return _RegimeId.dead
-
-
-def _make_model():
-    """Create a minimal model with discrete + continuous states and two regimes."""
-    working = Regime(
-        transition=_next_regime,
-        states={
-            "health": DiscreteGrid(Health),
-            "wealth": LinSpacedGrid(start=0, stop=100, n_points=10),
-        },
-        state_transitions={
-            "health": None,
-            "wealth": lambda wealth: wealth,
-        },
-        functions={"utility": lambda wealth, health: wealth + health},
-    )
-    retired = Regime(
-        transition=_next_regime,
-        states={
-            "health": DiscreteGrid(Health),
-            "wealth": LinSpacedGrid(start=0, stop=100, n_points=10),
-        },
-        state_transitions={
-            "health": None,
-            "wealth": lambda wealth: wealth,
-        },
-        functions={"utility": lambda wealth, health: wealth + health},
-    )
-    dead = Regime(
-        transition=None,
-        functions={"utility": lambda: 0.0},
-    )
-    return Model(
-        regimes={"working": working, "retired": retired, "dead": dead},
-        ages=AgeGrid(start=25, stop=75, step="10Y"),
-        regime_id_class=_RegimeId,
-    )
 
 
 def test_to_categorical_dtype_returns_correct_type():
@@ -168,10 +121,10 @@ def test_build_discrete_grid_lookup_inconsistent_raises():
 
 
 def test_continuous_states_and_age():
-    model = _make_model()
+    model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime": ["working", "working"],
+            "regime": ["working_life", "working_life"],
             "health": ["bad", "good"],
             "wealth": [10.0, 50.0],
             "age": [25.0, 35.0],
@@ -180,17 +133,17 @@ def test_continuous_states_and_age():
     conditions = initial_conditions_from_dataframe(df, model=model)
     assert jnp.array_equal(
         conditions["regime_id"],
-        jnp.array([_RegimeId.working, _RegimeId.working]),
+        jnp.array([BasicRegimeId.working_life, BasicRegimeId.working_life]),
     )
     assert jnp.allclose(conditions["wealth"], jnp.array([10.0, 50.0]))
     assert jnp.allclose(conditions["age"], jnp.array([25.0, 35.0]))
 
 
 def test_categorical_string_labels():
-    model = _make_model()
+    model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime": ["working", "retired"],
+            "regime": ["working_life", "retirement"],
             "health": ["bad", "good"],
             "wealth": [10.0, 50.0],
             "age": [25.0, 25.0],
@@ -199,17 +152,17 @@ def test_categorical_string_labels():
     conditions = initial_conditions_from_dataframe(df, model=model)
     assert jnp.array_equal(
         conditions["regime_id"],
-        jnp.array([_RegimeId.working, _RegimeId.retired]),
+        jnp.array([BasicRegimeId.working_life, BasicRegimeId.retirement]),
     )
     assert jnp.array_equal(conditions["health"], jnp.array([Health.bad, Health.good]))
 
 
 def test_categorical_pd_categorical_column():
-    model = _make_model()
+    model = get_basic_model()
     health_dtype = Health.to_categorical_dtype()  # ty: ignore[unresolved-attribute]
     df = pd.DataFrame(
         {
-            "regime": ["working", "working"],
+            "regime": ["working_life", "working_life"],
             "health": pd.Categorical(["good", "bad"], dtype=health_dtype),
             "wealth": [10.0, 50.0],
             "age": [25.0, 25.0],
@@ -220,10 +173,10 @@ def test_categorical_pd_categorical_column():
 
 
 def test_multi_regime():
-    model = _make_model()
+    model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime": ["working", "retired", "working"],
+            "regime": ["working_life", "retirement", "working_life"],
             "health": ["good", "bad", "good"],
             "wealth": [10.0, 50.0, 30.0],
             "age": [25.0, 25.0, 25.0],
@@ -232,23 +185,29 @@ def test_multi_regime():
     conditions = initial_conditions_from_dataframe(df, model=model)
     assert jnp.array_equal(
         conditions["regime_id"],
-        jnp.array([_RegimeId.working, _RegimeId.retired, _RegimeId.working]),
+        jnp.array(
+            [
+                BasicRegimeId.working_life,
+                BasicRegimeId.retirement,
+                BasicRegimeId.working_life,
+            ]
+        ),
     )
     assert len(conditions["wealth"]) == 3
 
 
 def test_missing_regime_column_raises():
-    model = _make_model()
+    model = get_basic_model()
     df = pd.DataFrame({"wealth": [10.0]})
     with pytest.raises(ValueError, match="'regime' column"):
         initial_conditions_from_dataframe(df, model=model)
 
 
 def test_invalid_regime_name_raises():
-    model = _make_model()
+    model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime": ["working", "nonexistent"],
+            "regime": ["working_life", "nonexistent"],
             "wealth": [10.0, 50.0],
         }
     )
@@ -257,10 +216,10 @@ def test_invalid_regime_name_raises():
 
 
 def test_invalid_category_label_raises():
-    model = _make_model()
+    model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime": ["working"],
+            "regime": ["working_life"],
             "health": ["excellent"],
             "wealth": [10.0],
             "age": [25.0],
@@ -271,7 +230,7 @@ def test_invalid_category_label_raises():
 
 
 def test_empty_dataframe_raises():
-    model = _make_model()
+    model = get_basic_model()
     df = pd.DataFrame(
         {"regime": pd.Series([], dtype=str), "wealth": pd.Series([], dtype=float)}
     )
@@ -280,10 +239,10 @@ def test_empty_dataframe_raises():
 
 
 def test_unknown_column_raises():
-    model = _make_model()
+    model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime": ["working"],
+            "regime": ["working_life"],
             "health": ["bad"],
             "wealth": [10.0],
             "age": [25.0],
@@ -295,10 +254,10 @@ def test_unknown_column_raises():
 
 
 def test_missing_state_column_raises():
-    model = _make_model()
+    model = get_basic_model()
     df = pd.DataFrame(
         {
-            "regime": ["working"],
+            "regime": ["working_life"],
             "age": [25.0],
             # missing "health" and "wealth"
         }
@@ -350,82 +309,6 @@ def test_round_trip_with_discrete_model():
     pd.testing.assert_frame_equal(df_raw, df_from_df)
 
 
-@categorical(ordered=False)
-class _PartnerStatus:
-    single: int
-    partnered: int
-
-
-@categorical(ordered=False)
-class _LaborSupply:
-    work: int
-    retire: int
-
-
-@categorical(ordered=False)
-class _StochasticRegimeId:
-    working_life: int
-    retirement: int
-    dead: int
-
-
-def _next_partner(
-    period: Period,
-    work: DiscreteAction,
-    partner: DiscreteState,
-    probs_array: FloatND,
-) -> FloatND:
-    return probs_array[period, work, partner]
-
-
-def _next_stochastic_regime() -> int:
-    return _StochasticRegimeId.dead
-
-
-def _make_stochastic_model():
-    """Create a model with a MarkovTransition on partner status."""
-    working_life = Regime(
-        transition=_next_stochastic_regime,
-        active=lambda age: age < 42,
-        states={
-            "partner": DiscreteGrid(_PartnerStatus),
-            "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
-        },
-        state_transitions={
-            "partner": MarkovTransition(_next_partner),
-            "wealth": lambda wealth: wealth,
-        },
-        actions={"work": DiscreteGrid(_LaborSupply)},
-        functions={"utility": lambda wealth, partner, work: wealth + partner + work},
-    )
-    retirement = Regime(
-        transition=_next_stochastic_regime,
-        active=lambda age: age < 42,
-        states={
-            "partner": DiscreteGrid(_PartnerStatus),
-            "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
-        },
-        state_transitions={
-            "partner": MarkovTransition(_next_partner),
-            "wealth": lambda wealth: wealth,
-        },
-        functions={"utility": lambda wealth, partner: wealth + partner},
-    )
-    dead = Regime(
-        transition=None,
-        functions={"utility": lambda: 0.0},
-    )
-    return Model(
-        regimes={
-            "working_life": working_life,
-            "retirement": retirement,
-            "dead": dead,
-        },
-        ages=AgeGrid(start=40, stop=42, step="Y"),
-        regime_id_class=_StochasticRegimeId,
-    )
-
-
 def _make_partner_probs_array():
     """Build a (n_periods=3, n_work=2, n_partner=2, n_next_partner=2) array."""
     return jnp.array(
@@ -463,7 +346,7 @@ def _array_to_series(arr, model):
 
 
 def test_transition_probs_basic_round_trip():
-    model = _make_stochastic_model()
+    model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
     series = _array_to_series(arr, model)
     result = transition_probs_from_series(
@@ -473,7 +356,7 @@ def test_transition_probs_basic_round_trip():
 
 
 def test_transition_probs_categorical_labels():
-    model = _make_stochastic_model()
+    model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
     series = _array_to_series(arr, model)
     result = transition_probs_from_series(
@@ -482,14 +365,14 @@ def test_transition_probs_categorical_labels():
     # Verify specific values by label
     assert float(result[0, 0, 0, 1]) == pytest.approx(
         0.7
-    )  # age=40, work, single→partnered
+    )  # age=40, work, single->partnered
     assert float(result[1, 1, 1, 0]) == pytest.approx(
         0.7
-    )  # age=41, retire, partnered→single
+    )  # age=50, retire, partnered->single
 
 
 def test_transition_probs_reordered_levels():
-    model = _make_stochastic_model()
+    model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
     series = _array_to_series(arr, model)
     # Reorder levels: put next_partner first, then partner, work, age
@@ -501,15 +384,18 @@ def test_transition_probs_reordered_levels():
 
 
 def test_transition_probs_not_markov_raises():
-    model = _make_model()  # health transition is None (fixed), not MarkovTransition
+    model = get_basic_model()  # health transition is None (fixed), not MarkovTransition
     with pytest.raises(TypeError, match="not a MarkovTransition"):
         transition_probs_from_series(
-            series=pd.Series(), model=model, regime_name="working", state_name="health"
+            series=pd.Series(),
+            model=model,
+            regime_name="working_life",
+            state_name="health",
         )
 
 
 def test_transition_probs_wrong_level_names_raises():
-    model = _make_stochastic_model()
+    model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
     series = _array_to_series(arr, model)
     # Rename a level to something wrong
@@ -521,7 +407,7 @@ def test_transition_probs_wrong_level_names_raises():
 
 
 def test_transition_probs_invalid_label_raises():
-    model = _make_stochastic_model()
+    model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
     series = _array_to_series(arr, model)
     # Replace one label with an invalid one
@@ -535,7 +421,7 @@ def test_transition_probs_invalid_label_raises():
 
 def test_transition_probs_period_level_raises():
     """Using 'period' instead of 'age' should raise a clear error."""
-    model = _make_stochastic_model()
+    model = get_stochastic_model(3)
     index = pd.MultiIndex.from_tuples(
         [(0, "work", "single", "single")],
         names=["period", "work", "partner", "next_partner"],
@@ -549,7 +435,7 @@ def test_transition_probs_period_level_raises():
 
 def test_transition_probs_duplicate_level_names_raises():
     """Duplicate MultiIndex level names should raise."""
-    model = _make_stochastic_model()
+    model = get_stochastic_model(3)
     index = pd.MultiIndex.from_tuples(
         [(40.0, "work", "single", "single")],
         names=["age", "work", "work", "next_partner"],
@@ -563,7 +449,7 @@ def test_transition_probs_duplicate_level_names_raises():
 
 def test_transition_probs_invalid_age_raises():
     """Age values not on the model's AgeGrid should raise."""
-    model = _make_stochastic_model()
+    model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
     series = _array_to_series(arr, model)
     # Replace age level with invalid values
@@ -577,7 +463,7 @@ def test_transition_probs_invalid_age_raises():
 
 
 def test_validate_transition_probs_valid():
-    model = _make_stochastic_model()
+    model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
     validate_transition_probs(
         probs=arr, model=model, regime_name="working_life", state_name="partner"
@@ -585,7 +471,7 @@ def test_validate_transition_probs_valid():
 
 
 def test_validate_transition_probs_wrong_shape():
-    model = _make_stochastic_model()
+    model = get_stochastic_model(3)
     arr = jnp.ones((2, 2, 2)) / 2  # wrong shape
     with pytest.raises(ValueError, match="shape"):
         validate_transition_probs(
@@ -594,7 +480,7 @@ def test_validate_transition_probs_wrong_shape():
 
 
 def test_validate_transition_probs_values_out_of_range():
-    model = _make_stochastic_model()
+    model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
     # Set one value negative
     bad_arr = arr.at[0, 0, 0, 0].set(-0.1)  # noqa: PD008
@@ -605,52 +491,12 @@ def test_validate_transition_probs_values_out_of_range():
 
 
 def test_validate_transition_probs_rows_dont_sum_to_one():
-    model = _make_stochastic_model()
+    model = get_stochastic_model(3)
     arr = jnp.ones((3, 2, 2, 2)) * 0.3  # rows sum to 0.6, not 1
     with pytest.raises(ValueError, match="sum to 1"):
         validate_transition_probs(
             probs=arr, model=model, regime_name="working_life", state_name="partner"
         )
-
-
-@categorical(ordered=False)
-class _MarkovRegimeId:
-    alive: int
-    dead: int
-
-
-def _next_regime_probs(
-    period: Period,
-    health: DiscreteState,
-    probs_array: FloatND,
-) -> FloatND:
-    return probs_array[period, health]
-
-
-def _make_regime_markov_model():
-    """Create a model with MarkovTransition on regime transitions."""
-    alive = Regime(
-        transition=MarkovTransition(_next_regime_probs),
-        states={
-            "health": DiscreteGrid(Health),
-            "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
-        },
-        state_transitions={
-            "health": None,
-            "wealth": lambda wealth: wealth,
-        },
-        functions={"utility": lambda wealth, health: wealth + health},
-        active=lambda age: age < 62,
-    )
-    dead = Regime(
-        transition=None,
-        functions={"utility": lambda: 0.0},
-    )
-    return Model(
-        regimes={"alive": alive, "dead": dead},
-        ages=AgeGrid(start=60, stop=62, step="Y"),
-        regime_id_class=_MarkovRegimeId,
-    )
 
 
 def _make_regime_probs_array():
@@ -689,7 +535,7 @@ def _regime_array_to_series(arr, model):
 
 
 def test_regime_transition_probs_basic_round_trip():
-    model = _make_regime_markov_model()
+    model = get_regime_markov_model()
     arr = _make_regime_probs_array()
     series = _regime_array_to_series(arr, model)
     result = transition_probs_from_series(
@@ -699,7 +545,7 @@ def test_regime_transition_probs_basic_round_trip():
 
 
 def test_regime_transition_probs_reordered_levels():
-    model = _make_regime_markov_model()
+    model = get_regime_markov_model()
     arr = _make_regime_probs_array()
     series = _regime_array_to_series(arr, model)
     series = series.reorder_levels(["next_regime", "health", "age"])
@@ -710,15 +556,15 @@ def test_regime_transition_probs_reordered_levels():
 
 
 def test_regime_transition_probs_not_markov_raises():
-    model = _make_model()  # deterministic regime transition
+    model = get_basic_model()  # deterministic regime transition
     with pytest.raises(TypeError, match="stochastic regime transition"):
         transition_probs_from_series(
-            series=pd.Series(), model=model, regime_name="working"
+            series=pd.Series(), model=model, regime_name="working_life"
         )
 
 
 def test_regime_transition_probs_wrong_level_names_raises():
-    model = _make_regime_markov_model()
+    model = get_regime_markov_model()
     arr = _make_regime_probs_array()
     series = _regime_array_to_series(arr, model)
     series.index = series.index.set_names(["age", "health", "wrong_name"])
@@ -727,7 +573,7 @@ def test_regime_transition_probs_wrong_level_names_raises():
 
 
 def test_regime_transition_probs_invalid_label_raises():
-    model = _make_regime_markov_model()
+    model = get_regime_markov_model()
     arr = _make_regime_probs_array()
     series = _regime_array_to_series(arr, model)
     new_index = series.index.set_levels(["alive", "INVALID"], level="next_regime")
@@ -737,20 +583,20 @@ def test_regime_transition_probs_invalid_label_raises():
 
 
 def test_validate_regime_transition_probs_valid():
-    model = _make_regime_markov_model()
+    model = get_regime_markov_model()
     arr = _make_regime_probs_array()
     validate_transition_probs(probs=arr, model=model, regime_name="alive")
 
 
 def test_validate_regime_transition_probs_wrong_shape():
-    model = _make_regime_markov_model()
+    model = get_regime_markov_model()
     arr = jnp.ones((2, 2)) / 2
     with pytest.raises(ValueError, match="shape"):
         validate_transition_probs(probs=arr, model=model, regime_name="alive")
 
 
 def test_validate_regime_transition_probs_not_markov_raises():
-    model = _make_model()
+    model = get_basic_model()
     arr = jnp.ones((3, 2)) / 2
     with pytest.raises(TypeError, match="stochastic regime transition"):
-        validate_transition_probs(probs=arr, model=model, regime_name="working")
+        validate_transition_probs(probs=arr, model=model, regime_name="working_life")

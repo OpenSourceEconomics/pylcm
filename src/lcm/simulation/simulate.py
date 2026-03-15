@@ -74,7 +74,7 @@ def simulate(
     logger.info("Starting simulation")
 
     # Separate regime_id from state arrays
-    initial_regime_ids = jnp.asarray(initial_conditions["regime_id"])
+    initial_regime_ids = initial_conditions["regime_id"]
     initial_states = {k: v for k, v in initial_conditions.items() if k != "regime_id"}
 
     # Convert flat initial_states to nested format
