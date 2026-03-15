@@ -713,11 +713,6 @@ def _filter_kwargs_for_func(
     return {k: v for k, v in kwargs.items() if k in params}
 
 
-# ======================================================================================
-# Debug persistence helpers
-# ======================================================================================
-
-
 def _persist_solution(
     *,
     V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],

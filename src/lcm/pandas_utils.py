@@ -84,6 +84,38 @@ def initial_states_from_dataframe(
     return initial_states, initial_regimes
 
 
+def regime_transition_probs_from_series(
+    *,
+    series: pd.Series,
+    model: Model,
+    regime_name: str,
+) -> Array:
+    """Convert a labeled pandas Series to a regime transition probability array.
+
+    Convenience wrapper around `transition_probs_from_series` for regime
+    transitions (equivalent to calling it without `state_name`).
+
+    Args:
+        series: Series with a named MultiIndex. Level names must match the
+            indexing parameters of the regime transition function plus a
+            `"next_regime"` outcome level.
+        model: The LCM Model instance.
+        regime_name: Name of the regime containing the transition.
+
+    Returns:
+        JAX array with axes corresponding to the indexing parameters in
+        declaration order, followed by the outcome axis.
+
+    Raises:
+        TypeError: If the regime transition is not a `MarkovTransition`.
+        ValueError: If level names don't match or labels are invalid.
+
+    """
+    return transition_probs_from_series(
+        series=series, model=model, regime_name=regime_name
+    )
+
+
 @overload
 def transition_probs_from_series(
     *,
@@ -181,7 +213,7 @@ class _OutcomeMapping:
     """Metadata for the outcome level of a transition probability array."""
 
     level_name: str
-    """Level name in the MultiIndex (e.g., ``"next_health"`` or ``"next_regime"``)."""
+    """Level name in the MultiIndex (e.g., `"next_health"` or `"next_regime"`)."""
 
     label_to_code: MappingProxyType[str, int]
     """Immutable mapping from string labels to integer codes."""

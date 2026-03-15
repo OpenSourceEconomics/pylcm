@@ -1,4 +1,4 @@
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 
 import jax
@@ -351,10 +351,10 @@ _BYTES_PER_ACTION_ELEMENT = 4  # float32 intermediates, not just the final bool
 def _batched_feasibility_check(
     *,
     feasibility_func: Callable[..., Array],
-    subject_states: dict[str, Array],
-    action_kwargs: dict[str, Array],
-    filtered_params: dict[str, object],
-    flat_actions: dict[str, Array],
+    subject_states: Mapping[str, Array],
+    action_kwargs: Mapping[str, Array],
+    filtered_params: Mapping[str, object],
+    flat_actions: Mapping[str, Array],
 ) -> Array:
     """Check feasibility for all subjects, batching to avoid OOM.
 
@@ -364,13 +364,14 @@ def _batched_feasibility_check(
 
     Args:
         feasibility_func: Feasibility function for this regime.
-        subject_states: Per-subject state arrays (shape ``(n_subjects,)`` each).
+        subject_states: Per-subject state arrays (shape `(n_subjects,)` each).
         action_kwargs: Action arrays from the flat action grid, keyed by name.
         filtered_params: Parameter values accepted by the feasibility function.
-        flat_actions: Flat action grid arrays (used to compute batch size).
+        flat_actions: Mapping of action names to flat grid arrays (used to compute
+            batch size).
 
     Returns:
-        Boolean array of shape ``(n_subjects,)`` — True where at least one action is
+        Boolean array of shape `(n_subjects,)` — True where at least one action is
         feasible.
 
     """
@@ -463,9 +464,9 @@ def _check_regime_feasibility(
     if needs_age:
         subject_states["age"] = initial_states["age"][idx_arr]
     if needs_period:
-        age_array = jnp.asarray(ages.exact_values)
-        subject_states["period"] = jnp.searchsorted(
-            age_array, initial_states["age"][idx_arr]
+        age_to_period = {float(v): i for i, v in enumerate(ages.exact_values)}
+        subject_states["period"] = jnp.array(
+            [age_to_period[float(a)] for a in initial_states["age"][idx_arr]]
         )
 
     # Split actions and params — actions are vmapped over, params are not
@@ -509,11 +510,11 @@ def _check_regime_feasibility(
 
 def _format_infeasibility_message(
     *,
-    infeasible_indices: list[int],
+    infeasible_indices: Sequence[int],
     internal_regime: InternalRegime,
     regime_name: str,
     initial_states: Mapping[str, Array],
-    state_names: list[str],
+    state_names: Sequence[str],
 ) -> str:
     """Format an error message for infeasible subjects.
 
