@@ -1,5 +1,8 @@
+import ast
 import inspect
-from collections.abc import Callable
+import textwrap
+import warnings
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import TYPE_CHECKING, overload
 
@@ -314,6 +317,109 @@ def _get_indexing_params(func: Callable) -> list[str]:
     return [name for name in param_names if name != "probs_array"]
 
 
+def _validate_probs_array_indexing(func: Callable) -> None:
+    """Check that `probs_array[...]` indexing order matches parameter order.
+
+    Handles two cases reliably:
+
+    - Single index: `probs_array[health]`
+    - Tuple of bare names: `probs_array[period, health]`
+
+    For computed indices (`probs_array[period - 1, health]`), variable aliasing,
+    or multiple subscripts in different branches, a warning is emitted instead.
+
+    Args:
+        func: The transition function to inspect.
+
+    Raises:
+        ValueError: If bare-name indices don't match the expected parameter order.
+
+    """
+    sig = inspect.signature(func)
+    if "probs_array" not in sig.parameters:
+        return
+
+    try:
+        source = textwrap.dedent(inspect.getsource(func))
+        tree = ast.parse(source)
+    except OSError, TypeError:
+        return
+
+    expected = _get_indexing_params(func)
+    func_name = getattr(func, "__name__", "<unknown>")
+
+    subscripts = _collect_probs_array_subscripts(tree)
+
+    if not subscripts:
+        warnings.warn(
+            f"Function '{func_name}' has a `probs_array` parameter but no "
+            f"`probs_array[...]` subscript was found. Cannot validate indexing order.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return
+
+    if len(subscripts) > 1:
+        warnings.warn(
+            f"Function '{func_name}' has multiple `probs_array[...]` subscripts. "
+            f"Cannot validate indexing order automatically.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return
+
+    index_names = _extract_bare_names(subscripts[0])
+
+    if index_names is None:
+        warnings.warn(
+            f"Function '{func_name}' uses computed indices in "
+            f"`probs_array[...]`. Cannot validate indexing order automatically.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return
+
+    if index_names != expected:
+        msg = (
+            f"In function '{func_name}', `probs_array` is indexed as "
+            f"`probs_array[{', '.join(index_names)}]` but the expected order "
+            f"(from the function signature) is "
+            f"`probs_array[{', '.join(expected)}]`."
+        )
+        raise ValueError(msg)
+
+
+def _collect_probs_array_subscripts(tree: ast.Module) -> list[ast.expr]:
+    """Find all `probs_array[...]` subscript slice nodes in an AST."""
+    return [
+        node.slice
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Subscript)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "probs_array"
+    ]
+
+
+def _extract_bare_names(slice_node: ast.expr) -> list[str] | None:
+    """Extract bare variable names from a subscript slice.
+
+    Return ``None`` if any index element is not a bare `ast.Name` (e.g. a
+    `BinOp` or `Call`).
+    """
+    if isinstance(slice_node, ast.Name):
+        return [slice_node.id]
+
+    if isinstance(slice_node, ast.Tuple):
+        names: list[str] = []
+        for elt in slice_node.elts:
+            if not isinstance(elt, ast.Name):
+                return None
+            names.append(elt.id)
+        return names
+
+    return None
+
+
 @overload
 def validate_transition_probs(
     *,
@@ -321,6 +427,17 @@ def validate_transition_probs(
     model: Model,
     regime_name: str,
     state_name: str,
+) -> None: ...
+
+
+@overload
+def validate_transition_probs(
+    *,
+    probs: FloatND,
+    model: Model,
+    regime_name: str,
+    state_name: str,
+    target_regime_name: str,
 ) -> None: ...
 
 
@@ -339,11 +456,16 @@ def validate_transition_probs(
     model: Model,
     regime_name: str,
     state_name: str | None = None,
+    target_regime_name: str | None = None,
 ) -> None:
     """Validate a transition probability array for shape, values, and row sums.
 
     When ``state_name`` is provided, validate a state transition probability array.
     When omitted, validate a regime transition probability array.
+
+    For per-target state transitions (where ``state_transitions[state_name]`` is a
+    dict mapping target regime names to `MarkovTransition` instances), pass
+    ``target_regime_name`` to select the specific transition to validate.
 
     Args:
         probs: The transition probability array to validate.
@@ -351,6 +473,8 @@ def validate_transition_probs(
         regime_name: Name of the regime.
         state_name: Name of the state with a `MarkovTransition`. If ``None``,
             validate a regime transition instead.
+        target_regime_name: Target regime name for per-target state transitions.
+            Required when the state transition is a per-target dict.
 
     Raises:
         TypeError: If the transition is not a `MarkovTransition`.
@@ -362,13 +486,13 @@ def validate_transition_probs(
 
     if state_name is not None:
         raw_transition = regime.state_transitions[state_name]
-        if not isinstance(raw_transition, MarkovTransition):
-            msg = (
-                f"State '{state_name}' in regime '{regime_name}' is not a "
-                f"MarkovTransition. Got {type(raw_transition).__name__}."
-            )
-            raise TypeError(msg)
-        func = raw_transition.func
+        markov = _extract_markov_transition(
+            raw_transition,
+            state_name=state_name,
+            regime_name=regime_name,
+            target_regime_name=target_regime_name,
+        )
+        func = markov.func
         all_grids = _build_all_grids(regime)
         n_outcomes = len(all_grids[state_name].categories)
     else:
@@ -381,6 +505,8 @@ def validate_transition_probs(
         func = regime.transition.func
         all_grids = _build_all_grids(regime)
         n_outcomes = len(model.regime_names_to_ids)
+
+    _validate_probs_array_indexing(func)
 
     indexing_params = _get_indexing_params(func)
     expected_shape = _build_expected_shape(
@@ -399,6 +525,49 @@ def validate_transition_probs(
     if not jnp.allclose(row_sums, 1.0, atol=1e-6):
         msg = "Rows must sum to 1 along the last axis."
         raise ValueError(msg)
+
+
+def _extract_markov_transition(
+    raw_transition: object,
+    *,
+    state_name: str,
+    regime_name: str,
+    target_regime_name: str | None,
+) -> MarkovTransition:
+    """Extract a MarkovTransition from a raw transition, handling per-target dicts."""
+    if isinstance(raw_transition, MarkovTransition):
+        return raw_transition
+
+    if isinstance(raw_transition, Mapping):
+        if target_regime_name is None:
+            targets = sorted(raw_transition.keys())
+            msg = (
+                f"State '{state_name}' in regime '{regime_name}' uses per-target "
+                f"transitions. Pass target_regime_name to select one of: {targets}."
+            )
+            raise TypeError(msg)
+        if target_regime_name not in raw_transition:
+            msg = (
+                f"Target regime '{target_regime_name}' not found in per-target "
+                f"transitions for state '{state_name}' in regime '{regime_name}'. "
+                f"Available targets: {sorted(raw_transition.keys())}."
+            )
+            raise ValueError(msg)
+        entry = raw_transition[target_regime_name]  # ty: ignore[invalid-argument-type]
+        if not isinstance(entry, MarkovTransition):
+            msg = (
+                f"Per-target transition for '{target_regime_name}' in state "
+                f"'{state_name}' of regime '{regime_name}' is not a "
+                f"MarkovTransition. Got {type(entry).__name__}."
+            )
+            raise TypeError(msg)
+        return entry
+
+    msg = (
+        f"State '{state_name}' in regime '{regime_name}' is not a "
+        f"MarkovTransition. Got {type(raw_transition).__name__}."
+    )
+    raise TypeError(msg)
 
 
 def _build_all_grids(regime: Regime) -> dict[str, DiscreteGrid]:

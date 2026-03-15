@@ -10,6 +10,7 @@ from pandas.testing import assert_frame_equal
 from lcm import Model
 from lcm.ages import AgeGrid
 from lcm.input_processing import process_regimes
+from lcm.input_processing.regime_processing import get_simulation_output_dtypes
 from lcm.logging import get_logger
 from lcm.simulation.result import SimulationResult
 from lcm.simulation.simulate import (
@@ -56,6 +57,10 @@ def simulate_inputs():
         "internal_regimes": internal_regimes,
         "regime_names_to_ids": regime_names_to_ids,
         "ages": ages,
+        "simulation_output_dtypes": get_simulation_output_dtypes(
+            regimes=regimes,
+            regime_names_to_ids=regime_names_to_ids,
+        ),
     }
 
 
@@ -86,11 +91,13 @@ def test_simulate_using_raw_inputs(simulate_inputs):
                 ),
             }
         ),
-        initial_states={
+        initial_conditions={
             "wealth": jnp.array([1.0, 50.400803]),
             "age": jnp.array([0.0, 0.0]),
+            "regime_id": jnp.array(
+                [simulate_inputs["regime_names_to_ids"]["working_life"]] * 2
+            ),
         },
-        initial_regimes=["working_life"] * 2,
         logger=get_logger(log_level="off"),
         **simulate_inputs,
     )
@@ -146,11 +153,11 @@ def test_simulate_using_model_methods(
     result = model.simulate(
         params,
         V_arr_dict=V_arr_dict,
-        initial_states={
+        initial_conditions={
             "wealth": jnp.array([20.0, 150, 250, 320]),
             "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
+            "regime_id": jnp.array([RegimeId.working_life] * 4),
         },
-        initial_regimes=["working_life"] * 4,
     )
     df = result.to_dataframe(
         additional_targets=["utility", "borrowing_constraint"]
@@ -187,6 +194,9 @@ def test_simulate_using_model_methods(
 
 def test_simulate_with_only_discrete_actions():
     from tests.test_models.deterministic.discrete import (  # noqa: PLC0415
+        RegimeId as DiscreteRegimeId,
+    )
+    from tests.test_models.deterministic.discrete import (  # noqa: PLC0415
         get_model,
         get_params,
     )
@@ -196,11 +206,11 @@ def test_simulate_with_only_discrete_actions():
 
     result = model.solve_and_simulate(
         params,
-        initial_states={
+        initial_conditions={
             "wealth": jnp.array([0, 2]),
             "age": jnp.array([50.0, 50.0]),
+            "regime_id": jnp.array([DiscreteRegimeId.working_life] * 2),
         },
-        initial_regimes=["working_life"] * 2,
     )
     got = result.to_dataframe().query('regime == "working_life"')
 
@@ -264,11 +274,11 @@ def test_effect_of_discount_factor_on_last_period():
     df_low = (
         model.solve_and_simulate(
             params_low,
-            initial_states={
+            initial_conditions={
                 "wealth": initial_wealth,
                 "age": jnp.array([18.0, 18.0, 18.0]),
+                "regime_id": jnp.array([RegimeId.working_life] * 3),
             },
-            initial_regimes=["working_life"] * 3,
         )
         .to_dataframe()
         .query('regime == "working_life"')
@@ -277,11 +287,11 @@ def test_effect_of_discount_factor_on_last_period():
     df_high = (
         model.solve_and_simulate(
             params_high,
-            initial_states={
+            initial_conditions={
                 "wealth": initial_wealth,
                 "age": jnp.array([18.0, 18.0, 18.0]),
+                "regime_id": jnp.array([RegimeId.working_life] * 3),
             },
-            initial_regimes=["working_life"] * 3,
         )
         .to_dataframe()
         .query('regime == "working_life"')
@@ -327,11 +337,11 @@ def test_effect_of_disutility_of_work():
     df_low = (
         model.solve_and_simulate(
             params_low,
-            initial_states={
+            initial_conditions={
                 "wealth": initial_wealth,
                 "age": jnp.array([18.0, 18.0, 18.0]),
+                "regime_id": jnp.array([RegimeId.working_life] * 3),
             },
-            initial_regimes=["working_life"] * 3,
         )
         .to_dataframe()
         .query('regime == "working_life"')
@@ -340,11 +350,11 @@ def test_effect_of_disutility_of_work():
     df_high = (
         model.solve_and_simulate(
             params_high,
-            initial_states={
+            initial_conditions={
                 "wealth": initial_wealth,
                 "age": jnp.array([18.0, 18.0, 18.0]),
+                "regime_id": jnp.array([RegimeId.working_life] * 3),
             },
-            initial_regimes=["working_life"] * 3,
         )
         .to_dataframe()
         .query('regime == "working_life"')
@@ -377,11 +387,11 @@ def test_to_dataframe_use_labels_parameter():
     params = get_params(n_periods=3)
     result = model.solve_and_simulate(
         params,
-        initial_states={
+        initial_conditions={
             "wealth": jnp.array([20.0, 50.0]),
             "age": jnp.array([18.0, 18.0]),
+            "regime_id": jnp.array([RegimeId.working_life] * 2),
         },
-        initial_regimes=["working_life"] * 2,
     )
 
     # use_labels=True (default): discrete columns are Categorical with string labels
@@ -409,11 +419,11 @@ def regression_simulation_result():
     params = get_params(n_periods=3)
     return model.solve_and_simulate(
         params,
-        initial_states={
+        initial_conditions={
             "wealth": jnp.array([20.0, 50.0]),
             "age": jnp.array([18.0, 18.0]),
+            "regime_id": jnp.array([RegimeId.working_life] * 2),
         },
-        initial_regimes=["working_life"] * 2,
     )
 
 
@@ -438,6 +448,7 @@ def test_additional_targets_all_with_stochastic_transitions():
     (e.g., weight_next_health) were incorrectly included in available_targets,
     causing additional_targets='all' to fail.
     """
+    from lcm_examples.mortality import RegimeId as StochasticRegimeId  # noqa: PLC0415
     from tests.test_models.stochastic import (  # noqa: PLC0415
         Health,
         PartnerStatus,
@@ -450,13 +461,13 @@ def test_additional_targets_all_with_stochastic_transitions():
 
     result = model.solve_and_simulate(
         params,
-        initial_states={
+        initial_conditions={
             "wealth": jnp.array([20.0, 50.0]),
             "health": jnp.array([Health.good, Health.bad]),
             "partner": jnp.array([PartnerStatus.single, PartnerStatus.partnered]),
             "age": jnp.array([40.0, 40.0]),
+            "regime_id": jnp.array([StochasticRegimeId.working_life] * 2),
         },
-        initial_regimes=["working_life", "working_life"],
     )
 
     # Stochastic weight functions should NOT be in available_targets
@@ -499,11 +510,11 @@ def test_simulation_result_pickle_roundtrip(tmp_path: Path):
     params = get_params(n_periods=3)
     result = model.solve_and_simulate(
         params,
-        initial_states={
+        initial_conditions={
             "wealth": jnp.array([20.0, 50.0]),
             "age": jnp.array([18.0, 18.0]),
+            "regime_id": jnp.array([RegimeId.working_life] * 2),
         },
-        initial_regimes=["working_life"] * 2,
     )
 
     # Pickle and unpickle

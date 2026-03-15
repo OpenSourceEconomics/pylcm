@@ -213,17 +213,16 @@ Model(
 
 - `model.solve(params)` - Solve the model and return value function arrays per period
   and regime
-- `model.simulate(params, initial_states, initial_regimes, V_arr_dict)` - Simulate
-  forward given solution
-- `model.solve_and_simulate(params, initial_states, initial_regimes)` - Combined solve
-  and simulate
+- `model.simulate(params, initial_conditions, V_arr_dict)` - Simulate forward given
+  solution
+- `model.solve_and_simulate(params, initial_conditions)` - Combined solve and simulate
 
 ### SimulationResult
 
 Both `simulate()` and `solve_and_simulate()` return a `SimulationResult` object:
 
 ```python
-result = model.solve_and_simulate(params, initial_states, initial_regimes)
+result = model.solve_and_simulate(params, initial_conditions)
 
 # Convert to DataFrame (deferred computation)
 df = result.to_dataframe()
@@ -255,16 +254,16 @@ result.to_pickle("path/to/file.pkl")
 loaded = SimulationResult.from_pickle("path/to/file.pkl")
 ```
 
-### Initial States Format
+### Initial Conditions Format
 
-Initial states use a flat dictionary format:
+Initial conditions use a flat dictionary with state names plus `"regime_id"`:
 
 ```python
-initial_states = {
+initial_conditions = {
     "wealth": jnp.array([1.0, 2.0, 3.0]),
     "health": jnp.array([0.5, 0.8, 0.3]),
+    "regime_id": jnp.array([RegimeId.working, RegimeId.working, RegimeId.retired]),
 }
-initial_regimes = ["working", "working", "retired"]
 ```
 
 ### Key Attributes

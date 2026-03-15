@@ -21,8 +21,7 @@ from lcm.grids import (
 )
 from lcm.model import Model
 from lcm.pandas_utils import (
-    initial_states_from_dataframe,
-    regime_transition_probs_from_series,
+    initial_conditions_from_dataframe,
     transition_probs_from_series,
 )
 from lcm.persistence import (
@@ -61,10 +60,9 @@ __all__ = [
     "SolveAndSimulateSnapshot",
     "SolveSnapshot",
     "categorical",
-    "initial_states_from_dataframe",
+    "initial_conditions_from_dataframe",
     "load_snapshot",
     "load_solution",
-    "regime_transition_probs_from_series",
     "save_solution",
     "shocks",
     "transition_probs_from_series",

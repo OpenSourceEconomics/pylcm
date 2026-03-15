@@ -73,12 +73,11 @@ def model_and_params():
 
 
 def _initial_conditions():
-    initial_states = {
+    return {
         "wealth": jnp.array([2.0, 3.0]),
         "age": jnp.array([0.0, 0.0]),
+        "regime_id": jnp.array([_RegimeId.working] * 2),
     }
-    initial_regimes = ["working", "working"]
-    return initial_states, initial_regimes
 
 
 def test_solve_debug_persists_snapshot(tmp_path, model_and_params):
@@ -102,11 +101,9 @@ def test_simulate_debug_persists_snapshot(tmp_path, model_and_params):
     model, params = model_and_params
     V_arr_dict = model.solve(params, log_level="off")
 
-    initial_states, initial_regimes = _initial_conditions()
     model.simulate(
         params,
-        initial_states=initial_states,
-        initial_regimes=initial_regimes,
+        _initial_conditions(),
         V_arr_dict=V_arr_dict,
         log_level="debug",
         log_path=tmp_path,
@@ -122,12 +119,9 @@ def test_simulate_debug_persists_snapshot(tmp_path, model_and_params):
 
 def test_solve_and_simulate_debug_persists_snapshot(tmp_path, model_and_params):
     model, params = model_and_params
-    initial_states, initial_regimes = _initial_conditions()
-
     model.solve_and_simulate(
         params,
-        initial_states=initial_states,
-        initial_regimes=initial_regimes,
+        _initial_conditions(),
         log_level="debug",
         log_path=tmp_path,
     )
@@ -152,11 +146,9 @@ def test_simulate_no_persistence_when_not_debug(tmp_path, model_and_params):
     model, params = model_and_params
     V_arr_dict = model.solve(params, log_level="off")
 
-    initial_states, initial_regimes = _initial_conditions()
     model.simulate(
         params,
-        initial_states=initial_states,
-        initial_regimes=initial_regimes,
+        _initial_conditions(),
         V_arr_dict=V_arr_dict,
         log_level="warning",
         log_path=tmp_path,

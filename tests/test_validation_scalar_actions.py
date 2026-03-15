@@ -101,11 +101,11 @@ def test_validation_vmaps_over_action_combos():
 
     result = model.solve_and_simulate(
         params=params,
-        initial_states={
+        initial_conditions={
             "wealth": jnp.array([5.0, 7.0]),
             "age": jnp.array([0.0, 0.0]),
+            "regime_id": jnp.array([RegimeId.alive] * 2),
         },
-        initial_regimes=["alive", "alive"],
         log_level="off",
     )
 

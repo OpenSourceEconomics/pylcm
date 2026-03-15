@@ -55,8 +55,13 @@ result = MAHLER_YUM_MODEL.solve_and_simulate(
             **common_params,
         },
     },
-    initial_states=initial_states_high,
-    initial_regimes=["alive" for i in range(selected_ids_high.shape[0])],
+    initial_conditions={
+        **initial_states_high,
+        "regime_id": jnp.full(
+            selected_ids_high.shape[0],
+            MAHLER_YUM_MODEL.regime_names_to_ids["alive"],
+        ),
+    },
     seed=8295,
 )
 ```

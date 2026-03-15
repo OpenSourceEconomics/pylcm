@@ -50,11 +50,8 @@ class SimulateSnapshot:
     params: UserParams
     """User parameters passed to simulate."""
 
-    initial_states: Mapping[str, Array] | None
-    """Mapping of state names to initial state arrays."""
-
-    initial_regimes: list[RegimeName] | None
-    """List of initial regime names."""
+    initial_conditions: Mapping[str, Array] | None
+    """Mapping of state names (plus `"regime_id"`) to arrays."""
 
     V_arr_dict: VArrMapping | None
     """Immutable mapping of periods to regime value function arrays."""
@@ -76,11 +73,8 @@ class SolveAndSimulateSnapshot:
     params: UserParams
     """User parameters passed to solve_and_simulate."""
 
-    initial_states: Mapping[str, Array] | None
-    """Mapping of state names to initial state arrays."""
-
-    initial_regimes: list[RegimeName] | None
-    """List of initial regime names."""
+    initial_conditions: Mapping[str, Array] | None
+    """Mapping of state names (plus `"regime_id"`) to arrays."""
 
     V_arr_dict: VArrMapping | None
     """Immutable mapping of periods to regime value function arrays."""
@@ -153,8 +147,7 @@ def load_snapshot(
         return SimulateSnapshot(
             model=loaded.get("model"),
             params=loaded.get("params"),
-            initial_states=loaded.get("initial_states"),
-            initial_regimes=loaded.get("initial_regimes"),
+            initial_conditions=loaded.get("initial_conditions"),
             V_arr_dict=loaded.get("V_arr_dict"),
             result=loaded.get("result"),
             platform=saved_platform,
@@ -162,8 +155,7 @@ def load_snapshot(
     return SolveAndSimulateSnapshot(
         model=loaded.get("model"),
         params=loaded.get("params"),
-        initial_states=loaded.get("initial_states"),
-        initial_regimes=loaded.get("initial_regimes"),
+        initial_conditions=loaded.get("initial_conditions"),
         V_arr_dict=loaded.get("V_arr_dict"),
         result=loaded.get("result"),
         platform=saved_platform,
@@ -212,8 +204,7 @@ def save_simulate_snapshot(
     *,
     model: object,
     params: UserParams,
-    initial_states: Mapping[str, Array],
-    initial_regimes: list[RegimeName],
+    initial_conditions: Mapping[str, Array],
     V_arr_dict: VArrMapping,
     result: object,
     log_path: Path,
@@ -224,8 +215,7 @@ def save_simulate_snapshot(
     Args:
         model: The Model instance.
         params: User parameters passed to simulate.
-        initial_states: Initial state arrays.
-        initial_regimes: Initial regime assignments.
+        initial_conditions: Mapping of state names (plus `"regime_id"`) to arrays.
         V_arr_dict: Value function arrays.
         result: SimulationResult object.
         log_path: Parent directory for snapshot directories.
@@ -242,14 +232,13 @@ def save_simulate_snapshot(
 
     _save_pkl(snap_dir / "model.pkl", model)
     _save_pkl(snap_dir / "params.pkl", params)
-    _save_pkl(snap_dir / "initial_states.pkl", initial_states)
-    _save_pkl(snap_dir / "initial_regimes.pkl", initial_regimes)
+    _save_pkl(snap_dir / "initial_conditions.pkl", initial_conditions)
     _save_pkl(snap_dir / "result.pkl", result)
     _save_V_arr_to_h5(snap_dir / "arrays.h5", V_arr_dict)
     _write_metadata(
         snap_dir,
         snapshot_type="simulate",
-        fields=["model", "params", "initial_states", "initial_regimes", "result"],
+        fields=["model", "params", "initial_conditions", "result"],
     )
     _write_environment_files(snap_dir)
 
@@ -263,8 +252,7 @@ def save_solve_and_simulate_snapshot(
     *,
     model: object,
     params: UserParams,
-    initial_states: Mapping[str, Array],
-    initial_regimes: list[RegimeName],
+    initial_conditions: Mapping[str, Array],
     V_arr_dict: VArrMapping,
     result: object,
     log_path: Path,
@@ -275,8 +263,7 @@ def save_solve_and_simulate_snapshot(
     Args:
         model: The Model instance.
         params: User parameters passed to solve_and_simulate.
-        initial_states: Initial state arrays.
-        initial_regimes: Initial regime assignments.
+        initial_conditions: Mapping of state names (plus `"regime_id"`) to arrays.
         V_arr_dict: Value function arrays.
         result: SimulationResult object.
         log_path: Parent directory for snapshot directories.
@@ -293,14 +280,13 @@ def save_solve_and_simulate_snapshot(
 
     _save_pkl(snap_dir / "model.pkl", model)
     _save_pkl(snap_dir / "params.pkl", params)
-    _save_pkl(snap_dir / "initial_states.pkl", initial_states)
-    _save_pkl(snap_dir / "initial_regimes.pkl", initial_regimes)
+    _save_pkl(snap_dir / "initial_conditions.pkl", initial_conditions)
     _save_pkl(snap_dir / "result.pkl", result)
     _save_V_arr_to_h5(snap_dir / "arrays.h5", V_arr_dict)
     _write_metadata(
         snap_dir,
         snapshot_type="solve_and_simulate",
-        fields=["model", "params", "initial_states", "initial_regimes", "result"],
+        fields=["model", "params", "initial_conditions", "result"],
     )
     _write_environment_files(snap_dir)
 
