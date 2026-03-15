@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from jax import Array
 
-from lcm.error_handling import _get_indexing_params
+from lcm.error_handling import _extract_markov_transition, _get_indexing_params
 from lcm.grids import DiscreteGrid
 from lcm.model import Model
 from lcm.regime import MarkovTransition, Regime
@@ -108,6 +108,17 @@ def transition_probs_from_series(
     series: pd.Series,
     model: Model,
     regime_name: str,
+    state_name: str,
+    target_regime_name: str,
+) -> Array: ...
+
+
+@overload
+def transition_probs_from_series(
+    *,
+    series: pd.Series,
+    model: Model,
+    regime_name: str,
 ) -> Array: ...
 
 
@@ -117,6 +128,7 @@ def transition_probs_from_series(
     model: Model,
     regime_name: str,
     state_name: str | None = None,
+    target_regime_name: str | None = None,
 ) -> Array:
     """Convert a labeled pandas Series to a transition probability array.
 
@@ -128,6 +140,10 @@ def transition_probs_from_series(
     The MultiIndex must use `"age"` (with actual age values from the model's
     `AgeGrid`) for the age/period dimension — not `"period"`.
 
+    For per-target state transitions (where ``state_transitions[state_name]`` is a
+    dict mapping target regime names to `MarkovTransition` instances), pass
+    ``target_regime_name`` to select the specific transition.
+
     Args:
         series: Series with a named MultiIndex. Level names must match the
             indexing parameters of the transition function (with `"period"`
@@ -137,6 +153,8 @@ def transition_probs_from_series(
         regime_name: Name of the regime containing the transition.
         state_name: Name of the state with a `MarkovTransition`. Omit for
             regime transitions.
+        target_regime_name: Target regime name for per-target state transitions.
+            Required when the state transition is a per-target dict.
 
     Returns:
         JAX array with axes corresponding to the indexing parameters in
@@ -154,14 +172,13 @@ def transition_probs_from_series(
 
     if state_name is not None:
         raw_transition = regime.state_transitions[state_name]
-        if not isinstance(raw_transition, MarkovTransition):
-            msg = (
-                f"State '{state_name}' in regime '{regime_name}' is not a "
-                f"MarkovTransition. Got {type(raw_transition).__name__}."
-            )
-            raise TypeError(msg)
-
-        func = raw_transition.func
+        markov = _extract_markov_transition(
+            raw_transition,
+            state_name=state_name,
+            regime_name=regime_name,
+            target_regime_name=target_regime_name,
+        )
+        func = markov.func
         state_grid = all_grids[state_name]
         outcome = _OutcomeMapping(
             level_name=f"next_{state_name}",

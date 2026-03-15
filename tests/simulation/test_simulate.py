@@ -10,6 +10,7 @@ from pandas.testing import assert_frame_equal
 from lcm import Model
 from lcm.ages import AgeGrid
 from lcm.input_processing import process_regimes
+from lcm.input_processing.regime_processing import get_simulation_output_dtypes
 from lcm.logging import get_logger
 from lcm.simulation.result import SimulationResult
 from lcm.simulation.simulate import (
@@ -56,6 +57,10 @@ def simulate_inputs():
         "internal_regimes": internal_regimes,
         "regime_names_to_ids": regime_names_to_ids,
         "ages": ages,
+        "simulation_output_dtypes": get_simulation_output_dtypes(
+            regimes=regimes,
+            regime_names_to_ids=regime_names_to_ids,
+        ),
     }
 
 

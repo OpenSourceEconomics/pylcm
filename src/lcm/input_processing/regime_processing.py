@@ -631,6 +631,81 @@ def _validate_categoricals(
         raise ModelInitializationError(format_messages(error_messages))
 
 
+def get_simulation_output_dtypes(
+    regimes: Mapping[str, Regime],
+    regime_names_to_ids: Mapping[str, int],
+) -> MappingProxyType[str, pd.CategoricalDtype]:
+    """Compute pandas CategoricalDtype for all discrete output columns.
+
+    Merge ordered categories across regimes via topological sort. This must be
+    called after model validation (which guarantees merges succeed).
+
+    Args:
+        regimes: Mapping of regime names to Regime instances.
+        regime_names_to_ids: Mapping of regime names to integer IDs.
+
+    Returns:
+        Immutable mapping of variable name to `pd.CategoricalDtype`. Includes
+        all discrete state/action variables plus the ``"regime"`` column.
+
+    """
+    merged_categories, ordered_flags = _compute_merged_discrete_categories(regimes)
+
+    dtypes: dict[str, pd.CategoricalDtype] = {}
+    for var_name, categories in merged_categories.items():
+        dtypes[var_name] = pd.CategoricalDtype(
+            categories=list(categories),
+            ordered=ordered_flags[var_name],
+        )
+
+    dtypes["regime"] = pd.CategoricalDtype(
+        categories=list(regime_names_to_ids.keys()),
+        ordered=False,
+    )
+
+    return MappingProxyType(dtypes)
+
+
+def _compute_merged_discrete_categories(
+    regimes: Mapping[str, Regime],
+) -> tuple[dict[str, tuple[str, ...]], dict[str, bool]]:
+    """Compute merged categories and ordered flags for all discrete variables.
+
+    Returns:
+        Tuple of (categories dict, ordered_flags dict).
+
+    """
+    var_grids: dict[str, list[tuple[str, DiscreteGrid]]] = {}
+    for regime_name, regime in regimes.items():
+        for var_name, grid in {**regime.states, **regime.actions}.items():
+            if isinstance(grid, DiscreteGrid):
+                var_grids.setdefault(var_name, []).append((regime_name, grid))
+
+    categories: dict[str, tuple[str, ...]] = {}
+    ordered_flags: dict[str, bool] = {}
+    for var_name, entries in var_grids.items():
+        first_grid = entries[0][1]
+        ordered_flags[var_name] = first_grid.ordered
+
+        if len(entries) == 1 or not first_grid.ordered:
+            categories[var_name] = first_grid.categories
+            continue
+
+        all_cats = [grid.categories for _, grid in entries]
+        if len(set(all_cats)) <= 1:
+            categories[var_name] = first_grid.categories
+            continue
+
+        merged = _merge_ordered_categories(
+            [(rn, grid.categories) for rn, grid in entries]
+        )
+        # Validation already passed, so merge must succeed
+        assert merged is not None  # noqa: S101
+        categories[var_name] = merged
+
+    return categories, ordered_flags
+
+
 def _validate_ordered_flags(
     regimes: Mapping[str, Regime],
     error_messages: list[str],

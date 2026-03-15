@@ -4,7 +4,7 @@ import contextlib
 import inspect
 import pickle
 import tempfile
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -19,7 +19,6 @@ from jax import Array
 from lcm.ages import AgeGrid
 from lcm.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
-from lcm.grids import DiscreteGrid
 from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
 from lcm.typing import (
     FlatRegimeParams,
@@ -54,6 +53,7 @@ class SimulationResult:
         internal_params: InternalParams,
         V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
         ages: AgeGrid,
+        simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     ) -> None:
         self._raw_results = raw_results
         self._internal_regimes = internal_regimes
@@ -61,7 +61,9 @@ class SimulationResult:
         self._V_arr_dict = V_arr_dict
         self._ages = ages
         self._metadata = _compute_metadata(
-            internal_regimes=internal_regimes, raw_results=raw_results
+            internal_regimes=internal_regimes,
+            raw_results=raw_results,
+            simulation_output_dtypes=simulation_output_dtypes,
         )
         self._available_targets = sorted(
             _collect_all_available_targets(internal_regimes)
@@ -281,6 +283,7 @@ def _compute_metadata(
     raw_results: MappingProxyType[
         RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
     ],
+    simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
 ) -> SimulationMetadata:
     """Compute metadata from internal regimes and raw results."""
     regime_names = list(internal_regimes.keys())
@@ -289,8 +292,6 @@ def _compute_metadata(
     all_actions: set[str] = set()
     regime_to_states: dict[str, tuple[str, ...]] = {}
     regime_to_actions: dict[str, tuple[str, ...]] = {}
-    discrete_categories: dict[str, tuple[str, ...]] = {}
-    discrete_ordered: dict[str, bool] = {}
 
     for regime_name, regime in internal_regimes.items():
         vi = regime.variable_info
@@ -301,11 +302,14 @@ def _compute_metadata(
         all_states.update(states)
         all_actions.update(actions)
 
-        # Extract categories and ordered flag from discrete grids
-        for var_name, grid in regime.gridspecs.items():
-            if isinstance(grid, DiscreteGrid) and var_name not in discrete_categories:
-                discrete_categories[var_name] = grid.categories
-                discrete_ordered[var_name] = grid.ordered
+    # Extract categories and ordered flags from simulation_output_dtypes
+    discrete_categories: dict[str, tuple[str, ...]] = {}
+    discrete_ordered: dict[str, bool] = {}
+    for var_name, dtype in simulation_output_dtypes.items():
+        if var_name == "regime":
+            continue
+        discrete_categories[var_name] = tuple(dtype.categories)
+        discrete_ordered[var_name] = dtype.ordered
 
     n_periods = len(raw_results[regime_names[0]])
     n_subjects = _get_n_subjects(raw_results)

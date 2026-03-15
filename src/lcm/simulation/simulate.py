@@ -4,6 +4,7 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
+import pandas as pd
 from jax import Array, vmap
 
 from lcm.ages import AgeGrid
@@ -42,6 +43,7 @@ def simulate(
     logger: logging.Logger,
     V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
     ages: AgeGrid,
+    simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     seed: int | None = None,
 ) -> SimulationResult:
     """Simulate the model forward in time given pre-computed value function arrays.
@@ -159,6 +161,7 @@ def simulate(
         internal_params=internal_params,
         V_arr_dict=V_arr_dict,
         ages=ages,
+        simulation_output_dtypes=simulation_output_dtypes,
     )
 
 
@@ -362,7 +365,7 @@ def _compute_starting_periods(
         invalid_ages = initial_ages[~valid]
         msg = (
             f"Initial ages {invalid_ages.tolist()} are not valid age grid points. "
-            f"Valid ages: {ages.values}."
+            f"Valid ages: {ages.values}."  # noqa: PD011
         )
         raise ValueError(msg)
 

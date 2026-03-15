@@ -17,7 +17,11 @@ from lcm.input_processing.params_processing import (
     create_params_template,
     process_params,
 )
-from lcm.input_processing.regime_processing import InternalRegime, process_regimes
+from lcm.input_processing.regime_processing import (
+    InternalRegime,
+    get_simulation_output_dtypes,
+    process_regimes,
+)
 from lcm.input_processing.util import get_variable_info
 from lcm.interfaces import PhaseVariantContainer
 from lcm.logging import get_logger
@@ -126,6 +130,10 @@ class Model:
             fixed_params=self.fixed_params,
         )
         self.enable_jit = enable_jit
+        self.simulation_output_dtypes = get_simulation_output_dtypes(
+            regimes=self.regimes,
+            regime_names_to_ids=self.regime_names_to_ids,
+        )
 
     def get_params_template(self) -> UserFacingParamsTemplate:
         """Get a human-readable params template.
@@ -244,6 +252,7 @@ class Model:
             logger=get_logger(debug_mode=debug_mode),
             V_arr_dict=V_arr_dict,
             ages=self.ages,
+            simulation_output_dtypes=self.simulation_output_dtypes,
             seed=seed,
         )
 
@@ -312,6 +321,7 @@ class Model:
             logger=get_logger(debug_mode=debug_mode),
             V_arr_dict=V_arr_dict,
             ages=self.ages,
+            simulation_output_dtypes=self.simulation_output_dtypes,
             seed=seed,
         )
 

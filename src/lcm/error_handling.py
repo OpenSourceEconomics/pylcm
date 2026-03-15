@@ -428,6 +428,17 @@ def validate_transition_probs(
     probs: FloatND,
     model: Model,
     regime_name: str,
+    state_name: str,
+    target_regime_name: str,
+) -> None: ...
+
+
+@overload
+def validate_transition_probs(
+    *,
+    probs: FloatND,
+    model: Model,
+    regime_name: str,
 ) -> None: ...
 
 
@@ -437,11 +448,16 @@ def validate_transition_probs(
     model: Model,
     regime_name: str,
     state_name: str | None = None,
+    target_regime_name: str | None = None,
 ) -> None:
     """Validate a transition probability array for shape, values, and row sums.
 
     When ``state_name`` is provided, validate a state transition probability array.
     When omitted, validate a regime transition probability array.
+
+    For per-target state transitions (where ``state_transitions[state_name]`` is a
+    dict mapping target regime names to `MarkovTransition` instances), pass
+    ``target_regime_name`` to select the specific transition to validate.
 
     Args:
         probs: The transition probability array to validate.
@@ -449,6 +465,8 @@ def validate_transition_probs(
         regime_name: Name of the regime.
         state_name: Name of the state with a `MarkovTransition`. If ``None``,
             validate a regime transition instead.
+        target_regime_name: Target regime name for per-target state transitions.
+            Required when the state transition is a per-target dict.
 
     Raises:
         TypeError: If the transition is not a `MarkovTransition`.
@@ -460,13 +478,13 @@ def validate_transition_probs(
 
     if state_name is not None:
         raw_transition = regime.state_transitions[state_name]
-        if not isinstance(raw_transition, MarkovTransition):
-            msg = (
-                f"State '{state_name}' in regime '{regime_name}' is not a "
-                f"MarkovTransition. Got {type(raw_transition).__name__}."
-            )
-            raise TypeError(msg)
-        func = raw_transition.func
+        markov = _extract_markov_transition(
+            raw_transition,
+            state_name=state_name,
+            regime_name=regime_name,
+            target_regime_name=target_regime_name,
+        )
+        func = markov.func
         all_grids = _build_all_grids(regime)
         n_outcomes = len(all_grids[state_name].categories)
     else:
@@ -499,6 +517,49 @@ def validate_transition_probs(
     if not jnp.allclose(row_sums, 1.0, atol=1e-6):
         msg = "Rows must sum to 1 along the last axis."
         raise ValueError(msg)
+
+
+def _extract_markov_transition(
+    raw_transition: object,
+    *,
+    state_name: str,
+    regime_name: str,
+    target_regime_name: str | None,
+) -> MarkovTransition:
+    """Extract a MarkovTransition from a raw transition, handling per-target dicts."""
+    if isinstance(raw_transition, MarkovTransition):
+        return raw_transition
+
+    if isinstance(raw_transition, (dict, MappingProxyType)):
+        if target_regime_name is None:
+            targets = sorted(raw_transition.keys())
+            msg = (
+                f"State '{state_name}' in regime '{regime_name}' uses per-target "
+                f"transitions. Pass target_regime_name to select one of: {targets}."
+            )
+            raise TypeError(msg)
+        if target_regime_name not in raw_transition:
+            msg = (
+                f"Target regime '{target_regime_name}' not found in per-target "
+                f"transitions for state '{state_name}' in regime '{regime_name}'. "
+                f"Available targets: {sorted(raw_transition.keys())}."
+            )
+            raise ValueError(msg)
+        entry = raw_transition[target_regime_name]
+        if not isinstance(entry, MarkovTransition):
+            msg = (
+                f"Per-target transition for '{target_regime_name}' in state "
+                f"'{state_name}' of regime '{regime_name}' is not a "
+                f"MarkovTransition. Got {type(entry).__name__}."
+            )
+            raise TypeError(msg)
+        return entry
+
+    msg = (
+        f"State '{state_name}' in regime '{regime_name}' is not a "
+        f"MarkovTransition. Got {type(raw_transition).__name__}."
+    )
+    raise TypeError(msg)
 
 
 def _build_all_grids(regime: Regime) -> dict[str, DiscreteGrid]:
