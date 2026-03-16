@@ -596,7 +596,9 @@ def create_regime_transition_grid() -> FloatND:
     spgrid = spgrid.at[:, 0, 0].set(surv_hs[:, 1])
     spgrid = spgrid.at[:, 1, 0].set(surv_cl[:, 1])
     spgrid = spgrid.at[:, 0, 1].set(surv_hs[:, 0])
-    return spgrid.at[:, 1, 1].set(surv_cl[:, 0])
+    spgrid = spgrid.at[:, 1, 1].set(surv_cl[:, 0])
+    # Certain death at the terminal period (age 101 is inactive for alive)
+    return spgrid.at[-1].set(0.0)
 
 
 def create_inputs(
