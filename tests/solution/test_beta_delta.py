@@ -179,6 +179,12 @@ def test_beta_delta_consumption(label, beta, delta):
 
     h_params = {"beta": beta, "delta": delta}
 
+    initial_conditions = {
+        "age": initial_age,
+        "wealth": initial_wealth,
+        "regime_id": jnp.array([RegimeId.working]),
+    }
+
     if label == "naive_phase_variant":
         # Use PhaseVariant to solve with exponential H, simulate with beta-delta H
         model = _make_model(
@@ -191,8 +197,7 @@ def test_beta_delta_consumption(label, beta, delta):
                     "H": {"discount_factor": delta, "beta": beta, "delta": delta},
                 },
             },
-            initial_states={"age": initial_age, "wealth": initial_wealth},
-            initial_regimes=["working"],
+            initial_conditions=initial_conditions,
         )
     elif label == "naive":
         model = _make_model()
@@ -204,16 +209,14 @@ def test_beta_delta_consumption(label, beta, delta):
         sim_params = {"working": {"H": h_params}}
         result = model.simulate(
             params=sim_params,
-            initial_states={"age": initial_age, "wealth": initial_wealth},
-            initial_regimes=["working"],
+            initial_conditions=initial_conditions,
             V_arr_dict=V,
         )
     else:
         model = _make_model()
         result = model.solve_and_simulate(
             params={"working": {"H": h_params}},
-            initial_states={"age": initial_age, "wealth": initial_wealth},
-            initial_regimes=["working"],
+            initial_conditions=initial_conditions,
         )
 
     df = result.to_dataframe().query('regime == "working"')
