@@ -4,11 +4,101 @@
   <meta charset="utf-8">
   <title>PyLCM Benchmarks</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; }
+    h1 { margin-bottom: 0.5rem; }
+    .chart-box { margin: 1.5rem 0; max-width: 900px; }
+    canvas { max-height: 350px; }
+    details { margin: 0.5rem 0; }
+    summary { cursor: pointer; font-weight: 600; }
+    p.meta { color: #666; font-size: 0.9rem; }
+  </style>
 </head>
 <body>
-  <div id="main"></div>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <h1>PyLCM Benchmarks</h1>
+  <p class="meta">Performance tracking across commits.</p>
+  <div id="charts"></div>
   <script src="dev/bench/data.js"></script>
-  <script src="https://cdn.jsdelivr.net/gh/benchmark-action/github-action-benchmark@v1/dev/bench/index.js"></script>
+  <script>
+  (function() {
+    var data = window.BENCHMARK_DATA;
+    if (!data || !data.entries) {
+      document.getElementById('charts').innerHTML =
+        '<p>No benchmark data available yet.</p>';
+      return;
+    }
+    var box = document.getElementById('charts');
+    Object.keys(data.entries).forEach(function(suite) {
+      var entries = data.entries[suite];
+      if (!entries.length) return;
+      var nameSet = {};
+      entries.forEach(function(e) {
+        e.benches.forEach(function(b) { nameSet[b.name] = 1; });
+      });
+      var names = Object.keys(nameSet);
+      var groups = {};
+      names.forEach(function(n) {
+        var g = n.replace(/\[.*/, '');
+        if (!groups[g]) groups[g] = [];
+        groups[g].push(n);
+      });
+      Object.keys(groups).forEach(function(group) {
+        var gNames = groups[group];
+        var det = document.createElement('details');
+        det.open = true;
+        var sum = document.createElement('summary');
+        sum.textContent = group;
+        det.appendChild(sum);
+        var div = document.createElement('div');
+        div.className = 'chart-box';
+        var cv = document.createElement('canvas');
+        div.appendChild(cv);
+        det.appendChild(div);
+        box.appendChild(det);
+        var labels = entries.map(function(e) {
+          return e.commit.id ? e.commit.id.slice(0, 8) : '?';
+        });
+        var ds = gNames.map(function(name, i) {
+          var hue = (i * 360 / gNames.length) % 360;
+          return {
+            label: name,
+            data: entries.map(function(e) {
+              var b = e.benches.find(
+                function(x) { return x.name === name; }
+              );
+              return b ? b.value * 1000 : null;
+            }),
+            borderColor: 'hsl('+hue+',70%,50%)',
+            tension: 0.2,
+            spanGaps: true
+          };
+        });
+        new Chart(cv, {
+          type: 'line',
+          data: { labels: labels, datasets: ds },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: {
+                position: 'bottom',
+                labels: { boxWidth: 12, font: { size: 11 } }
+              }
+            },
+            scales: {
+              y: {
+                title: { display: true, text: 'Time (ms)' },
+                beginAtZero: false
+              },
+              x: {
+                title: { display: true, text: 'Commit' }
+              }
+            }
+          }
+        });
+      });
+    });
+  })();
+  </script>
 </body>
 </html>
