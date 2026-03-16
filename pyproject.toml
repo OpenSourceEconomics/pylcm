@@ -99,10 +99,17 @@ extend-ignore = [
 ]
 per-file-ignores."benchmarks/*" = [
   "ANN",     # Annotations
+  "BLE001",  # Blind exception
   "D",       # Docstrings
   "INP001",  # Implicit namespace package
+  "PLC0415", # import not at top level
   "PLR2004", # Magic values in comparison
+  "PLW1510", # subprocess.run without explicit check
   "S101",    # Use of assert
+  "SIM108",  # Ternary operator
+  "S603",    # subprocess call without shell=True check
+  "S607",    # Partial executable path
+  "T201",    # print found
 ]
 per-file-ignores."docs/**/*" = [
   "ANN001", # Missing type annotation for function argument
@@ -270,6 +277,7 @@ benchmarks-compare = """\
   pytest benchmarks/ --benchmark-only -p no:xdist -o 'addopts=' -o \
   'python_files=bench_*.py test_*.py' --benchmark-compare\
   """
+benchmarks-publish = "python benchmarks/publish.py"
 benchmarks-save = """\
   pytest benchmarks/ --benchmark-only -p no:xdist -o 'addopts=' -o \
   'python_files=bench_*.py test_*.py' --benchmark-autosave -v\

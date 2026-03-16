@@ -1,0 +1,150 @@
+---
+name: benchmark-check
+on:
+  pull_request:
+    branches:
+      - '*'
+jobs:
+  check-benchmarks:
+    name: Check benchmark results exist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Check gh-pages for benchmark results
+        id: check
+        run: |
+          # Fetch gh-pages (may not exist yet)
+          GHP="origin/gh-pages"
+          if ! git fetch origin gh-pages --depth=1 2>/dev/null
+          then
+            echo "status=missing" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Read required machines from config
+          CFG=$(git show $GHP:benchmark-config.json \
+            2>/dev/null || echo '{}')
+          MACHINES=$(echo "$CFG" | python3 -c "
+          import sys, json
+          cfg = json.load(sys.stdin)
+          ms = cfg.get('required_machines', [])
+          print(' '.join(ms))
+          ")
+          if [ -z "$MACHINES" ]; then
+            echo "status=skip" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Get all PR commits (newest first)
+          BASE="origin/${{ github.base_ref }}"
+          PR_COMMITS=$(git log --format='%H' "$BASE..HEAD")
+          HEAD_SHA=$(git rev-parse HEAD)
+
+          # Check each required machine
+          ALL_OK=true
+          DETAILS=""
+          for MACHINE in $MACHINES; do
+            MPATH="results/${MACHINE}/manifest.json"
+            MANIFEST=$(git show "$GHP:$MPATH" \
+              2>/dev/null || echo "[]")
+            FOUND_SHA=""
+            while IFS= read -r sha; do
+              MATCH=$(echo "$MANIFEST" | python3 -c "
+          import sys, json
+          m = json.load(sys.stdin)
+          sha = '${sha}'
+          print('yes' if any(
+            e['commit_sha'] == sha for e in m
+          ) else 'no')
+          ")
+              if [ "$MATCH" = "yes" ]; then
+                FOUND_SHA="$sha"
+                break
+              fi
+            done <<< "$PR_COMMITS"
+            if [ -z "$FOUND_SHA" ]; then
+              ALL_OK=false
+              DETAILS="${DETAILS}Machine \`${MACHINE}\`"
+              DETAILS="${DETAILS}: no results found.\n"
+            elif [ "$FOUND_SHA" != "$HEAD_SHA" ]; then
+              SHORT="${FOUND_SHA:0:12}"
+              SINCE=$(git log --format='- %h %s' \
+                "${FOUND_SHA}..HEAD")
+              DETAILS="${DETAILS}Machine \`${MACHINE}\`"
+              DETAILS="${DETAILS}: results for "
+              DETAILS="${DETAILS}\`${SHORT}\`, not HEAD."
+              DETAILS="${DETAILS} Commits since:\n"
+              DETAILS="${DETAILS}${SINCE}\n"
+            fi
+          done
+          if [ "$ALL_OK" = false ]; then
+            echo "status=missing" >> "$GITHUB_OUTPUT"
+          elif [ -n "$DETAILS" ]; then
+            echo "status=stale" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=current" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Write multiline details
+          {
+            echo "details<<BENCHEOF"
+            echo -e "$DETAILS"
+            echo "BENCHEOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Report result
+        uses: actions/github-script@v7
+        with:
+          script: |-
+            const status = '${{ steps.check.outputs.status }}';
+            const details =
+              `${{ steps.check.outputs.details }}`.trim();
+            const marker = '<!-- benchmark-check -->';
+            if (status === 'current' || status === 'skip') {
+              core.info('Benchmark check passed.');
+              return;
+            }
+            if (status === 'stale') {
+              const body = [
+                marker,
+                '**Benchmark check**: results found, ' +
+                  'but not for HEAD.',
+                '',
+                details,
+                '',
+                'Consider re-running benchmarks if any ' +
+                  'of these commits may impact performance.',
+              ].join('\n');
+              const { data: comments } =
+                await github.rest.issues.listComments({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                });
+              const existing = comments.find(
+                c => c.body.includes(marker),
+              );
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: existing.id,
+                  body: body,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: body,
+                });
+              }
+              return;
+            }
+            // status === 'missing'
+            core.setFailed(
+              'No benchmark results found for this ' +
+              'PR. Run `pixi run benchmarks-save && ' +
+              'pixi run benchmarks-publish`.'
+            );
