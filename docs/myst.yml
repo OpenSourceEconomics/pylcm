@@ -65,6 +65,10 @@ project:
         - file: examples/mahler_yum_2024.md
     - file: development/index.md
       title: Development
+      children:
+        - file: development/setup.md
+        - file: development/conventions.md
+        - file: development/benchmarking.md
   error_rules:
     - rule: link-resolves
       severity: ignore
