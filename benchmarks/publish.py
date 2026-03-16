@@ -7,25 +7,11 @@ converts it to a Chart.js dashboard, and pushes it to the org site repo
 under pylcm-benchmarks/. The dashboard is at open-econ.org/pylcm-benchmarks/.
 """
 
-import contextlib
-import hashlib
 import json
-import platform
 import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
-
-
-def _machine_hash() -> str:
-    """Stable hash from CPU model + JAX backend + device."""
-    import jax
-
-    parts = [platform.processor(), jax.default_backend()]
-    with contextlib.suppress(RuntimeError):
-        parts.append(str(jax.devices()[0]))
-    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:8]
-
 
 _ORG_REPO = "git@github.com:OpenSourceEconomics/OpenSourceEconomics.github.io.git"
 _BRANCH = "main"
@@ -172,19 +158,21 @@ _INITIAL_CONFIG = {"required_machines": []}
 
 def publish() -> None:
     """Publish the latest benchmark results to the org site."""
-    machine = _machine_hash()
-    benchmark_dir = Path(f".benchmarks/{machine}")
+    benchmark_root = Path(".benchmarks")
 
-    json_files = sorted(benchmark_dir.rglob("*.json"), key=lambda p: p.name)
+    json_files = sorted(benchmark_root.rglob("*.json"), key=lambda p: p.name)
     if not json_files:
         msg = (
-            f"No benchmark results in {benchmark_dir}. "
+            f"No benchmark results in {benchmark_root}. "
             "Run `pixi run benchmarks-save` first."
         )
         raise FileNotFoundError(msg)
 
     latest = json_files[-1]
     data = json.loads(latest.read_text())
+
+    # Derive machine hash from directory structure: .benchmarks/{machine}/...
+    machine = latest.relative_to(benchmark_root).parts[0]
 
     commit_sha = data["commit_info"]["id"]
     commit_sha_short = commit_sha[:12]
