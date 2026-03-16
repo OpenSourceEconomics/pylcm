@@ -1,10 +1,10 @@
-"""Publish benchmark results to the gh-pages branch.
+"""Publish benchmark results to the OpenSourceEconomics.github.io repo.
 
 Usage: pixi run benchmarks-publish
 
 Reads the latest saved benchmark JSON from .benchmarks/{machine_hash}/,
-converts it to the github-action-benchmark format, and pushes it to the
-gh-pages branch along with the raw results.
+converts it to a Chart.js dashboard, and pushes it to the org site repo
+under pylcm-benchmarks/. The dashboard is at open-econ.org/pylcm-benchmarks/.
 """
 
 import contextlib
@@ -13,7 +13,6 @@ import json
 import platform
 import shutil
 import subprocess
-import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -28,24 +27,116 @@ def _machine_hash() -> str:
     return hashlib.sha256("|".join(parts).encode()).hexdigest()[:8]
 
 
-_REPO_URL = "git@github.com:OpenSourceEconomics/pylcm.git"
-_GH_PAGES_BRANCH = "gh-pages"
+_ORG_REPO = "git@github.com:OpenSourceEconomics/OpenSourceEconomics.github.io.git"
+_BRANCH = "main"
+_SITE_DIR = Path(".benchmark-site")
+_SUBDIR = "pylcm-benchmarks"
 _SUITE_NAME = "PyLCM Benchmarks"
 _MAX_DASHBOARD_ENTRIES = 200
 
-_INITIAL_INDEX_HTML = """\
+_INDEX_HTML = """\
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <title>PyLCM Benchmarks</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; }
+    h1 { margin-bottom: 0.5rem; }
+    .chart-box { margin: 1.5rem 0; max-width: 900px; }
+    canvas { max-height: 350px; }
+    details { margin: 0.5rem 0; }
+    summary { cursor: pointer; font-weight: 600; }
+    p.meta { color: #666; font-size: 0.9rem; }
+  </style>
 </head>
 <body>
-  <div id="main"></div>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <h1>PyLCM Benchmarks</h1>
+  <p class="meta">Performance tracking across commits.</p>
+  <div id="charts"></div>
   <script src="dev/bench/data.js"></script>
-  <script src="https://cdn.jsdelivr.net/gh/benchmark-action/github-action-benchmark@v1/dev/bench/index.js"></script>
+  <script>
+  (function() {
+    var data = window.BENCHMARK_DATA;
+    if (!data || !data.entries) {
+      document.getElementById('charts').innerHTML =
+        '<p>No benchmark data available yet.</p>';
+      return;
+    }
+    var box = document.getElementById('charts');
+    Object.keys(data.entries).forEach(function(suite) {
+      var entries = data.entries[suite];
+      if (!entries.length) return;
+      var nameSet = {};
+      entries.forEach(function(e) {
+        e.benches.forEach(function(b) { nameSet[b.name] = 1; });
+      });
+      var names = Object.keys(nameSet);
+      var groups = {};
+      names.forEach(function(n) {
+        var g = n.replace(/\\[.*/, '');
+        if (!groups[g]) groups[g] = [];
+        groups[g].push(n);
+      });
+      Object.keys(groups).forEach(function(group) {
+        var gNames = groups[group];
+        var det = document.createElement('details');
+        det.open = true;
+        var sum = document.createElement('summary');
+        sum.textContent = group;
+        det.appendChild(sum);
+        var div = document.createElement('div');
+        div.className = 'chart-box';
+        var cv = document.createElement('canvas');
+        div.appendChild(cv);
+        det.appendChild(div);
+        box.appendChild(det);
+        var labels = entries.map(function(e) {
+          return e.commit.id ? e.commit.id.slice(0, 8) : '?';
+        });
+        var ds = gNames.map(function(name, i) {
+          var hue = (i * 360 / gNames.length) % 360;
+          return {
+            label: name,
+            data: entries.map(function(e) {
+              var b = e.benches.find(
+                function(x) { return x.name === name; }
+              );
+              return b ? b.value * 1000 : null;
+            }),
+            borderColor: 'hsl('+hue+',70%,50%)',
+            tension: 0.2,
+            spanGaps: true
+          };
+        });
+        new Chart(cv, {
+          type: 'line',
+          data: { labels: labels, datasets: ds },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: {
+                position: 'bottom',
+                labels: { boxWidth: 12, font: { size: 11 } }
+              }
+            },
+            scales: {
+              y: {
+                title: { display: true, text: 'Time (ms)' },
+                beginAtZero: false
+              },
+              x: {
+                title: { display: true, text: 'Commit' }
+              }
+            }
+          }
+        });
+      });
+    });
+  })();
+  </script>
 </body>
 </html>
 """
@@ -56,7 +147,7 @@ _INITIAL_CONFIG = {"required_machines": []}
 
 
 def publish() -> None:
-    """Publish the latest benchmark results to gh-pages."""
+    """Publish the latest benchmark results to the org site."""
     machine = _machine_hash()
     benchmark_dir = Path(f".benchmarks/{machine}")
 
@@ -81,97 +172,81 @@ def publish() -> None:
         f"(branch: {branch}, machine: {machine})"
     )
 
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        _clone_or_init_gh_pages(tmp_path)
-        _write_result(tmp_path, machine, commit_sha_short, latest)
-        _update_manifest(tmp_path, machine, commit_sha, branch, timestamp)
-        _update_dashboard_data(tmp_path, data, commit_sha, timestamp)
-        _commit_and_push(tmp_path, commit_sha_short, machine)
+    _ensure_site_clone()
+    root = _SITE_DIR / _SUBDIR
+    _init_benchmark_dir(root)
+    (root / "index.html").write_text(_INDEX_HTML)
+    _write_result(root, machine, commit_sha_short, latest)
+    _update_manifest(root, machine, commit_sha, branch, timestamp)
+    _update_dashboard_data(root, data, commit_sha, timestamp)
+    _commit_and_push(commit_sha_short, machine)
 
     print("Done.")
 
 
-def _clone_or_init_gh_pages(tmp_path: Path) -> None:
-    """Clone the gh-pages branch, or create an orphan branch if it doesn't exist."""
-    result = subprocess.run(
-        ["git", "ls-remote", "--heads", _REPO_URL, _GH_PAGES_BRANCH],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-
-    if result.stdout.strip():
+def _ensure_site_clone() -> None:
+    """Clone the org site repo or pull latest if already cloned."""
+    if (_SITE_DIR / ".git").exists():
+        subprocess.run(
+            ["git", "pull", "--rebase"],
+            cwd=_SITE_DIR,
+            check=True,
+        )
+    else:
         subprocess.run(
             [
                 "git",
                 "clone",
-                "--branch",
-                _GH_PAGES_BRANCH,
                 "--depth",
                 "1",
-                _REPO_URL,
-                str(tmp_path),
+                "--branch",
+                _BRANCH,
+                _ORG_REPO,
+                str(_SITE_DIR),
             ],
             check=True,
         )
-    else:
-        print("gh-pages branch does not exist, creating it...")
-        subprocess.run(
-            ["git", "clone", "--depth", "1", _REPO_URL, str(tmp_path)],
-            check=True,
-        )
-        subprocess.run(
-            ["git", "checkout", "--orphan", _GH_PAGES_BRANCH],
-            cwd=tmp_path,
-            check=True,
-        )
-        subprocess.run(
-            ["git", "rm", "-rf", "."],
-            cwd=tmp_path,
-            check=True,
-            capture_output=True,
-        )
-        _init_gh_pages_content(tmp_path)
 
 
-def _init_gh_pages_content(tmp_path: Path) -> None:
-    """Create initial gh-pages content."""
-    (tmp_path / "index.html").write_text(_INITIAL_INDEX_HTML)
+def _init_benchmark_dir(root: Path) -> None:
+    """Create the benchmark subdirectory with initial content if needed."""
+    if root.exists():
+        return
 
-    dev_bench = tmp_path / "dev" / "bench"
+    root.mkdir(parents=True)
+
+    dev_bench = root / "dev" / "bench"
     dev_bench.mkdir(parents=True)
     (dev_bench / "data.js").write_text(_INITIAL_DATA_JS)
 
-    (tmp_path / "benchmark-config.json").write_text(
+    (root / "index.html").write_text(_INDEX_HTML)
+
+    (root / "benchmark-config.json").write_text(
         json.dumps(_INITIAL_CONFIG, indent=2) + "\n"
     )
 
-    # Prevent Jekyll from ignoring underscore-prefixed files
-    (tmp_path / ".nojekyll").write_text("")
-
 
 def _write_result(
-    tmp_path: Path,
+    root: Path,
     machine_hash: str,
     commit_sha_short: str,
     source_json: Path,
 ) -> None:
     """Copy the benchmark JSON to results/{machine_hash}/{sha}.json."""
-    results_dir = tmp_path / "results" / machine_hash
+    results_dir = root / "results" / machine_hash
     results_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_json, results_dir / f"{commit_sha_short}.json")
 
 
 def _update_manifest(
-    tmp_path: Path,
+    root: Path,
     machine_hash: str,
     commit_sha: str,
     branch: str,
     timestamp: str,
 ) -> None:
     """Append an entry to the manifest for this machine."""
-    manifest_path = tmp_path / "results" / machine_hash / "manifest.json"
+    manifest_path = root / "results" / machine_hash / "manifest.json"
 
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text())
@@ -192,18 +267,17 @@ def _update_manifest(
 
 
 def _update_dashboard_data(
-    tmp_path: Path,
+    root: Path,
     benchmark_data: dict,
     commit_sha: str,
     timestamp: str,
 ) -> None:
-    """Convert pytest-benchmark results to github-action-benchmark format."""
-    data_js_path = tmp_path / "dev" / "bench" / "data.js"
+    """Convert pytest-benchmark results to Chart.js dashboard data."""
+    data_js_path = root / "dev" / "bench" / "data.js"
     data_js_path.parent.mkdir(parents=True, exist_ok=True)
 
     if data_js_path.exists():
         raw = data_js_path.read_text()
-        # Strip "window.BENCHMARK_DATA = " prefix and ";\n" suffix
         json_str = (
             raw.removeprefix("window.BENCHMARK_DATA = ").removesuffix(";\n").rstrip(";")
         )
@@ -211,7 +285,6 @@ def _update_dashboard_data(
     else:
         dashboard = {"entries": {}}
 
-    # Build the new entry
     benches = []
     for bench in benchmark_data["benchmarks"]:
         stats = bench["stats"]
@@ -229,7 +302,6 @@ def _update_dashboard_data(
             }
         )
 
-    # Parse timestamp to epoch
     dt = datetime.fromisoformat(timestamp)
     epoch_ms = int(dt.timestamp() * 1000)
 
@@ -252,7 +324,6 @@ def _update_dashboard_data(
     suite = entries.setdefault(_SUITE_NAME, [])
     suite.append(entry)
 
-    # Trim to keep only the latest entries
     if len(suite) > _MAX_DASHBOARD_ENTRIES:
         entries[_SUITE_NAME] = suite[-_MAX_DASHBOARD_ENTRIES:]
 
@@ -261,14 +332,17 @@ def _update_dashboard_data(
     )
 
 
-def _commit_and_push(tmp_path: Path, commit_sha_short: str, machine_hash: str) -> None:
-    """Commit and push changes to gh-pages."""
-    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+def _commit_and_push(commit_sha_short: str, machine_hash: str) -> None:
+    """Commit and push changes to the org site repo."""
+    subprocess.run(
+        ["git", "add", _SUBDIR],
+        cwd=_SITE_DIR,
+        check=True,
+    )
 
-    # Check if there are changes to commit
     result = subprocess.run(
         ["git", "diff", "--cached", "--quiet"],
-        cwd=tmp_path,
+        cwd=_SITE_DIR,
         capture_output=True,
     )
     if result.returncode == 0:
@@ -280,17 +354,18 @@ def _commit_and_push(tmp_path: Path, commit_sha_short: str, machine_hash: str) -
             "git",
             "commit",
             "-m",
-            f"Publish benchmarks for {commit_sha_short} (machine: {machine_hash})",
+            f"pylcm: publish benchmarks for "
+            f"{commit_sha_short} (machine: {machine_hash})",
         ],
-        cwd=tmp_path,
+        cwd=_SITE_DIR,
         check=True,
     )
     subprocess.run(
-        ["git", "push", "origin", _GH_PAGES_BRANCH],
-        cwd=tmp_path,
+        ["git", "push", "origin", _BRANCH],
+        cwd=_SITE_DIR,
         check=True,
     )
-    print(f"Pushed to {_GH_PAGES_BRANCH}.")
+    print("Pushed to org site.")
 
 
 if __name__ == "__main__":

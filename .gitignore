@@ -44,6 +44,7 @@ __pycache__/
 .ruff_cache/
 
 # Testing
+.benchmark-site/
 .benchmarks/
 .cache/
 .coverage
