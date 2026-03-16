@@ -93,8 +93,12 @@ _INDEX_HTML = """\
         div.appendChild(cv);
         det.appendChild(div);
         box.appendChild(det);
+        var GH = 'https://github.com/OpenSourceEconomics/pylcm/commit/';
         var labels = entries.map(function(e) {
           return e.commit.id ? e.commit.id.slice(0, 8) : '?';
+        });
+        var commitIds = entries.map(function(e) {
+          return e.commit.id || '';
         });
         var ds = gNames.map(function(name, i) {
           var hue = (i * 360 / gNames.length) % 360;
@@ -116,6 +120,16 @@ _INDEX_HTML = """\
           data: { labels: labels, datasets: ds },
           options: {
             responsive: true,
+            onClick: function(evt, elems, chart) {
+              var pts = chart.getElementsAtEventForMode(
+                evt, 'index', { intersect: false }, false
+              );
+              if (pts.length > 0) {
+                var idx = pts[0].index;
+                var sha = commitIds[idx];
+                if (sha) window.open(GH + sha, '_blank');
+              }
+            },
             plugins: {
               legend: {
                 position: 'bottom',
@@ -128,8 +142,18 @@ _INDEX_HTML = """\
                 beginAtZero: false
               },
               x: {
-                title: { display: true, text: 'Commit' }
+                title: { display: true, text: 'Commit' },
+                ticks: {
+                  color: '#0969da',
+                  font: { size: 11 }
+                }
               }
+            },
+            onHover: function(evt, elems, chart) {
+              var pts = chart.getElementsAtEventForMode(
+                evt, 'index', { intersect: false }, false
+              );
+              cv.style.cursor = pts.length ? 'pointer' : '';
             }
           }
         });
