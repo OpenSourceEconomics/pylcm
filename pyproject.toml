@@ -277,7 +277,6 @@ benchmarks-compare = """\
   pytest benchmarks/ --benchmark-only -p no:xdist -o 'addopts=' -o \
   'python_files=bench_*.py test_*.py' --benchmark-compare\
   """
-benchmarks-publish = "python benchmarks/publish.py"
 benchmarks-save = """\
   pytest benchmarks/ --benchmark-only -p no:xdist -o 'addopts=' -o \
   'python_files=bench_*.py test_*.py' --benchmark-autosave -v\
@@ -296,6 +295,8 @@ ty = "ty check"
 jax = ">=0.9"
 pdbp = "*"
 pylcm = { path = ".", editable = true }
+[tool.pixi.tasks]
+benchmarks-publish = "python benchmarks/publish.py"
 [tool.pixi.workspace]
 channels = [ "conda-forge" ]
 platforms = [ "linux-64", "osx-arm64", "win-64" ]

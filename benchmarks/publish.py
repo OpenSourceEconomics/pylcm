@@ -346,7 +346,14 @@ def _update_dashboard_data(
 
     entries = dashboard.setdefault("entries", {})
     suite = entries.setdefault(_SUITE_NAME, [])
-    suite.append(entry)
+
+    # Deduplicate by commit SHA (keep last occurrence), then add new entry
+    deduped: dict[str, dict] = {}
+    for existing in suite:
+        cid = existing.get("commit", {}).get("id", id(existing))
+        deduped[cid] = existing
+    deduped[commit_sha] = entry
+    suite[:] = list(deduped.values())
 
     if len(suite) > _MAX_DASHBOARD_ENTRIES:
         entries[_SUITE_NAME] = suite[-_MAX_DASHBOARD_ENTRIES:]
