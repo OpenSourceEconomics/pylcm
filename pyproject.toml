@@ -97,6 +97,13 @@ extend-ignore = [
   "TRY003",  # Long messages outside exception class
   "UP047",   # Generic function should use type parameters
 ]
+per-file-ignores."benchmarks/*" = [
+  "ANN",     # Annotations
+  "D",       # Docstrings
+  "INP001",  # Implicit namespace package
+  "PLR2004", # Magic values in comparison
+  "S101",    # Use of assert
+]
 per-file-ignores."docs/**/*" = [
   "ANN001", # Missing type annotation for function argument
   "ANN002", # Missing type annotation for *args
@@ -169,7 +176,12 @@ expand_tables = [
 ]
 
 [tool.pytest]
-ini_options.addopts = [ "--pdbcls=pdbp:Pdb", "--dist", "loadfile" ]
+ini_options.addopts = [
+  "--pdbcls=pdbp:Pdb",
+  "--dist",
+  "loadfile",
+  "--benchmark-disable"
+]
 ini_options.filterwarnings = []
 ini_options.markers = [
   "illustrative: Tests are designed for illustrative purposes",
@@ -244,11 +256,24 @@ jax = ">=0.9"
 jax-metal = ">=0.1.1"
 [tool.pixi.feature.tests.dependencies]
 pytest = "*"
+pytest-benchmark = "*"
 pytest-cov = "*"
 pytest-xdist = "*"
 [tool.pixi.feature.tests.pypi-dependencies]
 quantecon = "*"
 [tool.pixi.feature.tests.tasks]
+benchmarks = """\
+  pytest benchmarks/ --benchmark-only -p no:xdist -o 'addopts=' -o \
+  'python_files=bench_*.py test_*.py' -v\
+  """
+benchmarks-compare = """\
+  pytest benchmarks/ --benchmark-only -p no:xdist -o 'addopts=' -o \
+  'python_files=bench_*.py test_*.py' --benchmark-compare\
+  """
+benchmarks-save = """\
+  pytest benchmarks/ --benchmark-only -p no:xdist -o 'addopts=' -o \
+  'python_files=bench_*.py test_*.py' --benchmark-autosave -v\
+  """
 tests = "pytest tests"
 tests-32bit = "pytest tests --precision=32"
 tests-with-cov = "pytest tests --cov-report=xml --cov=./"
