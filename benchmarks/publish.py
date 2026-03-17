@@ -3,7 +3,7 @@
 Usage: pixi run benchmarks-publish
 
 Reads the latest saved benchmark JSON from .benchmarks/{machine_hash}/,
-converts it to a Chart.js dashboard, and pushes it to the org site repo
+converts it to a Plotly dashboard, and pushes it to the org site repo
 under pylcm-benchmarks/. The dashboard is at open-econ.org/pylcm-benchmarks/.
 """
 
@@ -27,12 +27,11 @@ _INDEX_HTML = """\
   <meta charset="utf-8">
   <title>PyLCM Benchmarks</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/plotly.js-basic-dist-min@2"></script>
   <style>
     body { font-family: system-ui, sans-serif; margin: 2rem; }
     h1 { margin-bottom: 0.5rem; }
-    .chart-box { margin: 1.5rem 0; max-width: 900px; }
-    canvas { max-height: 350px; }
+    .chart-box { margin: 1rem 0; max-width: 900px; }
     details { margin: 0.5rem 0; }
     summary { cursor: pointer; font-weight: 600; }
     p.meta { color: #666; font-size: 0.9rem; }
@@ -94,90 +93,76 @@ _INDEX_HTML = """\
           sub.textContent = DESCRIPTIONS[group];
           det.appendChild(sub);
         }
-        var div = document.createElement('div');
-        div.className = 'chart-box';
-        var cv = document.createElement('canvas');
-        div.appendChild(cv);
-        det.appendChild(div);
+        var plotDiv = document.createElement('div');
+        plotDiv.className = 'chart-box';
+        det.appendChild(plotDiv);
         box.appendChild(det);
         var commitIds = entries.map(function(e) {
           return e.commit.id || '';
         });
-        var labels = commitIds.map(function(id) {
+        var shortShas = commitIds.map(function(id) {
           return id ? id.slice(0, 8) : '?';
         });
-        var ds = gNames.map(function(name, i) {
-          var hue = (i * 360 / gNames.length) % 360;
-          return {
-            label: name,
-            data: entries.map(function(e) {
-              var b = e.benches.find(
-                function(x) { return x.name === name; }
+        var traces = gNames.map(function(name) {
+          var yVals = [];
+          var hoverTexts = [];
+          entries.forEach(function(e, i) {
+            var b = e.benches.find(function(x) { return x.name === name; });
+            yVals.push(b ? b.value * 1000 : null);
+            if (b) {
+              hoverTexts.push(
+                '<b>' + name + '</b><br>' +
+                (b.value * 1000).toFixed(2) + ' ms ' + b.range + '<br>' +
+                b.extra + '<br>' +
+                '<i>' + shortShas[i] + '</i>'
               );
-              return b ? b.value * 1000 : null;
-            }),
-            borderColor: 'hsl('+hue+',70%,50%)',
-            tension: 0.2,
-            spanGaps: true
+            } else {
+              hoverTexts.push('');
+            }
+          });
+          return {
+            x: shortShas,
+            y: yVals,
+            name: name,
+            mode: 'lines+markers',
+            connectgaps: true,
+            hoverinfo: 'text',
+            hovertext: hoverTexts,
+            marker: { size: 6 }
           };
         });
-        new Chart(cv, {
-          type: 'line',
-          data: { labels: labels, datasets: ds },
-          options: {
-            responsive: true,
-            onClick: function(evt, elems, chart) {
-              var rect = cv.getBoundingClientRect();
-              var x = evt.native.clientX - rect.left;
-              var y = evt.native.clientY - rect.top;
-              var xScale = chart.scales.x;
-              var idx;
-              if (y >= xScale.top) {
-                idx = xScale.getValueForPixel(x);
-              } else {
-                var pts = chart.getElementsAtEventForMode(
-                  evt, 'index', { intersect: false }, false
-                );
-                if (pts.length > 0) idx = pts[0].index;
-              }
-              if (idx != null && idx >= 0 && idx < commitIds.length) {
-                var sha = commitIds[idx];
-                if (sha) window.open(GH + sha, '_blank');
-              }
-            },
-            plugins: {
-              legend: {
-                position: 'bottom',
-                labels: { boxWidth: 12, font: { size: 11 } }
-              }
-            },
-            scales: {
-              y: {
-                title: { display: true, text: 'Time (ms)' },
-                beginAtZero: false
-              },
-              x: {
-                title: { display: true, text: 'Commit' },
-                ticks: {
-                  color: '#0969da',
-                  font: { size: 11 }
-                }
-              }
-            },
-            onHover: function(evt, elems, chart) {
-              var rect = cv.getBoundingClientRect();
-              var y = evt.native.clientY - rect.top;
-              var xScale = chart.scales.x;
-              if (y >= xScale.top) {
-                cv.style.cursor = 'pointer';
-                return;
-              }
-              var pts = chart.getElementsAtEventForMode(
-                evt, 'index', { intersect: false }, false
-              );
-              cv.style.cursor = pts.length ? 'pointer' : '';
-            }
-          }
+        var layout = {
+          template: 'plotly_white',
+          height: 350,
+          margin: { l: 60, r: 20, t: 10, b: 60 },
+          xaxis: {
+            title: 'Commit',
+            tickfont: { size: 11, color: '#0969da' },
+            type: 'category'
+          },
+          yaxis: {
+            title: 'Time (ms)'
+          },
+          legend: {
+            orientation: 'h',
+            yanchor: 'top',
+            y: -0.25,
+            xanchor: 'center',
+            x: 0.5
+          },
+          hovermode: 'closest'
+        };
+        var config = {
+          responsive: true,
+          displayModeBar: true,
+          modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+          displaylogo: false
+        };
+        Plotly.newPlot(plotDiv, traces, layout, config);
+        plotDiv.on('plotly_click', function(clickData) {
+          var idx = clickData.points[0].pointIndex;
+          var sha = commitIds[idx];
+          if (sha) window.open(GH + sha, '_blank');
         });
       });
     });
@@ -320,7 +305,7 @@ def _update_dashboard_data(
     commit_sha: str,
     timestamp: str,
 ) -> None:
-    """Convert pytest-benchmark results to Chart.js dashboard data."""
+    """Convert pytest-benchmark results to Plotly dashboard data."""
     data_js_path = root / "dev" / "bench" / "data.js"
     data_js_path.parent.mkdir(parents=True, exist_ok=True)
 
