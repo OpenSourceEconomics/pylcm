@@ -1,4 +1,4 @@
-"""Grid type comparison benchmarks (LinSpaced vs LogSpaced vs IrregSpaced).
+"""Grid type comparison benchmarks (LinSpaced vs IrregSpaced).
 
 Addresses #225: benchmark IrregSpacedGrid vs LinSpacedGrid coordinate lookups.
 """
@@ -11,9 +11,9 @@ from lcm_examples import precautionary_savings
 _N_SUBJECTS = 100
 
 
-@pytest.mark.parametrize("n_points", [50, 200, 500])
-@pytest.mark.parametrize("grid_type", ["lin", "log", "irreg"])
-def test_grid_types(benchmark, n_points, grid_type):
+@pytest.mark.parametrize("n_points", [500, 1000, 2000])
+@pytest.mark.parametrize("grid_type", ["lin", "irreg"])
+def test_grid_lookup(benchmark, n_points, grid_type):
     model = precautionary_savings.get_model(
         n_periods=5,
         shock_type="rouwenhorst",

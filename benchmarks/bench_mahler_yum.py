@@ -13,7 +13,7 @@ _START_PARAMS_WITHOUT_BETA = {k: v for k, v in START_PARAMS.items() if k != "bet
 _N_SUBJECTS = 100
 
 
-def test_mahler_yum(benchmark):
+def test_mahler_yum_2024(benchmark):
     model = MAHLER_YUM_MODEL
     common_params, initial_states, _discount_factor_type = create_inputs(
         seed=0,

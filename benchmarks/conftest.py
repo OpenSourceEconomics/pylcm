@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
-from lcm_examples import precautionary_savings, tiny
+from lcm_examples import precautionary_savings
 
 
 def _machine_hash() -> str:
@@ -46,13 +46,6 @@ def pytest_configure(config):
             "Commit or stash your changes first."
         )
         raise pytest.UsageError(msg)
-
-
-@pytest.fixture
-def tiny_model_and_params():
-    model = tiny.get_model()
-    params = tiny.get_params()
-    return model, params
 
 
 @pytest.fixture

@@ -1,23 +1,15 @@
-"""Solve and simulate benchmarks for different models and grid sizes."""
+"""Solve benchmarks for different models and grid sizes."""
 
 import jax.numpy as jnp
 import pytest
 
-from lcm_examples import mortality, precautionary_savings, tiny
+from lcm_examples import mortality, precautionary_savings
 
 _N_SUBJECTS = 100
 
 
-def test_solve_tiny(benchmark):
-    model = tiny.get_model()
-    params = tiny.get_params()
-    # Warm up JIT
-    model.solve(params, log_level="off")
-    benchmark(model.solve, params, log_level="off")
-
-
-@pytest.mark.parametrize("n_points", [10, 50, 200])
-def test_precautionary(benchmark, n_points):
+@pytest.mark.parametrize("n_points", [50, 200, 500])
+def test_solve(benchmark, n_points):
     model = precautionary_savings.get_model(
         n_periods=5,
         shock_type="rouwenhorst",
@@ -29,20 +21,9 @@ def test_precautionary(benchmark, n_points):
         sigma=0.2,
         rho=0.9,
     )
-    initial_conditions = {
-        "age": jnp.full(_N_SUBJECTS, 20.0),
-        "wealth": jnp.full(_N_SUBJECTS, 5.0),
-        "income": jnp.full(_N_SUBJECTS, 0.0),
-        "regime_id": jnp.zeros(_N_SUBJECTS, dtype=jnp.int32),
-    }
     # Warm up JIT
-    model.solve_and_simulate(params, initial_conditions, log_level="off")
-    benchmark(
-        model.solve_and_simulate,
-        params,
-        initial_conditions,
-        log_level="off",
-    )
+    model.solve(params, log_level="off")
+    benchmark(model.solve, params, log_level="off")
 
 
 def test_mortality(benchmark):

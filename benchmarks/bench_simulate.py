@@ -7,7 +7,7 @@ from lcm_examples import precautionary_savings
 
 
 @pytest.mark.parametrize("n_subjects", [1_000, 10_000])
-def test_simulate_precautionary(benchmark, n_subjects):
+def test_simulate(benchmark, n_subjects):
     model = precautionary_savings.get_model(
         n_periods=5,
         shock_type="rouwenhorst",

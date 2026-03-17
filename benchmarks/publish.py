@@ -36,6 +36,7 @@ _INDEX_HTML = """\
     details { margin: 0.5rem 0; }
     summary { cursor: pointer; font-weight: 600; }
     p.meta { color: #666; font-size: 0.9rem; }
+    p.subtitle { color: #888; font-size: 0.85rem; margin: 0.2rem 0 0.5rem; }
   </style>
 </head>
 <body>
@@ -50,6 +51,20 @@ _INDEX_HTML = """\
       document.getElementById('charts').innerHTML =
         '<p>No benchmark data available yet.</p>';
       return;
+    }
+    var GH = 'https://github.com/OpenSourceEconomics/pylcm/commit/';
+    var DESCRIPTIONS = {
+      'test_solve': 'Precautionary savings model \\u2014 solve only',
+      'test_grid_lookup': 'Precautionary savings \\u2014 lin vs irreg grids',
+      'test_simulate': 'Precautionary savings model \\u2014 simulation only',
+      'test_mortality': 'Mortality model',
+      'test_mahler_yum_2024': 'Mahler & Yum (2024) replication'
+    };
+    function formatTitle(group) {
+      var s = group.replace(/^test_/, '');
+      return s.replace(/(^|_)([a-z0-9])/g, function(m, sep, ch) {
+        return (sep ? ' ' : '') + ch.toUpperCase();
+      });
     }
     var box = document.getElementById('charts');
     Object.keys(data.entries).forEach(function(suite) {
@@ -71,20 +86,25 @@ _INDEX_HTML = """\
         var det = document.createElement('details');
         det.open = true;
         var sum = document.createElement('summary');
-        sum.textContent = group;
+        sum.textContent = formatTitle(group);
         det.appendChild(sum);
+        if (DESCRIPTIONS[group]) {
+          var sub = document.createElement('p');
+          sub.className = 'subtitle';
+          sub.textContent = DESCRIPTIONS[group];
+          det.appendChild(sub);
+        }
         var div = document.createElement('div');
         div.className = 'chart-box';
         var cv = document.createElement('canvas');
         div.appendChild(cv);
         det.appendChild(div);
         box.appendChild(det);
-        var GH = 'https://github.com/OpenSourceEconomics/pylcm/commit/';
-        var labels = entries.map(function(e) {
-          return e.commit.id ? e.commit.id.slice(0, 8) : '?';
-        });
         var commitIds = entries.map(function(e) {
           return e.commit.id || '';
+        });
+        var labels = commitIds.map(function(id) {
+          return id ? id.slice(0, 8) : '?';
         });
         var ds = gNames.map(function(name, i) {
           var hue = (i * 360 / gNames.length) % 360;
@@ -107,11 +127,20 @@ _INDEX_HTML = """\
           options: {
             responsive: true,
             onClick: function(evt, elems, chart) {
-              var pts = chart.getElementsAtEventForMode(
-                evt, 'index', { intersect: false }, false
-              );
-              if (pts.length > 0) {
-                var idx = pts[0].index;
+              var rect = cv.getBoundingClientRect();
+              var x = evt.native.clientX - rect.left;
+              var y = evt.native.clientY - rect.top;
+              var xScale = chart.scales.x;
+              var idx;
+              if (y >= xScale.top) {
+                idx = xScale.getValueForPixel(x);
+              } else {
+                var pts = chart.getElementsAtEventForMode(
+                  evt, 'index', { intersect: false }, false
+                );
+                if (pts.length > 0) idx = pts[0].index;
+              }
+              if (idx != null && idx >= 0 && idx < commitIds.length) {
                 var sha = commitIds[idx];
                 if (sha) window.open(GH + sha, '_blank');
               }
@@ -136,6 +165,13 @@ _INDEX_HTML = """\
               }
             },
             onHover: function(evt, elems, chart) {
+              var rect = cv.getBoundingClientRect();
+              var y = evt.native.clientY - rect.top;
+              var xScale = chart.scales.x;
+              if (y >= xScale.top) {
+                cv.style.cursor = 'pointer';
+                return;
+              }
               var pts = chart.getElementsAtEventForMode(
                 evt, 'index', { intersect: false }, false
               );
