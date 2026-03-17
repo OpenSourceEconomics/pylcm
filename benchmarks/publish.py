@@ -107,10 +107,10 @@ _INDEX_HTML = """\
           var ts = e.commit.timestamp || '';
           if (!ts) return '?';
           var d = new Date(ts);
-          var yy = String(d.getFullYear()).slice(2);
+          var yyyy = d.getFullYear();
           var mm = String(d.getMonth() + 1).padStart(2, '0');
           var dd = String(d.getDate()).padStart(2, '0');
-          return yy + '-' + mm + '-' + dd;
+          return yyyy + '-' + mm + '-' + dd;
         });
         var traces = gNames.map(function(name) {
           var yVals = [];
