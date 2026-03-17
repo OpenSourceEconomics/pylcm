@@ -53,10 +53,11 @@ _INDEX_HTML = """\
     }
     var GH = 'https://github.com/OpenSourceEconomics/pylcm/commit/';
     var DESCRIPTIONS = {
-      'test_solve': 'Precautionary savings model \\u2014 solve only',
+      'test_solve': 'Precautionary savings \\u2014 solve only',
+      'test_simulate': 'Precautionary savings \\u2014 simulation only',
+      'test_solve_and_simulate': 'Precautionary savings \\u2014 solve + simulate',
       'test_grid_lookup': 'Precautionary savings \\u2014 lin vs irreg grids',
-      'test_simulate': 'Precautionary savings model \\u2014 simulation only',
-      'test_mortality': 'Mortality model',
+      'test_mortality': 'Mortality model \\u2014 solve + simulate',
       'test_mahler_yum_2024': 'Mahler & Yum (2024) replication'
     };
     function formatTitle(group) {
