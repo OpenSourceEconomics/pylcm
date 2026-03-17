@@ -281,6 +281,7 @@ benchmarks-save = """\
   pytest benchmarks/ --benchmark-only -p no:xdist -o 'addopts=' -o \
   'python_files=bench_*.py test_*.py' --benchmark-autosave -v\
   """
+benchmarks-save-and-publish = { depends-on = [ "benchmarks-save", "benchmarks-publish" ] }
 tests = "pytest tests"
 tests-32bit = "pytest tests --precision=32"
 tests-with-cov = "pytest tests --cov-report=xml --cov=./"
