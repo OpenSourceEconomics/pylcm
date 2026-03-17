@@ -103,25 +103,39 @@ _INDEX_HTML = """\
         var shortShas = commitIds.map(function(id) {
           return id ? id.slice(0, 8) : '?';
         });
+        var dateLabels = entries.map(function(e) {
+          var ts = e.commit.timestamp || '';
+          if (!ts) return '?';
+          var d = new Date(ts);
+          var yy = String(d.getFullYear()).slice(2);
+          var mm = String(d.getMonth() + 1).padStart(2, '0');
+          var dd = String(d.getDate()).padStart(2, '0');
+          return yy + '-' + mm + '-' + dd;
+        });
         var traces = gNames.map(function(name) {
           var yVals = [];
           var hoverTexts = [];
           entries.forEach(function(e, i) {
             var b = e.benches.find(function(x) { return x.name === name; });
             yVals.push(b ? b.value * 1000 : null);
+            var sha = shortShas[i];
+            var url = commitIds[i] ? GH + commitIds[i] : '';
+            var shaLink = url
+              ? '<a href="' + url + '" target="_blank">' + sha + '</a>'
+              : sha;
             if (b) {
               hoverTexts.push(
                 '<b>' + name + '</b><br>' +
                 (b.value * 1000).toFixed(2) + ' ms ' + b.range + '<br>' +
                 b.extra + '<br>' +
-                '<i>' + shortShas[i] + '</i>'
+                shaLink
               );
             } else {
               hoverTexts.push('');
             }
           });
           return {
-            x: shortShas,
+            x: dateLabels,
             y: yVals,
             name: name,
             mode: 'lines+markers',
@@ -134,10 +148,11 @@ _INDEX_HTML = """\
         var layout = {
           template: 'plotly_white',
           height: 350,
-          margin: { l: 60, r: 20, t: 10, b: 60 },
+          margin: { l: 60, r: 20, t: 10, b: 80 },
           xaxis: {
-            title: 'Commit',
-            tickfont: { size: 11, color: '#0969da' },
+            title: 'Date',
+            tickangle: -45,
+            tickfont: { size: 11 },
             type: 'category'
           },
           yaxis: {
