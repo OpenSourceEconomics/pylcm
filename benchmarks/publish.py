@@ -112,6 +112,7 @@ _INDEX_HTML = """\
           var dd = String(d.getDate()).padStart(2, '0');
           return yyyy + '-' + mm + '-' + dd;
         });
+        var xIndices = entries.map(function(_, i) { return i; });
         var traces = gNames.map(function(name) {
           var yVals = [];
           var hoverTexts = [];
@@ -135,7 +136,7 @@ _INDEX_HTML = """\
             }
           });
           return {
-            x: dateLabels,
+            x: xIndices,
             y: yVals,
             name: name,
             mode: 'lines+markers',
@@ -153,7 +154,8 @@ _INDEX_HTML = """\
             title: 'Date',
             tickangle: -45,
             tickfont: { size: 11 },
-            type: 'category'
+            tickvals: xIndices,
+            ticktext: dateLabels
           },
           yaxis: {
             title: 'Time (ms)'
