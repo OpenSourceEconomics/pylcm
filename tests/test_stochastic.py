@@ -55,7 +55,7 @@ def test_model_solve_and_simulate_with_stochastic_model():
     df = result.to_dataframe().query('regime == "working_life"')
 
     # Verify expected columns
-    required_cols = {"period", "subject_id", "partner", "work"}
+    required_cols = {"period", "subject_id", "partner", "labor_supply"}
     assert required_cols <= set(df.columns)
     assert len(df) > 0
 
@@ -67,7 +67,9 @@ def test_model_solve_and_simulate_with_stochastic_model():
 
     if len(common) > 0:
         p0, p1 = period_0.loc[common], period_1.loc[common]
-        should_be_single = (p0["work"] == "work") & (p0["partner"] == "partnered")
+        should_be_single = (p0["labor_supply"] == "work") & (
+            p0["partner"] == "partnered"
+        )
         expected = should_be_single.map({True: "single", False: "partnered"})
 
         pd.testing.assert_series_equal(

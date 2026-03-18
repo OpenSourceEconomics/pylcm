@@ -3,7 +3,7 @@
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 
 
-@categorical(ordered=False)
+@categorical(ordered=True)
 class Health:
     bad: int
     good: int

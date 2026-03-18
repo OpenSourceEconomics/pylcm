@@ -103,7 +103,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
     )
     got = result.to_dataframe().query('regime == "working_life"')
 
-    assert (got["work"] == "retire").all()
+    assert (got["labor_supply"] == "retire").all()
     assert_array_almost_equal(got["consumption"], [1.0, 50.400803])
 
 
@@ -168,7 +168,7 @@ def test_simulate_using_model_methods(
         "period",
         "age",
         "value",
-        "work",
+        "labor_supply",
         "consumption",
         "wealth",
         "utility",
@@ -179,7 +179,7 @@ def test_simulate_using_model_methods(
     assert expected_cols == set(df.columns)
 
     # Everyone retires in the last period
-    assert (df.loc[df["period"] == n_periods - 1, "work"] == "retire").all()
+    assert (df.loc[df["period"] == n_periods - 1, "labor_supply"] == "retire").all()
 
     # Higher wealth leads to higher consumption and value in each period
     # (data is sorted by subject_id which corresponds to increasing initial wealth)
@@ -222,15 +222,15 @@ def test_simulate_with_only_discrete_actions():
             "subject_id": [0, 0, 1, 1],
             "period": [0, 1, 0, 1],
             "wealth": ["low", "high", "high", "medium"],
-            "work": ["work", "retire", "retire", "retire"],
+            "labor_supply": ["work", "retire", "retire", "retire"],
             "consumption": ["low", "high", "high", "high"],
         }
     )
 
     assert_frame_equal(
-        got[["subject_id", "period", "wealth", "work", "consumption"]].reset_index(
-            drop=True
-        ),
+        got[
+            ["subject_id", "period", "wealth", "labor_supply", "consumption"]
+        ].reset_index(drop=True),
         expected,
         check_dtype=False,
         check_categorical=False,
@@ -370,8 +370,8 @@ def test_effect_of_disutility_of_work():
 
     # Lower disutility -> retire later (work=0, retire=1, lower code = more work)
     assert (
-        merged["work_low"].cat.codes.to_numpy()
-        <= merged["work_high"].cat.codes.to_numpy()
+        merged["labor_supply_low"].cat.codes.to_numpy()
+        <= merged["labor_supply_high"].cat.codes.to_numpy()
     ).all()
 
 
@@ -396,14 +396,14 @@ def test_to_dataframe_use_labels_parameter():
 
     # use_labels=True (default): discrete columns are Categorical with string labels
     df_labels = result.to_dataframe()
-    for col in ["regime", "work"]:
+    for col in ["regime", "labor_supply"]:
         assert df_labels[col].dtype.name == "category", f"{col} should be categorical"
-    assert set(df_labels["work"].cat.categories) == {"work", "retire"}
+    assert set(df_labels["labor_supply"].cat.categories) == {"work", "retire"}
 
     # use_labels=False: discrete columns have numeric codes
     df_codes = result.to_dataframe(use_labels=False)
-    assert df_codes["work"].dtype.kind in "iuf"  # integer/unsigned/float
-    assert set(df_codes["work"].dropna().unique()).issubset({0, 1})
+    assert df_codes["labor_supply"].dtype.kind in "iuf"  # integer/unsigned/float
+    assert set(df_codes["labor_supply"].dropna().unique()).issubset({0, 1})
 
 
 # ======================================================================================

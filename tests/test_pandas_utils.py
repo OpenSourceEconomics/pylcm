@@ -53,7 +53,7 @@ def test_to_categorical_dtype_preserves_order():
 
 
 def test_to_categorical_dtype_is_not_ordered():
-    result = Health.to_categorical_dtype()  # ty: ignore[unresolved-attribute]
+    result = Occupation.to_categorical_dtype()  # ty: ignore[unresolved-attribute]
     assert result.ordered is False
 
 
@@ -340,7 +340,7 @@ def _array_to_series(arr, model):
 
     index = pd.MultiIndex.from_tuples(
         [r[0] for r in records],
-        names=["age", "work", "partner", "next_partner"],
+        names=["age", "labor_supply", "partner", "next_partner"],
     )
     return pd.Series([r[1] for r in records], index=index)
 
@@ -376,7 +376,7 @@ def test_transition_probs_reordered_levels():
     arr = _make_partner_probs_array()
     series = _array_to_series(arr, model)
     # Reorder levels: put next_partner first, then partner, work, age
-    series = series.reorder_levels(["next_partner", "partner", "work", "age"])
+    series = series.reorder_levels(["next_partner", "partner", "labor_supply", "age"])
     result = transition_probs_from_series(
         series=series, model=model, regime_name="working_life", state_name="partner"
     )
@@ -399,7 +399,9 @@ def test_transition_probs_wrong_level_names_raises():
     arr = _make_partner_probs_array()
     series = _array_to_series(arr, model)
     # Rename a level to something wrong
-    series.index = series.index.set_names(["age", "work", "partner", "wrong_name"])
+    series.index = series.index.set_names(
+        ["age", "labor_supply", "partner", "wrong_name"]
+    )
     with pytest.raises(ValueError, match="level names"):
         transition_probs_from_series(
             series=series, model=model, regime_name="working_life", state_name="partner"
@@ -424,7 +426,7 @@ def test_transition_probs_period_level_raises():
     model = get_stochastic_model(3)
     index = pd.MultiIndex.from_tuples(
         [(0, "work", "single", "single")],
-        names=["period", "work", "partner", "next_partner"],
+        names=["period", "labor_supply", "partner", "next_partner"],
     )
     series = pd.Series([1.0], index=index)
     with pytest.raises(ValueError, match="age"):
@@ -438,7 +440,7 @@ def test_transition_probs_duplicate_level_names_raises():
     model = get_stochastic_model(3)
     index = pd.MultiIndex.from_tuples(
         [(40.0, "work", "single", "single")],
-        names=["age", "work", "work", "next_partner"],
+        names=["age", "labor_supply", "labor_supply", "next_partner"],
     )
     series = pd.Series([1.0], index=index)
     with pytest.raises(ValueError, match="duplicate"):

@@ -68,7 +68,7 @@ DEFAULT_CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 
 working_life = Regime(
     actions={
-        "work": DiscreteGrid(LaborSupply),
+        "labor_supply": DiscreteGrid(LaborSupply),
         "consumption": DEFAULT_CONSUMPTION_GRID,
     },
     states={
@@ -113,7 +113,7 @@ def get_model(
                 active=lambda age: age <= final_age_alive,
                 states={"wealth": wealth_grid},
                 actions={
-                    "work": DiscreteGrid(LaborSupply),
+                    "labor_supply": DiscreteGrid(LaborSupply),
                     "consumption": consumption_grid,
                 },
             ),
