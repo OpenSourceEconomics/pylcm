@@ -122,22 +122,22 @@ class RegimeId:
     working: int
 
 
-@categorical(ordered=False)
-class WorkChoice:
-    no: int
-    yes: int
+@categorical(ordered=True)
+class LaborSupply:
+    do_not_work: int
+    work: int
 
 
 def next_wealth(wealth, consumption, interest_rate):
     return (wealth - consumption) * (1 + interest_rate)
 
 
-def next_regime(work):
-    return jnp.where(work == WorkChoice.yes, RegimeId.working, RegimeId.retired)
+def next_regime(labor_supply):
+    return jnp.where(labor_supply == LaborSupply.work, RegimeId.working, RegimeId.retired)
 
 
-def utility(consumption, work, disutility_of_work):
-    return jnp.log(consumption) - disutility_of_work * work
+def utility(consumption, labor_supply, disutility_of_work):
+    return jnp.log(consumption) - disutility_of_work * labor_supply
 
 
 def terminal_utility(wealth):
@@ -154,7 +154,7 @@ working = Regime(
     },
     actions={
         "consumption": LinSpacedGrid(start=1, stop=50, n_points=30),
-        "work": DiscreteGrid(WorkChoice),
+        "labor_supply": DiscreteGrid(LaborSupply),
     },
     functions={"utility": utility},
 )

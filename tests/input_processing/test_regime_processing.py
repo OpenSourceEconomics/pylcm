@@ -128,12 +128,12 @@ def test_process_regimes():
         == working_life.actions["consumption"]
     )
 
-    assert isinstance(internal_working_regime.gridspecs["work"], DiscreteGrid)
-    assert internal_working_regime.gridspecs["work"].categories == (
+    assert isinstance(internal_working_regime.gridspecs["labor_supply"], DiscreteGrid)
+    assert internal_working_regime.gridspecs["labor_supply"].categories == (
         "work",
         "retire",
     )
-    assert internal_working_regime.gridspecs["work"].codes == (0, 1)
+    assert internal_working_regime.gridspecs["labor_supply"].codes == (0, 1)
 
     # Grids
     assert_array_equal(
@@ -145,7 +145,7 @@ def test_process_regimes():
         working_life.states["wealth"].to_jax(),
     )
 
-    assert (internal_working_regime.grids["work"] == jnp.array([0, 1])).all()
+    assert (internal_working_regime.grids["labor_supply"] == jnp.array([0, 1])).all()
 
     # Functions
     assert internal_working_regime.transitions is not None

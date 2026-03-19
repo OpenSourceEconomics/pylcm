@@ -43,7 +43,7 @@ from lcm_examples.mortality import working_life as _base_working_life
 # ======================================================================================
 
 
-@categorical(ordered=False)
+@categorical(ordered=True)
 class Health:
     bad: int
     good: int
@@ -115,12 +115,12 @@ def next_health(health: DiscreteState, partner: DiscreteState) -> FloatND:
 
 def next_partner(
     period: Period,
-    work: DiscreteAction,
+    labor_supply: DiscreteAction,
     partner: DiscreteState,
     probs_array: FloatND,
 ) -> FloatND:
     """Stochastic transition using pre-calculated markov transition probabilities."""
-    return probs_array[period, work, partner]
+    return probs_array[period, labor_supply, partner]
 
 
 # ======================================================================================
@@ -144,7 +144,7 @@ working_life = _base_working_life.replace(
         "wealth": next_wealth,
     },
     actions={
-        "work": DiscreteGrid(LaborSupply),
+        "labor_supply": DiscreteGrid(LaborSupply),
         "consumption": CONSUMPTION_GRID,
     },
     functions={
@@ -253,7 +253,7 @@ def get_params(
         "retirement": {
             "next_wealth": {"interest_rate": interest_rate, "labor_income": 0.0},
             "next_partner": {
-                "work": LaborSupply.retire,
+                "labor_supply": LaborSupply.retire,
                 "probs_array": probs_array,
             },
         },

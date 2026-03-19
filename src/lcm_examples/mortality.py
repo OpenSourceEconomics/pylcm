@@ -32,7 +32,7 @@ from lcm.typing import (
 # ---------------------------------------------------------------------------
 
 
-@categorical(ordered=False)
+@categorical(ordered=True)
 class LaborSupply:
     work: int
     retire: int
@@ -65,8 +65,8 @@ def labor_income(is_working: BoolND, wage: float | FloatND) -> FloatND:
     return jnp.where(is_working, wage, 0.0)
 
 
-def is_working(work: DiscreteAction) -> BoolND:
-    return work == LaborSupply.work
+def is_working(labor_supply: DiscreteAction) -> BoolND:
+    return labor_supply == LaborSupply.work
 
 
 def next_wealth(
@@ -79,7 +79,7 @@ def next_wealth(
 
 
 def next_regime_from_working(
-    work: DiscreteAction,
+    labor_supply: DiscreteAction,
     period: Period,
     survival_probs: FloatND,
 ) -> FloatND:
@@ -91,7 +91,7 @@ def next_regime_from_working(
 
     """
     sp = survival_probs[period]
-    retire_choice = work == LaborSupply.retire
+    retire_choice = labor_supply == LaborSupply.retire
     return jnp.where(
         retire_choice,
         jnp.array([0.0, sp, 1 - sp]),
@@ -135,7 +135,7 @@ _DEFAULT_LAST_AGE = _DEFAULT_AGE_GRID.exact_values[-1]
 
 working_life = Regime(
     actions={
-        "work": DiscreteGrid(LaborSupply),
+        "labor_supply": DiscreteGrid(LaborSupply),
         "consumption": CONSUMPTION_GRID,
     },
     states={"wealth": WEALTH_GRID},

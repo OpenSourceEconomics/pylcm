@@ -192,7 +192,7 @@ def test_deterministic_target_only_state() -> None:
         initial_conditions={
             "age": jnp.array([0.0, 0.0]),
             "wealth": jnp.array([20.0, 80.0]),
-            "regime_id": jnp.array([_RegimeId.alive] * 2),
+            "regime": jnp.array([_RegimeId.alive] * 2),
         },
         V_arr_dict=V_arr_dict,
     )
@@ -284,7 +284,7 @@ def test_stochastic_target_only_state() -> None:
         initial_conditions={
             "age": jnp.array([0.0, 0.0]),
             "wealth": jnp.array([20.0, 80.0]),
-            "regime_id": jnp.array([_RegimeId.alive] * 2),
+            "regime": jnp.array([_RegimeId.alive] * 2),
         },
         V_arr_dict=V_arr_dict,
     )
@@ -376,7 +376,7 @@ def test_per_target_dict_transitions():
         initial_conditions={
             "age": jnp.zeros(n_subjects),
             "health": initial_health,
-            "regime_id": jnp.array([RegimeId.working_life] * n_subjects),
+            "regime": jnp.array([RegimeId.working_life] * n_subjects),
         },
         V_arr_dict=V_arr_dict,
     )

@@ -22,7 +22,7 @@ def test_simulation_with_heterogeneous_initial_ages():
         initial_conditions={
             "age": jnp.array([40.0, 60.0]),
             "wealth": jnp.array([50.0, 50.0]),
-            "regime_id": jnp.array([RegimeId.working_life] * 2),
+            "regime": jnp.array([RegimeId.working_life] * 2),
         },
     )
     df = result.to_dataframe()
