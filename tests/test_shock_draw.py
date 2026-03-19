@@ -172,14 +172,15 @@ def test_ar1_draw_shock_unconditional_moments(grid_cls):
 
     n_steps = 20_000
     burn_in = 2_000
-    key = jax.random.key(42)
-    y = jnp.array(mu / (1 - rho))
-    trajectory = []
-    for _ in range(n_steps):
-        key, subkey = jax.random.split(key)
-        y = grid.draw_shock(params, subkey, y)
-        trajectory.append(y)
-    samples = jnp.array(trajectory[burn_in:])
+    keys = jax.random.split(jax.random.key(42), n_steps)
+
+    def step(y: jnp.ndarray, key: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
+        y_next = grid.draw_shock(params, key, y)
+        return y_next, y_next
+
+    y0 = jnp.array(mu / (1 - rho))
+    _, trajectory = jax.lax.scan(step, y0, keys)
+    samples = trajectory[burn_in:]
 
     expected_mean = mu / (1 - rho)
     expected_std = sigma / jnp.sqrt(1 - rho**2)

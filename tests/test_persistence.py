@@ -238,7 +238,6 @@ def test_snapshot_contains_pixi_lock_and_pyproject(tmp_path, model_and_params):
 
     snap_dir = sorted(tmp_path.glob("solve_snapshot_*/"))[0]
 
-    # These files should exist if the project root was found
     assert (snap_dir / "pyproject.toml").exists()
     assert (snap_dir / "pixi.lock").exists()
 

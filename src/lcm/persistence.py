@@ -1,6 +1,7 @@
 """Persistence utilities for saving and loading LCM artifacts."""
 
 import contextlib
+import copy
 import json
 import logging
 import pickle
@@ -12,7 +13,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import cloudpickle
 import h5py
@@ -22,6 +23,10 @@ from jax import Array
 
 from lcm.typing import FloatND, RegimeName, UserParams, VArrMapping
 
+if TYPE_CHECKING:
+    from lcm.model import Model
+    from lcm.simulation.result import SimulationResult
+
 logger = logging.getLogger(__name__)
 
 
@@ -29,7 +34,7 @@ logger = logging.getLogger(__name__)
 class SolveSnapshot:
     """Snapshot of a solve run for offline reconstruction."""
 
-    model: object
+    model: Model | None
     """The Model instance."""
 
     params: UserParams | None
@@ -46,7 +51,7 @@ class SolveSnapshot:
 class SimulateSnapshot:
     """Snapshot of a simulate run for offline reconstruction."""
 
-    model: object
+    model: Model | None
     """The Model instance."""
 
     params: UserParams | None
@@ -58,7 +63,7 @@ class SimulateSnapshot:
     V_arr_dict: VArrMapping | None
     """Immutable mapping of periods to regime value function arrays."""
 
-    result: object | None
+    result: SimulationResult | None
     """SimulationResult object."""
 
     platform: str
@@ -114,6 +119,9 @@ def load_snapshot(
     h5_path = path / "arrays.h5"
     if h5_path.exists() and "V_arr_dict" not in exclude:
         loaded["V_arr_dict"] = _load_V_arr_from_h5(h5_path)
+    elif "V_arr_dict" not in exclude:
+        loaded["V_arr_dict"] = None
+        logger.warning("arrays.h5 not found in %s; V_arr_dict set to None", path)
 
     if snapshot_type == "solve":
         return SolveSnapshot(
@@ -122,19 +130,22 @@ def load_snapshot(
             V_arr_dict=loaded.get("V_arr_dict"),
             platform=saved_platform,
         )
-    return SimulateSnapshot(
-        model=loaded.get("model"),
-        params=loaded.get("params"),
-        initial_conditions=loaded.get("initial_conditions"),
-        V_arr_dict=loaded.get("V_arr_dict"),
-        result=loaded.get("result"),
-        platform=saved_platform,
-    )
+    if snapshot_type == "simulate":
+        return SimulateSnapshot(
+            model=loaded.get("model"),
+            params=loaded.get("params"),
+            initial_conditions=loaded.get("initial_conditions"),
+            V_arr_dict=loaded.get("V_arr_dict"),
+            result=loaded.get("result"),
+            platform=saved_platform,
+        )
+    msg = f"Unknown snapshot_type: {snapshot_type!r}"
+    raise ValueError(msg)
 
 
 def save_solve_snapshot(
     *,
-    model: object,
+    model: Model,
     params: UserParams,
     V_arr_dict: VArrMapping,
     log_path: Path,
@@ -172,11 +183,11 @@ def save_solve_snapshot(
 
 def save_simulate_snapshot(
     *,
-    model: object,
+    model: Model,
     params: UserParams,
     initial_conditions: Mapping[str, Array],
     V_arr_dict: VArrMapping,
-    result: object,
+    result: SimulationResult,
     log_path: Path,
     log_keep_n_latest: int,
 ) -> Path:
@@ -204,7 +215,7 @@ def save_simulate_snapshot(
     _save_pkl(snap_dir / "model.pkl", model)
     _save_pkl(snap_dir / "params.pkl", params)
     _save_pkl(snap_dir / "initial_conditions.pkl", initial_conditions)
-    _save_pkl(snap_dir / "result.pkl", result)
+    _save_pkl(snap_dir / "result.pkl", _strip_V_arr_from_result(result))
     _save_V_arr_to_h5(snap_dir / "arrays.h5", V_arr_dict)
     _write_metadata(
         snap_dir,
@@ -270,6 +281,17 @@ def _find_project_root() -> Path | None:
         if (parent / "pyproject.toml").exists():
             return parent
     return None
+
+
+def _strip_V_arr_from_result(result: SimulationResult) -> SimulationResult:
+    """Create a copy of result with V_arr_dict replaced by an empty mapping.
+
+    Avoid storing V_arr_dict both in the pickle and in the HDF5 file.
+
+    """
+    stripped = copy.copy(result)
+    object.__setattr__(stripped, "_V_arr_dict", MappingProxyType({}))
+    return stripped
 
 
 def _save_pkl(path: Path, obj: object) -> None:
@@ -365,11 +387,13 @@ def _next_counter(parent_path: Path, prefix: str) -> int:
     existing = sorted(parent_path.glob(f"{prefix}_*/"))
     if not existing:
         return 1
-    last = existing[-1].name  # e.g. "solve_snapshot_003"
-    try:
-        return int(last.rsplit("_", 1)[1]) + 1
-    except IndexError, ValueError:
-        return len(existing) + 1
+    counters: list[int] = []
+    for entry in existing:
+        try:
+            counters.append(int(entry.name.rsplit("_", 1)[1]))
+        except IndexError, ValueError:
+            continue
+    return max(counters, default=0) + 1
 
 
 def _enforce_retention(parent_path: Path, prefix: str, *, keep_n_latest: int) -> None:

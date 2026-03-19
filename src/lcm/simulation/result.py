@@ -59,6 +59,7 @@ class SimulationResult:
             internal_regimes=internal_regimes,
             raw_results=raw_results,
             simulation_output_dtypes=simulation_output_dtypes,
+            ages=ages,
         )
         self._available_targets = sorted(
             _collect_all_available_targets(internal_regimes)
@@ -253,6 +254,7 @@ def _compute_metadata(
         RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
     ],
     simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
+    ages: AgeGrid,
 ) -> SimulationMetadata:
     """Compute metadata from internal regimes, raw results, and output dtypes."""
     regime_names = list(internal_regimes.keys())
@@ -280,7 +282,7 @@ def _compute_metadata(
         discrete_categories[var_name] = tuple(dtype.categories)
         discrete_ordered[var_name] = bool(dtype.ordered)
 
-    n_periods = len(raw_results[regime_names[0]])
+    n_periods = ages.n_periods
     n_subjects = _get_n_subjects(raw_results)
 
     return SimulationMetadata(
