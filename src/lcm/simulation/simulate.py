@@ -81,8 +81,7 @@ def simulate(
     logger.info("Starting simulation")
     total_start = time.monotonic()
 
-    # Separate regime_id from state arrays
-    initial_regime_ids = initial_conditions["regime"]
+    # Extract state arrays from initial conditions, which include the regime on top.
     initial_states = {k: v for k, v in initial_conditions.items() if k != "regime"}
 
     # Convert flat initial_states to nested format
@@ -98,7 +97,7 @@ def simulate(
     starting_periods = _compute_starting_periods(
         initial_ages=initial_states["age"], ages=ages
     )
-    subject_regime_ids = jnp.full_like(initial_regime_ids, MISSING_CAT_CODE)
+    subject_regime_ids = jnp.full_like(initial_conditions["regime"], MISSING_CAT_CODE)
 
     # Forward simulation
     simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
@@ -113,7 +112,7 @@ def simulate(
         # Activate subjects whose starting period matches the current period
         subject_regime_ids = jnp.where(
             starting_periods == period,
-            initial_regime_ids,
+            initial_conditions["regime"],
             subject_regime_ids,
         )
 

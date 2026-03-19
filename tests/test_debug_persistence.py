@@ -11,7 +11,6 @@ from lcm import (
     Model,
     Regime,
     SimulateSnapshot,
-    SolveAndSimulateSnapshot,
     SolveSnapshot,
     categorical,
     load_snapshot,
@@ -76,7 +75,7 @@ def _initial_conditions():
     return {
         "wealth": jnp.array([2.0, 3.0]),
         "age": jnp.array([0.0, 0.0]),
-        "regime_id": jnp.array([_RegimeId.working] * 2),
+        "regime": jnp.array([_RegimeId.working] * 2),
     }
 
 
@@ -131,7 +130,7 @@ def test_solve_and_simulate_debug_persists_snapshot(tmp_path, model_and_params):
     assert len(dirs) == 1
 
     snapshot = load_snapshot(dirs[0])
-    assert isinstance(snapshot, SolveAndSimulateSnapshot)
+    assert isinstance(snapshot, SimulateSnapshot)
     assert snapshot.V_arr_dict is not None
     assert snapshot.result is not None
 

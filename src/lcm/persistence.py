@@ -7,6 +7,7 @@ import pickle
 import platform
 import shutil
 import tempfile
+import textwrap
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,30 +53,7 @@ class SimulateSnapshot:
     """User parameters passed to simulate."""
 
     initial_conditions: Mapping[str, Array] | None
-    """Mapping of state names (plus `"regime_id"`) to arrays."""
-
-    V_arr_dict: VArrMapping | None
-    """Immutable mapping of periods to regime value function arrays."""
-
-    result: object | None
-    """SimulationResult object."""
-
-    platform: str
-    """Platform string, e.g. `"x86_64-Linux"`."""
-
-
-@dataclass(frozen=True)
-class SolveAndSimulateSnapshot:
-    """Snapshot of a solve-and-simulate run for offline reconstruction."""
-
-    model: object
-    """The Model instance."""
-
-    params: UserParams | None
-    """User parameters passed to solve_and_simulate."""
-
-    initial_conditions: Mapping[str, Array] | None
-    """Mapping of state names (plus `"regime_id"`) to arrays."""
+    """Mapping of state names and "regime" to arrays."""
 
     V_arr_dict: VArrMapping | None
     """Immutable mapping of periods to regime value function arrays."""
@@ -91,7 +69,7 @@ def load_snapshot(
     path: Path,
     *,
     exclude: Sequence[str] = (),
-) -> SolveSnapshot | SimulateSnapshot | SolveAndSimulateSnapshot:
+) -> SolveSnapshot | SimulateSnapshot:
     """Load a debug snapshot directory from disk.
 
     Args:
@@ -100,7 +78,7 @@ def load_snapshot(
             Excluded fields are set to `None`.
 
     Returns:
-        A `SolveSnapshot`, `SimulateSnapshot`, or `SolveAndSimulateSnapshot`.
+        A `SolveSnapshot` or `SimulateSnapshot`.
 
     """
     path = Path(path)
@@ -144,16 +122,7 @@ def load_snapshot(
             V_arr_dict=loaded.get("V_arr_dict"),
             platform=saved_platform,
         )
-    if snapshot_type == "simulate":
-        return SimulateSnapshot(
-            model=loaded.get("model"),
-            params=loaded.get("params"),
-            initial_conditions=loaded.get("initial_conditions"),
-            V_arr_dict=loaded.get("V_arr_dict"),
-            result=loaded.get("result"),
-            platform=saved_platform,
-        )
-    return SolveAndSimulateSnapshot(
+    return SimulateSnapshot(
         model=loaded.get("model"),
         params=loaded.get("params"),
         initial_conditions=loaded.get("initial_conditions"),
@@ -210,25 +179,28 @@ def save_simulate_snapshot(
     result: object,
     log_path: Path,
     log_keep_n_latest: int,
+    snapshot_type: str = "simulate",
 ) -> Path:
     """Save a simulate snapshot directory to disk.
 
     Args:
         model: The Model instance.
         params: User parameters passed to simulate.
-        initial_conditions: Mapping of state names (plus `"regime_id"`) to arrays.
+        initial_conditions: Mapping of state names and "regime" to arrays.
         V_arr_dict: Value function arrays.
         result: SimulationResult object.
         log_path: Parent directory for snapshot directories.
         log_keep_n_latest: Maximum number of snapshots to retain.
+        snapshot_type: Metadata label for the snapshot (default `"simulate"`).
 
     Returns:
         Path to the created snapshot directory.
 
     """
+    prefix = f"{snapshot_type}_snapshot"
     log_path.mkdir(parents=True, exist_ok=True)
-    counter = _next_counter(log_path, prefix="simulate_snapshot")
-    snap_dir = log_path / f"simulate_snapshot_{counter:03d}"
+    counter = _next_counter(log_path, prefix=prefix)
+    snap_dir = log_path / f"{prefix}_{counter:03d}"
     snap_dir.mkdir()
 
     _save_pkl(snap_dir / "model.pkl", model)
@@ -238,64 +210,12 @@ def save_simulate_snapshot(
     _save_V_arr_to_h5(snap_dir / "arrays.h5", V_arr_dict)
     _write_metadata(
         snap_dir,
-        snapshot_type="simulate",
+        snapshot_type=snapshot_type,
         fields=["model", "params", "initial_conditions", "result"],
     )
     _write_environment_files(snap_dir)
 
-    _enforce_retention(
-        log_path, prefix="simulate_snapshot", keep_n_latest=log_keep_n_latest
-    )
-    return snap_dir
-
-
-def save_solve_and_simulate_snapshot(
-    *,
-    model: object,
-    params: UserParams,
-    initial_conditions: Mapping[str, Array],
-    V_arr_dict: VArrMapping,
-    result: object,
-    log_path: Path,
-    log_keep_n_latest: int,
-) -> Path:
-    """Save a solve-and-simulate snapshot directory to disk.
-
-    Args:
-        model: The Model instance.
-        params: User parameters passed to solve_and_simulate.
-        initial_conditions: Mapping of state names (plus `"regime_id"`) to arrays.
-        V_arr_dict: Value function arrays.
-        result: SimulationResult object.
-        log_path: Parent directory for snapshot directories.
-        log_keep_n_latest: Maximum number of snapshots to retain.
-
-    Returns:
-        Path to the created snapshot directory.
-
-    """
-    log_path.mkdir(parents=True, exist_ok=True)
-    counter = _next_counter(log_path, prefix="solve_and_simulate_snapshot")
-    snap_dir = log_path / f"solve_and_simulate_snapshot_{counter:03d}"
-    snap_dir.mkdir()
-
-    _save_pkl(snap_dir / "model.pkl", model)
-    _save_pkl(snap_dir / "params.pkl", params)
-    _save_pkl(snap_dir / "initial_conditions.pkl", initial_conditions)
-    _save_pkl(snap_dir / "result.pkl", result)
-    _save_V_arr_to_h5(snap_dir / "arrays.h5", V_arr_dict)
-    _write_metadata(
-        snap_dir,
-        snapshot_type="solve_and_simulate",
-        fields=["model", "params", "initial_conditions", "result"],
-    )
-    _write_environment_files(snap_dir)
-
-    _enforce_retention(
-        log_path,
-        prefix="solve_and_simulate_snapshot",
-        keep_n_latest=log_keep_n_latest,
-    )
+    _enforce_retention(log_path, prefix=prefix, keep_n_latest=log_keep_n_latest)
     return snap_dir
 
 
@@ -432,21 +352,21 @@ def _write_environment_files(snap_dir: Path) -> None:
                 shutil.copy2(src, snap_dir / filename)
 
     platform_str = _get_platform()
-    reproduce_md = f"""\
-# Reproducing this run
+    reproduce_md = textwrap.dedent(f"""\
+        # Reproducing this run
 
-1. Copy `pixi.lock` and `pyproject.toml` from this directory
-2. Run `pixi install --frozen` to recreate the exact environment
-3. Load the snapshot:
+        1. Copy `pixi.lock` and `pyproject.toml` from this directory
+        2. Run `pixi install --frozen` to recreate the exact environment
+        3. Load the snapshot:
 
-```python
-from lcm import load_snapshot
-snapshot = load_snapshot("{snap_dir.name}")
-# Re-run: snapshot.model.solve(snapshot.params)
-```
+        ```python
+        from lcm import load_snapshot
+        snapshot = load_snapshot("{snap_dir.name}")
+        # Re-run: snapshot.model.solve(snapshot.params)
+        ```
 
-Platform: {platform_str}
-"""
+        Platform: {platform_str}
+    """)
     (snap_dir / "REPRODUCE.md").write_text(reproduce_md)
 
 

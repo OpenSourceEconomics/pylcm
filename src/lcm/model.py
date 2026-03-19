@@ -28,7 +28,6 @@ from lcm.interfaces import PhaseVariantContainer
 from lcm.logging import LogLevel, get_logger
 from lcm.persistence import (
     save_simulate_snapshot,
-    save_solve_and_simulate_snapshot,
     save_solve_snapshot,
 )
 from lcm.regime import Regime
@@ -373,7 +372,7 @@ class Model:
             seed=seed,
         )
         if log_level == "debug" and log_path is not None:
-            save_solve_and_simulate_snapshot(
+            save_simulate_snapshot(
                 model=self,
                 params=params,
                 initial_conditions=initial_conditions,
@@ -381,6 +380,7 @@ class Model:
                 result=result,
                 log_path=Path(log_path),
                 log_keep_n_latest=log_keep_n_latest,
+                snapshot_type="solve_and_simulate",
             )
         return result
 
