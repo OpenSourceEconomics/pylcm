@@ -3,17 +3,6 @@
 import gc
 import time
 
-import jax
-import jax.numpy as jnp
-
-from lcm_examples.mahler_yum_2024 import (
-    MAHLER_YUM_MODEL,
-    START_PARAMS,
-    create_inputs,
-)
-
-_START_PARAMS_WITHOUT_BETA = {k: v for k, v in START_PARAMS.items() if k != "beta"}
-
 _N_SUBJECTS = 100
 
 
@@ -21,11 +10,23 @@ class TimeMahlerYum:
     timeout = 1200
 
     def setup(self):
+        import jax.numpy as jnp
+
+        from lcm_examples.mahler_yum_2024 import (
+            MAHLER_YUM_MODEL,
+            START_PARAMS,
+            create_inputs,
+        )
+
+        start_params_without_beta = {
+            k: v for k, v in START_PARAMS.items() if k != "beta"
+        }
+
         self.model = MAHLER_YUM_MODEL
         common_params, initial_states, _discount_factor_type = create_inputs(
             seed=0,
             n_simulation_subjects=_N_SUBJECTS,
-            **_START_PARAMS_WITHOUT_BETA,
+            **start_params_without_beta,
         )
         self.model_params = {
             "alive": {
@@ -35,24 +36,30 @@ class TimeMahlerYum:
         }
         self.initial_conditions = {
             **initial_states,
-            "regime_id": jnp.full(
+            "regime": jnp.full(
                 _N_SUBJECTS,
                 self.model.regime_names_to_ids["alive"],
                 dtype=jnp.int32,
             ),
         }
         start = time.perf_counter()
-        self.model.solve_and_simulate(
-            self.model_params, self.initial_conditions, log_level="off"
+        self.model.simulate(
+            params=self.model_params,
+            initial_conditions=self.initial_conditions,
+            log_level="off",
         )
         self._warmup_time = time.perf_counter() - start
 
     def time_mahler_yum(self):
-        self.model.solve_and_simulate(
-            self.model_params, self.initial_conditions, log_level="off"
+        self.model.simulate(
+            params=self.model_params,
+            initial_conditions=self.initial_conditions,
+            log_level="off",
         )
 
     def teardown(self):
+        import jax
+
         jax.clear_caches()
         gc.collect()
 
