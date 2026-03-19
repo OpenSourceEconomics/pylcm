@@ -288,8 +288,8 @@ pylcm = { path = ".", editable = true }
 asv-compare = "asv compare"
 asv-preview = "asv preview"
 asv-publish = "asv publish && python benchmarks/publish.py"
-asv-quick = { cmd = "asv run --quick --set-commit-hash=$(git rev-parse HEAD)", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
-asv-run = { cmd = 'test -z "$(git status --porcelain --ignore-submodules)" && asv run --set-commit-hash=$(git rev-parse HEAD)', env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
+asv-quick = { cmd = "asv run --quick --set-commit-hash=$(git rev-parse HEAD)", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false", XLA_PYTHON_CLIENT_MEM_FRACTION = "0.5" } }
+asv-run = { cmd = 'git status --porcelain --ignore-submodules | grep -q . && echo "Refusing to benchmark: worktree is dirty. Commit first." && exit 1; asv run --set-commit-hash=$(git rev-parse HEAD)', env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false", XLA_PYTHON_CLIENT_MEM_FRACTION = "0.5" } }
 asv-run-and-publish = { depends-on = [ "asv-run", "asv-publish" ] }
 [tool.pixi.workspace]
 channels = [ "conda-forge" ]

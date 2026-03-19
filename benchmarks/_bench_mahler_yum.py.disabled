@@ -1,7 +1,9 @@
 """End-to-end benchmark for the Mahler & Yum (2024) replication model."""
 
+import gc
 import time
 
+import jax
 import jax.numpy as jnp
 
 from lcm_examples.mahler_yum_2024 import (
@@ -49,6 +51,10 @@ class TimeMahlerYum:
         self.model.solve_and_simulate(
             self.model_params, self.initial_conditions, log_level="off"
         )
+
+    def teardown(self):
+        jax.clear_caches()
+        gc.collect()
 
     def track_warmup(self):
         return self._warmup_time
