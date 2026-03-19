@@ -219,8 +219,7 @@ class Model:
         *,
         params: UserParams,
         initial_conditions: Mapping[str, Array],
-        V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
-        | None = None,
+        V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]] | None,
         check_initial_conditions: bool = True,
         seed: int | None = None,
         log_level: LogLevel = "progress",
