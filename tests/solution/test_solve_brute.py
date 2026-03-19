@@ -56,7 +56,7 @@ def test_solve_brute():
                 # lazy is like a type, it influences utility but is not affected
                 # by actions
                 "lazy": jnp.array([0, 1]),
-                "work": jnp.array([0, 1]),
+                "labor_supply": jnp.array([0, 1]),
             }
         ),
         continuous_actions=MappingProxyType(
@@ -70,14 +70,16 @@ def test_solve_brute():
                 "wealth": jnp.array([0.0, 1.0, 2.0]),
             }
         ),
-        state_and_discrete_action_names=("lazy", "work", "wealth"),
+        state_and_discrete_action_names=("lazy", "labor_supply", "wealth"),
     )
     # ==================================================================================
     # create the Q_and_F functions
     # ==================================================================================
 
-    def _Q_and_F(consumption, lazy, wealth, work, next_V_arr, discount_factor=0.9):
-        next_wealth = wealth + work - consumption
+    def _Q_and_F(
+        consumption, lazy, wealth, labor_supply, next_V_arr, discount_factor=0.9
+    ):
+        next_wealth = wealth + labor_supply - consumption
         next_lazy = lazy
 
         # next_V_arr is now a dict of regime names to arrays
@@ -91,7 +93,7 @@ def test_solve_brute():
                 coordinates=jnp.array([next_wealth]),
             )
 
-        U_arr = consumption - 0.2 * lazy * work
+        U_arr = consumption - 0.2 * lazy * labor_supply
         F_arr = next_wealth >= 0
 
         Q_arr = U_arr + discount_factor * expected_V
@@ -100,7 +102,7 @@ def test_solve_brute():
 
     max_Q_over_a = get_max_Q_over_a(
         Q_and_F=_Q_and_F,
-        action_names=("consumption", "work"),
+        action_names=("consumption", "labor_supply"),
         state_names=("lazy", "wealth"),
     )
 

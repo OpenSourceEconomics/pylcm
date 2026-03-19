@@ -41,8 +41,8 @@ def labor_income(is_working: BoolND) -> FloatND:
     return jnp.where(is_working, 1.5, 0.0)
 
 
-def is_working(work: DiscreteAction) -> BoolND:
-    return work == LaborSupply.work
+def is_working(labor_supply: DiscreteAction) -> BoolND:
+    return labor_supply == LaborSupply.work
 
 
 def next_wealth(
@@ -95,7 +95,7 @@ def _make_model(custom_H=None):
 
     working_life_regime = Regime(
         actions={
-            "work": DiscreteGrid(LaborSupply),
+            "labor_supply": DiscreteGrid(LaborSupply),
             "consumption": LinSpacedGrid(start=0.5, stop=10, n_points=50),
         },
         states={

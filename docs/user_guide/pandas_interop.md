@@ -12,7 +12,7 @@ come back as a DataFrame too, so the typical workflow is DataFrame in, DataFrame
 
 Convert a pandas DataFrame into the `initial_conditions` dict expected by
 `model.simulate()` and `model.solve_and_simulate()`. This is the standard way to supply
-initial conditions. The returned dict includes all state arrays plus a `"regime_id"`
+initial conditions. The returned dict includes all state arrays plus a `"regime"`
 array with integer codes.
 
 ```python
@@ -71,18 +71,17 @@ health_probs = transition_probs_from_series(
     series=probs,
     model=model,
     regime_name="working",
-    state_name="health",
 )
 ```
 
-The same function works for regime transitions — omit `state_name` and use
-`"next_regime"` as the outcome level:
+The transition type is inferred from the `"next_*"` level in the MultiIndex:
+`"next_health"` means a state transition on `"health"`, while `"next_regime"` means a
+regime transition. The `regime_name` can also be omitted when inference is unambiguous:
 
 ```python
 regime_probs = transition_probs_from_series(
     series=regime_series,
     model=model,
-    regime_name="alive",
 )
 ```
 

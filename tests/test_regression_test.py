@@ -45,7 +45,7 @@ def test_regression_test():
         initial_conditions={
             "wealth": jnp.array([5.0, 20, 40, 70]),
             "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
-            "regime_id": jnp.array([RegimeId.working_life] * 4),
+            "regime": jnp.array([RegimeId.working_life] * 4),
         },
     ).to_dataframe()
 
@@ -152,7 +152,7 @@ def test_model_with_different_grid_types(grid_type: str):
         initial_conditions={
             "wealth": jnp.array([5.0, 20, 40, 70]),
             "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
-            "regime_id": jnp.array([RegimeId.working_life] * 4),
+            "regime": jnp.array([RegimeId.working_life] * 4),
         },
     )
     df = result.to_dataframe()

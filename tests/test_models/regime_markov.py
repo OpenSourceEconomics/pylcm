@@ -12,7 +12,7 @@ from lcm import (
 from lcm.typing import DiscreteState, FloatND, Period
 
 
-@categorical(ordered=False)
+@categorical(ordered=True)
 class Health:
     bad: int
     good: int

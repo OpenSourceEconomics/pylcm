@@ -28,7 +28,7 @@ result = model.solve_and_simulate(
         "age": jnp.full(100, model.ages.values[0]),
         "wealth": jnp.linspace(1, 10, 100),
         "income": jnp.zeros(100),
-        "regime_id": jnp.full(100, model.regime_names_to_ids["alive"]),
+        "regime": jnp.full(100, model.regime_names_to_ids["alive"]),
     },
 )
 
