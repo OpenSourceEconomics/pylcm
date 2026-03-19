@@ -35,11 +35,6 @@ CLOUDPICKLE_IMPORT_ERROR_MSG = (
 )
 
 
-# ======================================================================================
-# Main result class
-# ======================================================================================
-
-
 class SimulationResult:
     """Result object from model simulation with deferred DataFrame computation."""
 
@@ -69,10 +64,6 @@ class SimulationResult:
             _collect_all_available_targets(internal_regimes)
         )
 
-    # ----------------------------------------------------------------------------------
-    # Public properties for advanced users
-    # ----------------------------------------------------------------------------------
-
     @property
     def raw_results(
         self,
@@ -91,10 +82,6 @@ class SimulationResult:
     ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
         """Value function arrays from the solution."""
         return self._V_arr_dict
-
-    # ----------------------------------------------------------------------------------
-    # Metadata properties (delegated to _metadata)
-    # ----------------------------------------------------------------------------------
 
     @property
     def regime_names(self) -> list[str]:
@@ -130,10 +117,6 @@ class SimulationResult:
 
         """
         return self._available_targets
-
-    # ----------------------------------------------------------------------------------
-    # Main methods
-    # ----------------------------------------------------------------------------------
 
     def to_dataframe(
         self,
@@ -240,11 +223,6 @@ class SimulationResult:
         )
 
 
-# ======================================================================================
-# Metadata
-# ======================================================================================
-
-
 @dataclass(frozen=True)
 class SimulationMetadata:
     """Pre-computed metadata about the simulation."""
@@ -340,11 +318,6 @@ def _get_n_subjects(
     return 0
 
 
-# ======================================================================================
-# Target resolution and validation
-# ======================================================================================
-
-
 def _resolve_targets(
     *,
     additional_targets: list[str] | Literal["all"] | None,
@@ -410,11 +383,6 @@ def _get_stochastic_weight_function_names(regime: InternalRegime) -> set[str]:
         for name in flat_transitions
         if tree_path_from_qname(name)[-1] in stochastic_transition_names
     }
-
-
-# ======================================================================================
-# DataFrame creation
-# ======================================================================================
 
 
 def _create_flat_dataframe(
@@ -603,11 +571,6 @@ def _reorder_columns(
     return df[base + state_names + action_names + rest]
 
 
-# ======================================================================================
-# Categorical conversion
-# ======================================================================================
-
-
 def _convert_to_categorical(
     *,
     df: pd.DataFrame,
@@ -677,11 +640,6 @@ def _codes_to_categorical(
     )
 
 
-# ======================================================================================
-# Target computation
-# ======================================================================================
-
-
 def _compute_targets(
     *,
     data: dict[str, Array | Sequence[str]],
@@ -740,11 +698,6 @@ def _get_function_variables(
 ) -> tuple[str, ...]:
     """Get variable names from signature, excluding flat param names."""
     return tuple(p for p in inspect.signature(func).parameters if p not in param_names)
-
-
-# ======================================================================================
-# IO operations
-# ======================================================================================
 
 
 def _atomic_dump(obj: SimulationResult, path: str | Path, *, protocol: int) -> Path:

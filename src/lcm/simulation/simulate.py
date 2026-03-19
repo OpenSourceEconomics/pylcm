@@ -93,7 +93,6 @@ def simulate(
     subject_regime_ids = jnp.full_like(initial_regime_ids, MISSING_CAT_CODE)
 
     # Forward simulation
-    # ----------------------------------------------------------------------------------
     simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
         regime_name: {} for regime_name in internal_regimes
     }
@@ -197,14 +196,13 @@ def _simulate_regime_in_period(
 
     Returns:
         Tuple containing:
-        - PeriodRegimeData for this regime-period
+        - PeriodRegimeSimulationData for this regime-period
         - Updated states dictionary
         - Updated new_subject_regime_ids array
         - Updated JAX random key
 
     """
     # Select subjects in the current regime
-    # ---------------------------------------------------------------------------------
     subject_ids_in_regime = jnp.asarray(
         regime_names_to_ids[regime_name] == subject_regime_ids
     )
@@ -214,7 +212,6 @@ def _simulate_regime_in_period(
         states=states,
     )
     # Compute optimal actions
-    # ---------------------------------------------------------------------------------
     # We need to pass the value function array of the next period to the
     # argmax_and_max_Q_over_a function, as the current Q-function requires the
     # next period's value function. In the last period, we pass an empty dict.
@@ -239,7 +236,6 @@ def _simulate_regime_in_period(
         grids=state_action_space.actions,
     )
     # Store results for this regime-period
-    # ---------------------------------------------------------------------------------
     # For state-less regimes (e.g., terminal regimes with no states), V_arr may be a
     # scalar. We need to broadcast it to match the number of subjects.
     n_subjects = subject_ids_in_regime.shape[0]
@@ -260,7 +256,6 @@ def _simulate_regime_in_period(
     )
 
     # Update states and regime membership for next period
-    # ---------------------------------------------------------------------------------
     if not internal_regime.terminal:
         next_states_key, next_regime_key, key = jax.random.split(key, 3)
 

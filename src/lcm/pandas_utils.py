@@ -256,6 +256,7 @@ def _infer_regime_name(
         The inferred regime name.
 
     Raises:
+        TypeError: If a candidate regime uses a per-target dict for the state.
         ValueError: If no matching regime is found or multiple regimes match
             with different transition function signatures.
 
@@ -303,7 +304,8 @@ def _fail_if_per_target_candidate(
         if isinstance(raw, Mapping):
             msg = (
                 f"State '{state_name}' in regime '{cand_name}' uses "
-                f"per-target transitions. Pass regime_name explicitly."
+                f"per-target transitions. Pass `regime_name` and "
+                f"`target_regime_name` explicitly."
             )
             raise TypeError(msg)
 
@@ -384,7 +386,7 @@ def _build_probs_array(
     Args:
         func: The transition function whose signature defines the axis order.
         outcome: Metadata for the outcome (last) axis.
-        all_grids: Dict of discrete grid names to `DiscreteGrid` instances.
+        all_grids: dict of discrete grid names to `DiscreteGrid` instances.
         model: The LCM Model instance (used for age-to-period mapping).
         series: Series with a named MultiIndex containing the probability values.
 
