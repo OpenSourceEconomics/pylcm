@@ -166,14 +166,14 @@ def test_solve_model_with_nan_value_function_array_raises_error(
     nan_value_model: Model, params: UserParams
 ) -> None:
     with pytest.raises(InvalidValueFunctionError):
-        nan_value_model.solve(params)
+        nan_value_model.solve(params=params)
 
 
 def test_solve_model_with_inf_value_function_does_not_raise_error(
     inf_value_model: Model, params: UserParams
 ) -> None:
     # This should not raise an error
-    inf_value_model.solve(params)
+    inf_value_model.solve(params=params)
 
 
 def test_simulate_model_with_nan_value_function_array_raises_error(
@@ -187,9 +187,10 @@ def test_simulate_model_with_nan_value_function_array_raises_error(
     }
 
     with pytest.raises(InvalidValueFunctionError):
-        nan_value_model.solve_and_simulate(
-            params,
+        nan_value_model.simulate(
+            params=params,
             initial_conditions=initial_conditions,
+            V_arr_dict=None,
             check_initial_conditions=False,
         )
 
@@ -207,18 +208,20 @@ def test_simulate_model_with_inf_value_function_array_does_not_raise_error(
     # This should not raise an error. Subject 1 (wealth=2.0, health=1.0) triggers the
     # +inf utility term (wealth > 1.9 AND health > 0.9), but the simulation should
     # still complete without error.
-    inf_value_model.solve_and_simulate(params, initial_conditions=initial_conditions)
+    inf_value_model.simulate(
+        params=params, initial_conditions=initial_conditions, V_arr_dict=None
+    )
 
 
 def test_nan_error_includes_regime_name(
     nan_value_model: Model, params: UserParams
 ) -> None:
     with pytest.raises(InvalidValueFunctionError, match="non_terminal"):
-        nan_value_model.solve(params)
+        nan_value_model.solve(params=params)
 
 
 def test_nan_error_includes_nan_count(
     nan_value_model: Model, params: UserParams
 ) -> None:
     with pytest.raises(InvalidValueFunctionError, match=r"\d+ of \d+ values are NaN"):
-        nan_value_model.solve(params)
+        nan_value_model.solve(params=params)

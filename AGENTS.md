@@ -54,7 +54,7 @@ automation. Python 3.14+ is required.
 
 - `simulate.py`: Forward simulation of solved models
 - `result.py`: `SimulationResult` class with deferred DataFrame computation
-- Entry point: Model methods (`solve()`, `simulate()`, `solve_and_simulate()`)
+- Entry point: Model methods (`solve()`, `simulate()`)
 
 **Grid System (`src/lcm/grids.py`)**
 
@@ -211,18 +211,22 @@ Model(
 
 ### Core Methods
 
-- `model.solve(params)` - Solve the model and return value function arrays per period
-  and regime
-- `model.simulate(params, initial_conditions, V_arr_dict)` - Simulate forward given
-  solution
-- `model.solve_and_simulate(params, initial_conditions)` - Combined solve and simulate
+- `model.solve(params=params)` - Solve the model and return value function arrays per
+  period and regime
+- `model.simulate(params=params, initial_conditions=initial_conditions, V_arr_dict=V_arr_dict)`
+  \- Simulate forward given solution. `V_arr_dict` is optional; when `None`, the model is
+  solved automatically before simulating.
 
 ### SimulationResult
 
-Both `simulate()` and `solve_and_simulate()` return a `SimulationResult` object:
+`simulate()` returns a `SimulationResult` object:
 
 ```python
-result = model.solve_and_simulate(params, initial_conditions)
+result = model.simulate(
+    params=params,
+    initial_conditions=initial_conditions,
+    V_arr_dict=None,
+)
 
 # Convert to DataFrame (deferred computation)
 df = result.to_dataframe()

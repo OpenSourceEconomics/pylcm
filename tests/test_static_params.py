@@ -97,22 +97,23 @@ def test_solve_with_fewer_params():
     )
     # Should NOT need interest_rate in params, only discount_factor
     params = {"discount_factor": 0.95}
-    V_arr_dict = model.solve(params, log_level="off")
+    V_arr_dict = model.solve(params=params, log_level="off")
     assert len(V_arr_dict) > 0
 
 
-def test_solve_and_simulate_with_fixed_params():
+def test_simulate_with_fixed_params():
     """Full solve and simulate with fixed params should produce valid results."""
     # Model without fixed_params
     model_full = _make_model()
     params_full = {"discount_factor": 0.95, "interest_rate": 0.05}
-    result_full = model_full.solve_and_simulate(
+    result_full = model_full.simulate(
         params=params_full,
         initial_conditions={
             "wealth": jnp.array([5.0, 7.0]),
             "age": jnp.array([0.0, 0.0]),
             "regime": jnp.array([RegimeId.alive] * 2),
         },
+        V_arr_dict=None,
         log_level="off",
     )
 
@@ -121,13 +122,14 @@ def test_solve_and_simulate_with_fixed_params():
         extra_fixed_params={"interest_rate": 0.05},
     )
     params_fixed = {"discount_factor": 0.95}
-    result_fixed = model_fixed.solve_and_simulate(
+    result_fixed = model_fixed.simulate(
         params=params_fixed,
         initial_conditions={
             "wealth": jnp.array([5.0, 7.0]),
             "age": jnp.array([0.0, 0.0]),
             "regime": jnp.array([RegimeId.alive] * 2),
         },
+        V_arr_dict=None,
         log_level="off",
     )
 
@@ -151,7 +153,7 @@ def test_regime_level_fixed_param():
     assert "interest_rate" not in all_param_names
 
     params = {"discount_factor": 0.95}
-    V_arr_dict = model.solve(params, log_level="off")
+    V_arr_dict = model.solve(params=params, log_level="off")
     assert len(V_arr_dict) > 0
 
 
@@ -165,5 +167,5 @@ def test_all_params_fixed():
         assert len(regime_template) == 0
 
     # Solve with empty params
-    V_arr_dict = model.solve({}, log_level="off")
+    V_arr_dict = model.solve(params={}, log_level="off")
     assert len(V_arr_dict) > 0

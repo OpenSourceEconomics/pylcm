@@ -81,7 +81,7 @@ def _initial_conditions():
 
 def test_solve_debug_persists_snapshot(tmp_path, model_and_params):
     model, params = model_and_params
-    V_arr_dict = model.solve(params, log_level="debug", log_path=tmp_path)
+    V_arr_dict = model.solve(params=params, log_level="debug", log_path=tmp_path)
 
     dirs = sorted(tmp_path.glob("solve_snapshot_*/"))
     assert len(dirs) == 1
@@ -99,11 +99,11 @@ def test_solve_debug_persists_snapshot(tmp_path, model_and_params):
 
 def test_simulate_debug_persists_snapshot(tmp_path, model_and_params):
     model, params = model_and_params
-    V_arr_dict = model.solve(params, log_level="off")
+    V_arr_dict = model.solve(params=params, log_level="off")
 
     model.simulate(
-        params,
-        _initial_conditions(),
+        params=params,
+        initial_conditions=_initial_conditions(),
         V_arr_dict=V_arr_dict,
         log_level="debug",
         log_path=tmp_path,
@@ -117,16 +117,17 @@ def test_simulate_debug_persists_snapshot(tmp_path, model_and_params):
     assert snapshot.result is not None
 
 
-def test_solve_and_simulate_debug_persists_snapshot(tmp_path, model_and_params):
+def test_simulate_with_solve_debug_persists_snapshot(tmp_path, model_and_params):
     model, params = model_and_params
-    model.solve_and_simulate(
-        params,
-        _initial_conditions(),
+    model.simulate(
+        params=params,
+        initial_conditions=_initial_conditions(),
+        V_arr_dict=None,
         log_level="debug",
         log_path=tmp_path,
     )
 
-    dirs = sorted(tmp_path.glob("solve_and_simulate_snapshot_*/"))
+    dirs = sorted(tmp_path.glob("simulate_snapshot_*/"))
     assert len(dirs) == 1
 
     snapshot = load_snapshot(dirs[0])
@@ -137,18 +138,18 @@ def test_solve_and_simulate_debug_persists_snapshot(tmp_path, model_and_params):
 
 def test_solve_no_persistence_when_not_debug(tmp_path, model_and_params):
     model, params = model_and_params
-    model.solve(params, log_level="progress", log_path=tmp_path)
+    model.solve(params=params, log_level="progress", log_path=tmp_path)
 
     assert len(list(tmp_path.iterdir())) == 0
 
 
 def test_simulate_no_persistence_when_not_debug(tmp_path, model_and_params):
     model, params = model_and_params
-    V_arr_dict = model.solve(params, log_level="off")
+    V_arr_dict = model.solve(params=params, log_level="off")
 
     model.simulate(
-        params,
-        _initial_conditions(),
+        params=params,
+        initial_conditions=_initial_conditions(),
         V_arr_dict=V_arr_dict,
         log_level="warning",
         log_path=tmp_path,
@@ -160,14 +161,16 @@ def test_simulate_no_persistence_when_not_debug(tmp_path, model_and_params):
 def test_debug_without_log_path_raises(model_and_params):
     model, params = model_and_params
     with pytest.raises(ValueError, match="log_path is required"):
-        model.solve(params, log_level="debug")
+        model.solve(params=params, log_level="debug")
 
 
 def test_log_keep_n_latest_deletes_old_snapshots(tmp_path, model_and_params):
     model, params = model_and_params
 
     for _ in range(5):
-        model.solve(params, log_level="debug", log_path=tmp_path, log_keep_n_latest=3)
+        model.solve(
+            params=params, log_level="debug", log_path=tmp_path, log_keep_n_latest=3
+        )
 
     dirs = sorted(tmp_path.glob("solve_snapshot_*/"))
     assert len(dirs) == 3
@@ -178,7 +181,7 @@ def test_log_keep_n_latest_deletes_old_snapshots(tmp_path, model_and_params):
 
 def test_snapshot_contains_environment_files(tmp_path, model_and_params):
     model, params = model_and_params
-    model.solve(params, log_level="debug", log_path=tmp_path)
+    model.solve(params=params, log_level="debug", log_path=tmp_path)
 
     snap_dir = sorted(tmp_path.glob("solve_snapshot_*/"))[0]
 
@@ -198,7 +201,7 @@ def test_snapshot_contains_environment_files(tmp_path, model_and_params):
 
 def test_snapshot_contains_pixi_lock_and_pyproject(tmp_path, model_and_params):
     model, params = model_and_params
-    model.solve(params, log_level="debug", log_path=tmp_path)
+    model.solve(params=params, log_level="debug", log_path=tmp_path)
 
     snap_dir = sorted(tmp_path.glob("solve_snapshot_*/"))[0]
 
@@ -209,7 +212,7 @@ def test_snapshot_contains_pixi_lock_and_pyproject(tmp_path, model_and_params):
 
 def test_snapshot_contains_h5_arrays(tmp_path, model_and_params):
     model, params = model_and_params
-    model.solve(params, log_level="debug", log_path=tmp_path)
+    model.solve(params=params, log_level="debug", log_path=tmp_path)
 
     snap_dir = sorted(tmp_path.glob("solve_snapshot_*/"))[0]
     assert (snap_dir / "arrays.h5").exists()
@@ -219,7 +222,7 @@ def test_snapshot_contains_h5_arrays(tmp_path, model_and_params):
 
 def test_load_snapshot_warns_on_platform_mismatch(tmp_path, model_and_params, caplog):
     model, params = model_and_params
-    model.solve(params, log_level="debug", log_path=tmp_path)
+    model.solve(params=params, log_level="debug", log_path=tmp_path)
 
     snap_dir = sorted(tmp_path.glob("solve_snapshot_*/"))[0]
 
@@ -233,7 +236,7 @@ def test_load_snapshot_warns_on_platform_mismatch(tmp_path, model_and_params, ca
 
 def test_load_snapshot_with_exclude(tmp_path, model_and_params):
     model, params = model_and_params
-    model.solve(params, log_level="debug", log_path=tmp_path)
+    model.solve(params=params, log_level="debug", log_path=tmp_path)
 
     snap_dir = sorted(tmp_path.glob("solve_snapshot_*/"))[0]
 
@@ -246,7 +249,7 @@ def test_load_snapshot_with_exclude(tmp_path, model_and_params):
 
 def test_solve_snapshot_round_trip(tmp_path, model_and_params):
     model, params = model_and_params
-    V_arr_dict = model.solve(params, log_level="debug", log_path=tmp_path)
+    V_arr_dict = model.solve(params=params, log_level="debug", log_path=tmp_path)
 
     snap_dir = sorted(tmp_path.glob("solve_snapshot_*/"))[0]
     snapshot = load_snapshot(snap_dir)
@@ -254,7 +257,7 @@ def test_solve_snapshot_round_trip(tmp_path, model_and_params):
     # Verify the loaded model can re-solve
     assert isinstance(snapshot.model, Model)
     assert snapshot.params is not None
-    V_arr_dict_2 = snapshot.model.solve(snapshot.params, log_level="off")
+    V_arr_dict_2 = snapshot.model.solve(params=snapshot.params, log_level="off")
     for period in V_arr_dict:
         for regime_name in V_arr_dict[period]:
             assert jnp.allclose(

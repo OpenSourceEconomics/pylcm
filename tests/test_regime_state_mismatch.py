@@ -186,7 +186,7 @@ def test_deterministic_target_only_state() -> None:
     )
 
     params = {"discount_factor": 0.95}
-    V_arr_dict = model.solve(params)
+    V_arr_dict = model.solve(params=params)
     result = model.simulate(
         params=params,
         initial_conditions={
@@ -278,7 +278,7 @@ def test_stochastic_target_only_state() -> None:
     )
 
     params = {"discount_factor": 0.95}
-    V_arr_dict = model.solve(params)
+    V_arr_dict = model.solve(params=params)
     result = model.simulate(
         params=params,
         initial_conditions={
@@ -357,7 +357,7 @@ def test_per_target_dict_transitions():
     )
 
     params = {"discount_factor": 0.95}
-    V_arr_dict = model.solve(params)
+    V_arr_dict = model.solve(params=params)
 
     n_subjects = 4
     # Use codes 0 (disabled) and 1 (bad) — valid in both regimes.

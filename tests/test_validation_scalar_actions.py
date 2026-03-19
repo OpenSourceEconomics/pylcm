@@ -66,7 +66,7 @@ def _next_regime(period: int) -> FloatND:
 
 
 def test_validation_vmaps_over_action_combos():
-    """solve_and_simulate succeeds when a MappingLeaf param requires scalar actions."""
+    """simulate succeeds when a MappingLeaf param requires scalar actions."""
     n_periods = 4
 
     alive = Regime(
@@ -99,13 +99,14 @@ def test_validation_vmaps_over_action_combos():
         },
     }
 
-    result = model.solve_and_simulate(
+    result = model.simulate(
         params=params,
         initial_conditions={
             "wealth": jnp.array([5.0, 7.0]),
             "age": jnp.array([0.0, 0.0]),
             "regime": jnp.array([RegimeId.alive] * 2),
         },
+        V_arr_dict=None,
         log_level="off",
     )
 

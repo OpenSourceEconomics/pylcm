@@ -161,8 +161,8 @@ class Model:
 
     def solve(
         self,
-        params: UserParams,
         *,
+        params: UserParams,
         log_level: LogLevel = "progress",
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
@@ -216,17 +216,21 @@ class Model:
 
     def simulate(
         self,
+        *,
         params: UserParams,
         initial_conditions: Mapping[str, Array],
-        V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
-        *,
+        V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
+        | None = None,
         check_initial_conditions: bool = True,
         seed: int | None = None,
         log_level: LogLevel = "progress",
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
     ) -> SimulationResult:
-        """Simulate the model forward using pre-computed value functions.
+        """Simulate the model forward, optionally solving first.
+
+        When `V_arr_dict` is `None`, the model is solved before simulating. Pass
+        pre-computed value functions from `solve()` to skip the solve step.
 
         Args:
             params: Model parameters compatible with `get_params_template()`.
@@ -241,87 +245,8 @@ class Model:
                 All arrays must have the same length (number of subjects). The
                 `"regime"` entry must contain integer regime codes (from
                 `model.regime_names_to_ids`).
-            V_arr_dict: Value function arrays from solve().
-            check_initial_conditions: Whether to validate initial conditions.
-            seed: Random seed.
-            log_level: Logging verbosity. `"off"` suppresses output, `"warning"` shows
-                NaN/Inf warnings, `"progress"` adds timing, `"debug"` adds stats and
-                requires `log_path`.
-            log_path: Directory for persisting debug snapshots. Required when
-                `log_level="debug"`.
-            log_keep_n_latest: Maximum number of debug snapshots to keep on disk.
-
-        Returns:
-            SimulationResult object. Call .to_dataframe() to get a pandas DataFrame,
-            optionally with additional_targets.
-
-        """
-        _validate_log_args(log_level=log_level, log_path=log_path)
-        internal_params = process_params(
-            params=params, params_template=self._params_template
-        )
-        if check_initial_conditions:
-            validate_initial_conditions(
-                initial_conditions=initial_conditions,
-                internal_regimes=self.internal_regimes,
-                regime_names_to_ids=self.regime_names_to_ids,
-                internal_params=internal_params,
-                ages=self.ages,
-            )
-        validate_regime_transitions_all_periods(
-            internal_regimes=self.internal_regimes,
-            internal_params=internal_params,
-            ages=self.ages,
-        )
-        result = simulate(
-            internal_params=internal_params,
-            initial_conditions=initial_conditions,
-            internal_regimes=self.internal_regimes,
-            regime_names_to_ids=self.regime_names_to_ids,
-            logger=get_logger(log_level=log_level),
-            V_arr_dict=V_arr_dict,
-            ages=self.ages,
-            simulation_output_dtypes=self.simulation_output_dtypes,
-            seed=seed,
-        )
-        if log_level == "debug" and log_path is not None:
-            save_simulate_snapshot(
-                model=self,
-                params=params,
-                initial_conditions=initial_conditions,
-                V_arr_dict=V_arr_dict,
-                result=result,
-                log_path=Path(log_path),
-                log_keep_n_latest=log_keep_n_latest,
-            )
-        return result
-
-    def solve_and_simulate(
-        self,
-        params: UserParams,
-        initial_conditions: Mapping[str, Array],
-        *,
-        check_initial_conditions: bool = True,
-        seed: int | None = None,
-        log_level: LogLevel = "progress",
-        log_path: str | Path | None = None,
-        log_keep_n_latest: int = 3,
-    ) -> SimulationResult:
-        """Solve and then simulate the model in one call.
-
-        Args:
-            params: Model parameters compatible with `get_params_template()`.
-                Parameters can be provided at exactly one of three levels:
-                - Model level: {"arg_0": 0.0} - propagates to all functions needing
-                  arg_0
-                - Regime level: {"regime_0": {"arg_0": 0.0}} - propagates within
-                  regime_0
-                - Function level: {"regime_0": {"func": {"arg_0": 0.0}}} - direct
-                  specification
-            initial_conditions: Mapping of state names (plus `"regime"`) to arrays.
-                All arrays must have the same length (number of subjects). The
-                `"regime"` entry must contain integer regime codes (from
-                `model.regime_names_to_ids`).
+            V_arr_dict: Value function arrays from `solve()`. When `None`, the model
+                is solved automatically before simulating.
             check_initial_conditions: Whether to validate initial conditions.
             seed: Random seed.
             log_level: Logging verbosity. `"off"` suppresses output, `"warning"` shows
@@ -354,12 +279,13 @@ class Model:
             ages=self.ages,
         )
         log = get_logger(log_level=log_level)
-        V_arr_dict = solve(
-            internal_params=internal_params,
-            ages=self.ages,
-            internal_regimes=self.internal_regimes,
-            logger=log,
-        )
+        if V_arr_dict is None:
+            V_arr_dict = solve(
+                internal_params=internal_params,
+                ages=self.ages,
+                internal_regimes=self.internal_regimes,
+                logger=log,
+            )
         result = simulate(
             internal_params=internal_params,
             initial_conditions=initial_conditions,
@@ -380,7 +306,6 @@ class Model:
                 result=result,
                 log_path=Path(log_path),
                 log_keep_n_latest=log_keep_n_latest,
-                snapshot_type="solve_and_simulate",
             )
         return result
 

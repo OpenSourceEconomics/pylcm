@@ -248,7 +248,7 @@ def test_solve_catches_transition_bug_hidden_at_first_grid_point():
     """Pre-solve validation catches invalid probs even if first action value is ok."""
     model, params = _build_action_dependent_model()
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError, match="outside"):
-        model.solve(params)
+        model.solve(params=params)
 
 
 N_PERIODS = 4
@@ -264,14 +264,14 @@ def test_solve_raises_for_invalid_regime_transition_probs():
     model = get_model(N_PERIODS)
     params = get_params(N_PERIODS, survival_probs=_invalid_survival_probs(N_PERIODS))
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
-        model.solve(params)
+        model.solve(params=params)
 
 
 def test_simulate_raises_for_invalid_regime_transition_probs():
     """model.simulate() raises for out-of-bounds regime transition probabilities."""
     model = get_model(N_PERIODS)
     good_params = get_params(N_PERIODS)
-    V_arr_dict = model.solve(good_params)
+    V_arr_dict = model.solve(params=good_params)
 
     bad_params = get_params(
         N_PERIODS, survival_probs=_invalid_survival_probs(N_PERIODS)
@@ -289,8 +289,8 @@ def test_simulate_raises_for_invalid_regime_transition_probs():
         )
 
 
-def test_solve_and_simulate_raises_for_invalid_regime_transition_probs():
-    """model.solve_and_simulate() raises for out-of-bounds regime transition probs."""
+def test_simulate_with_solve_raises_for_invalid_regime_transition_probs():
+    """model.simulate(V_arr_dict=None) raises for out-of-bounds probs."""
     model = get_model(N_PERIODS)
     params = get_params(N_PERIODS, survival_probs=_invalid_survival_probs(N_PERIODS))
     initial_conditions = {
@@ -299,7 +299,8 @@ def test_solve_and_simulate_raises_for_invalid_regime_transition_probs():
         "regime": jnp.array([MortalityRegimeId.working_life]),
     }
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
-        model.solve_and_simulate(
+        model.simulate(
             params=params,
             initial_conditions=initial_conditions,
+            V_arr_dict=None,
         )

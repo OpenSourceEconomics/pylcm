@@ -38,16 +38,16 @@ The `log_level` parameter controls both console output and disk persistence:
 
 ```python
 # Silent — no console output at all
-V_arr_dict = model.solve(params, log_level="off")
+V_arr_dict = model.solve(params=params, log_level="off")
 
 # Warnings only — alerts on NaN/Inf but no progress output
-V_arr_dict = model.solve(params, log_level="warning")
+V_arr_dict = model.solve(params=params, log_level="warning")
 
 # Progress (default) — timing per period
-V_arr_dict = model.solve(params)  # log_level="progress"
+V_arr_dict = model.solve(params=params)  # log_level="progress"
 
 # Debug — full diagnostics + snapshot persistence
-V_arr_dict = model.solve(params, log_level="debug", log_path="./debug/")
+V_arr_dict = model.solve(params=params, log_level="debug", log_path="./debug/")
 ```
 
 Using `log_level="debug"` without providing `log_path` raises a `ValueError`.
@@ -67,9 +67,9 @@ Each snapshot is a directory (e.g. `solve_snapshot_001/`) containing:
 | `arrays.h5` | Value function arrays in HDF5 (datasets at `/V_arr/{period}/{regime}`) |
 | `model.pkl` | The Model instance (cloudpickle) |
 | `params.pkl` | User parameters (cloudpickle) |
-| `initial_states.pkl` | Initial state arrays (simulate/solve_and_simulate only) |
-| `initial_regimes.pkl` | Initial regime assignments (simulate/solve_and_simulate only) |
-| `result.pkl` | SimulationResult (simulate/solve_and_simulate only) |
+| `initial_states.pkl` | Initial state arrays (simulate only) |
+| `initial_regimes.pkl` | Initial regime assignments (simulate only) |
+| `result.pkl` | SimulationResult (simulate only) |
 | `metadata.json` | Snapshot type, platform string, field manifest |
 | `pixi.lock` | Lock file from the project root |
 | `pyproject.toml` | Project file from the project root |
@@ -80,23 +80,29 @@ Each snapshot is a directory (e.g. `solve_snapshot_001/`) containing:
 ```python
 # Solve snapshot
 V_arr_dict = model.solve(
-    params, log_level="debug", log_path="./debug/"
+    params=params, log_level="debug", log_path="./debug/"
 )
 # Creates: ./debug/solve_snapshot_001/
 
-# Simulate snapshot
+# Simulate snapshot (with pre-solved value functions)
 result = model.simulate(
-    params, initial_states, initial_regimes, V_arr_dict,
-    log_level="debug", log_path="./debug/",
+    params=params,
+    initial_conditions=initial_conditions,
+    V_arr_dict=V_arr_dict,
+    log_level="debug",
+    log_path="./debug/",
 )
 # Creates: ./debug/simulate_snapshot_001/
 
-# Solve-and-simulate snapshot (includes everything)
-result = model.solve_and_simulate(
-    params, initial_states, initial_regimes,
-    log_level="debug", log_path="./debug/",
+# Simulate snapshot (solving automatically)
+result = model.simulate(
+    params=params,
+    initial_conditions=initial_conditions,
+    V_arr_dict=None,
+    log_level="debug",
+    log_path="./debug/",
 )
-# Creates: ./debug/solve_and_simulate_snapshot_001/
+# Creates: ./debug/simulate_snapshot_001/
 ```
 
 ### Loading snapshots
@@ -111,7 +117,7 @@ snapshot.params      # the user parameters
 snapshot.V_arr_dict  # value function arrays (loaded from HDF5)
 
 # Re-run the solve to reproduce the result
-V_arr_dict = snapshot.model.solve(snapshot.params)
+V_arr_dict = snapshot.model.solve(params=snapshot.params)
 ```
 
 For large snapshots, skip fields you don't need:
@@ -148,7 +154,7 @@ parameter (default 3) limits how many snapshot directories are kept per type:
 
 ```python
 V_arr_dict = model.solve(
-    params, log_level="debug", log_path="./debug/", log_keep_n_latest=5
+    params=params, log_level="debug", log_path="./debug/", log_keep_n_latest=5
 )
 ```
 
@@ -202,7 +208,7 @@ model = Model(
 )
 
 # Call solve with the bad parameters --- the traceback will be readable
-V_arr_dict = model.solve(bad_params)
+V_arr_dict = model.solve(params=bad_params)
 ```
 
 The traceback now points to the exact line in your user-defined functions where the
@@ -218,7 +224,7 @@ import jax.numpy as jnp
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-V_arr_dict = model.solve(params)
+V_arr_dict = model.solve(params=params)
 
 # Check for issues
 for period, regimes in V_arr_dict.items():

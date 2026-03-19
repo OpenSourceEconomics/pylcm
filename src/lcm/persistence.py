@@ -179,7 +179,6 @@ def save_simulate_snapshot(
     result: object,
     log_path: Path,
     log_keep_n_latest: int,
-    snapshot_type: str = "simulate",
 ) -> Path:
     """Save a simulate snapshot directory to disk.
 
@@ -191,13 +190,12 @@ def save_simulate_snapshot(
         result: SimulationResult object.
         log_path: Parent directory for snapshot directories.
         log_keep_n_latest: Maximum number of snapshots to retain.
-        snapshot_type: Metadata label for the snapshot (default `"simulate"`).
 
     Returns:
         Path to the created snapshot directory.
 
     """
-    prefix = f"{snapshot_type}_snapshot"
+    prefix = "simulate_snapshot"
     log_path.mkdir(parents=True, exist_ok=True)
     counter = _next_counter(log_path, prefix=prefix)
     snap_dir = log_path / f"{prefix}_{counter:03d}"
@@ -210,7 +208,7 @@ def save_simulate_snapshot(
     _save_V_arr_to_h5(snap_dir / "arrays.h5", V_arr_dict)
     _write_metadata(
         snap_dir,
-        snapshot_type=snapshot_type,
+        snapshot_type="simulate",
         fields=["model", "params", "initial_conditions", "result"],
     )
     _write_environment_files(snap_dir)
