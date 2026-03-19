@@ -169,7 +169,7 @@ def test_variable_info_with_continuous_constraint_has_unique_index():
 
 
 def test_rename_params_to_qnames_with_partial():
-    """Regression: partial keywords must be renamed too."""
+    """Regression: dags >=0.5.1 renames bound partial keywords to qualified names."""
 
     def utility(consumption, risk_aversion):
         return consumption ** (1 - risk_aversion)
@@ -184,5 +184,11 @@ def test_rename_params_to_qnames_with_partial():
         regime_params_template=regime_params_template,
         param_key="utility",
     )
-    # The renamed function should be callable with the qualified name
+    # 1. The bound default must work under the qualified name. Before dags >=0.5.1,
+    #    the manual unwrap/re-wrap rebound keywords under the old name, so this call
+    #    would raise TypeError.
     assert result(consumption=5.0) == 5.0 ** (1 - 2.0)
+
+    # 2. The qualified name must be usable to override the default. This fails if
+    #    _rename_params_to_qnames is a no-op (no renaming happened).
+    assert result(consumption=5.0, utility__risk_aversion=3.0) == 5.0 ** (1 - 3.0)
