@@ -42,15 +42,17 @@ project:
         - file: user_guide/regimes.ipynb
         - file: user_guide/grids.md
         - file: user_guide/transitions.ipynb
-        - file: user_guide/solving_and_simulating.md
-        - file: user_guide/parameters.md
         - file: user_guide/shocks.md
+        - file: user_guide/parameters.md
+        - file: user_guide/pandas_interop.md
+        - file: user_guide/solving_and_simulating.md
     - file: explanations/index.md
       title: Explanations
       children:
         - file: explanations/function_representation.ipynb
         - file: explanations/dispatchers.ipynb
         - file: explanations/interpolation.ipynb
+        - file: explanations/stochastic_transitions.ipynb
         - file: explanations/approximating_continuous_shocks.ipynb
     - file: examples/index.md
       title: Examples

@@ -14,6 +14,7 @@ from lcm import (
     Regime,
     categorical,
 )
+from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -43,18 +44,18 @@ def test_model_solve_and_simulate_with_stochastic_model():
 
     result = model.solve_and_simulate(
         params=params,
-        initial_states={
+        initial_conditions={
             "health": jnp.array([1, 1, 0, 0]),
             "partner": jnp.array([0, 0, 1, 0]),
             "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
             "age": jnp.array([40.0, 40.0, 40.0, 40.0]),
+            "regime": jnp.array([RegimeId.working_life] * 4),
         },
-        initial_regimes=["working_life"] * 4,
     )
     df = result.to_dataframe().query('regime == "working_life"')
 
     # Verify expected columns
-    required_cols = {"period", "subject_id", "partner", "work"}
+    required_cols = {"period", "subject_id", "partner", "labor_supply"}
     assert required_cols <= set(df.columns)
     assert len(df) > 0
 
@@ -66,7 +67,9 @@ def test_model_solve_and_simulate_with_stochastic_model():
 
     if len(common) > 0:
         p0, p1 = period_0.loc[common], period_1.loc[common]
-        should_be_single = (p0["work"] == "work") & (p0["partner"] == "partnered")
+        should_be_single = (p0["labor_supply"] == "work") & (
+            p0["partner"] == "partnered"
+        )
         expected = should_be_single.map({True: "single", False: "partnered"})
 
         pd.testing.assert_series_equal(
@@ -199,25 +202,23 @@ def test_compare_deterministic_and_stochastic_results_value_function(
     # ==================================================================================
     # Compare simulation results
     # ==================================================================================
-    initial_states = {
+    initial_conditions = {
         "health": jnp.array([1, 1, 0, 0]),
         "partner": jnp.array([0, 0, 0, 0]),
         "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
         "age": jnp.array([40.0, 40.0, 40.0, 40.0]),
+        "regime": jnp.array([RegimeId.working_life] * 4),
     }
-    initial_regimes = ["working_life"] * 4
 
     simulation_deterministic = model_deterministic.simulate(
         params,
         V_arr_dict=solution_deterministic,
-        initial_states=initial_states,
-        initial_regimes=initial_regimes,
+        initial_conditions=initial_conditions,
     )
     simulation_stochastic = model_stochastic.simulate(
         params,
         V_arr_dict=solution_stochastic,
-        initial_states=initial_states,
-        initial_regimes=initial_regimes,
+        initial_conditions=initial_conditions,
     )
     df_deterministic = simulation_deterministic.to_dataframe().query(
         'regime == "working_life"'
@@ -241,12 +242,12 @@ def _make_minimal_stochastic_model(next_draw: Callable[..., FloatND]) -> Model:
 
     final_age = 1
 
-    @categorical
+    @categorical(ordered=False)
     class ShockStatus:
         bad: int
         good: int
 
-    @categorical
+    @categorical(ordered=False)
     class ShockRegimeId:
         working_life: int
         dead: int
@@ -342,3 +343,28 @@ def test_stochastic_next_depending_on_continuous_state():
     assert all(
         jnp.all(jnp.isfinite(V[p]["working_life"])) for p in V if "working_life" in V[p]
     )
+
+
+def test_stochastic_regime_transition_active_at_last_period_raises():
+    """Non-terminal regimes active at the last period must raise an error.
+
+    See https://github.com/OpenSourceEconomics/pylcm/issues/276.
+    """
+    from lcm_examples import mortality  # noqa: PLC0415
+
+    # Deliberately set active=always to trigger the validation error.
+    model = Model(
+        regimes={
+            "working_life": mortality.working_life.replace(active=lambda _age: True),
+            "retirement": mortality.retirement.replace(active=lambda _age: True),
+            "dead": mortality.dead,
+        },
+        ages=AgeGrid(start=40, stop=70, step="10Y"),
+        regime_id_class=mortality.RegimeId,
+    )
+
+    with pytest.raises(
+        InvalidRegimeTransitionProbabilitiesError,
+        match=r"Non-terminal regime.*active at the last period",
+    ):
+        model.solve(mortality.get_params(n_periods=4))

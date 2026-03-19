@@ -1,5 +1,10 @@
+import ast
 import inspect
+import textwrap
+import warnings
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
+from typing import TYPE_CHECKING, overload
 
 import jax
 import jax.numpy as jnp
@@ -11,8 +16,22 @@ from lcm.exceptions import (
     InvalidRegimeTransitionProbabilitiesError,
     InvalidValueFunctionError,
 )
+from lcm.grids import DiscreteGrid
 from lcm.interfaces import InternalRegime
-from lcm.typing import FlatRegimeParams, InternalParams, RegimeName, ScalarFloat
+from lcm.regime import MarkovTransition, Regime
+from lcm.typing import (
+    FlatRegimeParams,
+    FloatND,
+    InternalParams,
+    RegimeName,
+    ScalarFloat,
+)
+
+# Genuine circular import: model.py imports from this module at module level.
+# Safe because Model is only used at runtime in validate_transition_probs,
+# which is never called during module initialisation.
+if TYPE_CHECKING:
+    from lcm.model import Model
 
 
 def validate_value_function_array(*, V_arr: Array, age: ScalarFloat) -> None:
@@ -169,6 +188,21 @@ def validate_regime_transitions_all_periods(
             positive transition probability.
 
     """
+    last_period = ages.n_periods - 1
+    non_terminal_active_at_last = [
+        name
+        for name, regime in internal_regimes.items()
+        if not regime.terminal and last_period in regime.active_periods
+    ]
+    if non_terminal_active_at_last:
+        raise InvalidRegimeTransitionProbabilitiesError(
+            f"Non-terminal regime(s) {non_terminal_active_at_last} are active at the "
+            f"last period (age {ages.exact_values[last_period]}). Non-terminal regimes "
+            "must not be active at the last period because there is no next period to "
+            "transition to. Adjust the 'active' function on these regimes to exclude "
+            "the last age."
+        )
+
     for period in range(ages.n_periods - 1):
         active_regimes_next_period = tuple(
             name
@@ -267,3 +301,295 @@ def _validate_regime_transition_single(
         next_age=ages.values[period + 1],  # noqa: PD011
         state_action_values=MappingProxyType(point),
     )
+
+
+def _get_indexing_params(func: Callable) -> list[str]:
+    """Return indexing parameter names (all except `probs_array`)."""
+    sig = inspect.signature(func)
+    param_names = list(sig.parameters.keys())
+    return [name for name in param_names if name != "probs_array"]
+
+
+def _validate_probs_array_indexing(func: Callable) -> None:
+    """Check that `probs_array[...]` indexing order matches parameter order.
+
+    Handles two cases reliably:
+
+    - Single index: `probs_array[health]`
+    - Tuple of bare names: `probs_array[period, health]`
+
+    For computed indices (`probs_array[period - 1, health]`), variable aliasing,
+    or multiple subscripts in different branches, a warning is emitted instead.
+
+    Args:
+        func: The transition function to inspect.
+
+    Raises:
+        ValueError: If bare-name indices don't match the expected parameter order.
+
+    """
+    sig = inspect.signature(func)
+    if "probs_array" not in sig.parameters:
+        return
+
+    try:
+        source = textwrap.dedent(inspect.getsource(func))
+        tree = ast.parse(source)
+    except OSError, TypeError:
+        return
+
+    expected = _get_indexing_params(func)
+    func_name = getattr(func, "__name__", "<unknown>")
+
+    subscripts = _collect_probs_array_subscripts(tree)
+
+    if not subscripts:
+        warnings.warn(
+            f"Function '{func_name}' has a `probs_array` parameter but no "
+            f"`probs_array[...]` subscript was found. Cannot validate indexing order.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return
+
+    if len(subscripts) > 1:
+        warnings.warn(
+            f"Function '{func_name}' has multiple `probs_array[...]` subscripts. "
+            f"Cannot validate indexing order automatically.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return
+
+    index_names = _extract_bare_names(subscripts[0])
+
+    if index_names is None:
+        warnings.warn(
+            f"Function '{func_name}' uses computed indices in "
+            f"`probs_array[...]`. Cannot validate indexing order automatically.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return
+
+    if index_names != expected:
+        msg = (
+            f"In function '{func_name}', `probs_array` is indexed as "
+            f"`probs_array[{', '.join(index_names)}]` but the expected order "
+            f"(from the function signature) is "
+            f"`probs_array[{', '.join(expected)}]`."
+        )
+        raise ValueError(msg)
+
+
+def _collect_probs_array_subscripts(tree: ast.Module) -> list[ast.expr]:
+    """Find all `probs_array[...]` subscript slice nodes in an AST."""
+    return [
+        node.slice
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Subscript)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "probs_array"
+    ]
+
+
+def _extract_bare_names(slice_node: ast.expr) -> list[str] | None:
+    """Extract bare variable names from a subscript slice.
+
+    Return ``None`` if any index element is not a bare `ast.Name` (e.g. a
+    `BinOp` or `Call`).
+    """
+    if isinstance(slice_node, ast.Name):
+        return [slice_node.id]
+
+    if isinstance(slice_node, ast.Tuple):
+        names: list[str] = []
+        for elt in slice_node.elts:
+            if not isinstance(elt, ast.Name):
+                return None
+            names.append(elt.id)
+        return names
+
+    return None
+
+
+@overload
+def validate_transition_probs(
+    *,
+    probs: FloatND,
+    model: Model,
+    regime_name: str,
+    state_name: str,
+) -> None: ...
+
+
+@overload
+def validate_transition_probs(
+    *,
+    probs: FloatND,
+    model: Model,
+    regime_name: str,
+    state_name: str,
+    target_regime_name: str,
+) -> None: ...
+
+
+@overload
+def validate_transition_probs(
+    *,
+    probs: FloatND,
+    model: Model,
+    regime_name: str,
+) -> None: ...
+
+
+def validate_transition_probs(
+    *,
+    probs: FloatND,
+    model: Model,
+    regime_name: str,
+    state_name: str | None = None,
+    target_regime_name: str | None = None,
+) -> None:
+    """Validate a transition probability array for shape, values, and row sums.
+
+    When ``state_name`` is provided, validate a state transition probability array.
+    When omitted, validate a regime transition probability array.
+
+    For per-target state transitions (where ``state_transitions[state_name]`` is a
+    dict mapping target regime names to `MarkovTransition` instances), pass
+    ``target_regime_name`` to select the specific transition to validate.
+
+    Args:
+        probs: The transition probability array to validate.
+        model: The LCM Model instance.
+        regime_name: Name of the regime.
+        state_name: Name of the state with a `MarkovTransition`. If ``None``,
+            validate a regime transition instead.
+        target_regime_name: Target regime name for per-target state transitions.
+            Required when the state transition is a per-target dict.
+
+    Raises:
+        TypeError: If the transition is not a `MarkovTransition`.
+        ValueError: If the shape is wrong, values are outside [0, 1], or rows
+            don't sum to 1.
+
+    """
+    regime = model.regimes[regime_name]
+
+    if state_name is not None:
+        raw_transition = regime.state_transitions[state_name]
+        markov = _extract_markov_transition(
+            raw_transition,
+            state_name=state_name,
+            regime_name=regime_name,
+            target_regime_name=target_regime_name,
+        )
+        func = markov.func
+        all_grids = _build_all_grids(regime)
+        n_outcomes = len(all_grids[state_name].categories)
+    else:
+        if not isinstance(regime.transition, MarkovTransition):
+            msg = (
+                f"Regime '{regime_name}' does not have a stochastic regime "
+                f"transition. Got {type(regime.transition).__name__}."
+            )
+            raise TypeError(msg)
+        func = regime.transition.func
+        all_grids = _build_all_grids(regime)
+        n_outcomes = len(model.regime_names_to_ids)
+
+    _validate_probs_array_indexing(func)
+
+    indexing_params = _get_indexing_params(func)
+    expected_shape = _build_expected_shape(
+        indexing_params, n_outcomes, all_grids, model
+    )
+
+    if probs.shape != expected_shape:
+        msg = f"Expected shape {expected_shape} but got {probs.shape}."
+        raise ValueError(msg)
+
+    if jnp.any(probs < 0) or jnp.any(probs > 1):
+        msg = "All values must be in [0, 1]."
+        raise ValueError(msg)
+
+    row_sums = jnp.sum(probs, axis=-1)
+    if not jnp.allclose(row_sums, 1.0, atol=1e-6):
+        msg = "Rows must sum to 1 along the last axis."
+        raise ValueError(msg)
+
+
+def _extract_markov_transition(
+    raw_transition: object,
+    *,
+    state_name: str,
+    regime_name: str,
+    target_regime_name: str | None,
+) -> MarkovTransition:
+    """Extract a MarkovTransition from a raw transition, handling per-target dicts."""
+    if isinstance(raw_transition, MarkovTransition):
+        return raw_transition
+
+    if isinstance(raw_transition, Mapping):
+        if target_regime_name is None:
+            targets = sorted(raw_transition.keys())
+            msg = (
+                f"State '{state_name}' in regime '{regime_name}' uses per-target "
+                f"transitions. Pass target_regime_name to select one of: {targets}."
+            )
+            raise TypeError(msg)
+        if target_regime_name not in raw_transition:
+            msg = (
+                f"Target regime '{target_regime_name}' not found in per-target "
+                f"transitions for state '{state_name}' in regime '{regime_name}'. "
+                f"Available targets: {sorted(raw_transition.keys())}."
+            )
+            raise ValueError(msg)
+        entry = raw_transition[target_regime_name]  # ty: ignore[invalid-argument-type]
+        if not isinstance(entry, MarkovTransition):
+            msg = (
+                f"Per-target transition for '{target_regime_name}' in state "
+                f"'{state_name}' of regime '{regime_name}' is not a "
+                f"MarkovTransition. Got {type(entry).__name__}."
+            )
+            raise TypeError(msg)
+        return entry
+
+    msg = (
+        f"State '{state_name}' in regime '{regime_name}' is not a "
+        f"MarkovTransition. Got {type(raw_transition).__name__}."
+    )
+    raise TypeError(msg)
+
+
+def _build_all_grids(regime: Regime) -> dict[str, DiscreteGrid]:
+    """Collect all DiscreteGrid instances from regime states and actions."""
+    return {
+        name: grid
+        for name, grid in (*regime.states.items(), *regime.actions.items())
+        if isinstance(grid, DiscreteGrid)
+    }
+
+
+def _build_expected_shape(
+    indexing_params: list[str],
+    n_outcomes: int,
+    all_grids: dict[str, DiscreteGrid],
+    model: Model,
+) -> tuple[int, ...]:
+    """Compute expected shape for a transition probability array."""
+    shape: list[int] = []
+    for param_name in indexing_params:
+        if param_name == "period":
+            shape.append(model.n_periods)
+        elif param_name in all_grids:
+            shape.append(len(all_grids[param_name].categories))
+        else:
+            msg = (
+                f"Cannot determine expected size for parameter '{param_name}'. "
+                f"It is not 'period' and not a DiscreteGrid state or action."
+            )
+            raise ValueError(msg)
+    shape.append(n_outcomes)
+    return tuple(shape)

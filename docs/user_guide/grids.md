@@ -44,12 +44,12 @@ categories:
 ```python
 from lcm import DiscreteGrid, categorical
 
-@categorical
-class WorkChoice:
-    no: int
-    yes: int
+@categorical(ordered=True)
+class LaborSupply:
+    do_not_work: int
+    work: int
 
-actions = {"work": DiscreteGrid(WorkChoice)}
+actions = {"labor_supply": DiscreteGrid(LaborSupply)}
 ```
 
 Values are integer codes (0, 1, 2, ...) auto-assigned by `@categorical`. In simulation

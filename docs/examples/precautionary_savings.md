@@ -24,11 +24,11 @@ params = get_params(shock_type="rouwenhorst", sigma=0.1, rho=0.95)
 
 result = model.solve_and_simulate(
     params=params,
-    initial_regimes=["alive"] * 100,
-    initial_states={
+    initial_conditions={
         "age": jnp.full(100, model.ages.values[0]),
         "wealth": jnp.linspace(1, 10, 100),
         "income": jnp.zeros(100),
+        "regime": jnp.full(100, model.regime_names_to_ids["alive"]),
     },
 )
 

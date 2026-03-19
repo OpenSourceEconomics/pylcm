@@ -4,7 +4,7 @@ import contextlib
 import inspect
 import pickle
 import tempfile
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -19,7 +19,6 @@ from jax import Array
 from lcm.ages import AgeGrid
 from lcm.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
-from lcm.grids import DiscreteGrid
 from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
 from lcm.typing import (
     FlatRegimeParams,
@@ -36,11 +35,6 @@ CLOUDPICKLE_IMPORT_ERROR_MSG = (
 )
 
 
-# ======================================================================================
-# Main result class
-# ======================================================================================
-
-
 class SimulationResult:
     """Result object from model simulation with deferred DataFrame computation."""
 
@@ -54,6 +48,7 @@ class SimulationResult:
         internal_params: InternalParams,
         V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
         ages: AgeGrid,
+        simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     ) -> None:
         self._raw_results = raw_results
         self._internal_regimes = internal_regimes
@@ -61,15 +56,13 @@ class SimulationResult:
         self._V_arr_dict = V_arr_dict
         self._ages = ages
         self._metadata = _compute_metadata(
-            internal_regimes=internal_regimes, raw_results=raw_results
+            internal_regimes=internal_regimes,
+            raw_results=raw_results,
+            simulation_output_dtypes=simulation_output_dtypes,
         )
         self._available_targets = sorted(
             _collect_all_available_targets(internal_regimes)
         )
-
-    # ----------------------------------------------------------------------------------
-    # Public properties for advanced users
-    # ----------------------------------------------------------------------------------
 
     @property
     def raw_results(
@@ -89,10 +82,6 @@ class SimulationResult:
     ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
         """Value function arrays from the solution."""
         return self._V_arr_dict
-
-    # ----------------------------------------------------------------------------------
-    # Metadata properties (delegated to _metadata)
-    # ----------------------------------------------------------------------------------
 
     @property
     def regime_names(self) -> list[str]:
@@ -128,10 +117,6 @@ class SimulationResult:
 
         """
         return self._available_targets
-
-    # ----------------------------------------------------------------------------------
-    # Main methods
-    # ----------------------------------------------------------------------------------
 
     def to_dataframe(
         self,
@@ -238,11 +223,6 @@ class SimulationResult:
         )
 
 
-# ======================================================================================
-# Metadata
-# ======================================================================================
-
-
 @dataclass(frozen=True)
 class SimulationMetadata:
     """Pre-computed metadata about the simulation."""
@@ -271,6 +251,9 @@ class SimulationMetadata:
     discrete_categories: MappingProxyType[str, tuple[str, ...]]
     """Immutable mapping of discrete variable names to their category labels."""
 
+    discrete_ordered: MappingProxyType[str, bool]
+    """Immutable mapping of discrete variable names to their ordered flag."""
+
 
 def _compute_metadata(
     *,
@@ -278,15 +261,15 @@ def _compute_metadata(
     raw_results: MappingProxyType[
         RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
     ],
+    simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
 ) -> SimulationMetadata:
-    """Compute metadata from internal regimes and raw results."""
+    """Compute metadata from internal regimes, raw results, and output dtypes."""
     regime_names = list(internal_regimes.keys())
 
     all_states: set[str] = set()
     all_actions: set[str] = set()
     regime_to_states: dict[str, tuple[str, ...]] = {}
     regime_to_actions: dict[str, tuple[str, ...]] = {}
-    discrete_categories: dict[str, tuple[str, ...]] = {}
 
     for regime_name, regime in internal_regimes.items():
         vi = regime.variable_info
@@ -297,10 +280,14 @@ def _compute_metadata(
         all_states.update(states)
         all_actions.update(actions)
 
-        # Extract categories from discrete grids
-        for var_name, grid in regime.gridspecs.items():
-            if isinstance(grid, DiscreteGrid) and var_name not in discrete_categories:
-                discrete_categories[var_name] = grid.categories
+    # Extract categories and ordered flags from simulation_output_dtypes
+    discrete_categories: dict[str, tuple[str, ...]] = {}
+    discrete_ordered: dict[str, bool] = {}
+    for var_name, dtype in simulation_output_dtypes.items():
+        if var_name == "regime":
+            continue
+        discrete_categories[var_name] = tuple(dtype.categories)
+        discrete_ordered[var_name] = bool(dtype.ordered)
 
     n_periods = len(raw_results[regime_names[0]])
     n_subjects = _get_n_subjects(raw_results)
@@ -314,6 +301,7 @@ def _compute_metadata(
         regime_to_states=MappingProxyType(regime_to_states),
         regime_to_actions=MappingProxyType(regime_to_actions),
         discrete_categories=MappingProxyType(discrete_categories),
+        discrete_ordered=MappingProxyType(discrete_ordered),
     )
 
 
@@ -328,11 +316,6 @@ def _get_n_subjects(
             first_result = next(iter(regime_results.values()))
             return len(first_result.in_regime)
     return 0
-
-
-# ======================================================================================
-# Target resolution and validation
-# ======================================================================================
 
 
 def _resolve_targets(
@@ -400,11 +383,6 @@ def _get_stochastic_weight_function_names(regime: InternalRegime) -> set[str]:
         for name in flat_transitions
         if tree_path_from_qname(name)[-1] in stochastic_transition_names
     }
-
-
-# ======================================================================================
-# DataFrame creation
-# ======================================================================================
 
 
 def _create_flat_dataframe(
@@ -593,11 +571,6 @@ def _reorder_columns(
     return df[base + state_names + action_names + rest]
 
 
-# ======================================================================================
-# Categorical conversion
-# ======================================================================================
-
-
 def _convert_to_categorical(
     *,
     df: pd.DataFrame,
@@ -607,7 +580,7 @@ def _convert_to_categorical(
 
     Converts:
     - regime column: uses regime_names as categories
-    - discrete state/action columns: uses categories from DiscreteGrid
+    - discrete state/action columns: uses categories from simulation metadata
 
     """
     df = df.copy()
@@ -619,7 +592,9 @@ def _convert_to_categorical(
     for var_name, categories in metadata.discrete_categories.items():
         if var_name in df.columns:
             df[var_name] = _codes_to_categorical(
-                codes=df[var_name], categories=categories
+                codes=df[var_name],
+                categories=categories,
+                ordered=metadata.discrete_ordered[var_name],
             )
 
     return df
@@ -629,6 +604,7 @@ def _codes_to_categorical(
     *,
     codes: pd.Series,
     categories: tuple[str, ...],
+    ordered: bool = False,
 ) -> pd.Categorical | pd.Series:
     """Convert integer codes to Categorical, handling NaN and out-of-range values.
 
@@ -654,17 +630,14 @@ def _codes_to_categorical(
         return pd.Categorical.from_codes(
             int_codes,
             categories=pd.Index(categories),
+            ordered=ordered,
         )
 
     return pd.Categorical.from_codes(
         codes_array.astype(int),
         categories=pd.Index(categories),
+        ordered=ordered,
     )
-
-
-# ======================================================================================
-# Target computation
-# ======================================================================================
 
 
 def _compute_targets(
@@ -725,11 +698,6 @@ def _get_function_variables(
 ) -> tuple[str, ...]:
     """Get variable names from signature, excluding flat param names."""
     return tuple(p for p in inspect.signature(func).parameters if p not in param_names)
-
-
-# ======================================================================================
-# IO operations
-# ======================================================================================
 
 
 def _atomic_dump(obj: SimulationResult, path: str | Path, *, protocol: int) -> Path:

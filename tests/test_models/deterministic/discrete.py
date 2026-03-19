@@ -35,20 +35,20 @@ from tests.test_models.deterministic.regression import (
 # --------------------------------------------------------------------------------------
 # Categorical variables
 # --------------------------------------------------------------------------------------
-@categorical
+@categorical(ordered=True)
 class DiscreteConsumption:
     low: int
     high: int
 
 
-@categorical
+@categorical(ordered=True)
 class DiscreteWealth:
     low: int
     medium: int
     high: int
 
 
-@categorical
+@categorical(ordered=False)
 class RegimeId:
     working_life: int
     dead: int
@@ -97,12 +97,15 @@ def borrowing_constraint(consumption: DiscreteAction, wealth: DiscreteState) -> 
     return consumption <= wealth
 
 
+_DEFAULT_N_PERIODS = 4
+_DEFAULT_LAST_ACTIVE_AGE = 50 + (_DEFAULT_N_PERIODS - 2) * 10
+
 # ======================================================================================
 # Regime specifications
 # ======================================================================================
 working_life = Regime(
     actions={
-        "work": DiscreteGrid(LaborSupply),
+        "labor_supply": DiscreteGrid(LaborSupply),
         "consumption": DiscreteGrid(DiscreteConsumption),
     },
     states={
@@ -120,14 +123,13 @@ working_life = Regime(
         "labor_income": labor_income,
         "is_working": is_working,
     },
-    active=lambda _age: True,  # Placeholder, will be replaced by get_model()
+    active=lambda age: age <= _DEFAULT_LAST_ACTIVE_AGE,
 )
 
 
 dead = Regime(
     transition=None,
     functions={"utility": lambda: 0.0},
-    active=lambda _age: True,  # Placeholder, will be replaced by get_model()
 )
 
 

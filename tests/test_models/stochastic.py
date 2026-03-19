@@ -41,13 +41,13 @@ from lcm_examples.mortality import working_life as _base_working_life
 # ======================================================================================
 
 
-@categorical
+@categorical(ordered=True)
 class Health:
     bad: int
     good: int
 
 
-@categorical
+@categorical(ordered=False)
 class PartnerStatus:
     single: int
     partnered: int
@@ -113,12 +113,12 @@ def next_health(health: DiscreteState, partner: DiscreteState) -> FloatND:
 
 def next_partner(
     period: Period,
-    work: DiscreteAction,
+    labor_supply: DiscreteAction,
     partner: DiscreteState,
-    partner_transition: FloatND,
+    probs_array: FloatND,
 ) -> FloatND:
     """Stochastic transition using pre-calculated markov transition probabilities."""
-    return partner_transition[period, work, partner]
+    return probs_array[period, labor_supply, partner]
 
 
 # ======================================================================================
@@ -142,7 +142,7 @@ working_life = _base_working_life.replace(
         "wealth": next_wealth,
     },
     actions={
-        "work": DiscreteGrid(LaborSupply),
+        "labor_supply": DiscreteGrid(LaborSupply),
         "consumption": CONSUMPTION_GRID,
     },
     functions={
@@ -190,9 +190,9 @@ def get_params(
     disutility_of_work=0.5,
     interest_rate=0.05,
     wage=10.0,
-    partner_transition=None,
+    probs_array=None,
 ):
-    default_partner_transition = jnp.array(
+    default_probs_array = jnp.array(
         [
             # Transition from period 0 to period 1
             [
@@ -230,8 +230,8 @@ def get_params(
             ],
         ],
     )
-    if partner_transition is None:
-        partner_transition = default_partner_transition
+    if probs_array is None:
+        probs_array = default_probs_array
 
     return {
         "discount_factor": discount_factor,
@@ -244,14 +244,14 @@ def get_params(
         "working_life": {
             "utility": {"disutility_of_work": disutility_of_work},
             "next_wealth": {"interest_rate": interest_rate},
-            "next_partner": {"partner_transition": partner_transition},
+            "next_partner": {"probs_array": probs_array},
             "labor_income": {"wage": wage},
         },
         "retirement": {
             "next_wealth": {"interest_rate": interest_rate, "labor_income": 0.0},
             "next_partner": {
-                "work": LaborSupply.retire,
-                "partner_transition": partner_transition,
+                "labor_supply": LaborSupply.retire,
+                "probs_array": probs_array,
             },
         },
     }

@@ -583,8 +583,16 @@ def _validate_categoricals(
     function is applied to all target regimes. If a target regime has a different number
     of categories for that state, JAX silently clips indices producing wrong results.
 
+    Also validates that the `ordered` flag is consistent across regimes for the same
+    discrete state variable. Mixed ordered flags (one True, one False) are not allowed.
+
+    When both regimes are ordered with different categories, the per-regime orderings
+    are merged via topological sort. If the merge is ambiguous or contradictory, an
+    error is raised.
+
     Raises:
-        ModelInitializationError: If a category count mismatch is found.
+        ModelInitializationError: If a category count mismatch or ordered flag
+            inconsistency is found.
 
     """
     error_messages: list[str] = []
@@ -616,8 +624,207 @@ def _validate_categoricals(
                         f"mapping for each target regime.",
                     )
 
+    # Validate ordered flag consistency across regimes
+    _validate_ordered_flags(regimes, error_messages)
+
     if error_messages:
         raise ModelInitializationError(format_messages(error_messages))
+
+
+def get_simulation_output_dtypes(
+    regimes: Mapping[str, Regime],
+    regime_names_to_ids: Mapping[str, int],
+) -> MappingProxyType[str, pd.CategoricalDtype]:
+    """Compute pandas CategoricalDtype for all discrete output columns.
+
+    Merge ordered categories across regimes via topological sort. This must be
+    called after model validation (which guarantees merges succeed).
+
+    Args:
+        regimes: Mapping of regime names to Regime instances.
+        regime_names_to_ids: Mapping of regime names to integer IDs.
+
+    Returns:
+        Immutable mapping of variable name to `pd.CategoricalDtype`. Includes
+        all discrete state/action variables plus the ``"regime"`` column.
+
+    """
+    merged_categories, ordered_flags = _compute_merged_discrete_categories(regimes)
+
+    dtypes: dict[str, pd.CategoricalDtype] = {}
+    for var_name, categories in merged_categories.items():
+        dtypes[var_name] = pd.CategoricalDtype(
+            categories=list(categories),
+            ordered=ordered_flags[var_name],
+        )
+
+    dtypes["regime"] = pd.CategoricalDtype(
+        categories=list(regime_names_to_ids.keys()),
+        ordered=False,
+    )
+
+    return MappingProxyType(dtypes)
+
+
+def _compute_merged_discrete_categories(
+    regimes: Mapping[str, Regime],
+) -> tuple[dict[str, tuple[str, ...]], dict[str, bool]]:
+    """Compute merged categories and ordered flags for all discrete variables.
+
+    Returns:
+        Tuple of (categories dict, ordered_flags dict).
+
+    """
+    var_grids: dict[str, list[tuple[str, DiscreteGrid]]] = {}
+    for regime_name, regime in regimes.items():
+        for var_name, grid in {**regime.states, **regime.actions}.items():
+            if isinstance(grid, DiscreteGrid):
+                var_grids.setdefault(var_name, []).append((regime_name, grid))
+
+    categories: dict[str, tuple[str, ...]] = {}
+    ordered_flags: dict[str, bool] = {}
+    for var_name, entries in var_grids.items():
+        first_grid = entries[0][1]
+        ordered_flags[var_name] = first_grid.ordered
+
+        if len(entries) == 1 or not first_grid.ordered:
+            categories[var_name] = first_grid.categories
+            continue
+
+        all_cats = [grid.categories for _, grid in entries]
+        if len(set(all_cats)) <= 1:
+            categories[var_name] = first_grid.categories
+            continue
+
+        merged = _merge_ordered_categories(
+            [(rn, grid.categories) for rn, grid in entries]
+        )
+        # Validation already passed, so merge must succeed
+        assert merged is not None  # noqa: S101
+        categories[var_name] = merged
+
+    return categories, ordered_flags
+
+
+def _validate_ordered_flags(
+    regimes: Mapping[str, Regime],
+    error_messages: list[str],
+) -> None:
+    """Validate that the ordered flag is consistent for each discrete variable.
+
+    For each discrete state/action variable that appears in multiple regimes:
+    - Mixed ordered flags (True in one, False in another) → error.
+    - Both ordered with different categories → merge via topological sort; ambiguous
+      or contradictory merges → error.
+    """
+    # Collect per-variable: list of (regime_name, grid)
+    var_grids: dict[str, list[tuple[str, DiscreteGrid]]] = {}
+    for regime_name, regime in regimes.items():
+        for var_name, grid in {**regime.states, **regime.actions}.items():
+            if isinstance(grid, DiscreteGrid):
+                var_grids.setdefault(var_name, []).append((regime_name, grid))
+
+    for var_name, entries in var_grids.items():
+        if len(entries) < 2:  # noqa: PLR2004
+            continue
+
+        ordered_flags = {grid.ordered for _, grid in entries}
+        if len(ordered_flags) > 1:
+            regime_details = ", ".join(
+                f"'{rn}' (ordered={g.ordered})" for rn, g in entries
+            )
+            error_messages.append(
+                f"Discrete variable '{var_name}' has inconsistent ordered flags "
+                f"across regimes: {regime_details}. All regimes must agree on "
+                f"whether the variable is ordered or unordered.",
+            )
+            continue
+
+        is_ordered = next(iter(ordered_flags))
+        if not is_ordered:
+            continue
+
+        # Both ordered — check if categories differ and need merging
+        all_categories = [grid.categories for _, grid in entries]
+        if len(set(all_categories)) <= 1:
+            continue
+
+        # Attempt topological sort merge
+        merged = _merge_ordered_categories(
+            [(rn, grid.categories) for rn, grid in entries]
+        )
+        if merged is None:
+            regime_details = ", ".join(
+                f"'{rn}': {list(g.categories)}" for rn, g in entries
+            )
+            error_messages.append(
+                f"Discrete variable '{var_name}' is ordered in multiple regimes "
+                f"with different categories that cannot be merged into a unique "
+                f"total order. Regime orderings: {regime_details}.",
+            )
+
+
+def _merge_ordered_categories(
+    regime_categories: list[tuple[str, tuple[str, ...]]],
+) -> tuple[str, ...] | None:
+    """Merge per-regime category orderings into a total order via topological sort.
+
+    Each regime contributes a chain of ordering constraints from its field declaration
+    order. Returns the unique total order if one exists, or None if ambiguous or
+    contradictory.
+    """
+    edges, all_nodes, in_degree = _build_ordering_graph(regime_categories)
+    return _unique_topological_sort(edges, all_nodes, in_degree)
+
+
+def _build_ordering_graph(
+    regime_categories: list[tuple[str, tuple[str, ...]]],
+) -> tuple[dict[str, set[str]], set[str], dict[str, int]]:
+    """Build a directed graph of ordering constraints from regime categories."""
+    from collections import defaultdict  # noqa: PLC0415
+
+    edges: dict[str, set[str]] = defaultdict(set)
+    all_nodes: set[str] = set()
+    in_degree: dict[str, int] = defaultdict(int)
+
+    for _regime_name, categories in regime_categories:
+        for cat in categories:
+            all_nodes.add(cat)
+            if cat not in in_degree:
+                in_degree[cat] = 0
+        for i in range(len(categories) - 1):
+            a, b = categories[i], categories[i + 1]
+            if b not in edges[a]:
+                edges[a].add(b)
+                in_degree[b] += 1
+
+    return edges, all_nodes, in_degree
+
+
+def _unique_topological_sort(
+    edges: dict[str, set[str]],
+    all_nodes: set[str],
+    in_degree: dict[str, int],
+) -> tuple[str, ...] | None:
+    """Return the unique topological order, or None if ambiguous or cyclic."""
+    queue = [n for n in all_nodes if in_degree[n] == 0]
+    result: list[str] = []
+
+    while queue:
+        if len(queue) > 1:
+            return None
+        node = queue[0]
+        queue = []
+        result.append(node)
+        for neighbor in sorted(edges.get(node, set())):
+            in_degree[neighbor] -= 1
+            if in_degree[neighbor] == 0:
+                queue.append(neighbor)
+
+    if len(result) != len(all_nodes):
+        return None
+
+    return tuple(result)
 
 
 def _get_simple_transition_discrete_grid(

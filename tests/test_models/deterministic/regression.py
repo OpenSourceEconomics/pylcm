@@ -38,7 +38,7 @@ from lcm_examples.mortality import (
 # --------------------------------------------------------------------------------------
 # Regression-specific: RegimeId (2 regimes) and wage function
 # --------------------------------------------------------------------------------------
-@categorical
+@categorical(ordered=False)
 class RegimeId:
     working_life: int
     dead: int
@@ -61,12 +61,14 @@ def next_regime(age: float, final_age_alive: float) -> ScalarInt:
 # ======================================================================================
 
 START_AGE = 18
+_DEFAULT_N_PERIODS = 5
+_DEFAULT_LAST_ACTIVE_AGE = START_AGE + _DEFAULT_N_PERIODS - 2
 DEFAULT_WEALTH_GRID = LinSpacedGrid(start=1, stop=400, n_points=100)
 DEFAULT_CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 
 working_life = Regime(
     actions={
-        "work": DiscreteGrid(LaborSupply),
+        "labor_supply": DiscreteGrid(LaborSupply),
         "consumption": DEFAULT_CONSUMPTION_GRID,
     },
     states={
@@ -83,14 +85,13 @@ working_life = Regime(
         "is_working": is_working,
         "wage": wage,
     },
-    active=lambda _age: True,
+    active=lambda age: age <= _DEFAULT_LAST_ACTIVE_AGE,
 )
 
 
 dead = Regime(
     transition=None,
     functions={"utility": lambda: 0.0},
-    active=lambda _age: True,
 )
 
 
@@ -112,7 +113,7 @@ def get_model(
                 active=lambda age: age <= final_age_alive,
                 states={"wealth": wealth_grid},
                 actions={
-                    "work": DiscreteGrid(LaborSupply),
+                    "labor_supply": DiscreteGrid(LaborSupply),
                     "consumption": consumption_grid,
                 },
             ),

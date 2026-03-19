@@ -18,7 +18,7 @@ from lcm import (
 from lcm._config import TEST_DATA
 from lcm.grids import UniformContinuousGrid
 from lcm.typing import FloatND
-from tests.test_models.deterministic.regression import get_model, get_params
+from tests.test_models.deterministic.regression import RegimeId, get_model, get_params
 
 
 def test_regression_test():
@@ -42,11 +42,11 @@ def test_regression_test():
     got_solve: Mapping[int, Mapping[str, FloatND]] = model.solve(params)
     got_simulate = model.solve_and_simulate(
         params=params,
-        initial_states={
+        initial_conditions={
             "wealth": jnp.array([5.0, 20, 40, 70]),
             "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
+            "regime": jnp.array([RegimeId.working_life] * 4),
         },
-        initial_regimes=["working_life"] * 4,
     ).to_dataframe()
 
     # Compare solution (iterate over expected regimes — got may have additional ones)
@@ -149,11 +149,11 @@ def test_model_with_different_grid_types(grid_type: str):
     # This should complete without error
     result = model.solve_and_simulate(
         params=params,
-        initial_states={
+        initial_conditions={
             "wealth": jnp.array([5.0, 20, 40, 70]),
             "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
+            "regime": jnp.array([RegimeId.working_life] * 4),
         },
-        initial_regimes=["working_life"] * 4,
     )
     df = result.to_dataframe()
 

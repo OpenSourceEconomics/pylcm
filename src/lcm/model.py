@@ -17,7 +17,11 @@ from lcm.input_processing.params_processing import (
     create_params_template,
     process_params,
 )
-from lcm.input_processing.regime_processing import InternalRegime, process_regimes
+from lcm.input_processing.regime_processing import (
+    InternalRegime,
+    get_simulation_output_dtypes,
+    process_regimes,
+)
 from lcm.input_processing.util import get_variable_info
 from lcm.interfaces import PhaseVariantContainer
 from lcm.logging import get_logger
@@ -126,6 +130,10 @@ class Model:
             fixed_params=self.fixed_params,
         )
         self.enable_jit = enable_jit
+        self.simulation_output_dtypes = get_simulation_output_dtypes(
+            regimes=self.regimes,
+            regime_names_to_ids=self.regime_names_to_ids,
+        )
 
     def get_params_template(self) -> UserFacingParamsTemplate:
         """Get a human-readable params template.
@@ -186,8 +194,7 @@ class Model:
     def simulate(
         self,
         params: UserParams,
-        initial_states: Mapping[str, Array],
-        initial_regimes: list[RegimeName],
+        initial_conditions: Mapping[str, Array],
         V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
         *,
         check_initial_conditions: bool = True,
@@ -205,12 +212,12 @@ class Model:
                   regime_0
                 - Function level: {"regime_0": {"func": {"arg_0": 0.0}}} - direct
                   specification
-            initial_states: Mapping of state names to arrays. All arrays must have the
-                same length (number of subjects). Each state name should correspond to a
-                state variable defined in at least one regime.
-            initial_regimes: List of regime names the subjects start in.
+            initial_conditions: Mapping of state names (plus `"regime"`) to arrays.
+                All arrays must have the same length (number of subjects). The
+                `"regime"` entry must contain integer regime codes (from
+                `model.regime_names_to_ids`).
             V_arr_dict: Value function arrays from solve().
-            check_initial_conditions: Whether to validate initial states and regimes.
+            check_initial_conditions: Whether to validate initial conditions.
             seed: Random seed.
             debug_mode: Whether to enable debug logging.
 
@@ -224,9 +231,9 @@ class Model:
         )
         if check_initial_conditions:
             validate_initial_conditions(
-                initial_states=initial_states,
-                initial_regimes=initial_regimes,
+                initial_conditions=initial_conditions,
                 internal_regimes=self.internal_regimes,
+                regime_names_to_ids=self.regime_names_to_ids,
                 internal_params=internal_params,
                 ages=self.ages,
             )
@@ -237,21 +244,20 @@ class Model:
         )
         return simulate(
             internal_params=internal_params,
-            initial_states=initial_states,
-            initial_regimes=initial_regimes,
+            initial_conditions=initial_conditions,
             internal_regimes=self.internal_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             logger=get_logger(debug_mode=debug_mode),
             V_arr_dict=V_arr_dict,
             ages=self.ages,
+            simulation_output_dtypes=self.simulation_output_dtypes,
             seed=seed,
         )
 
     def solve_and_simulate(
         self,
         params: UserParams,
-        initial_states: Mapping[str, Array],
-        initial_regimes: list[RegimeName],
+        initial_conditions: Mapping[str, Array],
         *,
         check_initial_conditions: bool = True,
         seed: int | None = None,
@@ -268,11 +274,11 @@ class Model:
                   regime_0
                 - Function level: {"regime_0": {"func": {"arg_0": 0.0}}} - direct
                   specification
-            initial_states: Mapping of state names to arrays. All arrays must have the
-                same length (number of subjects). Each state name should correspond to a
-                state variable defined in at least one regime.
-            initial_regimes: List of regime names the subjects start in.
-            check_initial_conditions: Whether to validate initial states and regimes.
+            initial_conditions: Mapping of state names (plus `"regime"`) to arrays.
+                All arrays must have the same length (number of subjects). The
+                `"regime"` entry must contain integer regime codes (from
+                `model.regime_names_to_ids`).
+            check_initial_conditions: Whether to validate initial conditions.
             seed: Random seed.
             debug_mode: Whether to enable debug logging.
 
@@ -286,9 +292,9 @@ class Model:
         )
         if check_initial_conditions:
             validate_initial_conditions(
-                initial_states=initial_states,
-                initial_regimes=initial_regimes,
+                initial_conditions=initial_conditions,
                 internal_regimes=self.internal_regimes,
+                regime_names_to_ids=self.regime_names_to_ids,
                 internal_params=internal_params,
                 ages=self.ages,
             )
@@ -305,13 +311,13 @@ class Model:
         )
         return simulate(
             internal_params=internal_params,
-            initial_states=initial_states,
-            initial_regimes=initial_regimes,
+            initial_conditions=initial_conditions,
             internal_regimes=self.internal_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             logger=get_logger(debug_mode=debug_mode),
             V_arr_dict=V_arr_dict,
             ages=self.ages,
+            simulation_output_dtypes=self.simulation_output_dtypes,
             seed=seed,
         )
 

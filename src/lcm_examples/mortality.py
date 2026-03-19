@@ -32,13 +32,13 @@ from lcm.typing import (
 # ---------------------------------------------------------------------------
 
 
-@categorical
+@categorical(ordered=True)
 class LaborSupply:
     work: int
     retire: int
 
 
-@categorical
+@categorical(ordered=False)
 class RegimeId:
     working_life: int
     retirement: int
@@ -65,8 +65,8 @@ def labor_income(is_working: BoolND, wage: float | FloatND) -> FloatND:
     return jnp.where(is_working, wage, 0.0)
 
 
-def is_working(work: DiscreteAction) -> BoolND:
-    return work == LaborSupply.work
+def is_working(labor_supply: DiscreteAction) -> BoolND:
+    return labor_supply == LaborSupply.work
 
 
 def next_wealth(
@@ -79,7 +79,7 @@ def next_wealth(
 
 
 def next_regime_from_working(
-    work: DiscreteAction,
+    labor_supply: DiscreteAction,
     period: Period,
     survival_probs: FloatND,
 ) -> FloatND:
@@ -91,7 +91,7 @@ def next_regime_from_working(
 
     """
     sp = survival_probs[period]
-    retire_choice = work == LaborSupply.retire
+    retire_choice = labor_supply == LaborSupply.retire
     return jnp.where(
         retire_choice,
         jnp.array([0.0, sp, 1 - sp]),
@@ -126,13 +126,16 @@ def borrowing_constraint(
 WEALTH_GRID = LinSpacedGrid(start=1, stop=400, n_points=100)
 CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 
+_DEFAULT_AGE_GRID = AgeGrid(start=40, stop=70, step="10Y")  # 4 periods
+_DEFAULT_LAST_AGE = _DEFAULT_AGE_GRID.exact_values[-1]
+
 # ---------------------------------------------------------------------------
 # Default regime objects
 # ---------------------------------------------------------------------------
 
 working_life = Regime(
     actions={
-        "work": DiscreteGrid(LaborSupply),
+        "labor_supply": DiscreteGrid(LaborSupply),
         "consumption": CONSUMPTION_GRID,
     },
     states={"wealth": WEALTH_GRID},
@@ -144,7 +147,7 @@ working_life = Regime(
         "labor_income": labor_income,
         "is_working": is_working,
     },
-    active=lambda _age: True,
+    active=lambda age: age < _DEFAULT_LAST_AGE,
 )
 
 retirement = Regime(
@@ -154,7 +157,7 @@ retirement = Regime(
     state_transitions={"wealth": next_wealth},
     constraints={"borrowing_constraint": borrowing_constraint},
     functions={"utility": utility_retirement},
-    active=lambda _age: True,
+    active=lambda age: age < _DEFAULT_LAST_AGE,
 )
 
 dead = Regime(

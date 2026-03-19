@@ -32,25 +32,25 @@ from tests.conftest import DECIMAL_PRECISION
 # ======================================================================================
 # Model specification
 # ======================================================================================
-@categorical
+@categorical(ordered=False)
 class DiscreteConsumption:
     low: int
     high: int
 
 
-@categorical
+@categorical(ordered=False)
 class LaborSupply:
-    not_working: int
-    working: int
+    do_not_work: int
+    work: int
 
 
-@categorical
+@categorical(ordered=False)
 class Health:
     bad: int
     good: int
 
 
-@categorical
+@categorical(ordered=False)
 class RegimeId:
     alive: int
     dead: int
@@ -58,17 +58,17 @@ class RegimeId:
 
 def utility(
     consumption: DiscreteAction,
-    work: DiscreteAction,
+    labor_supply: DiscreteAction,
     wealth: ContinuousState,  # noqa: ARG001
     health: DiscreteState,
 ) -> FloatND:
-    return jnp.log(1.0 + health * consumption) - 0.5 * work
+    return jnp.log(1.0 + health * consumption) - 0.5 * labor_supply
 
 
 def next_wealth(
-    wealth: ContinuousState, consumption: DiscreteAction, work: DiscreteAction
+    wealth: ContinuousState, consumption: DiscreteAction, labor_supply: DiscreteAction
 ) -> ContinuousState:
-    return wealth - consumption + work
+    return wealth - consumption + labor_supply
 
 
 def next_regime(age: float, final_age_alive: float) -> ScalarInt:
@@ -84,7 +84,7 @@ def borrowing_constraint(
 alive_deterministic = Regime(
     actions={
         "consumption": DiscreteGrid(DiscreteConsumption),
-        "work": DiscreteGrid(LaborSupply),
+        "labor_supply": DiscreteGrid(LaborSupply),
     },
     states={
         "wealth": LinSpacedGrid(
@@ -111,8 +111,8 @@ dead = Regime(
 )
 
 
-def next_health(health: DiscreteState, health_transition: FloatND) -> FloatND:
-    return health_transition[health]
+def next_health(health: DiscreteState, probs_array: FloatND) -> FloatND:
+    return probs_array[health]
 
 
 alive_stochastic = alive_deterministic.replace(
@@ -151,7 +151,7 @@ def policy_second_period_deterministic(wealth):
     policy = np.column_stack(
         (np.minimum(1, np.floor(wealth)), np.zeros_like(wealth)),
     ).astype(int)
-    return matrix_to_dict_of_vectors(policy, col_names=["consumption", "work"])
+    return matrix_to_dict_of_vectors(policy, col_names=["consumption", "labor_supply"])
 
 
 def value_first_period_deterministic(wealth, params):
@@ -179,7 +179,7 @@ def policy_first_period_deterministic(wealth, params):
         dtype=int,
     )
     policy = policies[index]
-    return matrix_to_dict_of_vectors(policy, col_names=["consumption", "work"])
+    return matrix_to_dict_of_vectors(policy, col_names=["consumption", "labor_supply"])
 
 
 def analytical_solve_deterministic(wealth_grid, params):
@@ -211,7 +211,9 @@ def analytical_simulate_deterministic(initial_wealth, params):
     consumption_codes = np.concatenate(
         [policy_0["consumption"], policy_1["consumption"]]
     ).astype(int)
-    work_codes = np.concatenate([policy_0["work"], policy_1["work"]]).astype(int)
+    work_codes = np.concatenate(
+        [policy_0["labor_supply"], policy_1["labor_supply"]]
+    ).astype(int)
 
     df = pd.DataFrame(
         {
@@ -228,9 +230,9 @@ def analytical_simulate_deterministic(initial_wealth, params):
                 consumption_codes.tolist(),
                 categories=pd.Index(["low", "high"]),
             ),
-            "work": pd.Categorical.from_codes(
+            "labor_supply": pd.Categorical.from_codes(
                 work_codes.tolist(),
-                categories=pd.Index(["not_working", "working"]),
+                categories=pd.Index(["do_not_work", "work"]),
             ),
         }
     )
@@ -267,27 +269,27 @@ def policy_second_period_stochastic(wealth, health):
     policy = np.column_stack(
         (np.minimum(1, np.floor(wealth)) * health, np.zeros_like(wealth)),
     ).astype(int)
-    return matrix_to_dict_of_vectors(policy, col_names=["consumption", "work"])
+    return matrix_to_dict_of_vectors(policy, col_names=["consumption", "labor_supply"])
 
 
 def value_first_period_stochastic(wealth, health, params):
     """Value function in the first period. Computed using pen and paper."""
-    health_transition = params["next_health"]["health_transition"]
+    probs_array = params["next_health"]["probs_array"]
 
     index = (wealth < 1).astype(int)  # map wealth to indices 0 and 1
 
     _values = np.array(
         [
-            params["discount_factor"] * health_transition[0, 1] * np.log(2),
+            params["discount_factor"] * probs_array[0, 1] * np.log(2),
             np.maximum(
-                0, params["discount_factor"] * health_transition[0, 1] * np.log(2) - 0.5
+                0, params["discount_factor"] * probs_array[0, 1] * np.log(2) - 0.5
             ),
         ],
     )
     value_health_0 = _values[index]
 
     new_discount_factor = (
-        params["discount_factor"] * params["next_health"]["health_transition"][1, 1]
+        params["discount_factor"] * params["next_health"]["probs_array"][1, 1]
     )
     value_health_1 = value_first_period_deterministic(
         wealth, params={"discount_factor": new_discount_factor}
@@ -299,7 +301,7 @@ def value_first_period_stochastic(wealth, health, params):
 
 def policy_first_period_stochastic(wealth, health, params):
     """Policy function in the first period. Computed using pen and paper."""
-    health_transition = params["next_health"]["health_transition"]
+    probs_array = params["next_health"]["probs_array"]
 
     index = (wealth < 1).astype(int)  # map wealth to indices 0 and 1
     _policies = np.array(
@@ -310,8 +312,7 @@ def policy_first_period_stochastic(wealth, health, params):
                 np.argmax(
                     (
                         0,
-                        params["discount_factor"] * health_transition[0, 1] * np.log(2)
-                        - 0.5,
+                        params["discount_factor"] * probs_array[0, 1] * np.log(2) - 0.5,
                     ),
                 ),
             ],
@@ -320,7 +321,7 @@ def policy_first_period_stochastic(wealth, health, params):
     policy_health_0 = _policies[index]
 
     new_discount_factor = (
-        params["discount_factor"] * params["next_health"]["health_transition"][1, 1]
+        params["discount_factor"] * params["next_health"]["probs_array"][1, 1]
     )
     _policy_health_1 = policy_first_period_deterministic(
         wealth,
@@ -331,7 +332,9 @@ def policy_first_period_stochastic(wealth, health, params):
 
     _health = health.reshape(-1, 1)
     policies = _health * policy_health_1 + (1 - _health) * policy_health_0
-    return matrix_to_dict_of_vectors(policies, col_names=["consumption", "work"])
+    return matrix_to_dict_of_vectors(
+        policies, col_names=["consumption", "labor_supply"]
+    )
 
 
 def analytical_solve_stochastic(wealth_grid, health_grid, params):
@@ -372,7 +375,9 @@ def analytical_simulate_stochastic(initial_wealth, initial_health, health_1, par
     consumption_codes = np.concatenate(
         [policy_0["consumption"], policy_1["consumption"]]
     ).astype(int)
-    work_codes = np.concatenate([policy_0["work"], policy_1["work"]]).astype(int)
+    work_codes = np.concatenate(
+        [policy_0["labor_supply"], policy_1["labor_supply"]]
+    ).astype(int)
 
     df = pd.DataFrame(
         {
@@ -393,9 +398,9 @@ def analytical_simulate_stochastic(initial_wealth, initial_health, health_1, par
                 consumption_codes.tolist(),
                 categories=pd.Index(["low", "high"]),
             ),
-            "work": pd.Categorical.from_codes(
+            "labor_supply": pd.Categorical.from_codes(
                 work_codes.tolist(),
-                categories=pd.Index(["not_working", "working"]),
+                categories=pd.Index(["do_not_work", "work"]),
             ),
         }
     )
@@ -491,11 +496,11 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
     }
     result = model.solve_and_simulate(
         params={"discount_factor": discount_factor, "alive": params_alive},
-        initial_states={
+        initial_conditions={
             "wealth": jnp.array([0.25, 0.75, 1.25, 1.75]),
             "age": jnp.array([0.0, 0.0, 0.0, 0.0]),
+            "regime": jnp.array([RegimeId.alive] * 4),
         },
-        initial_regimes=["alive"] * 4,
     )
     # Filter to alive regime only (dead regime has trivial values)
     got = (
@@ -525,8 +530,8 @@ HEALTH_TRANSITION = [
 
 @pytest.mark.parametrize("discount_factor", [0, 0.5, 0.9, 1.0])
 @pytest.mark.parametrize("n_wealth_points", [100, 1_000])
-@pytest.mark.parametrize("health_transition", HEALTH_TRANSITION)
-def test_stochastic_solve(discount_factor, n_wealth_points, health_transition):
+@pytest.mark.parametrize("probs_array", HEALTH_TRANSITION)
+def test_stochastic_solve(discount_factor, n_wealth_points, probs_array):
     # Update model
     # ==================================================================================
     n_periods = 3
@@ -549,7 +554,7 @@ def test_stochastic_solve(discount_factor, n_wealth_points, health_transition):
     # Solve model using LCM
     # ==================================================================================
     params = {
-        "next_health": {"health_transition": health_transition},
+        "next_health": {"probs_array": probs_array},
         "next_regime": {"final_age_alive": model.n_periods - 2},
     }
     got = model.solve(params={"discount_factor": discount_factor, "alive": params})
@@ -591,8 +596,8 @@ def test_stochastic_solve(discount_factor, n_wealth_points, health_transition):
 
 @pytest.mark.parametrize("discount_factor", [0, 0.5, 0.9, 1.0])
 @pytest.mark.parametrize("n_wealth_points", [100, 1_000])
-@pytest.mark.parametrize("health_transition", HEALTH_TRANSITION)
-def test_stochastic_simulate(discount_factor, n_wealth_points, health_transition):
+@pytest.mark.parametrize("probs_array", HEALTH_TRANSITION)
+def test_stochastic_simulate(discount_factor, n_wealth_points, probs_array):
     # Update model
     # ==================================================================================
     n_periods = 3
@@ -615,18 +620,18 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, health_transition
     # Simulate model using LCM
     # ==================================================================================
     params_alive = {
-        "next_health": {"health_transition": health_transition},
+        "next_health": {"probs_array": probs_array},
         "next_regime": {"final_age_alive": model.n_periods - 2},
     }
-    initial_states = {
+    initial_conditions = {
         "wealth": jnp.array([0.25, 0.75, 1.25, 1.75, 2.0]),
         "health": jnp.array([0, 1, 0, 1, 1]),
         "age": jnp.array([0.0, 0.0, 0.0, 0.0, 0.0]),
+        "regime": jnp.array([RegimeId.alive] * 5),
     }
     result = model.solve_and_simulate(
         params={"discount_factor": discount_factor, "alive": params_alive},
-        initial_states=initial_states,
-        initial_regimes=["alive"] * 5,
+        initial_conditions=initial_conditions,
     )
     # Filter to alive regime only (dead regime has trivial values)
     got = result.to_dataframe().query('regime == "alive"').reset_index(drop=True)
@@ -638,8 +643,8 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, health_transition
 
     analytical_params = {"discount_factor": discount_factor, **params_alive}
     expected = analytical_simulate_stochastic(
-        initial_wealth=initial_states["wealth"],
-        initial_health=initial_states["health"],
+        initial_wealth=initial_conditions["wealth"],
+        initial_health=initial_conditions["health"],
         health_1=health_1,
         params=analytical_params,
     )

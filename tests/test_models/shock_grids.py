@@ -32,8 +32,8 @@ _SHOCK_GRID_KWARGS: dict[str, dict[str, bool]] = {
 }
 
 
-def next_health(health: DiscreteState, health_transition: FloatND) -> FloatND:
-    return health_transition[health]
+def next_health(health: DiscreteState, probs_array: FloatND) -> FloatND:
+    return probs_array[health]
 
 
 def next_wealth(consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
@@ -63,13 +63,13 @@ def utility(
     return jnp.log(consumption) * (1.0 - (1.0 - health) * 0.3)
 
 
-@categorical
+@categorical(ordered=True)
 class Health:
     bad: int = 0
     good: int = 1
 
 
-@categorical
+@categorical(ordered=False)
 class RegimeId:
     alive: int
     dead: int
@@ -132,7 +132,7 @@ def get_params(
     return {
         "alive": {
             "discount_factor": 1,
-            "next_health": {"health_transition": jnp.full((2, 2), fill_value=0.5)},
+            "next_health": {"probs_array": jnp.full((2, 2), fill_value=0.5)},
             "income": _SHOCK_PARAMS[distribution_type],
         },
         "dead": {},

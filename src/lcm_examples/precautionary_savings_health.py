@@ -25,13 +25,13 @@ from lcm.typing import (
 # ======================================================================================
 
 
-@categorical
+@categorical(ordered=True)
 class LaborSupply:
-    not_working: int
-    working: int
+    do_not_work: int
+    work: int
 
 
-@categorical
+@categorical(ordered=False)
 class RegimeId:
     working_life: int
     retirement: int
@@ -44,12 +44,14 @@ class RegimeId:
 
 def utility(
     consumption: ContinuousAction,
-    work: DiscreteAction,
+    labor_supply: DiscreteAction,
     health: ContinuousState,
     exercise: ContinuousAction,
     disutility_of_work: ContinuousAction,
 ) -> FloatND:
-    return jnp.log(consumption) - (disutility_of_work - health) * work - exercise
+    return (
+        jnp.log(consumption) - (disutility_of_work - health) * labor_supply - exercise
+    )
 
 
 def utility_retirement(
@@ -59,8 +61,8 @@ def utility_retirement(
     return jnp.log(wealth) * health
 
 
-def labor_income(wage: float | FloatND, work: DiscreteAction) -> FloatND:
-    return wage * work
+def labor_income(wage: float | FloatND, labor_supply: DiscreteAction) -> FloatND:
+    return wage * labor_supply
 
 
 def wage(age: float) -> float | FloatND:
@@ -79,9 +81,9 @@ def next_wealth(
 def next_health(
     health: ContinuousState,
     exercise: ContinuousAction,
-    work: DiscreteAction,
+    labor_supply: DiscreteAction,
 ) -> ContinuousState:
-    return health * (1 + exercise - work / 2)
+    return health * (1 + exercise - labor_supply / 2)
 
 
 def next_regime(period: int, n_periods: int) -> ScalarInt:
@@ -115,7 +117,7 @@ working_life = Regime(
         "health": next_health,
     },
     actions={
-        "work": DiscreteGrid(LaborSupply),
+        "labor_supply": DiscreteGrid(LaborSupply),
         "consumption": LinSpacedGrid(
             start=1,
             stop=100,

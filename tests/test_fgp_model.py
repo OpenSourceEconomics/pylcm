@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from tests.test_models.precautionary_savings import get_model, get_params
+from tests.test_models.precautionary_savings import RegimeId, get_model, get_params
 
 # FGP reference parameters (Section 4, p. 191)
 SIGMA_EPS = 0.1269  # sqrt(0.0161)
@@ -41,12 +41,12 @@ def _solve_and_simulate(shock_type):
     )
     result = model.solve_and_simulate(
         params=params,
-        initial_states={
+        initial_conditions={
             "wealth": jnp.full(_N_SUBJECTS, 5.0),
             "income": jnp.zeros(_N_SUBJECTS),
             "age": jnp.full(_N_SUBJECTS, 20.0),
+            "regime": jnp.array([RegimeId.alive] * _N_SUBJECTS),
         },
-        initial_regimes=["alive"] * _N_SUBJECTS,
         seed=_SEED,
     )
     return result.to_dataframe()

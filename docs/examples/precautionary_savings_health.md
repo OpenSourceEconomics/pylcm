@@ -30,11 +30,11 @@ params = get_params()
 
 result = model.solve_and_simulate(
     params=params,
-    initial_regimes=["working_life"] * 1_000,
-    initial_states={
+    initial_conditions={
         "age": jnp.full(1_000, model.ages.values[0]),
         "wealth": jnp.full(1_000, 1.0),
         "health": jnp.full(1_000, 1.0),
+        "regime": jnp.full(1_000, model.regime_names_to_ids["working_life"]),
     },
 )
 

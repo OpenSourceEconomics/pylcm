@@ -4,6 +4,7 @@ from types import MappingProxyType
 
 import jax
 import jax.numpy as jnp
+import pandas as pd
 from jax import Array, vmap
 
 from lcm.ages import AgeGrid
@@ -35,30 +36,31 @@ from lcm.utils import flatten_regime_namespace
 def simulate(
     *,
     internal_params: InternalParams,
-    initial_states: Mapping[str, Array],
-    initial_regimes: list[RegimeName],
+    initial_conditions: Mapping[str, Array],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_names_to_ids: RegimeNamesToIds,
     logger: logging.Logger,
     V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
     ages: AgeGrid,
+    simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     seed: int | None = None,
 ) -> SimulationResult:
     """Simulate the model forward in time given pre-computed value function arrays.
 
     Args:
         internal_params: Immutable mapping of regime names to flat parameter mappings.
-        initial_states: Flat mapping of state names to arrays. All arrays must have
-            the same length (number of subjects). Each state name should correspond to
-            a state variable defined in at least one regime.
-            Example: {"wealth": jnp.array([10.0, 50.0]), "health": jnp.array([0, 1])}
+        initial_conditions: Flat mapping of state names (plus `"regime"`) to arrays.
+            All arrays must have the same length (number of subjects). The `"regime"`
+            entry must contain integer regime codes.
+            Example: {"wealth": jnp.array([10.0, 50.0]), "regime": jnp.array([0, 0])}
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
         regime_names_to_ids: Immutable mapping of regime names to integer indices.
-        initial_regimes: List of regime names the subjects start in.
         logger: Logger that logs to stdout.
         V_arr_dict: Immutable mapping of periods to regime value function arrays.
         ages: AgeGrid for the model, used to convert periods to ages.
+        simulation_output_dtypes: Mapping of variable name to `pd.CategoricalDtype`,
+            used for building simulation metadata.
         seed: Random number seed; will be passed to `jax.random.key`. If not provided,
             a random seed will be generated.
 
@@ -71,31 +73,26 @@ def simulate(
 
     logger.info("Starting simulation")
 
+    # Separate regime_id from state arrays
+    initial_regime_ids = initial_conditions["regime"]
+    initial_states = {k: v for k, v in initial_conditions.items() if k != "regime"}
+
     # Convert flat initial_states to nested format
-    # ----------------------------------------------------------------------------------
     nested_initial_states = convert_initial_states_to_nested(
         initial_states=initial_states, internal_regimes=internal_regimes
     )
 
     # Preparations
-    # ----------------------------------------------------------------------------------
     key = jax.random.key(seed=seed)
 
     # The following variables are updated during the forward simulation
     states = MappingProxyType(flatten_regime_namespace(nested_initial_states))
-    initial_regime_ids = jnp.asarray(
-        [
-            regime_names_to_ids[initial_regime_name]
-            for initial_regime_name in initial_regimes
-        ]
-    )
     starting_periods = _compute_starting_periods(
         initial_ages=initial_states["age"], ages=ages
     )
     subject_regime_ids = jnp.full_like(initial_regime_ids, MISSING_CAT_CODE)
 
     # Forward simulation
-    # ----------------------------------------------------------------------------------
     simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
         regime_name: {} for regime_name in internal_regimes
     }
@@ -123,9 +120,6 @@ def simulate(
             if period + 1 in regime.active_periods
         )
 
-        next_age = (
-            float(ages.values[period + 1]) if period + 1 < ages.n_periods else age
-        )
         for regime_name, internal_regime in active_regimes.items():
             result, new_states, new_subject_regime_ids, key = (
                 _simulate_regime_in_period(
@@ -133,7 +127,6 @@ def simulate(
                     internal_regime=internal_regime,
                     period=period,
                     age=age,
-                    next_age=next_age,
                     states=states,
                     subject_regime_ids=subject_regime_ids,
                     new_subject_regime_ids=new_subject_regime_ids,
@@ -163,6 +156,7 @@ def simulate(
         internal_params=internal_params,
         V_arr_dict=V_arr_dict,
         ages=ages,
+        simulation_output_dtypes=simulation_output_dtypes,
     )
 
 
@@ -172,7 +166,6 @@ def _simulate_regime_in_period(
     internal_regime: InternalRegime,
     period: int,
     age: float,
-    next_age: float,
     states: MappingProxyType[str, Array],
     subject_regime_ids: Int1D,
     new_subject_regime_ids: Int1D,
@@ -192,7 +185,6 @@ def _simulate_regime_in_period(
         internal_regime: Internal representation of the regime.
         period: Current period (0-indexed).
         age: Age corresponding to current period.
-        next_age: Age corresponding to next period.
         states: Current states for all subjects (namespaced by regime).
         subject_regime_ids: Current regime membership for all subjects.
         new_subject_regime_ids: Array to populate with next period's regime memberships.
@@ -204,14 +196,13 @@ def _simulate_regime_in_period(
 
     Returns:
         Tuple containing:
-        - PeriodRegimeData for this regime-period
+        - PeriodRegimeSimulationData for this regime-period
         - Updated states dictionary
         - Updated new_subject_regime_ids array
         - Updated JAX random key
 
     """
     # Select subjects in the current regime
-    # ---------------------------------------------------------------------------------
     subject_ids_in_regime = jnp.asarray(
         regime_names_to_ids[regime_name] == subject_regime_ids
     )
@@ -221,7 +212,6 @@ def _simulate_regime_in_period(
         states=states,
     )
     # Compute optimal actions
-    # ---------------------------------------------------------------------------------
     # We need to pass the value function array of the next period to the
     # argmax_and_max_Q_over_a function, as the current Q-function requires the
     # next period's value function. In the last period, we pass an empty dict.
@@ -246,7 +236,6 @@ def _simulate_regime_in_period(
         grids=state_action_space.actions,
     )
     # Store results for this regime-period
-    # ---------------------------------------------------------------------------------
     # For state-less regimes (e.g., terminal regimes with no states), V_arr may be a
     # scalar. We need to broadcast it to match the number of subjects.
     n_subjects = subject_ids_in_regime.shape[0]
@@ -267,7 +256,6 @@ def _simulate_regime_in_period(
     )
 
     # Update states and regime membership for next period
-    # ---------------------------------------------------------------------------------
     if not internal_regime.terminal:
         next_states_key, next_regime_key, key = jax.random.split(key, 3)
 
@@ -289,7 +277,6 @@ def _simulate_regime_in_period(
             optimal_actions=optimal_actions,
             period=period,
             age=age,
-            next_age=next_age,
             regime_params=internal_params[regime_name],
             regime_names_to_ids=regime_names_to_ids,
             new_subject_regime_ids=new_subject_regime_ids,
@@ -369,7 +356,7 @@ def _compute_starting_periods(
         invalid_ages = initial_ages[~valid]
         msg = (
             f"Initial ages {invalid_ages.tolist()} are not valid age grid points. "
-            f"Valid ages: {ages.values}."
+            f"Valid ages: {ages.values}."  # noqa: PD011
         )
         raise ValueError(msg)
 

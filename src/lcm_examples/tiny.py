@@ -32,13 +32,13 @@ from lcm.typing import (
 # ---------------------------------------------------------------------------
 
 
-@categorical
+@categorical(ordered=True)
 class LaborSupply:
-    not_working: int
-    working: int
+    do_not_work: int
+    work: int
 
 
-@categorical
+@categorical(ordered=False)
 class RegimeId:
     working_life: int
     retirement: int
@@ -51,21 +51,21 @@ class RegimeId:
 
 def utility(
     consumption: ContinuousAction,
-    work: DiscreteAction,
+    labor_supply: DiscreteAction,
     disutility_of_work: float,
     risk_aversion: float,
 ) -> FloatND:
     return consumption ** (1 - risk_aversion) / (
         1 - risk_aversion
-    ) - disutility_of_work * (work == LaborSupply.working)
+    ) - disutility_of_work * (labor_supply == LaborSupply.work)
 
 
 def utility_retirement(wealth: ContinuousState, risk_aversion: float) -> FloatND:
     return wealth ** (1 - risk_aversion) / (1 - risk_aversion)
 
 
-def earnings(work: DiscreteAction, wage: float) -> FloatND:
-    return jnp.where(work == LaborSupply.working, wage, 0.0)
+def earnings(labor_supply: DiscreteAction, wage: float) -> FloatND:
+    return jnp.where(labor_supply == LaborSupply.work, wage, 0.0)
 
 
 def taxes_transfers(
@@ -124,7 +124,7 @@ working_life = Regime(
     states={"wealth": WEALTH_GRID},
     state_transitions={"wealth": next_wealth},
     actions={
-        "work": DiscreteGrid(LaborSupply),
+        "labor_supply": DiscreteGrid(LaborSupply),
         "consumption": CONSUMPTION_GRID,
     },
     functions={

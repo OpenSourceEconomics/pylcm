@@ -37,7 +37,7 @@ CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=5, n_points=5)
 def test_regime_name_does_not_contain_separator():
     """Regime name validation happens at Model level, not Regime level."""
 
-    @categorical
+    @categorical(ordered=False)
     class RegimeId:
         work__test: int  # Contains separator - but RegimeId class has matching field
         dead: int
@@ -247,7 +247,7 @@ def test_identity_transition_is_auto_identity():
 def test_get_all_functions_includes_identity_for_fixed_discrete_state():
     """Fixed discrete states get identity transitions with DiscreteState annotation."""
 
-    @categorical
+    @categorical(ordered=False)
     class Edu:
         low: int
         high: int
@@ -359,7 +359,7 @@ def test_state_grid_unset_error_with_different_grid_types(grid_cls):
 def test_discrete_state_grid_without_explicit_transition_raises():
     """Discrete state grid missing from state_transitions is rejected."""
 
-    @categorical
+    @categorical(ordered=False)
     class Status:
         low: int
         high: int
@@ -395,7 +395,7 @@ def test_regime_with_fixed_states_only():
     Regression guard -- previously state transition functions were always required.
     """
 
-    @categorical
+    @categorical(ordered=False)
     class FixedRegimeId:
         working_life: int
         dead: int

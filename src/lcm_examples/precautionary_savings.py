@@ -72,7 +72,7 @@ def utility(consumption: ContinuousAction) -> FloatND:
 # ---------------------------------------------------------------------------
 
 
-@categorical
+@categorical(ordered=False)
 class RegimeId:
     alive: int
     dead: int

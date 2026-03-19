@@ -29,8 +29,8 @@ classifiers = [
 ]
 dynamic = [ "version" ]
 dependencies = [
-  "dags>=0.5",
-  "jax>=0.8",
+  "dags>=0.5.1",
+  "jax>=0.9",
   "jaxtyping>=0.3.2",
   "pandas",
   "portion>=2.6",
@@ -153,37 +153,47 @@ extend-immutable-calls = [ "lcm.utils.Unset", "Unset" ]
 column_width = 88
 max_supported_python = "3.14"
 table_format = "long"
-collapse_tables = [ "tool.hatch" ]
+collapse_tables = [ "tool.hatch", "tool.pytest", "tool.pytask", "tool.ty" ]
+expand_tables = [
+  "tool.pixi.dependencies",
+  "tool.pixi.environments",
+  "tool.pixi.feature.tests.pypi-dependencies",
+  "tool.pixi.feature.tests.tasks",
+  "tool.pixi.feature.type-checking.dependencies",
+  "tool.pixi.feature.type-checking.tasks",
+  "tool.pixi.pypi-dependencies",
+  "tool.pixi.tasks",
+  "tool.pixi.workspace",
+]
 
-[tool.pytest.ini_options]
-addopts = [ "--pdbcls=pdbp:Pdb" ]
-filterwarnings = []
-markers = [
+[tool.pytest]
+ini_options.addopts = [ "--pdbcls=pdbp:Pdb" ]
+ini_options.filterwarnings = []
+ini_options.markers = [
   "illustrative: Tests are designed for illustrative purposes",
 ]
-norecursedirs = [ "docs" ]
+ini_options.norecursedirs = [ "docs" ]
 
-[tool.ty.rules]
-ambiguous-protocol-member = "error"
-deprecated = "error"
-division-by-zero = "error"
-ignore-comment-unknown-rule = "error"
-invalid-argument-type = "error"
-invalid-ignore-comment = "error"
-invalid-return-type = "error"
-possibly-missing-attribute = "error"
-possibly-missing-implicit-call = "error"
-possibly-missing-import = "error"
-possibly-unresolved-reference = "error"
-redundant-cast = "error"
-undefined-reveal = "error"
-unresolved-global = "error"
-unsupported-base = "error"
-unused-ignore-comment = "error"
-useless-overload-body = "error"
-[tool.ty.src]
-exclude = [ "docs/**/*.ipynb" ]
-include = [ "src/", "tests/" ]
+[tool.ty]
+rules.ambiguous-protocol-member = "error"
+rules.deprecated = "error"
+rules.division-by-zero = "error"
+rules.ignore-comment-unknown-rule = "error"
+rules.invalid-argument-type = "error"
+rules.invalid-ignore-comment = "error"
+rules.invalid-return-type = "error"
+rules.possibly-missing-attribute = "error"
+rules.possibly-missing-implicit-call = "error"
+rules.possibly-missing-import = "error"
+rules.possibly-unresolved-reference = "error"
+rules.redundant-cast = "error"
+rules.undefined-reveal = "error"
+rules.unresolved-global = "error"
+rules.unsupported-base = "error"
+rules.unused-ignore-comment = "error"
+rules.useless-overload-body = "error"
+src.exclude = [ "docs/**/*.ipynb" ]
+src.include = [ "src/", "tests/" ]
 
 [tool.pixi.dependencies]
 python = "~=3.14.0"
@@ -200,47 +210,60 @@ snakeviz = "*"
 [tool.pixi.environments]
 cuda12 = { features = [ "cuda12" ], solve-group = "cuda12" }
 cuda13 = { features = [ "cuda13" ], solve-group = "cuda13" }
-docs = { features = [ "docs", "tests" ], solve-group = "default" }
+docs = { features = [ "docs" ], solve-group = "default" }
+metal = { features = [ "metal" ], solve-group = "metal" }
 tests-cpu = { features = [ "tests" ], solve-group = "default" }
 tests-cuda12 = { features = [ "tests", "cuda12" ], solve-group = "cuda12" }
 tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
+tests-metal = { features = [ "tests", "metal" ], solve-group = "metal" }
+type-checking = { features = [ "type-checking", "tests" ], solve-group = "default" }
 [tool.pixi.feature.cuda12]
 platforms = [ "linux-64" ]
 system-requirements = { cuda = "12" }
 [tool.pixi.feature.cuda12.target.linux-64.dependencies]
 cuda-nvcc = "~=12.0"
 [tool.pixi.feature.cuda12.target.linux-64.pypi-dependencies]
-jax = { version = ">=0.8", extras = [ "cuda12" ] }
+jax = { version = ">=0.9", extras = [ "cuda12" ] }
 [tool.pixi.feature.cuda13]
 platforms = [ "linux-64" ]
 system-requirements = { cuda = "13" }
 [tool.pixi.feature.cuda13.target.linux-64.dependencies]
 cuda-nvcc = "~=13.0"
 [tool.pixi.feature.cuda13.target.linux-64.pypi-dependencies]
-jax = { version = ">=0.8", extras = [ "cuda13" ] }
+jax = { version = ">=0.9", extras = [ "cuda13" ] }
 [tool.pixi.feature.docs.dependencies]
 jupyter-book = ">=2.0"
 mystmd = "*"
+[tool.pixi.feature.docs.pypi-dependencies]
+quantecon = "*"
 [tool.pixi.feature.docs.tasks]
 build-docs = { cmd = "jupyter book build --html --execute", cwd = "docs", env = { JAX_PLATFORMS = "cpu" } }
+explanation-notebooks = "jupyter execute docs/explanations/*.ipynb"
 view-docs = { cmd = "jupyter book start --execute", cwd = "docs", env = { JAX_PLATFORMS = "cpu" } }
+[tool.pixi.feature.metal]
+platforms = [ "osx-arm64" ]
+[tool.pixi.feature.metal.target.osx-arm64.pypi-dependencies]
+jax = ">=0.9"
+jax-metal = ">=0.1.1"
 [tool.pixi.feature.tests.dependencies]
-matplotlib = "*"  # required because of pandas
-pandas-stubs = "*"
 pytest = "*"
 pytest-cov = "*"
 pytest-xdist = "*"
-scipy-stubs = "*"
-ty = "*"
 [tool.pixi.feature.tests.pypi-dependencies]
 quantecon = "*"
 [tool.pixi.feature.tests.tasks]
-explanation-notebooks = "jupyter execute docs/explanations/*.ipynb"
 tests = "pytest tests"
 tests-32bit = "pytest tests --precision=32"
 tests-with-cov = "pytest tests --cov-report=xml --cov=./"
+[tool.pixi.feature.type-checking.dependencies]
+matplotlib = "*"
+pandas-stubs = "*"
+scipy-stubs = "*"
+ty = "*"
+[tool.pixi.feature.type-checking.tasks]
 ty = "ty check"
 [tool.pixi.pypi-dependencies]
+jax = ">=0.9"
 pdbp = "*"
 pylcm = { path = ".", editable = true }
 [tool.pixi.workspace]

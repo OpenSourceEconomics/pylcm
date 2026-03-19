@@ -2,7 +2,7 @@
 
 import jax.numpy as jnp
 
-from tests.test_models.deterministic.base import get_model, get_params
+from tests.test_models.deterministic.base import RegimeId, get_model, get_params
 
 
 def test_simulation_with_heterogeneous_initial_ages():
@@ -19,11 +19,11 @@ def test_simulation_with_heterogeneous_initial_ages():
     # Subject 0 starts at age 40, subject 1 starts at age 60
     result = model.solve_and_simulate(
         params,
-        initial_states={
+        initial_conditions={
             "age": jnp.array([40.0, 60.0]),
             "wealth": jnp.array([50.0, 50.0]),
+            "regime": jnp.array([RegimeId.working_life] * 2),
         },
-        initial_regimes=["working_life", "working_life"],
     )
     df = result.to_dataframe()
 

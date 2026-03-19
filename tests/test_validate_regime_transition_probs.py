@@ -15,6 +15,7 @@ from lcm import (
 from lcm.error_handling import _format_sum_violation, validate_regime_transition_probs
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import DiscreteAction, FloatND
+from lcm_examples.mortality import RegimeId as MortalityRegimeId
 from lcm_examples.mortality import get_model, get_params
 
 # ======================================================================================
@@ -189,13 +190,13 @@ def test_format_sum_violation_with_scalar_input_and_state_action_values():
 # ======================================================================================
 
 
-@categorical
+@categorical(ordered=False)
 class _Action:
     stay: int
     leave: int
 
 
-@categorical
+@categorical(ordered=False)
 class _RegimeId:
     active: int
     terminal: int
@@ -219,6 +220,7 @@ def _build_action_dependent_model() -> tuple[Model, dict]:
     """Build a minimal model whose transition bug only shows for the second action."""
     active = Regime(
         transition=MarkovTransition(_next_regime_only_fails_for_leave),
+        active=lambda age: age < 27,
         actions={
             "action": DiscreteGrid(_Action),
             "consumption": LinSpacedGrid(start=1, stop=10, n_points=5),
@@ -274,13 +276,15 @@ def test_simulate_raises_for_invalid_regime_transition_probs():
     bad_params = get_params(
         N_PERIODS, survival_probs=_invalid_survival_probs(N_PERIODS)
     )
-    initial_states = {"age": jnp.array([40.0]), "wealth": jnp.array([10.0])}
-    initial_regimes = ["working_life"]
+    initial_conditions = {
+        "age": jnp.array([40.0]),
+        "wealth": jnp.array([10.0]),
+        "regime": jnp.array([MortalityRegimeId.working_life]),
+    }
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
         model.simulate(
             params=bad_params,
-            initial_states=initial_states,
-            initial_regimes=initial_regimes,
+            initial_conditions=initial_conditions,
             V_arr_dict=V_arr_dict,
         )
 
@@ -289,11 +293,13 @@ def test_solve_and_simulate_raises_for_invalid_regime_transition_probs():
     """model.solve_and_simulate() raises for out-of-bounds regime transition probs."""
     model = get_model(N_PERIODS)
     params = get_params(N_PERIODS, survival_probs=_invalid_survival_probs(N_PERIODS))
-    initial_states = {"age": jnp.array([40.0]), "wealth": jnp.array([10.0])}
-    initial_regimes = ["working_life"]
+    initial_conditions = {
+        "age": jnp.array([40.0]),
+        "wealth": jnp.array([10.0]),
+        "regime": jnp.array([MortalityRegimeId.working_life]),
+    }
     with pytest.raises(InvalidRegimeTransitionProbabilitiesError):
         model.solve_and_simulate(
             params=params,
-            initial_states=initial_states,
-            initial_regimes=initial_regimes,
+            initial_conditions=initial_conditions,
         )

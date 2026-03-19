@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import pytest
 
 from tests.conftest import X64_ENABLED
-from tests.test_models.precautionary_savings import get_model, get_params
+from tests.test_models.precautionary_savings import RegimeId, get_model, get_params
 
 _N_PERIODS = 7
 _N_SUBJECTS = 50
@@ -25,12 +25,12 @@ def _solve_and_simulate(shock_type, *, sigma, rho=0.0, mu=0.0):
     unconditional_mean = mu / (1 - rho)
     result = model.solve_and_simulate(
         params=params,
-        initial_states={
+        initial_conditions={
             "wealth": jnp.full(_N_SUBJECTS, 5.0),
             "income": jnp.full(_N_SUBJECTS, unconditional_mean),
             "age": jnp.full(_N_SUBJECTS, 20.0),
+            "regime": jnp.array([RegimeId.alive] * _N_SUBJECTS),
         },
-        initial_regimes=["alive"] * _N_SUBJECTS,
         seed=_SEED,
     )
     return result.to_dataframe()

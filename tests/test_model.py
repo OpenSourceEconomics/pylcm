@@ -167,7 +167,7 @@ def test_regime_transition_must_be_callable():
 def test_model_requires_terminal_regime(binary_category_class):
     """Model must have at least one terminal regime."""
 
-    @categorical
+    @categorical(ordered=False)
     class RegimeId:
         test: int
 
@@ -192,7 +192,7 @@ def test_model_requires_terminal_regime(binary_category_class):
 def test_model_requires_non_terminal_regime(binary_category_class):
     """Model must have at least one non-terminal regime."""
 
-    @categorical
+    @categorical(ordered=False)
     class RegimeId:
         dead: int
 
@@ -222,7 +222,7 @@ def test_model_keyword_only():
 def test_model_accepts_multiple_terminal_regimes(binary_category_class):
     """Model can have multiple terminal regimes."""
 
-    @categorical
+    @categorical(ordered=False)
     class RegimeId:
         alive: int
         dead1: int
@@ -265,7 +265,7 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
 def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):
     """Model creates regime id mapping from dict keys in order."""
 
-    @categorical
+    @categorical(ordered=False)
     class RegimeId:
         alive: int
         dead: int
@@ -300,7 +300,7 @@ def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):
 def test_model_regime_name_validation(binary_category_class):
     """Model validates regime names don't contain the separator."""
 
-    @categorical
+    @categorical(ordered=False)
     class RegimeId:
         alive__bad: int
         dead: int
@@ -334,12 +334,12 @@ def test_model_regime_name_validation(binary_category_class):
 def test_unused_state_raises_error():
     """Model raises error when a state is defined but never used."""
 
-    @categorical
+    @categorical(ordered=False)
     class RegimeId:
         working_life: int
         retirement: int
 
-    @categorical
+    @categorical(ordered=False)
     class UnusedState:
         low: int
         medium: int
@@ -391,12 +391,12 @@ def test_unused_state_raises_error():
 def test_unused_action_raises_error():
     """Model raises error when an action is defined but never used."""
 
-    @categorical
+    @categorical(ordered=False)
     class RegimeId:
         working_life: int
         retirement: int
 
-    @categorical
+    @categorical(ordered=False)
     class UnusedAction:
         option_a: int
         option_b: int
@@ -455,17 +455,17 @@ def test_constraint_depending_on_transition_output():
     `ValueError: list.index(x): x not in list`.
     """
 
-    @categorical
+    @categorical(ordered=False)
     class RegimeId:
         alive: int
         dead: int
 
-    @categorical
+    @categorical(ordered=False)
     class EmploymentLastPeriod:
         unemployed: int
         employed: int
 
-    @categorical
+    @categorical(ordered=False)
     class EmploymentStatus:
         not_employed: int
         employed: int
@@ -536,17 +536,17 @@ def test_state_only_used_in_transitions():
     `ValueError: list.index(x): x not in list`.
     """
 
-    @categorical
+    @categorical(ordered=False)
     class RegimeId:
         alive: int
         dead: int
 
-    @categorical
+    @categorical(ordered=False)
     class EmploymentLastPeriod:
         unemployed: int
         employed: int
 
-    @categorical
+    @categorical(ordered=False)
     class EmploymentStatus:
         not_employed: int
         employed: int
@@ -625,12 +625,12 @@ def test_state_only_in_transitions_with_terminal_regime():
     See: https://github.com/OpenSourceEconomics/pylcm/issues/236
     """
 
-    @categorical
+    @categorical(ordered=False)
     class RegimeId:
         alive: int
         dead: int
 
-    @categorical
+    @categorical(ordered=False)
     class TypeVar:
         low: int
         high: int
