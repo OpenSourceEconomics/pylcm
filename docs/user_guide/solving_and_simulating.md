@@ -10,7 +10,7 @@ induction and simulates forward.
 ## Solving
 
 ```python
-V_arr_dict = model.solve(params)
+V_arr_dict = model.solve(params=params)
 ```
 
 Performs backward induction using dynamic programming. Returns an immutable mapping of
@@ -22,13 +22,13 @@ Control console output and snapshot persistence with `log_level`:
 
 ```python
 # Default: progress + timing
-V_arr_dict = model.solve(params)
+V_arr_dict = model.solve(params=params)
 
 # Silent
-V_arr_dict = model.solve(params, log_level="off")
+V_arr_dict = model.solve(params=params, log_level="off")
 
 # Full diagnostics + disk snapshots
-V_arr_dict = model.solve(params, log_level="debug", log_path="./debug/")
+V_arr_dict = model.solve(params=params, log_level="debug", log_path="./debug/")
 ```
 
 See [Debugging](debugging.md) for details on log levels and debug snapshots.
@@ -47,17 +47,18 @@ Forward simulation using solved value functions. Each agent starts from the give
 conditions and makes optimal decisions at each period. Returns a `SimulationResult`
 object.
 
-## Solve and Simulate (combined)
+## Simulate without pre-solving
+
+When `V_arr_dict=None`, `simulate()` solves the model automatically before simulating.
+Use this when you don't need the raw value function arrays:
 
 ```python
-result = model.solve_and_simulate(
+result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
+    V_arr_dict=None,
 )
 ```
-
-Convenience method combining both steps. Use when you don't need the raw value function
-arrays.
 
 ## Initial Conditions
 
@@ -65,7 +66,7 @@ arrays.
 
 The standard way to supply initial conditions is as a pandas DataFrame with one row per
 agent. Use `initial_conditions_from_dataframe` to convert it to the format expected by
-`simulate()` and `solve_and_simulate()`:
+`simulate()`:
 
 ```python
 import pandas as pd
@@ -232,10 +233,11 @@ initial_df = pd.DataFrame({
 })
 initial_conditions = initial_conditions_from_dataframe(initial_df, model=model)
 
-# 4. Solve and simulate
-result = model.solve_and_simulate(
+# 4. Simulate (solves automatically when V_arr_dict=None)
+result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
+    V_arr_dict=None,
 )
 
 # 5. Analyze

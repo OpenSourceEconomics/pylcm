@@ -1,3 +1,4 @@
+import functools
 from types import MappingProxyType
 
 import jax.numpy as jnp
@@ -9,6 +10,7 @@ from pandas.testing import assert_frame_equal
 from lcm import DiscreteGrid
 from lcm.ages import AgeGrid
 from lcm.input_processing.regime_processing import (
+    _rename_params_to_qnames,
     process_regimes,
 )
 from lcm.input_processing.util import get_grids, get_gridspecs, get_variable_info
@@ -164,3 +166,23 @@ def test_variable_info_with_continuous_constraint_has_unique_index():
 
     got = get_variable_info(working_copy)
     assert got.index.is_unique
+
+
+def test_rename_params_to_qnames_with_partial():
+    """Regression: partial keywords must be renamed too."""
+
+    def utility(consumption, risk_aversion):
+        return consumption ** (1 - risk_aversion)
+
+    func = functools.partial(utility, risk_aversion=2.0)
+    regime_params_template = MappingProxyType(
+        {"utility": MappingProxyType({"risk_aversion": "float"})}
+    )
+
+    result = _rename_params_to_qnames(
+        func=func,
+        regime_params_template=regime_params_template,
+        param_key="utility",
+    )
+    # The renamed function should be callable with the qualified name
+    assert result(consumption=5.0) == 5.0 ** (1 - 2.0)

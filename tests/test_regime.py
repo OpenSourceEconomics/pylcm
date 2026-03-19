@@ -439,7 +439,7 @@ def test_regime_with_fixed_states_only():
         regime_id_class=FixedRegimeId,
     )
     V = model.solve(
-        {
+        params={
             "discount_factor": 0.95,
             "working_life": {"next_regime": {"final_age_alive": final_age}},
         }

@@ -287,13 +287,14 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
         "utility": {"health": 1},
         "next_regime": {"final_age_alive": model.n_periods - 2},
     }
-    result = model.solve_and_simulate(
+    result = model.simulate(
         params={"discount_factor": discount_factor, "alive": params_alive},
         initial_conditions={
             "wealth": jnp.array([0.25, 0.75, 1.25, 1.75]),
             "age": jnp.array([0.0, 0.0, 0.0, 0.0]),
             "regime": jnp.array([RegimeId.alive] * 4),
         },
+        V_arr_dict=None,
     )
     # Filter to alive regime only (dead regime has trivial values)
     got = (

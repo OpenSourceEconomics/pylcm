@@ -144,8 +144,8 @@ def test_custom_ces_aggregator_differs_from_default():
         "dead": {},
     }
 
-    V_default = model_default.solve(params_default)
-    V_ces = model_ces.solve(params_ces)
+    V_default = model_default.solve(params=params_default)
+    V_ces = model_ces.solve(params=params_ces)
 
     # The value functions should differ because the aggregation rule differs
     has_difference = False
@@ -234,8 +234,8 @@ def test_terminal_regime_value_unchanged_by_H():
         "dead": {},
     }
 
-    V_default = model_default.solve(params_default)
-    V_ces = model_ces.solve(params_ces)
+    V_default = model_default.solve(params=params_default)
+    V_ces = model_ces.solve(params=params_ces)
 
     # Last period is terminal — value functions should be identical
     last_period = max(V_default.keys())

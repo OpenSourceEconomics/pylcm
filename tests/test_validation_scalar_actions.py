@@ -5,6 +5,10 @@ consistent first-dimension lengths (e.g. segment_sum), passing batched action ar
 (shape-(N,)) alongside MappingLeaf params (shape-(1,)) causes a shape mismatch.
 Solve and simulate avoid this by vmapping over individual state/action combos.
 Validation must do the same.
+
+This pattern arises in models that pass multi-dimensional lookup tables as parameters
+via MappingLeaf — e.g. tax schedules and pension accrual tables in aca-model, or
+tax-transfer schedules in ttsim/gettsim.
 """
 
 import jax
@@ -66,7 +70,7 @@ def _next_regime(period: int) -> FloatND:
 
 
 def test_validation_vmaps_over_action_combos():
-    """solve_and_simulate succeeds when a MappingLeaf param requires scalar actions."""
+    """simulate succeeds when a MappingLeaf param requires scalar actions."""
     n_periods = 4
 
     alive = Regime(
@@ -99,13 +103,14 @@ def test_validation_vmaps_over_action_combos():
         },
     }
 
-    result = model.solve_and_simulate(
+    result = model.simulate(
         params=params,
         initial_conditions={
             "wealth": jnp.array([5.0, 7.0]),
             "age": jnp.array([0.0, 0.0]),
-            "regime_id": jnp.array([RegimeId.alive] * 2),
+            "regime": jnp.array([RegimeId.alive] * 2),
         },
+        V_arr_dict=None,
         log_level="off",
     )
 

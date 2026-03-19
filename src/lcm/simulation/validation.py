@@ -58,15 +58,15 @@ def validate_initial_conditions(
         v: k for k, v in regime_names_to_ids.items()
     }
 
-    # Extract regime_id and derive initial_regimes list for internal helpers
-    regime_id_arr = initial_conditions.get("regime")
-    if regime_id_arr is None:
+    # Extract regime array and derive initial_regimes list for internal helpers
+    regime_arr = initial_conditions.get("regime")
+    if regime_arr is None:
         raise InvalidInitialConditionsError(
             format_messages(["'regime' must be provided in initial_conditions."])
         )
 
     initial_states = {k: v for k, v in initial_conditions.items() if k != "regime"}
-    initial_regimes = _regime_ids_to_names(regime_id_arr, ids_to_regime_names)
+    initial_regimes = _regime_ids_to_names(regime_arr, ids_to_regime_names)
 
     # Validate regime names and state names/shapes first; early-exit on errors so that
     # downstream checks (discrete codes, feasibility) can assume correct names.

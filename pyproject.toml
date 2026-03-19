@@ -29,7 +29,7 @@ classifiers = [
 ]
 dynamic = [ "version" ]
 dependencies = [
-  "cloudpickle>=3.1.2,<4",
+  "cloudpickle>=3.1.2",
   "dags>=0.5.1",
   "h5py>=3.12",
   "jax>=0.9",
@@ -182,19 +182,6 @@ expand_tables = [
   "tool.pixi.workspace",
 ]
 
-[tool.pytest]
-ini_options.addopts = [
-  "--pdbcls=pdbp:Pdb",
-  "--dist",
-  "loadfile",
-  "--benchmark-disable"
-]
-ini_options.filterwarnings = []
-ini_options.markers = [
-  "illustrative: Tests are designed for illustrative purposes",
-]
-ini_options.norecursedirs = [ "docs" ]
-
 [tool.ty]
 rules.ambiguous-protocol-member = "error"
 rules.deprecated = "error"
@@ -209,6 +196,19 @@ rules.unused-awaitable = "error"
 rules.unused-ignore-comment = "error"
 src.exclude = [ "docs/**/*.ipynb" ]
 src.include = [ "src/", "tests/" ]
+
+[tool.pytest]
+ini_options.addopts = [
+  "--pdbcls=pdbp:Pdb",
+  "--dist",
+  "loadfile",
+  "--benchmark-disable"
+]
+ini_options.filterwarnings = []
+ini_options.markers = [
+  "illustrative: Tests are designed for illustrative purposes",
+]
+ini_options.norecursedirs = [ "docs" ]
 
 [tool.pixi.dependencies]
 python = "~=3.14.0"

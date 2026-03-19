@@ -151,7 +151,7 @@ def test_simulate_using_model_methods(
     )
 
     result = model.simulate(
-        params,
+        params=params,
         V_arr_dict=V_arr_dict,
         initial_conditions={
             "wealth": jnp.array([20.0, 150, 250, 320]),
@@ -204,13 +204,14 @@ def test_simulate_with_only_discrete_actions():
     model = get_model(n_periods=3)
     params = get_params(n_periods=3, wage=1.5, discount_factor=1, interest_rate=0)
 
-    result = model.solve_and_simulate(
-        params,
+    result = model.simulate(
+        params=params,
         initial_conditions={
             "wealth": jnp.array([0, 2]),
             "age": jnp.array([50.0, 50.0]),
             "regime": jnp.array([DiscreteRegimeId.working_life] * 2),
         },
+        V_arr_dict=None,
     )
     got = result.to_dataframe().query('regime == "working_life"')
 
@@ -272,26 +273,28 @@ def test_effect_of_discount_factor_on_last_period():
     )
 
     df_low = (
-        model.solve_and_simulate(
-            params_low,
+        model.simulate(
+            params=params_low,
             initial_conditions={
                 "wealth": initial_wealth,
                 "age": jnp.array([18.0, 18.0, 18.0]),
                 "regime": jnp.array([RegimeId.working_life] * 3),
             },
+            V_arr_dict=None,
         )
         .to_dataframe()
         .query('regime == "working_life"')
     )
 
     df_high = (
-        model.solve_and_simulate(
-            params_high,
+        model.simulate(
+            params=params_high,
             initial_conditions={
                 "wealth": initial_wealth,
                 "age": jnp.array([18.0, 18.0, 18.0]),
                 "regime": jnp.array([RegimeId.working_life] * 3),
             },
+            V_arr_dict=None,
         )
         .to_dataframe()
         .query('regime == "working_life"')
@@ -335,26 +338,28 @@ def test_effect_of_disutility_of_work():
     )
 
     df_low = (
-        model.solve_and_simulate(
-            params_low,
+        model.simulate(
+            params=params_low,
             initial_conditions={
                 "wealth": initial_wealth,
                 "age": jnp.array([18.0, 18.0, 18.0]),
                 "regime": jnp.array([RegimeId.working_life] * 3),
             },
+            V_arr_dict=None,
         )
         .to_dataframe()
         .query('regime == "working_life"')
     )
 
     df_high = (
-        model.solve_and_simulate(
-            params_high,
+        model.simulate(
+            params=params_high,
             initial_conditions={
                 "wealth": initial_wealth,
                 "age": jnp.array([18.0, 18.0, 18.0]),
                 "regime": jnp.array([RegimeId.working_life] * 3),
             },
+            V_arr_dict=None,
         )
         .to_dataframe()
         .query('regime == "working_life"')
@@ -385,13 +390,14 @@ def test_to_dataframe_use_labels_parameter():
 
     model = get_model(n_periods=3)
     params = get_params(n_periods=3)
-    result = model.solve_and_simulate(
-        params,
+    result = model.simulate(
+        params=params,
         initial_conditions={
             "wealth": jnp.array([20.0, 50.0]),
             "age": jnp.array([18.0, 18.0]),
             "regime": jnp.array([RegimeId.working_life] * 2),
         },
+        V_arr_dict=None,
     )
 
     # use_labels=True (default): discrete columns are Categorical with string labels
@@ -417,13 +423,14 @@ def regression_simulation_result():
 
     model = get_model(n_periods=3)
     params = get_params(n_periods=3)
-    return model.solve_and_simulate(
-        params,
+    return model.simulate(
+        params=params,
         initial_conditions={
             "wealth": jnp.array([20.0, 50.0]),
             "age": jnp.array([18.0, 18.0]),
             "regime": jnp.array([RegimeId.working_life] * 2),
         },
+        V_arr_dict=None,
     )
 
 
@@ -459,8 +466,8 @@ def test_additional_targets_all_with_stochastic_transitions():
     model = get_model(n_periods=3)
     params = get_params(n_periods=3)
 
-    result = model.solve_and_simulate(
-        params,
+    result = model.simulate(
+        params=params,
         initial_conditions={
             "wealth": jnp.array([20.0, 50.0]),
             "health": jnp.array([Health.good, Health.bad]),
@@ -468,6 +475,7 @@ def test_additional_targets_all_with_stochastic_transitions():
             "age": jnp.array([40.0, 40.0]),
             "regime": jnp.array([StochasticRegimeId.working_life] * 2),
         },
+        V_arr_dict=None,
     )
 
     # Stochastic weight functions should NOT be in available_targets
@@ -508,13 +516,14 @@ def test_simulation_result_pickle_roundtrip(tmp_path: Path):
     # Create a SimulationResult
     model = get_model(n_periods=3)
     params = get_params(n_periods=3)
-    result = model.solve_and_simulate(
-        params,
+    result = model.simulate(
+        params=params,
         initial_conditions={
             "wealth": jnp.array([20.0, 50.0]),
             "age": jnp.array([18.0, 18.0]),
             "regime": jnp.array([RegimeId.working_life] * 2),
         },
+        V_arr_dict=None,
     )
 
     # Pickle and unpickle

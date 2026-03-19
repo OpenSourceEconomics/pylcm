@@ -285,9 +285,10 @@ def test_round_trip_with_discrete_model():
         "age": jnp.array([50.0, 50.0]),
         "regime": jnp.array([RegimeId.working_life, RegimeId.working_life]),
     }
-    result_raw = model.solve_and_simulate(
+    result_raw = model.simulate(
         params=params,
         initial_conditions=raw_conditions,
+        V_arr_dict=None,
     )
 
     # DataFrame approach
@@ -299,9 +300,10 @@ def test_round_trip_with_discrete_model():
         }
     )
     df_conditions = initial_conditions_from_dataframe(df, model=model)
-    result_df = model.solve_and_simulate(
+    result_df = model.simulate(
         params=params,
         initial_conditions=df_conditions,
+        V_arr_dict=None,
     )
 
     df_raw = result_raw.to_dataframe()
