@@ -99,12 +99,14 @@ extend-ignore = [
 ]
 per-file-ignores."benchmarks/*" = [
   "ANN",     # Annotations
+  "ARG002",  # Unused method argument (ASV passes params to all methods)
   "BLE001",  # Blind exception
   "D",       # Docstrings
   "INP001",  # Implicit namespace package
   "PLC0415", # import not at top level
   "PLR2004", # Magic values in comparison
   "PLW1510", # subprocess.run without explicit check
+  "RUF012",  # Mutable class attribute (ASV requires list `params`/`param_names`)
   "S101",    # Use of assert
   "SIM108",  # Ternary operator
   "S603",    # subprocess call without shell=True check
@@ -202,7 +204,6 @@ ini_options.addopts = [
   "--pdbcls=pdbp:Pdb",
   "--dist",
   "loadfile",
-  "--benchmark-disable"
 ]
 ini_options.filterwarnings = []
 ini_options.markers = [
@@ -211,6 +212,7 @@ ini_options.markers = [
 ini_options.norecursedirs = [ "docs" ]
 
 [tool.pixi.dependencies]
+asv = "*"
 python = "~=3.14.0"
 cloudpickle = ">=3.1.2,<4"
 h5py = ">=3.12"
@@ -263,25 +265,11 @@ jax = ">=0.9"
 jax-metal = ">=0.1.1"
 [tool.pixi.feature.tests.dependencies]
 pytest = "*"
-pytest-benchmark = "*"
 pytest-cov = "*"
 pytest-xdist = "*"
 [tool.pixi.feature.tests.pypi-dependencies]
 quantecon = "*"
 [tool.pixi.feature.tests.tasks]
-benchmarks = """\
-  pytest benchmarks/ --benchmark-only -p no:xdist -o 'addopts=' -o \
-  'python_files=bench_*.py test_*.py' -v\
-  """
-benchmarks-compare = """\
-  pytest benchmarks/ --benchmark-only -p no:xdist -o 'addopts=' -o \
-  'python_files=bench_*.py test_*.py' --benchmark-compare\
-  """
-benchmarks-save = """\
-  pytest benchmarks/ --benchmark-only -p no:xdist -o 'addopts=' -o \
-  'python_files=bench_*.py test_*.py' --benchmark-autosave -v\
-  """
-benchmarks-save-and-publish = { depends-on = [ "benchmarks-save", "benchmarks-publish" ] }
 tests = "pytest tests"
 tests-32bit = "pytest tests --precision=32"
 tests-with-cov = "pytest tests --cov-report=xml --cov=./"
@@ -297,7 +285,12 @@ jax = ">=0.9"
 pdbp = "*"
 pylcm = { path = ".", editable = true }
 [tool.pixi.tasks]
-benchmarks-publish = "python benchmarks/publish.py"
+asv-compare = "asv compare"
+asv-preview = "asv preview"
+asv-publish = "asv publish && python benchmarks/publish.py"
+asv-quick = { cmd = "asv run --quick --set-commit-hash=$(git rev-parse HEAD)", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
+asv-run = { cmd = 'test -z "$(git status --porcelain --ignore-submodules)" && asv run --set-commit-hash=$(git rev-parse HEAD)', env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
+asv-run-and-publish = { depends-on = [ "asv-run", "asv-publish" ] }
 [tool.pixi.workspace]
 channels = [ "conda-forge" ]
 platforms = [ "linux-64", "osx-arm64", "win-64" ]

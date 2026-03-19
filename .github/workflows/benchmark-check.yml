@@ -88,6 +88,6 @@ jobs:
             // status === 'missing'
             core.setFailed(
               'No benchmark results found for this ' +
-              'PR. Run `pixi run benchmarks-save && ' +
-              'pixi run benchmarks-publish`.'
+              'PR. Run `pixi run asv-run && ' +
+              'pixi run asv-publish`.'
             );

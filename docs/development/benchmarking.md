@@ -4,7 +4,7 @@ title: Benchmarking
 
 # Benchmarking
 
-pylcm uses [pytest-benchmark](https://pytest-benchmark.readthedocs.io/) to track
+pylcm uses [ASV (Airspeed Velocity)](https://asv.readthedocs.io/) to track
 performance across commits. Benchmarks run locally on GPU hardware and results are
 published to a [dashboard](https://open-econ.org/pylcm-benchmarks/).
 
@@ -12,17 +12,19 @@ published to a [dashboard](https://open-econ.org/pylcm-benchmarks/).
 
 ```bash
 # Run all benchmarks (GPU recommended)
-pixi run -e tests-cuda13 benchmarks
+pixi run -e tests-cuda13 asv-run
 
-# Run and save results for later comparison
-pixi run -e tests-cuda13 benchmarks-save
+# Quick smoke test (not saved)
+pixi run -e tests-cuda13 asv-quick
 
-# Compare against the last saved run
-pixi run -e tests-cuda13 benchmarks-compare
+# Compare two commits
+pixi run -e tests-cuda13 asv-compare HEAD~1 HEAD
+
+# Preview dashboard locally
+pixi run -e tests-cuda13 asv-preview
 ```
 
-Benchmarks are excluded from normal test runs (`pixi run tests`) via
-`--benchmark-disable` in `pyproject.toml`.
+The `asv-run` task guards against dirty worktrees — commit or stash changes first.
 
 ## Benchmark Scenarios
 
@@ -32,20 +34,35 @@ Benchmarks are excluded from normal test runs (`pixi run tests`) via
 | `bench_mortality.py` | Mortality model — solve + simulate |
 | `bench_mahler_yum.py` | Mahler & Yum (2024) replication (GPU only) |
 
-Each benchmark warms up JIT compilation before timing.
+Each benchmark tracks three metrics:
+
+- **`time_*`** — execution time (after JIT warmup)
+- **`peakmem_*`** — peak memory usage
+- **`track_warmup`** — JIT compilation time
 
 ## Publishing Results
 
-After saving benchmarks, publish them to the dashboard:
+After running benchmarks, publish them to the dashboard:
 
 ```bash
-pixi run -e tests-cuda13 benchmarks-publish
+pixi run -e tests-cuda13 asv-publish
 ```
 
-This pushes results to the
+This generates the ASV HTML dashboard and pushes results to the
 [OpenSourceEconomics.github.io](https://github.com/OpenSourceEconomics/OpenSourceEconomics.github.io)
 repo under `pylcm-benchmarks/`. A persistent clone is kept in `.benchmark-site/`
 (gitignored) to avoid re-cloning on every publish.
+
+## Profiling
+
+ASV includes built-in profiling support for drilling into bottlenecks:
+
+```bash
+# Profile a specific benchmark
+asv profile "bench_precautionary_savings.TimeSolve.time_solve" HEAD^!
+```
+
+This runs the benchmark under cProfile and opens the results in snakeviz.
 
 ## CI Check
 
@@ -60,24 +77,41 @@ results exist for at least one commit in the PR branch.
 To satisfy the check:
 
 ```bash
-pixi run -e tests-cuda13 benchmarks-save
-pixi run -e tests-cuda13 benchmarks-publish
+pixi run -e tests-cuda13 asv-run
+pixi run -e tests-cuda13 asv-publish
 ```
-
-The required machine(s) are configured in `benchmark-config.json` on the org site repo.
 
 ## Adding New Benchmarks
 
-Create a new `bench_*.py` file in the `benchmarks/` directory. Each benchmark is a
-regular pytest function that receives the `benchmark` fixture:
+Create a new `bench_*.py` file in the `benchmarks/` directory. Benchmarks use ASV's
+class-based API:
 
 ```python
-def test_solve_my_model(benchmark):
-    model = ...
-    params = ...
-    # Warm up JIT
-    model.solve(params, log_level="off")
-    benchmark(model.solve, params, log_level="off")
+import time
+
+
+class TimeMyModel:
+    timeout = 600
+
+    def setup(self):
+        self.model = ...
+        self.model_params = ...
+        # JIT warmup (timed separately)
+        start = time.perf_counter()
+        self.model.solve(self.model_params, log_level="off")
+        self._warmup_time = time.perf_counter() - start
+
+    def time_solve(self):
+        self.model.solve(self.model_params, log_level="off")
+
+    def peakmem_solve(self):
+        self.model.solve(self.model_params, log_level="off")
+
+    def track_warmup(self):
+        return self._warmup_time
+
+    track_warmup.unit = "seconds"
 ```
 
-Use `@pytest.mark.parametrize` to vary grid sizes or other parameters.
+Use the `params` and `param_names` class attributes to vary grid sizes or other
+parameters.

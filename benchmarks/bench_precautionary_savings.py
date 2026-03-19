@@ -1,7 +1,8 @@
 """Precautionary savings benchmarks: solve, simulate, grid types."""
 
+import time
+
 import jax.numpy as jnp
-import pytest
 
 from lcm_examples import precautionary_savings
 
@@ -33,57 +34,111 @@ def _make_initial_conditions(n_subjects):
     }
 
 
-@pytest.mark.parametrize("n_points", [50, 200, 500])
-def test_solve(benchmark, n_points):
-    model, params = _make_model(
-        wealth_n_points=n_points,
-        consumption_n_points=n_points,
-    )
-    # Warm up JIT
-    model.solve(params, log_level="off")
-    benchmark(model.solve, params, log_level="off")
+class TimeSolve:
+    params = [50, 200, 500]
+    param_names = ["n_points"]
+    timeout = 600
+
+    def setup(self, n_points):
+        self.model, self.model_params = _make_model(
+            wealth_n_points=n_points,
+            consumption_n_points=n_points,
+        )
+        start = time.perf_counter()
+        self.model.solve(self.model_params, log_level="off")
+        self._warmup_time = time.perf_counter() - start
+
+    def time_solve(self, n_points):
+        self.model.solve(self.model_params, log_level="off")
+
+    def track_warmup(self, n_points):
+        return self._warmup_time
+
+    track_warmup.unit = "seconds"
 
 
-@pytest.mark.parametrize("n_subjects", [1_000, 10_000])
-def test_simulate(benchmark, n_subjects):
-    model, params = _make_model()
-    V_arr_dict = model.solve(params, log_level="off")
-    initial_conditions = _make_initial_conditions(n_subjects)
+class TimeSimulate:
+    params = [[1_000, 10_000]]
+    param_names = ["n_subjects"]
+    timeout = 600
 
-    # Warm up JIT
-    model.simulate(params, initial_conditions, V_arr_dict, log_level="off")
-    benchmark(model.simulate, params, initial_conditions, V_arr_dict, log_level="off")
+    def setup(self, n_subjects):
+        self.model, self.model_params = _make_model()
+        self.V_arr_dict = self.model.solve(self.model_params, log_level="off")
+        self.initial_conditions = _make_initial_conditions(n_subjects)
+        start = time.perf_counter()
+        self.model.simulate(
+            self.model_params,
+            self.initial_conditions,
+            self.V_arr_dict,
+            log_level="off",
+        )
+        self._warmup_time = time.perf_counter() - start
+
+    def time_simulate(self, n_subjects):
+        self.model.simulate(
+            self.model_params,
+            self.initial_conditions,
+            self.V_arr_dict,
+            log_level="off",
+        )
+
+    def track_warmup(self, n_subjects):
+        return self._warmup_time
+
+    track_warmup.unit = "seconds"
 
 
-def test_solve_and_simulate(benchmark):
-    model, params = _make_model(wealth_n_points=200, consumption_n_points=200)
-    initial_conditions = _make_initial_conditions(_N_SUBJECTS)
+class TimeSolveAndSimulate:
+    timeout = 600
 
-    # Warm up JIT
-    model.solve_and_simulate(params, initial_conditions, log_level="off")
-    benchmark(
-        model.solve_and_simulate,
-        params,
-        initial_conditions,
-        log_level="off",
-    )
+    def setup(self):
+        self.model, self.model_params = _make_model(
+            wealth_n_points=200,
+            consumption_n_points=200,
+        )
+        self.initial_conditions = _make_initial_conditions(_N_SUBJECTS)
+        start = time.perf_counter()
+        self.model.solve_and_simulate(
+            self.model_params, self.initial_conditions, log_level="off"
+        )
+        self._warmup_time = time.perf_counter() - start
+
+    def time_solve_and_simulate(self):
+        self.model.solve_and_simulate(
+            self.model_params, self.initial_conditions, log_level="off"
+        )
+
+    def track_warmup(self):
+        return self._warmup_time
+
+    track_warmup.unit = "seconds"
 
 
-@pytest.mark.parametrize("n_points", [500, 1000, 2000])
-@pytest.mark.parametrize("grid_type", ["lin", "irreg"])
-def test_grid_lookup(benchmark, n_points, grid_type):
-    model, params = _make_model(
-        wealth_grid_type=grid_type,
-        wealth_n_points=n_points,
-        consumption_n_points=n_points,
-    )
-    initial_conditions = _make_initial_conditions(100)
+class TimeGridLookup:
+    params = [[500, 1000, 2000], ["lin", "irreg"]]
+    param_names = ["n_points", "grid_type"]
+    timeout = 600
 
-    # Warm up JIT
-    model.solve_and_simulate(params, initial_conditions, log_level="off")
-    benchmark(
-        model.solve_and_simulate,
-        params,
-        initial_conditions,
-        log_level="off",
-    )
+    def setup(self, n_points, grid_type):
+        self.model, self.model_params = _make_model(
+            wealth_grid_type=grid_type,
+            wealth_n_points=n_points,
+            consumption_n_points=n_points,
+        )
+        self.initial_conditions = _make_initial_conditions(100)
+        start = time.perf_counter()
+        self.model.solve_and_simulate(
+            self.model_params, self.initial_conditions, log_level="off"
+        )
+        self._warmup_time = time.perf_counter() - start
+
+    def time_grid_lookup(self, n_points, grid_type):
+        self.model.solve_and_simulate(
+            self.model_params, self.initial_conditions, log_level="off"
+        )
+
+    def track_warmup(self, n_points, grid_type):
+        return self._warmup_time
+
+    track_warmup.unit = "seconds"
