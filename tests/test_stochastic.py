@@ -49,7 +49,7 @@ def test_model_solve_and_simulate_with_stochastic_model():
             "partner": jnp.array([0, 0, 1, 0]),
             "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
             "age": jnp.array([40.0, 40.0, 40.0, 40.0]),
-            "regime_id": jnp.array([RegimeId.working_life] * 4),
+            "regime": jnp.array([RegimeId.working_life] * 4),
         },
     )
     df = result.to_dataframe().query('regime == "working_life"')
@@ -207,7 +207,7 @@ def test_compare_deterministic_and_stochastic_results_value_function(
         "partner": jnp.array([0, 0, 0, 0]),
         "wealth": jnp.array([10.0, 50.0, 30, 80.0]),
         "age": jnp.array([40.0, 40.0, 40.0, 40.0]),
-        "regime_id": jnp.array([RegimeId.working_life] * 4),
+        "regime": jnp.array([RegimeId.working_life] * 4),
     }
 
     simulation_deterministic = model_deterministic.simulate(

@@ -94,7 +94,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
         initial_conditions={
             "wealth": jnp.array([1.0, 50.400803]),
             "age": jnp.array([0.0, 0.0]),
-            "regime_id": jnp.array(
+            "regime": jnp.array(
                 [simulate_inputs["regime_names_to_ids"]["working_life"]] * 2
             ),
         },
@@ -156,7 +156,7 @@ def test_simulate_using_model_methods(
         initial_conditions={
             "wealth": jnp.array([20.0, 150, 250, 320]),
             "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
-            "regime_id": jnp.array([RegimeId.working_life] * 4),
+            "regime": jnp.array([RegimeId.working_life] * 4),
         },
     )
     df = result.to_dataframe(
@@ -209,7 +209,7 @@ def test_simulate_with_only_discrete_actions():
         initial_conditions={
             "wealth": jnp.array([0, 2]),
             "age": jnp.array([50.0, 50.0]),
-            "regime_id": jnp.array([DiscreteRegimeId.working_life] * 2),
+            "regime": jnp.array([DiscreteRegimeId.working_life] * 2),
         },
     )
     got = result.to_dataframe().query('regime == "working_life"')
@@ -277,7 +277,7 @@ def test_effect_of_discount_factor_on_last_period():
             initial_conditions={
                 "wealth": initial_wealth,
                 "age": jnp.array([18.0, 18.0, 18.0]),
-                "regime_id": jnp.array([RegimeId.working_life] * 3),
+                "regime": jnp.array([RegimeId.working_life] * 3),
             },
         )
         .to_dataframe()
@@ -290,7 +290,7 @@ def test_effect_of_discount_factor_on_last_period():
             initial_conditions={
                 "wealth": initial_wealth,
                 "age": jnp.array([18.0, 18.0, 18.0]),
-                "regime_id": jnp.array([RegimeId.working_life] * 3),
+                "regime": jnp.array([RegimeId.working_life] * 3),
             },
         )
         .to_dataframe()
@@ -340,7 +340,7 @@ def test_effect_of_disutility_of_work():
             initial_conditions={
                 "wealth": initial_wealth,
                 "age": jnp.array([18.0, 18.0, 18.0]),
-                "regime_id": jnp.array([RegimeId.working_life] * 3),
+                "regime": jnp.array([RegimeId.working_life] * 3),
             },
         )
         .to_dataframe()
@@ -353,7 +353,7 @@ def test_effect_of_disutility_of_work():
             initial_conditions={
                 "wealth": initial_wealth,
                 "age": jnp.array([18.0, 18.0, 18.0]),
-                "regime_id": jnp.array([RegimeId.working_life] * 3),
+                "regime": jnp.array([RegimeId.working_life] * 3),
             },
         )
         .to_dataframe()
@@ -390,7 +390,7 @@ def test_to_dataframe_use_labels_parameter():
         initial_conditions={
             "wealth": jnp.array([20.0, 50.0]),
             "age": jnp.array([18.0, 18.0]),
-            "regime_id": jnp.array([RegimeId.working_life] * 2),
+            "regime": jnp.array([RegimeId.working_life] * 2),
         },
     )
 
@@ -422,7 +422,7 @@ def regression_simulation_result():
         initial_conditions={
             "wealth": jnp.array([20.0, 50.0]),
             "age": jnp.array([18.0, 18.0]),
-            "regime_id": jnp.array([RegimeId.working_life] * 2),
+            "regime": jnp.array([RegimeId.working_life] * 2),
         },
     )
 
@@ -466,7 +466,7 @@ def test_additional_targets_all_with_stochastic_transitions():
             "health": jnp.array([Health.good, Health.bad]),
             "partner": jnp.array([PartnerStatus.single, PartnerStatus.partnered]),
             "age": jnp.array([40.0, 40.0]),
-            "regime_id": jnp.array([StochasticRegimeId.working_life] * 2),
+            "regime": jnp.array([StochasticRegimeId.working_life] * 2),
         },
     )
 
@@ -513,7 +513,7 @@ def test_simulation_result_pickle_roundtrip(tmp_path: Path):
         initial_conditions={
             "wealth": jnp.array([20.0, 50.0]),
             "age": jnp.array([18.0, 18.0]),
-            "regime_id": jnp.array([RegimeId.working_life] * 2),
+            "regime": jnp.array([RegimeId.working_life] * 2),
         },
     )
 

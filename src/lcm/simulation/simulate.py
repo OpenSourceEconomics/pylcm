@@ -49,10 +49,10 @@ def simulate(
 
     Args:
         internal_params: Immutable mapping of regime names to flat parameter mappings.
-        initial_conditions: Flat mapping of state names (plus `"regime_id"`) to arrays.
-            All arrays must have the same length (number of subjects). The `"regime_id"`
+        initial_conditions: Flat mapping of state names (plus `"regime"`) to arrays.
+            All arrays must have the same length (number of subjects). The `"regime"`
             entry must contain integer regime codes.
-            Example: {"wealth": jnp.array([10.0, 50.0]), "regime_id": jnp.array([0, 0])}
+            Example: {"wealth": jnp.array([10.0, 50.0]), "regime": jnp.array([0, 0])}
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
         regime_names_to_ids: Immutable mapping of regime names to integer indices.
@@ -74,8 +74,8 @@ def simulate(
     logger.info("Starting simulation")
 
     # Separate regime_id from state arrays
-    initial_regime_ids = initial_conditions["regime_id"]
-    initial_states = {k: v for k, v in initial_conditions.items() if k != "regime_id"}
+    initial_regime_ids = initial_conditions["regime"]
+    initial_states = {k: v for k, v in initial_conditions.items() if k != "regime"}
 
     # Convert flat initial_states to nested format
     nested_initial_states = convert_initial_states_to_nested(

@@ -92,7 +92,7 @@ initial_conditions = {
     "age": jnp.array([25.0, 25.0, 25.0, 25.0]),
     "wealth": jnp.array([1.0, 5.0, 10.0, 20.0]),
     "health": jnp.array([0, 1, 1, 0]),  # integer codes for discrete states
-    "regime_id": jnp.array([
+    "regime": jnp.array([
         RegimeId.working_life, RegimeId.working_life,
         RegimeId.retirement, RegimeId.working_life,
     ]),
@@ -100,7 +100,7 @@ initial_conditions = {
 ```
 
 - Every non-shock state must have an entry.
-- `"regime_id"` must be included, with integer codes from the `regime_id_class`.
+- `"regime"` must be included, with integer codes from the `regime_id_class`.
 - All arrays must have the same length (= number of agents).
 - Shock states are drawn automatically.
 
@@ -124,7 +124,7 @@ Subjects can start at different ages:
 initial_conditions = {
     "age": jnp.array([40.0, 60.0]),
     "wealth": jnp.array([50.0, 50.0]),
-    "regime_id": jnp.array([
+    "regime": jnp.array([
         model.regime_names_to_ids["working_life"],
         model.regime_names_to_ids["working_life"],
     ]),
