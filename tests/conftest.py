@@ -4,6 +4,9 @@ import pytest
 
 # Module-level precision settings (updated by pytest_configure based on --precision)
 X64_ENABLED: bool = True
+# 12 decimals (not 14): CI showed that 14 exceeded reproducible machine precision
+# across platforms. 12 is well within float64 guarantees (~15 significant digits)
+# while avoiding spurious failures. See commit cdd9ac3.
 DECIMAL_PRECISION: int = 12
 
 

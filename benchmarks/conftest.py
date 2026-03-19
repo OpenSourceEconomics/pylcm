@@ -1,4 +1,8 @@
-"""Shared fixtures and configuration for PyLCM benchmarks."""
+"""pytest-benchmark hooks that route results to machine-specific directories.
+
+Guards against benchmarking uncommitted code so that every saved result is
+tied to a specific commit SHA.
+"""
 
 import contextlib
 import hashlib
@@ -10,7 +14,11 @@ import pytest
 
 
 def _machine_hash() -> str:
-    """Stable hash from CPU model + JAX backend + device."""
+    """Return a stable short hash identifying this machine and JAX backend.
+
+    Results from different machines or backends must not mix — the hash
+    partitions storage directories and the published dashboard.
+    """
     parts = [platform.processor(), jax.default_backend()]
     with contextlib.suppress(RuntimeError):
         parts.append(str(jax.devices()[0]))
@@ -18,7 +26,12 @@ def _machine_hash() -> str:
 
 
 def _is_worktree_dirty() -> bool:
-    """Check if the git worktree has modified or untracked files."""
+    """Return True if the git worktree has modified or untracked files.
+
+    Benchmarks are tagged with the current commit SHA; uncommitted changes
+    would make results misleading because the SHA would not reflect the
+    actual code that was benchmarked.
+    """
     result = subprocess.run(
         ["git", "status", "--porcelain"],
         capture_output=True,
@@ -29,11 +42,22 @@ def _is_worktree_dirty() -> bool:
 
 
 def pytest_benchmark_update_machine_info(config, machine_info):  # noqa: ARG001
+    """Add JAX backend and machine hash to benchmark JSON metadata.
+
+    This ensures benchmark result files record what hardware and backend
+    produced the numbers.
+    """
     machine_info["jax_backend"] = jax.default_backend()
     machine_info["machine_hash"] = _machine_hash()
 
 
 def pytest_configure(config):
+    """Wire up machine-specific storage and enforce the dirty-worktree guard.
+
+    Called at pytest startup. Sets the benchmark storage path to
+    `.benchmarks/{machine_hash}/` and raises `UsageError` if the user
+    attempts to autosave results while the worktree is dirty.
+    """
     machine = _machine_hash()
     config.option.benchmark_storage = f".benchmarks/{machine}"
 

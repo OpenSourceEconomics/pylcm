@@ -20,87 +20,20 @@ jobs:
       - name: Check for benchmark results
         id: check
         run: |
-          ORG="/tmp/org-site/pylcm-benchmarks"
-          if [ ! -d "$ORG" ]; then
-            echo "status=missing" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # Read required machines from config
-          CFG="$ORG/benchmark-config.json"
-          if [ ! -f "$CFG" ]; then
-            echo "status=skip" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          MACHINES=$(python3 -c "
-          import json
-          cfg = json.load(open('$CFG'))
-          ms = cfg.get('required_machines', [])
-          print(' '.join(ms))
-          ")
-          if [ -z "$MACHINES" ]; then
-            echo "status=skip" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # Get all PR commits (newest first)
           BASE="origin/${{ github.base_ref }}"
           PR_COMMITS=$(git log --format='%H' \
-            "$BASE..HEAD")
-          HEAD_SHA=$(git rev-parse HEAD)
-
-          # Check each required machine
-          ALL_OK=true
-          DETAILS=""
-          for MACHINE in $MACHINES; do
-            MPATH="$ORG/results/$MACHINE/manifest.json"
-            if [ ! -f "$MPATH" ]; then
-              ALL_OK=false
-              DETAILS="${DETAILS}Machine \`${MACHINE}\`"
-              DETAILS="${DETAILS}: no results.\n"
-              continue
-            fi
-            MANIFEST=$(cat "$MPATH")
-            FOUND_SHA=""
-            while IFS= read -r sha; do
-              MATCH=$(echo "$MANIFEST" | python3 -c "
-          import sys, json
-          m = json.load(sys.stdin)
-          sha = '${sha}'
-          print('yes' if any(
-            e['commit_sha'] == sha for e in m
-          ) else 'no')
-          ")
-              if [ "$MATCH" = "yes" ]; then
-                FOUND_SHA="$sha"
-                break
-              fi
-            done <<< "$PR_COMMITS"
-            if [ -z "$FOUND_SHA" ]; then
-              ALL_OK=false
-              DETAILS="${DETAILS}Machine \`${MACHINE}\`"
-              DETAILS="${DETAILS}: no results found.\n"
-            elif [ "$FOUND_SHA" != "$HEAD_SHA" ]; then
-              SHORT="${FOUND_SHA:0:12}"
-              SINCE=$(git log --format='- %h %s' \
-                "${FOUND_SHA}..HEAD")
-              DETAILS="${DETAILS}Machine \`${MACHINE}\`"
-              DETAILS="${DETAILS}: results for "
-              DETAILS="${DETAILS}\`${SHORT}\`, not HEAD."
-              DETAILS="${DETAILS} Commits since:\n"
-              DETAILS="${DETAILS}${SINCE}\n"
-            fi
-          done
-          if [ "$ALL_OK" = false ]; then
-            echo "status=missing" >> "$GITHUB_OUTPUT"
-          elif [ -n "$DETAILS" ]; then
-            echo "status=stale" >> "$GITHUB_OUTPUT"
-          else
-            echo "status=current" >> "$GITHUB_OUTPUT"
-          fi
+            "$BASE..HEAD" | tr '\n' ',')
+          PR_COMMITS="${PR_COMMITS%,}"
+          OUTPUT=$(python benchmarks/check_results.py \
+            --org-site-dir /tmp/org-site \
+            --pr-commits "$PR_COMMITS" 2>&1) || true
+          STATUS=$(echo "$OUTPUT" | tail -1 | \
+            sed 's/Status: //')
+          DETAILS=$(echo "$OUTPUT" | head -n -1)
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
           {
             echo "details<<BENCHEOF"
-            echo -e "$DETAILS"
+            echo "$DETAILS"
             echo "BENCHEOF"
           } >> "$GITHUB_OUTPUT"
       - name: Report result

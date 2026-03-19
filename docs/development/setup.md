@@ -16,9 +16,10 @@ cd pylcm
 ```
 
 The first `pixi run` command will install dependencies automatically, but you can run
-`pixi install` explicitly if you prefer.
+`pixi install` explicitly if you prefer. Run `pixi task list` to see all available
+tasks.
 
-Install pre-commit hooks (requires [prek](https://github.com/hmgaudecker/prek)):
+Install pre-commit hooks (requires [prek](https://github.com/j178/prek)):
 
 ```bash
 pixi global install prek
@@ -45,7 +46,7 @@ pixi run pytest tests/test_specific_module.py::test_function_name
 
 ```bash
 # Type checking (ty, not mypy)
-pixi run -e tests-cpu ty
+pixi run ty
 
 # Run all pre-commit hooks
 prek run --all-files

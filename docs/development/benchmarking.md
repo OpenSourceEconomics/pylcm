@@ -28,10 +28,9 @@ Benchmarks are excluded from normal test runs (`pixi run tests`) via
 
 | File | What it benchmarks |
 |---|---|
-| `bench_solve.py` | Solve time for tiny, precautionary savings, and mortality models |
-| `bench_simulate.py` | Simulation with 100 / 1K / 10K subjects |
-| `bench_grid_types.py` | `LinSpacedGrid` vs `LogSpacedGrid` vs `IrregSpacedGrid` at varying sizes |
-| `bench_mahler_yum.py` | End-to-end solve of the Mahler & Yum (2024) replication model (GPU only) |
+| `bench_precautionary_savings.py` | Solve (varying grid sizes), simulate (varying subjects), solve+simulate, lin vs irreg grid comparison |
+| `bench_mortality.py` | Mortality model — solve + simulate |
+| `bench_mahler_yum.py` | Mahler & Yum (2024) replication (GPU only) |
 
 Each benchmark warms up JIT compilation before timing.
 
