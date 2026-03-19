@@ -233,7 +233,7 @@ class InternalRegime:
 
         """
         all_params = {**self.resolved_fixed_params, **regime_params}
-        replacements: dict[str, object] = {}
+        replacements: dict[str, ContinuousState | DiscreteState] = {}
         for state_name, spec in self.gridspecs.items():
             if state_name not in self._base_state_action_space.states:
                 continue
@@ -241,7 +241,9 @@ class InternalRegime:
                 points_key = f"{state_name}__points"
                 if points_key not in all_params:
                     continue
-                replacements[state_name] = all_params[points_key]
+                replacements[state_name] = cast(
+                    "ContinuousState", all_params[points_key]
+                )
             elif isinstance(spec, _ShockGrid) and spec.params_to_pass_at_runtime:
                 all_present = all(
                     f"{state_name}__{p}" in all_params
