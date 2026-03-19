@@ -221,14 +221,12 @@ def save_solution(
     *,
     V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
     path: str | Path,
-    protocol: int = pickle.HIGHEST_PROTOCOL,
 ) -> Path:
-    """Save value function arrays from solve() to disk.
+    """Save value function arrays from solve() to an HDF5 file.
 
     Args:
         V_arr_dict: Immutable mapping of periods to regime value function arrays.
-        path: File path to save the pickle.
-        protocol: Pickle protocol version (default HIGHEST_PROTOCOL).
+        path: File path to save the HDF5 file.
 
     Returns:
         The path where the object was saved.
@@ -237,33 +235,27 @@ def save_solution(
         FileNotFoundError: If the parent directory does not exist.
 
     """
-    return _atomic_dump(V_arr_dict, path, protocol=protocol)
+    p = Path(path)
+    if not p.parent.is_dir():
+        raise FileNotFoundError(f"Parent directory does not exist: {p.parent}")
+    _save_V_arr_to_h5(p, V_arr_dict)
+    return p
 
 
 def load_solution(
-    *, path: str | Path
+    *,
+    path: str | Path,
 ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
-    """Load value function arrays from disk.
+    """Load value function arrays from an HDF5 file.
 
     Args:
-        path: File path to read the pickle from.
+        path: File path to read the HDF5 file from.
 
     Returns:
         Immutable mapping of periods to regime value function arrays.
 
-    Raises:
-        TypeError: If the loaded object is not a MappingProxyType.
-
     """
-    p = Path(path)
-    with p.open("rb") as f:
-        obj = cloudpickle.load(f)
-
-    if not isinstance(obj, MappingProxyType):
-        raise TypeError(
-            f"Pickle at {p} is {type(obj).__name__}, expected MappingProxyType"
-        )
-    return obj
+    return _load_V_arr_from_h5(Path(path))
 
 
 def _get_platform() -> str:

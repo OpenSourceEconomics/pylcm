@@ -15,7 +15,7 @@ from lcm import (
     categorical,
     load_snapshot,
 )
-from lcm.persistence import _get_platform
+from lcm.persistence import _get_platform, load_solution, save_solution
 from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 
@@ -66,17 +66,50 @@ def _build_tiny_model():
     return model, params
 
 
-@pytest.fixture
-def model_and_params():
-    return _build_tiny_model()
-
-
 def _initial_conditions():
     return {
         "wealth": jnp.array([2.0, 3.0]),
         "age": jnp.array([0.0, 0.0]),
         "regime": jnp.array([_RegimeId.working] * 2),
     }
+
+
+@pytest.fixture
+def model_and_params():
+    return _build_tiny_model()
+
+
+@pytest.fixture
+def solved(model_and_params):
+    model, params = model_and_params
+    return model.solve(params=params, log_level="off")
+
+
+# -- save_solution / load_solution ---------------------------------------------------
+
+
+def test_save_and_load_solution_roundtrip(tmp_path, solved):
+    path = tmp_path / "solution.h5"
+    save_solution(V_arr_dict=solved, path=path)
+
+    loaded = load_solution(path=path)
+
+    assert set(loaded.keys()) == set(solved.keys())
+    for period in solved:
+        assert set(loaded[period].keys()) == set(solved[period].keys())
+        for regime_name in solved[period]:
+            assert jnp.allclose(
+                loaded[period][regime_name], solved[period][regime_name]
+            )
+
+
+def test_save_solution_missing_parent_dir(tmp_path, solved):
+    path = tmp_path / "nonexistent" / "solution.h5"
+    with pytest.raises(FileNotFoundError):
+        save_solution(V_arr_dict=solved, path=path)
+
+
+# -- debug snapshots ------------------------------------------------------------------
 
 
 def test_solve_debug_persists_snapshot(tmp_path, model_and_params):
