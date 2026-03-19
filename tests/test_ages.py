@@ -168,7 +168,7 @@ def test_model_with_quarterly_steps():
         initial_conditions={
             "wealth": jnp.array([50.0, 100.0, 150.0]),
             "age": jnp.array([18.0, 18.0, 18.0]),
-            "regime_id": jnp.array([RegimeId.working_life] * 3),
+            "regime": jnp.array([RegimeId.working_life] * 3),
         },
     )
 

@@ -50,10 +50,10 @@ def simulate(
 
     Args:
         internal_params: Immutable mapping of regime names to flat parameter mappings.
-        initial_conditions: Flat mapping of state names (plus `"regime_id"`) to arrays.
-            All arrays must have the same length (number of subjects). The `"regime_id"`
+        initial_conditions: Flat mapping of state names (plus `"regime"`) to arrays.
+            All arrays must have the same length (number of subjects). The `"regime"`
             entry must contain integer regime codes.
-            Example: {"wealth": jnp.array([10.0, 50.0]), "regime_id": jnp.array([0, 0])}
+            Example: {"wealth": jnp.array([10.0, 50.0]), "regime": jnp.array([0, 0])}
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
         regime_names_to_ids: Immutable mapping of regime names to integer indices.
@@ -77,8 +77,8 @@ def simulate(
     total_start = time.monotonic()
 
     # Separate regime_id from state arrays
-    initial_regime_ids = initial_conditions["regime_id"]
-    initial_states = {k: v for k, v in initial_conditions.items() if k != "regime_id"}
+    initial_regime_ids = initial_conditions["regime"]
+    initial_states = {k: v for k, v in initial_conditions.items() if k != "regime"}
 
     # Convert flat initial_states to nested format
     nested_initial_states = convert_initial_states_to_nested(
@@ -96,7 +96,6 @@ def simulate(
     subject_regime_ids = jnp.full_like(initial_regime_ids, MISSING_CAT_CODE)
 
     # Forward simulation
-    # ----------------------------------------------------------------------------------
     simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
         regime_name: {} for regime_name in internal_regimes
     }
@@ -233,14 +232,13 @@ def _simulate_regime_in_period(
 
     Returns:
         Tuple containing:
-        - PeriodRegimeData for this regime-period
+        - PeriodRegimeSimulationData for this regime-period
         - Updated states dictionary
         - Updated new_subject_regime_ids array
         - Updated JAX random key
 
     """
     # Select subjects in the current regime
-    # ---------------------------------------------------------------------------------
     subject_ids_in_regime = jnp.asarray(
         regime_names_to_ids[regime_name] == subject_regime_ids
     )
@@ -250,7 +248,6 @@ def _simulate_regime_in_period(
         states=states,
     )
     # Compute optimal actions
-    # ---------------------------------------------------------------------------------
     # We need to pass the value function array of the next period to the
     # argmax_and_max_Q_over_a function, as the current Q-function requires the
     # next period's value function. In the last period, we pass an empty dict.
@@ -275,7 +272,6 @@ def _simulate_regime_in_period(
         grids=state_action_space.actions,
     )
     # Store results for this regime-period
-    # ---------------------------------------------------------------------------------
     # For state-less regimes (e.g., terminal regimes with no states), V_arr may be a
     # scalar. We need to broadcast it to match the number of subjects.
     n_subjects = subject_ids_in_regime.shape[0]
@@ -296,7 +292,6 @@ def _simulate_regime_in_period(
     )
 
     # Update states and regime membership for next period
-    # ---------------------------------------------------------------------------------
     if not internal_regime.terminal:
         next_states_key, next_regime_key, key = jax.random.split(key, 3)
 

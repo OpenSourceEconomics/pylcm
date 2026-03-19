@@ -29,7 +29,7 @@ def _solve_and_simulate(shock_type, *, sigma, rho=0.0, mu=0.0):
             "wealth": jnp.full(_N_SUBJECTS, 5.0),
             "income": jnp.full(_N_SUBJECTS, unconditional_mean),
             "age": jnp.full(_N_SUBJECTS, 20.0),
-            "regime_id": jnp.array([RegimeId.alive] * _N_SUBJECTS),
+            "regime": jnp.array([RegimeId.alive] * _N_SUBJECTS),
         },
         seed=_SEED,
     )

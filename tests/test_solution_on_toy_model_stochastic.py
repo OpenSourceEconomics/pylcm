@@ -31,9 +31,6 @@ from tests.test_solution_on_toy_model_deterministic import (
 )
 
 
-# ======================================================================================
-# Model specification
-# ======================================================================================
 @categorical(ordered=False)
 class Health:
     bad: int
@@ -51,9 +48,6 @@ alive_stochastic = alive_deterministic.replace(
 )
 
 
-# ======================================================================================
-# Analytical solution and simulation (stochastic model)
-# ======================================================================================
 def value_second_period_stochastic(wealth, health):
     """Value function in the second (last) period. Computed using pen and paper."""
     consumption = np.minimum(1, np.floor(wealth))
@@ -69,7 +63,7 @@ def policy_second_period_stochastic(wealth, health):
     policy = np.column_stack(
         (np.minimum(1, np.floor(wealth)) * health, np.zeros_like(wealth)),
     ).astype(int)
-    return matrix_to_dict_of_vectors(policy, col_names=["consumption", "work"])
+    return matrix_to_dict_of_vectors(policy, col_names=["consumption", "labor_supply"])
 
 
 def value_first_period_stochastic(wealth, health, params):
@@ -132,7 +126,9 @@ def policy_first_period_stochastic(wealth, health, params):
 
     _health = health.reshape(-1, 1)
     policies = _health * policy_health_1 + (1 - _health) * policy_health_0
-    return matrix_to_dict_of_vectors(policies, col_names=["consumption", "work"])
+    return matrix_to_dict_of_vectors(
+        policies, col_names=["consumption", "labor_supply"]
+    )
 
 
 def analytical_solve_stochastic(wealth_grid, health_grid, params):
@@ -173,7 +169,9 @@ def analytical_simulate_stochastic(initial_wealth, initial_health, health_1, par
     consumption_codes = np.concatenate(
         [policy_0["consumption"], policy_1["consumption"]]
     ).astype(int)
-    work_codes = np.concatenate([policy_0["work"], policy_1["work"]]).astype(int)
+    work_codes = np.concatenate(
+        [policy_0["labor_supply"], policy_1["labor_supply"]]
+    ).astype(int)
 
     df = pd.DataFrame(
         {
@@ -194,18 +192,13 @@ def analytical_simulate_stochastic(initial_wealth, initial_health, health_1, par
                 consumption_codes.tolist(),
                 categories=pd.Index(["low", "high"]),
             ),
-            "work": pd.Categorical.from_codes(
+            "labor_supply": pd.Categorical.from_codes(
                 work_codes.tolist(),
-                categories=pd.Index(["not_working", "working"]),
+                categories=pd.Index(["do_not_work", "work"]),
             ),
         }
     )
     return df.sort_values(["subject_id", "period"]).reset_index(drop=True)
-
-
-# ======================================================================================
-# Tests
-# ======================================================================================
 
 
 HEALTH_TRANSITION = [
@@ -219,8 +212,6 @@ HEALTH_TRANSITION = [
 @pytest.mark.parametrize("n_wealth_points", [100, 1_000])
 @pytest.mark.parametrize("probs_array", HEALTH_TRANSITION)
 def test_stochastic_solve(discount_factor, n_wealth_points, probs_array):
-    # Update model
-    # ==================================================================================
     n_periods = 3
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     new_states = dict(alive_stochastic.states)
@@ -238,16 +229,12 @@ def test_stochastic_solve(discount_factor, n_wealth_points, probs_array):
         regime_id_class=RegimeId,
     )
 
-    # Solve model using LCM
-    # ==================================================================================
     params = {
         "next_health": {"probs_array": probs_array},
         "next_regime": {"final_age_alive": model.n_periods - 2},
     }
     got = model.solve(params={"discount_factor": discount_factor, "alive": params})
 
-    # Compute analytical solution
-    # ==================================================================================
     wealth_grid_class = cast("LinSpacedGrid", new_states["wealth"])
     _wealth_grid = np.linspace(
         start=wealth_grid_class.start,
@@ -272,7 +259,6 @@ def test_stochastic_solve(discount_factor, n_wealth_points, probs_array):
 
     # Do not assert that in the first period, the arrays have the same values on the
     # first and last index: TODO (@timmens): THIS IS A BUG AND NEEDS TO BE INVESTIGATED.
-    # ==================================================================================
     aaae(
         got[0]["alive"][:, slice(1, -1)],
         expected[0][:, slice(1, -1)],
@@ -285,8 +271,6 @@ def test_stochastic_solve(discount_factor, n_wealth_points, probs_array):
 @pytest.mark.parametrize("n_wealth_points", [100, 1_000])
 @pytest.mark.parametrize("probs_array", HEALTH_TRANSITION)
 def test_stochastic_simulate(discount_factor, n_wealth_points, probs_array):
-    # Update model
-    # ==================================================================================
     n_periods = 3
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     new_states = dict(alive_stochastic.states)
@@ -304,8 +288,6 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, probs_array):
         regime_id_class=RegimeId,
     )
 
-    # Simulate model using LCM
-    # ==================================================================================
     params_alive = {
         "next_health": {"probs_array": probs_array},
         "next_regime": {"final_age_alive": model.n_periods - 2},
@@ -314,7 +296,7 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, probs_array):
         "wealth": jnp.array([0.25, 0.75, 1.25, 1.75, 2.0]),
         "health": jnp.array([0, 1, 0, 1, 1]),
         "age": jnp.array([0.0, 0.0, 0.0, 0.0, 0.0]),
-        "regime_id": jnp.array([RegimeId.alive] * 5),
+        "regime": jnp.array([RegimeId.alive] * 5),
     }
     result = model.solve_and_simulate(
         params={"discount_factor": discount_factor, "alive": params_alive},

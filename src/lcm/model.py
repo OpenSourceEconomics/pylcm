@@ -238,9 +238,9 @@ class Model:
                   regime_0
                 - Function level: {"regime_0": {"func": {"arg_0": 0.0}}} - direct
                   specification
-            initial_conditions: Mapping of state names (plus `"regime_id"`) to arrays.
+            initial_conditions: Mapping of state names (plus `"regime"`) to arrays.
                 All arrays must have the same length (number of subjects). The
-                `"regime_id"` entry must contain integer regime codes (from
+                `"regime"` entry must contain integer regime codes (from
                 `model.regime_names_to_ids`).
             V_arr_dict: Value function arrays from solve().
             check_initial_conditions: Whether to validate initial conditions.
@@ -319,9 +319,9 @@ class Model:
                   regime_0
                 - Function level: {"regime_0": {"func": {"arg_0": 0.0}}} - direct
                   specification
-            initial_conditions: Mapping of state names (plus `"regime_id"`) to arrays.
+            initial_conditions: Mapping of state names (plus `"regime"`) to arrays.
                 All arrays must have the same length (number of subjects). The
-                `"regime_id"` entry must contain integer regime codes (from
+                `"regime"` entry must contain integer regime codes (from
                 `model.regime_names_to_ids`).
             check_initial_conditions: Whether to validate initial conditions.
             seed: Random seed.

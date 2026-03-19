@@ -77,14 +77,14 @@ def calc_savingsgrid(x: Float1D) -> Float1D:
 # ======================================================================================
 
 
-@categorical(ordered=False)
+@categorical(ordered=True)
 class LaborSupply:
-    not_working: int
-    part: int
-    full: int
+    do_not_work: int
+    part_time: int
+    full_time: int
 
 
-@categorical(ordered=False)
+@categorical(ordered=True)
 class Education:
     low: int
     high: int
@@ -95,25 +95,25 @@ Effort = make_dataclass(
 )
 
 
-@categorical(ordered=False)
+@categorical(ordered=True)
 class Health:
     bad: int
     good: int
 
 
-@categorical(ordered=False)
+@categorical(ordered=True)
 class ProductivityType:
     low: int
     high: int
 
 
-@categorical(ordered=False)
+@categorical(ordered=True)
 class HealthType:
     low: int
     high: int
 
 
-@categorical(ordered=False)
+@categorical(ordered=True)
 class ProductivityShock:
     val0: int
     val1: int
@@ -146,13 +146,17 @@ def utility(
 
 
 def disutil(
-    working: DiscreteAction,
+    labor_supply: DiscreteAction,
     health: DiscreteState,
     education: DiscreteState,
     period: Period,
     phigrid: FloatND,
 ) -> FloatND:
-    return phigrid[period, education, health] * ((working / 2) ** (2)) / 2
+    return (
+        phigrid[period, education, health]
+        * ((labor_supply / LaborSupply.full_time) ** 2)
+        / 2
+    )
 
 
 def scaled_adjustment_cost(
@@ -213,7 +217,7 @@ def scaled_productivity_shock(
 
 
 def income(
-    working: DiscreteAction,
+    labor_supply: DiscreteAction,
     period: Period,
     health: DiscreteState,
     education: DiscreteState,
@@ -223,7 +227,7 @@ def income(
 ) -> FloatND:
     return (
         income_grid[period, health, education]
-        * (working / 2)
+        * (labor_supply / LaborSupply.full_time)
         * theta_val[productivity]
         * jnp.exp(scaled_productivity_shock)
     )
@@ -233,8 +237,12 @@ def taxed_income(income: FloatND) -> FloatND:
     return lamda * (income ** (1.0 - taul)) * (avrgearn**taul)
 
 
-def benefits(period: Period, health: DiscreteState, working: DiscreteAction) -> FloatND:
-    eligible = jnp.logical_and(health == 0, working == 0)
+def benefits(
+    period: Period, health: DiscreteState, labor_supply: DiscreteAction
+) -> FloatND:
+    eligible = jnp.logical_and(
+        health == Health.bad, labor_supply == LaborSupply.do_not_work
+    )
     return jnp.where(
         jnp.logical_and(eligible, period <= retirement_age), tt0 * avrgearn, 0
     )
@@ -294,8 +302,12 @@ def next_regime(
 # --------------------------------------------------------------------------------------
 # Constraints
 # --------------------------------------------------------------------------------------
-def retirement_constraint(period: Period, working: DiscreteAction) -> BoolND:
-    return jnp.logical_not(jnp.logical_and(period > retirement_age, working > 0))
+def retirement_constraint(period: Period, labor_supply: DiscreteAction) -> BoolND:
+    return jnp.logical_not(
+        jnp.logical_and(
+            period > retirement_age, labor_supply != LaborSupply.do_not_work
+        )
+    )
 
 
 def savings_constraint(
@@ -343,7 +355,7 @@ ALIVE_REGIME = Regime(
         "health_type": None,
     },
     actions={
-        "working": DiscreteGrid(LaborSupply),
+        "labor_supply": DiscreteGrid(LaborSupply),
         "saving": LinSpacedGrid(start=0, stop=49, n_points=50),
         "effort": DiscreteGrid(Effort),
     },

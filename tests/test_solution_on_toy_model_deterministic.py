@@ -28,9 +28,6 @@ from lcm.typing import (
 from tests.conftest import DECIMAL_PRECISION
 
 
-# ======================================================================================
-# Model specification
-# ======================================================================================
 @categorical(ordered=False)
 class DiscreteConsumption:
     low: int
@@ -39,8 +36,8 @@ class DiscreteConsumption:
 
 @categorical(ordered=False)
 class LaborSupply:
-    not_working: int
-    working: int
+    do_not_work: int
+    work: int
 
 
 @categorical(ordered=False)
@@ -51,17 +48,17 @@ class RegimeId:
 
 def utility(
     consumption: DiscreteAction,
-    work: DiscreteAction,
+    labor_supply: DiscreteAction,
     wealth: ContinuousState,  # noqa: ARG001
     health: DiscreteState,
 ) -> FloatND:
-    return jnp.log(1.0 + health * consumption) - 0.5 * work
+    return jnp.log(1.0 + health * consumption) - 0.5 * labor_supply
 
 
 def next_wealth(
-    wealth: ContinuousState, consumption: DiscreteAction, work: DiscreteAction
+    wealth: ContinuousState, consumption: DiscreteAction, labor_supply: DiscreteAction
 ) -> ContinuousState:
-    return wealth - consumption + work
+    return wealth - consumption + labor_supply
 
 
 def next_regime(age: float, final_age_alive: float) -> ScalarInt:
@@ -77,7 +74,7 @@ def borrowing_constraint(
 alive_deterministic = Regime(
     actions={
         "consumption": DiscreteGrid(DiscreteConsumption),
-        "work": DiscreteGrid(LaborSupply),
+        "labor_supply": DiscreteGrid(LaborSupply),
     },
     states={
         "wealth": LinSpacedGrid(
@@ -104,9 +101,6 @@ dead = Regime(
 )
 
 
-# ======================================================================================
-# Analytical solution and simulation (deterministic model)
-# ======================================================================================
 def value_second_period_deterministic(wealth):
     """Value function in the second (last) period. Computed using pen and paper."""
     consumption = np.minimum(1, np.floor(wealth))
@@ -122,7 +116,7 @@ def policy_second_period_deterministic(wealth):
     policy = np.column_stack(
         (np.minimum(1, np.floor(wealth)), np.zeros_like(wealth)),
     ).astype(int)
-    return matrix_to_dict_of_vectors(policy, col_names=["consumption", "work"])
+    return matrix_to_dict_of_vectors(policy, col_names=["consumption", "labor_supply"])
 
 
 def value_first_period_deterministic(wealth, params):
@@ -150,7 +144,7 @@ def policy_first_period_deterministic(wealth, params):
         dtype=int,
     )
     policy = policies[index]
-    return matrix_to_dict_of_vectors(policy, col_names=["consumption", "work"])
+    return matrix_to_dict_of_vectors(policy, col_names=["consumption", "labor_supply"])
 
 
 def analytical_solve_deterministic(wealth_grid, params):
@@ -182,7 +176,9 @@ def analytical_simulate_deterministic(initial_wealth, params):
     consumption_codes = np.concatenate(
         [policy_0["consumption"], policy_1["consumption"]]
     ).astype(int)
-    work_codes = np.concatenate([policy_0["work"], policy_1["work"]]).astype(int)
+    work_codes = np.concatenate(
+        [policy_0["labor_supply"], policy_1["labor_supply"]]
+    ).astype(int)
 
     df = pd.DataFrame(
         {
@@ -199,9 +195,9 @@ def analytical_simulate_deterministic(initial_wealth, params):
                 consumption_codes.tolist(),
                 categories=pd.Index(["low", "high"]),
             ),
-            "work": pd.Categorical.from_codes(
+            "labor_supply": pd.Categorical.from_codes(
                 work_codes.tolist(),
-                categories=pd.Index(["not_working", "working"]),
+                categories=pd.Index(["do_not_work", "work"]),
             ),
         }
     )
@@ -220,16 +216,9 @@ def dict_of_vectors_to_matrix(d):
     return np.column_stack(list(d.values()))
 
 
-# ======================================================================================
-# Tests
-# ======================================================================================
-
-
 @pytest.mark.parametrize("discount_factor", [0, 0.5, 0.9, 1.0])
 @pytest.mark.parametrize("n_wealth_points", [100, 1_000])
 def test_deterministic_solve(discount_factor, n_wealth_points):
-    # Update model
-    # ==================================================================================
     n_periods = 3
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     new_states = dict(alive_deterministic.states)
@@ -247,8 +236,6 @@ def test_deterministic_solve(discount_factor, n_wealth_points):
         regime_id_class=RegimeId,
     )
 
-    # Solve model using LCM
-    # ==================================================================================
     params_alive = {
         "utility": {"health": 1},
         "next_regime": {"final_age_alive": model.n_periods - 2},
@@ -257,8 +244,6 @@ def test_deterministic_solve(discount_factor, n_wealth_points):
         params={"discount_factor": discount_factor, "alive": params_alive}
     )
 
-    # Compute analytical solution
-    # ==================================================================================
     wealth_grid_class = cast("LinSpacedGrid", new_states["wealth"])
     wealth_grid = np.linspace(
         start=wealth_grid_class.start,
@@ -270,7 +255,6 @@ def test_deterministic_solve(discount_factor, n_wealth_points):
 
     # Do not assert that in the first period, the arrays have the same values on the
     # first and last index: TODO (@timmens): THIS IS A BUG AND NEEDS TO BE INVESTIGATED.
-    # ==================================================================================
     aaae(
         got[0]["alive"][slice(1, -1)],
         expected[0][slice(1, -1)],
@@ -282,8 +266,6 @@ def test_deterministic_solve(discount_factor, n_wealth_points):
 @pytest.mark.parametrize("discount_factor", [0, 0.5, 0.9, 1.0])
 @pytest.mark.parametrize("n_wealth_points", [100, 1_000])
 def test_deterministic_simulate(discount_factor, n_wealth_points):
-    # Update model
-    # ==================================================================================
     n_periods = 3
     ages = AgeGrid(start=0, stop=n_periods - 1, step="Y")
     new_states = dict(alive_deterministic.states)
@@ -301,8 +283,6 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
         regime_id_class=RegimeId,
     )
 
-    # Simulate model using LCM
-    # ==================================================================================
     params_alive = {
         "utility": {"health": 1},
         "next_regime": {"final_age_alive": model.n_periods - 2},
@@ -312,7 +292,7 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
         initial_conditions={
             "wealth": jnp.array([0.25, 0.75, 1.25, 1.75]),
             "age": jnp.array([0.0, 0.0, 0.0, 0.0]),
-            "regime_id": jnp.array([RegimeId.alive] * 4),
+            "regime": jnp.array([RegimeId.alive] * 4),
         },
     )
     # Filter to alive regime only (dead regime has trivial values)

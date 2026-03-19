@@ -111,7 +111,7 @@ def test_solve_and_simulate_with_fixed_params():
         initial_conditions={
             "wealth": jnp.array([5.0, 7.0]),
             "age": jnp.array([0.0, 0.0]),
-            "regime_id": jnp.array([RegimeId.alive] * 2),
+            "regime": jnp.array([RegimeId.alive] * 2),
         },
         log_level="off",
     )
@@ -126,7 +126,7 @@ def test_solve_and_simulate_with_fixed_params():
         initial_conditions={
             "wealth": jnp.array([5.0, 7.0]),
             "age": jnp.array([0.0, 0.0]),
-            "regime_id": jnp.array([RegimeId.alive] * 2),
+            "regime": jnp.array([RegimeId.alive] * 2),
         },
         log_level="off",
     )
