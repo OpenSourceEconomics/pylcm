@@ -76,7 +76,9 @@ def test_get_Q_and_F_function():
         labor_supply=labor_supply,
         wealth=wealth,
         **internal_params["working_life"],
-        next_V_arr=jnp.empty(0),  # Terminal period doesn't use continuation value
+        next_regime_to_V_arr=jnp.empty(
+            0
+        ),  # Terminal period doesn't use continuation value
     )
 
     assert_array_equal(

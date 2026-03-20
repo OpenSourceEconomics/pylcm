@@ -4,6 +4,7 @@ import dataclasses
 import functools
 import inspect
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from types import MappingProxyType
 from typing import cast
 
@@ -24,7 +25,11 @@ from lcm.input_processing.regime_processing import (
 )
 from lcm.input_processing.util import get_variable_info
 from lcm.interfaces import PhaseVariantContainer
-from lcm.logging import get_logger
+from lcm.logging import LogLevel, get_logger
+from lcm.persistence import (
+    save_simulate_snapshot,
+    save_solve_snapshot,
+)
 from lcm.regime import Regime
 from lcm.simulation.result import SimulationResult
 from lcm.simulation.simulate import simulate
@@ -156,9 +161,11 @@ class Model:
 
     def solve(
         self,
-        params: UserParams,
         *,
-        debug_mode: bool = True,
+        params: UserParams,
+        log_level: LogLevel = "progress",
+        log_path: str | Path | None = None,
+        log_keep_n_latest: int = 3,
     ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
         """Solve the model using the pre-computed functions.
 
@@ -171,11 +178,18 @@ class Model:
                   regime_0
                 - Function level: {"regime_0": {"func": {"arg_0": 0.0}}} - direct
                   specification
-            debug_mode: Whether to enable debug logging
+            log_level: Logging verbosity. `"off"` suppresses output, `"warning"` shows
+                NaN/Inf warnings, `"progress"` adds timing, `"debug"` adds stats and
+                requires `log_path`.
+            log_path: Directory for persisting debug snapshots. Required when
+                `log_level="debug"`.
+            log_keep_n_latest: Maximum number of debug snapshots to keep on disk.
 
         Returns:
             Immutable mapping of period to a value function array for each regime.
+
         """
+        _validate_log_args(log_level=log_level, log_path=log_path)
         internal_params = process_params(
             params=params, params_template=self._params_template
         )
@@ -184,24 +198,42 @@ class Model:
             internal_params=internal_params,
             ages=self.ages,
         )
-        return solve(
+        period_to_regime_to_V_arr = solve(
             internal_params=internal_params,
             ages=self.ages,
             internal_regimes=self.internal_regimes,
-            logger=get_logger(debug_mode=debug_mode),
+            logger=get_logger(log_level=log_level),
         )
+        if log_level == "debug" and log_path is not None:
+            save_solve_snapshot(
+                model=self,
+                params=params,
+                period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+                log_path=Path(log_path),
+                log_keep_n_latest=log_keep_n_latest,
+            )
+        return period_to_regime_to_V_arr
 
     def simulate(
         self,
+        *,
         params: UserParams,
         initial_conditions: Mapping[str, Array],
-        V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
-        *,
+        period_to_regime_to_V_arr: MappingProxyType[
+            int, MappingProxyType[RegimeName, FloatND]
+        ]
+        | None,
         check_initial_conditions: bool = True,
         seed: int | None = None,
-        debug_mode: bool = True,
+        log_level: LogLevel = "progress",
+        log_path: str | Path | None = None,
+        log_keep_n_latest: int = 3,
     ) -> SimulationResult:
-        """Simulate the model forward using pre-computed value functions.
+        """Simulate the model forward, optionally solving first.
+
+        When `period_to_regime_to_V_arr` is `None`, the model is solved before
+        simulating. Pass pre-computed value functions from `solve()` to skip the
+        solve step.
 
         Args:
             params: Model parameters compatible with `get_params_template()`.
@@ -216,16 +248,23 @@ class Model:
                 All arrays must have the same length (number of subjects). The
                 `"regime"` entry must contain integer regime codes (from
                 `model.regime_names_to_ids`).
-            V_arr_dict: Value function arrays from solve().
+            period_to_regime_to_V_arr: Value function arrays from `solve()`.
+                When `None`, the model is solved automatically before simulating.
             check_initial_conditions: Whether to validate initial conditions.
             seed: Random seed.
-            debug_mode: Whether to enable debug logging.
+            log_level: Logging verbosity. `"off"` suppresses output, `"warning"` shows
+                NaN/Inf warnings, `"progress"` adds timing, `"debug"` adds stats and
+                requires `log_path`.
+            log_path: Directory for persisting debug snapshots. Required when
+                `log_level="debug"`.
+            log_keep_n_latest: Maximum number of debug snapshots to keep on disk.
 
         Returns:
             SimulationResult object. Call .to_dataframe() to get a pandas DataFrame,
             optionally with additional_targets.
 
         """
+        _validate_log_args(log_level=log_level, log_path=log_path)
         internal_params = process_params(
             params=params, params_template=self._params_template
         )
@@ -242,84 +281,43 @@ class Model:
             internal_params=internal_params,
             ages=self.ages,
         )
-        return simulate(
-            internal_params=internal_params,
-            initial_conditions=initial_conditions,
-            internal_regimes=self.internal_regimes,
-            regime_names_to_ids=self.regime_names_to_ids,
-            logger=get_logger(debug_mode=debug_mode),
-            V_arr_dict=V_arr_dict,
-            ages=self.ages,
-            simulation_output_dtypes=self.simulation_output_dtypes,
-            seed=seed,
-        )
-
-    def solve_and_simulate(
-        self,
-        params: UserParams,
-        initial_conditions: Mapping[str, Array],
-        *,
-        check_initial_conditions: bool = True,
-        seed: int | None = None,
-        debug_mode: bool = True,
-    ) -> SimulationResult:
-        """Solve and then simulate the model in one call.
-
-        Args:
-            params: Model parameters compatible with `get_params_template()`.
-                Parameters can be provided at exactly one of three levels:
-                - Model level: {"arg_0": 0.0} - propagates to all functions needing
-                  arg_0
-                - Regime level: {"regime_0": {"arg_0": 0.0}} - propagates within
-                  regime_0
-                - Function level: {"regime_0": {"func": {"arg_0": 0.0}}} - direct
-                  specification
-            initial_conditions: Mapping of state names (plus `"regime"`) to arrays.
-                All arrays must have the same length (number of subjects). The
-                `"regime"` entry must contain integer regime codes (from
-                `model.regime_names_to_ids`).
-            check_initial_conditions: Whether to validate initial conditions.
-            seed: Random seed.
-            debug_mode: Whether to enable debug logging.
-
-        Returns:
-            SimulationResult object. Call .to_dataframe() to get a pandas DataFrame,
-            optionally with additional_targets.
-
-        """
-        internal_params = process_params(
-            params=params, params_template=self._params_template
-        )
-        if check_initial_conditions:
-            validate_initial_conditions(
-                initial_conditions=initial_conditions,
-                internal_regimes=self.internal_regimes,
-                regime_names_to_ids=self.regime_names_to_ids,
+        log = get_logger(log_level=log_level)
+        if period_to_regime_to_V_arr is None:
+            period_to_regime_to_V_arr = solve(
                 internal_params=internal_params,
                 ages=self.ages,
+                internal_regimes=self.internal_regimes,
+                logger=log,
             )
-        validate_regime_transitions_all_periods(
-            internal_regimes=self.internal_regimes,
-            internal_params=internal_params,
-            ages=self.ages,
-        )
-        V_arr_dict = solve(
-            internal_params=internal_params,
-            ages=self.ages,
-            internal_regimes=self.internal_regimes,
-            logger=get_logger(debug_mode=debug_mode),
-        )
-        return simulate(
+        result = simulate(
             internal_params=internal_params,
             initial_conditions=initial_conditions,
             internal_regimes=self.internal_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
-            logger=get_logger(debug_mode=debug_mode),
-            V_arr_dict=V_arr_dict,
+            logger=log,
+            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
             ages=self.ages,
             simulation_output_dtypes=self.simulation_output_dtypes,
             seed=seed,
         )
+        if log_level == "debug" and log_path is not None:
+            save_simulate_snapshot(
+                model=self,
+                params=params,
+                initial_conditions=initial_conditions,
+                period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+                result=result,
+                log_path=Path(log_path),
+                log_keep_n_latest=log_keep_n_latest,
+            )
+        return result
+
+
+def _validate_log_args(*, log_level: LogLevel, log_path: str | Path | None) -> None:
+    """Raise ValueError if log_level='debug' but log_path is not set."""
+    if log_level == "debug" and log_path is None:
+        msg = "log_path is required when log_level='debug'"
+        raise ValueError(msg)
 
 
 def _build_regimes_and_template(

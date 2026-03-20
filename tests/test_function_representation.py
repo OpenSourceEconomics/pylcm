@@ -14,7 +14,7 @@ from lcm.function_representation import (
     _get_interpolator,
     _get_label_translator,
     _get_lookup_function,
-    get_value_function_representation,
+    get_V_interpolator,
 )
 from lcm.grids import ContinuousGrid, DiscreteGrid
 from lcm.interfaces import (
@@ -50,7 +50,11 @@ def test_function_evaluator_with_one_continuous_variable():
     next_V_arr = jnp.pi * wealth_grid.to_jax() + 2
 
     # create the evaluator
-    evaluator = get_value_function_representation(state_space_info)
+    evaluator = get_V_interpolator(
+        state_space_info=state_space_info,
+        state_prefix="next_",
+        V_arr_name="next_V_arr",
+    )
 
     # partial the function values into the evaluator
     func = partial(evaluator, next_V_arr=next_V_arr)
@@ -71,7 +75,11 @@ def test_function_evaluator_with_one_discrete_variable(binary_discrete_grid):
     )
 
     # create the evaluator
-    evaluator = get_value_function_representation(state_space_info)
+    evaluator = get_V_interpolator(
+        state_space_info=state_space_info,
+        state_prefix="next_",
+        V_arr_name="next_V_arr",
+    )
 
     # partial the function values into the evaluator
     func = partial(evaluator, next_V_arr=next_V_arr)
@@ -127,13 +135,12 @@ def test_function_evaluator(binary_discrete_grid):
     )
 
     # create the evaluator
-    evaluator = get_value_function_representation(
+    evaluator = get_V_interpolator(
         state_space_info=state_space_info,
+        state_prefix="next_",
+        V_arr_name="next_V_arr",
     )
 
-    # test the evaluator; note that the prefix 'next_' is added to the variable names
-    # by default, and that the argument name of the value function array is 'next_V_arr'
-    # by default; these can be changed when calling get_value_function_representation
     out = evaluator(
         next_retired=1,
         next_insured=0,
@@ -232,10 +239,10 @@ def test_get_function_evaluator_illustrative():
     values = jnp.pi * a_grid.to_jax() + 2
 
     # create the evaluator
-    evaluator = get_value_function_representation(
+    evaluator = get_V_interpolator(
         state_space_info=state_space_info,
-        name_of_values_on_grid="values_name",
-        input_prefix="prefix_",
+        V_arr_name="values_name",
+        state_prefix="prefix_",
     )
 
     # partial the function values into the evaluator
@@ -357,7 +364,11 @@ def test_function_evaluator_performs_linear_extrapolation():
     next_V_arr = jnp.pi * wealth_grid.to_jax() + 2
 
     # create the evaluator
-    evaluator = get_value_function_representation(state_space_info)
+    evaluator = get_V_interpolator(
+        state_space_info=state_space_info,
+        state_prefix="next_",
+        V_arr_name="next_V_arr",
+    )
 
     # partial the function values into the evaluator
     func = partial(evaluator, next_V_arr=next_V_arr)

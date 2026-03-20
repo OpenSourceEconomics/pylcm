@@ -1,15 +1,14 @@
 """Simulation result object with deferred DataFrame computation."""
 
-import contextlib
 import inspect
 import pickle
-import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal
 
+import cloudpickle
 import jax.numpy as jnp
 import pandas as pd
 from dags import concatenate_functions
@@ -20,6 +19,7 @@ from lcm.ages import AgeGrid
 from lcm.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
+from lcm.persistence import atomic_dump
 from lcm.typing import (
     FlatRegimeParams,
     FloatND,
@@ -46,19 +46,22 @@ class SimulationResult:
         ],
         internal_regimes: MappingProxyType[RegimeName, InternalRegime],
         internal_params: InternalParams,
-        V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
+        period_to_regime_to_V_arr: MappingProxyType[
+            int, MappingProxyType[RegimeName, FloatND]
+        ],
         ages: AgeGrid,
         simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     ) -> None:
         self._raw_results = raw_results
         self._internal_regimes = internal_regimes
         self._internal_params = internal_params
-        self._V_arr_dict = V_arr_dict
+        self._period_to_regime_to_V_arr = period_to_regime_to_V_arr
         self._ages = ages
         self._metadata = _compute_metadata(
             internal_regimes=internal_regimes,
             raw_results=raw_results,
             simulation_output_dtypes=simulation_output_dtypes,
+            ages=ages,
         )
         self._available_targets = sorted(
             _collect_all_available_targets(internal_regimes)
@@ -77,11 +80,11 @@ class SimulationResult:
         return self._internal_params
 
     @property
-    def V_arr_dict(
+    def period_to_regime_to_V_arr(
         self,
     ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
         """Value function arrays from the solution."""
-        return self._V_arr_dict
+        return self._period_to_regime_to_V_arr
 
     @property
     def regime_names(self) -> list[str]:
@@ -169,8 +172,6 @@ class SimulationResult:
     ) -> Path:
         """Serialize the SimulationResult to a file.
 
-        Note: This requires the optional dependency 'cloudpickle'.
-
         Args:
             path: File path to save the pickle.
             protocol: Int which indicates which protocol should be used by the pickler,
@@ -181,13 +182,11 @@ class SimulationResult:
             The path where the object was saved.
 
         """
-        return _atomic_dump(self, path, protocol=protocol)
+        return atomic_dump(self, path, protocol=protocol)
 
     @classmethod
     def from_pickle(cls, path: str | Path) -> SimulationResult:
         """Deserialize a SimulationResult from a pickle file.
-
-        Note: This requires the optional dependency 'cloudpickle'.
 
         Args:
             path: File path to read the pickle from.
@@ -196,11 +195,6 @@ class SimulationResult:
             The unpickled SimulationResult object.
 
         """
-        try:
-            import cloudpickle  # noqa: PLC0415
-        except ModuleNotFoundError as e:
-            raise ModuleNotFoundError(CLOUDPICKLE_IMPORT_ERROR_MSG) from e
-
         p = Path(path)
         with p.open("rb") as f:
             obj = cloudpickle.load(f)
@@ -262,6 +256,7 @@ def _compute_metadata(
         RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
     ],
     simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
+    ages: AgeGrid,
 ) -> SimulationMetadata:
     """Compute metadata from internal regimes, raw results, and output dtypes."""
     regime_names = list(internal_regimes.keys())
@@ -289,7 +284,7 @@ def _compute_metadata(
         discrete_categories[var_name] = tuple(dtype.categories)
         discrete_ordered[var_name] = bool(dtype.ordered)
 
-    n_periods = len(raw_results[regime_names[0]])
+    n_periods = ages.n_periods
     n_subjects = _get_n_subjects(raw_results)
 
     return SimulationMetadata(
@@ -698,48 +693,3 @@ def _get_function_variables(
 ) -> tuple[str, ...]:
     """Get variable names from signature, excluding flat param names."""
     return tuple(p for p in inspect.signature(func).parameters if p not in param_names)
-
-
-def _atomic_dump(obj: SimulationResult, path: str | Path, *, protocol: int) -> Path:
-    """Serialize `obj` to `path` in an atomic (all-or-nothing) way.
-
-    Args:
-        obj: SimulationResult to serialize.
-        path: File path to save the pickle.
-        protocol: Int which indicates which protocol should be used by the pickler.
-            The possible values are 0, 1, 2, 3, 4, 5. See
-            https://docs.python.org/3/library/pickle.html.
-
-    Returns:
-        The path where the object was saved.
-
-    """
-    try:
-        import cloudpickle  # noqa: PLC0415
-    except ModuleNotFoundError as e:
-        raise ModuleNotFoundError(CLOUDPICKLE_IMPORT_ERROR_MSG) from e
-
-    p = Path(path)
-    if not p.parent.is_dir():
-        raise FileNotFoundError(f"Parent directory does not exist: {p.parent}")
-
-    tmp: Path | None = None
-    try:
-        # Write to a uniquely-named temp file in the *same directory* as the target.
-        with tempfile.NamedTemporaryFile(mode="wb", dir=p.parent, delete=False) as f:
-            tmp = Path(f.name)
-            cloudpickle.dump(obj, f, protocol=protocol)
-
-        # Atomic replace: after this line, readers either see the old file or the new
-        # one, never a partially-written file. (Temp file is closed already, which
-        # matters on Windows.)
-        tmp.replace(p)
-        tmp = None
-        return p
-    finally:
-        # If anything failed before the replace succeeded, delete the temp file. We used
-        # delete=False so we can close the file before replacing (needed on Windows), so
-        # the context manager will not auto-delete it for us.
-        if tmp is not None:
-            with contextlib.suppress(OSError):
-                tmp.unlink()

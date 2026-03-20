@@ -8,6 +8,8 @@ continuous version.
 
 """
 
+import functools
+
 import jax.numpy as jnp
 
 from lcm import AgeGrid, DiscreteGrid, Model, Regime, categorical
@@ -133,6 +135,7 @@ dead = Regime(
 )
 
 
+@functools.cache
 def get_model(n_periods: int) -> Model:
     ages = AgeGrid(start=50, stop=50 + (n_periods - 1) * 10, step="10Y")
     final_age_alive = 50 + (n_periods - 2) * 10

@@ -10,25 +10,28 @@ induction and simulates forward.
 ## Solving
 
 ```python
-V_arr_dict = model.solve(params)
+period_to_regime_to_V_arr = model.solve(params=params)
 ```
 
 Performs backward induction using dynamic programming. Returns an immutable mapping of
 `period -> regime_name -> value_function_array`.
 
-### Debug mode
+### Log levels
 
-- `debug_mode=True` (default): Enables period-by-period logging so you can track
-  progress and diagnose issues. Use this while developing.
-- `debug_mode=False`: Disables debug logging. Use for production runs.
-
-JIT compilation is controlled separately via `enable_jit` in the `Model` constructor.
-Setting `enable_jit=False` gives clearer error tracebacks when debugging, but makes
-solving and simulating **much** slower.
+Control console output and snapshot persistence with `log_level`:
 
 ```python
-V_arr_dict = model.solve(params, debug_mode=False)
+# Default: progress + timing
+period_to_regime_to_V_arr = model.solve(params=params)
+
+# Silent
+period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
+
+# Full diagnostics + disk snapshots
+period_to_regime_to_V_arr = model.solve(params=params, log_level="debug", log_path="./debug/")
 ```
+
+See [Debugging](debugging.md) for details on log levels and debug snapshots.
 
 ## Simulating
 
@@ -36,7 +39,7 @@ V_arr_dict = model.solve(params, debug_mode=False)
 result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
-    V_arr_dict=V_arr_dict,
+    period_to_regime_to_V_arr=period_to_regime_to_V_arr,
 )
 ```
 
@@ -44,17 +47,18 @@ Forward simulation using solved value functions. Each agent starts from the give
 conditions and makes optimal decisions at each period. Returns a `SimulationResult`
 object.
 
-## Solve and Simulate (combined)
+## Simulate without pre-solving
+
+When `period_to_regime_to_V_arr=None`, `simulate()` solves the model automatically before simulating.
+Use this when you don't need the raw value function arrays:
 
 ```python
-result = model.solve_and_simulate(
+result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
+    period_to_regime_to_V_arr=None,
 )
 ```
-
-Convenience method combining both steps. Use when you don't need the raw value function
-arrays.
 
 ## Initial Conditions
 
@@ -62,7 +66,7 @@ arrays.
 
 The standard way to supply initial conditions is as a pandas DataFrame with one row per
 agent. Use `initial_conditions_from_dataframe` to convert it to the format expected by
-`simulate()` and `solve_and_simulate()`:
+`simulate()`:
 
 ```python
 import pandas as pd
@@ -109,7 +113,9 @@ initial_conditions = {
 - `check_initial_conditions=True`: Validates that initial states are on-grid and regimes
   are valid. Set to `False` to skip validation.
 - `seed=None`: Random seed for stochastic simulations (int).
-- `debug_mode=True`: Same as for `solve()`.
+- `log_level="progress"`: Controls logging verbosity (same options as `solve()`).
+- `log_path=None`: Directory for debug snapshots (when `log_level="debug"`).
+- `log_keep_n_latest=3`: Maximum snapshot directories to retain.
 
 ### Heterogeneous initial ages
 
@@ -199,7 +205,7 @@ loaded = SimulationResult.from_pickle("my_results.pkl")
 ```python
 result.raw_results      # regime -> period -> PeriodRegimeSimulationData
 result.internal_params  # processed parameter object
-result.V_arr_dict       # value function arrays from solve()
+result.period_to_regime_to_V_arr       # value function arrays from solve()
 ```
 
 ## Typical Workflow
@@ -227,10 +233,11 @@ initial_df = pd.DataFrame({
 })
 initial_conditions = initial_conditions_from_dataframe(initial_df, model=model)
 
-# 4. Solve and simulate
-result = model.solve_and_simulate(
+# 4. Simulate (solves automatically when period_to_regime_to_V_arr=None)
+result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
+    period_to_regime_to_V_arr=None,
 )
 
 # 5. Analyze

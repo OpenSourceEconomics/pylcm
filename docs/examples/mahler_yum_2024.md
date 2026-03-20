@@ -48,7 +48,7 @@ initial_states_high =   {
                         }
 
 # Solve and simulate for high discount factor type
-result = MAHLER_YUM_MODEL.solve_and_simulate(
+result = MAHLER_YUM_MODEL.simulate(
     params={
         "alive": {
             "discount_factor": beta_mean + beta_std,
@@ -62,6 +62,7 @@ result = MAHLER_YUM_MODEL.solve_and_simulate(
             MAHLER_YUM_MODEL.regime_names_to_ids["alive"],
         ),
     },
+    period_to_regime_to_V_arr=None,
     seed=8295,
 )
 ```

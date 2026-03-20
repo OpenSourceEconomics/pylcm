@@ -21,13 +21,14 @@ from lcm_examples.mortality import get_model, get_params
 model = get_model(n_periods=5)
 params = get_params(n_periods=5)
 
-result = model.solve_and_simulate(
+result = model.simulate(
     params=params,
     initial_conditions={
         "age": jnp.full(100, model.ages.values[0]),
         "wealth": jnp.linspace(1, 100, 100),
         "regime": jnp.full(100, model.regime_names_to_ids["working_life"]),
     },
+    period_to_regime_to_V_arr=None,
     seed=1234,
 )
 

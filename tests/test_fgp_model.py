@@ -22,7 +22,7 @@ _N_SUBJECTS = 100
 _SEED = 42
 
 
-def _solve_and_simulate(shock_type):
+def _simulate(shock_type):
     model = get_model(
         N_PERIODS,
         shock_type,
@@ -39,7 +39,7 @@ def _solve_and_simulate(shock_type):
         interest_rate=R,
         discount_factor=BETA,
     )
-    result = model.solve_and_simulate(
+    result = model.simulate(
         params=params,
         initial_conditions={
             "wealth": jnp.full(_N_SUBJECTS, 5.0),
@@ -47,6 +47,7 @@ def _solve_and_simulate(shock_type):
             "age": jnp.full(_N_SUBJECTS, 20.0),
             "regime": jnp.array([RegimeId.alive] * _N_SUBJECTS),
         },
+        period_to_regime_to_V_arr=None,
         seed=_SEED,
     )
     return result.to_dataframe()
@@ -80,7 +81,7 @@ def test_model_solves(shock_type):
 @pytest.mark.parametrize("shock_type", ["rouwenhorst", "tauchen"])
 def test_model_simulates(shock_type):
     """Model simulates without error."""
-    df = _solve_and_simulate(shock_type)
+    df = _simulate(shock_type)
     assert len(df) > 0
     assert "wealth" in df.columns
     assert "consumption" in df.columns
@@ -90,7 +91,7 @@ def test_model_simulates(shock_type):
 @pytest.mark.parametrize("shock_type", ["rouwenhorst", "tauchen"])
 def test_simulated_income_moments(shock_type):
     """Simulated income moments are in the right ballpark."""
-    df = _solve_and_simulate(shock_type)
+    df = _simulate(shock_type)
     alive_df = df[df["regime"] == "alive"]
 
     # Income on the grid should have mean near 0 and std near sigma_y
@@ -105,8 +106,8 @@ def test_rouwenhorst_income_moments_closer_to_theory():
     """Rouwenhorst income moments are at least as close to theory as Tauchen's."""
     expected_var = SIGMA_EPS**2 / (1 - RHO**2)
 
-    df_r = _solve_and_simulate("rouwenhorst")
-    df_t = _solve_and_simulate("tauchen")
+    df_r = _simulate("rouwenhorst")
+    df_t = _simulate("tauchen")
 
     r_var = df_r[df_r["regime"] == "alive"]["income"].var()
     t_var = df_t[df_t["regime"] == "alive"]["income"].var()

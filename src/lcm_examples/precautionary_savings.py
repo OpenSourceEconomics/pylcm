@@ -9,6 +9,7 @@ of Fella, Gallipoli & Pan (RED 2019). See `tests/test_fgp_model.py`.
 
 """
 
+import functools
 from typing import Literal
 
 from jax import numpy as jnp
@@ -83,6 +84,7 @@ class RegimeId:
 # ---------------------------------------------------------------------------
 
 
+@functools.cache
 def get_model(
     n_periods: int,
     shock_type: ShockType,

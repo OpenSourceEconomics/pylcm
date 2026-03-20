@@ -29,7 +29,9 @@ classifiers = [
 ]
 dynamic = [ "version" ]
 dependencies = [
+  "cloudpickle>=3.1.2",
   "dags>=0.5.1",
+  "h5py>=3.12",
   "jax>=0.9",
   "jaxtyping>=0.3.2",
   "pandas",
@@ -167,7 +169,7 @@ expand_tables = [
 ]
 
 [tool.pytest]
-ini_options.addopts = [ "--pdbcls=pdbp:Pdb" ]
+ini_options.addopts = [ "--pdbcls=pdbp:Pdb", "--dist", "loadfile" ]
 ini_options.filterwarnings = []
 ini_options.markers = [
   "illustrative: Tests are designed for illustrative purposes",
@@ -179,25 +181,20 @@ rules.ambiguous-protocol-member = "error"
 rules.deprecated = "error"
 rules.division-by-zero = "error"
 rules.ignore-comment-unknown-rule = "error"
-rules.invalid-argument-type = "error"
+rules.ineffective-final = "error"
+rules.invalid-enum-member-annotation = "error"
 rules.invalid-ignore-comment = "error"
-rules.invalid-return-type = "error"
-rules.possibly-missing-attribute = "error"
-rules.possibly-missing-implicit-call = "error"
-rules.possibly-missing-import = "error"
-rules.possibly-unresolved-reference = "error"
+rules.invalid-legacy-positional-parameter = "error"
 rules.redundant-cast = "error"
-rules.undefined-reveal = "error"
-rules.unresolved-global = "error"
-rules.unsupported-base = "error"
+rules.unused-awaitable = "error"
 rules.unused-ignore-comment = "error"
-rules.useless-overload-body = "error"
 src.exclude = [ "docs/**/*.ipynb" ]
 src.include = [ "src/", "tests/" ]
 
 [tool.pixi.dependencies]
 python = "~=3.14.0"
 cloudpickle = ">=3.1.2,<4"
+h5py = ">=3.12"
 jupyterlab = "*"
 memory_profiler = "*"
 numpy = ">=2.4"

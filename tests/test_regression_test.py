@@ -39,14 +39,15 @@ def test_regression_test():
         interest_rate=0.05,
     )
 
-    got_solve: Mapping[int, Mapping[str, FloatND]] = model.solve(params)
-    got_simulate = model.solve_and_simulate(
+    got_solve: Mapping[int, Mapping[str, FloatND]] = model.solve(params=params)
+    got_simulate = model.simulate(
         params=params,
         initial_conditions={
             "wealth": jnp.array([5.0, 20, 40, 70]),
             "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
             "regime": jnp.array([RegimeId.working_life] * 4),
         },
+        period_to_regime_to_V_arr=None,
     ).to_dataframe()
 
     # Compare solution (iterate over expected regimes — got may have additional ones)
@@ -147,13 +148,14 @@ def test_model_with_different_grid_types(grid_type: str):
     )
 
     # This should complete without error
-    result = model.solve_and_simulate(
+    result = model.simulate(
         params=params,
         initial_conditions={
             "wealth": jnp.array([5.0, 20, 40, 70]),
             "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
             "regime": jnp.array([RegimeId.working_life] * 4),
         },
+        period_to_regime_to_V_arr=None,
     )
     df = result.to_dataframe()
 

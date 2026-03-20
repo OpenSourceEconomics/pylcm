@@ -28,7 +28,7 @@ from lcm_examples.precautionary_savings_health import get_model, get_params
 model = get_model()
 params = get_params()
 
-result = model.solve_and_simulate(
+result = model.simulate(
     params=params,
     initial_conditions={
         "age": jnp.full(1_000, model.ages.values[0]),
@@ -36,6 +36,7 @@ result = model.solve_and_simulate(
         "health": jnp.full(1_000, 1.0),
         "regime": jnp.full(1_000, model.regime_names_to_ids["working_life"]),
     },
+    period_to_regime_to_V_arr=None,
 )
 
 df = result.to_dataframe(additional_targets="all")

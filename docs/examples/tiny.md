@@ -32,9 +32,10 @@ initial_df = pd.DataFrame({
 
 initial_conditions = initial_conditions_from_dataframe(initial_df, model=model)
 
-result = model.solve_and_simulate(
+result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
+    period_to_regime_to_V_arr=None,
 )
 
 df = result.to_dataframe(additional_targets="all")

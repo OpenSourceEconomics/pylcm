@@ -365,7 +365,7 @@ class _OutcomeMapping:
     """Metadata for the outcome level of a transition probability array."""
 
     level_name: str
-    """Level name in the MultiIndex (e.g., ``"next_health"`` or ``"next_regime"``)."""
+    """Level name in the MultiIndex (e.g., `"next_health"` or `"next_regime"`)."""
 
     label_to_code: MappingProxyType[str, int]
     """Immutable mapping from string labels to integer codes."""

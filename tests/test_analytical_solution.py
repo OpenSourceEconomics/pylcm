@@ -66,16 +66,24 @@ def test_analytical_solution(model_name, model_and_params):
     model = model_and_params["model"]
     params = model_and_params["params"]
 
-    V_arr_dict: dict[int, dict[str, FloatND]] = model.solve(params=params)
+    period_to_regime_to_V_arr: dict[int, dict[str, FloatND]] = model.solve(
+        params=params
+    )
 
-    V_arr_dict_list = [V_arr_dict[period] for period in sorted(V_arr_dict.keys())]
+    period_to_regime_to_V_arr_list = [
+        period_to_regime_to_V_arr[period]
+        for period in sorted(period_to_regime_to_V_arr.keys())
+    ]
 
     v_arr_worker = np.stack(
-        [v_arr_dict["working_life"] for v_arr_dict in V_arr_dict_list[:-1]]
+        [
+            v_arr_dict["working_life"]
+            for v_arr_dict in period_to_regime_to_V_arr_list[:-1]
+        ]
     )
 
     v_arr_retired = np.stack(
-        [v_arr_dict["retirement"] for v_arr_dict in V_arr_dict_list[:-1]]
+        [v_arr_dict["retirement"] for v_arr_dict in period_to_regime_to_V_arr_list[:-1]]
     )
 
     numerical = {

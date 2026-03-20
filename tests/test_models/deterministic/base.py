@@ -2,6 +2,8 @@
 transitions (no stochastic mortality).
 """
 
+import functools
+
 import jax.numpy as jnp
 
 from lcm import AgeGrid, DiscreteGrid, Regime, categorical
@@ -100,6 +102,7 @@ retirement = Regime(
 from lcm import Model  # noqa: E402
 
 
+@functools.cache
 def get_model(n_periods: int) -> Model:
     ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]

@@ -38,11 +38,11 @@ from tests.test_models.stochastic import (
 # ======================================================================================
 
 
-def test_model_solve_and_simulate_with_stochastic_model():
+def test_model_simulate_with_stochastic_model():
     model = get_model(n_periods=4)
     params = get_params(n_periods=4)
 
-    result = model.solve_and_simulate(
+    result = model.simulate(
         params=params,
         initial_conditions={
             "health": jnp.array([1, 1, 0, 0]),
@@ -51,6 +51,7 @@ def test_model_solve_and_simulate_with_stochastic_model():
             "age": jnp.array([40.0, 40.0, 40.0, 40.0]),
             "regime": jnp.array([RegimeId.working_life] * 4),
         },
+        period_to_regime_to_V_arr=None,
     )
     df = result.to_dataframe().query('regime == "working_life"')
 
@@ -186,10 +187,10 @@ def test_compare_deterministic_and_stochastic_results_value_function(
     # Compare value function arrays
     # ==================================================================================
     solution_deterministic: Mapping[int, Mapping[str, FloatND]] = (
-        model_deterministic.solve(params)
+        model_deterministic.solve(params=params)
     )
     solution_stochastic: Mapping[int, Mapping[str, FloatND]] = model_stochastic.solve(
-        params
+        params=params
     )
 
     for period in range(model_deterministic.n_periods - 1):
@@ -211,13 +212,13 @@ def test_compare_deterministic_and_stochastic_results_value_function(
     }
 
     simulation_deterministic = model_deterministic.simulate(
-        params,
-        V_arr_dict=solution_deterministic,
+        params=params,
+        period_to_regime_to_V_arr=solution_deterministic,
         initial_conditions=initial_conditions,
     )
     simulation_stochastic = model_stochastic.simulate(
-        params,
-        V_arr_dict=solution_stochastic,
+        params=params,
+        period_to_regime_to_V_arr=solution_stochastic,
         initial_conditions=initial_conditions,
     )
     df_deterministic = simulation_deterministic.to_dataframe().query(
@@ -317,7 +318,7 @@ def test_stochastic_next_function_with_no_arguments():
         "discount_factor": 0.95,
         "working_life": {"next_regime": {"final_age_alive": 1}},
     }
-    V = model.solve(params)
+    V = model.solve(params=params)
     assert all(
         jnp.all(jnp.isfinite(V[p]["working_life"])) for p in V if "working_life" in V[p]
     )
@@ -339,7 +340,7 @@ def test_stochastic_next_depending_on_continuous_state():
         "discount_factor": 0.95,
         "working_life": {"next_regime": {"final_age_alive": 1}},
     }
-    V = model.solve(params)
+    V = model.solve(params=params)
     assert all(
         jnp.all(jnp.isfinite(V[p]["working_life"])) for p in V if "working_life" in V[p]
     )
@@ -367,4 +368,4 @@ def test_stochastic_regime_transition_active_at_last_period_raises():
         InvalidRegimeTransitionProbabilitiesError,
         match=r"Non-terminal regime.*active at the last period",
     ):
-        model.solve(mortality.get_params(n_periods=4))
+        model.solve(params=mortality.get_params(n_periods=4))

@@ -11,9 +11,8 @@ come back as a DataFrame too, so the typical workflow is DataFrame in, DataFrame
 ## Initial Conditions from a DataFrame
 
 Convert a pandas DataFrame into the `initial_conditions` dict expected by
-`model.simulate()` and `model.solve_and_simulate()`. This is the standard way to supply
-initial conditions. The returned dict includes all state arrays plus a `"regime"`
-array with integer codes.
+`model.simulate()`. This is the standard way to supply initial conditions. The returned
+dict includes all state arrays plus a `"regime"` array with integer codes.
 
 ```python
 from lcm import initial_conditions_from_dataframe
@@ -27,9 +26,10 @@ df = pd.DataFrame({
 
 initial_conditions = initial_conditions_from_dataframe(df, model=model)
 
-result = model.solve_and_simulate(
+result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
+    period_to_regime_to_V_arr=None,
 )
 ```
 

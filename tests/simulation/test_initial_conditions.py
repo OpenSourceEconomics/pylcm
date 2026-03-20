@@ -307,13 +307,14 @@ def test_infeasible_initial_states_detected():
     }
     _working_life = model.regime_names_to_ids["working_life"]
     with pytest.raises(InvalidInitialConditionsError):
-        model.solve_and_simulate(
+        model.simulate(
             params=params,
             initial_conditions={
                 "age": jnp.array([0.0]),
                 "wealth": jnp.array([0.25]),
                 "regime": jnp.array([_working_life]),
             },
+            period_to_regime_to_V_arr=None,
         )
 
 
@@ -332,13 +333,14 @@ def test_on_grid_state_but_combination_infeasible():
     }
     _working_life = model.regime_names_to_ids["working_life"]
     with pytest.raises(InvalidInitialConditionsError):
-        model.solve_and_simulate(
+        model.simulate(
             params=params,
             initial_conditions={
                 "age": jnp.array([0.0]),
                 "wealth": jnp.array([0.3]),
                 "regime": jnp.array([_working_life]),
             },
+            period_to_regime_to_V_arr=None,
         )
 
 
@@ -352,13 +354,14 @@ def test_extrapolated_initial_states_accepted():
         "working_life": {"next_regime": {"final_age_alive": 1}},
     }
     _working_life = model.regime_names_to_ids["working_life"]
-    model.solve_and_simulate(
+    model.simulate(
         params=params,
         initial_conditions={
             "age": jnp.array([0.0]),
             "wealth": jnp.array([1.0]),
             "regime": jnp.array([_working_life]),
         },
+        period_to_regime_to_V_arr=None,
     )
 
 
@@ -372,13 +375,14 @@ def test_on_grid_initial_states_accepted():
         "working_life": {"next_regime": {"final_age_alive": 1}},
     }
     _working_life = model.regime_names_to_ids["working_life"]
-    model.solve_and_simulate(
+    model.simulate(
         params=params,
         initial_conditions={
             "age": jnp.array([0.0]),
             "wealth": jnp.array([5.0]),
             "regime": jnp.array([_working_life]),
         },
+        period_to_regime_to_V_arr=None,
     )
 
 
@@ -394,12 +398,13 @@ def test_irreg_spaced_grid_with_runtime_points():
     }
     _working_life = model.regime_names_to_ids["working_life"]
     with pytest.raises(InvalidInitialConditionsError):
-        model.solve_and_simulate(
+        model.simulate(
             params=params,
             initial_conditions={
                 "wealth": jnp.array([0.3]),
                 "regime": jnp.array([_working_life]),
             },
+            period_to_regime_to_V_arr=None,
         )
 
 

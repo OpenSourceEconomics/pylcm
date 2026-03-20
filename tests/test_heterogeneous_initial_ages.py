@@ -17,13 +17,14 @@ def test_simulation_with_heterogeneous_initial_ages():
     params = get_params(n_periods)
 
     # Subject 0 starts at age 40, subject 1 starts at age 60
-    result = model.solve_and_simulate(
-        params,
+    result = model.simulate(
+        params=params,
         initial_conditions={
             "age": jnp.array([40.0, 60.0]),
             "wealth": jnp.array([50.0, 50.0]),
             "regime": jnp.array([RegimeId.working_life] * 2),
         },
+        period_to_regime_to_V_arr=None,
     )
     df = result.to_dataframe()
 

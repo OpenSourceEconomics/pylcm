@@ -492,6 +492,7 @@ def _rename_params_to_qnames(
     if not param_names:
         return cast("InternalUserFunction", func)
     mapper = {p: qname_from_tree_path((param_key, p)) for p in param_names}
+
     return cast("InternalUserFunction", rename_arguments(func, mapper=mapper))
 
 

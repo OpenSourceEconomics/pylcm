@@ -160,7 +160,7 @@ model = Model(
 
 # The solve/simulate calls only need the estimated parameters
 params = {"risk_aversion": 1.5, "disutility_of_work": 1.0}
-result = model.solve_and_simulate(params, ...)
+result = model.simulate(params=params, initial_conditions=..., period_to_regime_to_V_arr=None)
 ```
 
 ## What Counts as a Parameter?

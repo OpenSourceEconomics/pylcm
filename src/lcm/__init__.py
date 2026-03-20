@@ -24,6 +24,13 @@ from lcm.pandas_utils import (
     initial_conditions_from_dataframe,
     transition_probs_from_series,
 )
+from lcm.persistence import (
+    SimulateSnapshot,
+    SolveSnapshot,
+    load_snapshot,
+    load_solution,
+    save_solution,
+)
 from lcm.regime import MarkovTransition, Regime
 from lcm.simulation.result import SimulationResult
 
@@ -47,9 +54,14 @@ __all__ = [
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",
     "Regime",
+    "SimulateSnapshot",
     "SimulationResult",
+    "SolveSnapshot",
     "categorical",
     "initial_conditions_from_dataframe",
+    "load_snapshot",
+    "load_solution",
+    "save_solution",
     "shocks",
     "transition_probs_from_series",
     "validate_transition_probs",
