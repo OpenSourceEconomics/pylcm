@@ -59,6 +59,9 @@ class TimeSolve:
     def time_solve(self, n_points):
         self.model.solve(params=self.model_params, log_level="off")
 
+    def peakmem_solve(self, n_points):
+        self.model.solve(params=self.model_params, log_level="off")
+
     def teardown(self, n_points):
         _clear_gpu_memory()
 
@@ -87,6 +90,14 @@ class TimeSimulate:
         self._warmup_time = time.perf_counter() - start
 
     def time_simulate(self, n_subjects):
+        self.model.simulate(
+            params=self.model_params,
+            initial_conditions=self.initial_conditions,
+            V_arr_dict=self.V_arr_dict,
+            log_level="off",
+        )
+
+    def peakmem_simulate(self, n_subjects):
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
@@ -127,6 +138,13 @@ class TimeSolveAndSimulate:
             log_level="off",
         )
 
+    def peakmem_solve_and_simulate(self):
+        self.model.simulate(
+            params=self.model_params,
+            initial_conditions=self.initial_conditions,
+            log_level="off",
+        )
+
     def teardown(self):
         _clear_gpu_memory()
 
@@ -157,6 +175,13 @@ class TimeGridLookup:
         self._warmup_time = time.perf_counter() - start
 
     def time_grid_lookup(self, n_points, grid_type):
+        self.model.simulate(
+            params=self.model_params,
+            initial_conditions=self.initial_conditions,
+            log_level="off",
+        )
+
+    def peakmem_grid_lookup(self, n_points, grid_type):
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,

@@ -36,6 +36,13 @@ class TimeMortality:
             log_level="off",
         )
 
+    def peakmem_mortality(self):
+        self.model.simulate(
+            params=self.model_params,
+            initial_conditions=self.initial_conditions,
+            log_level="off",
+        )
+
     def teardown(self):
         import jax
 
