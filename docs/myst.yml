@@ -46,6 +46,7 @@ project:
         - file: user_guide/parameters.md
         - file: user_guide/pandas_interop.md
         - file: user_guide/solving_and_simulating.md
+        - file: user_guide/benchmarking.md
         - file: user_guide/debugging.md
     - file: explanations/index.md
       title: Explanations
