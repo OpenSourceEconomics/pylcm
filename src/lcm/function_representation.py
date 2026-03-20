@@ -13,13 +13,13 @@ from lcm.ndimage import map_coordinates
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
 
 
-def get_scalar_next_V(
-    state_space_info: StateSpaceInfo,
+def get_V_interpolator(
     *,
-    input_prefix: str = "next_",
-    name_of_values_on_grid: str = "next_V_arr",
+    state_space_info: StateSpaceInfo,
+    state_prefix: str,
+    V_arr_name: str,
 ) -> Callable[..., FloatND]:
-    """Create a function representation of the next value function array.
+    """Create a function representation of a value function array.
 
     The returned function
     ---------------------
@@ -58,12 +58,11 @@ def get_scalar_next_V(
     Args:
         state_space_info: Class containing all information needed to interpret the
             pre-calculated values of a function.
-        input_prefix: Prefix that will be added to all argument names of the resulting
-            function, except for the helpers arguments. Default is "next_"; since the
-            value function is typically evaluated on the next period's state space.
-        name_of_values_on_grid: The name of the argument via which the pre-calculated
-            values, that have been evaluated on the state-space grid, will be passed
-            into the resulting function. Defaults to "next_V_arr".
+        state_prefix: Prefix that will be added to all argument names of the resulting
+            function, except for the helper arguments.
+        V_arr_name: The name of the argument via which the pre-calculated values, that
+            have been evaluated on the state-space grid, will be passed into the
+            resulting function.
 
     Returns:
         A callable that lets you treat the result of pre-calculating a function on the
@@ -86,7 +85,7 @@ def get_scalar_next_V(
 
     for var in state_space_info.discrete_states:
         funcs[f"__{var}_pos__"] = _get_label_translator(
-            in_name=input_prefix + var,
+            in_name=state_prefix + var,
         )
 
     # ==================================================================================
@@ -99,7 +98,7 @@ def get_scalar_next_V(
 
     _out_name = "__interpolation_data__" if _need_interpolation else "__fval__"
     funcs[_out_name] = _get_lookup_function(
-        array_name=name_of_values_on_grid,
+        array_name=V_arr_name,
         axis_names=_discrete_axes,
     )
 
@@ -109,7 +108,7 @@ def get_scalar_next_V(
         # ==============================================================================
         for var, grid_spec in state_space_info.continuous_states.items():
             funcs[f"__{var}_coord__"] = _get_coordinate_finder(
-                in_name=input_prefix + var,
+                in_name=state_prefix + var,
                 grid=grid_spec,
             )
 

@@ -8,7 +8,7 @@ from dags.tree import QNAME_DELIMITER
 from jax import Array
 
 from lcm.dispatchers import productmap
-from lcm.function_representation import get_scalar_next_V
+from lcm.function_representation import get_V_interpolator
 from lcm.functools import get_union_of_args
 from lcm.interfaces import InternalFunctions, StateSpaceInfo
 from lcm.next_state import (
@@ -91,14 +91,19 @@ def get_Q_and_F(
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
         )
-        scalar_next_V = get_scalar_next_V(next_state_space_infos[target_regime_name])
+        V_arr_name = "next_V_arr"
+        next_V_interpolator = get_V_interpolator(
+            state_space_info=next_state_space_infos[target_regime_name],
+            state_prefix="next_",
+            V_arr_name=V_arr_name,
+        )
         # Determine extra kwargs needed by next_V beyond next_states and next_V_arr
         # (e.g. wealth__points for IrregSpacedGrid with runtime-supplied points).
         next_V_extra_param_names[target_regime_name] = frozenset(
-            get_union_of_args([scalar_next_V]) - set(transitions) - {"next_V_arr"}
+            get_union_of_args([next_V_interpolator]) - set(transitions) - {V_arr_name}
         )
         next_V[target_regime_name] = productmap(
-            func=scalar_next_V,
+            func=next_V_interpolator,
             variables=tuple(
                 key for key in transitions if key in stochastic_transition_names
             ),
