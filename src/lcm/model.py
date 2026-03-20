@@ -198,7 +198,7 @@ class Model:
             internal_params=internal_params,
             ages=self.ages,
         )
-        V_arr_dict = solve(
+        period_to_regime_to_V_arr = solve(
             internal_params=internal_params,
             ages=self.ages,
             internal_regimes=self.internal_regimes,
@@ -208,19 +208,21 @@ class Model:
             save_solve_snapshot(
                 model=self,
                 params=params,
-                V_arr_dict=V_arr_dict,
+                period_to_regime_to_V_arr=period_to_regime_to_V_arr,
                 log_path=Path(log_path),
                 log_keep_n_latest=log_keep_n_latest,
             )
-        return V_arr_dict
+        return period_to_regime_to_V_arr
 
     def simulate(
         self,
         *,
         params: UserParams,
         initial_conditions: Mapping[str, Array],
-        V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
-        | None = None,
+        period_to_regime_to_V_arr: MappingProxyType[
+            int, MappingProxyType[RegimeName, FloatND]
+        ]
+        | None,
         check_initial_conditions: bool = True,
         seed: int | None = None,
         log_level: LogLevel = "progress",
@@ -229,8 +231,9 @@ class Model:
     ) -> SimulationResult:
         """Simulate the model forward, optionally solving first.
 
-        When `V_arr_dict` is `None`, the model is solved before simulating. Pass
-        pre-computed value functions from `solve()` to skip the solve step.
+        When `period_to_regime_to_V_arr` is `None`, the model is solved before
+        simulating. Pass pre-computed value functions from `solve()` to skip the
+        solve step.
 
         Args:
             params: Model parameters compatible with `get_params_template()`.
@@ -245,8 +248,8 @@ class Model:
                 All arrays must have the same length (number of subjects). The
                 `"regime"` entry must contain integer regime codes (from
                 `model.regime_names_to_ids`).
-            V_arr_dict: Value function arrays from `solve()`. When `None`, the model
-                is solved automatically before simulating.
+            period_to_regime_to_V_arr: Value function arrays from `solve()`.
+                When `None`, the model is solved automatically before simulating.
             check_initial_conditions: Whether to validate initial conditions.
             seed: Random seed.
             log_level: Logging verbosity. `"off"` suppresses output, `"warning"` shows
@@ -279,8 +282,8 @@ class Model:
             ages=self.ages,
         )
         log = get_logger(log_level=log_level)
-        if V_arr_dict is None:
-            V_arr_dict = solve(
+        if period_to_regime_to_V_arr is None:
+            period_to_regime_to_V_arr = solve(
                 internal_params=internal_params,
                 ages=self.ages,
                 internal_regimes=self.internal_regimes,
@@ -292,7 +295,7 @@ class Model:
             internal_regimes=self.internal_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             logger=log,
-            V_arr_dict=V_arr_dict,
+            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
             ages=self.ages,
             simulation_output_dtypes=self.simulation_output_dtypes,
             seed=seed,
@@ -302,7 +305,7 @@ class Model:
                 model=self,
                 params=params,
                 initial_conditions=initial_conditions,
-                V_arr_dict=V_arr_dict,
+                period_to_regime_to_V_arr=period_to_regime_to_V_arr,
                 result=result,
                 log_path=Path(log_path),
                 log_keep_n_latest=log_keep_n_latest,

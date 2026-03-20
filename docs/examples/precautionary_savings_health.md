@@ -36,7 +36,7 @@ result = model.simulate(
         "health": jnp.full(1_000, 1.0),
         "regime": jnp.full(1_000, model.regime_names_to_ids["working_life"]),
     },
-    V_arr_dict=None,
+    period_to_regime_to_V_arr=None,
 )
 
 df = result.to_dataframe(additional_targets="all")

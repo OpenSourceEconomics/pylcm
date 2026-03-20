@@ -120,8 +120,8 @@ def test_solve_with_runtime_grid():
         "interest_rate": 0.05,
         "alive": {"wealth": {"points": jnp.linspace(1, 10, 5)}},
     }
-    V_arr_dict = model.solve(params=params, log_level="off")
-    assert len(V_arr_dict) > 0
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
+    assert len(period_to_regime_to_V_arr) > 0
 
 
 def test_runtime_grid_matches_fixed():

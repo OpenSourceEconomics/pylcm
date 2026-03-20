@@ -34,7 +34,7 @@ def test_model_with_shock(distribution_type):
             "age": jnp.asarray([0.0, 0.0]),
             "regime": jnp.array([RegimeId.alive] * 2),
         },
-        V_arr_dict=got_solve,
+        period_to_regime_to_V_arr=got_solve,
         seed=42,
     ).to_dataframe()
 

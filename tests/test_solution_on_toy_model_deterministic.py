@@ -294,7 +294,7 @@ def test_deterministic_simulate(discount_factor, n_wealth_points):
             "age": jnp.array([0.0, 0.0, 0.0, 0.0]),
             "regime": jnp.array([RegimeId.alive] * 4),
         },
-        V_arr_dict=None,
+        period_to_regime_to_V_arr=None,
     )
     # Filter to alive regime only (dead regime has trivial values)
     got = (

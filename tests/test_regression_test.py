@@ -47,7 +47,7 @@ def test_regression_test():
             "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
             "regime": jnp.array([RegimeId.working_life] * 4),
         },
-        V_arr_dict=None,
+        period_to_regime_to_V_arr=None,
     ).to_dataframe()
 
     # Compare solution (iterate over expected regimes — got may have additional ones)
@@ -155,7 +155,7 @@ def test_model_with_different_grid_types(grid_type: str):
             "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
             "regime": jnp.array([RegimeId.working_life] * 4),
         },
-        V_arr_dict=None,
+        period_to_regime_to_V_arr=None,
     )
     df = result.to_dataframe()
 

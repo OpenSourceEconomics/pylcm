@@ -213,9 +213,9 @@ Model(
 
 - `model.solve(params=params)` - Solve the model and return value function arrays per
   period and regime
-- `model.simulate(params=params, initial_conditions=initial_conditions, V_arr_dict=V_arr_dict)`
-  \- Simulate forward given solution. `V_arr_dict` is optional; when `None`, the model is
-  solved automatically before simulating.
+- `model.simulate(params=params, initial_conditions=initial_conditions, period_to_regime_to_V_arr=period_to_regime_to_V_arr)`
+  \- Simulate forward given solution. `period_to_regime_to_V_arr` is optional; when
+  `None`, the model is solved automatically before simulating.
 
 ### SimulationResult
 
@@ -225,7 +225,7 @@ Model(
 result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
-    V_arr_dict=None,
+    period_to_regime_to_V_arr=None,
 )
 
 # Convert to DataFrame (deferred computation)
@@ -251,7 +251,7 @@ result.available_targets  # list[str] - computable additional targets
 # Access raw data for advanced users
 result.raw_results  # dict[RegimeName, dict[int, PeriodRegimeSimulationData]]
 result.internal_params  # InternalParams
-result.V_arr_dict  # dict[int, dict[RegimeName, FloatND]]
+result.period_to_regime_to_V_arr  # dict[int, dict[RegimeName, FloatND]]
 
 # Serialization (requires cloudpickle)
 result.to_pickle("path/to/file.pkl")

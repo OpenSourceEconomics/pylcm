@@ -24,7 +24,7 @@ def test_simulation_with_heterogeneous_initial_ages():
             "wealth": jnp.array([50.0, 50.0]),
             "regime": jnp.array([RegimeId.working_life] * 2),
         },
-        V_arr_dict=None,
+        period_to_regime_to_V_arr=None,
     )
     df = result.to_dataframe()
 

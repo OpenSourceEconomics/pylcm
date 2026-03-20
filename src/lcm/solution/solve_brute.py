@@ -5,9 +5,9 @@ from types import MappingProxyType
 import jax.numpy as jnp
 
 from lcm.ages import AgeGrid
-from lcm.error_handling import validate_value_function_array
+from lcm.error_handling import validate_V
 from lcm.interfaces import InternalRegime
-from lcm.logging import format_duration, log_period_timing, log_vf_nan, log_vf_stats
+from lcm.logging import format_duration, log_nan_in_V, log_period_timing, log_V_stats
 from lcm.typing import FloatND, InternalParams, RegimeName
 
 
@@ -32,7 +32,7 @@ def solve(
 
     """
     solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
-    next_V_arr: MappingProxyType[RegimeName, FloatND] = MappingProxyType(
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND] = MappingProxyType(
         {name: jnp.empty(0) for name in internal_regimes}
     )
 
@@ -60,25 +60,23 @@ def solve(
             V_arr = max_Q_over_a(
                 **state_action_space.states,
                 **state_action_space.actions,
-                next_V_arr=next_V_arr,
+                next_regime_to_V_arr=next_regime_to_V_arr,
                 **internal_params[name],
             )
 
-            log_vf_nan(
+            log_nan_in_V(
                 logger=logger,
                 regime_name=name,
                 age=ages.values[period],
                 V_arr=V_arr,
             )
-            log_vf_stats(logger=logger, regime_name=name, V_arr=V_arr)
+            log_V_stats(logger=logger, regime_name=name, V_arr=V_arr)
 
-            validate_value_function_array(
-                V_arr=V_arr, age=ages.values[period], regime_name=name
-            )
+            validate_V(V_arr=V_arr, age=ages.values[period], regime_name=name)
             period_solution[name] = V_arr
 
-        next_V_arr = MappingProxyType(period_solution)
-        solution[period] = next_V_arr
+        next_regime_to_V_arr = MappingProxyType(period_solution)
+        solution[period] = next_regime_to_V_arr
 
         elapsed = time.monotonic() - period_start
         log_period_timing(

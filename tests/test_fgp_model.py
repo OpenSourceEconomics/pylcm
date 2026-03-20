@@ -47,7 +47,7 @@ def _simulate(shock_type):
             "age": jnp.full(_N_SUBJECTS, 20.0),
             "regime": jnp.array([RegimeId.alive] * _N_SUBJECTS),
         },
-        V_arr_dict=None,
+        period_to_regime_to_V_arr=None,
         seed=_SEED,
     )
     return result.to_dataframe()

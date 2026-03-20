@@ -90,7 +90,7 @@ def solved(model_and_params):
 
 def test_save_and_load_solution_roundtrip(tmp_path, solved):
     path = tmp_path / "solution.h5"
-    save_solution(V_arr_dict=solved, path=path)
+    save_solution(period_to_regime_to_V_arr=solved, path=path)
 
     loaded = load_solution(path=path)
 
@@ -106,7 +106,7 @@ def test_save_and_load_solution_roundtrip(tmp_path, solved):
 def test_save_solution_missing_parent_dir(tmp_path, solved):
     path = tmp_path / "nonexistent" / "solution.h5"
     with pytest.raises(FileNotFoundError):
-        save_solution(V_arr_dict=solved, path=path)
+        save_solution(period_to_regime_to_V_arr=solved, path=path)
 
 
 # -- debug snapshots ------------------------------------------------------------------
@@ -114,30 +114,32 @@ def test_save_solution_missing_parent_dir(tmp_path, solved):
 
 def test_solve_debug_persists_snapshot(tmp_path, model_and_params):
     model, params = model_and_params
-    V_arr_dict = model.solve(params=params, log_level="debug", log_path=tmp_path)
+    period_to_regime_to_V_arr = model.solve(
+        params=params, log_level="debug", log_path=tmp_path
+    )
 
     dirs = sorted(tmp_path.glob("solve_snapshot_*/"))
     assert len(dirs) == 1
 
     snapshot = load_snapshot(dirs[0])
     assert isinstance(snapshot, SolveSnapshot)
-    assert snapshot.V_arr_dict is not None
-    for period in V_arr_dict:
-        for regime_name in V_arr_dict[period]:
+    assert snapshot.period_to_regime_to_V_arr is not None
+    for period in period_to_regime_to_V_arr:
+        for regime_name in period_to_regime_to_V_arr[period]:
             assert jnp.allclose(
-                snapshot.V_arr_dict[period][regime_name],
-                V_arr_dict[period][regime_name],
+                snapshot.period_to_regime_to_V_arr[period][regime_name],
+                period_to_regime_to_V_arr[period][regime_name],
             )
 
 
 def test_simulate_debug_persists_snapshot(tmp_path, model_and_params):
     model, params = model_and_params
-    V_arr_dict = model.solve(params=params, log_level="off")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
 
     model.simulate(
         params=params,
         initial_conditions=_initial_conditions(),
-        V_arr_dict=V_arr_dict,
+        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
         log_level="debug",
         log_path=tmp_path,
     )
@@ -155,7 +157,7 @@ def test_simulate_with_solve_debug_persists_snapshot(tmp_path, model_and_params)
     model.simulate(
         params=params,
         initial_conditions=_initial_conditions(),
-        V_arr_dict=None,
+        period_to_regime_to_V_arr=None,
         log_level="debug",
         log_path=tmp_path,
     )
@@ -165,7 +167,7 @@ def test_simulate_with_solve_debug_persists_snapshot(tmp_path, model_and_params)
 
     snapshot = load_snapshot(dirs[0])
     assert isinstance(snapshot, SimulateSnapshot)
-    assert snapshot.V_arr_dict is not None
+    assert snapshot.period_to_regime_to_V_arr is not None
     assert snapshot.result is not None
 
 
@@ -178,12 +180,12 @@ def test_solve_no_persistence_when_not_debug(tmp_path, model_and_params):
 
 def test_simulate_no_persistence_when_not_debug(tmp_path, model_and_params):
     model, params = model_and_params
-    V_arr_dict = model.solve(params=params, log_level="off")
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
 
     model.simulate(
         params=params,
         initial_conditions=_initial_conditions(),
-        V_arr_dict=V_arr_dict,
+        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
         log_level="warning",
         log_path=tmp_path,
     )
@@ -238,7 +240,6 @@ def test_snapshot_contains_pixi_lock_and_pyproject(tmp_path, model_and_params):
 
     snap_dir = sorted(tmp_path.glob("solve_snapshot_*/"))[0]
 
-    # These files should exist if the project root was found
     assert (snap_dir / "pyproject.toml").exists()
     assert (snap_dir / "pixi.lock").exists()
 
@@ -273,16 +274,18 @@ def test_load_snapshot_with_exclude(tmp_path, model_and_params):
 
     snap_dir = sorted(tmp_path.glob("solve_snapshot_*/"))[0]
 
-    snapshot = load_snapshot(snap_dir, exclude=["V_arr_dict"])
+    snapshot = load_snapshot(snap_dir, exclude=["period_to_regime_to_V_arr"])
     assert isinstance(snapshot, SolveSnapshot)
-    assert snapshot.V_arr_dict is None
+    assert snapshot.period_to_regime_to_V_arr is None
     assert snapshot.model is not None
     assert snapshot.params is not None
 
 
 def test_solve_snapshot_round_trip(tmp_path, model_and_params):
     model, params = model_and_params
-    V_arr_dict = model.solve(params=params, log_level="debug", log_path=tmp_path)
+    period_to_regime_to_V_arr = model.solve(
+        params=params, log_level="debug", log_path=tmp_path
+    )
 
     snap_dir = sorted(tmp_path.glob("solve_snapshot_*/"))[0]
     snapshot = load_snapshot(snap_dir)
@@ -290,10 +293,12 @@ def test_solve_snapshot_round_trip(tmp_path, model_and_params):
     # Verify the loaded model can re-solve
     assert isinstance(snapshot.model, Model)
     assert snapshot.params is not None
-    V_arr_dict_2 = snapshot.model.solve(params=snapshot.params, log_level="off")
-    for period in V_arr_dict:
-        for regime_name in V_arr_dict[period]:
+    period_to_regime_to_V_arr_2 = snapshot.model.solve(
+        params=snapshot.params, log_level="off"
+    )
+    for period in period_to_regime_to_V_arr:
+        for regime_name in period_to_regime_to_V_arr[period]:
             assert jnp.allclose(
-                V_arr_dict_2[period][regime_name],
-                V_arr_dict[period][regime_name],
+                period_to_regime_to_V_arr_2[period][regime_name],
+                period_to_regime_to_V_arr[period][regime_name],
             )

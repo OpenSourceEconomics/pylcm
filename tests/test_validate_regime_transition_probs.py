@@ -271,7 +271,7 @@ def test_simulate_raises_for_invalid_regime_transition_probs():
     """model.simulate() raises for out-of-bounds regime transition probabilities."""
     model = get_model(N_PERIODS)
     good_params = get_params(N_PERIODS)
-    V_arr_dict = model.solve(params=good_params)
+    period_to_regime_to_V_arr = model.solve(params=good_params)
 
     bad_params = get_params(
         N_PERIODS, survival_probs=_invalid_survival_probs(N_PERIODS)
@@ -285,12 +285,12 @@ def test_simulate_raises_for_invalid_regime_transition_probs():
         model.simulate(
             params=bad_params,
             initial_conditions=initial_conditions,
-            V_arr_dict=V_arr_dict,
+            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
         )
 
 
 def test_simulate_with_solve_raises_for_invalid_regime_transition_probs():
-    """model.simulate(V_arr_dict=None) raises for out-of-bounds probs."""
+    """model.simulate(period_to_regime_to_V_arr=None) raises for out-of-bounds probs."""
     model = get_model(N_PERIODS)
     params = get_params(N_PERIODS, survival_probs=_invalid_survival_probs(N_PERIODS))
     initial_conditions = {
@@ -302,5 +302,5 @@ def test_simulate_with_solve_raises_for_invalid_regime_transition_probs():
         model.simulate(
             params=params,
             initial_conditions=initial_conditions,
-            V_arr_dict=None,
+            period_to_regime_to_V_arr=None,
         )

@@ -8,7 +8,7 @@ from dags.tree import QNAME_DELIMITER
 from jax import Array
 
 from lcm.dispatchers import productmap
-from lcm.function_representation import get_value_function_representation
+from lcm.function_representation import get_V_interpolator
 from lcm.functools import get_union_of_args
 from lcm.interfaces import InternalFunctions, StateSpaceInfo
 from lcm.next_state import (
@@ -91,16 +91,19 @@ def get_Q_and_F(
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
         )
-        _scalar_next_V = get_value_function_representation(
-            next_state_space_infos[target_regime_name]
+        V_arr_name = "next_V_arr"
+        next_V_interpolator = get_V_interpolator(
+            state_space_info=next_state_space_infos[target_regime_name],
+            state_prefix="next_",
+            V_arr_name=V_arr_name,
         )
         # Determine extra kwargs needed by next_V beyond next_states and next_V_arr
         # (e.g. wealth__points for IrregSpacedGrid with runtime-supplied points).
         next_V_extra_param_names[target_regime_name] = frozenset(
-            get_union_of_args([_scalar_next_V]) - set(transitions) - {"next_V_arr"}
+            get_union_of_args([next_V_interpolator]) - set(transitions) - {V_arr_name}
         )
         next_V[target_regime_name] = productmap(
-            func=_scalar_next_V,
+            func=next_V_interpolator,
             variables=tuple(
                 key for key in transitions if key in stochastic_transition_names
             ),
@@ -117,7 +120,7 @@ def get_Q_and_F(
             *list(state_transitions.values()),
             *list(next_stochastic_states_weights.values()),
         ],
-        include=frozenset({"next_V_arr"} | flat_param_names),
+        include=frozenset({"next_regime_to_V_arr"} | flat_param_names),
         exclude=frozenset({"period", "age"}),
     )
 
@@ -125,13 +128,13 @@ def get_Q_and_F(
         args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
     )
     def Q_and_F(
-        next_V_arr: FloatND,
+        next_regime_to_V_arr: FloatND,
         **states_actions_params: Array,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action value and feasibility for a non-terminal period.
 
         Args:
-            next_V_arr: The next period's value function array.
+            next_regime_to_V_arr: The next period's value function array.
             **states_actions_params: States, actions, and flat regime params.
 
         Returns:
@@ -183,7 +186,7 @@ def get_Q_and_F(
             }
             next_V_at_stochastic_states_arr = next_V[target_regime_name](
                 **next_states,
-                next_V_arr=next_V_arr[target_regime_name],
+                next_V_arr=next_regime_to_V_arr[target_regime_name],
                 **extra_kw,
             )
 
@@ -241,7 +244,7 @@ def get_Q_and_F_terminal(
         # While the terminal period does not depend on the value function array, we
         # include it in the signature, such that we can treat all periods uniformly
         # during the solution and simulation.
-        include=frozenset({"next_V_arr"} | flat_param_names),
+        include=frozenset({"next_regime_to_V_arr"} | flat_param_names),
         exclude=frozenset({"period", "age"}),
     )
 
@@ -249,13 +252,13 @@ def get_Q_and_F_terminal(
         args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
     )
     def Q_and_F(
-        next_V_arr: FloatND,  # noqa: ARG001
+        next_regime_to_V_arr: FloatND,  # noqa: ARG001
         **states_actions_params: Array,
     ) -> tuple[FloatND, BoolND]:
         """Calculate the state-action values and feasibilities for the terminal period.
 
         Args:
-            next_V_arr: The next period's value function array (unused here).
+            next_regime_to_V_arr: The next period's value function array (unused here).
             **states_actions_params: States, actions, and flat regime params.
 
         Returns:

@@ -97,8 +97,8 @@ def test_solve_with_fewer_params():
     )
     # Should NOT need interest_rate in params, only discount_factor
     params = {"discount_factor": 0.95}
-    V_arr_dict = model.solve(params=params, log_level="off")
-    assert len(V_arr_dict) > 0
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
+    assert len(period_to_regime_to_V_arr) > 0
 
 
 def test_simulate_with_fixed_params():
@@ -113,7 +113,7 @@ def test_simulate_with_fixed_params():
             "age": jnp.array([0.0, 0.0]),
             "regime": jnp.array([RegimeId.alive] * 2),
         },
-        V_arr_dict=None,
+        period_to_regime_to_V_arr=None,
         log_level="off",
     )
 
@@ -129,7 +129,7 @@ def test_simulate_with_fixed_params():
             "age": jnp.array([0.0, 0.0]),
             "regime": jnp.array([RegimeId.alive] * 2),
         },
-        V_arr_dict=None,
+        period_to_regime_to_V_arr=None,
         log_level="off",
     )
 
@@ -153,8 +153,8 @@ def test_regime_level_fixed_param():
     assert "interest_rate" not in all_param_names
 
     params = {"discount_factor": 0.95}
-    V_arr_dict = model.solve(params=params, log_level="off")
-    assert len(V_arr_dict) > 0
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
+    assert len(period_to_regime_to_V_arr) > 0
 
 
 def test_all_params_fixed():
@@ -167,5 +167,5 @@ def test_all_params_fixed():
         assert len(regime_template) == 0
 
     # Solve with empty params
-    V_arr_dict = model.solve(params={}, log_level="off")
-    assert len(V_arr_dict) > 0
+    period_to_regime_to_V_arr = model.solve(params={}, log_level="off")
+    assert len(period_to_regime_to_V_arr) > 0

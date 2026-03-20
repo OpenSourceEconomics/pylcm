@@ -19,7 +19,7 @@ from lcm.ages import AgeGrid
 from lcm.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
-from lcm.persistence import _atomic_dump
+from lcm.persistence import atomic_dump
 from lcm.typing import (
     FlatRegimeParams,
     FloatND,
@@ -46,19 +46,22 @@ class SimulationResult:
         ],
         internal_regimes: MappingProxyType[RegimeName, InternalRegime],
         internal_params: InternalParams,
-        V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
+        period_to_regime_to_V_arr: MappingProxyType[
+            int, MappingProxyType[RegimeName, FloatND]
+        ],
         ages: AgeGrid,
         simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     ) -> None:
         self._raw_results = raw_results
         self._internal_regimes = internal_regimes
         self._internal_params = internal_params
-        self._V_arr_dict = V_arr_dict
+        self._period_to_regime_to_V_arr = period_to_regime_to_V_arr
         self._ages = ages
         self._metadata = _compute_metadata(
             internal_regimes=internal_regimes,
             raw_results=raw_results,
             simulation_output_dtypes=simulation_output_dtypes,
+            ages=ages,
         )
         self._available_targets = sorted(
             _collect_all_available_targets(internal_regimes)
@@ -77,11 +80,11 @@ class SimulationResult:
         return self._internal_params
 
     @property
-    def V_arr_dict(
+    def period_to_regime_to_V_arr(
         self,
     ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
         """Value function arrays from the solution."""
-        return self._V_arr_dict
+        return self._period_to_regime_to_V_arr
 
     @property
     def regime_names(self) -> list[str]:
@@ -179,7 +182,7 @@ class SimulationResult:
             The path where the object was saved.
 
         """
-        return _atomic_dump(self, path, protocol=protocol)
+        return atomic_dump(self, path, protocol=protocol)
 
     @classmethod
     def from_pickle(cls, path: str | Path) -> SimulationResult:
@@ -253,6 +256,7 @@ def _compute_metadata(
         RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
     ],
     simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
+    ages: AgeGrid,
 ) -> SimulationMetadata:
     """Compute metadata from internal regimes, raw results, and output dtypes."""
     regime_names = list(internal_regimes.keys())
@@ -280,7 +284,7 @@ def _compute_metadata(
         discrete_categories[var_name] = tuple(dtype.categories)
         discrete_ordered[var_name] = bool(dtype.ordered)
 
-    n_periods = len(raw_results[regime_names[0]])
+    n_periods = ages.n_periods
     n_subjects = _get_n_subjects(raw_results)
 
     return SimulationMetadata(

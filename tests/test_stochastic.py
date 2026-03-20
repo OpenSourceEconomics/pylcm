@@ -51,7 +51,7 @@ def test_model_simulate_with_stochastic_model():
             "age": jnp.array([40.0, 40.0, 40.0, 40.0]),
             "regime": jnp.array([RegimeId.working_life] * 4),
         },
-        V_arr_dict=None,
+        period_to_regime_to_V_arr=None,
     )
     df = result.to_dataframe().query('regime == "working_life"')
 
@@ -213,12 +213,12 @@ def test_compare_deterministic_and_stochastic_results_value_function(
 
     simulation_deterministic = model_deterministic.simulate(
         params=params,
-        V_arr_dict=solution_deterministic,
+        period_to_regime_to_V_arr=solution_deterministic,
         initial_conditions=initial_conditions,
     )
     simulation_stochastic = model_stochastic.simulate(
         params=params,
-        V_arr_dict=solution_stochastic,
+        period_to_regime_to_V_arr=solution_stochastic,
         initial_conditions=initial_conditions,
     )
     df_deterministic = simulation_deterministic.to_dataframe().query(

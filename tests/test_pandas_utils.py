@@ -288,7 +288,7 @@ def test_round_trip_with_discrete_model():
     result_raw = model.simulate(
         params=params,
         initial_conditions=raw_conditions,
-        V_arr_dict=None,
+        period_to_regime_to_V_arr=None,
     )
 
     # DataFrame approach
@@ -303,7 +303,7 @@ def test_round_trip_with_discrete_model():
     result_df = model.simulate(
         params=params,
         initial_conditions=df_conditions,
-        V_arr_dict=None,
+        period_to_regime_to_V_arr=None,
     )
 
     df_raw = result_raw.to_dataframe()

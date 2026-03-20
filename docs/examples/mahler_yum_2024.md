@@ -62,7 +62,7 @@ result = MAHLER_YUM_MODEL.simulate(
             MAHLER_YUM_MODEL.regime_names_to_ids["alive"],
         ),
     },
-    V_arr_dict=None,
+    period_to_regime_to_V_arr=None,
     seed=8295,
 )
 ```

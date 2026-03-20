@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from lcm.model import Model
 
 
-def validate_value_function_array(
+def validate_V(
     *, V_arr: Array, age: ScalarFloat, regime_name: str | None = None
 ) -> None:
     """Validate the value function array for NaN values.

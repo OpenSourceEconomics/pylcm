@@ -66,16 +66,16 @@ def get_max_Q_over_a(
     )
 
     @with_signature(
-        args=["next_V_arr", *action_names, *state_names, *extra_param_names],
+        args=["next_regime_to_V_arr", *action_names, *state_names, *extra_param_names],
         return_annotation="FloatND",
         enforce=False,
     )
     def max_Q_over_a(
-        next_V_arr: MappingProxyType[RegimeName, FloatND],
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **states_actions_params: Array,
     ) -> FloatND:
         Q_arr, F_arr = Q_and_F(
-            next_V_arr=next_V_arr,
+            next_regime_to_V_arr=next_regime_to_V_arr,
             **states_actions_params,
         )
         return Q_arr.max(where=F_arr, initial=-jnp.inf)
@@ -134,7 +134,7 @@ def get_argmax_and_max_Q_over_a(
 
     @with_signature(
         args=[
-            "next_V_arr",
+            "next_regime_to_V_arr",
             *action_names,
             *state_names,
             *extra_param_names,
@@ -143,11 +143,11 @@ def get_argmax_and_max_Q_over_a(
         enforce=False,
     )
     def argmax_and_max_Q_over_a(
-        next_V_arr: MappingProxyType[RegimeName, FloatND],
+        next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
         **states_actions_params: Array,
     ) -> tuple[IntND, FloatND]:
         Q_arr, F_arr = Q_and_F(
-            next_V_arr=next_V_arr,
+            next_regime_to_V_arr=next_regime_to_V_arr,
             **states_actions_params,
         )
         return argmax_and_max(Q_arr, where=F_arr, initial=-jnp.inf)
@@ -161,9 +161,9 @@ def _get_extra_param_names(
     action_names: tuple[str, ...],
     state_names: tuple[str, ...],
 ) -> list[str]:
-    """Get param names from Q_and_F that are not actions, states, or next_V_arr."""
+    """Get param names from Q_and_F not in actions, states, or next_regime_to_V_arr."""
     sig = inspect.signature(Q_and_F)
-    known_names = {"next_V_arr", *action_names, *state_names}
+    known_names = {"next_regime_to_V_arr", *action_names, *state_names}
     return sorted(
         name
         for name, param in sig.parameters.items()

@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Mapping
 from typing import Literal
 
 import jax.numpy as jnp
@@ -27,8 +28,9 @@ def get_logger(*, log_level: LogLevel) -> logging.Logger:
         Logger that logs to stdout.
 
     """
-    logging.basicConfig(level=logging.WARNING)
     logger = logging.getLogger("lcm")
+    if not logger.handlers:
+        logger.addHandler(logging.StreamHandler())
     logger.setLevel(_LOG_LEVEL_MAP[log_level])
     return logger
 
@@ -54,7 +56,7 @@ def format_duration(*, seconds: float) -> str:
     return f"{seconds / _seconds_per_hour:.1f}h"
 
 
-def log_vf_nan(
+def log_nan_in_V(
     *,
     logger: logging.Logger,
     regime_name: str,
@@ -74,7 +76,7 @@ def log_vf_nan(
         logger.warning("NaN/Inf in V_arr for regime '%s' at age %s", regime_name, age)
 
 
-def log_vf_stats(
+def log_V_stats(
     *,
     logger: logging.Logger,
     regime_name: str,
@@ -129,7 +131,7 @@ def log_regime_transitions(
     logger: logging.Logger,
     prev_regime_ids: Int1D,
     new_regime_ids: Int1D,
-    ids_to_names: dict[int, str],
+    ids_to_names: Mapping[int, str],
 ) -> None:
     """Log regime transition counts at debug level.
 
