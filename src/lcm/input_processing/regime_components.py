@@ -77,6 +77,7 @@ def build_Q_and_F_functions(
 def build_max_Q_over_a_functions(
     *,
     state_action_space: StateActionSpace,
+    state_space_info: StateSpaceInfo,
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
     enable_jit: bool,
 ) -> MappingProxyType[int, MaxQOverAFunction]:
@@ -84,6 +85,7 @@ def build_max_Q_over_a_functions(
     for period, Q_and_F in Q_and_F_functions.items():
         max_Q_over_a_functions[period] = _build_max_Q_over_a_function(
             state_action_space=state_action_space,
+            state_space_info=state_space_info,
             Q_and_F=Q_and_F,
             enable_jit=enable_jit,
         )
@@ -93,6 +95,7 @@ def build_max_Q_over_a_functions(
 def _build_max_Q_over_a_function(
     *,
     state_action_space: StateActionSpace,
+    state_space_info: StateSpaceInfo,
     Q_and_F: QAndFFunction,
     enable_jit: bool,
 ) -> MaxQOverAFunction:
@@ -100,6 +103,7 @@ def _build_max_Q_over_a_function(
         Q_and_F=Q_and_F,
         action_names=state_action_space.action_names,
         state_names=state_action_space.state_names,
+        batch_sizes=state_space_info.batch_sizes,
     )
 
     if enable_jit:

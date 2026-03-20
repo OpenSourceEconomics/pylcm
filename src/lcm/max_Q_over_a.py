@@ -23,6 +23,7 @@ def get_max_Q_over_a(
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
     action_names: tuple[str, ...],
     state_names: tuple[str, ...],
+    batch_sizes: dict[str, int],
 ) -> MaxQOverAFunction:
     r"""Get the function returning the maximum of Q over all actions.
 
@@ -80,7 +81,7 @@ def get_max_Q_over_a(
         )
         return Q_arr.max(where=F_arr, initial=-jnp.inf)
 
-    return productmap(func=max_Q_over_a, variables=state_names)
+    return productmap(func=max_Q_over_a, variables=state_names, batch_sizes=batch_sizes)
 
 
 def get_argmax_and_max_Q_over_a(

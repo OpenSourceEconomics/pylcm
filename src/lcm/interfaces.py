@@ -140,6 +140,8 @@ class StateSpaceInfo:
 
     continuous_states: MappingProxyType[str, ContinuousGrid]
     """Immutable mapping of continuous state names to their grids."""
+    batch_sizes: MappingProxyType[str, int]
+    """Immutable mapping of state names to their batch sizes."""
 
 
 class PhaseVariantContainer[S, T]:
