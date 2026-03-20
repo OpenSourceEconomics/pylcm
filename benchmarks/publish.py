@@ -55,12 +55,12 @@ def publish() -> None:
 
 def _patch_html_title(index_html: Path) -> None:
     """Replace ASV's default page title with a project-specific one."""
-    text = index_html.read_text()
+    text = index_html.read_text(encoding="utf-8")
     text = text.replace(
         "<title>airspeed velocity</title>",
         "<title>pylcm benchmarks</title>",
     )
-    index_html.write_text(text)
+    index_html.write_text(text, encoding="utf-8")
 
 
 def _ensure_site_clone() -> None:
