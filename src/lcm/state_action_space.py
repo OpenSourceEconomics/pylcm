@@ -96,11 +96,13 @@ def create_state_space_info(regime: Regime) -> StateSpaceInfo:
         and isinstance(grid_spec, ContinuousGrid)
         and not isinstance(grid_spec, _ShockGrid)
     }
+    batch_sizes = {name: grid_spec.batch_size for name, grid_spec in gridspecs.items()}
 
     return StateSpaceInfo(
         state_names=tuple(state_names),
         discrete_states=MappingProxyType(discrete_states),
         continuous_states=MappingProxyType(continuous_states),
+        batch_sizes=MappingProxyType(batch_sizes),
     )
 
 

@@ -1,11 +1,14 @@
 import inspect
 from collections.abc import Callable
+from functools import partial
 from types import MappingProxyType
 from typing import Literal, TypeVar, cast
 
+import jax
 from jax import Array, vmap
 
 from lcm.functools import allow_args, allow_only_kwargs
+from lcm.typing import Float1D, FloatND
 from lcm.utils import find_duplicates
 
 FunctionWithArrayReturn = TypeVar(
@@ -147,7 +150,10 @@ def vmap_1d(
 
 
 def productmap(
-    *, func: FunctionWithArrayReturn, variables: tuple[str, ...]
+    *,
+    func: FunctionWithArrayReturn,
+    variables: tuple[str, ...],
+    batch_sizes: dict[str, int] | None = None,
 ) -> FunctionWithArrayReturn:
     """Apply vmap such that func is evaluated on the Cartesian product of variables.
 
@@ -179,7 +185,12 @@ def productmap(
 
     func_callable_with_args = allow_args(func)
 
-    vmapped = _base_productmap(func_callable_with_args, variables)
+    if batch_sizes is not None:
+        vmapped = _base_productmap_batched(
+            func_callable_with_args, variables, batch_sizes
+        )
+    else:
+        vmapped = _base_productmap(func_callable_with_args, variables)
 
     # Callables do not necessarily have a __signature__ attribute.
     vmapped.__signature__ = inspect.signature(func_callable_with_args)  # ty: ignore[unresolved-attribute]
@@ -219,5 +230,50 @@ def _base_productmap(
     vmapped = func
     for spec in vmap_specs:
         vmapped = vmap(vmapped, in_axes=spec)
-
     return vmapped
+
+
+def _base_productmap_batched(
+    func: FunctionWithArrayReturn,
+    product_axes: tuple[str, ...],
+    batch_sizes: dict[str, int],
+) -> FunctionWithArrayReturn:
+    """Map func over the Cartesian product of product_axes.
+
+    Like vmap, this function does not preserve the function signature and does not allow
+    the function to be called with keyword arguments.
+
+    Args:
+        func: The function to be dispatched. Cannot have keyword-only arguments.
+        product_axes: Tuple with names of arguments over which we apply vmap.
+
+    Returns:
+        A callable with the same arguments as func. See `product_map` for details.
+
+    """
+
+    def nest_map(next_regime_to_V_arr: FloatND, **kwargs: FloatND) -> FloatND:
+        non_array_kwargs = {
+            key: val for key, val in kwargs.items() if key not in product_axes
+        }
+        loop = partial(func, **non_array_kwargs)
+
+        # induction case: scan over one argument, eliminating it
+        def scan_one_more(
+            loop: FunctionWithArrayReturn, x: Float1D
+        ) -> FunctionWithArrayReturn:
+            def new_loop(**xs: Float1D) -> FloatND:
+                return jax.lax.map(
+                    lambda x_i: loop(**{x: x_i}, **xs),
+                    kwargs[x],
+                    batch_size=batch_sizes[x],
+                )
+
+            return new_loop
+
+        # compose
+        for x in reversed(product_axes):
+            loop = scan_one_more(loop, x)
+        return loop(next_regime_to_V_arr)
+
+    return nest_map

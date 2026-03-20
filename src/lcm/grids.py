@@ -75,14 +75,18 @@ def categorical[T](*, ordered: bool) -> Callable[[type[T]], type[T]]:
     return decorator
 
 
+@dataclass(frozen=True, kw_only=True)
 class Grid(ABC):
     """LCM Grid base class."""
+
+    batch_size: int = 0
 
     @abstractmethod
     def to_jax(self) -> Int1D | Float1D:
         """Convert the grid to a Jax array."""
 
 
+@dataclass(frozen=True, kw_only=True)
 class ContinuousGrid(Grid):
     """Base class for grids representing continuous values with coordinate lookup.
 
