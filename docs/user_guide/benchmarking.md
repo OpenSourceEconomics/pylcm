@@ -85,7 +85,7 @@ class TimeSolveSimulate:
 
         # --- Build model and params --------------------------------------
         self.model = retirement.get_model()
-        self.params = retirement.get_params()
+        self.model_params = retirement.get_params()  # not self.params — ASV reserves that
         self.initial_conditions = {
             "age": jnp.full(500, 25.0),
             "wealth": jnp.full(500, 5.0),
@@ -97,9 +97,9 @@ class TimeSolveSimulate:
         # track_warmup reports compilation cost while time_* methods measure
         # only post-compilation performance.
         start = time.perf_counter()
-        self._V = self.model.solve(params=self.params, log_level="off")
+        self._V = self.model.solve(params=self.model_params, log_level="off")
         self.model.simulate(
-            params=self.params,
+            params=self.model_params,
             initial_conditions=self.initial_conditions,
             period_to_regime_to_V_arr=self._V,
             log_level="off",
@@ -108,12 +108,12 @@ class TimeSolveSimulate:
 
     def time_solve(self):
         """Steady-state solve time (after JIT warmup)."""
-        self.model.solve(params=self.params, log_level="off")
+        self.model.solve(params=self.model_params, log_level="off")
 
     def time_simulate(self):
         """Steady-state simulate time (after JIT warmup)."""
         self.model.simulate(
-            params=self.params,
+            params=self.model_params,
             initial_conditions=self.initial_conditions,
             period_to_regime_to_V_arr=self._V,
             log_level="off",
@@ -121,7 +121,7 @@ class TimeSolveSimulate:
 
     def peakmem_solve(self):
         """Peak memory during solve."""
-        self.model.solve(params=self.params, log_level="off")
+        self.model.solve(params=self.model_params, log_level="off")
 
     def track_warmup(self):
         """JIT compilation time (first call)."""
@@ -160,7 +160,7 @@ class TimeSolveGrid:
         ...  # build model with n_wealth_points grid points
 
     def time_solve(self, n_wealth_points):
-        self.model.solve(params=self.params, log_level="off")
+        self.model.solve(params=self.model_params, log_level="off")
 ```
 
 ## Running Benchmarks
