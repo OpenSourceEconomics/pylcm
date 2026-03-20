@@ -118,7 +118,7 @@ def load_snapshot(
     # Load V_arr_dict from HDF5 if not excluded
     h5_path = path / "arrays.h5"
     if h5_path.exists() and "V_arr_dict" not in exclude:
-        loaded["V_arr_dict"] = _load_V_arr_from_h5(h5_path)
+        loaded["V_arr_dict"] = _load_h5(h5_path)
     elif "V_arr_dict" not in exclude:
         loaded["V_arr_dict"] = None
         logger.warning("arrays.h5 not found in %s; V_arr_dict set to None", path)
@@ -171,7 +171,7 @@ def save_solve_snapshot(
 
     _save_pkl(snap_dir / "model.pkl", model)
     _save_pkl(snap_dir / "params.pkl", params)
-    _save_V_arr_to_h5(snap_dir / "arrays.h5", V_arr_dict)
+    _save_h5(snap_dir / "arrays.h5", V_arr_dict)
     _write_metadata(snap_dir, snapshot_type="solve", fields=["model", "params"])
     _write_environment_files(snap_dir)
 
@@ -216,7 +216,7 @@ def save_simulate_snapshot(
     _save_pkl(snap_dir / "params.pkl", params)
     _save_pkl(snap_dir / "initial_conditions.pkl", initial_conditions)
     _save_pkl(snap_dir / "result.pkl", _strip_V_arr_from_result(result))
-    _save_V_arr_to_h5(snap_dir / "arrays.h5", V_arr_dict)
+    _save_h5(snap_dir / "arrays.h5", V_arr_dict)
     _write_metadata(
         snap_dir,
         snapshot_type="simulate",
@@ -249,7 +249,7 @@ def save_solution(
     p = Path(path)
     if not p.parent.is_dir():
         raise FileNotFoundError(f"Parent directory does not exist: {p.parent}")
-    _save_V_arr_to_h5(p, V_arr_dict)
+    _save_h5(p, V_arr_dict)
     return p
 
 
@@ -266,7 +266,7 @@ def load_solution(
         Immutable mapping of periods to regime value function arrays.
 
     """
-    return _load_V_arr_from_h5(Path(path))
+    return _load_h5(Path(path))
 
 
 def _get_platform() -> str:
@@ -299,38 +299,37 @@ def _save_pkl(path: Path, obj: object) -> None:
     atomic_dump(obj, path, protocol=pickle.HIGHEST_PROTOCOL)
 
 
-def _save_V_arr_to_h5(
+def _save_h5(
     path: Path,
     V_arr_dict: VArrMapping,
 ) -> None:
-    """Write V_arr_dict to an HDF5 file.
+    """Write value function arrays to an HDF5 file.
 
-    Datasets are stored at `/V_arr/{period}/{regime_name}`.
+    Datasets are stored at `/{period}/{regime_name}/V_arr`.
 
     """
     with h5py.File(path, "w") as fh:
         for period, regime_dict in V_arr_dict.items():
             for regime_name, arr in regime_dict.items():
-                dataset_name = f"V_arr/{period}/{regime_name}"
+                dataset_name = f"{period}/{regime_name}/V_arr"
                 fh.create_dataset(dataset_name, data=np.asarray(arr))
 
 
-def _load_V_arr_from_h5(path: Path) -> VArrMapping:
-    """Read V_arr_dict from an HDF5 file.
+def _load_h5(path: Path) -> VArrMapping:
+    """Read value function arrays from an HDF5 file.
 
     Returns:
-        Immutable mapping matching the structure written by `_save_V_arr_to_h5`.
+        Immutable mapping matching the structure written by `_save_h5`.
 
     """
     result: dict[int, dict[str, FloatND]] = {}
     with h5py.File(path, "r") as fh:
-        v_arr_group = fh["V_arr"]
-        for period_key in v_arr_group:
+        for period_key in fh:
             period = int(period_key)
             result[period] = {}
-            for regime_name in v_arr_group[period_key]:
+            for regime_name in fh[period_key]:
                 result[period][regime_name] = jnp.asarray(
-                    v_arr_group[period_key][regime_name][()]
+                    fh[period_key][regime_name]["V_arr"][()]
                 )
 
     return MappingProxyType(
