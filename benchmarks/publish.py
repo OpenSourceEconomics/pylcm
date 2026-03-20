@@ -34,6 +34,8 @@ def publish() -> None:
 
     print(f"Publishing benchmarks for {commit_sha_short}")
 
+    _patch_html_title(html_dir / "index.html")
+
     _ensure_site_clone()
     root = _SITE_DIR / _SUBDIR
 
@@ -49,6 +51,16 @@ def publish() -> None:
 
     _commit_and_push(commit_sha_short)
     print("Done.")
+
+
+def _patch_html_title(index_html: Path) -> None:
+    """Replace ASV's default page title with a project-specific one."""
+    text = index_html.read_text()
+    text = text.replace(
+        "<title>airspeed velocity</title>",
+        "<title>pylcm benchmarks</title>",
+    )
+    index_html.write_text(text)
 
 
 def _ensure_site_clone() -> None:
