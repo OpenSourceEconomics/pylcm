@@ -296,7 +296,7 @@ def _strip_V_arr_from_result(result: SimulationResult) -> SimulationResult:
 
 def _save_pkl(path: Path, obj: object) -> None:
     """Save an object to a pickle file atomically."""
-    _atomic_dump(obj, path, protocol=pickle.HIGHEST_PROTOCOL)
+    atomic_dump(obj, path, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 def _save_V_arr_to_h5(
@@ -404,7 +404,7 @@ def _enforce_retention(parent_path: Path, prefix: str, *, keep_n_latest: int) ->
             shutil.rmtree(snap_dir)
 
 
-def _atomic_dump(obj: object, path: str | Path, *, protocol: int) -> Path:
+def atomic_dump(obj: object, path: str | Path, *, protocol: int) -> Path:
     """Serialize `obj` to `path` in an atomic (all-or-nothing) way.
 
     Args:

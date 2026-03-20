@@ -19,7 +19,7 @@ from lcm.ages import AgeGrid
 from lcm.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
-from lcm.persistence import _atomic_dump
+from lcm.persistence import atomic_dump
 from lcm.typing import (
     FlatRegimeParams,
     FloatND,
@@ -180,7 +180,7 @@ class SimulationResult:
             The path where the object was saved.
 
         """
-        return _atomic_dump(self, path, protocol=protocol)
+        return atomic_dump(self, path, protocol=protocol)
 
     @classmethod
     def from_pickle(cls, path: str | Path) -> SimulationResult:
