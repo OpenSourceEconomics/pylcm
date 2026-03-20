@@ -10,7 +10,7 @@ induction and simulates forward.
 ## Solving
 
 ```python
-V_arr_dict = model.solve(params=params)
+period_to_regime_to_V_arr = model.solve(params=params)
 ```
 
 Performs backward induction using dynamic programming. Returns an immutable mapping of
@@ -22,13 +22,13 @@ Control console output and snapshot persistence with `log_level`:
 
 ```python
 # Default: progress + timing
-V_arr_dict = model.solve(params=params)
+period_to_regime_to_V_arr = model.solve(params=params)
 
 # Silent
-V_arr_dict = model.solve(params=params, log_level="off")
+period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
 
 # Full diagnostics + disk snapshots
-V_arr_dict = model.solve(params=params, log_level="debug", log_path="./debug/")
+period_to_regime_to_V_arr = model.solve(params=params, log_level="debug", log_path="./debug/")
 ```
 
 See [Debugging](debugging.md) for details on log levels and debug snapshots.
@@ -39,7 +39,7 @@ See [Debugging](debugging.md) for details on log levels and debug snapshots.
 result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
-    V_arr_dict=V_arr_dict,
+    period_to_regime_to_V_arr=period_to_regime_to_V_arr,
 )
 ```
 
@@ -49,14 +49,14 @@ object.
 
 ## Simulate without pre-solving
 
-When `V_arr_dict=None`, `simulate()` solves the model automatically before simulating.
+When `period_to_regime_to_V_arr=None`, `simulate()` solves the model automatically before simulating.
 Use this when you don't need the raw value function arrays:
 
 ```python
 result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
-    V_arr_dict=None,
+    period_to_regime_to_V_arr=None,
 )
 ```
 
@@ -205,7 +205,7 @@ loaded = SimulationResult.from_pickle("my_results.pkl")
 ```python
 result.raw_results      # regime -> period -> PeriodRegimeSimulationData
 result.internal_params  # processed parameter object
-result.V_arr_dict       # value function arrays from solve()
+result.period_to_regime_to_V_arr       # value function arrays from solve()
 ```
 
 ## Typical Workflow
@@ -233,11 +233,11 @@ initial_df = pd.DataFrame({
 })
 initial_conditions = initial_conditions_from_dataframe(initial_df, model=model)
 
-# 4. Simulate (solves automatically when V_arr_dict=None)
+# 4. Simulate (solves automatically when period_to_regime_to_V_arr=None)
 result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
-    V_arr_dict=None,
+    period_to_regime_to_V_arr=None,
 )
 
 # 5. Analyze

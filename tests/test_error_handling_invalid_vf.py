@@ -190,7 +190,7 @@ def test_simulate_model_with_nan_value_function_array_raises_error(
         nan_value_model.simulate(
             params=params,
             initial_conditions=initial_conditions,
-            V_arr_dict=None,
+            period_to_regime_to_V_arr=None,
             check_initial_conditions=False,
         )
 
@@ -209,7 +209,9 @@ def test_simulate_model_with_inf_value_function_array_does_not_raise_error(
     # +inf utility term (wealth > 1.9 AND health > 0.9), but the simulation should
     # still complete without error.
     inf_value_model.simulate(
-        params=params, initial_conditions=initial_conditions, V_arr_dict=None
+        params=params,
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
     )
 
 

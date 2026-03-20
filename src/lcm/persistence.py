@@ -21,7 +21,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
-from lcm.typing import FloatND, RegimeName, UserParams, VArrMapping
+from lcm.typing import FloatND, PeriodToRegimeToVArr, RegimeName, UserParams
 
 if TYPE_CHECKING:
     from lcm.model import Model
@@ -40,7 +40,7 @@ class SolveSnapshot:
     params: UserParams | None
     """User parameters passed to solve."""
 
-    V_arr_dict: VArrMapping | None
+    period_to_regime_to_V_arr: PeriodToRegimeToVArr | None
     """Immutable mapping of periods to regime value function arrays."""
 
     platform: str
@@ -60,7 +60,7 @@ class SimulateSnapshot:
     initial_conditions: Mapping[str, Array] | None
     """Mapping of state names and "regime" to arrays."""
 
-    V_arr_dict: VArrMapping | None
+    period_to_regime_to_V_arr: PeriodToRegimeToVArr | None
     """Immutable mapping of periods to regime value function arrays."""
 
     result: SimulationResult | None
@@ -79,7 +79,8 @@ def load_snapshot(
 
     Args:
         path: Path to the snapshot directory (e.g. `solve_snapshot_001/`).
-        exclude: Field names to skip loading (e.g. `["V_arr_dict"]` to save memory).
+        exclude: Field names to skip loading
+            (e.g. `["period_to_regime_to_V_arr"]` to save memory).
             Excluded fields are set to `None`.
 
     Returns:
@@ -115,19 +116,22 @@ def load_snapshot(
             with pkl_path.open("rb") as fh:
                 loaded[field_name] = cloudpickle.load(fh)
 
-    # Load V_arr_dict from HDF5 if not excluded
+    # Load period_to_regime_to_V_arr from HDF5 if not excluded
     h5_path = path / "arrays.h5"
-    if h5_path.exists() and "V_arr_dict" not in exclude:
-        loaded["V_arr_dict"] = _load_h5(h5_path)
-    elif "V_arr_dict" not in exclude:
-        loaded["V_arr_dict"] = None
-        logger.warning("arrays.h5 not found in %s; V_arr_dict set to None", path)
+    if h5_path.exists() and "period_to_regime_to_V_arr" not in exclude:
+        loaded["period_to_regime_to_V_arr"] = _load_h5(h5_path)
+    elif "period_to_regime_to_V_arr" not in exclude:
+        loaded["period_to_regime_to_V_arr"] = None
+        logger.warning(
+            "arrays.h5 not found in %s; period_to_regime_to_V_arr set to None",
+            path,
+        )
 
     if snapshot_type == "solve":
         return SolveSnapshot(
             model=loaded.get("model"),
             params=loaded.get("params"),
-            V_arr_dict=loaded.get("V_arr_dict"),
+            period_to_regime_to_V_arr=loaded.get("period_to_regime_to_V_arr"),
             platform=saved_platform,
         )
     if snapshot_type == "simulate":
@@ -135,7 +139,7 @@ def load_snapshot(
             model=loaded.get("model"),
             params=loaded.get("params"),
             initial_conditions=loaded.get("initial_conditions"),
-            V_arr_dict=loaded.get("V_arr_dict"),
+            period_to_regime_to_V_arr=loaded.get("period_to_regime_to_V_arr"),
             result=loaded.get("result"),
             platform=saved_platform,
         )
@@ -147,7 +151,7 @@ def save_solve_snapshot(
     *,
     model: Model,
     params: UserParams,
-    V_arr_dict: VArrMapping,
+    period_to_regime_to_V_arr: PeriodToRegimeToVArr,
     log_path: Path,
     log_keep_n_latest: int,
 ) -> Path:
@@ -156,7 +160,7 @@ def save_solve_snapshot(
     Args:
         model: The Model instance.
         params: User parameters passed to solve.
-        V_arr_dict: Value function arrays from solve.
+        period_to_regime_to_V_arr: Value function arrays from solve.
         log_path: Parent directory for snapshot directories.
         log_keep_n_latest: Maximum number of snapshots to retain.
 
@@ -171,7 +175,7 @@ def save_solve_snapshot(
 
     _save_pkl(snap_dir / "model.pkl", model)
     _save_pkl(snap_dir / "params.pkl", params)
-    _save_h5(snap_dir / "arrays.h5", V_arr_dict)
+    _save_h5(snap_dir / "arrays.h5", period_to_regime_to_V_arr)
     _write_metadata(snap_dir, snapshot_type="solve", fields=["model", "params"])
     _write_environment_files(snap_dir)
 
@@ -186,7 +190,7 @@ def save_simulate_snapshot(
     model: Model,
     params: UserParams,
     initial_conditions: Mapping[str, Array],
-    V_arr_dict: VArrMapping,
+    period_to_regime_to_V_arr: PeriodToRegimeToVArr,
     result: SimulationResult,
     log_path: Path,
     log_keep_n_latest: int,
@@ -197,7 +201,7 @@ def save_simulate_snapshot(
         model: The Model instance.
         params: User parameters passed to simulate.
         initial_conditions: Mapping of state names and "regime" to arrays.
-        V_arr_dict: Value function arrays.
+        period_to_regime_to_V_arr: Value function arrays.
         result: SimulationResult object.
         log_path: Parent directory for snapshot directories.
         log_keep_n_latest: Maximum number of snapshots to retain.
@@ -216,7 +220,7 @@ def save_simulate_snapshot(
     _save_pkl(snap_dir / "params.pkl", params)
     _save_pkl(snap_dir / "initial_conditions.pkl", initial_conditions)
     _save_pkl(snap_dir / "result.pkl", _strip_V_arr_from_result(result))
-    _save_h5(snap_dir / "arrays.h5", V_arr_dict)
+    _save_h5(snap_dir / "arrays.h5", period_to_regime_to_V_arr)
     _write_metadata(
         snap_dir,
         snapshot_type="simulate",
@@ -230,13 +234,16 @@ def save_simulate_snapshot(
 
 def save_solution(
     *,
-    V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
+    period_to_regime_to_V_arr: MappingProxyType[
+        int, MappingProxyType[RegimeName, FloatND]
+    ],
     path: str | Path,
 ) -> Path:
     """Save value function arrays from solve() to an HDF5 file.
 
     Args:
-        V_arr_dict: Immutable mapping of periods to regime value function arrays.
+        period_to_regime_to_V_arr: Immutable mapping of periods to regime
+            value function arrays.
         path: File path to save the HDF5 file.
 
     Returns:
@@ -249,7 +256,7 @@ def save_solution(
     p = Path(path)
     if not p.parent.is_dir():
         raise FileNotFoundError(f"Parent directory does not exist: {p.parent}")
-    _save_h5(p, V_arr_dict)
+    _save_h5(p, period_to_regime_to_V_arr)
     return p
 
 
@@ -284,13 +291,13 @@ def _find_project_root() -> Path | None:
 
 
 def _strip_V_arr_from_result(result: SimulationResult) -> SimulationResult:
-    """Create a copy of result with V_arr_dict replaced by an empty mapping.
+    """Create a copy of result with value arrays replaced by an empty mapping.
 
-    Avoid storing V_arr_dict both in the pickle and in the HDF5 file.
+    Avoid storing period_to_regime_to_V_arr both in the pickle and in the HDF5 file.
 
     """
     stripped = copy.copy(result)
-    object.__setattr__(stripped, "_V_arr_dict", MappingProxyType({}))
+    object.__setattr__(stripped, "_period_to_regime_to_V_arr", MappingProxyType({}))
     return stripped
 
 
@@ -301,7 +308,7 @@ def _save_pkl(path: Path, obj: object) -> None:
 
 def _save_h5(
     path: Path,
-    V_arr_dict: VArrMapping,
+    period_to_regime_to_V_arr: PeriodToRegimeToVArr,
 ) -> None:
     """Write value function arrays to an HDF5 file.
 
@@ -309,13 +316,13 @@ def _save_h5(
 
     """
     with h5py.File(path, "w") as fh:
-        for period, regime_dict in V_arr_dict.items():
+        for period, regime_dict in period_to_regime_to_V_arr.items():
             for regime_name, arr in regime_dict.items():
                 dataset_name = f"{period}/{regime_name}/V_arr"
                 fh.create_dataset(dataset_name, data=np.asarray(arr))
 
 
-def _load_h5(path: Path) -> VArrMapping:
+def _load_h5(path: Path) -> PeriodToRegimeToVArr:
     """Read value function arrays from an HDF5 file.
 
     Returns:

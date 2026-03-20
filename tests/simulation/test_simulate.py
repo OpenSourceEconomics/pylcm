@@ -81,7 +81,7 @@ def test_simulate_using_raw_inputs(simulate_inputs):
 
     result = simulate(
         internal_params=internal_params,
-        V_arr_dict=MappingProxyType(
+        period_to_regime_to_V_arr=MappingProxyType(
             {
                 0: MappingProxyType(
                     {"working_life": jnp.zeros(100), "dead": jnp.zeros(2)}
@@ -136,8 +136,8 @@ def iskhakov_et_al_2017_stripped_down_model_solution():
             ages=ages,
             regime_id_class=RegimeId,
         )
-        V_arr_dict = model.solve(params=params)
-        return V_arr_dict, params, model
+        period_to_regime_to_V_arr = model.solve(params=params)
+        return period_to_regime_to_V_arr, params, model
 
     return _model_solution
 
@@ -146,13 +146,15 @@ def test_simulate_using_model_methods(
     iskhakov_et_al_2017_stripped_down_model_solution,
 ):
     n_periods = 4
-    V_arr_dict, params, model = iskhakov_et_al_2017_stripped_down_model_solution(
-        n_periods=n_periods,
+    period_to_regime_to_V_arr, params, model = (
+        iskhakov_et_al_2017_stripped_down_model_solution(
+            n_periods=n_periods,
+        )
     )
 
     result = model.simulate(
         params=params,
-        V_arr_dict=V_arr_dict,
+        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
         initial_conditions={
             "wealth": jnp.array([20.0, 150, 250, 320]),
             "age": jnp.array([18.0, 18.0, 18.0, 18.0]),
@@ -211,7 +213,7 @@ def test_simulate_with_only_discrete_actions():
             "age": jnp.array([50.0, 50.0]),
             "regime": jnp.array([DiscreteRegimeId.working_life] * 2),
         },
-        V_arr_dict=None,
+        period_to_regime_to_V_arr=None,
     )
     got = result.to_dataframe().query('regime == "working_life"')
 
@@ -280,7 +282,7 @@ def test_effect_of_discount_factor_on_last_period():
                 "age": jnp.array([18.0, 18.0, 18.0]),
                 "regime": jnp.array([RegimeId.working_life] * 3),
             },
-            V_arr_dict=None,
+            period_to_regime_to_V_arr=None,
         )
         .to_dataframe()
         .query('regime == "working_life"')
@@ -294,7 +296,7 @@ def test_effect_of_discount_factor_on_last_period():
                 "age": jnp.array([18.0, 18.0, 18.0]),
                 "regime": jnp.array([RegimeId.working_life] * 3),
             },
-            V_arr_dict=None,
+            period_to_regime_to_V_arr=None,
         )
         .to_dataframe()
         .query('regime == "working_life"')
@@ -345,7 +347,7 @@ def test_effect_of_disutility_of_work():
                 "age": jnp.array([18.0, 18.0, 18.0]),
                 "regime": jnp.array([RegimeId.working_life] * 3),
             },
-            V_arr_dict=None,
+            period_to_regime_to_V_arr=None,
         )
         .to_dataframe()
         .query('regime == "working_life"')
@@ -359,7 +361,7 @@ def test_effect_of_disutility_of_work():
                 "age": jnp.array([18.0, 18.0, 18.0]),
                 "regime": jnp.array([RegimeId.working_life] * 3),
             },
-            V_arr_dict=None,
+            period_to_regime_to_V_arr=None,
         )
         .to_dataframe()
         .query('regime == "working_life"')
@@ -397,7 +399,7 @@ def test_to_dataframe_use_labels_parameter():
             "age": jnp.array([18.0, 18.0]),
             "regime": jnp.array([RegimeId.working_life] * 2),
         },
-        V_arr_dict=None,
+        period_to_regime_to_V_arr=None,
     )
 
     # use_labels=True (default): discrete columns are Categorical with string labels
@@ -430,7 +432,7 @@ def regression_simulation_result():
             "age": jnp.array([18.0, 18.0]),
             "regime": jnp.array([RegimeId.working_life] * 2),
         },
-        V_arr_dict=None,
+        period_to_regime_to_V_arr=None,
     )
 
 
@@ -475,7 +477,7 @@ def test_additional_targets_all_with_stochastic_transitions():
             "age": jnp.array([40.0, 40.0]),
             "regime": jnp.array([StochasticRegimeId.working_life] * 2),
         },
-        V_arr_dict=None,
+        period_to_regime_to_V_arr=None,
     )
 
     # Stochastic weight functions should NOT be in available_targets
@@ -523,7 +525,7 @@ def test_simulation_result_pickle_roundtrip(tmp_path: Path):
             "age": jnp.array([18.0, 18.0]),
             "regime": jnp.array([RegimeId.working_life] * 2),
         },
-        V_arr_dict=None,
+        period_to_regime_to_V_arr=None,
     )
 
     # Pickle and unpickle

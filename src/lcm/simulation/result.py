@@ -46,14 +46,16 @@ class SimulationResult:
         ],
         internal_regimes: MappingProxyType[RegimeName, InternalRegime],
         internal_params: InternalParams,
-        V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
+        period_to_regime_to_V_arr: MappingProxyType[
+            int, MappingProxyType[RegimeName, FloatND]
+        ],
         ages: AgeGrid,
         simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     ) -> None:
         self._raw_results = raw_results
         self._internal_regimes = internal_regimes
         self._internal_params = internal_params
-        self._V_arr_dict = V_arr_dict
+        self._period_to_regime_to_V_arr = period_to_regime_to_V_arr
         self._ages = ages
         self._metadata = _compute_metadata(
             internal_regimes=internal_regimes,
@@ -78,11 +80,11 @@ class SimulationResult:
         return self._internal_params
 
     @property
-    def V_arr_dict(
+    def period_to_regime_to_V_arr(
         self,
     ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
         """Value function arrays from the solution."""
-        return self._V_arr_dict
+        return self._period_to_regime_to_V_arr
 
     @property
     def regime_names(self) -> list[str]:

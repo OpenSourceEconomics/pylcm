@@ -301,7 +301,7 @@ def test_stochastic_simulate(discount_factor, n_wealth_points, probs_array):
     result = model.simulate(
         params={"discount_factor": discount_factor, "alive": params_alive},
         initial_conditions=initial_conditions,
-        V_arr_dict=None,
+        period_to_regime_to_V_arr=None,
     )
     # Filter to alive regime only (dead regime has trivial values)
     got = result.to_dataframe().query('regime == "alive"').reset_index(drop=True)

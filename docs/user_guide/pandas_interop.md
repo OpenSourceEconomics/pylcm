@@ -29,7 +29,7 @@ initial_conditions = initial_conditions_from_dataframe(df, model=model)
 result = model.simulate(
     params=params,
     initial_conditions=initial_conditions,
-    V_arr_dict=None,
+    period_to_regime_to_V_arr=None,
 )
 ```
 

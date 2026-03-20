@@ -170,7 +170,7 @@ def test_model_with_quarterly_steps():
             "age": jnp.array([18.0, 18.0, 18.0]),
             "regime": jnp.array([RegimeId.working_life] * 3),
         },
-        V_arr_dict=None,
+        period_to_regime_to_V_arr=None,
     )
 
     df = result.to_dataframe()

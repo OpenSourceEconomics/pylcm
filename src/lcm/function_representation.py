@@ -13,7 +13,7 @@ from lcm.ndimage import map_coordinates
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
 
 
-def get_value_function_representation(
+def get_scalar_next_V(
     state_space_info: StateSpaceInfo,
     *,
     input_prefix: str = "next_",

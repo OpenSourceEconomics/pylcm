@@ -56,7 +56,7 @@ def format_duration(*, seconds: float) -> str:
     return f"{seconds / _seconds_per_hour:.1f}h"
 
 
-def log_vf_nan(
+def log_nan_in_V(
     *,
     logger: logging.Logger,
     regime_name: str,
@@ -76,7 +76,7 @@ def log_vf_nan(
         logger.warning("NaN/Inf in V_arr for regime '%s' at age %s", regime_name, age)
 
 
-def log_vf_stats(
+def log_V_stats(
     *,
     logger: logging.Logger,
     regime_name: str,
