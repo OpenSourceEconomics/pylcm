@@ -182,7 +182,7 @@ def test_beta_delta_consumption(label, beta, delta):
     initial_conditions = {
         "age": initial_age,
         "wealth": initial_wealth,
-        "regime_id": jnp.array([RegimeId.working]),
+        "regime": jnp.array([RegimeId.working]),
     }
 
     if label == "naive_phase_variant":
@@ -191,32 +191,35 @@ def test_beta_delta_consumption(label, beta, delta):
             H_func=PhaseVariant(solve=exponential_H, simulate=beta_delta_H),
         )
         # Params are the union of both variants' params
-        result = model.solve_and_simulate(
-            params={
-                "working": {
-                    "H": {"discount_factor": delta, "beta": beta, "delta": delta},
-                },
+        params = {
+            "working": {
+                "H": {"discount_factor": delta, "beta": beta, "delta": delta},
             },
+        }
+        result = model.simulate(
+            params=params,
             initial_conditions=initial_conditions,
+            period_to_regime_to_V_arr=None,
         )
     elif label == "naive":
         model = _make_model()
         # Solve with exponential discounting (beta=1)
         solve_params = {"working": {"H": {"beta": 1.0, "delta": delta}}}
-        V = model.solve(solve_params)
+        period_to_regime_to_V_arr = model.solve(params=solve_params)
 
         # Simulate with present-biased params
         sim_params = {"working": {"H": h_params}}
         result = model.simulate(
             params=sim_params,
             initial_conditions=initial_conditions,
-            V_arr_dict=V,
+            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
         )
     else:
         model = _make_model()
-        result = model.solve_and_simulate(
+        result = model.simulate(
             params={"working": {"H": h_params}},
             initial_conditions=initial_conditions,
+            period_to_regime_to_V_arr=None,
         )
 
     df = result.to_dataframe().query('regime == "working"')
