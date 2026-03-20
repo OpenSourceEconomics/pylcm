@@ -25,18 +25,12 @@ from lcm import AgeGrid, LinSpacedGrid, Model, PhaseVariant, Regime, categorical
 from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 
-# --------------------------------------------------------------------------------------
-# Categorical variables
-# --------------------------------------------------------------------------------------
 @categorical(ordered=False)
 class RegimeId:
     working: int
     dead: int
 
 
-# --------------------------------------------------------------------------------------
-# Model functions
-# --------------------------------------------------------------------------------------
 def utility(consumption: ContinuousAction) -> FloatND:
     return jnp.log(consumption)
 
@@ -78,9 +72,6 @@ def beta_delta_H(
     return utility + beta * delta * E_next_V
 
 
-# --------------------------------------------------------------------------------------
-# Model factory
-# --------------------------------------------------------------------------------------
 WEALTH_START = 0.5
 WEALTH_STOP = 50.0
 N_WEALTH = 200
@@ -133,9 +124,6 @@ def _make_model(*, H_func=beta_delta_H):
     )
 
 
-# --------------------------------------------------------------------------------------
-# Analytical denominators
-# --------------------------------------------------------------------------------------
 def _denominators(beta, delta):
     """Return (D_0, D_1) for the given discounting type."""
     bd = beta * delta
@@ -152,9 +140,6 @@ def _denominators_naive(beta, delta):
     return d0, d1
 
 
-# --------------------------------------------------------------------------------------
-# Test
-# --------------------------------------------------------------------------------------
 @pytest.mark.parametrize(
     ("label", "beta", "delta"),
     [

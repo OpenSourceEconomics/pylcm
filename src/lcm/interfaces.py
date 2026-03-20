@@ -1,5 +1,5 @@
 import dataclasses
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from types import MappingProxyType
 from typing import cast
@@ -346,12 +346,7 @@ class InternalFunctions:
         if not self.simulate_overrides:
             return self
         merged = dict(self.functions) | dict(self.simulate_overrides)
-        return InternalFunctions(
-            functions=MappingProxyType(merged),
-            constraints=self.constraints,
-            transitions=self.transitions,
-            regime_transition_probs=self.regime_transition_probs,
-        )
+        return replace(self, functions=MappingProxyType(merged))
 
     def get_all_functions(self) -> MappingProxyType[str, InternalUserFunction]:
         """Get all regime functions including utility, constraints, and transitions.

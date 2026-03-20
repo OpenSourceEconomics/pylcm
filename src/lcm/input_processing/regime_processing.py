@@ -162,13 +162,10 @@ def process_regimes(
 
         # Build Q_and_F for simulate (uses simulate overrides if any).
         if _has_phase_variants(regime):
-            simulate_internal_functions = _resolve_internal_functions_for_simulate(
-                internal_functions,
-            )
             Q_and_F_simulate = build_Q_and_F_functions(
                 regime=regime,
                 regimes_to_active_periods=regimes_to_active_periods,
-                internal_functions=simulate_internal_functions,
+                internal_functions=internal_functions.with_simulate_overrides(),
                 state_space_infos=state_space_infos,
                 ages=ages,
                 regime_params_template=regime_params_template,
@@ -450,21 +447,6 @@ def _classify_transitions(
 def _has_phase_variants(regime: Regime) -> bool:
     """Check if any function in the regime is a PhaseVariant."""
     return any(isinstance(f, PhaseVariant) for f in regime.functions.values())
-
-
-def _resolve_internal_functions_for_simulate(
-    internal_functions: InternalFunctions,
-) -> InternalFunctions:
-    """Return InternalFunctions with simulate overrides applied.
-
-    Args:
-        internal_functions: The internal functions with possible simulate overrides.
-
-    Returns:
-        InternalFunctions with simulate overrides merged into functions.
-
-    """
-    return internal_functions.with_simulate_overrides()
 
 
 def _extract_transitions_from_regime(
