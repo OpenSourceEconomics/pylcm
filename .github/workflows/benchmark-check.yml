@@ -29,7 +29,7 @@ jobs:
             --pr-commits "$PR_COMMITS" 2>&1) || true
           STATUS=$(echo "$OUTPUT" | tail -1 | \
             sed 's/Status: //')
-          DETAILS=$(echo "$OUTPUT" | head -n -1)
+          DETAILS=$(echo "$OUTPUT" | head -n -1 | sed 's/`/\\`/g')
           echo "status=$STATUS" >> "$GITHUB_OUTPUT"
           {
             echo "details<<BENCHEOF"
