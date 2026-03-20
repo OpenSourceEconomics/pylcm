@@ -46,6 +46,7 @@ project:
         - file: user_guide/parameters.md
         - file: user_guide/pandas_interop.md
         - file: user_guide/solving_and_simulating.md
+        - file: user_guide/benchmarking.md
         - file: user_guide/debugging.md
     - file: explanations/index.md
       title: Explanations
@@ -65,6 +66,10 @@ project:
         - file: examples/mahler_yum_2024.md
     - file: development/index.md
       title: Development
+      children:
+        - file: development/setup.md
+        - file: development/conventions.md
+        - file: development/benchmarking.md
   error_rules:
     - rule: link-resolves
       severity: ignore

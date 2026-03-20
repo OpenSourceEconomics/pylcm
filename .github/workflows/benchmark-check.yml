@@ -1,0 +1,93 @@
+---
+name: benchmark-check
+on:
+  pull_request:
+    branches:
+      - '*'
+jobs:
+  check-benchmarks:
+    name: Check benchmark results exist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Fetch org site repo
+        run: |
+          git clone --depth 1 \
+            https://github.com/OpenSourceEconomics/OpenSourceEconomics.github.io.git \
+            /tmp/org-site
+      - name: Check for benchmark results
+        id: check
+        run: |
+          BASE="origin/${{ github.base_ref }}"
+          PR_COMMITS=$(git log --format='%H' \
+            "$BASE..HEAD" | tr '\n' ',')
+          PR_COMMITS="${PR_COMMITS%,}"
+          OUTPUT=$(python benchmarks/check_results.py \
+            --org-site-dir /tmp/org-site \
+            --pr-commits "$PR_COMMITS" 2>&1) || true
+          STATUS=$(echo "$OUTPUT" | tail -1 | \
+            sed 's/Status: //')
+          DETAILS=$(echo "$OUTPUT" | head -n -1 | sed 's/`/\\`/g')
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          {
+            echo "details<<BENCHEOF"
+            echo "$DETAILS"
+            echo "BENCHEOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Report result
+        uses: actions/github-script@v7
+        with:
+          script: |-
+            const status = '${{ steps.check.outputs.status }}';
+            const details =
+              `${{ steps.check.outputs.details }}`.trim();
+            const marker = '<!-- benchmark-check -->';
+            if (status === 'current' || status === 'skip') {
+              core.info('Benchmark check passed.');
+              return;
+            }
+            if (status === 'stale') {
+              const body = [
+                marker,
+                '**Benchmark check**: results found, ' +
+                  'but not for HEAD.',
+                '',
+                details,
+                '',
+                'Consider re-running benchmarks if any ' +
+                  'of these commits may impact performance.',
+              ].join('\n');
+              const { data: comments } =
+                await github.rest.issues.listComments({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                });
+              const existing = comments.find(
+                c => c.body.includes(marker),
+              );
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: existing.id,
+                  body: body,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: body,
+                });
+              }
+              return;
+            }
+            // status === 'missing'
+            core.setFailed(
+              'No benchmark results found for this ' +
+              'PR. Run `pixi run asv-run && ' +
+              'pixi run asv-publish`.'
+            );

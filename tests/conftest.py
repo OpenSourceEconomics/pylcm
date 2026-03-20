@@ -4,7 +4,10 @@ import pytest
 
 # Module-level precision settings (updated by pytest_configure based on --precision)
 X64_ENABLED: bool = True
-DECIMAL_PRECISION: int = 14
+# 12 decimals (not 14): CI showed that 14 exceeded reproducible machine precision
+# across platforms. 12 is well within float64 guarantees (~15 significant digits)
+# while avoiding spurious failures. See commit cdd9ac3.
+DECIMAL_PRECISION: int = 12
 
 
 def pytest_addoption(parser):
@@ -23,7 +26,7 @@ def pytest_configure(config):
     global X64_ENABLED, DECIMAL_PRECISION  # noqa: PLW0603
 
     X64_ENABLED = config.getoption("--precision") == "64"
-    DECIMAL_PRECISION = 14 if X64_ENABLED else 5
+    DECIMAL_PRECISION = 12 if X64_ENABLED else 5
 
     from jax import config as jax_config  # noqa: PLC0415
 
