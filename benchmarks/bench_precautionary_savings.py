@@ -78,13 +78,15 @@ class TimeSimulate:
 
     def setup(self, n_subjects):
         self.model, self.model_params = _make_model()
-        self.V_arr_dict = self.model.solve(params=self.model_params, log_level="off")
+        self.period_to_regime_to_V_arr = self.model.solve(
+            params=self.model_params, log_level="off"
+        )
         self.initial_conditions = _make_initial_conditions(n_subjects)
         start = time.perf_counter()
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
-            V_arr_dict=self.V_arr_dict,
+            period_to_regime_to_V_arr=self.period_to_regime_to_V_arr,
             log_level="off",
         )
         self._warmup_time = time.perf_counter() - start
@@ -93,7 +95,7 @@ class TimeSimulate:
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
-            V_arr_dict=self.V_arr_dict,
+            period_to_regime_to_V_arr=self.period_to_regime_to_V_arr,
             log_level="off",
         )
 
@@ -101,7 +103,7 @@ class TimeSimulate:
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
-            V_arr_dict=self.V_arr_dict,
+            period_to_regime_to_V_arr=self.period_to_regime_to_V_arr,
             log_level="off",
         )
 
@@ -127,6 +129,7 @@ class TimeSolveAndSimulate:
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
+            period_to_regime_to_V_arr=None,
             log_level="off",
         )
         self._warmup_time = time.perf_counter() - start
@@ -135,6 +138,7 @@ class TimeSolveAndSimulate:
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
+            period_to_regime_to_V_arr=None,
             log_level="off",
         )
 
@@ -142,6 +146,7 @@ class TimeSolveAndSimulate:
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
+            period_to_regime_to_V_arr=None,
             log_level="off",
         )
 
@@ -170,6 +175,7 @@ class TimeGridLookup:
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
+            period_to_regime_to_V_arr=None,
             log_level="off",
         )
         self._warmup_time = time.perf_counter() - start
@@ -178,6 +184,7 @@ class TimeGridLookup:
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
+            period_to_regime_to_V_arr=None,
             log_level="off",
         )
 
@@ -185,6 +192,7 @@ class TimeGridLookup:
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
+            period_to_regime_to_V_arr=None,
             log_level="off",
         )
 

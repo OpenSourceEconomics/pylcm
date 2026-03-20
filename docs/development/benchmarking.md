@@ -125,6 +125,7 @@ class TimeMyModel:
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
+            period_to_regime_to_V_arr=None,
             log_level="off",
         )
         self._warmup_time = time.perf_counter() - start
