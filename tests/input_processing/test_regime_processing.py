@@ -1,3 +1,4 @@
+import functools
 from types import MappingProxyType
 
 import jax.numpy as jnp
@@ -9,6 +10,7 @@ from pandas.testing import assert_frame_equal
 from lcm import DiscreteGrid
 from lcm.ages import AgeGrid
 from lcm.input_processing.regime_processing import (
+    _rename_params_to_qnames,
     process_regimes,
 )
 from lcm.input_processing.util import get_grids, get_gridspecs, get_variable_info
@@ -128,12 +130,12 @@ def test_process_regimes():
         == working_life.actions["consumption"]
     )
 
-    assert isinstance(internal_working_regime.gridspecs["work"], DiscreteGrid)
-    assert internal_working_regime.gridspecs["work"].categories == (
+    assert isinstance(internal_working_regime.gridspecs["labor_supply"], DiscreteGrid)
+    assert internal_working_regime.gridspecs["labor_supply"].categories == (
         "work",
         "retire",
     )
-    assert internal_working_regime.gridspecs["work"].codes == (0, 1)
+    assert internal_working_regime.gridspecs["labor_supply"].codes == (0, 1)
 
     # Grids
     assert_array_equal(
@@ -145,7 +147,7 @@ def test_process_regimes():
         working_life.states["wealth"].to_jax(),
     )
 
-    assert (internal_working_regime.grids["work"] == jnp.array([0, 1])).all()
+    assert (internal_working_regime.grids["labor_supply"] == jnp.array([0, 1])).all()
 
     # Functions
     assert internal_working_regime.transitions is not None
@@ -164,3 +166,29 @@ def test_variable_info_with_continuous_constraint_has_unique_index():
 
     got = get_variable_info(working_copy)
     assert got.index.is_unique
+
+
+def test_rename_params_to_qnames_with_partial():
+    """Regression: dags >=0.5.1 renames bound partial keywords to qualified names."""
+
+    def utility(consumption, risk_aversion):
+        return consumption ** (1 - risk_aversion)
+
+    func = functools.partial(utility, risk_aversion=2.0)
+    regime_params_template = MappingProxyType(
+        {"utility": MappingProxyType({"risk_aversion": "float"})}
+    )
+
+    result = _rename_params_to_qnames(
+        func=func,
+        regime_params_template=regime_params_template,
+        param_key="utility",
+    )
+    # 1. The bound default must work under the qualified name. Before dags >=0.5.1,
+    #    the manual unwrap/re-wrap rebound keywords under the old name, so this call
+    #    would raise TypeError.
+    assert result(consumption=5.0) == 5.0 ** (1 - 2.0)
+
+    # 2. The qualified name must be usable to override the default. This fails if
+    #    _rename_params_to_qnames is a no-op (no renaming happened).
+    assert result(consumption=5.0, utility__risk_aversion=3.0) == 5.0 ** (1 - 3.0)

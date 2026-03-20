@@ -56,7 +56,7 @@ def test_solve_brute():
                 # lazy is like a type, it influences utility but is not affected
                 # by actions
                 "lazy": jnp.array([0, 1]),
-                "work": jnp.array([0, 1]),
+                "labor_supply": jnp.array([0, 1]),
             }
         ),
         continuous_actions=MappingProxyType(
@@ -70,28 +70,38 @@ def test_solve_brute():
                 "wealth": jnp.array([0.0, 1.0, 2.0]),
             }
         ),
-        state_and_discrete_action_names=("lazy", "work", "wealth"),
+        state_and_discrete_action_names=("lazy", "labor_supply", "wealth"),
     )
     # ==================================================================================
     # create the Q_and_F functions
     # ==================================================================================
 
-    def _Q_and_F(consumption, lazy, wealth, work, next_V_arr, discount_factor=0.9):
-        next_wealth = wealth + work - consumption
+    def _Q_and_F(
+        consumption,
+        lazy,
+        wealth,
+        labor_supply,
+        next_regime_to_V_arr,
+        discount_factor=0.9,
+    ):
+        next_wealth = wealth + labor_supply - consumption
         next_lazy = lazy
 
-        # next_V_arr is now a dict of regime names to arrays
+        # next_regime_to_V_arr is now a dict of regime names to arrays
         regime_name = "default"
-        if regime_name not in next_V_arr or next_V_arr[regime_name].size == 0:
-            # this is the last period, when next_V_arr = {regime_name: jnp.empty(0)}
+        if (
+            regime_name not in next_regime_to_V_arr
+            or next_regime_to_V_arr[regime_name].size == 0
+        ):
+            # last period: next_regime_to_V_arr = {regime_name: jnp.empty(0)}
             expected_V = 0
         else:
             expected_V = map_coordinates(
-                input=next_V_arr[regime_name][next_lazy],
+                input=next_regime_to_V_arr[regime_name][next_lazy],
                 coordinates=jnp.array([next_wealth]),
             )
 
-        U_arr = consumption - 0.2 * lazy * work
+        U_arr = consumption - 0.2 * lazy * labor_supply
         F_arr = next_wealth >= 0
 
         Q_arr = U_arr + discount_factor * expected_V
@@ -100,7 +110,7 @@ def test_solve_brute():
 
     max_Q_over_a = get_max_Q_over_a(
         Q_and_F=_Q_and_F,
-        action_names=("consumption", "work"),
+        action_names=("consumption", "labor_supply"),
         state_names=("lazy", "wealth"),
     )
 
@@ -147,8 +157,8 @@ def test_solve_brute_single_period_Qc_arr():
         state_and_discrete_action_names=("a", "b", "c"),
     )
 
-    def _Q_and_F(a, c, b, d, next_V_arr):  # noqa: ARG001
-        # next_V_arr is now a dict but not used in this test
+    def _Q_and_F(a, c, b, d, next_regime_to_V_arr):  # noqa: ARG001
+        # next_regime_to_V_arr is now a dict but not used in this test
         util = d
         feasib = d <= a + b + c
         return util, feasib

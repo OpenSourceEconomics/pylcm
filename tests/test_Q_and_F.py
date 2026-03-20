@@ -68,22 +68,24 @@ def test_get_Q_and_F_function():
     )
 
     consumption = jnp.array([10, 20, 30])
-    work = jnp.array([0, 1, 0])
+    labor_supply = jnp.array([0, 1, 0])
     wealth = jnp.array([20, 20, 20])
 
     Q_arr, F_arr = Q_and_F(
         consumption=consumption,
-        work=work,
+        labor_supply=labor_supply,
         wealth=wealth,
         **internal_params["working_life"],
-        next_V_arr=jnp.empty(0),  # Terminal period doesn't use continuation value
+        next_regime_to_V_arr=jnp.empty(
+            0
+        ),  # Terminal period doesn't use continuation value
     )
 
     assert_array_equal(
         Q_arr,
         utility(
             consumption=consumption,
-            is_working=work == LaborSupply.work,
+            is_working=labor_supply == LaborSupply.work,
             disutility_of_work=0.5,  # matches get_params default
         ),
     )

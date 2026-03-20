@@ -5,8 +5,9 @@ from types import MappingProxyType
 import jax.numpy as jnp
 
 from lcm.ages import AgeGrid
-from lcm.error_handling import validate_value_function_array
+from lcm.error_handling import validate_V
 from lcm.interfaces import InternalRegime
+from lcm.logging import format_duration, log_nan_in_V, log_period_timing, log_V_stats
 from lcm.typing import FloatND, InternalParams, RegimeName
 
 
@@ -31,12 +32,11 @@ def solve(
 
     """
     solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
-    next_V_arr: MappingProxyType[RegimeName, FloatND] = MappingProxyType(
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND] = MappingProxyType(
         {name: jnp.empty(0) for name in internal_regimes}
     )
 
     logger.info("Starting solution")
-    has_multiple_regimes = len(internal_regimes) > 1
     total_start = time.monotonic()
 
     # backwards induction loop
@@ -60,45 +60,33 @@ def solve(
             V_arr = max_Q_over_a(
                 **state_action_space.states,
                 **state_action_space.actions,
-                next_V_arr=next_V_arr,
+                next_regime_to_V_arr=next_regime_to_V_arr,
                 **internal_params[name],
             )
 
-            if jnp.any(jnp.isnan(V_arr)) or jnp.any(jnp.isinf(V_arr)):
-                logger.warning(
-                    "NaN/Inf in V_arr for regime '%s' at age %s",
-                    name,
-                    ages.values[period],
-                )
-
-            logger.debug(
-                "  regime '%s': V min=%.3g max=%.3g mean=%.3g",
-                name,
-                float(jnp.min(V_arr)),
-                float(jnp.max(V_arr)),
-                float(jnp.mean(V_arr)),
+            log_nan_in_V(
+                logger=logger,
+                regime_name=name,
+                age=ages.values[period],
+                V_arr=V_arr,
             )
+            log_V_stats(logger=logger, regime_name=name, V_arr=V_arr)
 
-            validate_value_function_array(
-                V_arr=V_arr, age=ages.values[period], regime_name=name
-            )
+            validate_V(V_arr=V_arr, age=ages.values[period], regime_name=name)
             period_solution[name] = V_arr
 
-        next_V_arr = MappingProxyType(period_solution)
-        solution[period] = next_V_arr
+        next_regime_to_V_arr = MappingProxyType(period_solution)
+        solution[period] = next_regime_to_V_arr
 
         elapsed = time.monotonic() - period_start
-        if has_multiple_regimes:
-            logger.info(
-                "Age: %s  regimes=%d  (%.1fs)",
-                ages.values[period],
-                len(active_regimes),
-                elapsed,
-            )
-        else:
-            logger.info("Age: %s  (%.1fs)", ages.values[period], elapsed)
+        log_period_timing(
+            logger=logger,
+            age=ages.values[period],
+            n_active_regimes=len(active_regimes),
+            elapsed=elapsed,
+        )
 
     total_elapsed = time.monotonic() - total_start
-    logger.info("Solution complete  (%.1fs)", total_elapsed)
+    logger.info("Solution complete  (%s)", format_duration(seconds=total_elapsed))
 
     return MappingProxyType(solution)

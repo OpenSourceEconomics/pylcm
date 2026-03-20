@@ -35,14 +35,14 @@ def validate_initial_conditions(
     """Validate initial conditions (regimes, states, and feasibility).
 
     Checks that:
-    1. `"regime_id"` is present, non-empty, and contains only valid regime IDs
+    1. `"regime"` is present, non-empty, and contains only valid regime IDs
     2. All required state names (across all regimes) are provided, with no extras
     3. All arrays have the same length
     4. Discrete state values are valid codes
     5. Each subject has at least one feasible action combination
 
     Args:
-        initial_conditions: Mapping of state names (plus `"regime_id"`) to arrays.
+        initial_conditions: Mapping of state names (plus `"regime"`) to arrays.
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
         regime_names_to_ids: Immutable mapping of regime names to integer IDs.
@@ -58,15 +58,15 @@ def validate_initial_conditions(
         v: k for k, v in regime_names_to_ids.items()
     }
 
-    # Extract regime_id and derive initial_regimes list for internal helpers
-    regime_id_arr = initial_conditions.get("regime_id")
-    if regime_id_arr is None:
+    # Extract regime array and derive initial_regimes list for internal helpers
+    regime_arr = initial_conditions.get("regime")
+    if regime_arr is None:
         raise InvalidInitialConditionsError(
-            format_messages(["'regime_id' must be provided in initial_conditions."])
+            format_messages(["'regime' must be provided in initial_conditions."])
         )
 
-    initial_states = {k: v for k, v in initial_conditions.items() if k != "regime_id"}
-    initial_regimes = _regime_ids_to_names(regime_id_arr, ids_to_regime_names)
+    initial_states = {k: v for k, v in initial_conditions.items() if k != "regime"}
+    initial_regimes = _regime_ids_to_names(regime_arr, ids_to_regime_names)
 
     # Validate regime names and state names/shapes first; early-exit on errors so that
     # downstream checks (discrete codes, feasibility) can assume correct names.

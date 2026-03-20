@@ -54,7 +54,7 @@ automation. Python 3.14+ is required.
 
 - `simulate.py`: Forward simulation of solved models
 - `result.py`: `SimulationResult` class with deferred DataFrame computation
-- Entry point: Model methods (`solve()`, `simulate()`, `solve_and_simulate()`)
+- Entry point: Model methods (`solve()`, `simulate()`)
 
 **Grid System (`src/lcm/grids.py`)**
 
@@ -211,18 +211,22 @@ Model(
 
 ### Core Methods
 
-- `model.solve(params)` - Solve the model and return value function arrays per period
-  and regime
-- `model.simulate(params, initial_conditions, V_arr_dict)` - Simulate forward given
-  solution
-- `model.solve_and_simulate(params, initial_conditions)` - Combined solve and simulate
+- `model.solve(params=params)` - Solve the model and return value function arrays per
+  period and regime
+- `model.simulate(params=params, initial_conditions=initial_conditions, period_to_regime_to_V_arr=period_to_regime_to_V_arr)`
+  \- Simulate forward given solution. `period_to_regime_to_V_arr` is optional; when
+  `None`, the model is solved automatically before simulating.
 
 ### SimulationResult
 
-Both `simulate()` and `solve_and_simulate()` return a `SimulationResult` object:
+`simulate()` returns a `SimulationResult` object:
 
 ```python
-result = model.solve_and_simulate(params, initial_conditions)
+result = model.simulate(
+    params=params,
+    initial_conditions=initial_conditions,
+    period_to_regime_to_V_arr=None,
+)
 
 # Convert to DataFrame (deferred computation)
 df = result.to_dataframe()
@@ -247,7 +251,7 @@ result.available_targets  # list[str] - computable additional targets
 # Access raw data for advanced users
 result.raw_results  # dict[RegimeName, dict[int, PeriodRegimeSimulationData]]
 result.internal_params  # InternalParams
-result.V_arr_dict  # dict[int, dict[RegimeName, FloatND]]
+result.period_to_regime_to_V_arr  # dict[int, dict[RegimeName, FloatND]]
 
 # Serialization (requires cloudpickle)
 result.to_pickle("path/to/file.pkl")
@@ -256,13 +260,13 @@ loaded = SimulationResult.from_pickle("path/to/file.pkl")
 
 ### Initial Conditions Format
 
-Initial conditions use a flat dictionary with state names plus `"regime_id"`:
+Initial conditions use a flat dictionary with state names plus `"regime"`:
 
 ```python
 initial_conditions = {
     "wealth": jnp.array([1.0, 2.0, 3.0]),
     "health": jnp.array([0.5, 0.8, 0.3]),
-    "regime_id": jnp.array([RegimeId.working, RegimeId.working, RegimeId.retired]),
+    "regime": jnp.array([RegimeId.working, RegimeId.working, RegimeId.retired]),
 }
 ```
 

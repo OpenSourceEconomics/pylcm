@@ -70,7 +70,7 @@ type ParamsTemplate = MappingProxyType[RegimeName, RegimeParamsTemplate]
 type UserFacingParamsTemplate = dict[RegimeName, dict[str, dict[str, str]]]
 
 # Type aliases for value function arrays
-type VArrMapping = MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
+type PeriodToRegimeToVArr = MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
 
 
 class UserFunction(Protocol):
@@ -141,7 +141,7 @@ class QAndFFunction(Protocol):
 
     def __call__(
         self,
-        next_V_arr: FloatND,
+        next_regime_to_V_arr: FloatND,
         **kwargs: Any,  # noqa: ANN401
     ) -> tuple[FloatND, BoolND]: ...
 
@@ -158,7 +158,7 @@ class MaxQOverAFunction(Protocol):
 
     def __call__(
         self,
-        next_V_arr: MappingProxyType[RegimeName, Array],
+        next_regime_to_V_arr: MappingProxyType[RegimeName, Array],
         **kwargs: Any,  # noqa: ANN401
     ) -> Array: ...
 
@@ -175,7 +175,7 @@ class ArgmaxQOverAFunction(Protocol):
 
     def __call__(
         self,
-        next_V_arr: MappingProxyType[RegimeName, Array],
+        next_regime_to_V_arr: MappingProxyType[RegimeName, Array],
         **kwargs: Any,  # noqa: ANN401
     ) -> tuple[Array, Array]: ...
 

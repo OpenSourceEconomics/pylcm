@@ -37,7 +37,7 @@ class RegimeId:
 
 
 def next_regime_from_working(
-    work: DiscreteAction,
+    labor_supply: DiscreteAction,
     age: float,
     final_age_alive: float,
 ) -> ScalarInt:
@@ -45,7 +45,7 @@ def next_regime_from_working(
         age >= final_age_alive,
         RegimeId.dead,
         jnp.where(
-            work == LaborSupply.retire,
+            labor_supply == LaborSupply.retire,
             RegimeId.retirement,
             RegimeId.working_life,
         ),
@@ -69,7 +69,7 @@ _DEFAULT_LAST_AGE = _DEFAULT_AGE_GRID.exact_values[-1]
 
 working_life = Regime(
     actions={
-        "work": DiscreteGrid(LaborSupply),
+        "labor_supply": DiscreteGrid(LaborSupply),
         "consumption": CONSUMPTION_GRID,
     },
     states={"wealth": WEALTH_GRID},

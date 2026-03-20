@@ -19,7 +19,7 @@ from lcm.ages import AgeGrid
 from lcm.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
-from lcm.persistence import _atomic_dump
+from lcm.persistence import atomic_dump
 from lcm.typing import (
     FlatRegimeParams,
     FloatND,
@@ -29,9 +29,10 @@ from lcm.typing import (
 )
 from lcm.utils import flatten_regime_namespace
 
-# ======================================================================================
-# Main result class
-# ======================================================================================
+CLOUDPICKLE_IMPORT_ERROR_MSG = (
+    "Pickling SimulationResult objects requires the optional dependency 'cloudpickle'. "
+    "Install it with: `pixi/uv add cloudpickle` (or add it to your project deps)."
+)
 
 
 class SimulationResult:
@@ -45,27 +46,26 @@ class SimulationResult:
         ],
         internal_regimes: MappingProxyType[RegimeName, InternalRegime],
         internal_params: InternalParams,
-        V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
+        period_to_regime_to_V_arr: MappingProxyType[
+            int, MappingProxyType[RegimeName, FloatND]
+        ],
         ages: AgeGrid,
         simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     ) -> None:
         self._raw_results = raw_results
         self._internal_regimes = internal_regimes
         self._internal_params = internal_params
-        self._V_arr_dict = V_arr_dict
+        self._period_to_regime_to_V_arr = period_to_regime_to_V_arr
         self._ages = ages
         self._metadata = _compute_metadata(
             internal_regimes=internal_regimes,
             raw_results=raw_results,
             simulation_output_dtypes=simulation_output_dtypes,
+            ages=ages,
         )
         self._available_targets = sorted(
             _collect_all_available_targets(internal_regimes)
         )
-
-    # ----------------------------------------------------------------------------------
-    # Public properties for advanced users
-    # ----------------------------------------------------------------------------------
 
     @property
     def raw_results(
@@ -80,15 +80,11 @@ class SimulationResult:
         return self._internal_params
 
     @property
-    def V_arr_dict(
+    def period_to_regime_to_V_arr(
         self,
     ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
         """Value function arrays from the solution."""
-        return self._V_arr_dict
-
-    # ----------------------------------------------------------------------------------
-    # Metadata properties (delegated to _metadata)
-    # ----------------------------------------------------------------------------------
+        return self._period_to_regime_to_V_arr
 
     @property
     def regime_names(self) -> list[str]:
@@ -124,10 +120,6 @@ class SimulationResult:
 
         """
         return self._available_targets
-
-    # ----------------------------------------------------------------------------------
-    # Main methods
-    # ----------------------------------------------------------------------------------
 
     def to_dataframe(
         self,
@@ -190,7 +182,7 @@ class SimulationResult:
             The path where the object was saved.
 
         """
-        return _atomic_dump(self, path, protocol=protocol)
+        return atomic_dump(self, path, protocol=protocol)
 
     @classmethod
     def from_pickle(cls, path: str | Path) -> SimulationResult:
@@ -223,11 +215,6 @@ class SimulationResult:
             f"  action_names={self.action_names}\n"
             f")"
         )
-
-
-# ======================================================================================
-# Metadata
-# ======================================================================================
 
 
 @dataclass(frozen=True)
@@ -269,6 +256,7 @@ def _compute_metadata(
         RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
     ],
     simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
+    ages: AgeGrid,
 ) -> SimulationMetadata:
     """Compute metadata from internal regimes, raw results, and output dtypes."""
     regime_names = list(internal_regimes.keys())
@@ -296,7 +284,7 @@ def _compute_metadata(
         discrete_categories[var_name] = tuple(dtype.categories)
         discrete_ordered[var_name] = bool(dtype.ordered)
 
-    n_periods = len(raw_results[regime_names[0]])
+    n_periods = ages.n_periods
     n_subjects = _get_n_subjects(raw_results)
 
     return SimulationMetadata(
@@ -323,11 +311,6 @@ def _get_n_subjects(
             first_result = next(iter(regime_results.values()))
             return len(first_result.in_regime)
     return 0
-
-
-# ======================================================================================
-# Target resolution and validation
-# ======================================================================================
 
 
 def _resolve_targets(
@@ -395,11 +378,6 @@ def _get_stochastic_weight_function_names(regime: InternalRegime) -> set[str]:
         for name in flat_transitions
         if tree_path_from_qname(name)[-1] in stochastic_transition_names
     }
-
-
-# ======================================================================================
-# DataFrame creation
-# ======================================================================================
 
 
 def _create_flat_dataframe(
@@ -588,11 +566,6 @@ def _reorder_columns(
     return df[base + state_names + action_names + rest]
 
 
-# ======================================================================================
-# Categorical conversion
-# ======================================================================================
-
-
 def _convert_to_categorical(
     *,
     df: pd.DataFrame,
@@ -660,11 +633,6 @@ def _codes_to_categorical(
         categories=pd.Index(categories),
         ordered=ordered,
     )
-
-
-# ======================================================================================
-# Target computation
-# ======================================================================================
 
 
 def _compute_targets(

@@ -37,13 +37,13 @@ from tests.test_models.deterministic.regression import (
 # --------------------------------------------------------------------------------------
 # Categorical variables
 # --------------------------------------------------------------------------------------
-@categorical(ordered=False)
+@categorical(ordered=True)
 class DiscreteConsumption:
     low: int
     high: int
 
 
-@categorical(ordered=False)
+@categorical(ordered=True)
 class DiscreteWealth:
     low: int
     medium: int
@@ -107,7 +107,7 @@ _DEFAULT_LAST_ACTIVE_AGE = 50 + (_DEFAULT_N_PERIODS - 2) * 10
 # ======================================================================================
 working_life = Regime(
     actions={
-        "work": DiscreteGrid(LaborSupply),
+        "labor_supply": DiscreteGrid(LaborSupply),
         "consumption": DiscreteGrid(DiscreteConsumption),
     },
     states={

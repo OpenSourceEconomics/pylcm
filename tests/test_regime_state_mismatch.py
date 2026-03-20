@@ -186,15 +186,15 @@ def test_deterministic_target_only_state() -> None:
     )
 
     params = {"discount_factor": 0.95}
-    V_arr_dict = model.solve(params)
+    period_to_regime_to_V_arr = model.solve(params=params)
     result = model.simulate(
         params=params,
         initial_conditions={
             "age": jnp.array([0.0, 0.0]),
             "wealth": jnp.array([20.0, 80.0]),
-            "regime_id": jnp.array([_RegimeId.alive] * 2),
+            "regime": jnp.array([_RegimeId.alive] * 2),
         },
-        V_arr_dict=V_arr_dict,
+        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
     )
     df = result.to_dataframe(use_labels=False)
     dead_rows = df[df["regime"] == "dead"]
@@ -278,15 +278,15 @@ def test_stochastic_target_only_state() -> None:
     )
 
     params = {"discount_factor": 0.95}
-    V_arr_dict = model.solve(params)
+    period_to_regime_to_V_arr = model.solve(params=params)
     result = model.simulate(
         params=params,
         initial_conditions={
             "age": jnp.array([0.0, 0.0]),
             "wealth": jnp.array([20.0, 80.0]),
-            "regime_id": jnp.array([_RegimeId.alive] * 2),
+            "regime": jnp.array([_RegimeId.alive] * 2),
         },
-        V_arr_dict=V_arr_dict,
+        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
     )
     df = result.to_dataframe(use_labels=False)
     dead_rows = df[df["regime"] == "dead"]
@@ -357,7 +357,7 @@ def test_per_target_dict_transitions():
     )
 
     params = {"discount_factor": 0.95}
-    V_arr_dict = model.solve(params)
+    period_to_regime_to_V_arr = model.solve(params=params)
 
     n_subjects = 4
     # Use codes 0 (disabled) and 1 (bad) — valid in both regimes.
@@ -376,9 +376,9 @@ def test_per_target_dict_transitions():
         initial_conditions={
             "age": jnp.zeros(n_subjects),
             "health": initial_health,
-            "regime_id": jnp.array([RegimeId.working_life] * n_subjects),
+            "regime": jnp.array([RegimeId.working_life] * n_subjects),
         },
-        V_arr_dict=V_arr_dict,
+        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
     )
     df = result.to_dataframe(use_labels=False)
 

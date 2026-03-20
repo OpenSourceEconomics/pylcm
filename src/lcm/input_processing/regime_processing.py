@@ -564,14 +564,6 @@ def _rename_params_to_qnames(
         return cast("InternalUserFunction", func)
     mapper = {p: qname_from_tree_path((param_key, p)) for p in param_names}
 
-    # Unwrap partials before renaming, then re-wrap — this avoids rename_arguments
-    # seeing the already-bound keywords and is simpler than letting dags handle it.
-    if isinstance(func, functools.partial):
-        renamed = rename_arguments(func.func, mapper=mapper)
-        return cast(
-            "InternalUserFunction",
-            functools.partial(renamed, *func.args, **func.keywords),
-        )
     return cast("InternalUserFunction", rename_arguments(func, mapper=mapper))
 
 

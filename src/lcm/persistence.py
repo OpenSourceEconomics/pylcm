@@ -1,17 +1,19 @@
 """Persistence utilities for saving and loading LCM artifacts."""
 
 import contextlib
+import copy
 import json
 import logging
 import pickle
 import platform
 import shutil
 import tempfile
+import textwrap
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import cloudpickle
 import h5py
@@ -19,7 +21,11 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
-from lcm.typing import FloatND, RegimeName, UserParams, VArrMapping
+from lcm.typing import FloatND, PeriodToRegimeToVArr, RegimeName, UserParams
+
+if TYPE_CHECKING:
+    from lcm.model import Model
+    from lcm.simulation.result import SimulationResult
 
 logger = logging.getLogger(__name__)
 
@@ -28,13 +34,13 @@ logger = logging.getLogger(__name__)
 class SolveSnapshot:
     """Snapshot of a solve run for offline reconstruction."""
 
-    model: object
+    model: Model | None
     """The Model instance."""
 
     params: UserParams | None
     """User parameters passed to solve."""
 
-    V_arr_dict: VArrMapping | None
+    period_to_regime_to_V_arr: PeriodToRegimeToVArr | None
     """Immutable mapping of periods to regime value function arrays."""
 
     platform: str
@@ -45,42 +51,19 @@ class SolveSnapshot:
 class SimulateSnapshot:
     """Snapshot of a simulate run for offline reconstruction."""
 
-    model: object
+    model: Model | None
     """The Model instance."""
 
     params: UserParams | None
     """User parameters passed to simulate."""
 
     initial_conditions: Mapping[str, Array] | None
-    """Mapping of state names (plus `"regime_id"`) to arrays."""
+    """Mapping of state names and "regime" to arrays."""
 
-    V_arr_dict: VArrMapping | None
+    period_to_regime_to_V_arr: PeriodToRegimeToVArr | None
     """Immutable mapping of periods to regime value function arrays."""
 
-    result: object | None
-    """SimulationResult object."""
-
-    platform: str
-    """Platform string, e.g. `"x86_64-Linux"`."""
-
-
-@dataclass(frozen=True)
-class SolveAndSimulateSnapshot:
-    """Snapshot of a solve-and-simulate run for offline reconstruction."""
-
-    model: object
-    """The Model instance."""
-
-    params: UserParams | None
-    """User parameters passed to solve_and_simulate."""
-
-    initial_conditions: Mapping[str, Array] | None
-    """Mapping of state names (plus `"regime_id"`) to arrays."""
-
-    V_arr_dict: VArrMapping | None
-    """Immutable mapping of periods to regime value function arrays."""
-
-    result: object | None
+    result: SimulationResult | None
     """SimulationResult object."""
 
     platform: str
@@ -91,16 +74,17 @@ def load_snapshot(
     path: Path,
     *,
     exclude: Sequence[str] = (),
-) -> SolveSnapshot | SimulateSnapshot | SolveAndSimulateSnapshot:
+) -> SolveSnapshot | SimulateSnapshot:
     """Load a debug snapshot directory from disk.
 
     Args:
         path: Path to the snapshot directory (e.g. `solve_snapshot_001/`).
-        exclude: Field names to skip loading (e.g. `["V_arr_dict"]` to save memory).
+        exclude: Field names to skip loading
+            (e.g. `["period_to_regime_to_V_arr"]` to save memory).
             Excluded fields are set to `None`.
 
     Returns:
-        A `SolveSnapshot`, `SimulateSnapshot`, or `SolveAndSimulateSnapshot`.
+        A `SolveSnapshot` or `SimulateSnapshot`.
 
     """
     path = Path(path)
@@ -132,16 +116,22 @@ def load_snapshot(
             with pkl_path.open("rb") as fh:
                 loaded[field_name] = cloudpickle.load(fh)
 
-    # Load V_arr_dict from HDF5 if not excluded
+    # Load period_to_regime_to_V_arr from HDF5 if not excluded
     h5_path = path / "arrays.h5"
-    if h5_path.exists() and "V_arr_dict" not in exclude:
-        loaded["V_arr_dict"] = _load_V_arr_from_h5(h5_path)
+    if h5_path.exists() and "period_to_regime_to_V_arr" not in exclude:
+        loaded["period_to_regime_to_V_arr"] = _load_h5(h5_path)
+    elif "period_to_regime_to_V_arr" not in exclude:
+        loaded["period_to_regime_to_V_arr"] = None
+        logger.warning(
+            "arrays.h5 not found in %s; period_to_regime_to_V_arr set to None",
+            path,
+        )
 
     if snapshot_type == "solve":
         return SolveSnapshot(
             model=loaded.get("model"),
             params=loaded.get("params"),
-            V_arr_dict=loaded.get("V_arr_dict"),
+            period_to_regime_to_V_arr=loaded.get("period_to_regime_to_V_arr"),
             platform=saved_platform,
         )
     if snapshot_type == "simulate":
@@ -149,25 +139,19 @@ def load_snapshot(
             model=loaded.get("model"),
             params=loaded.get("params"),
             initial_conditions=loaded.get("initial_conditions"),
-            V_arr_dict=loaded.get("V_arr_dict"),
+            period_to_regime_to_V_arr=loaded.get("period_to_regime_to_V_arr"),
             result=loaded.get("result"),
             platform=saved_platform,
         )
-    return SolveAndSimulateSnapshot(
-        model=loaded.get("model"),
-        params=loaded.get("params"),
-        initial_conditions=loaded.get("initial_conditions"),
-        V_arr_dict=loaded.get("V_arr_dict"),
-        result=loaded.get("result"),
-        platform=saved_platform,
-    )
+    msg = f"Unknown snapshot_type: {snapshot_type!r}"
+    raise ValueError(msg)
 
 
 def save_solve_snapshot(
     *,
-    model: object,
+    model: Model,
     params: UserParams,
-    V_arr_dict: VArrMapping,
+    period_to_regime_to_V_arr: PeriodToRegimeToVArr,
     log_path: Path,
     log_keep_n_latest: int,
 ) -> Path:
@@ -176,7 +160,7 @@ def save_solve_snapshot(
     Args:
         model: The Model instance.
         params: User parameters passed to solve.
-        V_arr_dict: Value function arrays from solve.
+        period_to_regime_to_V_arr: Value function arrays from solve.
         log_path: Parent directory for snapshot directories.
         log_keep_n_latest: Maximum number of snapshots to retain.
 
@@ -191,7 +175,7 @@ def save_solve_snapshot(
 
     _save_pkl(snap_dir / "model.pkl", model)
     _save_pkl(snap_dir / "params.pkl", params)
-    _save_V_arr_to_h5(snap_dir / "arrays.h5", V_arr_dict)
+    _save_h5(snap_dir / "arrays.h5", period_to_regime_to_V_arr)
     _write_metadata(snap_dir, snapshot_type="solve", fields=["model", "params"])
     _write_environment_files(snap_dir)
 
@@ -203,11 +187,11 @@ def save_solve_snapshot(
 
 def save_simulate_snapshot(
     *,
-    model: object,
+    model: Model,
     params: UserParams,
     initial_conditions: Mapping[str, Array],
-    V_arr_dict: VArrMapping,
-    result: object,
+    period_to_regime_to_V_arr: PeriodToRegimeToVArr,
+    result: SimulationResult,
     log_path: Path,
     log_keep_n_latest: int,
 ) -> Path:
@@ -216,8 +200,8 @@ def save_simulate_snapshot(
     Args:
         model: The Model instance.
         params: User parameters passed to simulate.
-        initial_conditions: Mapping of state names (plus `"regime_id"`) to arrays.
-        V_arr_dict: Value function arrays.
+        initial_conditions: Mapping of state names and "regime" to arrays.
+        period_to_regime_to_V_arr: Value function arrays.
         result: SimulationResult object.
         log_path: Parent directory for snapshot directories.
         log_keep_n_latest: Maximum number of snapshots to retain.
@@ -226,16 +210,17 @@ def save_simulate_snapshot(
         Path to the created snapshot directory.
 
     """
+    prefix = "simulate_snapshot"
     log_path.mkdir(parents=True, exist_ok=True)
-    counter = _next_counter(log_path, prefix="simulate_snapshot")
-    snap_dir = log_path / f"simulate_snapshot_{counter:03d}"
+    counter = _next_counter(log_path, prefix=prefix)
+    snap_dir = log_path / f"{prefix}_{counter:03d}"
     snap_dir.mkdir()
 
     _save_pkl(snap_dir / "model.pkl", model)
     _save_pkl(snap_dir / "params.pkl", params)
     _save_pkl(snap_dir / "initial_conditions.pkl", initial_conditions)
-    _save_pkl(snap_dir / "result.pkl", result)
-    _save_V_arr_to_h5(snap_dir / "arrays.h5", V_arr_dict)
+    _save_pkl(snap_dir / "result.pkl", _strip_V_arr_from_result(result))
+    _save_h5(snap_dir / "arrays.h5", period_to_regime_to_V_arr)
     _write_metadata(
         snap_dir,
         snapshot_type="simulate",
@@ -243,74 +228,23 @@ def save_simulate_snapshot(
     )
     _write_environment_files(snap_dir)
 
-    _enforce_retention(
-        log_path, prefix="simulate_snapshot", keep_n_latest=log_keep_n_latest
-    )
-    return snap_dir
-
-
-def save_solve_and_simulate_snapshot(
-    *,
-    model: object,
-    params: UserParams,
-    initial_conditions: Mapping[str, Array],
-    V_arr_dict: VArrMapping,
-    result: object,
-    log_path: Path,
-    log_keep_n_latest: int,
-) -> Path:
-    """Save a solve-and-simulate snapshot directory to disk.
-
-    Args:
-        model: The Model instance.
-        params: User parameters passed to solve_and_simulate.
-        initial_conditions: Mapping of state names (plus `"regime_id"`) to arrays.
-        V_arr_dict: Value function arrays.
-        result: SimulationResult object.
-        log_path: Parent directory for snapshot directories.
-        log_keep_n_latest: Maximum number of snapshots to retain.
-
-    Returns:
-        Path to the created snapshot directory.
-
-    """
-    log_path.mkdir(parents=True, exist_ok=True)
-    counter = _next_counter(log_path, prefix="solve_and_simulate_snapshot")
-    snap_dir = log_path / f"solve_and_simulate_snapshot_{counter:03d}"
-    snap_dir.mkdir()
-
-    _save_pkl(snap_dir / "model.pkl", model)
-    _save_pkl(snap_dir / "params.pkl", params)
-    _save_pkl(snap_dir / "initial_conditions.pkl", initial_conditions)
-    _save_pkl(snap_dir / "result.pkl", result)
-    _save_V_arr_to_h5(snap_dir / "arrays.h5", V_arr_dict)
-    _write_metadata(
-        snap_dir,
-        snapshot_type="solve_and_simulate",
-        fields=["model", "params", "initial_conditions", "result"],
-    )
-    _write_environment_files(snap_dir)
-
-    _enforce_retention(
-        log_path,
-        prefix="solve_and_simulate_snapshot",
-        keep_n_latest=log_keep_n_latest,
-    )
+    _enforce_retention(log_path, prefix=prefix, keep_n_latest=log_keep_n_latest)
     return snap_dir
 
 
 def save_solution(
     *,
-    V_arr_dict: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
+    period_to_regime_to_V_arr: MappingProxyType[
+        int, MappingProxyType[RegimeName, FloatND]
+    ],
     path: str | Path,
-    protocol: int = pickle.HIGHEST_PROTOCOL,
 ) -> Path:
-    """Save value function arrays from solve() to disk.
+    """Save value function arrays from solve() to an HDF5 file.
 
     Args:
-        V_arr_dict: Immutable mapping of periods to regime value function arrays.
-        path: File path to save the pickle.
-        protocol: Pickle protocol version (default HIGHEST_PROTOCOL).
+        period_to_regime_to_V_arr: Immutable mapping of periods to regime
+            value function arrays.
+        path: File path to save the HDF5 file.
 
     Returns:
         The path where the object was saved.
@@ -319,33 +253,27 @@ def save_solution(
         FileNotFoundError: If the parent directory does not exist.
 
     """
-    return _atomic_dump(V_arr_dict, path, protocol=protocol)
+    p = Path(path)
+    if not p.parent.is_dir():
+        raise FileNotFoundError(f"Parent directory does not exist: {p.parent}")
+    _save_h5(p, period_to_regime_to_V_arr)
+    return p
 
 
 def load_solution(
-    *, path: str | Path
+    *,
+    path: str | Path,
 ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
-    """Load value function arrays from disk.
+    """Load value function arrays from an HDF5 file.
 
     Args:
-        path: File path to read the pickle from.
+        path: File path to read the HDF5 file from.
 
     Returns:
         Immutable mapping of periods to regime value function arrays.
 
-    Raises:
-        TypeError: If the loaded object is not a MappingProxyType.
-
     """
-    p = Path(path)
-    with p.open("rb") as f:
-        obj = cloudpickle.load(f)
-
-    if not isinstance(obj, MappingProxyType):
-        raise TypeError(
-            f"Pickle at {p} is {type(obj).__name__}, expected MappingProxyType"
-        )
-    return obj
+    return _load_h5(Path(path))
 
 
 def _get_platform() -> str:
@@ -362,43 +290,53 @@ def _find_project_root() -> Path | None:
     return None
 
 
+def _strip_V_arr_from_result(result: SimulationResult) -> SimulationResult:
+    """Create a copy of result with value arrays replaced by an empty mapping.
+
+    Avoid storing period_to_regime_to_V_arr both in the pickle and in the HDF5 file.
+
+    """
+    stripped = copy.copy(result)
+    object.__setattr__(stripped, "_period_to_regime_to_V_arr", MappingProxyType({}))
+    return stripped
+
+
 def _save_pkl(path: Path, obj: object) -> None:
     """Save an object to a pickle file atomically."""
-    _atomic_dump(obj, path, protocol=pickle.HIGHEST_PROTOCOL)
+    atomic_dump(obj, path, protocol=pickle.HIGHEST_PROTOCOL)
 
 
-def _save_V_arr_to_h5(
+def _save_h5(
     path: Path,
-    V_arr_dict: VArrMapping,
+    period_to_regime_to_V_arr: PeriodToRegimeToVArr,
 ) -> None:
-    """Write V_arr_dict to an HDF5 file.
+    """Write value function arrays to an HDF5 file.
 
-    Datasets are stored at `/V_arr/{period}/{regime_name}`.
+    Datasets are stored at `/{period}/{regime_name}/V_arr`.
 
     """
     with h5py.File(path, "w") as fh:
-        for period, regime_dict in V_arr_dict.items():
+        for period, regime_dict in period_to_regime_to_V_arr.items():
             for regime_name, arr in regime_dict.items():
-                dataset_name = f"V_arr/{period}/{regime_name}"
+                dataset_name = f"{period}/{regime_name}/V_arr"
                 fh.create_dataset(dataset_name, data=np.asarray(arr))
 
 
-def _load_V_arr_from_h5(path: Path) -> VArrMapping:
-    """Read V_arr_dict from an HDF5 file.
+def _load_h5(path: Path) -> PeriodToRegimeToVArr:
+    """Read value function arrays from an HDF5 file.
 
     Returns:
-        Immutable mapping matching the structure written by `_save_V_arr_to_h5`.
+        Immutable mapping matching the structure written by `_save_h5`.
 
     """
     result: dict[int, dict[str, FloatND]] = {}
     with h5py.File(path, "r") as fh:
-        v_arr_group = fh["V_arr"]
-        for period_key in v_arr_group:
+        for period_key in fh:
             period = int(period_key)
             result[period] = {}
-            for regime_name in v_arr_group[period_key]:
+            for regime_name in fh[period_key]:
                 result[period][regime_name] = jnp.asarray(
-                    v_arr_group[period_key][regime_name][()]
+                    fh[period_key][regime_name]["V_arr"][()]
                 )
 
     return MappingProxyType(
@@ -432,21 +370,21 @@ def _write_environment_files(snap_dir: Path) -> None:
                 shutil.copy2(src, snap_dir / filename)
 
     platform_str = _get_platform()
-    reproduce_md = f"""\
-# Reproducing this run
+    reproduce_md = textwrap.dedent(f"""\
+        # Reproducing this run
 
-1. Copy `pixi.lock` and `pyproject.toml` from this directory
-2. Run `pixi install --frozen` to recreate the exact environment
-3. Load the snapshot:
+        1. Copy `pixi.lock` and `pyproject.toml` from this directory
+        2. Run `pixi install --frozen` to recreate the exact environment
+        3. Load the snapshot:
 
-```python
-from lcm import load_snapshot
-snapshot = load_snapshot("{snap_dir.name}")
-# Re-run: snapshot.model.solve(snapshot.params)
-```
+        ```python
+        from lcm import load_snapshot
+        snapshot = load_snapshot("{snap_dir.name}")
+        # Re-run: snapshot.model.solve(snapshot.params)
+        ```
 
-Platform: {platform_str}
-"""
+        Platform: {platform_str}
+    """)
     (snap_dir / "REPRODUCE.md").write_text(reproduce_md)
 
 
@@ -455,11 +393,13 @@ def _next_counter(parent_path: Path, prefix: str) -> int:
     existing = sorted(parent_path.glob(f"{prefix}_*/"))
     if not existing:
         return 1
-    last = existing[-1].name  # e.g. "solve_snapshot_003"
-    try:
-        return int(last.rsplit("_", 1)[1]) + 1
-    except IndexError, ValueError:
-        return len(existing) + 1
+    counters: list[int] = []
+    for entry in existing:
+        try:
+            counters.append(int(entry.name.rsplit("_", 1)[1]))
+        except IndexError, ValueError:
+            continue
+    return max(counters, default=0) + 1
 
 
 def _enforce_retention(parent_path: Path, prefix: str, *, keep_n_latest: int) -> None:
@@ -470,7 +410,7 @@ def _enforce_retention(parent_path: Path, prefix: str, *, keep_n_latest: int) ->
             shutil.rmtree(snap_dir)
 
 
-def _atomic_dump(obj: object, path: str | Path, *, protocol: int) -> Path:
+def atomic_dump(obj: object, path: str | Path, *, protocol: int) -> Path:
     """Serialize `obj` to `path` in an atomic (all-or-nothing) way.
 
     Args:

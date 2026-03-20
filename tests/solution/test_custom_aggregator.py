@@ -41,8 +41,8 @@ def labor_income(is_working: BoolND) -> FloatND:
     return jnp.where(is_working, 1.5, 0.0)
 
 
-def is_working(work: DiscreteAction) -> BoolND:
-    return work == LaborSupply.work
+def is_working(labor_supply: DiscreteAction) -> BoolND:
+    return labor_supply == LaborSupply.work
 
 
 def next_wealth(
@@ -95,7 +95,7 @@ def _make_model(custom_H=None):
 
     working_life_regime = Regime(
         actions={
-            "work": DiscreteGrid(LaborSupply),
+            "labor_supply": DiscreteGrid(LaborSupply),
             "consumption": LinSpacedGrid(start=0.5, stop=10, n_points=50),
         },
         states={
@@ -144,8 +144,8 @@ def test_custom_ces_aggregator_differs_from_default():
         "dead": {},
     }
 
-    V_default = model_default.solve(params_default)
-    V_ces = model_ces.solve(params_ces)
+    V_default = model_default.solve(params=params_default)
+    V_ces = model_ces.solve(params=params_ces)
 
     # The value functions should differ because the aggregation rule differs
     has_difference = False
@@ -234,8 +234,8 @@ def test_terminal_regime_value_unchanged_by_H():
         "dead": {},
     }
 
-    V_default = model_default.solve(params_default)
-    V_ces = model_ces.solve(params_ces)
+    V_default = model_default.solve(params=params_default)
+    V_ces = model_ces.solve(params=params_ces)
 
     # Last period is terminal — value functions should be identical
     last_period = max(V_default.keys())

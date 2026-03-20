@@ -27,7 +27,6 @@ from lcm.pandas_utils import (
 )
 from lcm.persistence import (
     SimulateSnapshot,
-    SolveAndSimulateSnapshot,
     SolveSnapshot,
     load_snapshot,
     load_solution,
@@ -59,7 +58,6 @@ __all__ = [
     "Regime",
     "SimulateSnapshot",
     "SimulationResult",
-    "SolveAndSimulateSnapshot",
     "SolveSnapshot",
     "categorical",
     "initial_conditions_from_dataframe",

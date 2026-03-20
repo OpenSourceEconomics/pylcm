@@ -29,8 +29,8 @@ def initial_conditions_from_dataframe(
         model: The LCM Model instance.
 
     Returns:
-        Dict mapping state names (plus `"regime_id"`) to JAX arrays. The
-        `"regime_id"` entry contains integer codes derived from the `"regime"`
+        Dict mapping state names (plus `"regime"`) to JAX arrays. The
+        `"regime"` entry contains integer codes derived from the `"regime"`
         column via `model.regime_names_to_ids`.
 
     Raises:
@@ -92,7 +92,7 @@ def initial_conditions_from_dataframe(
             initial_conditions[col] = jnp.array(df[col].values)
 
     # Convert regime names to integer codes
-    initial_conditions["regime_id"] = jnp.array(
+    initial_conditions["regime"] = jnp.array(
         [model.regime_names_to_ids[name] for name in regime_names]
     )
 
@@ -104,8 +104,7 @@ def transition_probs_from_series(
     *,
     series: pd.Series,
     model: Model,
-    regime_name: str,
-    state_name: str,
+    regime_name: str | None = ...,
 ) -> Array: ...
 
 
@@ -114,35 +113,25 @@ def transition_probs_from_series(
     *,
     series: pd.Series,
     model: Model,
-    regime_name: str,
-    state_name: str,
+    regime_name: str | None = ...,
     target_regime_name: str,
 ) -> Array: ...
 
 
-@overload
 def transition_probs_from_series(
     *,
     series: pd.Series,
     model: Model,
-    regime_name: str,
-) -> Array: ...
-
-
-def transition_probs_from_series(
-    *,
-    series: pd.Series,
-    model: Model,
-    regime_name: str,
-    state_name: str | None = None,
+    regime_name: str | None = None,
     target_regime_name: str | None = None,
 ) -> Array:
     """Convert a labeled pandas Series to a transition probability array.
 
     Build a transition probability array from a Series with a named MultiIndex,
-    eliminating manual array construction with opaque axis ordering. Works for
-    both state transitions (pass `state_name`) and regime transitions (omit
-    `state_name`).
+    eliminating manual array construction with opaque axis ordering. The
+    transition type (state vs. regime) is inferred from the `"next_*"` level in
+    the MultiIndex: `"next_health"` means a state transition on `"health"`,
+    while `"next_regime"` means a regime transition.
 
     The MultiIndex must use `"age"` (with actual age values from the model's
     `AgeGrid`) for the age/period dimension — not `"period"`.
@@ -157,9 +146,8 @@ def transition_probs_from_series(
             replaced by `"age"`) plus the outcome level
             (`"next_{state_name}"` or `"next_regime"`).
         model: The LCM Model instance.
-        regime_name: Name of the regime containing the transition.
-        state_name: Name of the state with a `MarkovTransition`. Omit for
-            regime transitions.
+        regime_name: Name of the regime containing the transition. If ``None``,
+            inferred by scanning regimes for a matching `MarkovTransition`.
         target_regime_name: Target regime name for per-target state transitions.
             Required when the state transition is a per-target dict.
 
@@ -169,9 +157,18 @@ def transition_probs_from_series(
 
     Raises:
         TypeError: If the transition is not a `MarkovTransition`.
-        ValueError: If level names don't match or labels are invalid.
+        ValueError: If level names don't match, labels are invalid, or
+            inference fails.
 
     """
+    state_name = _infer_transition_target(series)
+    if regime_name is None:
+        regime_name = _infer_regime_name(
+            model=model,
+            state_name=state_name,
+            target_regime_name=target_regime_name,
+        )
+
     regime = model.regimes[regime_name]
     discrete_lookup = _build_discrete_grid_lookup(model.regimes)
     action_lookup = _build_discrete_action_lookup(regime)
@@ -212,6 +209,157 @@ def transition_probs_from_series(
     return _build_probs_array(func, outcome, all_grids, model, series)
 
 
+def _infer_transition_target(series: pd.Series) -> str | None:
+    """Find the ``next_*`` level in the MultiIndex.
+
+    Args:
+        series: Series whose MultiIndex must contain exactly one ``next_*`` level.
+
+    Returns:
+        The state name (e.g. ``"health"`` for ``"next_health"``), or ``None``
+        for regime transitions (``"next_regime"``).
+
+    Raises:
+        ValueError: If no ``next_*`` level is found.
+
+    """
+    next_levels = [
+        name
+        for name in series.index.names
+        if isinstance(name, str) and name.startswith("next_")
+    ]
+    if not next_levels:
+        msg = (
+            "No 'next_*' level found in the Series MultiIndex. "
+            "Expected a level like 'next_health' or 'next_regime'."
+        )
+        raise ValueError(msg)
+    suffix = next_levels[0].removeprefix("next_")
+    return None if suffix == "regime" else suffix
+
+
+def _infer_regime_name(
+    *,
+    model: Model,
+    state_name: str | None,
+    target_regime_name: str | None,
+) -> str:
+    """Infer the regime name by scanning for a matching MarkovTransition.
+
+    Args:
+        model: The LCM Model instance.
+        state_name: Name of the state variable, or ``None`` for regime
+            transitions.
+        target_regime_name: Target regime name for per-target dicts.
+
+    Returns:
+        The inferred regime name.
+
+    Raises:
+        TypeError: If a candidate regime uses a per-target dict for the state.
+        ValueError: If no matching regime is found or multiple regimes match
+            with different transition function signatures.
+
+    """
+    if state_name is None:
+        candidates = [
+            name
+            for name, regime in model.regimes.items()
+            if isinstance(regime.transition, MarkovTransition)
+        ]
+    else:
+        candidates = [
+            name
+            for name, regime in model.regimes.items()
+            if _has_markov_on_state(regime, state_name)
+        ]
+
+    if not candidates:
+        if state_name is None:
+            msg = "No regime with a stochastic regime transition found."
+        else:
+            msg = f"No regime with a MarkovTransition on state '{state_name}' found."
+        raise ValueError(msg)
+
+    _fail_if_per_target_candidate(candidates, state_name, model)
+
+    if len(candidates) == 1:
+        return candidates[0]
+
+    return _pick_among_multiple_candidates(
+        candidates, state_name, target_regime_name, model
+    )
+
+
+def _fail_if_per_target_candidate(
+    candidates: list[str],
+    state_name: str | None,
+    model: Model,
+) -> None:
+    """Raise if any candidate uses a per-target dict for `state_name`."""
+    if state_name is None:
+        return
+    for cand_name in candidates:
+        raw = model.regimes[cand_name].state_transitions[state_name]
+        if isinstance(raw, Mapping):
+            msg = (
+                f"State '{state_name}' in regime '{cand_name}' uses "
+                f"per-target transitions. Pass `regime_name` and "
+                f"`target_regime_name` explicitly."
+            )
+            raise TypeError(msg)
+
+
+def _pick_among_multiple_candidates(
+    candidates: list[str],
+    state_name: str | None,
+    target_regime_name: str | None,
+    model: Model,
+) -> str:
+    """Pick a regime when multiple candidates have a matching MarkovTransition.
+
+    Return the first candidate if all have identical indexing params.
+    Raise if signatures differ.
+
+    """
+    param_sets: set[tuple[str, ...]] = set()
+    for cand_name in candidates:
+        regime = model.regimes[cand_name]
+        if state_name is not None:
+            raw = regime.state_transitions[state_name]
+            markov = _extract_markov_transition(
+                raw,
+                state_name=state_name,
+                regime_name=cand_name,
+                target_regime_name=target_regime_name,
+            )
+            func = markov.func
+        else:
+            func = regime.transition.func  # ty: ignore[unresolved-attribute]
+        param_sets.add(tuple(_get_indexing_params(func)))
+
+    if len(param_sets) == 1:
+        return candidates[0]
+
+    msg = (
+        f"Multiple regimes have a MarkovTransition that matches, but with "
+        f"different signatures: {candidates}. Pass regime_name explicitly."
+    )
+    raise ValueError(msg)
+
+
+def _has_markov_on_state(regime: Regime, state_name: str) -> bool:
+    """Return True if `regime` has a MarkovTransition on `state_name`."""
+    if state_name not in regime.state_transitions:
+        return False
+    raw = regime.state_transitions[state_name]
+    if isinstance(raw, MarkovTransition):
+        return True
+    return isinstance(raw, Mapping) and any(
+        isinstance(v, MarkovTransition) for v in raw.values()
+    )
+
+
 @dataclass(frozen=True)
 class _OutcomeMapping:
     """Metadata for the outcome level of a transition probability array."""
@@ -238,7 +386,7 @@ def _build_probs_array(
     Args:
         func: The transition function whose signature defines the axis order.
         outcome: Metadata for the outcome (last) axis.
-        all_grids: Dict of discrete grid names to `DiscreteGrid` instances.
+        all_grids: dict of discrete grid names to `DiscreteGrid` instances.
         model: The LCM Model instance (used for age-to-period mapping).
         series: Series with a named MultiIndex containing the probability values.
 

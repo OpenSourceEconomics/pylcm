@@ -46,7 +46,7 @@ def test_get_next_state_function_with_solve_target():
         "utility__disutility_of_work": 1.0,
         "next_wealth__interest_rate": 0.05,
     }
-    action = {"work": 1, "consumption": 10}
+    action = {"labor_supply": 1, "consumption": 10}
     state = {"wealth": 20}
 
     got = got_func(
