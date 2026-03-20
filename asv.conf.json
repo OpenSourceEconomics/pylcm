@@ -7,5 +7,5 @@
     "benchmark_dir": "benchmarks",
     "results_dir": ".asv/results",
     "html_dir": ".asv/html",
-    "branches": ["main", "benchmarking"]
+    "branches": ["main"]
 }
