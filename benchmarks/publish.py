@@ -1,10 +1,12 @@
 """Publish ASV benchmark results to the OpenSourceEconomics.github.io repo.
 
-Usage: pixi run asv-publish
+Usage: pixi run asv-run-and-publish-main
 
 Runs `asv publish` to generate the HTML dashboard, generates a comparison
 against main (if results exist for the merge-base), then copies the results
-and HTML to the org site repo under pylcm-benchmarks/.
+and HTML to the org site repo under pylcm-benchmarks/.  This is intended
+for the main branch only — PR branches should use ``asv-run-and-pr-comment``
+instead.
 """
 
 import json

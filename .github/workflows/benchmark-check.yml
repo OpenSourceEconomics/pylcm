@@ -9,163 +9,42 @@ jobs:
     name: Check benchmark results exist
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - name: Fetch org site repo
-        run: |
-          git clone --depth 1 \
-            https://github.com/OpenSourceEconomics/OpenSourceEconomics.github.io.git \
-            /tmp/org-site
-      - name: Check for benchmark results
-        id: check
-        run: |
-          BASE="origin/${{ github.base_ref }}"
-          PR_COMMITS=$(git log --format='%H' \
-            "$BASE..HEAD" | tr '\n' ',')
-          PR_COMMITS="${PR_COMMITS%,}"
-          OUTPUT=$(python benchmarks/check_results.py \
-            --org-site-dir /tmp/org-site \
-            --pr-commits "$PR_COMMITS" 2>&1) || true
-          STATUS=$(echo "$OUTPUT" | grep '^Status: ' | \
-            sed 's/Status: //')
-          COMPARISON=$(echo "$OUTPUT" | grep '^Comparison: ' | \
-            sed 's/^Comparison: //')
-          DETAILS=$(echo "$OUTPUT" | grep -v '^Status: ' | \
-            grep -v '^Comparison: ' | sed 's/`/\\`/g')
-          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
-          {
-            echo "details<<BENCHEOF"
-            echo "$DETAILS"
-            echo "BENCHEOF"
-          } >> "$GITHUB_OUTPUT"
-          {
-            echo "comparison<<COMPEOF"
-            echo "$COMPARISON"
-            echo "COMPEOF"
-          } >> "$GITHUB_OUTPUT"
-      - name: Report result
-        uses: actions/github-script@v7
+      - uses: actions/github-script@v7
         with:
           script: |-
-            const status = '${{ steps.check.outputs.status }}';
-            const details =
-              `${{ steps.check.outputs.details }}`.trim();
-            const compRaw =
-              `${{ steps.check.outputs.comparison }}`.trim();
             const marker = '<!-- benchmark-check -->';
-            let comparison = null;
-            if (compRaw) {
-              try {
-                comparison = JSON.parse(compRaw);
-              } catch (e) {
-                core.warning('Could not parse comparison JSON');
-              }
-            }
-            function formatComparison(comp) {
-              const machine = comp.machine || 'unknown';
-              const base = comp.base_commit || '?';
-              const head = comp.head_commit || '?';
-              const text = comp.comparison || 'No output';
-              return [
-                `**Benchmark comparison** (\`${machine}\`, ` +
-                  `\`${base}\` → \`${head}\`):`,
-                '',
-                '<details><summary>Results</summary>',
-                '',
-                '```',
-                text.trim(),
-                '```',
-                '',
-                '</details>',
-              ].join('\n');
-            }
-            if (status === 'skip') {
-              core.info('Benchmark check skipped.');
+            const headSha = context.payload.pull_request.head.sha
+              .slice(0, 8);
+            const { data: comments } =
+              await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+              });
+            const found = comments.find(
+              c => c.body.includes(marker),
+            );
+            if (!found) {
+              core.setFailed(
+                'No benchmark results found for this PR. ' +
+                'Run `pixi run -e tests-cuda13 ' +
+                'asv-run-and-pr-comment`.',
+              );
               return;
             }
-            if (status === 'current') {
-              if (!comparison) {
-                core.info('Benchmark check passed.');
-                return;
-              }
-              const body = [
-                marker,
-                formatComparison(comparison),
-              ].join('\n');
-              const { data: comments } =
-                await github.rest.issues.listComments({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: context.issue.number,
-                });
-              const existing = comments.find(
-                c => c.body.includes(marker),
+            const match = found.body.match(
+              /<!-- head-sha:(\w+) -->/,
+            );
+            const commentSha = match ? match[1] : null;
+            if (commentSha === headSha) {
+              core.info(
+                `Benchmark results are current (${headSha}).`,
               );
-              if (existing) {
-                await github.rest.issues.updateComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  comment_id: existing.id,
-                  body: body,
-                });
-              } else {
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: context.issue.number,
-                  body: body,
-                });
-              }
               return;
             }
-            if (status === 'stale') {
-              const parts = [
-                marker,
-                '**Benchmark check**: results found, ' +
-                  'but not for HEAD.',
-                '',
-                details,
-              ];
-              if (comparison) {
-                parts.push('');
-                parts.push(formatComparison(comparison));
-              }
-              parts.push('');
-              parts.push(
-                'Consider re-running benchmarks if any ' +
-                  'of these commits may impact performance.',
-              );
-              const body = parts.join('\n');
-              const { data: comments } =
-                await github.rest.issues.listComments({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: context.issue.number,
-                });
-              const existing = comments.find(
-                c => c.body.includes(marker),
-              );
-              if (existing) {
-                await github.rest.issues.updateComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  comment_id: existing.id,
-                  body: body,
-                });
-              } else {
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: context.issue.number,
-                  body: body,
-                });
-              }
-              return;
-            }
-            // status === 'missing'
-            core.setFailed(
-              'No benchmark results found for this ' +
-              'PR. Run `pixi run asv-run && ' +
-              'pixi run asv-publish`.'
+            core.warning(
+              `Benchmark comment is for ${commentSha}, ` +
+              `but PR HEAD is ${headSha}. Consider ` +
+              're-running benchmarks if recent commits ' +
+              'may impact performance.',
             );
