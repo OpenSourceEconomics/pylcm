@@ -19,6 +19,7 @@ from lcm.grids import (
     PiecewiseLogSpacedGrid,
     categorical,
 )
+from lcm.interfaces import PhaseVariant
 from lcm.model import Model
 from lcm.pandas_utils import (
     initial_conditions_from_dataframe,
@@ -50,6 +51,7 @@ __all__ = [
     "LogSpacedGrid",
     "MarkovTransition",
     "Model",
+    "PhaseVariant",
     "Piece",
     "PiecewiseLinSpacedGrid",
     "PiecewiseLogSpacedGrid",
