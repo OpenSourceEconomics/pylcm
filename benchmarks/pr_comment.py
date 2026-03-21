@@ -50,7 +50,13 @@ _CLASS_SORT = {name: i for i, name in enumerate(_CLASS_DISPLAY)}
 
 _ALERT_RATIO = 1.10
 
-_DATA_ROW_RE = re.compile(r"^\s*(?:[-+x]\s+)?(\S+)\s+(\S+)\s+([\d.]+)\s+(\S+)\s*$")
+_DATA_ROW_RE = re.compile(
+    r"^\|\s*[-+~x]?\s*"  # | change_indicator
+    r"\|\s*(\S+)\s*"  # | before_value
+    r"\|\s*(\S+)\s*"  # | after_value
+    r"\|\s*~?([\d.]+)\s*"  # | ratio (strip ~ prefix)
+    r"\|\s*(.+?)\s*\|$"  # | benchmark_name |
+)
 _BENCH_NAME_RE = re.compile(r"(?:\w+\.)*(\w+)\.(\w+)(?:\(([^)]*)\))?$")
 _HASH_RE = re.compile(r"\[(\w+)\]")
 
