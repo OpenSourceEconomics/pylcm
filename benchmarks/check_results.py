@@ -9,10 +9,12 @@ Exit codes:
 """
 
 import argparse
+import json
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 _ORG_REPO = "https://github.com/OpenSourceEconomics/OpenSourceEconomics.github.io.git"
 _SUBDIR = "pylcm-benchmarks"
@@ -56,6 +58,18 @@ def _find_result_for_commits(machine_dir: Path, pr_commits: list[str]) -> str | 
     return None
 
 
+def _find_comparison_for_commits(
+    machine_dir: Path,
+    pr_commits: list[str],
+) -> dict[str, Any] | None:
+    """Return comparison data for the first PR commit that has a compare file."""
+    for sha in pr_commits:
+        compare_file = machine_dir / f"{sha[:8]}-compare.json"
+        if compare_file.exists():
+            return json.loads(compare_file.read_text(encoding="utf-8"))
+    return None
+
+
 def _check_machine(
     machine_dir: Path,
     pr_commits: list[str],
@@ -87,32 +101,44 @@ def _check_machine(
     return "stale"
 
 
-def check(org_site_dir: Path, pr_commits: list[str]) -> str:
+def check(
+    org_site_dir: Path,
+    pr_commits: list[str],
+) -> tuple[str, dict[str, Any] | None]:
     """Check benchmark status and print details.
 
     Returns:
-        One of "current", "stale", "missing", or "skip".
+        Tuple of (status, comparison_data) where status is one of "current",
+        "stale", "missing", or "skip", and comparison_data is the parsed
+        content of a `-compare.json` file (or None if not found).
 
     """
     results_root = org_site_dir / _SUBDIR / "results"
 
     if not pr_commits:
         print("No PR commits found — skipping check.")
-        return "skip"
+        return "skip", None
 
     machine_dirs = _get_machine_dirs(results_root)
     if not machine_dirs:
         print("No machine results found on org site.")
-        return "missing"
+        return "missing", None
 
     head_sha = pr_commits[0]
     statuses = [_check_machine(d, pr_commits, head_sha) for d in machine_dirs]
 
+    # Find comparison data from any machine
+    comparison = None
+    for machine_dir in machine_dirs:
+        comparison = _find_comparison_for_commits(machine_dir, pr_commits)
+        if comparison is not None:
+            break
+
     if "missing" in statuses:
-        return "missing"
+        return "missing", comparison
     if "stale" in statuses:
-        return "stale"
-    return "current"
+        return "stale", comparison
+    return "current", comparison
 
 
 def main() -> None:
@@ -134,15 +160,17 @@ def main() -> None:
     pr_commits = args.pr_commits.split(",") if args.pr_commits else _get_pr_commits()
 
     if args.org_site_dir is not None:
-        status = check(args.org_site_dir, pr_commits)
+        status, comparison = check(args.org_site_dir, pr_commits)
     else:
         with tempfile.TemporaryDirectory() as tmpdir:
             org_site_dir = Path(tmpdir) / "org-site"
             print(f"Cloning org site to {org_site_dir} ...")
             _clone_org_site(org_site_dir)
-            status = check(org_site_dir, pr_commits)
+            status, comparison = check(org_site_dir, pr_commits)
 
     print(f"\nStatus: {status}")
+    if comparison is not None:
+        print(f"Comparison: {json.dumps(comparison)}")
     sys.exit(1 if status == "missing" else 0)
 
 

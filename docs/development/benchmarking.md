@@ -82,11 +82,17 @@ repo under `pylcm-benchmarks/`. A persistent clone is kept in `.benchmark-site/`
 ## CI Check
 
 The `benchmark-check` workflow runs on every pull request. It verifies that benchmark
-results exist for at least one commit in the PR branch.
+results exist and posts a performance comparison table as a PR comment.
 
-- **Passes** if results exist for the HEAD commit
+When you run `pixi run asv-publish`, the publish script automatically compares HEAD
+against the merge-base with main (using `asv compare --split --factor 1.05`) and saves
+the comparison alongside the results. The CI workflow then picks up this comparison and
+posts it on the PR.
+
+- **Passes with comparison** if results and a comparison exist for the HEAD commit — the
+  comparison table is posted as a PR comment
 - **Passes with warning** if results exist for an older PR commit (a PR comment lists
-  commits since the last benchmark)
+  commits since the last benchmark, plus the comparison if available)
 - **Fails** if no commit in the PR has benchmark results
 
 To satisfy the check:
