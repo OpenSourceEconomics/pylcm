@@ -11,19 +11,63 @@ can verify that benchmarks have been run.
 """
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
+
+_REPO_URL = "https://github.com/OpenSourceEconomics/pylcm"
 
 _MARKER = "<!-- benchmark-check -->"
 _RESULTS_DIR = Path(".asv/results")
 
+_CLASS_DISPLAY = {
+    "MahlerYum": "Mahler-Yum",
+    "Mortality": "Mortality",
+    "PrecautionarySavingsSolve": "Precautionary Savings - Solve",
+    "PrecautionarySavingsSimulate": ("Precautionary Savings - Simulate"),
+    "PrecautionarySavingsSimulateWithSolve": (
+        "Precautionary Savings - Simulate with Solve"
+    ),
+    "PrecautionarySavingsGridLookup": ("Precautionary Savings - Grid Lookup"),
+}
+
+_METHOD_DISPLAY = {
+    "time_execution": "execution time",
+    "peakmem_execution": "peak mem usage",
+    "track_compilation_time": "compilation time",
+}
+
+_METHOD_SORT = {
+    name: i
+    for i, name in enumerate(
+        ("time_execution", "track_compilation_time", "peakmem_execution")
+    )
+}
+
+_CLASS_SORT = {name: i for i, name in enumerate(_CLASS_DISPLAY)}
+
+_ALERT_RATIO = 1.10
+
+_DATA_ROW_RE = re.compile(r"^\s*(?:[-+x]\s+)?(\S+)\s+(\S+)\s+([\d.]+)\s+(\S+)\s*$")
+_BENCH_NAME_RE = re.compile(r"(?:\w+\.)*(\w+)\.(\w+)(?:\(([^)]*)\))?$")
+_HASH_RE = re.compile(r"\[(\w+)\]")
+
+
+class _BenchmarkRow(NamedTuple):
+    class_name: str
+    method_name: str
+    params: str
+    before_value: str
+    after_value: str
+    ratio: float
+
 
 def post_pr_comment() -> None:
     """Post benchmark comparison (or raw results) as a PR comment."""
-    head_sha = _get_short_hash("HEAD")
     head_sha_full = _get_full_hash("HEAD")
+    head_sha = head_sha_full[:8]
 
     machine_dir = _find_machine_dir(_RESULTS_DIR)
     if machine_dir is None:
@@ -46,7 +90,10 @@ def post_pr_comment() -> None:
     print(f"Benchmark comment posted for {head_sha}.")
 
 
-def _try_comparison(machine_dir: Path, head_sha_full: str) -> str | None:
+def _try_comparison(
+    machine_dir: Path,
+    head_sha_full: str,
+) -> str | None:
     """Run ``asv compare`` against the merge-base, returning markdown or None."""
     try:
         base_sha_full = subprocess.run(
@@ -86,20 +133,127 @@ def _try_comparison(machine_dir: Path, head_sha_full: str) -> str | None:
         return None
 
 
-def _format_comparison_comment(head_sha: str, comparison_md: str) -> str:
+def _format_comparison_comment(
+    head_sha: str,
+    comparison_md: str,
+) -> str:
     """Format the full PR comment body for a comparison."""
     return "\n".join(
         [
             _MARKER,
             f"<!-- head-sha:{head_sha} -->",
             "",
-            "### Benchmark comparison (main → HEAD)",
+            "### Benchmark comparison (main \u2192 HEAD)",
             "",
-            "```",
-            comparison_md,
-            "```",
+            _postprocess_comparison(comparison_md),
         ]
     )
+
+
+def _postprocess_comparison(raw: str) -> str:
+    """Parse ASV compare output and reformat as a grouped benchmark table."""
+    rows, hashes = _parse_comparison_rows(raw)
+
+    if not rows:
+        return re.sub(
+            r"\[(\w+)\]\s*<[^>]+>",
+            lambda m: f"[`{m.group(1)}`]({_REPO_URL}/commit/{m.group(1)})",
+            raw,
+        )
+
+    parts: list[str] = []
+
+    if len(hashes) >= 2:
+        base_link = f"[`{hashes[0]}`]({_REPO_URL}/commit/{hashes[0]})"
+        head_link = f"[`{hashes[1]}`]({_REPO_URL}/commit/{hashes[1]})"
+        parts.append(f"Comparing {base_link} (main) \u2192 {head_link} (HEAD)")
+        parts.append("")
+
+    parts.append(_build_grouped_table(rows))
+
+    return "\n".join(parts)
+
+
+def _parse_comparison_rows(
+    raw: str,
+) -> tuple[list[_BenchmarkRow], list[str]]:
+    """Parse ASV compare text into structured rows and commit hashes."""
+    rows: list[_BenchmarkRow] = []
+    hashes: list[str] = []
+
+    for line in raw.splitlines():
+        hash_matches = _HASH_RE.findall(line)
+        if hash_matches and not hashes:
+            hashes = hash_matches
+            continue
+
+        row_match = _DATA_ROW_RE.match(line)
+        if not row_match:
+            continue
+
+        before_val, after_val, ratio_str, bench_name = row_match.groups()
+
+        name_match = _BENCH_NAME_RE.match(bench_name)
+        if not name_match:
+            continue
+
+        class_name, method_name, params = name_match.groups()
+
+        rows.append(
+            _BenchmarkRow(
+                class_name=class_name,
+                method_name=method_name,
+                params=params or "",
+                before_value=before_val,
+                after_value=after_val,
+                ratio=float(ratio_str),
+            )
+        )
+
+    return rows, hashes
+
+
+def _build_grouped_table(rows: list[_BenchmarkRow]) -> str:
+    """Build a grouped markdown table from parsed benchmark rows."""
+    groups: dict[tuple[str, str], list[_BenchmarkRow]] = {}
+    for row in rows:
+        key = (row.class_name, row.params)
+        groups.setdefault(key, []).append(row)
+
+    for group_rows in groups.values():
+        group_rows.sort(
+            key=lambda r: _METHOD_SORT.get(r.method_name, len(_METHOD_SORT))
+        )
+
+    sorted_keys = sorted(
+        groups,
+        key=lambda k: (
+            _CLASS_SORT.get(k[0], len(_CLASS_SORT)),
+            k[1],
+        ),
+    )
+
+    lines = [
+        "| Benchmark | Statistic | before | after | Ratio | Alert |",
+        "|---|---|---|---|---|---|",
+    ]
+
+    for class_name, params in sorted_keys:
+        display_name = _CLASS_DISPLAY.get(class_name, class_name)
+        if params:
+            display_name = f"{display_name} ({params})"
+
+        for i, row in enumerate(groups[(class_name, params)]):
+            bench_col = display_name if i == 0 else ""
+            stat_col = _METHOD_DISPLAY.get(row.method_name, row.method_name)
+            alert = "\u274c" if row.ratio > _ALERT_RATIO else ""
+            lines.append(
+                f"| {bench_col} | {stat_col} "
+                f"| {row.before_value} | {row.after_value} "
+                f"| {row.ratio:.2f} | {alert} |"
+            )
+
+    return "\n".join(lines)
 
 
 def _format_raw_results(result_file: Path, head_sha: str) -> str:
@@ -122,13 +276,13 @@ def _format_raw_results(result_file: Path, head_sha: str) -> str:
             short_name = bench_name
 
         if params:
-            # Parametrized benchmark — list each variant
             param_combos = _expand_params(params)
             for idx, combo_str in enumerate(param_combos):
                 if idx < len(raw_values) and raw_values[idx] is not None:
                     lines.append(
                         f"| {short_name}({combo_str}) | "
-                        f"{_format_value(short_name, raw_values[idx])} |"
+                        f"{_format_value(short_name, raw_values[idx])}"
+                        " |"
                     )
         elif isinstance(raw_values, list) and len(raw_values) == 1:
             lines.append(
@@ -145,7 +299,6 @@ def _expand_params(params: list[list[str]]) -> list[str]:
         return []
     if len(params) == 1:
         return [str(v) for v in params[0]]
-    # Cartesian product for multi-dimensional params
     combos = [str(v) for v in params[0]]
     for dim in params[1:]:
         combos = [f"{c}, {v}" for c in combos for v in dim]
@@ -158,7 +311,7 @@ def _format_value(bench_name: str, value: float) -> str:
         if value >= 1e9:
             return f"{value / 1e9:.2f} GB"
         return f"{value / 1e6:.0f} MB"
-    if "warmup" in bench_name or "track" in bench_name:
+    if "compilation_time" in bench_name or "track" in bench_name:
         return f"{value:.2f} s"
     if value >= 1.0:
         return f"{value:.3f} s"
@@ -174,7 +327,7 @@ def _format_raw_comment(head_sha: str, raw_md: str) -> str:
             _MARKER,
             f"<!-- head-sha:{head_sha} -->",
             "",
-            "### Benchmark results (HEAD only — no baseline comparison available)",
+            "### Benchmark results (HEAD only \u2014 no baseline comparison available)",
             "",
             raw_md,
             "",
@@ -194,7 +347,7 @@ def _upsert_pr_comment(body: str) -> None:
     existing_id = _find_marker_comment(pr_number)
 
     if existing_id is not None:
-        subprocess.run(
+        _run_gh(
             [
                 "gh",
                 "api",
@@ -207,7 +360,7 @@ def _upsert_pr_comment(body: str) -> None:
             check=True,
         )
     else:
-        subprocess.run(
+        _run_gh(
             [
                 "gh",
                 "pr",
@@ -220,10 +373,33 @@ def _upsert_pr_comment(body: str) -> None:
         )
 
 
+def _run_gh(
+    cmd: list[str],
+    **kwargs: Any,
+) -> subprocess.CompletedProcess[str]:
+    """Run a ``gh`` CLI command, raising a clear error if gh is missing."""
+    try:
+        return subprocess.run(cmd, **kwargs)
+    except FileNotFoundError:
+        print(
+            "The GitHub CLI (gh) is not installed. "
+            "Install it from https://cli.github.com/ and run `gh auth login`."
+        )
+        sys.exit(1)
+
+
 def _get_current_pr_number() -> int | None:
     """Return the PR number for the current branch, or None."""
-    result = subprocess.run(
-        ["gh", "pr", "view", "--json", "number", "--jq", ".number"],
+    result = _run_gh(
+        [
+            "gh",
+            "pr",
+            "view",
+            "--json",
+            "number",
+            "--jq",
+            ".number",
+        ],
         capture_output=True,
         text=True,
     )
@@ -237,7 +413,7 @@ def _get_current_pr_number() -> int | None:
 
 def _find_marker_comment(pr_number: int) -> int | None:
     """Find the comment ID with our marker on the given PR, or None."""
-    result = subprocess.run(
+    result = _run_gh(
         [
             "gh",
             "api",
@@ -255,16 +431,6 @@ def _find_marker_comment(pr_number: int) -> int | None:
         return int(result.stdout.strip())
     except ValueError:
         return None
-
-
-def _get_short_hash(ref: str) -> str:
-    """Return the short (8-char) hash for a git ref."""
-    return subprocess.run(
-        ["git", "rev-parse", "--short=8", ref],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
 
 
 def _get_full_hash(ref: str) -> str:
@@ -287,7 +453,10 @@ def _find_machine_dir(results_dir: Path) -> Path | None:
     return None
 
 
-def _find_result_file(machine_dir: Path, short_hash: str) -> Path | None:
+def _find_result_file(
+    machine_dir: Path,
+    short_hash: str,
+) -> Path | None:
     """Return the first result file matching the short hash, or None."""
     matches = [
         p for p in machine_dir.glob(f"{short_hash}*.json") if "-compare" not in p.name

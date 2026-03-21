@@ -6,7 +6,7 @@ import time
 _N_SUBJECTS = 100
 
 
-class TimeMahlerYum:
+class MahlerYum:
     timeout = 1200
 
     def setup(self):
@@ -49,9 +49,9 @@ class TimeMahlerYum:
             period_to_regime_to_V_arr=None,
             log_level="off",
         )
-        self._warmup_time = time.perf_counter() - start
+        self._compile_time = time.perf_counter() - start
 
-    def time_mahler_yum(self):
+    def time_execution(self):
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
@@ -59,7 +59,7 @@ class TimeMahlerYum:
             log_level="off",
         )
 
-    def peakmem_mahler_yum(self):
+    def peakmem_execution(self):
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
@@ -73,7 +73,7 @@ class TimeMahlerYum:
         jax.clear_caches()
         gc.collect()
 
-    def track_warmup(self):
-        return self._warmup_time
+    def track_compilation_time(self):
+        return self._compile_time
 
-    track_warmup.unit = "seconds"
+    track_compilation_time.unit = "seconds"
