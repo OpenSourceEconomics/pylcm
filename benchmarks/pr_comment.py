@@ -90,8 +90,12 @@ def post_pr_comment() -> None:
     stored_sha_full = _read_stored_hash(head_result_file)
 
     comparison_md = _try_comparison(machine_dir, stored_sha_full)
-    if comparison_md is not None:
-        body = _format_comparison_comment(head_sha, comparison_md)
+    processed = (
+        _postprocess_comparison(comparison_md) if comparison_md is not None else None
+    )
+
+    if processed is not None:
+        body = _format_comparison_comment(head_sha, processed)
     else:
         raw_md = _format_raw_results(head_result_file, head_sha)
         body = _format_raw_comment(head_sha, raw_md)
@@ -156,7 +160,7 @@ def _try_comparison(
 
 def _format_comparison_comment(
     head_sha: str,
-    comparison_md: str,
+    processed_md: str,
 ) -> str:
     """Format the full PR comment body for a comparison."""
     return "\n".join(
@@ -166,21 +170,23 @@ def _format_comparison_comment(
             "",
             "### Benchmark comparison (main \u2192 HEAD)",
             "",
-            _postprocess_comparison(comparison_md),
+            processed_md,
         ]
     )
 
 
-def _postprocess_comparison(raw: str) -> str:
-    """Parse ASV compare output and reformat as a grouped benchmark table."""
+def _postprocess_comparison(raw: str) -> str | None:
+    """Parse ASV compare output and reformat as a grouped benchmark table.
+
+    Return ``None`` when no rows with numeric ratios are found (e.g. all
+    benchmarks were renamed between base and HEAD, producing only ``n/a``
+    ratios).
+
+    """
     rows, hashes = _parse_comparison_rows(raw)
 
     if not rows:
-        return re.sub(
-            r"\[(\w+)\]\s*<[^>]+>",
-            lambda m: f"[`{m.group(1)}`]({_REPO_URL}/commit/{m.group(1)})",
-            raw,
-        )
+        return None
 
     parts: list[str] = []
 
