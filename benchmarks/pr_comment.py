@@ -240,6 +240,9 @@ def _parse_comparison_rows(
 
         class_name, method_name, params = name_match.groups()
 
+        if class_name not in _CLASS_DISPLAY:
+            continue
+
         rows.append(
             _BenchmarkRow(
                 class_name=class_name,
