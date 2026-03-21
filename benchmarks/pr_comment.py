@@ -284,40 +284,88 @@ def _build_grouped_table(rows: list[_BenchmarkRow]) -> str:
 
 
 def _format_raw_results(result_file: Path, head_sha: str) -> str:
-    """Extract a readable summary from an ASV results JSON file."""
+    """Extract a grouped summary from an ASV results JSON file."""
+    entries = _parse_raw_entries(result_file)
+
+    if not entries:
+        return "No benchmark results found."
+
+    groups: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    for class_name, method_name, params, value in entries:
+        groups.setdefault((class_name, params), []).append((method_name, value))
+
+    for group in groups.values():
+        group.sort(key=lambda x: _METHOD_SORT.get(x[0], len(_METHOD_SORT)))
+
+    sorted_keys = sorted(
+        groups,
+        key=lambda k: (
+            _CLASS_SORT.get(k[0], len(_CLASS_SORT)),
+            k[1],
+        ),
+    )
+
+    lines = [
+        f"| Benchmark ({head_sha}) | Statistic | Value |",
+        "|---|---|---|",
+    ]
+
+    for class_name, params in sorted_keys:
+        display_name = _CLASS_DISPLAY.get(class_name, class_name)
+        if params:
+            display_name = f"{display_name} ({params})"
+
+        for i, (method_name, value) in enumerate(groups[(class_name, params)]):
+            bench_col = display_name if i == 0 else ""
+            stat_col = _METHOD_DISPLAY.get(method_name, method_name)
+            lines.append(f"| {bench_col} | {stat_col} | {value} |")
+
+    return "\n".join(lines)
+
+
+def _parse_raw_entries(
+    result_file: Path,
+) -> list[tuple[str, str, str, str]]:
+    """Parse an ASV result JSON into (class, method, params, value) tuples."""
     data: dict[str, Any] = json.loads(result_file.read_text(encoding="utf-8"))
     results: dict[str, list[Any]] = data.get("results", {})
 
-    lines: list[str] = []
-    for bench_name, values in sorted(results.items()):
+    entries: list[tuple[str, str, str, str]] = []
+
+    for bench_name, values in results.items():
         if not values or values[0] is None:
             continue
+
+        name_match = _BENCH_NAME_RE.match(bench_name)
+        if not name_match:
+            continue
+
+        class_name, method_name, _ = name_match.groups()
         raw_values = values[0]
-        params = values[1] if len(values) > 1 else []
+        params_list = values[1] if len(values) > 1 else []
 
-        if bench_name.startswith("bench_") or "." in bench_name:
-            short_name = (
-                bench_name.rsplit(".", 1)[-1] if "." in bench_name else bench_name
-            )
-        else:
-            short_name = bench_name
-
-        if params:
-            param_combos = _expand_params(params)
-            for idx, combo_str in enumerate(param_combos):
+        if params_list:
+            for idx, combo_str in enumerate(_expand_params(params_list)):
                 if idx < len(raw_values) and raw_values[idx] is not None:
-                    lines.append(
-                        f"| {short_name}({combo_str}) | "
-                        f"{_format_value(short_name, raw_values[idx])}"
-                        " |"
+                    entries.append(
+                        (
+                            class_name,
+                            method_name,
+                            combo_str,
+                            _format_value(method_name, raw_values[idx]),
+                        )
                     )
         elif isinstance(raw_values, list) and len(raw_values) == 1:
-            lines.append(
-                f"| {short_name} | {_format_value(short_name, raw_values[0])} |"
+            entries.append(
+                (
+                    class_name,
+                    method_name,
+                    "",
+                    _format_value(method_name, raw_values[0]),
+                )
             )
 
-    header = f"| Benchmark ({head_sha}) | Value |\n|---|---|"
-    return header + "\n" + "\n".join(lines) if lines else "No benchmark results found."
+    return entries
 
 
 def _expand_params(params: list[list[str]]) -> list[str]:
