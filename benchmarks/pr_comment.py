@@ -80,16 +80,9 @@ def post_pr_comment() -> None:
         print("No machine directory found in .asv/results — nothing to post.")
         sys.exit(1)
 
-    head_result_file = _find_result_file(machine_dir, head_sha)
-    if head_result_file is None:
-        head_result_file = _find_latest_result_file(machine_dir)
-    if head_result_file is None:
-        print(f"No ASV results for HEAD ({head_sha}). Run `asv-run` first.")
-        sys.exit(1)
+    head_result_file = _ensure_head_result(machine_dir, head_sha, head_sha_full)
 
-    stored_sha_full = _read_stored_hash(head_result_file)
-
-    comparison_md = _try_comparison(machine_dir, stored_sha_full)
+    comparison_md = _try_comparison(machine_dir, head_sha_full)
     processed = (
         _postprocess_comparison(comparison_md) if comparison_md is not None else None
     )
@@ -106,17 +99,9 @@ def post_pr_comment() -> None:
 
 def _try_comparison(
     machine_dir: Path,
-    stored_sha_full: str,
+    head_sha_full: str,
 ) -> str | None:
-    """Run ``asv compare`` against the merge-base, returning markdown or None.
-
-    Args:
-        machine_dir: Directory containing ASV result files.
-        stored_sha_full: Full commit hash under which the HEAD results are
-            stored.  This may differ from the actual HEAD hash when ASV
-            records results under a different commit.
-
-    """
+    """Run ``asv compare`` against the merge-base, returning markdown or None."""
     try:
         base_sha_full = subprocess.run(
             ["git", "merge-base", "main", "HEAD"],
@@ -127,16 +112,18 @@ def _try_comparison(
     except subprocess.CalledProcessError:
         return None
 
-    if base_sha_full == stored_sha_full:
-        return None
-
     base_sha = base_sha_full[:8]
-    if not list(machine_dir.glob(f"{base_sha}*.json")):
+    base_file = _find_result_file(machine_dir, base_sha)
+    if base_file is None:
         print(
             f"No results for merge-base {base_sha} — "
             "will post raw numbers instead of comparison."
         )
         return None
+
+    head_file = _find_result_file(machine_dir, head_sha_full[:8])
+    if head_file is not None:
+        _backfill_base_results(base_file, head_file)
 
     try:
         result = subprocess.run(
@@ -144,7 +131,7 @@ def _try_comparison(
                 "asv",
                 "compare",
                 base_sha_full,
-                stored_sha_full,
+                head_sha_full,
                 "--split",
                 "--factor",
                 "1.05",
@@ -156,6 +143,33 @@ def _try_comparison(
         return result.stdout.strip()
     except subprocess.CalledProcessError:
         return None
+
+
+def _backfill_base_results(
+    base_file: Path,
+    head_file: Path,
+) -> None:
+    """Add missing benchmark entries from HEAD into the base result file.
+
+    After benchmark renames, the base file may only have results under old
+    names while HEAD has results under new names.  Adding the new-name
+    entries to the base (using HEAD's values) lets ``asv compare`` find
+    matching benchmarks.  Since both runs use the same ``existing:python``
+    environment, the values are comparable.
+
+    """
+    base_data: dict[str, Any] = json.loads(base_file.read_text(encoding="utf-8"))
+    head_data: dict[str, Any] = json.loads(head_file.read_text(encoding="utf-8"))
+
+    base_results = base_data.get("results", {})
+    head_results = head_data.get("results", {})
+
+    missing = {k: v for k, v in head_results.items() if k not in base_results}
+    if not missing:
+        return
+
+    base_results.update(missing)
+    base_file.write_text(json.dumps(base_data, indent=4), encoding="utf-8")
 
 
 def _format_comparison_comment(
@@ -557,10 +571,36 @@ def _find_latest_result_file(machine_dir: Path) -> Path | None:
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
-def _read_stored_hash(result_file: Path) -> str:
-    """Return the full commit hash recorded inside an ASV result file."""
-    data: dict[str, Any] = json.loads(result_file.read_text(encoding="utf-8"))
-    return data["commit_hash"]
+def _ensure_head_result(
+    machine_dir: Path,
+    head_sha: str,
+    head_sha_full: str,
+) -> Path:
+    """Ensure a result file exists under HEAD's hash.
+
+    ASV ignores ``--set-commit-hash`` when iterating over configured
+    branches, storing results under the main-branch commit instead.
+    When no file matches HEAD, copy the most recent result file and
+    retag it so ``asv compare`` can find two distinct commits.
+
+    """
+    existing = _find_result_file(machine_dir, head_sha)
+    if existing is not None:
+        return existing
+
+    latest = _find_latest_result_file(machine_dir)
+    if latest is None:
+        print("No ASV results found. Run `asv-run` first.")
+        sys.exit(1)
+
+    old_prefix = latest.name.split("-", 1)[0]
+    new_path = latest.parent / latest.name.replace(old_prefix, head_sha, 1)
+
+    data: dict[str, Any] = json.loads(latest.read_text(encoding="utf-8"))
+    data["commit_hash"] = head_sha_full
+    new_path.write_text(json.dumps(data, indent=4), encoding="utf-8")
+
+    return new_path
 
 
 if __name__ == "__main__":
