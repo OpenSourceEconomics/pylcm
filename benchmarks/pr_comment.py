@@ -76,10 +76,14 @@ def post_pr_comment() -> None:
 
     head_result_file = _find_result_file(machine_dir, head_sha)
     if head_result_file is None:
+        head_result_file = _find_latest_result_file(machine_dir)
+    if head_result_file is None:
         print(f"No ASV results for HEAD ({head_sha}). Run `asv-run` first.")
         sys.exit(1)
 
-    comparison_md = _try_comparison(machine_dir, head_sha_full)
+    stored_sha_full = _read_stored_hash(head_result_file)
+
+    comparison_md = _try_comparison(machine_dir, stored_sha_full)
     if comparison_md is not None:
         body = _format_comparison_comment(head_sha, comparison_md)
     else:
@@ -92,9 +96,17 @@ def post_pr_comment() -> None:
 
 def _try_comparison(
     machine_dir: Path,
-    head_sha_full: str,
+    stored_sha_full: str,
 ) -> str | None:
-    """Run ``asv compare`` against the merge-base, returning markdown or None."""
+    """Run ``asv compare`` against the merge-base, returning markdown or None.
+
+    Args:
+        machine_dir: Directory containing ASV result files.
+        stored_sha_full: Full commit hash under which the HEAD results are
+            stored.  This may differ from the actual HEAD hash when ASV
+            records results under a different commit.
+
+    """
     try:
         base_sha_full = subprocess.run(
             ["git", "merge-base", "main", "HEAD"],
@@ -103,6 +115,9 @@ def _try_comparison(
             check=True,
         ).stdout.strip()
     except subprocess.CalledProcessError:
+        return None
+
+    if base_sha_full == stored_sha_full:
         return None
 
     base_sha = base_sha_full[:8]
@@ -119,7 +134,7 @@ def _try_comparison(
                 "asv",
                 "compare",
                 base_sha_full,
-                head_sha_full,
+                stored_sha_full,
                 "--split",
                 "--factor",
                 "1.05",
@@ -462,6 +477,30 @@ def _find_result_file(
         p for p in machine_dir.glob(f"{short_hash}*.json") if "-compare" not in p.name
     ]
     return matches[0] if matches else None
+
+
+def _find_latest_result_file(machine_dir: Path) -> Path | None:
+    """Return the most recently modified result file, or None.
+
+    Fallback when ``--set-commit-hash`` did not produce a file matching
+    HEAD.  ASV may store results under a different commit hash depending
+    on how it resolves the configured branches.
+
+    """
+    candidates = [
+        p
+        for p in machine_dir.glob("*.json")
+        if p.name != "machine.json" and "-compare" not in p.name
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
+def _read_stored_hash(result_file: Path) -> str:
+    """Return the full commit hash recorded inside an ASV result file."""
+    data: dict[str, Any] = json.loads(result_file.read_text(encoding="utf-8"))
+    return data["commit_hash"]
 
 
 if __name__ == "__main__":
