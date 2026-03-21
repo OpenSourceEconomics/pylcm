@@ -10,7 +10,7 @@ Each class follows a standard protocol:
   reports statistics).
 - `peakmem_*` — peak memory usage during execution.
 - `track_*` — return an arbitrary scalar metric (e.g.
-  `track_compile_time` returns the JIT compilation time captured in
+  `track_compilation_time` returns the JIT compilation time captured in
   `setup`).
 
 Parametrised benchmarks declare `params` (list of value lists) and
@@ -26,7 +26,7 @@ steady-state runtime:
 1. `setup` calls the operation once and stores the elapsed time in
    `self._compile_time`.  After this call all relevant JAX traces are cached.
 2. `time_*` / `peakmem_*` then measure post-compilation performance.
-3. `track_compile_time` reports the first-call time so we can track compilation cost
+3. `track_compilation_time` reports the first-call time so we can track compilation cost
    separately.
 
 ## Running benchmarks
