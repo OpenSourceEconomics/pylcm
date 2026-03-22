@@ -29,14 +29,7 @@ from tests.test_models.deterministic.regression import (
     utility,
 )
 
-# ======================================================================================
-# Regime functions
-# ======================================================================================
 
-
-# --------------------------------------------------------------------------------------
-# Categorical variables
-# --------------------------------------------------------------------------------------
 @categorical(ordered=True)
 class DiscreteConsumption:
     low: int
@@ -56,9 +49,6 @@ class RegimeId:
     dead: int
 
 
-# --------------------------------------------------------------------------------------
-# Utility functions
-# --------------------------------------------------------------------------------------
 def utility_discrete(
     consumption: DiscreteAction,
     is_working: BoolND,
@@ -70,9 +60,6 @@ def utility_discrete(
     return utility(consumption_level, is_working, disutility_of_work)
 
 
-# --------------------------------------------------------------------------------------
-# State and regime transitions
-# --------------------------------------------------------------------------------------
 def next_wealth_discrete(
     wealth: DiscreteState,
     consumption: DiscreteAction,
@@ -102,9 +89,6 @@ def borrowing_constraint(consumption: DiscreteAction, wealth: DiscreteState) -> 
 _DEFAULT_N_PERIODS = 4
 _DEFAULT_LAST_ACTIVE_AGE = 50 + (_DEFAULT_N_PERIODS - 2) * 10
 
-# ======================================================================================
-# Regime specifications
-# ======================================================================================
 working_life = Regime(
     actions={
         "labor_supply": DiscreteGrid(LaborSupply),

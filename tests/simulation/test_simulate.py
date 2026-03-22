@@ -26,10 +26,6 @@ from tests.test_models.deterministic.regression import (
     working_life,
 )
 
-# ======================================================================================
-# Test simulate using raw inputs
-# ======================================================================================
-
 
 @pytest.fixture
 def simulate_inputs():
@@ -105,11 +101,6 @@ def test_simulate_using_raw_inputs(simulate_inputs):
 
     assert (got["labor_supply"] == "retire").all()
     assert_array_almost_equal(got["consumption"], [1.0, 50.400803])
-
-
-# ======================================================================================
-# Test simulate
-# ======================================================================================
 
 
 @pytest.fixture
@@ -238,11 +229,6 @@ def test_simulate_with_only_discrete_actions():
         check_dtype=False,
         check_categorical=False,
     )
-
-
-# ======================================================================================
-# Testing effects of parameters
-# ======================================================================================
 
 
 def test_effect_of_discount_factor_on_last_period():
@@ -382,11 +368,6 @@ def test_effect_of_disutility_of_work():
     ).all()
 
 
-# ======================================================================================
-# Test use_labels parameter
-# ======================================================================================
-
-
 def test_to_dataframe_use_labels_parameter():
     """Test that use_labels=True/False controls discrete column dtypes."""
 
@@ -412,11 +393,6 @@ def test_to_dataframe_use_labels_parameter():
     df_codes = result.to_dataframe(use_labels=False)
     assert df_codes["labor_supply"].dtype.kind in "iuf"  # integer/unsigned/float
     assert set(df_codes["labor_supply"].dropna().unique()).issubset({0, 1})
-
-
-# ======================================================================================
-# Test available_targets and additional_targets="all"
-# ======================================================================================
 
 
 @pytest.fixture
@@ -491,11 +467,6 @@ def test_additional_targets_all_with_stochastic_transitions():
     assert set(result.available_targets) <= set(df.columns)
 
 
-# ======================================================================================
-# Helper functions
-# ======================================================================================
-
-
 def test_retrieve_actions():
     got = _lookup_values_from_indices(
         flat_indices=jnp.array([0, 3, 7]),
@@ -505,11 +476,6 @@ def test_retrieve_actions():
     )
     assert_array_equal(got["a"], jnp.array([0, 0, 0.25]))
     assert_array_equal(got["b"], jnp.array([10, 16, 12]))
-
-
-# ======================================================================================
-# Test pickling
-# ======================================================================================
 
 
 def test_simulation_result_pickle_roundtrip(tmp_path: Path):

@@ -27,10 +27,6 @@ from lcm.typing import (
     Period,
 )
 
-# ---------------------------------------------------------------------------
-# Categorical variables
-# ---------------------------------------------------------------------------
-
 
 @categorical(ordered=True)
 class LaborSupply:
@@ -43,11 +39,6 @@ class RegimeId:
     working_life: int
     retirement: int
     dead: int
-
-
-# ---------------------------------------------------------------------------
-# Model functions
-# ---------------------------------------------------------------------------
 
 
 def utility_working(
@@ -119,19 +110,12 @@ def borrowing_constraint(
     return consumption <= wealth
 
 
-# ---------------------------------------------------------------------------
-# Default grids
-# ---------------------------------------------------------------------------
-
 WEALTH_GRID = LinSpacedGrid(start=1, stop=400, n_points=100)
 CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 
 _DEFAULT_AGE_GRID = IntAgeGrid(start=40, stop=70, step="10Y")  # 4 periods
 _DEFAULT_LAST_AGE = _DEFAULT_AGE_GRID.exact_values[-1]
 
-# ---------------------------------------------------------------------------
-# Default regime objects
-# ---------------------------------------------------------------------------
 
 working_life = Regime(
     actions={
@@ -165,11 +149,6 @@ dead = Regime(
     functions={"utility": lambda: 0.0},
     active=lambda _age: True,
 )
-
-
-# ---------------------------------------------------------------------------
-# Factories
-# ---------------------------------------------------------------------------
 
 
 def get_model(n_periods: int) -> Model:

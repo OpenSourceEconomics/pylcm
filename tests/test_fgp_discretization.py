@@ -20,10 +20,6 @@ import lcm
 from lcm.shocks._base import _mixture_cdf
 from tests.conftest import DECIMAL_PRECISION
 
-# ======================================================================================
-# FGP reference parameters
-# ======================================================================================
-
 SIGMA_EPS_SQ = 0.0161
 SIGMA_EPS = np.sqrt(SIGMA_EPS_SQ)
 
@@ -33,11 +29,6 @@ FGP_MU1 = 0.0089
 FGP_MU2 = -FGP_MU1 * FGP_P1 / (1 - FGP_P1)  # -0.0800 (approx)
 FGP_SIGMA1 = 0.0635
 FGP_SIGMA2 = 0.3430
-
-
-# ======================================================================================
-# 2a. Grid points match FGP formulas
-# ======================================================================================
 
 
 @pytest.mark.parametrize(
@@ -80,11 +71,6 @@ def test_rouwenhorst_grid_span_matches_fgp(rho, n_points):
     expected_span = 2 * np.sqrt(n_points - 1) * expected_std_y
     aaae(float(points[-1] - points[0]), expected_span, decimal=DECIMAL_PRECISION)
     aaae(float((points[0] + points[-1]) / 2), 0.0, decimal=DECIMAL_PRECISION)
-
-
-# ======================================================================================
-# 2b. Transition matrix properties
-# ======================================================================================
 
 
 @pytest.mark.parametrize(
@@ -168,11 +154,6 @@ def test_rouwenhorst_conditional_variance(rho, n_points):
     aaae(conditional_vars, jnp.full(n_points, SIGMA_EPS_SQ), decimal=DECIMAL_PRECISION)
 
 
-# ======================================================================================
-# 2c. Markov chain stationary moments
-# ======================================================================================
-
-
 def _stationary_distribution(P):
     """Compute stationary distribution via eigendecomposition."""
     eigvals, eigvecs = jnp.linalg.eig(P.T)
@@ -228,11 +209,6 @@ def test_stationary_moments(method, rho, n_points):
         aaae(got_autocorr, rho, decimal=1)
 
 
-# ======================================================================================
-# 2d. Rouwenhorst moment accuracy > Tauchen
-# ======================================================================================
-
-
 @pytest.mark.parametrize(
     ("rho", "n_points"),
     [(0.95, 5), (0.95, 25), (0.98, 5), (0.98, 25)],
@@ -255,11 +231,6 @@ def test_rouwenhorst_more_accurate_than_tauchen(rho, n_points):
     # Rouwenhorst should have smaller (or equal) errors
     assert abs(r_var - expected_var) <= abs(t_var - expected_var) + 1e-12
     assert abs(r_autocorr - rho) <= abs(t_autocorr - rho) + 1e-12
-
-
-# ======================================================================================
-# 2e. TauchenNormalMixture tests
-# ======================================================================================
 
 
 def _make_fgp_mixture_grid(n_points=5, rho=0.95, n_std=3.0):
@@ -396,11 +367,6 @@ def test_mixture_fully_specified_with_all_params():
     grid = _make_fgp_mixture_grid(n_points=5)
     assert grid.is_fully_specified
     assert grid.get_gridpoints().shape == (5,)
-
-
-# ======================================================================================
-# Helpers
-# ======================================================================================
 
 
 def _make_grid(method, rho, n_points):

@@ -13,10 +13,6 @@ from lcm import (
 )
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
 
-# ======================================================================================
-# Model setup helpers
-# ======================================================================================
-
 
 @categorical(ordered=False)
 class RegimeIdShock:
@@ -76,11 +72,6 @@ def _make_model(*, fixed_params=None):
         regime_id_class=RegimeIdShock,
         fixed_params=fixed_params or {},
     )
-
-
-# ======================================================================================
-# Tests
-# ======================================================================================
 
 
 def test_runtime_shock_params_property():

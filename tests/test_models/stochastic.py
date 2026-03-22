@@ -38,10 +38,6 @@ from lcm_examples.mortality import (
 from lcm_examples.mortality import retirement as _base_retirement
 from lcm_examples.mortality import working_life as _base_working_life
 
-# ======================================================================================
-# Additional categorical variables
-# ======================================================================================
-
 
 @categorical(ordered=True)
 class Health:
@@ -53,11 +49,6 @@ class Health:
 class PartnerStatus:
     single: int
     partnered: int
-
-
-# ======================================================================================
-# Stochastic model functions (different signatures due to health/partner)
-# ======================================================================================
 
 
 def utility_working(
@@ -93,9 +84,6 @@ def next_wealth(
     return (1 + interest_rate) * (wealth - consumption) + labor_income + partner
 
 
-# --------------------------------------------------------------------------------------
-# Stochastic state transitions
-# --------------------------------------------------------------------------------------
 def next_health(health: DiscreteState, partner: DiscreteState) -> FloatND:
     """Stochastic transition with JIT-calculated markov transition probabilities."""
     return jnp.where(
@@ -122,10 +110,6 @@ def next_partner(
     """Stochastic transition using pre-calculated markov transition probabilities."""
     return probs_array[period, labor_supply, partner]
 
-
-# ======================================================================================
-# Model specification (extend base regimes via .replace())
-# ======================================================================================
 
 # Smaller grids than the base mortality model to keep solve time manageable with the
 # additional stochastic states (health, partner).

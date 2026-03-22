@@ -12,10 +12,6 @@ import jax.numpy as jnp
 from lcm.exceptions import GridInitializationError, format_messages
 from lcm.typing import Float1D, Int1D
 
-# ======================================================================================
-# Step parsing
-# ======================================================================================
-
 STEP_UNITS: MappingProxyType[str, Fraction] = MappingProxyType(
     {
         "Y": Fraction(1, 1),
@@ -38,11 +34,6 @@ def parse_step(step: str) -> int | Fraction:
     multiplier = int(multiplier_str) if multiplier_str else 1
     result = multiplier * STEP_UNITS[unit.upper()]
     return int(result) if result.denominator == 1 else result
-
-
-# ======================================================================================
-# AgeGrid class
-# ======================================================================================
 
 
 class AgeGrid:
@@ -309,11 +300,6 @@ def _fail_if_not_integer_valued(
             f"Got non-integer values: {non_int}. "
             "Sub-annual steps (e.g., 'Q', 'M') produce fractional ages."
         )
-
-
-# ======================================================================================
-# Validation
-# ======================================================================================
 
 
 def _validate_age_grid(

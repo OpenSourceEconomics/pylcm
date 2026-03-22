@@ -534,11 +534,6 @@ def _init_piecewise_grid_cache(
     object.__setattr__(grid, "_cumulative_offsets", cumulative)
 
 
-# ======================================================================================
-# Validate user input
-# ======================================================================================
-
-
 def _validate_discrete_grid(category_class: type) -> None:
     """Validate the field names and values of the category_class passed to DiscreteGrid.
 

@@ -15,10 +15,6 @@ from lcm.functools import (
     get_union_of_args,
 )
 
-# ======================================================================================
-# get_union_of_args
-# ======================================================================================
-
 
 def test_get_union_of_args():
     def f(a, b):
@@ -37,11 +33,6 @@ def test_get_union_of_args_no_args():
 
     got = get_union_of_args([f])
     assert got == set()
-
-
-# ======================================================================================
-# all_as_kwargs
-# ======================================================================================
 
 
 def test_all_as_kwargs():
@@ -71,11 +62,6 @@ def test_all_as_kwargs_empty_kwargs():
     assert got == {"a": 1, "b": 2, "c": 3}
 
 
-# ======================================================================================
-# all_as_args
-# ======================================================================================
-
-
 def test_all_as_args():
     got = all_as_args(
         args=(1, 2),
@@ -103,22 +89,12 @@ def test_all_as_args_empty_kwargs():
     assert got == (1, 2, 3)
 
 
-# ======================================================================================
-# convert kwargs to args
-# ======================================================================================
-
-
 def test_convert_kwargs_to_args():
     kwargs = {"a": 1, "b": 2, "c": 3}
     parameters = ["c", "a", "b"]
     exp = [3, 1, 2]
     got = convert_kwargs_to_args(kwargs=kwargs, arg_names=parameters)
     assert got == exp
-
-
-# ======================================================================================
-# allow kwargs
-# ======================================================================================
 
 
 def test_allow_only_kwargs():
@@ -170,11 +146,6 @@ def test_allow_only_kwargs_signature_change():
     assert parameters["a"].kind == inspect.Parameter.KEYWORD_ONLY
     assert parameters["b"].kind == inspect.Parameter.KEYWORD_ONLY
     assert parameters["c"].kind == inspect.Parameter.KEYWORD_ONLY
-
-
-# ======================================================================================
-# allow args
-# ======================================================================================
 
 
 def test_allow_args():

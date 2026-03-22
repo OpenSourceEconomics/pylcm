@@ -24,10 +24,6 @@ from lcm_examples.mortality import (
     utility_working,
 )
 
-# ---------------------------------------------------------------------------
-# Deterministic regime transitions (override the stochastic ones)
-# ---------------------------------------------------------------------------
-
 
 @categorical(ordered=False)
 class RegimeId:
@@ -63,9 +59,6 @@ def next_regime_from_retirement(age: int, final_age_alive: float) -> ScalarInt:
 _DEFAULT_AGE_GRID = IntAgeGrid(start=40, stop=70, step="10Y")  # 4 periods
 _DEFAULT_LAST_AGE = _DEFAULT_AGE_GRID.exact_values[-1]
 
-# ---------------------------------------------------------------------------
-# Deterministic regime objects
-# ---------------------------------------------------------------------------
 
 working_life = Regime(
     actions={
@@ -94,10 +87,6 @@ retirement = Regime(
     active=lambda age: age < _DEFAULT_LAST_AGE,
 )
 
-
-# ---------------------------------------------------------------------------
-# Factories
-# ---------------------------------------------------------------------------
 
 from lcm import Model  # noqa: E402
 

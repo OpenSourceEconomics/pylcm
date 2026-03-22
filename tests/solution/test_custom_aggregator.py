@@ -14,9 +14,6 @@ from lcm.typing import (
 )
 
 
-# --------------------------------------------------------------------------------------
-# Shared model components
-# --------------------------------------------------------------------------------------
 @categorical(ordered=False)
 class LaborSupply:
     work: int
@@ -63,9 +60,6 @@ def borrowing_constraint(
     return consumption <= wealth
 
 
-# --------------------------------------------------------------------------------------
-# CES aggregator (Epstein-Zin style)
-# --------------------------------------------------------------------------------------
 def ces_H(
     utility: float,
     continuation_value: float,

@@ -36,11 +36,6 @@ def g(a, /, b, *, c, d):
     return f(a, b=b, c=c) + jnp.log(d)
 
 
-# ======================================================================================
-# productmap
-# ======================================================================================
-
-
 @pytest.fixture
 def setup_productmap_f():
     return {
@@ -181,11 +176,6 @@ def test_productmap_with_some_argument_mapped_twice():
         productmap(func=f, variables=("a", "a", "c"))
 
 
-# ======================================================================================
-# spacemap
-# ======================================================================================
-
-
 @pytest.fixture
 def setup_spacemap():
     value_grid = {
@@ -261,11 +251,6 @@ def test_spacemap_arguments_overlap(error_msg, product_vars, combination_vars):
         simulation_spacemap(
             func=g, action_names=product_vars, state_names=combination_vars
         )
-
-
-# ======================================================================================
-# vmap_1d
-# ======================================================================================
 
 
 def test_vmap_1d():
