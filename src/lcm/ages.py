@@ -258,27 +258,17 @@ class IntAgeGrid(AgeGrid):
             )
         return int(self._values[period])
 
-    def age_to_period(self, age: float) -> int:
-        """Convert an age to the corresponding period index.
-
-        Uses exact integer keys internally, avoiding float imprecision.
+    def age_to_period(self, age: int) -> int:  # ty: ignore[invalid-method-override]
+        """Convert an integer age to the corresponding period index.
 
         Args:
-            age: Age that must be a valid grid point.
+            age: Integer age that must be a valid grid point.
 
         Returns:
             The zero-based period index corresponding to the given age.
 
-        Raises:
-            ValueError: If age is not a valid grid point.
-
         """
-        try:
-            return self._age_to_period_map[int(age)]
-        except KeyError, ValueError:
-            valid = sorted(self._age_to_period_map)
-            msg = f"Age {age} is not a valid grid point. Valid ages: {valid}."
-            raise ValueError(msg) from None
+        return self._age_to_period_map[age]
 
     @functools.cached_property
     def _age_to_period_map(self) -> dict[int, int]:

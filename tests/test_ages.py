@@ -254,7 +254,7 @@ def test_int_age_grid_age_to_period():
 
 def test_int_age_grid_age_to_period_invalid():
     ages = IntAgeGrid(start=40, stop=70, step="10Y")
-    with pytest.raises(ValueError, match="not a valid grid point"):
+    with pytest.raises(KeyError):
         ages.age_to_period(45)
 
 
