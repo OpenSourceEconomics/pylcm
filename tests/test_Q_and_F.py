@@ -12,7 +12,7 @@ from lcm.input_processing.params_processing import (
     get_flat_param_names,
     process_params,
 )
-from lcm.interfaces import InternalFunctions, PhaseVariantContainer
+from lcm.interfaces import InternalFunctions, PhaseVariant
 from lcm.Q_and_F import (
     _get_feasibility,
     _get_joint_weights_function,
@@ -136,7 +136,7 @@ def internal_functions_illustrative():
         transitions=MappingProxyType({}),
         constraints=constraints,  # ty: ignore[invalid-argument-type]
         functions=MappingProxyType({"utility": lambda: 0, **functions}),  # ty: ignore[invalid-argument-type]
-        regime_transition_probs=PhaseVariantContainer(
+        regime_transition_probs=PhaseVariant(
             solve=mock_transition_solve, simulate=mock_transition_simulate
         ),
     )
@@ -209,7 +209,7 @@ def test_get_combined_constraint():
         constraints={"f": f, "g": g},  # ty: ignore[invalid-argument-type]
         transitions=MappingProxyType({}),
         functions=MappingProxyType({"utility": lambda: 0, "h": h}),  # ty: ignore[invalid-argument-type]
-        regime_transition_probs=PhaseVariantContainer(
+        regime_transition_probs=PhaseVariant(
             solve=mock_transition_solve, simulate=mock_transition_simulate
         ),
     )
@@ -263,7 +263,7 @@ def test_get_U_and_F_with_annotated_constraints():
         ),
         transitions=MappingProxyType({}),
         functions=MappingProxyType({"utility": utility_func}),  # ty: ignore[invalid-argument-type]
-        regime_transition_probs=PhaseVariantContainer(
+        regime_transition_probs=PhaseVariant(
             solve=mock_transition_solve, simulate=mock_transition_simulate
         ),
     )
