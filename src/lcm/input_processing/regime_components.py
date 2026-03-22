@@ -16,7 +16,7 @@ from lcm.grids import Grid
 from lcm.input_processing.params_processing import get_flat_param_names
 from lcm.interfaces import (
     InternalFunctions,
-    PhaseVariantContainer,
+    PhaseVariant,
     StateActionSpace,
     StateSpaceInfo,
 )
@@ -189,7 +189,7 @@ def build_regime_transition_probs_functions(
     regime_params_template: RegimeParamsTemplate,
     is_stochastic: bool,
     enable_jit: bool,
-) -> PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]:
+) -> PhaseVariant[RegimeTransitionFunction, VmappedRegimeTransitionFunction]:
     # Wrap deterministic next_regime to return one-hot probability array
     if is_stochastic:
         probs_func = regime_transition_probs
@@ -231,7 +231,7 @@ def build_regime_transition_probs_functions(
         ),
     )
 
-    return PhaseVariantContainer(
+    return PhaseVariant(
         solve=jax.jit(next_regime) if enable_jit else next_regime,
         simulate=jax.jit(next_regime_vmapped) if enable_jit else next_regime_vmapped,
     )

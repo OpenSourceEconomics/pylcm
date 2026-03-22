@@ -7,7 +7,7 @@ from pybaum import tree_equal
 
 from lcm.ages import AgeGrid
 from lcm.input_processing import process_regimes
-from lcm.interfaces import InternalFunctions, PhaseVariantContainer
+from lcm.interfaces import InternalFunctions, PhaseVariant
 from lcm.next_state import (
     _create_discrete_stochastic_next_func,
     get_next_state_function_for_simulation,
@@ -78,7 +78,7 @@ def test_get_next_state_function_with_simulate_target():
         constraints=MappingProxyType({}),
         transitions=MappingProxyType({"next_a": f_a, "next_b": f_b}),  # ty: ignore[invalid-argument-type]
         functions=MappingProxyType({"utility": lambda: 0, "f_weight_b": f_weight_b}),  # ty: ignore[invalid-argument-type]
-        regime_transition_probs=PhaseVariantContainer(
+        regime_transition_probs=PhaseVariant(
             solve=mock_transition_solve, simulate=mock_transition_simulate
         ),
     )
