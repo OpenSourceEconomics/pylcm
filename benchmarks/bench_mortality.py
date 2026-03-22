@@ -6,7 +6,7 @@ import time
 _N_SUBJECTS = 1_000
 
 
-class TimeMortality:
+class Mortality:
     timeout = 600
 
     def setup(self):
@@ -28,9 +28,9 @@ class TimeMortality:
             period_to_regime_to_V_arr=None,
             log_level="off",
         )
-        self._warmup_time = time.perf_counter() - start
+        self._compile_time = time.perf_counter() - start
 
-    def time_mortality(self):
+    def time_execution(self):
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
@@ -38,7 +38,7 @@ class TimeMortality:
             log_level="off",
         )
 
-    def peakmem_mortality(self):
+    def peakmem_execution(self):
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
@@ -52,7 +52,7 @@ class TimeMortality:
         jax.clear_caches()
         gc.collect()
 
-    def track_warmup(self):
-        return self._warmup_time
+    def track_compilation_time(self):
+        return self._compile_time
 
-    track_warmup.unit = "seconds"
+    track_compilation_time.unit = "seconds"

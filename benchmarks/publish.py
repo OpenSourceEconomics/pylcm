@@ -1,14 +1,21 @@
 """Publish ASV benchmark results to the OpenSourceEconomics.github.io repo.
 
-Usage: pixi run asv-publish
+Usage: pixi run asv-run-and-publish-main
 
-Runs `asv publish` to generate the HTML dashboard, then copies the results
-and HTML to the org site repo under pylcm-benchmarks/.
+Runs `asv publish` to generate the HTML dashboard, generates a comparison
+against main (if results exist for the merge-base), then copies the results
+and HTML to the org site repo under pylcm-benchmarks/.  This is intended
+for the main branch only — PR branches should use ``asv-run-and-pr-comment``
+instead.
 """
 
+import json
+import logging
 import shutil
 import subprocess
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 _ORG_REPO = "git@github.com:OpenSourceEconomics/OpenSourceEconomics.github.io.git"
 _BRANCH = "main"
@@ -34,6 +41,8 @@ def publish() -> None:
 
     print(f"Publishing benchmarks for {commit_sha_short}")
 
+    _generate_comparison(results_dir)
+
     _patch_html_title(html_dir / "index.html")
 
     _ensure_site_clone()
@@ -51,6 +60,76 @@ def publish() -> None:
 
     _commit_and_push(commit_sha_short)
     print("Done.")
+
+
+def _generate_comparison(results_dir: Path) -> None:
+    """Generate a comparison JSON file against the main merge-base.
+
+    Finds the merge-base commit between main and HEAD, checks if local ASV
+    results exist for it, and if so runs `asv compare` and saves the output.
+    This is best-effort — failures are logged but do not stop publishing.
+    """
+    try:
+        head_sha = _get_short_hash("HEAD")
+        base_sha_full = subprocess.run(
+            ["git", "merge-base", "main", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        base_sha = base_sha_full[:8]
+
+        machine_dir = _find_machine_dir(results_dir)
+        if machine_dir is None:
+            logger.warning("No machine directory found in %s", results_dir)
+            return
+
+        if not list(machine_dir.glob(f"{base_sha}*.json")):
+            logger.warning(
+                "No results for merge-base %s — skipping comparison", base_sha
+            )
+            return
+
+        comparison_text = subprocess.run(
+            ["asv", "compare", base_sha_full, "HEAD", "--split", "--factor", "1.05"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+
+        compare_data = {
+            "base_commit": base_sha,
+            "head_commit": head_sha,
+            "base_branch": "main",
+            "machine": machine_dir.name,
+            "comparison": comparison_text,
+        }
+        out_path = machine_dir / f"{head_sha}-compare.json"
+        out_path.write_text(json.dumps(compare_data, indent=2), encoding="utf-8")
+        print(f"Comparison saved to {out_path.name}")
+
+    except subprocess.CalledProcessError, OSError:
+        logger.warning("Could not generate comparison — skipping", exc_info=True)
+
+
+def _get_short_hash(ref: str) -> str:
+    """Return the short (8-char) hash for a git ref."""
+    return subprocess.run(
+        ["git", "rev-parse", "--short=8", ref],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+def _find_machine_dir(results_dir: Path) -> Path | None:
+    """Return the first machine directory under results_dir, or None."""
+    if not results_dir.is_dir():
+        return None
+    for path in results_dir.iterdir():
+        if path.is_dir():
+            return path
+    return None
 
 
 def _patch_html_title(index_html: Path) -> None:

@@ -20,14 +20,23 @@ This creates `.asv/results/<machine-name>/machine.json` with hardware metadata.
 
 ## Running Benchmarks
 
-The primary workflow is a single command that runs all benchmarks and publishes
-results:
+There are two primary workflows depending on whether you are working on main or a PR
+branch:
+
+**PR branches** — run benchmarks and post a comparison comment on your PR:
 
 ```bash
-pixi run -e tests-cuda13 asv-run-and-publish
+pixi run -e tests-cuda13 asv-run-and-pr-comment
 ```
 
-This runs `asv-run` (which requires a clean worktree) followed by `asv-publish`.
+**Main branch** — run benchmarks and publish results to the dashboard:
+
+```bash
+pixi run -e tests-cuda13 asv-run-and-publish-main
+```
+
+Both workflows run `asv-run` (which requires a clean worktree) followed by their
+respective post-processing step.
 
 Individual tasks are also available:
 
@@ -37,6 +46,9 @@ pixi run -e tests-cuda13 asv-run
 
 # Quick smoke test (not saved)
 pixi run -e tests-cuda13 asv-quick
+
+# Post benchmark comment to current PR (no GPU needed)
+pixi run asv-pr-comment
 
 # Compare two commits (no GPU needed)
 pixi run asv-compare HEAD~1 HEAD
@@ -68,7 +80,7 @@ Each benchmark tracks three metrics:
 
 ## Publishing Results
 
-After running benchmarks, publish them to the dashboard:
+After running benchmarks on the main branch, publish them to the dashboard:
 
 ```bash
 pixi run asv-publish
@@ -81,18 +93,18 @@ repo under `pylcm-benchmarks/`. A persistent clone is kept in `.benchmark-site/`
 
 ## CI Check
 
-The `benchmark-check` workflow runs on every pull request. It verifies that benchmark
-results exist for at least one commit in the PR branch.
+The `benchmark-check` workflow runs on every pull request. It looks for a PR comment
+with the `<!-- benchmark-check -->` marker and checks the embedded commit hash against
+the PR's HEAD:
 
-- **Passes** if results exist for the HEAD commit
-- **Passes with warning** if results exist for an older PR commit (a PR comment lists
-  commits since the last benchmark)
-- **Fails** if no commit in the PR has benchmark results
+- **Passes** if the comment's commit hash matches the PR HEAD
+- **Passes with warning** if a benchmark comment exists but for an older commit
+- **Fails** if no benchmark comment is found
 
 To satisfy the check:
 
 ```bash
-pixi run -e tests-cuda13 asv-run-and-publish
+pixi run -e tests-cuda13 asv-run-and-pr-comment
 ```
 
 ## Adding New Benchmarks

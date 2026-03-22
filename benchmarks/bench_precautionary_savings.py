@@ -42,8 +42,8 @@ def _clear_gpu_memory():
     gc.collect()
 
 
-class TimeSolve:
-    params = [50, 200, 500]
+class PrecautionarySavingsSolve:
+    params = [200, 500]
     param_names = ["n_points"]
     timeout = 600
 
@@ -54,25 +54,25 @@ class TimeSolve:
         )
         start = time.perf_counter()
         self.model.solve(params=self.model_params, log_level="off")
-        self._warmup_time = time.perf_counter() - start
+        self._compile_time = time.perf_counter() - start
 
-    def time_solve(self, n_points):
+    def time_execution(self, n_points):
         self.model.solve(params=self.model_params, log_level="off")
 
-    def peakmem_solve(self, n_points):
+    def peakmem_execution(self, n_points):
         self.model.solve(params=self.model_params, log_level="off")
 
     def teardown(self, n_points):
         _clear_gpu_memory()
 
-    def track_warmup(self, n_points):
-        return self._warmup_time
+    def track_compilation_time(self, n_points):
+        return self._compile_time
 
-    track_warmup.unit = "seconds"
+    track_compilation_time.unit = "seconds"
 
 
-class TimeSimulate:
-    params = [[1_000, 10_000]]
+class PrecautionarySavingsSimulate:
+    params = [[10_000, 100_000]]
     param_names = ["n_subjects"]
     timeout = 600
 
@@ -89,9 +89,9 @@ class TimeSimulate:
             period_to_regime_to_V_arr=self.period_to_regime_to_V_arr,
             log_level="off",
         )
-        self._warmup_time = time.perf_counter() - start
+        self._compile_time = time.perf_counter() - start
 
-    def time_simulate(self, n_subjects):
+    def time_execution(self, n_subjects):
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
@@ -99,7 +99,7 @@ class TimeSimulate:
             log_level="off",
         )
 
-    def peakmem_simulate(self, n_subjects):
+    def peakmem_execution(self, n_subjects):
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
@@ -110,13 +110,13 @@ class TimeSimulate:
     def teardown(self, n_subjects):
         _clear_gpu_memory()
 
-    def track_warmup(self, n_subjects):
-        return self._warmup_time
+    def track_compilation_time(self, n_subjects):
+        return self._compile_time
 
-    track_warmup.unit = "seconds"
+    track_compilation_time.unit = "seconds"
 
 
-class TimeSolveAndSimulate:
+class PrecautionarySavingsSimulateWithSolve:
     timeout = 600
 
     def setup(self):
@@ -132,9 +132,9 @@ class TimeSolveAndSimulate:
             period_to_regime_to_V_arr=None,
             log_level="off",
         )
-        self._warmup_time = time.perf_counter() - start
+        self._compile_time = time.perf_counter() - start
 
-    def time_solve_and_simulate(self):
+    def time_execution(self):
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
@@ -142,7 +142,7 @@ class TimeSolveAndSimulate:
             log_level="off",
         )
 
-    def peakmem_solve_and_simulate(self):
+    def peakmem_execution(self):
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
@@ -153,14 +153,14 @@ class TimeSolveAndSimulate:
     def teardown(self):
         _clear_gpu_memory()
 
-    def track_warmup(self):
-        return self._warmup_time
+    def track_compilation_time(self):
+        return self._compile_time
 
-    track_warmup.unit = "seconds"
+    track_compilation_time.unit = "seconds"
 
 
-class TimeGridLookup:
-    params = [[500, 2000], ["lin", "irreg"]]
+class PrecautionarySavingsGridLookup:
+    params = [[2000], ["lin", "irreg"]]
     param_names = ["n_points", "grid_type"]
     timeout = 600
 
@@ -178,9 +178,9 @@ class TimeGridLookup:
             period_to_regime_to_V_arr=None,
             log_level="off",
         )
-        self._warmup_time = time.perf_counter() - start
+        self._compile_time = time.perf_counter() - start
 
-    def time_grid_lookup(self, n_points, grid_type):
+    def time_execution(self, n_points, grid_type):
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
@@ -188,7 +188,7 @@ class TimeGridLookup:
             log_level="off",
         )
 
-    def peakmem_grid_lookup(self, n_points, grid_type):
+    def peakmem_execution(self, n_points, grid_type):
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
@@ -199,7 +199,7 @@ class TimeGridLookup:
     def teardown(self, n_points, grid_type):
         _clear_gpu_memory()
 
-    def track_warmup(self, n_points, grid_type):
-        return self._warmup_time
+    def track_compilation_time(self, n_points, grid_type):
+        return self._compile_time
 
-    track_warmup.unit = "seconds"
+    track_compilation_time.unit = "seconds"
