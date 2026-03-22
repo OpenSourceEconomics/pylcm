@@ -3,7 +3,7 @@
 import gc
 import time
 
-_N_SUBJECTS = 1_000
+_N_SUBJECTS = 1_000_000
 
 
 class Mortality:

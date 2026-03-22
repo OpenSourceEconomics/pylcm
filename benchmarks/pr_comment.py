@@ -28,9 +28,11 @@ _CLASS_DISPLAY = {
     "PrecautionarySavingsSolve": "Precautionary Savings - Solve",
     "PrecautionarySavingsSimulate": ("Precautionary Savings - Simulate"),
     "PrecautionarySavingsSimulateWithSolve": (
-        "Precautionary Savings - Simulate with Solve"
+        "Precautionary Savings - Solve & Simulate"
     ),
-    "PrecautionarySavingsGridLookup": ("Precautionary Savings - Grid Lookup"),
+    "PrecautionarySavingsSimulateWithSolveIrreg": (
+        "Precautionary Savings - Solve & Simulate (irreg)"
+    ),
 }
 
 _METHOD_DISPLAY = {

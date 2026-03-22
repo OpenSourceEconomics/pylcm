@@ -127,7 +127,7 @@ class PrecautionarySavingsSimulateWithSolve:
             wealth_n_points=200,
             consumption_n_points=200,
         )
-        self.initial_conditions = _make_initial_conditions(_N_SUBJECTS)
+        self.initial_conditions = _make_initial_conditions(1_000_000)
         start = time.perf_counter()
         self.model.simulate(
             params=self.model_params,
@@ -165,18 +165,16 @@ class PrecautionarySavingsSimulateWithSolve:
     track_compilation_time.unit = "seconds"
 
 
-class PrecautionarySavingsGridLookup:
-    params = [[2000], ["lin", "irreg"]]
-    param_names = ["n_points", "grid_type"]
+class PrecautionarySavingsSimulateWithSolveIrreg:
     timeout = 600
 
-    def setup(self, n_points, grid_type):
+    def setup(self):
         self.model, self.model_params = _make_model(
-            wealth_grid_type=grid_type,
-            wealth_n_points=n_points,
-            consumption_n_points=n_points,
+            wealth_grid_type="irreg",
+            wealth_n_points=200,
+            consumption_n_points=200,
         )
-        self.initial_conditions = _make_initial_conditions(100)
+        self.initial_conditions = _make_initial_conditions(1_000_000)
         start = time.perf_counter()
         self.model.simulate(
             params=self.model_params,
@@ -187,7 +185,7 @@ class PrecautionarySavingsGridLookup:
         )
         self._compile_time = time.perf_counter() - start
 
-    def time_execution(self, n_points, grid_type):
+    def time_execution(self):
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
@@ -196,7 +194,7 @@ class PrecautionarySavingsGridLookup:
             check_initial_conditions=False,
         )
 
-    def peakmem_execution(self, n_points, grid_type):
+    def peakmem_execution(self):
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
@@ -205,10 +203,10 @@ class PrecautionarySavingsGridLookup:
             check_initial_conditions=False,
         )
 
-    def teardown(self, n_points, grid_type):
+    def teardown(self):
         _clear_gpu_memory()
 
-    def track_compilation_time(self, n_points, grid_type):
+    def track_compilation_time(self):
         return self._compile_time
 
     track_compilation_time.unit = "seconds"
