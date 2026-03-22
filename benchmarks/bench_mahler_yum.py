@@ -48,6 +48,7 @@ class MahlerYum:
             initial_conditions=self.initial_conditions,
             period_to_regime_to_V_arr=None,
             log_level="off",
+            check_initial_conditions=False,
         )
         self._compile_time = time.perf_counter() - start
 
@@ -57,6 +58,7 @@ class MahlerYum:
             initial_conditions=self.initial_conditions,
             period_to_regime_to_V_arr=None,
             log_level="off",
+            check_initial_conditions=False,
         )
 
     def peakmem_execution(self):
@@ -65,6 +67,7 @@ class MahlerYum:
             initial_conditions=self.initial_conditions,
             period_to_regime_to_V_arr=None,
             log_level="off",
+            check_initial_conditions=False,
         )
 
     def teardown(self):

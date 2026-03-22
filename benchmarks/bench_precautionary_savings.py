@@ -88,6 +88,7 @@ class PrecautionarySavingsSimulate:
             initial_conditions=self.initial_conditions,
             period_to_regime_to_V_arr=self.period_to_regime_to_V_arr,
             log_level="off",
+            check_initial_conditions=False,
         )
         self._compile_time = time.perf_counter() - start
 
@@ -97,6 +98,7 @@ class PrecautionarySavingsSimulate:
             initial_conditions=self.initial_conditions,
             period_to_regime_to_V_arr=self.period_to_regime_to_V_arr,
             log_level="off",
+            check_initial_conditions=False,
         )
 
     def peakmem_execution(self, n_subjects):
@@ -105,6 +107,7 @@ class PrecautionarySavingsSimulate:
             initial_conditions=self.initial_conditions,
             period_to_regime_to_V_arr=self.period_to_regime_to_V_arr,
             log_level="off",
+            check_initial_conditions=False,
         )
 
     def teardown(self, n_subjects):
@@ -131,6 +134,7 @@ class PrecautionarySavingsSimulateWithSolve:
             initial_conditions=self.initial_conditions,
             period_to_regime_to_V_arr=None,
             log_level="off",
+            check_initial_conditions=False,
         )
         self._compile_time = time.perf_counter() - start
 
@@ -140,6 +144,7 @@ class PrecautionarySavingsSimulateWithSolve:
             initial_conditions=self.initial_conditions,
             period_to_regime_to_V_arr=None,
             log_level="off",
+            check_initial_conditions=False,
         )
 
     def peakmem_execution(self):
@@ -148,6 +153,7 @@ class PrecautionarySavingsSimulateWithSolve:
             initial_conditions=self.initial_conditions,
             period_to_regime_to_V_arr=None,
             log_level="off",
+            check_initial_conditions=False,
         )
 
     def teardown(self):
@@ -177,6 +183,7 @@ class PrecautionarySavingsGridLookup:
             initial_conditions=self.initial_conditions,
             period_to_regime_to_V_arr=None,
             log_level="off",
+            check_initial_conditions=False,
         )
         self._compile_time = time.perf_counter() - start
 
@@ -186,6 +193,7 @@ class PrecautionarySavingsGridLookup:
             initial_conditions=self.initial_conditions,
             period_to_regime_to_V_arr=None,
             log_level="off",
+            check_initial_conditions=False,
         )
 
     def peakmem_execution(self, n_points, grid_type):
@@ -194,6 +202,7 @@ class PrecautionarySavingsGridLookup:
             initial_conditions=self.initial_conditions,
             period_to_regime_to_V_arr=None,
             log_level="off",
+            check_initial_conditions=False,
         )
 
     def teardown(self, n_points, grid_type):
