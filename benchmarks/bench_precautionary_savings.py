@@ -43,7 +43,7 @@ def _clear_gpu_memory():
 
 
 class PrecautionarySavingsSolve:
-    params = [50, 200, 500]
+    params = [200, 500]
     param_names = ["n_points"]
     timeout = 600
 
@@ -72,7 +72,7 @@ class PrecautionarySavingsSolve:
 
 
 class PrecautionarySavingsSimulate:
-    params = [[1_000, 10_000]]
+    params = [[10_000, 100_000]]
     param_names = ["n_subjects"]
     timeout = 600
 
@@ -160,7 +160,7 @@ class PrecautionarySavingsSimulateWithSolve:
 
 
 class PrecautionarySavingsGridLookup:
-    params = [[500, 2000], ["lin", "irreg"]]
+    params = [[2000], ["lin", "irreg"]]
     param_names = ["n_points", "grid_type"]
     timeout = 600
 
