@@ -10,7 +10,7 @@ empirical calibration.
 
 import jax.numpy as jnp
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import DiscreteGrid, IntAgeGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -65,7 +65,7 @@ def labor_income(wage: float | FloatND, labor_supply: DiscreteAction) -> FloatND
     return wage * labor_supply
 
 
-def wage(age: float) -> float | FloatND:
+def wage(age: int) -> float | FloatND:
     return 1 + 0.1 * age
 
 
@@ -176,7 +176,7 @@ def get_model(retirement_age: int = 24) -> Model:
             "working_life": wl,
             "retirement": ret,
         },
-        ages=AgeGrid(start=18, stop=retirement_age, step="Y"),
+        ages=IntAgeGrid(start=18, stop=retirement_age, step="Y"),
         regime_id_class=RegimeId,
     )
 

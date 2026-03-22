@@ -1,4 +1,4 @@
-"""Tests for the ages module (AgeGrid and step parsing)."""
+"""Tests for the ages module (AgeGrid, IntAgeGrid, and step parsing)."""
 
 from fractions import Fraction
 
@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from lcm import Model
-from lcm.ages import AgeGrid, parse_step
+from lcm.ages import AgeGrid, IntAgeGrid, parse_step
 from lcm.exceptions import GridInitializationError
 from tests.test_models.deterministic.base import (
     RegimeId,
@@ -181,3 +181,164 @@ def test_model_with_quarterly_steps():
     # Check working/retired regimes only have ages < 19
     non_dead_df = df.query('regime != "dead"')
     assert all(non_dead_df["age"] < 19)
+
+
+# ======================================================================================
+# AgeGrid.age_to_period tests
+# ======================================================================================
+
+
+def test_age_grid_age_to_period():
+    ages = AgeGrid(start=18, stop=22, step="Y")
+    assert ages.age_to_period(18.0) == 0
+    assert ages.age_to_period(20.0) == 2
+    assert ages.age_to_period(22.0) == 4
+
+
+def test_age_grid_age_to_period_invalid():
+    ages = AgeGrid(start=18, stop=22, step="Y")
+    with pytest.raises(ValueError, match="not a valid grid point"):
+        ages.age_to_period(17.0)
+
+
+# ======================================================================================
+# IntAgeGrid creation tests
+# ======================================================================================
+
+
+def test_int_age_grid_from_range():
+    ages = IntAgeGrid(start=18, stop=21, step="Y")
+    assert ages.n_periods == 4
+    np.testing.assert_array_equal(ages.values, [18, 19, 20, 21])
+    assert ages.values.dtype == jnp.int32
+    assert ages.step_size == 1.0
+
+
+def test_int_age_grid_multiannual():
+    ages = IntAgeGrid(start=40, stop=70, step="10Y")
+    assert ages.n_periods == 4
+    np.testing.assert_array_equal(ages.values, [40, 50, 60, 70])
+    assert ages.values.dtype == jnp.int32
+
+
+def test_int_age_grid_from_values():
+    ages = IntAgeGrid(exact_values=(18, 25, 35, 65))
+    assert ages.n_periods == 4
+    np.testing.assert_array_equal(ages.values, [18, 25, 35, 65])
+    assert ages.values.dtype == jnp.int32
+    assert ages.step_size is None
+
+
+def test_int_age_grid_accepts_fraction_with_unit_denominator():
+    """Fraction(18, 1) is integer-valued and should be accepted."""
+    ages = IntAgeGrid(start=Fraction(18, 1), stop=Fraction(21, 1), step="Y")
+    assert ages.n_periods == 4
+    np.testing.assert_array_equal(ages.values, [18, 19, 20, 21])
+    assert ages.values.dtype == jnp.int32
+    assert all(isinstance(v, int) for v in ages.exact_values)
+
+
+def test_int_age_grid_period_to_age_returns_int():
+    ages = IntAgeGrid(start=18, stop=21, step="Y")
+    result = ages.period_to_age(0)
+    assert result == 18
+    assert type(result) is int
+
+
+def test_int_age_grid_age_to_period():
+    ages = IntAgeGrid(start=40, stop=70, step="10Y")
+    assert ages.age_to_period(40) == 0
+    assert ages.age_to_period(60) == 2
+    assert ages.age_to_period(70) == 3
+
+
+def test_int_age_grid_age_to_period_invalid():
+    ages = IntAgeGrid(start=40, stop=70, step="10Y")
+    with pytest.raises(ValueError, match="not a valid grid point"):
+        ages.age_to_period(45)
+
+
+def test_int_age_grid_get_periods_where():
+    ages = IntAgeGrid(start=18, stop=22, step="Y")
+    received_types = []
+    periods = ages.get_periods_where(
+        lambda age: (received_types.append(type(age)), age >= 21)[1]
+    )
+    assert periods == (3, 4)
+    assert all(t is int for t in received_types)
+
+
+def test_int_age_grid_is_subclass():
+    ages = IntAgeGrid(start=18, stop=21, step="Y")
+    assert isinstance(ages, AgeGrid)
+
+
+# ======================================================================================
+# IntAgeGrid validation tests
+# ======================================================================================
+
+
+def test_int_age_grid_rejects_quarterly():
+    with pytest.raises(GridInitializationError, match="integer-valued"):
+        IntAgeGrid(start=20, stop=21, step="Q")
+
+
+def test_int_age_grid_rejects_monthly():
+    with pytest.raises(GridInitializationError, match="integer-valued"):
+        IntAgeGrid(start=20, stop=21, step="M")
+
+
+def test_int_age_grid_rejects_non_integer_fraction():
+    with pytest.raises(GridInitializationError, match="integer-valued"):
+        IntAgeGrid(exact_values=(18, Fraction(51, 2)))
+
+
+# ======================================================================================
+# IntAgeGrid integration test
+# ======================================================================================
+
+
+def test_model_with_int_age_grid():
+    """Test that solve/simulate works with IntAgeGrid."""
+    ages = IntAgeGrid(start=40, stop=70, step="10Y")
+    last_age = ages.exact_values[-1]
+
+    model = Model(
+        regimes={
+            "working_life": working_life.replace(
+                active=lambda age, la=last_age: age < la
+            ),
+            "retirement": retirement.replace(active=lambda age, la=last_age: age < la),
+            "dead": dead,
+        },
+        ages=ages,
+        regime_id_class=RegimeId,
+    )
+
+    params = {
+        "discount_factor": 0.95,
+        "final_age_alive": 60,
+        "working_life": {
+            "utility": {"disutility_of_work": 0.5},
+            "next_wealth": {"interest_rate": 0.05},
+            "labor_income": {"wage": 10.0},
+        },
+        "retirement": {
+            "next_wealth": {"interest_rate": 0.05, "labor_income": 0.0},
+        },
+    }
+
+    result = model.simulate(
+        params=params,
+        initial_conditions={
+            "wealth": jnp.array([50.0, 100.0, 150.0]),
+            "age": jnp.array([40, 40, 40]),
+            "regime": jnp.array([RegimeId.working_life] * 3),
+        },
+        period_to_regime_to_V_arr=None,
+    )
+
+    df = result.to_dataframe()
+
+    # Age column should have integer values
+    assert set(df["age"].unique()) == {40, 50, 60, 70}

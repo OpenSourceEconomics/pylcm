@@ -17,8 +17,8 @@ from scipy.interpolate import interp1d
 
 import lcm
 from lcm import (
-    AgeGrid,
     DiscreteGrid,
+    IntAgeGrid,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -50,7 +50,7 @@ _DATA_DIR = Path(__file__).parent / "data"
 # --------------------------------------------------------------------------------------
 avrgearn_not_normalized: float = 57706.57
 theta_val: Float1D = jnp.array([jnp.exp(-0.2898), jnp.exp(0.2898)])
-ages = AgeGrid(start=25, stop=101, step="2Y")
+ages = IntAgeGrid(start=25, stop=101, step="2Y")
 n: int = ages.n_periods
 retirement_age: int = 19
 taul: float = 0.128
@@ -323,11 +323,11 @@ def savings_constraint(
 # ======================================================================================
 
 
-def alive_is_active(age: float, final_age_alive: float) -> bool:
+def alive_is_active(age: int, final_age_alive: float) -> bool:
     return age <= final_age_alive
 
 
-def dead_is_active(age: float, initial_age: float) -> bool:
+def dead_is_active(age: int, initial_age: float) -> bool:
     return age > initial_age
 
 

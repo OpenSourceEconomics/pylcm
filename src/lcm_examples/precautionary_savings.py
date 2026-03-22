@@ -15,7 +15,7 @@ from typing import Literal
 from jax import numpy as jnp
 
 import lcm
-from lcm import AgeGrid, LinSpacedGrid, LogSpacedGrid, Model, Regime, categorical
+from lcm import IntAgeGrid, LinSpacedGrid, LogSpacedGrid, Model, Regime, categorical
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -53,7 +53,7 @@ def next_wealth(
     return (1 + interest_rate) * (wealth - consumption) + jnp.exp(income)
 
 
-def next_regime(age: float, final_age_alive: float) -> ScalarInt:
+def next_regime(age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.alive)
 
 
@@ -150,7 +150,7 @@ def get_model(
     return Model(
         regimes={"alive": alive, "dead": dead},
         regime_id_class=RegimeId,
-        ages=AgeGrid(start=20, stop=20 + (n_periods - 1) * 10, step="10Y"),
+        ages=IntAgeGrid(start=20, stop=20 + (n_periods - 1) * 10, step="10Y"),
         fixed_params={"final_age_alive": final_age_alive},
     )
 

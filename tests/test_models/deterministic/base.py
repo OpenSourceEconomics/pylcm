@@ -6,7 +6,7 @@ import functools
 
 import jax.numpy as jnp
 
-from lcm import AgeGrid, DiscreteGrid, Regime, categorical
+from lcm import DiscreteGrid, IntAgeGrid, Regime, categorical
 from lcm.typing import (
     DiscreteAction,
     ScalarInt,
@@ -38,7 +38,7 @@ class RegimeId:
 
 def next_regime_from_working(
     labor_supply: DiscreteAction,
-    age: float,
+    age: int,
     final_age_alive: float,
 ) -> ScalarInt:
     return jnp.where(
@@ -52,7 +52,7 @@ def next_regime_from_working(
     )
 
 
-def next_regime_from_retirement(age: float, final_age_alive: float) -> ScalarInt:
+def next_regime_from_retirement(age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(
         age >= final_age_alive,
         RegimeId.dead,
@@ -60,7 +60,7 @@ def next_regime_from_retirement(age: float, final_age_alive: float) -> ScalarInt
     )
 
 
-_DEFAULT_AGE_GRID = AgeGrid(start=40, stop=70, step="10Y")  # 4 periods
+_DEFAULT_AGE_GRID = IntAgeGrid(start=40, stop=70, step="10Y")  # 4 periods
 _DEFAULT_LAST_AGE = _DEFAULT_AGE_GRID.exact_values[-1]
 
 # ---------------------------------------------------------------------------
@@ -104,7 +104,7 @@ from lcm import Model  # noqa: E402
 
 @functools.cache
 def get_model(n_periods: int) -> Model:
-    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    ages = IntAgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]
     return Model(
         regimes={

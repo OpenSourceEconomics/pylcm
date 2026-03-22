@@ -7,7 +7,7 @@ with contextlib.suppress(ImportError):
     import pdbp  # noqa: F401
 
 from lcm import shocks
-from lcm.ages import AgeGrid
+from lcm.ages import AgeGrid, IntAgeGrid
 from lcm.error_handling import validate_transition_probs
 from lcm.grids import (
     DiscreteGrid,
@@ -45,6 +45,7 @@ jax.tree_util.register_pytree_node(
 __all__ = [
     "AgeGrid",
     "DiscreteGrid",
+    "IntAgeGrid",
     "IrregSpacedGrid",
     "LinSpacedGrid",
     "LogSpacedGrid",

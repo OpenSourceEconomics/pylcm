@@ -487,15 +487,13 @@ def _map_labels_to_codes(
         level_values = series.index.get_level_values(level_name)
 
         if level_name == "age":
-            age_values = model.ages.values  # noqa: PD011
-            age_to_period: dict[float, int] = {
-                float(age): idx for idx, age in enumerate(age_values)
-            }
             try:
-                mapped = np.array([age_to_period[float(v)] for v in level_values])
-            except KeyError:
-                invalid = {float(v) for v in level_values} - set(age_to_period)
-                valid_ages = sorted(age_to_period)
+                mapped = np.array(
+                    [model.ages.age_to_period(float(v)) for v in level_values]
+                )
+            except ValueError:
+                valid_ages = sorted(float(v) for v in model.ages.exact_values)
+                invalid = {float(v) for v in level_values} - set(valid_ages)
                 msg = (
                     f"Invalid age values: {sorted(invalid)}. Valid ages: {valid_ages}."
                 )
