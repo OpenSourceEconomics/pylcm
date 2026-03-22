@@ -162,7 +162,7 @@ def _backfill_base_results(
     base_data: dict[str, Any] = json.loads(base_file.read_text(encoding="utf-8"))
     head_data: dict[str, Any] = json.loads(head_file.read_text(encoding="utf-8"))
 
-    base_results = base_data.get("results", {})
+    base_results = base_data.setdefault("results", {})
     head_results = head_data.get("results", {})
 
     updates = {
@@ -262,7 +262,7 @@ def _parse_comparison_rows(
 
         class_name, method_name, params = name_match.groups()
 
-        if class_name not in _CLASS_DISPLAY:
+        if class_name not in _CLASS_DISPLAY and method_name not in _METHOD_DISPLAY:
             continue
 
         rows.append(
