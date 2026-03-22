@@ -5,18 +5,21 @@ from dags.tree import tree_path_from_qname
 
 from lcm.exceptions import InvalidNameError
 from lcm.grids import IrregSpacedGrid
+from lcm.interfaces import PhaseVariant
 from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
 from lcm.typing import RegimeParamsTemplate
 
 
-def create_regime_params_template(regime: Regime) -> RegimeParamsTemplate:
+def create_regime_params_template(  # noqa: C901
+    regime: Regime,
+) -> RegimeParamsTemplate:
     """Create parameter template from a regime specification.
 
     Uses dags.tree.create_tree_with_input_types() to discover parameters and their
     type annotations from function signatures. Parameters are identified as function
     arguments that are not states, actions, other regime functions, or special variables
-    (period, age, continuation_value).
+    (period, age, E_next_V).
 
     Grids with runtime-supplied values (IrregSpacedGrid without points, _ShockGrid
     without full shock_params) add entries to the template under pseudo-function keys
@@ -32,8 +35,8 @@ def create_regime_params_template(regime: Regime) -> RegimeParamsTemplate:
 
     """
     # Collect all variables that H may receive: regime functions, special variables
-    # (period, age) and continuation_value.
-    H_variables = {*regime.functions, "period", "age", "continuation_value"}
+    # (period, age) and E_next_V.
+    H_variables = {*regime.functions, "period", "age", "E_next_V"}
     # Other functions may receive states/actions, too.
     variables = H_variables | {
         *regime.actions,
@@ -43,7 +46,14 @@ def create_regime_params_template(regime: Regime) -> RegimeParamsTemplate:
     function_params: dict[str, dict[str, str]] = {}
     # Use dags.tree to discover parameters and their type annotations for each function.
     for name, func in regime.get_all_functions().items():
-        tree = dt.create_tree_with_input_types({name: func})
+        raw_func = regime.functions.get(name)
+        if isinstance(raw_func, PhaseVariant):
+            # Discover params from both variants and take the union.
+            tree_solve = dt.create_tree_with_input_types({name: raw_func.solve})
+            tree_sim = dt.create_tree_with_input_types({name: raw_func.simulate})
+            tree = dict(tree_solve) | dict(tree_sim)
+        else:
+            tree = dt.create_tree_with_input_types({name: func})
         excl = H_variables if name == "H" else variables
         # Filter out variables to get only the parameters
         params = {k: v for k, v in sorted(tree.items()) if k not in excl}
