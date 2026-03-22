@@ -223,24 +223,10 @@ def _collect_structural_errors(
     """
     errors: list[str] = []
 
-    # Validate initial regimes
     if regime_id_arr.size == 0:
         errors.append("initial_regimes must not be empty.")
 
     valid_regime_names = set(internal_regimes.keys())
-    valid_ids_arr = jnp.array(sorted(regime_names_to_ids.values()))
-    invalid_mask = ~jnp.isin(regime_id_arr, valid_ids_arr)
-    invalid_ids = (
-        sorted({int(i) for i in jnp.unique(regime_id_arr[invalid_mask])})
-        if jnp.any(invalid_mask)
-        else []
-    )
-    invalid_names = [ids_to_regime_names.get(i, f"<invalid:{i}>") for i in invalid_ids]
-    if invalid_names:
-        errors.append(
-            f"Invalid regime names {invalid_names} in initial_regimes. "
-            f"Valid regime names are: {sorted(valid_regime_names)}"
-        )
 
     errors.extend(
         _collect_state_name_errors(
