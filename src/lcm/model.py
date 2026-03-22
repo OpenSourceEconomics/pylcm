@@ -24,7 +24,7 @@ from lcm.input_processing.regime_processing import (
     process_regimes,
 )
 from lcm.input_processing.util import get_variable_info
-from lcm.interfaces import PhaseVariantContainer
+from lcm.interfaces import PhaseVariant
 from lcm.logging import LogLevel, get_logger
 from lcm.persistence import (
     save_simulate_snapshot,
@@ -616,7 +616,7 @@ def _partial_fixed_params_into_regimes(
         # function actually accepts to avoid signature mismatches during
         # inspect.signature (used by dags.concatenate_functions in to_dataframe).
         if regime.regime_transition_probs is not None:
-            new_regime_tp = PhaseVariantContainer(
+            new_regime_tp = PhaseVariant(
                 solve=functools.partial(
                     regime.regime_transition_probs.solve,
                     **_filter_kwargs_for_func(

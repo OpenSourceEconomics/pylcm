@@ -163,11 +163,6 @@ class PhaseVariant[S, T]:
         self.simulate = simulate
 
 
-# Internal alias kept for backward compatibility with existing infrastructure
-# that already uses `PhaseVariantContainer`.
-PhaseVariantContainer = PhaseVariant
-
-
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class InternalRegime:
     """Internal representation of a user regime."""
@@ -200,8 +195,7 @@ class InternalRegime:
     """Period indices during which this regime is active."""
 
     regime_transition_probs: (
-        PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]
-        | None
+        PhaseVariant[RegimeTransitionFunction, VmappedRegimeTransitionFunction] | None
     )
     """Regime transition probability functions for solve and simulate, or `None`."""
 
@@ -319,8 +313,7 @@ class InternalFunctions:
     """Immutable mapping of transition names to transition functions."""
 
     regime_transition_probs: (
-        PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]
-        | None
+        PhaseVariant[RegimeTransitionFunction, VmappedRegimeTransitionFunction] | None
     )
     """Regime transition probability functions, or None for terminal regimes."""
 
