@@ -72,7 +72,7 @@ class PrecautionarySavingsSolve:
 
 
 class PrecautionarySavingsSimulate:
-    params = [[10_000, 1_000_000]]
+    params = [[1_000_000]]
     param_names = ["n_subjects"]
     timeout = 600
 
