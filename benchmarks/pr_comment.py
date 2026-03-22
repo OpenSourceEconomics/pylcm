@@ -149,13 +149,12 @@ def _backfill_base_results(
     base_file: Path,
     head_file: Path,
 ) -> None:
-    """Add missing benchmark entries from HEAD into the base result file.
+    """Sync the base result file so ``asv compare`` finds matching benchmarks.
 
-    After benchmark renames, the base file may only have results under old
-    names while HEAD has results under new names.  Adding the new-name
-    entries to the base (using HEAD's values) lets ``asv compare`` find
-    matching benchmarks.  Since both runs use the same ``existing:python``
-    environment, the values are comparable.
+    Copies HEAD entries into the base when the benchmark is missing or its
+    parameter set has changed (e.g. after adding/removing param values).
+    Since both runs use the same ``existing:python`` environment, the
+    values are comparable.
 
     """
     base_data: dict[str, Any] = json.loads(base_file.read_text(encoding="utf-8"))
@@ -164,12 +163,33 @@ def _backfill_base_results(
     base_results = base_data.get("results", {})
     head_results = head_data.get("results", {})
 
-    missing = {k: v for k, v in head_results.items() if k not in base_results}
-    if not missing:
+    updates = {
+        key: head_val
+        for key, head_val in head_results.items()
+        if _needs_backfill(base_results.get(key), head_val)
+    }
+
+    if not updates:
         return
 
-    base_results.update(missing)
+    base_results.update(updates)
     base_file.write_text(json.dumps(base_data, indent=4), encoding="utf-8")
+
+
+def _needs_backfill(
+    base_val: list[Any] | None,
+    head_val: Any,
+) -> bool:
+    """Return True when a base entry is missing or has different params."""
+    if base_val is None:
+        return True
+    return (
+        isinstance(head_val, list)
+        and len(head_val) > 1
+        and isinstance(base_val, list)
+        and len(base_val) > 1
+        and head_val[1] != base_val[1]
+    )
 
 
 def _format_comparison_comment(
