@@ -127,7 +127,7 @@ class PrecautionarySavingsSimulateWithSolve:
             wealth_n_points=200,
             consumption_n_points=200,
         )
-        self.initial_conditions = _make_initial_conditions(1_000_000)
+        self.initial_conditions = _make_initial_conditions(500_000)
         start = time.perf_counter()
         self.model.simulate(
             params=self.model_params,
@@ -174,7 +174,7 @@ class PrecautionarySavingsSimulateWithSolveIrreg:
             wealth_n_points=200,
             consumption_n_points=200,
         )
-        self.initial_conditions = _make_initial_conditions(1_000_000)
+        self.initial_conditions = _make_initial_conditions(500_000)
         start = time.perf_counter()
         self.model.simulate(
             params=self.model_params,
