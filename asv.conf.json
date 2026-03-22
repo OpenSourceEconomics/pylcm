@@ -1,0 +1,11 @@
+{
+    "version": 1,
+    "project": "pylcm",
+    "project_url": "https://github.com/OpenSourceEconomics/pylcm",
+    "repo": ".",
+    "environment_type": "existing:python",
+    "benchmark_dir": "benchmarks",
+    "results_dir": ".asv/results",
+    "html_dir": ".asv/html",
+    "branches": ["main"]
+}

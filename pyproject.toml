@@ -97,6 +97,22 @@ extend-ignore = [
   "TRY003",  # Long messages outside exception class
   "UP047",   # Generic function should use type parameters
 ]
+per-file-ignores."benchmarks/*" = [
+  "ANN",     # Annotations
+  "ARG002",  # Unused method argument (ASV passes params to all methods)
+  "BLE001",  # Blind exception
+  "D",       # Docstrings
+  "INP001",  # Implicit namespace package
+  "PLC0415", # import not at top level
+  "PLR2004", # Magic values in comparison
+  "PLW1510", # subprocess.run without explicit check
+  "RUF012",  # Mutable class attribute (ASV requires list `params`/`param_names`)
+  "S101",    # Use of assert
+  "SIM108",  # Ternary operator
+  "S603",    # subprocess call without shell=True check
+  "S607",    # Partial executable path
+  "T201",    # print found
+]
 per-file-ignores."docs/**/*" = [
   "ANN001", # Missing type annotation for function argument
   "ANN002", # Missing type annotation for *args
@@ -168,14 +184,6 @@ expand_tables = [
   "tool.pixi.workspace",
 ]
 
-[tool.pytest]
-ini_options.addopts = [ "--pdbcls=pdbp:Pdb", "--dist", "loadfile" ]
-ini_options.filterwarnings = []
-ini_options.markers = [
-  "illustrative: Tests are designed for illustrative purposes",
-]
-ini_options.norecursedirs = [ "docs" ]
-
 [tool.ty]
 rules.ambiguous-protocol-member = "error"
 rules.deprecated = "error"
@@ -191,7 +199,20 @@ rules.unused-ignore-comment = "error"
 src.exclude = [ "docs/**/*.ipynb" ]
 src.include = [ "src/", "tests/" ]
 
+[tool.pytest]
+ini_options.addopts = [
+  "--pdbcls=pdbp:Pdb",
+  "--dist",
+  "loadfile",
+]
+ini_options.filterwarnings = []
+ini_options.markers = [
+  "illustrative: Tests are designed for illustrative purposes",
+]
+ini_options.norecursedirs = [ "docs" ]
+
 [tool.pixi.dependencies]
+asv = "*"
 python = "~=3.14.0"
 cloudpickle = ">=3.1.2,<4"
 h5py = ">=3.12"
@@ -263,6 +284,13 @@ ty = "ty check"
 jax = ">=0.9"
 pdbp = "*"
 pylcm = { path = ".", editable = true }
+[tool.pixi.tasks]
+asv-compare = "asv compare"
+asv-preview = "asv preview"
+asv-publish = "asv publish && python benchmarks/publish.py"
+asv-quick = { cmd = "asv run --quick --set-commit-hash=$(git rev-parse HEAD)", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false", XLA_PYTHON_CLIENT_MEM_FRACTION = "0.3" } }
+asv-run = { cmd = 'git status --porcelain --ignore-submodules | grep -q . && echo "Refusing to benchmark: worktree is dirty. Commit first." && exit 1; asv run --set-commit-hash=$(git rev-parse HEAD)', env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false", XLA_PYTHON_CLIENT_MEM_FRACTION = "0.3" } }
+asv-run-and-publish = { depends-on = [ "asv-run", "asv-publish" ] }
 [tool.pixi.workspace]
 channels = [ "conda-forge" ]
 platforms = [ "linux-64", "osx-arm64", "win-64" ]

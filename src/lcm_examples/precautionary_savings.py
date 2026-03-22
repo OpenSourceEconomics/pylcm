@@ -15,7 +15,15 @@ from typing import Literal
 from jax import numpy as jnp
 
 import lcm
-from lcm import IntAgeGrid, LinSpacedGrid, LogSpacedGrid, Model, Regime, categorical
+from lcm import (
+    IntAgeGrid,
+    IrregSpacedGrid,
+    LinSpacedGrid,
+    LogSpacedGrid,
+    Model,
+    Regime,
+    categorical,
+)
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -25,6 +33,7 @@ from lcm.typing import (
 )
 
 ShockType = Literal["normal_gh", "rouwenhorst", "tauchen"]
+WealthGridType = Literal["lin", "log", "irreg"]
 
 _SHOCK_GRID_CLASSES = {
     "normal_gh": lcm.shocks.iid.Normal,
@@ -89,7 +98,7 @@ def get_model(
     n_periods: int,
     shock_type: ShockType,
     *,
-    wealth_grid_type: Literal["lin", "log"] = "lin",
+    wealth_grid_type: WealthGridType = "lin",
     wealth_start: float = 1.0,
     wealth_stop: float = 20.0,
     wealth_n_points: int = 7,
@@ -101,7 +110,7 @@ def get_model(
     Args:
         n_periods: Number of periods.
         shock_type: Type of income shock grid.
-        wealth_grid_type: "lin" or "log" for wealth grid.
+        wealth_grid_type: "lin", "log", or "irreg" for wealth grid.
         wealth_start: Start of wealth grid.
         wealth_stop: Stop of wealth grid.
         wealth_n_points: Number of wealth grid points.
@@ -114,15 +123,25 @@ def get_model(
     """
     final_age_alive = 20 + (n_periods - 2) * 10
 
-    wealth_grid_cls = LogSpacedGrid if wealth_grid_type == "log" else LinSpacedGrid
+    if wealth_grid_type == "irreg":
+        lin_grid = LinSpacedGrid(
+            start=wealth_start,
+            stop=wealth_stop,
+            n_points=wealth_n_points,
+        )
+        wealth_grid = IrregSpacedGrid(points=tuple(lin_grid.to_jax().tolist()))
+    else:
+        wealth_grid_cls = LogSpacedGrid if wealth_grid_type == "log" else LinSpacedGrid
+        wealth_grid = wealth_grid_cls(
+            start=wealth_start,
+            stop=wealth_stop,
+            n_points=wealth_n_points,
+        )
+
     alive = Regime(
         active=lambda age, n=final_age_alive: age <= n,
         states={
-            "wealth": wealth_grid_cls(
-                start=wealth_start,
-                stop=wealth_stop,
-                n_points=wealth_n_points,
-            ),
+            "wealth": wealth_grid,
             "income": _SHOCK_GRID_CLASSES[shock_type](
                 n_points=income_n_points,
                 **_SHOCK_GRID_KWARGS[shock_type],  # ty: ignore[invalid-argument-type]
