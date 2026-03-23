@@ -1,5 +1,6 @@
 """Age grid and step parsing utilities for lifecycle models."""
 
+import functools
 import re
 from collections.abc import Callable, Iterable
 from fractions import Fraction
@@ -9,11 +10,7 @@ from typing import overload
 import jax.numpy as jnp
 
 from lcm.exceptions import GridInitializationError, format_messages
-from lcm.typing import Float1D
-
-# ======================================================================================
-# Step parsing
-# ======================================================================================
+from lcm.typing import Age, Float1D, Int1D
 
 STEP_UNITS: MappingProxyType[str, Fraction] = MappingProxyType(
     {
@@ -24,28 +21,14 @@ STEP_UNITS: MappingProxyType[str, Fraction] = MappingProxyType(
 )
 
 
-def parse_step(step: str) -> int | Fraction:
-    """Parse a step string like 'Y', '2Y', 'M', '3M', 'Q' into int or Fraction."""
-    match = re.match(r"^(\d+)?([YMQ])$", step, re.IGNORECASE)
-    if not match:
-        raise GridInitializationError(
-            f"Invalid step format: '{step}'. "
-            "Expected format like 'Y', '2Y', 'M', '3M', 'Q'."
-        )
-
-    multiplier_str, unit = match.groups()
-    multiplier = int(multiplier_str) if multiplier_str else 1
-    result = multiplier * STEP_UNITS[unit.upper()]
-    return int(result) if result.denominator == 1 else result
-
-
-# ======================================================================================
-# AgeGrid class
-# ======================================================================================
-
-
 class AgeGrid:
-    """Age grid for life-cycle models."""
+    """Age grid for life-cycle models.
+
+    Automatically produces integer ages (`int32` array, `int` scalars) when all
+    values are integer-valued, and float ages (`float32` array, `float` scalars)
+    otherwise.
+
+    """
 
     @overload
     def __init__(
@@ -80,19 +63,33 @@ class AgeGrid:
             self._exact_values = tuple(
                 start + i * self._exact_step_size for i in range(n_steps)
             )
-            self._values = jnp.array([float(age) for age in self._exact_values])
         elif exact_values is not None:
             self._exact_values = tuple(exact_values)
-            self._values = jnp.array(exact_values)
             self._step_size = None
             self._exact_step_size = None
         else:
             msg = "Must specify 'start/stop/step' or 'exact_values'."
             raise GridInitializationError(msg)
 
+        self._is_integer = all(_is_integer_valued(v) for v in self._exact_values)
+        if self._is_integer:
+            self._exact_values = tuple(int(v) for v in self._exact_values)
+            self._values = jnp.array(self._exact_values, dtype=jnp.int32)
+        else:
+            self._values = jnp.array([float(v) for v in self._exact_values])
+
     @property
-    def values(self) -> Float1D:
-        """Float ages; indexed by period."""
+    def is_integer(self) -> bool:
+        """Whether all ages are integer-valued."""
+        return self._is_integer
+
+    @property
+    def values(self) -> Int1D | Float1D:
+        """Age values as a JAX array; indexed by period.
+
+        `Int1D` when all ages are integer-valued, `Float1D` otherwise.
+
+        """
         return self._values
 
     @property
@@ -128,14 +125,15 @@ class AgeGrid:
         """
         return self._exact_step_size
 
-    def period_to_age(self, period: int) -> float:
+    def period_to_age(self, period: int) -> Age:
         """Convert a period index to the corresponding age.
 
         Args:
             period: Zero-based period index.
 
         Returns:
-            The age corresponding to the given period.
+            The age corresponding to the given period. `int` when all ages are
+            integer-valued, `float` otherwise.
 
         Raises:
             IndexError: If period is out of bounds.
@@ -145,9 +143,37 @@ class AgeGrid:
             raise IndexError(
                 f"Period {period} out of bounds for grid with {self.n_periods} periods."
             )
+        if self._is_integer:
+            return int(self._values[period])
         return float(self._values[period])
 
-    def get_periods_where(self, predicate: Callable[[float], bool]) -> tuple[int, ...]:
+    def age_to_period(self, age: Age) -> int:
+        """Convert an age to the corresponding period index.
+
+        Args:
+            age: Age value that must be a valid grid point.
+
+        Returns:
+            The zero-based period index corresponding to the given age.
+
+        Raises:
+            ValueError: If age is not a valid grid point.
+
+        """
+        try:
+            return self._age_to_period_map[age]
+        except KeyError:
+            valid = sorted(self._age_to_period_map)
+            msg = f"Age {age} is not a valid grid point. Valid ages: {valid}."
+            raise ValueError(msg) from None
+
+    @functools.cached_property
+    def _age_to_period_map(self) -> dict[Age, int]:
+        if self._is_integer:
+            return {int(v): i for i, v in enumerate(self._exact_values)}
+        return {float(v): i for i, v in enumerate(self._exact_values)}
+
+    def get_periods_where(self, predicate: Callable[[Age], bool]) -> tuple[int, ...]:
         """Get period indices where predicate is True.
 
         Args:
@@ -157,16 +183,34 @@ class AgeGrid:
             Tuple of period indices where predicate(age) is True.
 
         """
+        _convert: Callable[[object], Age] = int if self._is_integer else float  # ty: ignore[invalid-assignment]
         return tuple(
             period
             for period in range(self.n_periods)
-            if predicate(float(self._values[period]))
+            if predicate(_convert(self._values[period]))
         )
 
 
-# ======================================================================================
-# Validation
-# ======================================================================================
+def parse_step(step: str) -> int | Fraction:
+    """Parse a step string like 'Y', '2Y', 'M', '3M', 'Q' into int or Fraction."""
+    match = re.match(r"^(\d+)?([YMQ])$", step, re.IGNORECASE)
+    if not match:
+        raise GridInitializationError(
+            f"Invalid step format: '{step}'. "
+            "Expected format like 'Y', '2Y', 'M', '3M', 'Q'."
+        )
+
+    multiplier_str, unit = match.groups()
+    multiplier = int(multiplier_str) if multiplier_str else 1
+    result = multiplier * STEP_UNITS[unit.upper()]
+    return int(result) if result.denominator == 1 else result
+
+
+def _is_integer_valued(value: int | Fraction) -> bool:
+    """Check if a value is integer-valued (int or Fraction with unit denominator)."""
+    if isinstance(value, int):
+        return True
+    return isinstance(value, Fraction) and value.denominator == 1
 
 
 def _validate_age_grid(

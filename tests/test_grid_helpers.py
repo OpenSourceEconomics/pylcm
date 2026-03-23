@@ -156,11 +156,6 @@ def test_map_coordinates_linear_outside_grid():
     aaae(interpolated_value, [-2, 0, 6], decimal=DECIMAL_PRECISION)
 
 
-# ======================================================================================
-# Array-valued coordinate functions
-# ======================================================================================
-
-
 def test_get_linspace_coordinate_with_array():
     values = jnp.array([1.0, 1.2, 1.5])
     coords = get_linspace_coordinate(value=values, start=1, stop=2, n_points=6)

@@ -18,10 +18,6 @@ from lcm.typing import DiscreteAction, FloatND
 from lcm_examples.mortality import RegimeId as MortalityRegimeId
 from lcm_examples.mortality import get_model, get_params
 
-# ======================================================================================
-# Tests for validate_regime_transition_probs
-# ======================================================================================
-
 
 def test_valid_probs_all_active():
     """Valid probabilities with all regimes active pass validation."""
@@ -164,11 +160,6 @@ def test_raises_for_inf_values():
         )
 
 
-# ======================================================================================
-# Tests for _format_sum_violation with 0-d array inputs
-# ======================================================================================
-
-
 def test_format_sum_violation_with_scalar_input():
     """A 0-d array (scalar) input does not raise IndexError."""
     result = _format_sum_violation(jnp.array(0.5))
@@ -183,11 +174,6 @@ def test_format_sum_violation_with_scalar_input_and_state_action_values():
     )
     assert "1 of 1 probability vectors do not sum to 1.0" in result
     assert "wealth" in result
-
-
-# ======================================================================================
-# Integration tests via public Model methods
-# ======================================================================================
 
 
 @categorical(ordered=False)

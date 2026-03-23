@@ -25,6 +25,7 @@ from lcm.typing import (
     InternalParams,
     RegimeName,
     ScalarFloat,
+    ScalarInt,
 )
 
 # Genuine circular import: model.py imports from this module at module level.
@@ -35,7 +36,7 @@ if TYPE_CHECKING:
 
 
 def validate_V(
-    *, V_arr: Array, age: ScalarFloat, regime_name: str | None = None
+    *, V_arr: Array, age: ScalarInt | ScalarFloat, regime_name: str | None = None
 ) -> None:
     """Validate the value function array for NaN values.
 
@@ -70,8 +71,8 @@ def validate_regime_transition_probs(
     regime_transition_probs: MappingProxyType[str, Array],
     active_regimes_next_period: tuple[str, ...],
     regime_name: str,
-    age: ScalarFloat,
-    next_age: ScalarFloat,
+    age: ScalarInt | ScalarFloat,
+    next_age: ScalarInt | ScalarFloat,
     state_action_values: MappingProxyType[str, Array] | None = None,
 ) -> None:
     """Validate regime transition probabilities.
@@ -279,7 +280,7 @@ def _validate_regime_transition_single(
             _params: dict = filtered_params,
             _func: object = regime_transition_func,
             _period: int = period,
-            _age: ScalarFloat = ages.values[period],  # noqa: PD011
+            _age: ScalarInt | ScalarFloat = ages.values[period],  # noqa: PD011
         ) -> MappingProxyType[str, Array]:
             kwargs = dict(zip(_names, args, strict=True))
             return _func(  # ty: ignore[call-non-callable]

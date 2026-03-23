@@ -35,9 +35,6 @@ from lcm_examples.mortality import (
 )
 
 
-# --------------------------------------------------------------------------------------
-# Regression-specific: RegimeId (2 regimes) and wage function
-# --------------------------------------------------------------------------------------
 @categorical(ordered=False)
 class RegimeId:
     working_life: int
@@ -55,10 +52,6 @@ def next_regime(age: float, final_age_alive: float) -> ScalarInt:
         RegimeId.working_life,
     )
 
-
-# ======================================================================================
-# Regime specifications
-# ======================================================================================
 
 START_AGE = 18
 _DEFAULT_N_PERIODS = 5

@@ -60,10 +60,6 @@ def test_model_with_shock(distribution_type):
     )
 
 
-# ======================================================================================
-# Shape tests
-# ======================================================================================
-
 _GRID_CLASSES_WITH_GH_KWARG = [
     (lcm.shocks.iid.Uniform, {}),
     (lcm.shocks.iid.Normal, {"gauss_hermite": True}),
@@ -150,10 +146,6 @@ def test_shock_grid_fully_specified_with_all_params(grid_cls, kwargs):
     assert result.shape == (3,)
 
 
-# ======================================================================================
-# AR(1) grid property tests
-# ======================================================================================
-
 _AR1_GRID_CLASSES = [lcm.shocks.ar1.Tauchen, lcm.shocks.ar1.Rouwenhorst]
 
 
@@ -181,11 +173,6 @@ def test_ar1_transition_probs_rows_sum_to_one(grid_cls):
     P = grid.get_transition_probs()
     row_sums = P.sum(axis=1)
     aaae(row_sums, jnp.ones(7), decimal=DECIMAL_PRECISION)
-
-
-# ======================================================================================
-# Validation tests
-# ======================================================================================
 
 
 @pytest.mark.parametrize(
@@ -232,11 +219,6 @@ def test_gauss_hermite_required():
     """Normal(n_points=5) without gauss_hermite raises TypeError."""
     with pytest.raises(TypeError):
         lcm.shocks.iid.Normal(n_points=5)  # ty: ignore[missing-argument]
-
-
-# ======================================================================================
-# Gauss-Hermite specific tests
-# ======================================================================================
 
 
 def test_normal_gauss_hermite_weights_sum_to_one():
@@ -304,11 +286,6 @@ def test_tauchen_gauss_hermite_centers_on_unconditional_mean():
     aaae(midpoint, expected, decimal=10)
 
 
-# ======================================================================================
-# LogNormal specific tests
-# ======================================================================================
-
-
 def test_lognormal_correct_shape_without_params():
     """LogNormal without params returns correct-shape NaN arrays."""
     grid = lcm.shocks.iid.LogNormal(n_points=3, gauss_hermite=True)
@@ -346,10 +323,6 @@ def test_lognormal_gauss_hermite_weights_sum_to_one():
     aaae(P[0].sum(), 1.0, decimal=DECIMAL_PRECISION)
 
 
-# ======================================================================================
-# NormalMixture specific tests
-# ======================================================================================
-
 _NORMAL_MIXTURE_KWARGS = {
     "n_std": 3.0,
     "p1": 0.9,
@@ -385,10 +358,6 @@ def test_iid_normal_mixture_stationary_moments():
     aaae(got_mean, expected_mean, decimal=1)
     aaae(got_std, float(jnp.sqrt(expected_var)), decimal=1)
 
-
-# ======================================================================================
-# TauchenNormalMixture specific tests
-# ======================================================================================
 
 _TAUCHEN_NORMAL_MIXTURE_KWARGS = {
     "rho": 0.8,
@@ -449,10 +418,6 @@ def test_tauchen_normal_mixture_stationary_moments_and_autocorrelation():
     aaae(got_rho, rho, decimal=1)
 
 
-# ======================================================================================
-# Regression tests against QuantEcon
-# ======================================================================================
-
 TAUCHEN_CASES = [
     {"rho": 0.9, "sigma": 0.5, "mu": 0.0, "n_std": 3, "n": 7},
     {"rho": 0.7, "sigma": 1.0, "mu": 2.0, "n_std": 2, "n": 5},
@@ -499,11 +464,6 @@ def test_rouwenhorst_matches_quantecon(case):
     )
     aaae(grid.get_gridpoints(), qe.state_values, decimal=DECIMAL_PRECISION)
     aaae(grid.get_transition_probs(), qe.P, decimal=DECIMAL_PRECISION)
-
-
-# ======================================================================================
-# Long-series Markov-chain simulation tests
-# ======================================================================================
 
 
 def _stationary_moments(gridpoints, P):

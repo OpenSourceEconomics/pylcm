@@ -6,10 +6,6 @@ import pytest
 from lcm import AgeGrid
 from lcm.simulation.simulate import _compute_starting_periods
 
-# =============================================================================
-# Happy path
-# =============================================================================
-
 
 def test_all_subjects_start_at_first_age():
     ages = AgeGrid(start=25, stop=75, step="Y")
@@ -68,11 +64,6 @@ def test_multi_year_steps():
     result = _compute_starting_periods(initial_ages=initial_ages, ages=ages)
     expected = jnp.array([0, 1, 2])
     assert jnp.array_equal(result, expected)
-
-
-# =============================================================================
-# Validation / error cases
-# =============================================================================
 
 
 def test_age_below_grid_minimum():

@@ -5,13 +5,7 @@ from numpy.testing import assert_array_equal
 from lcm.argmax import _flatten_last_n_axes, _move_axes_to_back, argmax_and_max
 
 # Test jitted functions
-# ======================================================================================
 jitted_argmax = jit(argmax_and_max, static_argnums=[1, 2])
-
-
-# ======================================================================================
-# argmax
-# ======================================================================================
 
 
 def test_argmax_1d_with_mask():
@@ -108,11 +102,6 @@ def test_argmax_with_ties():
     assert_array_equal(_argmax, jnp.array([0, 0]))
 
 
-# ======================================================================================
-# Move axes to back
-# ======================================================================================
-
-
 def test_move_axes_to_back_1d():
     a = jnp.arange(4)
     got = _move_axes_to_back(a, axes=(0,))
@@ -135,11 +124,6 @@ def test_move_axes_to_back_3d():
     a = jnp.arange(8).reshape(2, 2, 2)
     got = _move_axes_to_back(a, axes=(1,))
     assert_array_equal(got, a.transpose(0, 2, 1))
-
-
-# ======================================================================================
-# Flatten last n axes
-# ======================================================================================
 
 
 def test_flatten_last_n_axes_1d():

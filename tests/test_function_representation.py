@@ -217,11 +217,6 @@ def test_get_interpolator():
     assert calculated == 3
 
 
-# ======================================================================================
-# Illustrative
-# ======================================================================================
-
-
 @pytest.mark.illustrative
 def test_get_function_evaluator_illustrative():
     a_grid = LinSpacedGrid(start=0, stop=1, n_points=3)

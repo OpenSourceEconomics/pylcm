@@ -66,11 +66,6 @@ def test_regression_test():
     )
 
 
-# ======================================================================================
-# Test that all grid types work in model solution and simulation
-# ======================================================================================
-
-
 def _create_grid(
     grid_type: str, start: float, stop: float, n_points: int
 ) -> (

@@ -27,7 +27,7 @@ type ScalarInt = int | Int[Scalar, ""]  # noqa: F722
 type ScalarFloat = float | Float[Scalar, ""]  # noqa: F722
 
 type Period = int | Int1D
-type Age = float
+type Age = int | float
 type RegimeName = str
 type RegimeNamesToIds = MappingProxyType[RegimeName, int]
 

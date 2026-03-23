@@ -443,11 +443,6 @@ def test_unused_action_raises_error():
         )
 
 
-# ======================================================================================
-# Reproducers for GitHub issue #230
-# ======================================================================================
-
-
 def test_constraint_depending_on_transition_output():
     """Regression guard for GitHub issue #230.
 
@@ -606,11 +601,6 @@ def test_state_only_used_in_transitions():
         ages=AgeGrid(start=59, stop=61, step="Y"),
         regime_id_class=RegimeId,
     )
-
-
-# ======================================================================================
-# Reproducer for GitHub issue #236
-# ======================================================================================
 
 
 def test_state_only_in_transitions_with_terminal_regime():

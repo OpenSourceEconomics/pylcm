@@ -48,11 +48,6 @@ _SHOCK_GRID_KWARGS: dict[str, dict[str, bool | float]] = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Model functions
-# ---------------------------------------------------------------------------
-
-
 def next_wealth(
     wealth: ContinuousState,
     consumption: ContinuousAction,
@@ -62,7 +57,7 @@ def next_wealth(
     return (1 + interest_rate) * (wealth - consumption) + jnp.exp(income)
 
 
-def next_regime(age: float, final_age_alive: float) -> ScalarInt:
+def next_regime(age: int, final_age_alive: float) -> ScalarInt:
     return jnp.where(age >= final_age_alive, RegimeId.dead, RegimeId.alive)
 
 
@@ -77,20 +72,10 @@ def utility(consumption: ContinuousAction) -> FloatND:
     return jnp.log(consumption)
 
 
-# ---------------------------------------------------------------------------
-# Categorical variables
-# ---------------------------------------------------------------------------
-
-
 @categorical(ordered=False)
 class RegimeId:
     alive: int
     dead: int
-
-
-# ---------------------------------------------------------------------------
-# Factories
-# ---------------------------------------------------------------------------
 
 
 @functools.cache

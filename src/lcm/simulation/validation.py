@@ -271,12 +271,7 @@ def _collect_structural_errors(
     else:
         # Validate that each subject's initial regime is active at their starting age.
         # Only safe to run when all ages are valid (so age_to_period lookup succeeds).
-        age_to_period = {float(v): i for i, v in enumerate(ages.exact_values)}
-        age_to_period_arr = jnp.array(
-            [age_to_period[float(v)] for v in ages.exact_values]
-        )
-        age_indices = jnp.searchsorted(valid_ages_arr, age_values)
-        periods = age_to_period_arr[age_indices]
+        periods = jnp.array([ages.age_to_period(a.item()) for a in age_values])
 
         active_mask = jnp.ones(regime_id_arr.size, dtype=bool)
         for regime_name, internal_regime in internal_regimes.items():
@@ -514,13 +509,9 @@ def _check_regime_feasibility(
     if needs_age:
         subject_states["age"] = initial_states["age"][idx_arr]
     if needs_period:
-        age_to_period = {float(v): i for i, v in enumerate(ages.exact_values)}
-        age_to_period_arr = jnp.array(
-            [age_to_period[float(v)] for v in ages.exact_values]
+        subject_states["period"] = jnp.array(
+            [ages.age_to_period(a.item()) for a in initial_states["age"][idx_arr]]
         )
-        valid_ages_arr = jnp.array(sorted(age_to_period.keys()))
-        age_indices = jnp.searchsorted(valid_ages_arr, initial_states["age"][idx_arr])
-        subject_states["period"] = age_to_period_arr[age_indices]
 
     # Split actions and params — actions are vmapped over, params are not
     action_kwargs: dict[str, Array] = {
