@@ -1,5 +1,6 @@
 from collections.abc import Mapping
 
+import jax
 import numpy as np
 import pandas as pd
 import pytest
@@ -18,7 +19,17 @@ from lcm import (
 from lcm._config import TEST_DATA
 from lcm.grids import UniformContinuousGrid
 from lcm.typing import FloatND
+from lcm_examples import mortality as mortality_example
+from lcm_examples import precautionary_savings as ps_example
+from lcm_examples.mahler_yum_2024 import (
+    MAHLER_YUM_MODEL,
+    START_PARAMS,
+    create_inputs,
+)
 from tests.test_models.deterministic.regression import RegimeId, get_model, get_params
+
+_HAS_GPU = jax.devices()[0].platform == "gpu"
+_skip_no_gpu = pytest.mark.skipif(not _HAS_GPU, reason="requires GPU")
 
 
 def test_regression_test():
@@ -59,6 +70,130 @@ def test_regression_test():
     assert_frame_equal(
         got_simulate,
         expected_simulate,
+        check_dtype=False,
+        atol=1e-5,
+        check_column_type=False,
+        check_categorical=False,
+    )
+
+
+@pytest.mark.gpu
+@_skip_no_gpu
+def test_regression_precautionary_savings():
+    """Test that precautionary savings benchmark model output does not change."""
+    expected = pd.read_pickle(
+        TEST_DATA / "regression_tests" / "precautionary_savings_simulation.pkl"
+    )
+
+    model = ps_example.get_model(
+        n_periods=5,
+        shock_type="rouwenhorst",
+        wealth_n_points=10,
+        consumption_n_points=10,
+    )
+    params = ps_example.get_params(shock_type="rouwenhorst", sigma=0.2, rho=0.9)
+
+    n_subjects = 4
+    got = model.simulate(
+        params=params,
+        initial_conditions={
+            "age": jnp.full(n_subjects, 20.0),
+            "wealth": jnp.full(n_subjects, 5.0),
+            "income": jnp.full(n_subjects, 0.0),
+            "regime": jnp.zeros(n_subjects, dtype=jnp.int32),
+        },
+        period_to_regime_to_V_arr=None,
+        seed=12345,
+        log_level="off",
+    ).to_dataframe()
+
+    assert_frame_equal(
+        got,
+        expected,
+        check_dtype=False,
+        atol=1e-5,
+        check_column_type=False,
+        check_categorical=False,
+    )
+
+
+@pytest.mark.gpu
+@_skip_no_gpu
+def test_regression_mortality():
+    """Test that mortality benchmark model output does not change."""
+    expected = pd.read_pickle(
+        TEST_DATA / "regression_tests" / "mortality_simulation.pkl"
+    )
+
+    n_periods = 4
+    model = mortality_example.get_model(n_periods=n_periods)
+    params = mortality_example.get_params(n_periods=n_periods)
+
+    n_subjects = 4
+    got = model.simulate(
+        params=params,
+        initial_conditions={
+            "age": jnp.full(n_subjects, 40.0),
+            "wealth": jnp.full(n_subjects, 100.0),
+            "regime": jnp.zeros(n_subjects, dtype=jnp.int32),
+        },
+        period_to_regime_to_V_arr=None,
+        seed=12345,
+        log_level="off",
+    ).to_dataframe()
+
+    assert_frame_equal(
+        got,
+        expected,
+        check_dtype=False,
+        atol=1e-5,
+        check_column_type=False,
+        check_categorical=False,
+    )
+
+
+@pytest.mark.gpu
+@_skip_no_gpu
+def test_regression_mahler_yum():
+    """Test that Mahler & Yum benchmark model output does not change."""
+    expected = pd.read_pickle(
+        TEST_DATA / "regression_tests" / "mahler_yum_simulation.pkl"
+    )
+
+    n_subjects = 4
+    start_params_without_beta = {k: v for k, v in START_PARAMS.items() if k != "beta"}
+    common_params, initial_states, _discount_factor_type = create_inputs(
+        seed=0,
+        n_simulation_subjects=n_subjects,
+        **start_params_without_beta,  # ty: ignore[invalid-argument-type]
+    )
+    model = MAHLER_YUM_MODEL
+    params = {
+        "alive": {
+            "discount_factor": START_PARAMS["beta"]["mean"],  # ty: ignore[invalid-argument-type, not-subscriptable]
+            **common_params,
+        },
+    }
+    initial_conditions = {
+        **initial_states,
+        "regime": jnp.full(
+            n_subjects,
+            model.regime_names_to_ids["alive"],
+            dtype=jnp.int32,
+        ),
+    }
+
+    got = model.simulate(
+        params=params,  # ty: ignore[invalid-argument-type]
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
+        seed=12345,
+        log_level="off",
+    ).to_dataframe()
+
+    assert_frame_equal(
+        got,
+        expected,
         check_dtype=False,
         atol=1e-5,
         check_column_type=False,
