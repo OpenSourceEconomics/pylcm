@@ -1,5 +1,5 @@
 import dataclasses
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from types import MappingProxyType
 from typing import cast
@@ -144,8 +144,19 @@ class StateSpaceInfo:
     """Immutable mapping of state names to their batch sizes."""
 
 
-class PhaseVariantContainer[S, T]:
-    """Container for objects that vary whether we are in the solve or simulate phase."""
+class PhaseVariant[S, T]:
+    """Container for phase-specific function variants.
+
+    Use this to provide different implementations of a function for the solve
+    and simulate phases.  For example, naive beta-delta discounting uses
+    exponential discounting during backward induction (solve) but present-biased
+    discounting for action selection (simulate).
+
+    Variants may have different parameter signatures.  The params template is
+    the union of both variants' parameters; each variant receives only the
+    kwargs it expects.
+
+    """
 
     __slots__ = ("simulate", "solve")
 
@@ -186,8 +197,7 @@ class InternalRegime:
     """Period indices during which this regime is active."""
 
     regime_transition_probs: (
-        PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]
-        | None
+        PhaseVariant[RegimeTransitionFunction, VmappedRegimeTransitionFunction] | None
     )
     """Regime transition probability functions for solve and simulate, or `None`."""
 
@@ -305,13 +315,33 @@ class InternalFunctions:
     """Immutable mapping of transition names to transition functions."""
 
     regime_transition_probs: (
-        PhaseVariantContainer[RegimeTransitionFunction, VmappedRegimeTransitionFunction]
-        | None
+        PhaseVariant[RegimeTransitionFunction, VmappedRegimeTransitionFunction] | None
     )
     """Regime transition probability functions, or None for terminal regimes."""
 
     stochastic_transition_names: frozenset[str] = frozenset()
     """Frozenset of stochastic transition function names."""
+
+    simulate_overrides: MappingProxyType[str, InternalUserFunction] = MappingProxyType(
+        {}
+    )
+    """Simulate-phase overrides for functions that have PhaseVariant entries.
+
+    Keys are function names whose simulate variant differs from the solve variant
+    stored in `functions`.
+    """
+
+    def with_simulate_overrides(self) -> InternalFunctions:
+        """Return a copy with simulate overrides applied to functions.
+
+        For functions with phase variants, replaces the solve variant
+        with the simulate variant.
+
+        """
+        if not self.simulate_overrides:
+            return self
+        merged = dict(self.functions) | dict(self.simulate_overrides)
+        return replace(self, functions=MappingProxyType(merged))
 
     def get_all_functions(self) -> MappingProxyType[str, InternalUserFunction]:
         """Get all regime functions including utility, constraints, and transitions.
