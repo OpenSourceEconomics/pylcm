@@ -4,7 +4,7 @@ from typing import Literal
 
 import jax.numpy as jnp
 
-from lcm.typing import FloatND, Int1D, ScalarFloat
+from lcm.typing import FloatND, Int1D, ScalarFloat, ScalarInt
 
 type LogLevel = Literal["off", "warning", "progress", "debug"]
 
@@ -60,7 +60,7 @@ def log_nan_in_V(
     *,
     logger: logging.Logger,
     regime_name: str,
-    age: ScalarFloat,
+    age: ScalarInt | ScalarFloat,
     V_arr: FloatND,
 ) -> None:
     """Log a warning if V_arr contains NaN or Inf values.
@@ -105,7 +105,7 @@ def log_V_stats(
 def log_period_timing(
     *,
     logger: logging.Logger,
-    age: ScalarFloat,
+    age: ScalarInt | ScalarFloat,
     n_active_regimes: int,
     elapsed: float,
 ) -> None:

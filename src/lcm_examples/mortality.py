@@ -10,8 +10,8 @@ Based on tests/test_models/deterministic/base.py.
 import jax.numpy as jnp
 
 from lcm import (
+    AgeGrid,
     DiscreteGrid,
-    IntAgeGrid,
     LinSpacedGrid,
     MarkovTransition,
     Model,
@@ -126,7 +126,7 @@ def borrowing_constraint(
 WEALTH_GRID = LinSpacedGrid(start=1, stop=400, n_points=100)
 CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=400, n_points=500)
 
-_DEFAULT_AGE_GRID = IntAgeGrid(start=40, stop=70, step="10Y")  # 4 periods
+_DEFAULT_AGE_GRID = AgeGrid(start=40, stop=70, step="10Y")  # 4 periods
 _DEFAULT_LAST_AGE = _DEFAULT_AGE_GRID.exact_values[-1]
 
 # ---------------------------------------------------------------------------
@@ -182,7 +182,7 @@ def get_model(n_periods: int) -> Model:
         A configured Model instance.
 
     """
-    ages = IntAgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
+    ages = AgeGrid(start=40, stop=40 + (n_periods - 1) * 10, step="10Y")
     last_age = ages.exact_values[-1]
     return Model(
         regimes={

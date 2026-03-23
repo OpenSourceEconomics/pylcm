@@ -10,8 +10,8 @@ Based on docs/getting_started/tiny_example.ipynb.
 import jax.numpy as jnp
 
 from lcm import (
+    AgeGrid,
     DiscreteGrid,
-    IntAgeGrid,
     LinSpacedGrid,
     LogSpacedGrid,
     Model,
@@ -115,7 +115,7 @@ CONSUMPTION_GRID = LogSpacedGrid(start=4, stop=50, n_points=100)
 # Default regime objects
 # ---------------------------------------------------------------------------
 
-_DEFAULT_AGE_GRID = IntAgeGrid(start=25, stop=65, step="20Y")
+_DEFAULT_AGE_GRID = AgeGrid(start=25, stop=65, step="20Y")
 _RETIREMENT_AGE = _DEFAULT_AGE_GRID.exact_values[-1]
 
 working_life = Regime(
@@ -164,9 +164,7 @@ def get_model(
         A configured Model instance.
 
     """
-    age_grid = IntAgeGrid(
-        start=25, stop=25 + (n_periods - 1) * int(step[:-1]), step=step
-    )
+    age_grid = AgeGrid(start=25, stop=25 + (n_periods - 1) * int(step[:-1]), step=step)
     retirement_age = age_grid.exact_values[-1]
 
     wl = working_life.replace(
@@ -199,9 +197,7 @@ def get_params(
         Parameter dict ready for model.solve().
 
     """
-    age_grid = IntAgeGrid(
-        start=25, stop=25 + (n_periods - 1) * int(step[:-1]), step=step
-    )
+    age_grid = AgeGrid(start=25, stop=25 + (n_periods - 1) * int(step[:-1]), step=step)
     return {
         "discount_factor": 0.95,
         "risk_aversion": 1.5,

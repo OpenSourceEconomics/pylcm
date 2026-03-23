@@ -10,7 +10,7 @@ from typing import overload
 import jax.numpy as jnp
 
 from lcm.exceptions import GridInitializationError, format_messages
-from lcm.typing import Float1D, Int1D
+from lcm.typing import Age, Float1D, Int1D
 
 # ======================================================================================
 # Step parsing
@@ -46,7 +46,13 @@ def parse_step(step: str) -> int | Fraction:
 
 
 class AgeGrid:
-    """Age grid for life-cycle models."""
+    """Age grid for life-cycle models.
+
+    Automatically produces integer ages (`int32` array, `int` scalars) when all
+    values are integer-valued, and float ages (`float32` array, `float` scalars)
+    otherwise.
+
+    """
 
     @overload
     def __init__(
@@ -81,19 +87,33 @@ class AgeGrid:
             self._exact_values = tuple(
                 start + i * self._exact_step_size for i in range(n_steps)
             )
-            self._values = jnp.array([float(age) for age in self._exact_values])
         elif exact_values is not None:
             self._exact_values = tuple(exact_values)
-            self._values = jnp.array(exact_values)
             self._step_size = None
             self._exact_step_size = None
         else:
             msg = "Must specify 'start/stop/step' or 'exact_values'."
             raise GridInitializationError(msg)
 
+        self._is_integer = all(_is_integer_valued(v) for v in self._exact_values)
+        if self._is_integer:
+            self._exact_values = tuple(int(v) for v in self._exact_values)
+            self._values = jnp.array(self._exact_values, dtype=jnp.int32)
+        else:
+            self._values = jnp.array([float(v) for v in self._exact_values])
+
     @property
-    def values(self) -> Float1D:
-        """Float ages; indexed by period."""
+    def is_integer(self) -> bool:
+        """Whether all ages are integer-valued."""
+        return self._is_integer
+
+    @property
+    def values(self) -> Int1D | Float1D:
+        """Age values as a JAX array; indexed by period.
+
+        `Int1D` when all ages are integer-valued, `Float1D` otherwise.
+
+        """
         return self._values
 
     @property
@@ -129,14 +149,15 @@ class AgeGrid:
         """
         return self._exact_step_size
 
-    def period_to_age(self, period: int) -> float:
+    def period_to_age(self, period: int) -> Age:
         """Convert a period index to the corresponding age.
 
         Args:
             period: Zero-based period index.
 
         Returns:
-            The age corresponding to the given period.
+            The age corresponding to the given period. `int` when all ages are
+            integer-valued, `float` otherwise.
 
         Raises:
             IndexError: If period is out of bounds.
@@ -146,9 +167,11 @@ class AgeGrid:
             raise IndexError(
                 f"Period {period} out of bounds for grid with {self.n_periods} periods."
             )
+        if self._is_integer:
+            return int(self._values[period])
         return float(self._values[period])
 
-    def age_to_period(self, age: float) -> int:
+    def age_to_period(self, age: Age) -> int:
         """Convert an age to the corresponding period index.
 
         Args:
@@ -169,10 +192,12 @@ class AgeGrid:
             raise ValueError(msg) from None
 
     @functools.cached_property
-    def _age_to_period_map(self) -> dict[float, int]:
+    def _age_to_period_map(self) -> dict[Age, int]:
+        if self._is_integer:
+            return {int(v): i for i, v in enumerate(self._exact_values)}
         return {float(v): i for i, v in enumerate(self._exact_values)}
 
-    def get_periods_where(self, predicate: Callable[[float], bool]) -> tuple[int, ...]:
+    def get_periods_where(self, predicate: Callable[[Age], bool]) -> tuple[int, ...]:
         """Get period indices where predicate is True.
 
         Args:
@@ -182,112 +207,11 @@ class AgeGrid:
             Tuple of period indices where predicate(age) is True.
 
         """
+        _convert: Callable[[object], Age] = int if self._is_integer else float  # ty: ignore[invalid-assignment]
         return tuple(
             period
             for period in range(self.n_periods)
-            if predicate(float(self._values[period]))
-        )
-
-
-class IntAgeGrid(AgeGrid):
-    """Age grid with integer values for annual/multiannual models.
-
-    Behaves like `AgeGrid` but `.values` returns an `Int1D` array and
-    `period_to_age` returns `int`.  Accepts `int` and integer-valued
-    `Fraction` inputs; rejects sub-annual steps that produce fractional ages.
-
-    """
-
-    @overload
-    def __init__(
-        self,
-        *,
-        start: int | Fraction,
-        stop: int | Fraction,
-        step: str,
-    ) -> None: ...
-
-    @overload
-    def __init__(
-        self,
-        *,
-        exact_values: Iterable[int | Fraction],
-    ) -> None: ...
-
-    def __init__(
-        self,
-        *,
-        start: int | Fraction | None = None,
-        stop: int | Fraction | None = None,
-        step: str | None = None,
-        exact_values: Iterable[int | Fraction] | None = None,
-    ) -> None:
-        if exact_values is not None:
-            exact_values = tuple(exact_values)
-            _fail_if_not_integer_valued(exact_values, context="exact_values")
-
-        super().__init__(start=start, stop=stop, step=step, exact_values=exact_values)  # ty: ignore[no-matching-overload]
-
-        # Validate step-based path produces integer ages (catches sub-annual steps)
-        _fail_if_not_integer_valued(self._exact_values, context="step-computed ages")
-
-        self._exact_values = tuple(int(v) for v in self._exact_values)
-        self._values = jnp.array(self._exact_values, dtype=jnp.int32)
-
-    @property
-    def values(self) -> Int1D:
-        """Integer ages; indexed by period."""
-        return self._values
-
-    def period_to_age(self, period: int) -> int:
-        """Convert a period index to the corresponding integer age.
-
-        Args:
-            period: Zero-based period index.
-
-        Returns:
-            The integer age corresponding to the given period.
-
-        Raises:
-            IndexError: If period is out of bounds.
-
-        """
-        if period < 0 or period >= self.n_periods:
-            raise IndexError(
-                f"Period {period} out of bounds for grid with {self.n_periods} periods."
-            )
-        return int(self._values[period])
-
-    def age_to_period(self, age: int) -> int:  # ty: ignore[invalid-method-override]
-        """Convert an integer age to the corresponding period index.
-
-        Args:
-            age: Integer age that must be a valid grid point.
-
-        Returns:
-            The zero-based period index corresponding to the given age.
-
-        """
-        return self._age_to_period_map[age]
-
-    @functools.cached_property
-    def _age_to_period_map(self) -> dict[int, int]:
-        return {int(v): i for i, v in enumerate(self._exact_values)}
-
-    def get_periods_where(self, predicate: Callable[[int], bool]) -> tuple[int, ...]:
-        """Get period indices where predicate is True.
-
-        Args:
-            predicate: A function that takes an integer age and returns True/False.
-
-        Returns:
-            Tuple of period indices where predicate(age) is True.
-
-        """
-        return tuple(
-            period
-            for period in range(self.n_periods)
-            if predicate(int(self._values[period]))
+            if predicate(_convert(self._values[period]))
         )
 
 
@@ -296,19 +220,6 @@ def _is_integer_valued(value: int | Fraction) -> bool:
     if isinstance(value, int):
         return True
     return isinstance(value, Fraction) and value.denominator == 1
-
-
-def _fail_if_not_integer_valued(
-    values: tuple[int | Fraction, ...], *, context: str
-) -> None:
-    """Raise if any value is not integer-valued."""
-    non_int = [v for v in values if not _is_integer_valued(v)]
-    if non_int:
-        raise GridInitializationError(
-            f"IntAgeGrid requires all ages to be integer-valued ({context}). "
-            f"Got non-integer values: {non_int}. "
-            "Sub-annual steps (e.g., 'Q', 'M') produce fractional ages."
-        )
 
 
 # ======================================================================================
