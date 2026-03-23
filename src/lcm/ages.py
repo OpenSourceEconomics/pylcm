@@ -12,10 +12,6 @@ import jax.numpy as jnp
 from lcm.exceptions import GridInitializationError, format_messages
 from lcm.typing import Age, Float1D, Int1D
 
-# ======================================================================================
-# Step parsing
-# ======================================================================================
-
 STEP_UNITS: MappingProxyType[str, Fraction] = MappingProxyType(
     {
         "Y": Fraction(1, 1),
@@ -23,26 +19,6 @@ STEP_UNITS: MappingProxyType[str, Fraction] = MappingProxyType(
         "Q": Fraction(1, 4),
     }
 )
-
-
-def parse_step(step: str) -> int | Fraction:
-    """Parse a step string like 'Y', '2Y', 'M', '3M', 'Q' into int or Fraction."""
-    match = re.match(r"^(\d+)?([YMQ])$", step, re.IGNORECASE)
-    if not match:
-        raise GridInitializationError(
-            f"Invalid step format: '{step}'. "
-            "Expected format like 'Y', '2Y', 'M', '3M', 'Q'."
-        )
-
-    multiplier_str, unit = match.groups()
-    multiplier = int(multiplier_str) if multiplier_str else 1
-    result = multiplier * STEP_UNITS[unit.upper()]
-    return int(result) if result.denominator == 1 else result
-
-
-# ======================================================================================
-# AgeGrid class
-# ======================================================================================
 
 
 class AgeGrid:
@@ -215,16 +191,26 @@ class AgeGrid:
         )
 
 
+def parse_step(step: str) -> int | Fraction:
+    """Parse a step string like 'Y', '2Y', 'M', '3M', 'Q' into int or Fraction."""
+    match = re.match(r"^(\d+)?([YMQ])$", step, re.IGNORECASE)
+    if not match:
+        raise GridInitializationError(
+            f"Invalid step format: '{step}'. "
+            "Expected format like 'Y', '2Y', 'M', '3M', 'Q'."
+        )
+
+    multiplier_str, unit = match.groups()
+    multiplier = int(multiplier_str) if multiplier_str else 1
+    result = multiplier * STEP_UNITS[unit.upper()]
+    return int(result) if result.denominator == 1 else result
+
+
 def _is_integer_valued(value: int | Fraction) -> bool:
     """Check if a value is integer-valued (int or Fraction with unit denominator)."""
     if isinstance(value, int):
         return True
     return isinstance(value, Fraction) and value.denominator == 1
-
-
-# ======================================================================================
-# Validation
-# ======================================================================================
 
 
 def _validate_age_grid(

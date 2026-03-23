@@ -48,11 +48,6 @@ _SHOCK_GRID_KWARGS: dict[str, dict[str, bool | float]] = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Model functions
-# ---------------------------------------------------------------------------
-
-
 def next_wealth(
     wealth: ContinuousState,
     consumption: ContinuousAction,
@@ -77,20 +72,10 @@ def utility(consumption: ContinuousAction) -> FloatND:
     return jnp.log(consumption)
 
 
-# ---------------------------------------------------------------------------
-# Categorical variables
-# ---------------------------------------------------------------------------
-
-
 @categorical(ordered=False)
 class RegimeId:
     alive: int
     dead: int
-
-
-# ---------------------------------------------------------------------------
-# Factories
-# ---------------------------------------------------------------------------
 
 
 @functools.cache

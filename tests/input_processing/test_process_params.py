@@ -34,11 +34,6 @@ def params_template():
     }
 
 
-# ======================================================================================
-# Tests for valid parameter passing (should eventually pass)
-# ======================================================================================
-
-
 def test_params_at_function_level(params_template):
     """Test 1: Passing params at the function level (same structure as template)."""
     params = {
@@ -117,11 +112,6 @@ def test_params_at_model_level(params_template):
         )
 
 
-# ======================================================================================
-# Tests for ambiguous parameter passing (should raise InvalidNameError)
-# ======================================================================================
-
-
 def test_ambiguous_regime_function_level(params_template):
     """Test 5: Passing ambiguously at regime/function level should raise error."""
     params = {
@@ -172,16 +162,6 @@ def test_ambiguous_model_regime_level(params_template):
     }
     with pytest.raises(InvalidNameError):
         process_params(params=params, params_template=params_template)
-
-
-# ======================================================================================
-# Tests for name validation
-# ======================================================================================
-
-
-# ======================================================================================
-# Tests for name validation in create_params_template
-# ======================================================================================
 
 
 class MockRegime:
@@ -253,22 +233,12 @@ def test_regime_argument_names_disjoint():
         create_params_template(internal_regimes)  # ty: ignore[invalid-argument-type]
 
 
-# ======================================================================================
-# Tests for missing parameters
-# ======================================================================================
-
-
 def test_missing_parameter_raises_error(params_template):
     """Test that missing required parameters raise InvalidParamsError."""
     # Only provide arg_0, but arg_1 is also required in the template
     params = {"arg_0": 0.0}
     with pytest.raises(InvalidParamsError, match="Missing required parameter"):
         process_params(params=params, params_template=params_template)
-
-
-# ======================================================================================
-# Tests for unknown parameters
-# ======================================================================================
 
 
 def test_unknown_keys_raises_error(params_template):

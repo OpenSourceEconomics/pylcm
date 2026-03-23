@@ -8,10 +8,6 @@ from lcm import AgeGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.grids import IrregSpacedGrid
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
 
-# ======================================================================================
-# Model setup helpers
-# ======================================================================================
-
 
 @categorical(ordered=False)
 class RegimeId:
@@ -66,11 +62,6 @@ def _make_model(*, wealth_grid=None):
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
     )
-
-
-# ======================================================================================
-# Tests
-# ======================================================================================
 
 
 def test_runtime_grid_creation():

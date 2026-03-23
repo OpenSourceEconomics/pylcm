@@ -41,13 +41,7 @@ from lcm.typing import (
 
 _DATA_DIR = Path(__file__).parent / "data"
 
-# ======================================================================================
-# Parameters
-# ======================================================================================
 
-# --------------------------------------------------------------------------------------
-# Fixed Parameters
-# --------------------------------------------------------------------------------------
 avrgearn_not_normalized: float = 57706.57
 theta_val: Float1D = jnp.array([jnp.exp(-0.2898), jnp.exp(0.2898)])
 ages = AgeGrid(start=25, stop=101, step="2Y")
@@ -70,11 +64,6 @@ def calc_savingsgrid(x: Float1D) -> Float1D:
     xgrid = x - 10.0 ** (0.0)
     xgrid = xgrid / (10.0**2 - 10.0**0.0)
     return xgrid * (30 - 0) + 0
-
-
-# ======================================================================================
-# Discrete Variables
-# ======================================================================================
 
 
 @categorical(ordered=True)
@@ -128,14 +117,6 @@ class RegimeId:
     dead: int
 
 
-# ======================================================================================
-# Model functions
-# ======================================================================================
-
-
-# --------------------------------------------------------------------------------------
-# Utility function
-# --------------------------------------------------------------------------------------
 def utility(
     scaled_adjustment_cost: FloatND,
     fcost: FloatND,
@@ -203,9 +184,6 @@ def fcost(
     )
 
 
-# --------------------------------------------------------------------------------------
-# Income Calculation
-# --------------------------------------------------------------------------------------
 def net_income(benefits: FloatND, taxed_income: FloatND, pension: FloatND) -> FloatND:
     return taxed_income + pension + benefits
 
@@ -262,9 +240,6 @@ def pension(
     )
 
 
-# --------------------------------------------------------------------------------------
-# State transitions
-# --------------------------------------------------------------------------------------
 def next_wealth(saving: ContinuousAction) -> ContinuousState:
     return saving
 
@@ -285,9 +260,6 @@ def next_effort_t_1(effort: DiscreteAction) -> DiscreteState:
     return effort
 
 
-# --------------------------------------------------------------------------------------
-# Regime Transitions
-# --------------------------------------------------------------------------------------
 def next_regime(
     period: Period,
     education: DiscreteState,
@@ -299,9 +271,6 @@ def next_regime(
     return jnp.array([survival_prob, 1 - survival_prob])
 
 
-# --------------------------------------------------------------------------------------
-# Constraints
-# --------------------------------------------------------------------------------------
 def retirement_constraint(period: Period, labor_supply: DiscreteAction) -> BoolND:
     return jnp.logical_not(
         jnp.logical_and(
@@ -316,11 +285,6 @@ def savings_constraint(
     wealth = calc_savingsgrid(wealth)
     saving = calc_savingsgrid(saving)
     return net_income + (wealth) * r >= (saving)
-
-
-# ======================================================================================
-# Model specification
-# ======================================================================================
 
 
 def alive_is_active(age: int, final_age_alive: float) -> bool:
@@ -392,11 +356,6 @@ MAHLER_YUM_MODEL = Model(
 )
 
 
-# ======================================================================================
-# Mahler & Yum starting params
-# ======================================================================================
-
-
 START_PARAMS = {
     # Disutility of work
     "nu": {
@@ -466,10 +425,6 @@ START_PARAMS = {
     # Coefficient of relative risk-aversion
     "sigma": 2,
 }
-
-# ======================================================================================
-# Model Input Construction
-# ======================================================================================
 
 
 def create_phigrid(nu: dict[str, list[float]]) -> FloatND:
@@ -551,16 +506,10 @@ def create_income_grid(income_process: dict[str, dict[str, float]]) -> FloatND:
     return mapped(j, health, education)
 
 
-# --------------------------------------------------------------------------------------
-# Static Grids
-# --------------------------------------------------------------------------------------
 eff_grid: Float1D = jnp.linspace(0, 1, 40)
 tr2yp_grid: FloatND = jnp.zeros((38, 2, 40, 40, 2, 2, 2))
 j: Float1D = jnp.floor_divide(jnp.arange(38), 5)
 
-# --------------------------------------------------------------------------------------
-# Health Transition Probability Grid
-# --------------------------------------------------------------------------------------
 
 const_healthtr: float = -0.906
 age_const: Float1D = jnp.asarray(

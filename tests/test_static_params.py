@@ -6,10 +6,6 @@ from numpy.testing import assert_array_almost_equal as aaae
 from lcm import AgeGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
 
-# ======================================================================================
-# Model setup helpers
-# ======================================================================================
-
 
 @categorical(ordered=False)
 class RegimeId:
@@ -68,11 +64,6 @@ def _make_model(n_periods=3, *, extra_fixed_params=None):
         regime_id_class=RegimeId,
         fixed_params=fixed_params,
     )
-
-
-# ======================================================================================
-# Tests
-# ======================================================================================
 
 
 def test_fixed_param_removed_from_template():

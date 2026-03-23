@@ -33,10 +33,6 @@ from tests.test_models.stochastic import (
     working_life,
 )
 
-# ======================================================================================
-# Simulate
-# ======================================================================================
-
 
 def test_model_simulate_with_stochastic_model():
     model = get_model(n_periods=4)
@@ -82,19 +78,9 @@ def test_model_simulate_with_stochastic_model():
         )
 
 
-# ======================================================================================
-# Solve
-# ======================================================================================
-
-
 def test_model_solve_with_stochastic_model():
     model = get_model(n_periods=4)
     model.solve(params=get_params(n_periods=4))
-
-
-# ======================================================================================
-# Comparison with deterministic results
-# ======================================================================================
 
 
 @pytest.fixture
@@ -233,11 +219,6 @@ def test_compare_deterministic_and_stochastic_results_value_function(
     )
 
 
-# ======================================================================================
-# Minimal stochastic model for issue reproducers
-# ======================================================================================
-
-
 def _make_minimal_stochastic_model(next_draw: Callable[..., FloatND]) -> Model:
     """Create a minimal stochastic model with a discrete state `draw`."""
 
@@ -296,11 +277,6 @@ def _make_minimal_stochastic_model(next_draw: Callable[..., FloatND]) -> Model:
         ages=AgeGrid(start=0, stop=final_age + 1, step="Y"),
         regime_id_class=ShockRegimeId,
     )
-
-
-# ======================================================================================
-# Issue reproducers / regression guards
-# ======================================================================================
 
 
 def test_stochastic_next_function_with_no_arguments():

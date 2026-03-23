@@ -16,10 +16,6 @@ from tests.test_models.deterministic.base import (
     working_life,
 )
 
-# ======================================================================================
-# parse_step tests
-# ======================================================================================
-
 
 @pytest.mark.parametrize(
     ("step", "expected"),
@@ -38,11 +34,6 @@ def test_parse_step_valid_formats(step, expected):
 def test_parse_step_invalid():
     with pytest.raises(GridInitializationError, match="Invalid step format"):
         parse_step("X")
-
-
-# ======================================================================================
-# AgeGrid creation tests
-# ======================================================================================
 
 
 def test_age_grid_from_range():
@@ -94,11 +85,6 @@ def test_age_grid_get_periods_where():
     assert periods == (3, 4)
 
 
-# ======================================================================================
-# AgeGrid validation tests
-# ======================================================================================
-
-
 def test_age_grid_no_params_raises():
     with pytest.raises(GridInitializationError):
         AgeGrid()  # ty: ignore[no-matching-overload]
@@ -123,11 +109,6 @@ def test_age_grid_step_size_not_divisible_raises():
     """Test that step size must divide evenly into the range."""
     with pytest.raises(GridInitializationError, match="does not divide evenly"):
         AgeGrid(start=18, stop=21, step="2Y")
-
-
-# ======================================================================================
-# Integration test with non-yearly steps
-# ======================================================================================
 
 
 def test_model_with_quarterly_steps():
@@ -184,11 +165,6 @@ def test_model_with_quarterly_steps():
     assert all(non_dead_df["age"] < 19)
 
 
-# ======================================================================================
-# AgeGrid.age_to_period tests
-# ======================================================================================
-
-
 def test_age_grid_age_to_period():
     ages = AgeGrid(start=18, stop=22, step="Y")
     assert ages.age_to_period(18) == 0
@@ -200,11 +176,6 @@ def test_age_grid_age_to_period_invalid():
     ages = AgeGrid(start=18, stop=22, step="Y")
     with pytest.raises(ValueError, match="not a valid grid point"):
         ages.age_to_period(17)
-
-
-# ======================================================================================
-# Integer auto-detection tests
-# ======================================================================================
 
 
 def test_annual_step_produces_int():
@@ -285,11 +256,6 @@ def test_integer_get_periods_where_passes_int():
     )
     assert periods == (3, 4)
     assert all(t is int for t in received_types)
-
-
-# ======================================================================================
-# Integer age integration test
-# ======================================================================================
 
 
 def test_model_with_integer_ages():
