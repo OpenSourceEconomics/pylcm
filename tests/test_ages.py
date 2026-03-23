@@ -1,4 +1,4 @@
-"""Tests for the ages module (AgeGrid, IntAgeGrid, and step parsing)."""
+"""Tests for the ages module (AgeGrid and step parsing)."""
 
 from fractions import Fraction
 
@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from lcm import Model
-from lcm.ages import AgeGrid, IntAgeGrid, parse_step
+from lcm.ages import AgeGrid, parse_step
 from lcm.exceptions import GridInitializationError
 from tests.test_models.deterministic.base import (
     RegimeId,
@@ -74,8 +74,9 @@ def test_age_grid_from_values():
 
 def test_age_grid_period_to_age():
     ages = AgeGrid(start=18, stop=22, step="Y")
-    assert ages.period_to_age(0) == 18.0
-    assert ages.period_to_age(3) == 21.0
+    assert ages.period_to_age(0) == 18
+    assert type(ages.period_to_age(0)) is int
+    assert ages.period_to_age(3) == 21
 
 
 def test_age_grid_get_periods_where():
@@ -166,71 +167,89 @@ def test_model_with_quarterly_steps():
 
 def test_age_grid_age_to_period():
     ages = AgeGrid(start=18, stop=22, step="Y")
-    assert ages.age_to_period(18.0) == 0
-    assert ages.age_to_period(20.0) == 2
-    assert ages.age_to_period(22.0) == 4
+    assert ages.age_to_period(18) == 0
+    assert ages.age_to_period(20) == 2
+    assert ages.age_to_period(22) == 4
 
 
 def test_age_grid_age_to_period_invalid():
     ages = AgeGrid(start=18, stop=22, step="Y")
     with pytest.raises(ValueError, match="not a valid grid point"):
-        ages.age_to_period(17.0)
+        ages.age_to_period(17)
 
 
-def test_int_age_grid_from_range():
-    ages = IntAgeGrid(start=18, stop=21, step="Y")
-    assert ages.n_periods == 4
+def test_annual_step_produces_int():
+    ages = AgeGrid(start=18, stop=21, step="Y")
+    assert ages.is_integer
+    assert ages.values.dtype == jnp.int32
     np.testing.assert_array_equal(ages.values, [18, 19, 20, 21])
+    assert all(isinstance(v, int) for v in ages.exact_values)
+
+
+def test_multiannual_step_produces_int():
+    ages = AgeGrid(start=40, stop=70, step="10Y")
+    assert ages.is_integer
     assert ages.values.dtype == jnp.int32
-    assert ages.step_size == 1.0
-
-
-def test_int_age_grid_multiannual():
-    ages = IntAgeGrid(start=40, stop=70, step="10Y")
-    assert ages.n_periods == 4
     np.testing.assert_array_equal(ages.values, [40, 50, 60, 70])
+
+
+def test_integer_exact_values_produce_int():
+    ages = AgeGrid(exact_values=(18, 25, 35, 65))
+    assert ages.is_integer
     assert ages.values.dtype == jnp.int32
-
-
-def test_int_age_grid_from_values():
-    ages = IntAgeGrid(exact_values=(18, 25, 35, 65))
-    assert ages.n_periods == 4
     np.testing.assert_array_equal(ages.values, [18, 25, 35, 65])
-    assert ages.values.dtype == jnp.int32
     assert ages.step_size is None
 
 
-def test_int_age_grid_accepts_fraction_with_unit_denominator():
-    """Fraction(18, 1) is integer-valued and should be accepted."""
-    ages = IntAgeGrid(start=Fraction(18, 1), stop=Fraction(21, 1), step="Y")
-    assert ages.n_periods == 4
-    np.testing.assert_array_equal(ages.values, [18, 19, 20, 21])
+def test_integer_fraction_exact_values_produce_int():
+    """Fraction(18, 1) is integer-valued and should produce int."""
+    ages = AgeGrid(start=Fraction(18, 1), stop=Fraction(21, 1), step="Y")
+    assert ages.is_integer
     assert ages.values.dtype == jnp.int32
     assert all(isinstance(v, int) for v in ages.exact_values)
 
 
-def test_int_age_grid_period_to_age_returns_int():
-    ages = IntAgeGrid(start=18, stop=21, step="Y")
+def test_quarterly_step_produces_float():
+    ages = AgeGrid(start=20, stop=21, step="Q")
+    assert not ages.is_integer
+    assert jnp.issubdtype(ages.values.dtype, jnp.floating)
+
+
+def test_monthly_step_produces_float():
+    ages = AgeGrid(start=20, stop=Fraction(20 * 12 + 1, 12), step="M")
+    assert not ages.is_integer
+    assert jnp.issubdtype(ages.values.dtype, jnp.floating)
+
+
+def test_fractional_exact_values_produce_float():
+    ages = AgeGrid(exact_values=(18, Fraction(51, 2)))
+    assert not ages.is_integer
+    assert jnp.issubdtype(ages.values.dtype, jnp.floating)
+
+
+def test_integer_period_to_age_returns_int():
+    ages = AgeGrid(start=18, stop=21, step="Y")
     result = ages.period_to_age(0)
     assert result == 18
     assert type(result) is int
 
 
-def test_int_age_grid_age_to_period():
-    ages = IntAgeGrid(start=40, stop=70, step="10Y")
+def test_float_period_to_age_returns_float():
+    ages = AgeGrid(start=20, stop=21, step="Q")
+    result = ages.period_to_age(0)
+    assert result == 20.0
+    assert type(result) is float
+
+
+def test_integer_age_to_period():
+    ages = AgeGrid(start=40, stop=70, step="10Y")
     assert ages.age_to_period(40) == 0
     assert ages.age_to_period(60) == 2
     assert ages.age_to_period(70) == 3
 
 
-def test_int_age_grid_age_to_period_invalid():
-    ages = IntAgeGrid(start=40, stop=70, step="10Y")
-    with pytest.raises(KeyError):
-        ages.age_to_period(45)
-
-
-def test_int_age_grid_get_periods_where():
-    ages = IntAgeGrid(start=18, stop=22, step="Y")
+def test_integer_get_periods_where_passes_int():
+    ages = AgeGrid(start=18, stop=22, step="Y")
     received_types = []
     periods = ages.get_periods_where(
         lambda age: (received_types.append(type(age)), age >= 21)[1]
@@ -239,29 +258,9 @@ def test_int_age_grid_get_periods_where():
     assert all(t is int for t in received_types)
 
 
-def test_int_age_grid_is_subclass():
-    ages = IntAgeGrid(start=18, stop=21, step="Y")
-    assert isinstance(ages, AgeGrid)
-
-
-def test_int_age_grid_rejects_quarterly():
-    with pytest.raises(GridInitializationError, match="integer-valued"):
-        IntAgeGrid(start=20, stop=21, step="Q")
-
-
-def test_int_age_grid_rejects_monthly():
-    with pytest.raises(GridInitializationError, match="integer-valued"):
-        IntAgeGrid(start=20, stop=21, step="M")
-
-
-def test_int_age_grid_rejects_non_integer_fraction():
-    with pytest.raises(GridInitializationError, match="integer-valued"):
-        IntAgeGrid(exact_values=(18, Fraction(51, 2)))
-
-
-def test_model_with_int_age_grid():
-    """Test that solve/simulate works with IntAgeGrid."""
-    ages = IntAgeGrid(start=40, stop=70, step="10Y")
+def test_model_with_integer_ages():
+    """Test that solve/simulate works with integer ages."""
+    ages = AgeGrid(start=40, stop=70, step="10Y")
     last_age = ages.exact_values[-1]
 
     model = Model(

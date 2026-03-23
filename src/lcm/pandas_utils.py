@@ -488,9 +488,7 @@ def _map_labels_to_codes(
 
         if level_name == "age":
             try:
-                mapped = np.array(
-                    [model.ages.age_to_period(float(v)) for v in level_values]
-                )
+                mapped = np.array([model.ages.age_to_period(v) for v in level_values])
             except ValueError:
                 valid_ages = sorted(float(v) for v in model.ages.exact_values)
                 invalid = {float(v) for v in level_values} - set(valid_ages)
