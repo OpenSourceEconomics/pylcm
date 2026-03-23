@@ -271,7 +271,7 @@ def _collect_structural_errors(
     else:
         # Validate that each subject's initial regime is active at their starting age.
         # Only safe to run when all ages are valid (so age_to_period lookup succeeds).
-        periods = jnp.array([ages.age_to_period(float(a)) for a in age_values])
+        periods = jnp.array([ages.age_to_period(a.item()) for a in age_values])
 
         active_mask = jnp.ones(regime_id_arr.size, dtype=bool)
         for regime_name, internal_regime in internal_regimes.items():
@@ -510,7 +510,7 @@ def _check_regime_feasibility(
         subject_states["age"] = initial_states["age"][idx_arr]
     if needs_period:
         subject_states["period"] = jnp.array(
-            [ages.age_to_period(float(a)) for a in initial_states["age"][idx_arr]]
+            [ages.age_to_period(a.item()) for a in initial_states["age"][idx_arr]]
         )
 
     # Split actions and params — actions are vmapped over, params are not
