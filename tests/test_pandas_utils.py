@@ -7,6 +7,7 @@ import pytest
 from pandas.api.types import CategoricalDtype
 
 from lcm import (
+    AgeGrid,
     DiscreteGrid,
     LinSpacedGrid,
     Regime,
@@ -15,6 +16,8 @@ from lcm import (
 from lcm.error_handling import validate_transition_probs
 from lcm.pandas_utils import (
     _build_discrete_grid_lookup,
+    array_from_series,
+    array_mapping_from_dataframe,
     initial_conditions_from_dataframe,
     transition_probs_from_series,
 )
@@ -677,3 +680,160 @@ def test_validate_regime_transition_probs_not_markov_raises():
     arr = jnp.ones((3, 2)) / 2
     with pytest.raises(TypeError, match="stochastic regime transition"):
         validate_transition_probs(probs=arr, model=model, regime_name="working_life")
+
+
+# ---------------------------------------------------------------------------
+# array_from_pandas
+# ---------------------------------------------------------------------------
+
+_AGES_51_55 = AgeGrid(start=51, stop=55, step="Y")
+
+
+@categorical(ordered=True)
+class _AB:
+    a: int
+    b: int
+
+
+_AB_GRID = DiscreteGrid(_AB)
+
+
+# --- array_from_series ---
+
+
+def test_array_from_series_simple_age_index() -> None:
+    series = pd.Series(
+        [10.0, 20.0, 30.0, 40.0, 50.0],
+        index=pd.Index([51, 52, 53, 54, 55], name="age"),
+    )
+    result = array_from_series(data=series, ages=_AGES_51_55)
+    expected = jnp.array([10.0, 20.0, 30.0, 40.0, 50.0])
+    np.testing.assert_allclose(result, expected)
+
+
+def test_array_from_series_multiindex_with_categoricals() -> None:
+    index = pd.MultiIndex.from_tuples(
+        [
+            (51, "a"),
+            (51, "b"),
+            (52, "a"),
+            (52, "b"),
+            (53, "a"),
+            (53, "b"),
+            (54, "a"),
+            (54, "b"),
+            (55, "a"),
+            (55, "b"),
+        ],
+        names=["age", "category"],
+    )
+    values = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
+    series = pd.Series(values, index=index)
+    result = array_from_series(
+        data=series, ages=_AGES_51_55, categoricals={"category": _AB_GRID}
+    )
+    expected = jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0], [9.0, 10.0]])
+    np.testing.assert_allclose(result, expected)
+
+
+def test_array_from_series_categorical_only() -> None:
+    """No ages, just categorical index → 1D array by category."""
+    series = pd.Series([100.0, 200.0], index=pd.Index(["a", "b"], name="category"))
+    result = array_from_series(data=series, categoricals={"category": _AB_GRID})
+    np.testing.assert_allclose(result, jnp.array([100.0, 200.0]))
+
+
+def test_array_from_series_multiindex_no_categorical_raises() -> None:
+    """MultiIndex with non-age level but no categorical → ValueError."""
+    index = pd.MultiIndex.from_tuples([(51, "x"), (51, "y")], names=["age", "mystery"])
+    series = pd.Series([1.0, 2.0], index=index)
+    with pytest.raises(ValueError, match="No categorical mapping"):
+        array_from_series(data=series, ages=_AGES_51_55)
+
+
+def test_array_from_series_invalid_label_raises() -> None:
+    """Label not in categorical → ValueError."""
+    series = pd.Series([1.0], index=pd.Index(["z"], name="category"))
+    with pytest.raises(ValueError, match="Invalid label"):
+        array_from_series(data=series, categoricals={"category": _AB_GRID})
+
+
+# --- array_mapping_from_dataframe ---
+
+
+def test_array_mapping_from_dataframe_simple_age_index() -> None:
+    df = pd.DataFrame(
+        {"x": [1.0, 2.0, 3.0, 4.0, 5.0], "y": [10.0, 20.0, 30.0, 40.0, 50.0]},
+        index=pd.Index([51, 52, 53, 54, 55], name="age"),
+    )
+    result = array_mapping_from_dataframe(data=df, ages=_AGES_51_55)
+    assert isinstance(result, dict)
+    assert set(result.keys()) == {"x", "y"}
+    np.testing.assert_allclose(result["x"], jnp.array([1.0, 2.0, 3.0, 4.0, 5.0]))
+    np.testing.assert_allclose(result["y"], jnp.array([10.0, 20.0, 30.0, 40.0, 50.0]))
+
+
+def test_array_mapping_from_dataframe_with_categoricals() -> None:
+    index = pd.MultiIndex.from_tuples(
+        [
+            (51, "a"),
+            (51, "b"),
+            (52, "a"),
+            (52, "b"),
+            (53, "a"),
+            (53, "b"),
+            (54, "a"),
+            (54, "b"),
+            (55, "a"),
+            (55, "b"),
+        ],
+        names=["age", "category"],
+    )
+    df = pd.DataFrame(
+        {"x": range(10), "y": range(10, 20)},
+        index=index,
+        dtype=float,
+    )
+    result = array_mapping_from_dataframe(
+        data=df, ages=_AGES_51_55, categoricals={"category": _AB_GRID}
+    )
+    assert isinstance(result, dict)
+    assert result["x"].shape == (5, 2)
+    np.testing.assert_allclose(
+        result["x"],
+        jnp.array([[0.0, 1.0], [2.0, 3.0], [4.0, 5.0], [6.0, 7.0], [8.0, 9.0]]),
+    )
+
+
+# --- NaN fill and edge cases ---
+
+
+def test_array_from_series_missing_ages_filled_with_nan() -> None:
+    """Missing grid ages produce NaN instead of raising."""
+    series = pd.Series(
+        [10.0, 20.0, 30.0],
+        index=pd.Index([51, 52, 53], name="age"),
+    )
+    result = array_from_series(data=series, ages=_AGES_51_55)
+    assert result.shape == (5,)
+    np.testing.assert_allclose(result[:3], jnp.array([10.0, 20.0, 30.0]))
+    assert jnp.isnan(result[3])
+    assert jnp.isnan(result[4])
+
+
+def test_array_from_series_extra_ages_dropped() -> None:
+    series = pd.Series(
+        [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0],
+        index=pd.Index([49, 50, 51, 52, 53, 54, 55], name="age"),
+    )
+    result = array_from_series(data=series, ages=_AGES_51_55)
+    expected = jnp.array([30.0, 40.0, 50.0, 60.0, 70.0])
+    np.testing.assert_allclose(result, expected)
+
+
+def test_array_from_series_no_ages_no_categoricals() -> None:
+    """No ages, no categoricals → plain value conversion."""
+    series = pd.Series([1.0, 2.0, 3.0], index=["a", "b", "c"])
+    result = array_from_series(data=series)
+    expected = jnp.array([1.0, 2.0, 3.0])
+    np.testing.assert_allclose(result, expected)

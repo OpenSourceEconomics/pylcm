@@ -22,6 +22,8 @@ from lcm.grids import (
 from lcm.interfaces import PhaseVariant
 from lcm.model import Model
 from lcm.pandas_utils import (
+    array_from_series,
+    array_mapping_from_dataframe,
     initial_conditions_from_dataframe,
     transition_probs_from_series,
 )
@@ -59,6 +61,8 @@ __all__ = [
     "SimulateSnapshot",
     "SimulationResult",
     "SolveSnapshot",
+    "array_from_series",
+    "array_mapping_from_dataframe",
     "categorical",
     "initial_conditions_from_dataframe",
     "load_snapshot",

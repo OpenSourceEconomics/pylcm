@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 from jax import Array
 
+from lcm.ages import AgeGrid
 from lcm.error_handling import _extract_markov_transition, _get_indexing_params
 from lcm.grids import DiscreteGrid
 from lcm.model import Model
@@ -105,6 +106,7 @@ def transition_probs_from_series(
     series: pd.Series,
     model: Model,
     regime_name: str | None = ...,
+    categoricals: dict[str, DiscreteGrid] | None = ...,
 ) -> Array: ...
 
 
@@ -115,6 +117,7 @@ def transition_probs_from_series(
     model: Model,
     regime_name: str | None = ...,
     target_regime_name: str,
+    categoricals: dict[str, DiscreteGrid] | None = ...,
 ) -> Array: ...
 
 
@@ -124,6 +127,7 @@ def transition_probs_from_series(
     model: Model,
     regime_name: str | None = None,
     target_regime_name: str | None = None,
+    categoricals: dict[str, DiscreteGrid] | None = None,
 ) -> Array:
     """Convert a labeled pandas Series to a transition probability array.
 
@@ -150,6 +154,8 @@ def transition_probs_from_series(
             inferred by scanning regimes for a matching `MarkovTransition`.
         target_regime_name: Target regime name for per-target state transitions.
             Required when the state transition is a per-target dict.
+        categoricals: Extra categorical mappings (level name → grid) for
+            derived variables not in the model's state/action grids.
 
     Returns:
         JAX array with axes corresponding to the indexing parameters in
@@ -170,9 +176,9 @@ def transition_probs_from_series(
         )
 
     regime = model.regimes[regime_name]
-    discrete_lookup = _build_discrete_grid_lookup(model.regimes)
-    action_lookup = _build_discrete_action_lookup(regime)
-    all_grids = {**discrete_lookup, **action_lookup}
+    all_grids = _resolve_categoricals(
+        model=model, regime_name=regime_name, categoricals=categoricals
+    )
 
     if state_name is not None:
         raw_transition = regime.state_transitions[state_name]
@@ -207,6 +213,208 @@ def transition_probs_from_series(
         )
 
     return _build_probs_array(func, outcome, all_grids, model, series)
+
+
+def array_from_series(
+    *,
+    data: pd.Series,
+    ages: AgeGrid | None = None,
+    model: Model | None = None,
+    regime_name: str | None = None,
+    categoricals: dict[str, DiscreteGrid] | None = None,
+) -> Array:
+    """Convert a pandas Series to a JAX array.
+
+    Cases:
+
+    1. ``ages`` + simple index → 1D ``[n_periods]``, NaN for missing ages
+    2. ``ages`` + MultiIndex (age + categorical) → 2D ``[n_periods, n_cats]``
+    3. No ``ages``, categorical index → 1D ``[n_cats]``
+    4. No ``ages``, no categoricals → 1D from raw values
+
+    Categorical levels are resolved from ``model`` state/action grids (auto)
+    and/or explicit ``categoricals`` (which take precedence). Every non-age
+    MultiIndex level **must** have a corresponding categorical or ValueError
+    is raised.
+
+    Missing grid ages are filled with NaN. Extra ages are dropped.
+
+    Args:
+        data: pandas Series.
+        ages: ``AgeGrid`` for age-to-period alignment.
+        model: ``Model`` for auto-discovering state/action categoricals.
+        regime_name: Regime for action grid discovery (requires ``model``).
+        categoricals: Explicit categorical mappings (level name → grid).
+
+    Returns:
+        JAX array.
+
+    Raises:
+        ValueError: If a non-age index level has no categorical mapping.
+
+    """
+    grids = _resolve_categoricals(
+        model=model, regime_name=regime_name, categoricals=categoricals
+    )
+
+    if isinstance(data.index, pd.MultiIndex):
+        return _multiindex_series_to_array(data, ages=ages, grids=grids)
+
+    # Simple index — check if it's age-aligned or categorical
+    if ages is not None:
+        return _age_series_to_array(data, ages=ages)
+
+    # Check if index name matches a categorical
+    idx_name = str(data.index.name) if data.index.name is not None else None
+    if idx_name is not None and idx_name in grids:
+        return _categorical_series_to_array(data, grid=grids[idx_name])
+
+    return jnp.array(data.to_numpy(), dtype=float)
+
+
+def array_mapping_from_dataframe(
+    *,
+    data: pd.DataFrame,
+    ages: AgeGrid | None = None,
+    model: Model | None = None,
+    regime_name: str | None = None,
+    categoricals: dict[str, DiscreteGrid] | None = None,
+) -> dict[str, Array]:
+    """Convert each DataFrame column to a JAX array via `array_from_series`.
+
+    Args:
+        data: pandas DataFrame.
+        ages: ``AgeGrid`` for age-to-period alignment.
+        model: ``Model`` for auto-discovering state/action categoricals.
+        regime_name: Regime for action grid discovery (requires ``model``).
+        categoricals: Explicit categorical mappings (level name → grid).
+
+    Returns:
+        Dict mapping column names to JAX arrays.
+
+    """
+    return {
+        col: array_from_series(
+            data=data[col],
+            ages=ages,
+            model=model,
+            regime_name=regime_name,
+            categoricals=categoricals,
+        )
+        for col in data.columns
+    }
+
+
+def _resolve_categoricals(
+    *,
+    model: Model | None,
+    regime_name: str | None,
+    categoricals: dict[str, DiscreteGrid] | None,
+) -> dict[str, DiscreteGrid]:
+    """Build combined categorical lookup from model + explicit overrides."""
+    grids: dict[str, DiscreteGrid] = {}
+    if model is not None:
+        grids.update(_build_discrete_grid_lookup(model.regimes))
+        if regime_name is not None:
+            grids.update(_build_discrete_action_lookup(model.regimes[regime_name]))
+    if categoricals is not None:
+        grids.update(categoricals)
+    return grids
+
+
+def _age_series_to_array(series: pd.Series, *, ages: AgeGrid) -> Array:
+    """Convert a Series with age index to a 1D JAX array, NaN-filling gaps."""
+    grid_ages = {float(v) for v in ages.exact_values}
+    filtered = series.loc[[a for a in series.index if float(a) in grid_ages]]
+    period_indices = np.array([ages.age_to_period(float(a)) for a in filtered.index])
+
+    result = np.full(ages.n_periods, np.nan)
+    result[period_indices] = filtered.to_numpy()
+    return jnp.array(result)
+
+
+def _categorical_series_to_array(series: pd.Series, *, grid: DiscreteGrid) -> Array:
+    """Convert a Series indexed by categorical labels to a 1D JAX array."""
+    label_to_code = dict(zip(grid.categories, grid.codes, strict=True))
+    result = np.full(len(grid.categories), np.nan)
+    for label, value in series.items():
+        if label not in label_to_code:
+            msg = (
+                f"Invalid label {label!r} for categorical '{series.index.name}'. "
+                f"Valid labels: {list(grid.categories)}."
+            )
+            raise ValueError(msg)
+        result[label_to_code[label]] = float(value)
+    return jnp.array(result)
+
+
+def _multiindex_series_to_array(
+    series: pd.Series,
+    *,
+    ages: AgeGrid | None,
+    grids: dict[str, DiscreteGrid],
+) -> Array:
+    """Convert a MultiIndex Series to a JAX array using age + categorical mapping."""
+    index: pd.MultiIndex = series.index  # ty: ignore[invalid-assignment]
+    level_names = list(index.names)
+
+    has_age = "age" in level_names
+    cat_levels = [name for name in level_names if name != "age"]
+
+    # Validate: every non-age level must have a categorical
+    for level in cat_levels:
+        if level not in grids:
+            msg = (
+                f"No categorical mapping for index level {level!r}. "
+                f"Provide it via `categoricals` or `model`. "
+                f"Available: {sorted(grids)}."
+            )
+            raise ValueError(msg)
+
+    if len(cat_levels) != 1:
+        msg = f"Expected exactly one non-age index level, but got {cat_levels}."
+        raise ValueError(msg)
+
+    cat_level = str(cat_levels[0])
+    cat_grid = grids[cat_level]
+    label_to_code = dict(zip(cat_grid.categories, cat_grid.codes, strict=True))
+    n_cats = len(cat_grid.categories)
+
+    if has_age and ages is not None:
+        grid_ages = {float(v) for v in ages.exact_values}
+        result = np.full((ages.n_periods, n_cats), np.nan)
+
+        age_pos = level_names.index("age")
+        cat_pos = 1 - age_pos  # the other position
+        for idx, value in series.items():
+            tup = idx if isinstance(idx, tuple) else (idx,)
+            age_f = float(str(tup[age_pos]))
+            cat_label = str(tup[cat_pos])
+            if age_f not in grid_ages:
+                continue
+            if cat_label not in label_to_code:
+                msg = (
+                    f"Invalid label {cat_label!r} for level {cat_level!r}. "
+                    f"Valid: {list(cat_grid.categories)}."
+                )
+                raise ValueError(msg)
+            period = ages.age_to_period(age_f)
+            result[period, label_to_code[cat_label]] = float(value)
+    else:
+        # No age dimension — just categorical MultiIndex
+        result = np.full(n_cats, np.nan)
+        for idx, value in series.items():
+            tup = idx if isinstance(idx, tuple) else (idx,)
+            cat_label = str(tup[0])
+            if cat_label not in label_to_code:
+                msg = (
+                    f"Invalid label {cat_label!r} for level {cat_level!r}. "
+                    f"Valid: {list(cat_grid.categories)}."
+                )
+                raise ValueError(msg)
+            result[label_to_code[cat_label]] = float(value)
+
+    return jnp.array(result)
 
 
 def _infer_transition_target(series: pd.Series) -> str | None:
