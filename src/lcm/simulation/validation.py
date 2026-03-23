@@ -58,21 +58,36 @@ def validate_initial_conditions(
         v: k for k, v in regime_names_to_ids.items()
     }
 
-    # Extract regime array and derive initial_regimes list for internal helpers
+    # Extract regime array
     regime_arr = initial_conditions.get("regime")
     if regime_arr is None:
         raise InvalidInitialConditionsError(
             format_messages(["'regime' must be provided in initial_conditions."])
         )
 
+    # Vectorized regime ID validity check
+    valid_ids_arr = jnp.array(sorted(ids_to_regime_names.keys()))
+    invalid_mask = ~jnp.isin(regime_arr, valid_ids_arr)
+    if jnp.any(invalid_mask):
+        invalid_ids = sorted({int(i) for i in jnp.unique(regime_arr[invalid_mask])})
+        raise InvalidInitialConditionsError(
+            format_messages(
+                [
+                    f"Invalid regime IDs {invalid_ids}. "
+                    f"Valid IDs: {sorted(ids_to_regime_names.keys())}"
+                ]
+            )
+        )
+
     initial_states = {k: v for k, v in initial_conditions.items() if k != "regime"}
-    initial_regimes = _regime_ids_to_names(regime_arr, ids_to_regime_names)
 
     # Validate regime names and state names/shapes first; early-exit on errors so that
     # downstream checks (discrete codes, feasibility) can assume correct names.
     structural_errors = _collect_structural_errors(
         initial_states=initial_states,
-        initial_regimes=initial_regimes,
+        regime_id_arr=regime_arr,
+        ids_to_regime_names=ids_to_regime_names,
+        regime_names_to_ids=regime_names_to_ids,
         internal_regimes=internal_regimes,
         ages=ages,
     )
@@ -87,36 +102,14 @@ def validate_initial_conditions(
     # Validate feasibility
     feasibility_errors = _collect_feasibility_errors(
         initial_states=initial_states,
-        initial_regimes=initial_regimes,
+        regime_id_arr=regime_arr,
+        regime_names_to_ids=regime_names_to_ids,
         internal_regimes=internal_regimes,
         internal_params=internal_params,
         ages=ages,
     )
     if feasibility_errors:
         raise InvalidInitialConditionsError(format_messages(feasibility_errors))
-
-
-def _regime_ids_to_names(
-    regime_id_arr: Array,
-    ids_to_regime_names: dict[int, RegimeName],
-) -> list[RegimeName]:
-    """Convert an array of regime IDs to a list of regime names.
-
-    Args:
-        regime_id_arr: Array of integer regime IDs.
-        ids_to_regime_names: Mapping from integer IDs to regime names.
-
-    Returns:
-        List of regime name strings.
-
-    """
-    valid_ids = set(ids_to_regime_names)
-    return [
-        ids_to_regime_names.get(int(rid), f"<invalid:{int(rid)}>")
-        if int(rid) in valid_ids
-        else f"<invalid:{int(rid)}>"
-        for rid in regime_id_arr
-    ]
 
 
 def _format_missing_states_message(missing: set[str], required: set[str]) -> str:
@@ -149,19 +142,21 @@ def _format_missing_states_message(missing: set[str], required: set[str]) -> str
 def _collect_state_name_errors(
     *,
     initial_states: Mapping[str, Array],
-    initial_regimes: list[RegimeName],
+    regime_id_arr: Array,
+    ids_to_regime_names: dict[int, RegimeName],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     valid_regime_names: set[str],
 ) -> list[str]:
     """Collect errors about missing or unknown state names.
 
-    Only states from regimes that appear in `initial_regimes` are required. States
+    Only states from regimes that appear in `regime_id_arr` are required. States
     from other regimes are accepted but not mandatory. States that don't belong to
     any regime are flagged as unknown.
 
     Args:
         initial_states: Mapping of state names to arrays.
-        initial_regimes: List of regime names the subjects start in.
+        regime_id_arr: Array of integer regime IDs.
+        ids_to_regime_names: Mapping from integer IDs to regime names.
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
         valid_regime_names: Set of valid regime names.
@@ -179,7 +174,10 @@ def _collect_state_name_errors(
 
     # Required states — only from regimes subjects actually start in
     required_states: set[str] = {"age"}
-    used_regime_names = set(initial_regimes) & valid_regime_names
+    used_ids = jnp.unique(regime_id_arr)
+    used_regime_names = {
+        ids_to_regime_names[int(i)] for i in used_ids if int(i) in ids_to_regime_names
+    } & valid_regime_names
     for regime_name in used_regime_names:
         required_states.update(get_regime_state_names(internal_regimes[regime_name]))
 
@@ -202,7 +200,9 @@ def _collect_state_name_errors(
 def _collect_structural_errors(
     *,
     initial_states: Mapping[str, Array],
-    initial_regimes: list[RegimeName],
+    regime_id_arr: Array,
+    ids_to_regime_names: dict[int, RegimeName],
+    regime_names_to_ids: RegimeNamesToIds,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     ages: AgeGrid,
 ) -> list[str]:
@@ -210,7 +210,9 @@ def _collect_structural_errors(
 
     Args:
         initial_states: Mapping of state names to arrays.
-        initial_regimes: List of regime names the subjects start in.
+        regime_id_arr: Array of integer regime IDs.
+        ids_to_regime_names: Mapping from integer IDs to regime names.
+        regime_names_to_ids: Immutable mapping of regime names to integer IDs.
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
         ages: AgeGrid for the model.
@@ -221,22 +223,16 @@ def _collect_structural_errors(
     """
     errors: list[str] = []
 
-    # Validate initial regimes
-    if not initial_regimes:
+    if regime_id_arr.size == 0:
         errors.append("initial_regimes must not be empty.")
 
     valid_regime_names = set(internal_regimes.keys())
-    invalid_names = sorted({r for r in initial_regimes if r not in valid_regime_names})
-    if invalid_names:
-        errors.append(
-            f"Invalid regime names {invalid_names} in initial_regimes. "
-            f"Valid regime names are: {sorted(valid_regime_names)}"
-        )
 
     errors.extend(
         _collect_state_name_errors(
             initial_states=initial_states,
-            initial_regimes=initial_regimes,
+            regime_id_arr=regime_id_arr,
+            ids_to_regime_names=ids_to_regime_names,
             internal_regimes=internal_regimes,
             valid_regime_names=valid_regime_names,
         )
@@ -260,7 +256,13 @@ def _collect_structural_errors(
     # precision issues with sub-annual steps.
     valid_ages = {float(v) for v in ages.exact_values}
     age_values = initial_states["age"]
-    invalid_ages = sorted({float(a) for a in age_values if float(a) not in valid_ages})
+    valid_ages_arr = jnp.array(sorted(valid_ages))
+    age_invalid_mask = ~jnp.isin(age_values, valid_ages_arr)
+    invalid_ages = (
+        sorted(set(np.asarray(age_values[age_invalid_mask]).tolist()))
+        if jnp.any(age_invalid_mask)
+        else []
+    )
     if invalid_ages:
         errors.append(
             f"Invalid age values {invalid_ages} in initial_states. "
@@ -270,18 +272,23 @@ def _collect_structural_errors(
         # Validate that each subject's initial regime is active at their starting age.
         # Only safe to run when all ages are valid (so age_to_period lookup succeeds).
         age_to_period = {float(v): i for i, v in enumerate(ages.exact_values)}
-        periods = jnp.array([age_to_period[float(a)] for a in age_values])
+        age_to_period_arr = jnp.array(
+            [age_to_period[float(v)] for v in ages.exact_values]
+        )
+        age_indices = jnp.searchsorted(valid_ages_arr, age_values)
+        periods = age_to_period_arr[age_indices]
 
-        active_mask = jnp.ones(len(initial_regimes), dtype=bool)
+        active_mask = jnp.ones(regime_id_arr.size, dtype=bool)
         for regime_name, internal_regime in internal_regimes.items():
-            in_regime = jnp.array([r == regime_name for r in initial_regimes])
+            in_regime = regime_id_arr == regime_names_to_ids[regime_name]
             period_active = jnp.isin(periods, jnp.array(internal_regime.active_periods))
             active_mask = active_mask & (~in_regime | period_active)
 
         if not jnp.all(active_mask):
+            invalid_indices = jnp.where(~active_mask)[0]
             invalid_combos = {
-                (initial_regimes[i], float(age_values[i]))
-                for i in jnp.where(~active_mask)[0]
+                (ids_to_regime_names[int(regime_id_arr[i])], float(age_values[i]))
+                for i in invalid_indices
             }
             details = "\n".join(
                 f"  regime '{name}' is not active at age {age}"
@@ -298,7 +305,8 @@ def _collect_structural_errors(
 def _collect_feasibility_errors(
     *,
     initial_states: Mapping[str, Array],
-    initial_regimes: list[RegimeName],
+    regime_id_arr: Array,
+    regime_names_to_ids: RegimeNamesToIds,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     internal_params: InternalParams,
     ages: AgeGrid,
@@ -307,7 +315,8 @@ def _collect_feasibility_errors(
 
     Args:
         initial_states: Mapping of state names to arrays.
-        initial_regimes: List of regime names the subjects start in.
+        regime_id_arr: Array of integer regime IDs.
+        regime_names_to_ids: Immutable mapping of regime names to integer IDs.
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
         internal_params: Immutable mapping of regime names to flat parameter mappings.
@@ -319,7 +328,9 @@ def _collect_feasibility_errors(
     """
     errors: list[str] = []
     for regime_name, internal_regime in internal_regimes.items():
-        subject_indices = [i for i, r in enumerate(initial_regimes) if r == regime_name]
+        regime_id = regime_names_to_ids[regime_name]
+        idx_arr = jnp.where(regime_id_arr == regime_id)[0]
+        subject_indices = idx_arr.tolist() if idx_arr.size > 0 else []
         if not subject_indices:
             continue
 
@@ -504,9 +515,12 @@ def _check_regime_feasibility(
         subject_states["age"] = initial_states["age"][idx_arr]
     if needs_period:
         age_to_period = {float(v): i for i, v in enumerate(ages.exact_values)}
-        subject_states["period"] = jnp.array(
-            [age_to_period[float(a)] for a in initial_states["age"][idx_arr]]
+        age_to_period_arr = jnp.array(
+            [age_to_period[float(v)] for v in ages.exact_values]
         )
+        valid_ages_arr = jnp.array(sorted(age_to_period.keys()))
+        age_indices = jnp.searchsorted(valid_ages_arr, initial_states["age"][idx_arr])
+        subject_states["period"] = age_to_period_arr[age_indices]
 
     # Split actions and params — actions are vmapped over, params are not
     action_kwargs: dict[str, Array] = {
