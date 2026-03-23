@@ -462,7 +462,7 @@ def test_transition_probs_invalid_age_raises():
     series.index = series.index.set_codes([0] * len(series), level="age").set_levels(
         [999.0], level="age"
     )
-    with pytest.raises(ValueError, match="Invalid age"):
+    with pytest.raises(ValueError, match="not a valid grid point"):
         transition_probs_from_series(
             series=series, model=model, regime_name="working_life"
         )
@@ -540,6 +540,29 @@ def test_transition_probs_per_target_requires_regime_name():
     series = pd.Series([1.0], index=index)
     with pytest.raises(TypeError, match="per-target"):
         transition_probs_from_series(series=series, model=model)
+
+
+def test_transition_probs_sparse_input_fills_nan():
+    """Unfilled positions should be NaN, not zero."""
+    model = get_stochastic_model(3)
+    # Provide data for only the first age — other ages should be NaN
+    index = pd.MultiIndex.from_tuples(
+        [
+            (40.0, "work", "single", "single"),
+            (40.0, "work", "single", "partnered"),
+        ],
+        names=["age", "labor_supply", "partner", "next_partner"],
+    )
+    series = pd.Series([0.3, 0.7], index=index)
+    result = transition_probs_from_series(
+        series=series, model=model, regime_name="working_life"
+    )
+    # age=40 (period 0), work (0), single (0) → provided
+    np.testing.assert_allclose(result[0, 0, 0], jnp.array([0.3, 0.7]), atol=1e-7)
+    # age=50 (period 1) → all NaN
+    assert jnp.all(jnp.isnan(result[1]))
+    # age=60 (period 2) → all NaN
+    assert jnp.all(jnp.isnan(result[2]))
 
 
 def test_validate_transition_probs_valid():
@@ -682,10 +705,6 @@ def test_validate_regime_transition_probs_not_markov_raises():
         validate_transition_probs(probs=arr, model=model, regime_name="working_life")
 
 
-# ---------------------------------------------------------------------------
-# array_from_pandas
-# ---------------------------------------------------------------------------
-
 _AGES_51_55 = AgeGrid(start=51, stop=55, step="Y")
 
 
@@ -696,9 +715,6 @@ class _AB:
 
 
 _AB_GRID = DiscreteGrid(_AB)
-
-
-# --- array_from_series ---
 
 
 def test_array_from_series_simple_age_index() -> None:
@@ -758,9 +774,6 @@ def test_array_from_series_invalid_label_raises() -> None:
         array_from_series(data=series, categoricals={"category": _AB_GRID})
 
 
-# --- array_mapping_from_dataframe ---
-
-
 def test_array_mapping_from_dataframe_simple_age_index() -> None:
     df = pd.DataFrame(
         {"x": [1.0, 2.0, 3.0, 4.0, 5.0], "y": [10.0, 20.0, 30.0, 40.0, 50.0]},
@@ -805,9 +818,6 @@ def test_array_mapping_from_dataframe_with_categoricals() -> None:
     )
 
 
-# --- NaN fill and edge cases ---
-
-
 def test_array_from_series_missing_ages_filled_with_nan() -> None:
     """Missing grid ages produce NaN instead of raising."""
     series = pd.Series(
@@ -837,3 +847,100 @@ def test_array_from_series_no_ages_no_categoricals() -> None:
     result = array_from_series(data=series)
     expected = jnp.array([1.0, 2.0, 3.0])
     np.testing.assert_allclose(result, expected)
+
+
+@categorical(ordered=False)
+class _CD:
+    c: int
+    d: int
+
+
+_CD_GRID = DiscreteGrid(_CD)
+
+
+def test_array_from_series_expected_levels_two_categoricals() -> None:
+    """expected_levels with two categorical levels → 2D array."""
+    index = pd.MultiIndex.from_tuples(
+        [("a", "c"), ("a", "d"), ("b", "c"), ("b", "d")],
+        names=["category", "category2"],
+    )
+    series = pd.Series([1.0, 2.0, 3.0, 4.0], index=index)
+    result = array_from_series(
+        data=series,
+        categoricals={"category": _AB_GRID, "category2": _CD_GRID},
+        expected_levels=("category", "category2"),
+    )
+    expected = jnp.array([[1.0, 2.0], [3.0, 4.0]])
+    np.testing.assert_allclose(result, expected)
+
+
+def test_array_from_series_expected_levels_age_and_two_categoricals() -> None:
+    """expected_levels with age + two categoricals → 3D array."""
+    index = pd.MultiIndex.from_tuples(
+        [
+            (51, "a", "c"),
+            (51, "a", "d"),
+            (51, "b", "c"),
+            (51, "b", "d"),
+            (52, "a", "c"),
+            (52, "a", "d"),
+            (52, "b", "c"),
+            (52, "b", "d"),
+        ],
+        names=["age", "category", "category2"],
+    )
+    series = pd.Series([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], index=index)
+    result = array_from_series(
+        data=series,
+        ages=_AGES_51_55,
+        categoricals={"category": _AB_GRID, "category2": _CD_GRID},
+        expected_levels=("age", "category", "category2"),
+    )
+    assert result.shape == (5, 2, 2)
+    # age=51 filled
+    np.testing.assert_allclose(result[0], jnp.array([[1.0, 2.0], [3.0, 4.0]]))
+    # age=52 filled
+    np.testing.assert_allclose(result[1], jnp.array([[5.0, 6.0], [7.0, 8.0]]))
+    # age=53-55 NaN
+    assert jnp.all(jnp.isnan(result[2]))
+
+
+def test_array_from_series_expected_levels_reorders() -> None:
+    """Levels in the Series can be in any order; expected_levels controls output."""
+    index = pd.MultiIndex.from_tuples(
+        [("c", "a"), ("d", "a"), ("c", "b"), ("d", "b")],
+        names=["category2", "category"],
+    )
+    series = pd.Series([1.0, 2.0, 3.0, 4.0], index=index)
+    result = array_from_series(
+        data=series,
+        categoricals={"category": _AB_GRID, "category2": _CD_GRID},
+        expected_levels=("category", "category2"),
+    )
+    # Output axes: category (a,b) x category2 (c,d)
+    expected = jnp.array([[1.0, 2.0], [3.0, 4.0]])
+    np.testing.assert_allclose(result, expected)
+
+
+def test_array_from_series_expected_levels_wrong_names_raises() -> None:
+    """Mismatched level names should raise ValueError."""
+    index = pd.MultiIndex.from_tuples([("a", "c")], names=["category", "wrong"])
+    series = pd.Series([1.0], index=index)
+    with pytest.raises(ValueError, match="level names"):
+        array_from_series(
+            data=series,
+            categoricals={"category": _AB_GRID, "category2": _CD_GRID},
+            expected_levels=("category", "category2"),
+        )
+
+
+def test_array_from_series_expected_levels_unknown_level_raises() -> None:
+    """Level name not in grids should raise ValueError."""
+    index = pd.MultiIndex.from_tuples([("a", "x")], names=["category", "unknown"])
+    series = pd.Series([1.0], index=index)
+    with pytest.raises(ValueError, match="No categorical mapping"):
+        array_from_series(
+            data=series,
+            categoricals={"category": _AB_GRID},
+            expected_levels=("category", "unknown"),
+        )

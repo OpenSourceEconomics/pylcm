@@ -2,7 +2,6 @@
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import overload
 
 import jax.numpy as jnp
@@ -189,13 +188,8 @@ def transition_probs_from_series(
             target_regime_name=target_regime_name,
         )
         func = markov.func
-        state_grid = all_grids[state_name]
-        outcome = _OutcomeMapping(
-            level_name=f"next_{state_name}",
-            label_to_code=MappingProxyType(
-                dict(zip(state_grid.categories, state_grid.codes, strict=True))
-            ),
-            n_outcomes=len(state_grid.categories),
+        outcome_mapping = _grid_level_mapping(
+            f"next_{state_name}", all_grids[state_name]
         )
     else:
         if not isinstance(regime.transition, MarkovTransition):
@@ -206,13 +200,15 @@ def transition_probs_from_series(
             raise TypeError(msg)
 
         func = regime.transition.func
-        outcome = _OutcomeMapping(
-            level_name="next_regime",
-            label_to_code=MappingProxyType(dict(model.regime_names_to_ids)),
-            n_outcomes=len(model.regime_names_to_ids),
+        regime_ids = dict(model.regime_names_to_ids)
+        outcome_mapping = _LevelMapping(
+            name="next_regime",
+            size=len(regime_ids),
+            label_to_index=regime_ids.__getitem__,  # ty: ignore[invalid-argument-type]
+            valid_labels=tuple(regime_ids),
         )
 
-    return _build_probs_array(func, outcome, all_grids, model, series)
+    return _build_probs_array(func, outcome_mapping, all_grids, model, series)
 
 
 def array_from_series(
@@ -222,13 +218,20 @@ def array_from_series(
     model: Model | None = None,
     regime_name: str | None = None,
     categoricals: dict[str, DiscreteGrid] | None = None,
+    expected_levels: tuple[str, ...] | None = None,
 ) -> Array:
     """Convert a pandas Series to a JAX array.
 
-    Cases:
+    When ``expected_levels`` is provided, the Series must have a MultiIndex
+    whose level names match exactly (after ``"period"`` → ``"age"`` rename).
+    Levels are reordered to match, and the result is an N-dimensional array
+    with one axis per level. This mode supports any number of categorical
+    levels.
+
+    When ``expected_levels`` is ``None``, behavior is inferred from the index:
 
     1. ``ages`` + simple index → 1D ``[n_periods]``, NaN for missing ages
-    2. ``ages`` + MultiIndex (age + categorical) → 2D ``[n_periods, n_cats]``
+    2. ``ages`` + MultiIndex (age + 1 categorical) → 2D ``[n_periods, n_cats]``
     3. No ``ages``, categorical index → 1D ``[n_cats]``
     4. No ``ages``, no categoricals → 1D from raw values
 
@@ -237,7 +240,7 @@ def array_from_series(
     MultiIndex level **must** have a corresponding categorical or ValueError
     is raised.
 
-    Missing grid ages are filled with NaN. Extra ages are dropped.
+    Missing grid points are filled with NaN.
 
     Args:
         data: pandas Series.
@@ -245,17 +248,26 @@ def array_from_series(
         model: ``Model`` for auto-discovering state/action categoricals.
         regime_name: Regime for action grid discovery (requires ``model``).
         categoricals: Explicit categorical mappings (level name → grid).
+        expected_levels: Exact MultiIndex level names in output axis order.
+            Enables strict validation and N-categorical support.
 
     Returns:
         JAX array.
 
     Raises:
-        ValueError: If a non-age index level has no categorical mapping.
+        ValueError: If a non-age index level has no categorical mapping, or
+            if ``expected_levels`` doesn't match the Series MultiIndex.
 
     """
     grids = _resolve_categoricals(
         model=model, regime_name=regime_name, categoricals=categoricals
     )
+
+    if expected_levels is not None:
+        level_mappings = _build_level_mappings_from_grids(
+            expected_levels, grids=grids, ages=ages
+        )
+        return _scatter_series(data, level_mappings)
 
     if isinstance(data.index, pd.MultiIndex):
         return _multiindex_series_to_array(data, ages=ages, grids=grids)
@@ -270,6 +282,43 @@ def array_from_series(
         return _categorical_series_to_array(data, grid=grids[idx_name])
 
     return jnp.array(data.to_numpy(), dtype=float)
+
+
+def _build_level_mappings_from_grids(
+    expected_levels: tuple[str, ...],
+    *,
+    grids: dict[str, DiscreteGrid],
+    ages: AgeGrid | None,
+) -> tuple[_LevelMapping, ...]:
+    """Build level mappings for `array_from_series` from level names and grids.
+
+    Args:
+        expected_levels: Level names in output axis order.
+        grids: Categorical grid lookup.
+        ages: ``AgeGrid`` for the age dimension (required if ``"age"`` is in
+            ``expected_levels``).
+
+    Returns:
+        Tuple of `_LevelMapping` instances.
+
+    """
+    mappings: list[_LevelMapping] = []
+    for level_name in expected_levels:
+        if level_name == "age":
+            if ages is None:
+                msg = "expected_levels contains 'age' but no AgeGrid was provided."
+                raise ValueError(msg)
+            mappings.append(_age_level_mapping(ages))
+        elif level_name in grids:
+            mappings.append(_grid_level_mapping(level_name, grids[level_name]))
+        else:
+            msg = (
+                f"No categorical mapping for level {level_name!r}. "
+                f"Provide it via `categoricals` or `model`. "
+                f"Available: {sorted(grids)}."
+            )
+            raise ValueError(msg)
+    return tuple(mappings)
 
 
 def array_mapping_from_dataframe(
@@ -320,6 +369,95 @@ def _resolve_categoricals(
     if categoricals is not None:
         grids.update(categoricals)
     return grids
+
+
+@dataclass(frozen=True)
+class _LevelMapping:
+    """Specification for mapping one MultiIndex level to array indices."""
+
+    name: str
+    """Level name in the MultiIndex (e.g., `"age"`, `"health"`, `"next_health"`)."""
+
+    size: int
+    """Number of positions along this axis."""
+
+    label_to_index: Callable[[object], int]
+    """Map a single label value to its integer index."""
+
+    valid_labels: tuple[str, ...] = ()
+    """Valid label names, for error messages. Empty for age levels."""
+
+
+def _age_level_mapping(ages: AgeGrid) -> _LevelMapping:
+    """Create a `_LevelMapping` for the age dimension."""
+    return _LevelMapping(
+        name="age",
+        size=ages.n_periods,
+        label_to_index=ages.age_to_period,  # ty: ignore[invalid-argument-type]
+    )
+
+
+def _grid_level_mapping(name: str, grid: DiscreteGrid) -> _LevelMapping:
+    """Create a `_LevelMapping` for a categorical dimension."""
+    label_to_code = dict(zip(grid.categories, grid.codes, strict=True))
+    return _LevelMapping(
+        name=name,
+        size=len(grid.categories),
+        label_to_index=label_to_code.__getitem__,
+        valid_labels=grid.categories,
+    )
+
+
+def _scatter_series(
+    series: pd.Series,
+    level_mappings: tuple[_LevelMapping, ...],
+    *,
+    fill_value: float = np.nan,
+) -> Array:
+    """Scatter a MultiIndex Series into an N-dimensional JAX array.
+
+    Each `_LevelMapping` defines one axis: its size, and how to map labels from
+    the corresponding MultiIndex level to integer indices. Positions not covered
+    by the Series are filled with `fill_value`.
+
+    Args:
+        series: Series with a named MultiIndex.
+        level_mappings: One mapping per axis, in output axis order.
+        fill_value: Value for positions not present in the Series.
+
+    Returns:
+        JAX array with shape ``[m.size for m in level_mappings]``.
+
+    """
+    expected_levels = [m.name for m in level_mappings]
+    series = _validate_and_reorder_levels(series, expected_levels)
+
+    shape = [m.size for m in level_mappings]
+    index_arrays = [
+        _map_level(mapping, series.index.get_level_values(mapping.name))
+        for mapping in level_mappings
+    ]
+
+    result = np.full(shape, fill_value)
+    result[tuple(index_arrays)] = series.to_numpy()
+    return jnp.array(result)
+
+
+def _map_level(mapping: _LevelMapping, level_values: pd.Index) -> np.ndarray:
+    """Map label values from one MultiIndex level to integer indices."""
+    try:
+        return np.array([mapping.label_to_index(v) for v in level_values])
+    except ValueError:
+        # Age levels: age_to_period raises ValueError with a good message
+        raise
+    except KeyError:
+        # Categorical levels: collect all invalid labels
+        invalid = sorted(set(level_values) - set(mapping.valid_labels))
+        msg = (
+            f"Invalid labels for level '{mapping.name}': {invalid}. "
+            f"Valid labels: {sorted(mapping.valid_labels)}."
+        )
+        raise ValueError(msg) from None
 
 
 def _age_series_to_array(series: pd.Series, *, ages: AgeGrid) -> Array:
@@ -568,23 +706,9 @@ def _has_markov_on_state(regime: Regime, state_name: str) -> bool:
     )
 
 
-@dataclass(frozen=True)
-class _OutcomeMapping:
-    """Metadata for the outcome level of a transition probability array."""
-
-    level_name: str
-    """Level name in the MultiIndex (e.g., `"next_health"` or `"next_regime"`)."""
-
-    label_to_code: MappingProxyType[str, int]
-    """Immutable mapping from string labels to integer codes."""
-
-    n_outcomes: int
-    """Number of outcome categories."""
-
-
 def _build_probs_array(
     func: Callable,
-    outcome: _OutcomeMapping,
+    outcome_mapping: _LevelMapping,
     all_grids: dict[str, DiscreteGrid],
     model: Model,
     series: pd.Series,
@@ -593,7 +717,7 @@ def _build_probs_array(
 
     Args:
         func: The transition function whose signature defines the axis order.
-        outcome: Metadata for the outcome (last) axis.
+        outcome_mapping: `_LevelMapping` for the outcome (last) axis.
         all_grids: dict of discrete grid names to `DiscreteGrid` instances.
         model: The LCM Model instance (used for age-to-period mapping).
         series: Series with a named MultiIndex containing the probability values.
@@ -604,23 +728,38 @@ def _build_probs_array(
 
     """
     indexing_params = _get_indexing_params(func)
-    # Replace internal "period" param with user-facing "age" level name
-    expected_levels = [
-        "age" if param == "period" else param for param in indexing_params
-    ]
-    expected_levels.append(outcome.level_name)
-
-    series = _validate_and_reorder_levels(series, expected_levels)
-
-    shape = _compute_shape(expected_levels, outcome, all_grids, model)
-    index_arrays = _map_labels_to_codes(
-        expected_levels, outcome, all_grids, model, series
+    level_mappings = _build_level_mappings(
+        indexing_params, all_grids, model.ages, outcome_mapping
     )
+    return _scatter_series(series, level_mappings)
 
-    result = np.zeros(shape, dtype=float)
-    result[tuple(index_arrays)] = series.to_numpy()
 
-    return jnp.array(result)
+def _build_level_mappings(
+    indexing_params: list[str],
+    all_grids: dict[str, DiscreteGrid],
+    ages: AgeGrid,
+    outcome_mapping: _LevelMapping,
+) -> tuple[_LevelMapping, ...]:
+    """Build level mappings from function indexing params + outcome.
+
+    Replaces the internal ``"period"`` parameter name with ``"age"`` and
+    constructs a `_LevelMapping` for each level.
+
+    """
+    mappings: list[_LevelMapping] = []
+    for param in indexing_params:
+        if param == "period":
+            mappings.append(_age_level_mapping(ages))
+        elif param in all_grids:
+            mappings.append(_grid_level_mapping(param, all_grids[param]))
+        else:
+            msg = (
+                f"Unrecognised indexing parameter '{param}'. Expected 'period', "
+                f"or a discrete grid name ({sorted(all_grids)})."
+            )
+            raise ValueError(msg)
+    mappings.append(outcome_mapping)
+    return tuple(mappings)
 
 
 def _validate_and_reorder_levels(
@@ -655,83 +794,6 @@ def _validate_and_reorder_levels(
         series = series.reorder_levels(expected_levels)  # ty: ignore[invalid-argument-type]
 
     return series
-
-
-def _compute_shape(
-    expected_levels: list[str],
-    outcome: _OutcomeMapping,
-    all_grids: dict[str, DiscreteGrid],
-    model: Model,
-) -> list[int]:
-    """Compute the expected array shape from grid sizes."""
-    shape: list[int] = []
-    for level_name in expected_levels:
-        if level_name == "age":
-            shape.append(model.n_periods)
-        elif level_name == outcome.level_name:
-            shape.append(outcome.n_outcomes)
-        elif level_name in all_grids:
-            shape.append(len(all_grids[level_name].categories))
-        else:
-            msg = (
-                f"Unrecognised level name '{level_name}'. Expected 'age', "
-                f"a discrete grid name ({sorted(all_grids)}), or the outcome "
-                f"level '{outcome.level_name}'."
-            )
-            raise ValueError(msg)
-    return shape
-
-
-def _map_labels_to_codes(
-    expected_levels: list[str],
-    outcome: _OutcomeMapping,
-    all_grids: dict[str, DiscreteGrid],
-    model: Model,
-    series: pd.Series,
-) -> list[np.ndarray]:
-    """Map string labels in MultiIndex levels to integer codes."""
-    index_arrays: list[np.ndarray] = []
-    for level_name in expected_levels:
-        level_values = series.index.get_level_values(level_name)
-
-        if level_name == "age":
-            try:
-                mapped = np.array([model.ages.age_to_period(v) for v in level_values])
-            except ValueError:
-                valid_ages = sorted(float(v) for v in model.ages.exact_values)
-                invalid = {float(v) for v in level_values} - set(valid_ages)
-                msg = (
-                    f"Invalid age values: {sorted(invalid)}. Valid ages: {valid_ages}."
-                )
-                raise ValueError(msg) from None
-            index_arrays.append(mapped)
-            continue
-
-        if level_name == outcome.level_name:
-            label_to_code = outcome.label_to_code
-        elif level_name in all_grids:
-            grid = all_grids[level_name]
-            label_to_code = dict(zip(grid.categories, grid.codes, strict=True))
-        else:
-            msg = (
-                f"Unrecognised level name '{level_name}'. Expected 'age', "
-                f"a discrete grid name ({sorted(all_grids)}), or the outcome "
-                f"level '{outcome.level_name}'."
-            )
-            raise ValueError(msg)
-
-        try:
-            mapped = np.array([label_to_code[v] for v in level_values])
-        except KeyError:
-            invalid = set(level_values) - set(label_to_code)
-            msg = (
-                f"Invalid labels for level '{level_name}': "
-                f"{sorted(invalid)}. "
-                f"Valid labels: {sorted(label_to_code)}."
-            )
-            raise ValueError(msg) from None
-        index_arrays.append(mapped)
-    return index_arrays
 
 
 def _validate_state_columns(
