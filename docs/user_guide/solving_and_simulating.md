@@ -79,7 +79,7 @@ df = pd.DataFrame({
     "health": ["good", "bad", "bad", "good"],  # string labels, auto-converted
 })
 
-initial_conditions = initial_conditions_from_dataframe(df, model=model)
+initial_conditions = initial_conditions_from_dataframe(df=df, model=model)
 ```
 
 Discrete states (those backed by a `DiscreteGrid`) are mapped from string labels to
@@ -231,7 +231,7 @@ initial_df = pd.DataFrame({
     "age": model.ages.values[0],
     "wealth": np.linspace(1, 50, 100),
 })
-initial_conditions = initial_conditions_from_dataframe(initial_df, model=model)
+initial_conditions = initial_conditions_from_dataframe(df=initial_df, model=model)
 
 # 4. Simulate (solves automatically when period_to_regime_to_V_arr=None)
 result = model.simulate(

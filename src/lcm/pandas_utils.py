@@ -25,8 +25,8 @@ from lcm.utils import flatten_regime_namespace, unflatten_regime_namespace
 
 
 def initial_conditions_from_dataframe(
-    df: pd.DataFrame,
     *,
+    df: pd.DataFrame,
     model: Model,
 ) -> dict[str, Array]:
     """Convert a DataFrame of initial conditions to LCM initial conditions format.
@@ -64,14 +64,12 @@ def initial_conditions_from_dataframe(
         )
         raise ValueError(msg)
 
-    regime_names = df["regime"].tolist()
-
     state_columns = {col for col in df.columns if col != "regime"}
     _validate_state_columns(
-        state_columns=state_columns, regimes=model.regimes, initial_regimes=regime_names
+        state_columns=state_columns, regimes=model.regimes, initial_regimes=df["regime"]
     )
 
-    discrete_lookup = _build_discrete_grid_lookup(regimes=model.regimes)
+    discrete_lookup = _build_discrete_grid_lookup(model.regimes)
 
     initial_conditions: dict[str, Array] = {}
     for col in df.columns:
@@ -102,10 +100,144 @@ def initial_conditions_from_dataframe(
 
     # Convert regime names to integer codes
     initial_conditions["regime"] = jnp.array(
-        [model.regime_names_to_ids[name] for name in regime_names]
+        [model.regime_names_to_ids[name] for name in df["regime"]]
     )
 
     return initial_conditions
+
+
+def params_from_pandas(
+    *,
+    params: dict,
+    model: Model,
+    categoricals: dict[str, DiscreteGrid] | None = None,
+) -> dict:
+    """Convert a params dict, replacing `pd.Series` values with JAX arrays.
+
+    Walk the params dict (which may use model, regime, or function-level
+    nesting) and convert any `pd.Series` leaf values via `array_from_series`.
+    `MappingLeaf` values are traversed and any Series inside are converted.
+    Other values (scalars, existing arrays) pass through unchanged.
+
+    The output preserves the same nesting structure as the input. Pass it
+    to `model.solve(params=...)` or `model.simulate(params=...)`.
+
+    Args:
+        params: User params dict with `pd.Series` in place of array values.
+        model: The LCM Model instance.
+        categoricals: Extra categorical mappings (level name to grid) for
+            derived variables not in the model's state/action grids.
+
+    Returns:
+        New dict with the same structure, Series replaced by JAX arrays.
+
+    Raises:
+        ValueError: If a param name cannot be resolved in the model's
+            template.
+
+    """
+    template_flat = flatten_regime_namespace(model.get_params_template())
+    params_flat = flatten_regime_namespace(params)
+    regime_names = frozenset(model.regimes)
+
+    converted_flat: dict[str, object] = {}
+    for user_qname, value in params_flat.items():
+        template_qname = _find_template_qname(
+            user_qname=user_qname,
+            template_flat=template_flat,
+            regime_names=regime_names,
+        )
+        param_path = tree_path_from_qname(template_qname)
+        converted_flat[user_qname] = _convert_param_value(
+            value=value,
+            model=model,
+            param_path=param_path,
+            categoricals=categoricals,
+        )
+
+    return unflatten_regime_namespace(converted_flat)
+
+
+def _find_template_qname(
+    *,
+    user_qname: str,
+    template_flat: Mapping[str, object],
+    regime_names: frozenset[str],
+) -> str:
+    """Find the 3-part template qname matching a user-provided qname.
+
+    Use the same resolution logic as `process_params`: exact match first,
+    then regime-level or function-level match, then model-level match.
+
+    Args:
+        user_qname: Flattened qname from the user params dict.
+        template_flat: Flattened params template (3-part qnames).
+        regime_names: Set of regime names in the model.
+
+    Returns:
+        The matching 3-part template qname.
+
+    Raises:
+        ValueError: If no match is found.
+
+    """
+    if user_qname in template_flat:
+        return user_qname
+
+    user_path = tree_path_from_qname(user_qname)
+    param_name = user_path[-1]
+
+    matches: list[str] = []
+    for template_qname in template_flat:
+        template_path = tree_path_from_qname(template_qname)
+        if len(user_path) == 1 and template_path[-1] == param_name:
+            matches.append(template_qname)
+        elif len(user_path) == 2:  # noqa: PLR2004
+            if user_path[0] in regime_names:
+                if template_path[0] == user_path[0] and template_path[-1] == param_name:
+                    matches.append(template_qname)
+            elif (
+                len(template_path) == 3  # noqa: PLR2004
+                and template_path[1] == user_path[0]
+                and template_path[-1] == param_name
+            ):
+                matches.append(template_qname)
+
+    if not matches:
+        msg = f"No template match for parameter '{user_qname}'."
+        raise ValueError(msg)
+
+    return matches[0]
+
+
+def _convert_param_value(
+    value: object,
+    *,
+    model: Model,
+    param_path: tuple[str, ...],
+    categoricals: dict[str, DiscreteGrid] | None = None,
+) -> object:
+    """Convert a single param value, dispatching on type."""
+    if isinstance(value, pd.Series):
+        return array_from_series(
+            sr=value, model=model, param_path=param_path, categoricals=categoricals
+        )
+    if isinstance(value, MappingLeaf):
+        converted_data = {
+            k: (
+                array_from_series(
+                    sr=v,
+                    model=model,
+                    param_path=param_path,
+                    categoricals=categoricals,
+                )
+                if isinstance(v, pd.Series)
+                else v
+            )
+            for k, v in value.data.items()
+        }
+        return MappingLeaf(converted_data)
+    return value
 
 
 @overload
@@ -175,7 +307,7 @@ def transition_probs_from_series(
             inference fails.
 
     """
-    state_name = _infer_transition_target(series=series)
+    state_name = _infer_transition_target(series)
     if regime_name is None:
         regime_name = _infer_regime_name(
             model=model,
@@ -318,126 +450,6 @@ def array_mapping_from_dataframe(
     }
 
 
-def params_from_pandas(
-    *,
-    params: dict,
-    model: Model,
-) -> dict:
-    """Convert a params dict, replacing `pd.Series` values with JAX arrays.
-
-    Walk the params dict (which may use model, regime, or function-level
-    nesting) and convert any `pd.Series` leaf values via `array_from_series`.
-    `MappingLeaf` values are traversed and any Series inside are converted.
-    Other values (scalars, existing arrays) pass through unchanged.
-
-    The output preserves the same nesting structure as the input. Pass it
-    to `model.solve(params=...)` or `model.simulate(params=...)`.
-
-    Args:
-        params: User params dict with `pd.Series` in place of array values.
-        model: The LCM Model instance.
-
-    Returns:
-        New dict with the same structure, Series replaced by JAX arrays.
-
-    Raises:
-        ValueError: If a param name cannot be resolved in the model's
-            template.
-
-    """
-    template_flat = flatten_regime_namespace(model.get_params_template())
-    params_flat = flatten_regime_namespace(params)
-    regime_names = frozenset(model.regimes)
-
-    converted_flat: dict[str, object] = {}
-    for user_qname, value in params_flat.items():
-        template_qname = _find_template_qname(
-            user_qname=user_qname,
-            template_flat=template_flat,
-            regime_names=regime_names,
-        )
-        param_path = tree_path_from_qname(template_qname)
-        converted_flat[user_qname] = _convert_param_value(
-            value=value, model=model, param_path=param_path
-        )
-
-    return unflatten_regime_namespace(converted_flat)
-
-
-def _find_template_qname(
-    *,
-    user_qname: str,
-    template_flat: Mapping[str, object],
-    regime_names: frozenset[str],
-) -> str:
-    """Find the 3-part template qname matching a user-provided qname.
-
-    Use the same resolution logic as `process_params`: exact match first,
-    then regime-level or function-level match, then model-level match.
-
-    Args:
-        user_qname: Flattened qname from the user params dict.
-        template_flat: Flattened params template (3-part qnames).
-        regime_names: Set of regime names in the model.
-
-    Returns:
-        The matching 3-part template qname.
-
-    Raises:
-        ValueError: If no match is found.
-
-    """
-    if user_qname in template_flat:
-        return user_qname
-
-    user_path = tree_path_from_qname(user_qname)
-    param_name = user_path[-1]
-
-    matches: list[str] = []
-    for template_qname in template_flat:
-        template_path = tree_path_from_qname(template_qname)
-        if len(user_path) == 1 and template_path[-1] == param_name:
-            matches.append(template_qname)
-        elif len(user_path) == 2:  # noqa: PLR2004
-            if user_path[0] in regime_names:
-                if template_path[0] == user_path[0] and template_path[-1] == param_name:
-                    matches.append(template_qname)
-            elif (
-                len(template_path) == 3  # noqa: PLR2004
-                and template_path[1] == user_path[0]
-                and template_path[-1] == param_name
-            ):
-                matches.append(template_qname)
-
-    if not matches:
-        msg = f"No template match for parameter '{user_qname}'."
-        raise ValueError(msg)
-
-    return matches[0]
-
-
-def _convert_param_value(
-    *,
-    value: object,
-    model: Model,
-    param_path: tuple[str, ...],
-) -> object:
-    """Convert a single param value, dispatching on type."""
-    if isinstance(value, pd.Series):
-        return array_from_series(sr=value, model=model, param_path=param_path)
-    if isinstance(value, MappingLeaf):
-        converted_data = {
-            k: (
-                array_from_series(sr=v, model=model, param_path=param_path)
-                if isinstance(v, pd.Series)
-                else v
-            )
-            for k, v in value.data.items()
-        }
-        return MappingLeaf(converted_data)
-    return value
-
-
 def _resolve_categoricals(
     *,
     model: Model,
@@ -460,9 +472,9 @@ def _resolve_categoricals(
 
     """
     grids: dict[str, DiscreteGrid] = {}
-    grids.update(_build_discrete_grid_lookup(regimes=model.regimes))
+    grids.update(_build_discrete_grid_lookup(model.regimes))
     if regime_name is not None:
-        grids.update(_build_discrete_action_lookup(regime=model.regimes[regime_name]))
+        grids.update(_build_discrete_action_lookup(model.regimes[regime_name]))
     if categoricals is not None:
         for name, grid in categoricals.items():
             if name in grids:
@@ -556,7 +568,7 @@ def _resolve_3_part_path(
         )
         raise ValueError(msg)
 
-    return _get_func_indexing_params(func=func), regime_name
+    return _get_func_indexing_params(func), regime_name
 
 
 def _resolve_2_part_path(
@@ -576,7 +588,7 @@ def _resolve_2_part_path(
         sig = inspect.signature(func)
         if param_name not in sig.parameters:
             continue
-        indexing = _get_func_indexing_params(func=func)
+        indexing = _get_func_indexing_params(func)
         matches.append((indexing, regime_name))
 
     if not matches:
@@ -607,7 +619,7 @@ def _resolve_1_part_path(
             sig = inspect.signature(func)
             if param_name not in sig.parameters:
                 continue
-            indexing = _get_func_indexing_params(func=func)
+            indexing = _get_func_indexing_params(func)
             matches.append((indexing, regime_name))
 
     if not matches:
@@ -666,7 +678,7 @@ class _LevelMapping:
     """Valid label names, for error messages. Empty for age levels."""
 
 
-def _age_level_mapping(*, ages: AgeGrid) -> _LevelMapping:
+def _age_level_mapping(ages: AgeGrid) -> _LevelMapping:
     """Create a `_LevelMapping` for the age dimension."""
     return _LevelMapping(
         name="age",
@@ -710,7 +722,7 @@ def _build_level_mappings_for_param(
     mappings: list[_LevelMapping] = []
     for param in indexing_params:
         if param == "age":
-            mappings.append(_age_level_mapping(ages=ages))
+            mappings.append(_age_level_mapping(ages))
         elif param in all_grids:
             mappings.append(_grid_level_mapping(name=param, grid=all_grids[param]))
         else:
@@ -778,7 +790,7 @@ def _map_level(*, mapping: _LevelMapping, level_values: pd.Index) -> np.ndarray:
         raise ValueError(msg) from None
 
 
-def _infer_transition_target(*, series: pd.Series) -> str | None:
+def _infer_transition_target(series: pd.Series) -> str | None:
     """Find the ``next_*`` level in the MultiIndex.
 
     Args:
@@ -912,7 +924,7 @@ def _pick_among_multiple_candidates(
             func = markov.func
         else:
             func = regime.transition.func  # ty: ignore[unresolved-attribute]
-        param_sets.add(tuple(_get_func_indexing_params(func=func)))
+        param_sets.add(tuple(_get_func_indexing_params(func)))
 
     if len(param_sets) == 1:
         return candidates[0]
@@ -958,7 +970,7 @@ def _build_probs_array(
         declaration order) followed by the outcome axis.
 
     """
-    indexing_params = _get_func_indexing_params(func=func)
+    indexing_params = _get_func_indexing_params(func)
     level_mappings = _build_level_mappings(
         indexing_params=indexing_params,
         all_grids=all_grids,
@@ -984,7 +996,7 @@ def _build_level_mappings(
     mappings: list[_LevelMapping] = []
     for param in indexing_params:
         if param == "period":
-            mappings.append(_age_level_mapping(ages=ages))
+            mappings.append(_age_level_mapping(ages))
         elif param in all_grids:
             mappings.append(_grid_level_mapping(name=param, grid=all_grids[param]))
         else:
@@ -1036,7 +1048,7 @@ def _validate_state_columns(
     *,
     state_columns: set[str],
     regimes: Mapping[str, Regime],
-    initial_regimes: list[str],
+    initial_regimes: pd.Series,
 ) -> None:
     """Validate that DataFrame columns match model states."""
     all_states = _collect_all_state_names(
@@ -1063,11 +1075,11 @@ def _validate_state_columns(
 def _collect_all_state_names(
     *,
     regimes: Mapping[str, Regime],
-    initial_regimes: list[str],
+    initial_regimes: pd.Series,
 ) -> set[str]:
     """Collect all non-shock state names from regimes present in initial_regimes."""
     state_names: set[str] = set()
-    for regime_name in set(initial_regimes):
+    for regime_name in initial_regimes.unique():
         regime = regimes[regime_name]
         for name, grid in regime.states.items():
             if not isinstance(grid, _ShockGrid):
@@ -1078,7 +1090,6 @@ def _collect_all_state_names(
 
 
 def _build_discrete_grid_lookup(
-    *,
     regimes: Mapping[str, Regime],
 ) -> dict[str, DiscreteGrid]:
     """Collect all DiscreteGrid instances across regimes, verifying consistency.
@@ -1111,7 +1122,7 @@ def _build_discrete_grid_lookup(
     return lookup
 
 
-def _build_discrete_action_lookup(*, regime: Regime) -> dict[str, DiscreteGrid]:
+def _build_discrete_action_lookup(regime: Regime) -> dict[str, DiscreteGrid]:
     """Collect DiscreteGrid instances from a regime's actions.
 
     Args:

@@ -26,7 +26,7 @@ def _good_three(period: int, work: int, partner: int, probs_array: Any) -> Any:
 @pytest.mark.parametrize("func", [_good_multi, _good_single, _good_three])
 def test_get_func_indexing_params_correct(func: Any) -> None:
     """AST-based detection returns correct indexing param names."""
-    indexing = _get_func_indexing_params(func=func)
+    indexing = _get_func_indexing_params(func)
     _validate_array_param_indexing(
         func=func, array_param_name="probs_array", indexing_params=indexing
     )
@@ -76,7 +76,7 @@ def _mixed_bare_and_computed(period: int, health: int, probs_array: Any) -> Any:
 def test_computed_index_raises(func: Any) -> None:
     """Computed indices raise ValueError with recipe for fix."""
     with pytest.raises(ValueError, match="computed indices"):
-        _get_func_indexing_params(func=func)
+        _get_func_indexing_params(func)
 
 
 def _aliased_variable(period: int, health: int, probs_array: Any) -> Any:
@@ -126,7 +126,7 @@ def test_lambda_raises() -> None:
     """Lambda functions raise TypeError."""
     func = lambda health, probs_array: probs_array[health]  # noqa: E731
     with pytest.raises(TypeError, match="lambda"):
-        _get_func_indexing_params(func=func)
+        _get_func_indexing_params(func)
 
 
 def _custom_array(period: int, health: int, wage_grid: Any) -> Any:

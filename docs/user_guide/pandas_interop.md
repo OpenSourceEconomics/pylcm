@@ -24,7 +24,7 @@ df = pd.DataFrame({
     "age": [25.0, 25.0, 25.0],
 })
 
-initial_conditions = initial_conditions_from_dataframe(df, model=model)
+initial_conditions = initial_conditions_from_dataframe(df=df, model=model)
 
 result = model.simulate(
     params=params,

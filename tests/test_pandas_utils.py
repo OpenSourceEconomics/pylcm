@@ -79,7 +79,7 @@ def test_build_discrete_grid_lookup_basic():
             functions={"utility": lambda: 0.0},
         ),
     }
-    lookup = _build_discrete_grid_lookup(regimes=regimes)
+    lookup = _build_discrete_grid_lookup(regimes)
     assert "health" in lookup
     assert lookup["health"].categories == ("bad", "good")
 
@@ -95,7 +95,7 @@ def test_build_discrete_grid_lookup_ignores_continuous():
             functions={"utility": lambda: 0.0},
         ),
     }
-    lookup = _build_discrete_grid_lookup(regimes=regimes)
+    lookup = _build_discrete_grid_lookup(regimes)
     assert "wealth" not in lookup
     assert "health" in lookup
 
@@ -119,7 +119,7 @@ def test_build_discrete_grid_lookup_inconsistent_raises():
         ),
     }
     with pytest.raises(ValueError, match="Inconsistent DiscreteGrid"):
-        _build_discrete_grid_lookup(regimes=regimes)
+        _build_discrete_grid_lookup(regimes)
 
 
 def test_continuous_states_and_age():
@@ -132,7 +132,7 @@ def test_continuous_states_and_age():
             "age": [25.0, 35.0],
         }
     )
-    conditions = initial_conditions_from_dataframe(df, model=model)
+    conditions = initial_conditions_from_dataframe(df=df, model=model)
     assert jnp.array_equal(
         conditions["regime"],
         jnp.array([BasicRegimeId.working_life, BasicRegimeId.working_life]),
@@ -151,7 +151,7 @@ def test_categorical_string_labels():
             "age": [25.0, 25.0],
         }
     )
-    conditions = initial_conditions_from_dataframe(df, model=model)
+    conditions = initial_conditions_from_dataframe(df=df, model=model)
     assert jnp.array_equal(
         conditions["regime"],
         jnp.array([BasicRegimeId.working_life, BasicRegimeId.retirement]),
@@ -170,7 +170,7 @@ def test_categorical_pd_categorical_column():
             "age": [25.0, 25.0],
         }
     )
-    conditions = initial_conditions_from_dataframe(df, model=model)
+    conditions = initial_conditions_from_dataframe(df=df, model=model)
     assert jnp.array_equal(conditions["health"], jnp.array([Health.good, Health.bad]))
 
 
@@ -184,7 +184,7 @@ def test_multi_regime():
             "age": [25.0, 25.0, 25.0],
         }
     )
-    conditions = initial_conditions_from_dataframe(df, model=model)
+    conditions = initial_conditions_from_dataframe(df=df, model=model)
     assert jnp.array_equal(
         conditions["regime"],
         jnp.array(
@@ -202,7 +202,7 @@ def test_missing_regime_column_raises():
     model = get_basic_model()
     df = pd.DataFrame({"wealth": [10.0]})
     with pytest.raises(ValueError, match="'regime' column"):
-        initial_conditions_from_dataframe(df, model=model)
+        initial_conditions_from_dataframe(df=df, model=model)
 
 
 def test_invalid_regime_name_raises():
@@ -214,7 +214,7 @@ def test_invalid_regime_name_raises():
         }
     )
     with pytest.raises(ValueError, match="Invalid regime names"):
-        initial_conditions_from_dataframe(df, model=model)
+        initial_conditions_from_dataframe(df=df, model=model)
 
 
 def test_invalid_category_label_raises():
@@ -228,7 +228,7 @@ def test_invalid_category_label_raises():
         }
     )
     with pytest.raises(ValueError, match="Invalid labels"):
-        initial_conditions_from_dataframe(df, model=model)
+        initial_conditions_from_dataframe(df=df, model=model)
 
 
 def test_empty_dataframe_raises():
@@ -237,7 +237,7 @@ def test_empty_dataframe_raises():
         {"regime": pd.Series([], dtype=str), "wealth": pd.Series([], dtype=float)}
     )
     with pytest.raises(ValueError, match="empty"):
-        initial_conditions_from_dataframe(df, model=model)
+        initial_conditions_from_dataframe(df=df, model=model)
 
 
 def test_unknown_column_raises():
@@ -252,7 +252,7 @@ def test_unknown_column_raises():
         }
     )
     with pytest.raises(ValueError, match="Unknown columns"):
-        initial_conditions_from_dataframe(df, model=model)
+        initial_conditions_from_dataframe(df=df, model=model)
 
 
 def test_missing_state_column_raises():
@@ -265,7 +265,7 @@ def test_missing_state_column_raises():
         }
     )
     with pytest.raises(ValueError, match="Missing required"):
-        initial_conditions_from_dataframe(df, model=model)
+        initial_conditions_from_dataframe(df=df, model=model)
 
 
 def test_round_trip_with_discrete_model():
@@ -301,7 +301,7 @@ def test_round_trip_with_discrete_model():
             "age": [50.0, 50.0],
         }
     )
-    df_conditions = initial_conditions_from_dataframe(df, model=model)
+    df_conditions = initial_conditions_from_dataframe(df=df, model=model)
     result_df = model.simulate(
         params=params,
         initial_conditions=df_conditions,
@@ -1053,6 +1053,56 @@ def test_params_from_pandas_unknown_param_raises() -> None:
     params = {"nonexistent_param": pd.Series([1.0])}
     with pytest.raises(ValueError, match="No template match"):
         params_from_pandas(params=params, model=model)
+
+
+def test_params_from_pandas_with_categoricals() -> None:
+    """Derived variable indexing requires explicit categoricals."""
+    from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
+
+    # In the stochastic model, next_partner(period, labor_supply, partner, probs_array)
+    # uses labor_supply — which is a DiscreteGrid action in working_life.
+    # Simulate the case where the converter needs extra categoricals by building
+    # a model where a function indexes by a variable not in the model grids.
+    # Use the existing stochastic model: next_partner indexes by labor_supply,
+    # which IS in the working_life action grids. But for the retirement regime,
+    # labor_supply is NOT an action — it's a fixed param. So if we provide
+    # probs_array for retirement's next_partner (which also indexes by
+    # labor_supply in the source code), we need categoricals to resolve it.
+    from tests.test_models.stochastic import LaborSupply  # noqa: PLC0415
+
+    model = get_stochastic_model(3)
+    labor_grid = DiscreteGrid(LaborSupply)
+
+    # Build a Series indexed by age x labor_supply x partner
+    ages = model.ages.values  # noqa: PD011
+    records = []
+    val = 1.0
+    for period_idx in range(model.n_periods):
+        for w_label in ("work", "retire"):
+            for p_label in ("single", "partnered"):
+                records.append(((float(ages[period_idx]), w_label, p_label), val))
+                val += 1.0
+
+    index = pd.MultiIndex.from_tuples(
+        [r[0] for r in records],
+        names=["age", "labor_supply", "partner"],
+    )
+    series = pd.Series([r[1] for r in records], index=index)
+
+    # Without categoricals, this should fail (retirement doesn't have
+    # labor_supply as an action)
+    params = {"retirement": {"next_partner": {"probs_array": series}}}
+    with pytest.raises(ValueError, match="Unrecognised indexing parameter"):
+        params_from_pandas(params=params, model=model)
+
+    # With categoricals providing the labor_supply grid, it succeeds
+    result = params_from_pandas(
+        params=params,
+        model=model,
+        categoricals={"labor_supply": labor_grid},
+    )
+    arr = result["retirement"]["next_partner"]["probs_array"]
+    assert arr.shape == (3, 2, 2)
 
 
 def test_resolve_categoricals_conflict_raises() -> None:

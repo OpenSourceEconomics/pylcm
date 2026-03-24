@@ -30,7 +30,7 @@ initial_df = pd.DataFrame({
     "wealth": np.linspace(1, 20, 100),
 })
 
-initial_conditions = initial_conditions_from_dataframe(initial_df, model=model)
+initial_conditions = initial_conditions_from_dataframe(df=initial_df, model=model)
 
 result = model.simulate(
     params=params,

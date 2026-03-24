@@ -311,7 +311,7 @@ def _validate_regime_transition_single(
     )
 
 
-def _get_func_indexing_params(*, func: Callable) -> list[str]:
+def _get_func_indexing_params(func: Callable) -> list[str]:
     """Return indexing parameter names by inspecting array subscripts.
 
     Scan the function source for `param[x, y, ...]` subscripts where all
@@ -354,7 +354,7 @@ def _get_func_indexing_params(*, func: Callable) -> list[str]:
         if not subscripts:
             continue
 
-        names = _extract_bare_names(slice_node=subscripts[0])
+        names = _extract_bare_names(subscripts[0])
 
         if names is not None and all(n in param_names for n in names):
             return names
@@ -444,7 +444,7 @@ def _validate_array_param_indexing(
         )
         return
 
-    index_names = _extract_bare_names(slice_node=subscripts[0])
+    index_names = _extract_bare_names(subscripts[0])
 
     if index_names is None:
         warnings.warn(
@@ -481,7 +481,7 @@ def _collect_subscripts(
     ]
 
 
-def _extract_bare_names(*, slice_node: ast.expr) -> list[str] | None:
+def _extract_bare_names(slice_node: ast.expr) -> list[str] | None:
     """Extract bare variable names from a subscript slice.
 
     Return ``None`` if any index element is not a bare `ast.Name` (e.g. a
@@ -574,7 +574,7 @@ def validate_transition_probs(
             target_regime_name=target_regime_name,
         )
         func = markov.func
-        all_grids = _build_all_grids(regime=regime)
+        all_grids = _build_all_grids(regime)
         n_outcomes = len(all_grids[state_name].categories)
     else:
         if not isinstance(regime.transition, MarkovTransition):
@@ -584,10 +584,10 @@ def validate_transition_probs(
             )
             raise TypeError(msg)
         func = regime.transition.func
-        all_grids = _build_all_grids(regime=regime)
+        all_grids = _build_all_grids(regime)
         n_outcomes = len(model.regime_names_to_ids)
 
-    indexing_params = _get_func_indexing_params(func=func)
+    indexing_params = _get_func_indexing_params(func)
     expected_shape = _build_expected_shape(
         indexing_params=indexing_params,
         n_outcomes=n_outcomes,
@@ -652,7 +652,7 @@ def _extract_markov_transition(
     raise TypeError(msg)
 
 
-def _build_all_grids(*, regime: Regime) -> dict[str, DiscreteGrid]:
+def _build_all_grids(regime: Regime) -> dict[str, DiscreteGrid]:
     """Collect all DiscreteGrid instances from regime states and actions."""
     return {
         name: grid
