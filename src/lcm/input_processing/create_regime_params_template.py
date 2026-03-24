@@ -5,8 +5,7 @@ from dags.tree import tree_path_from_qname
 
 from lcm.exceptions import InvalidNameError
 from lcm.grids import IrregSpacedGrid
-from lcm.interfaces import PhaseVariant
-from lcm.regime import Regime
+from lcm.regime import Regime, _is_phase_dict
 from lcm.shocks import _ShockGrid
 from lcm.typing import RegimeParamsTemplate
 
@@ -47,10 +46,10 @@ def create_regime_params_template(  # noqa: C901
     # Use dags.tree to discover parameters and their type annotations for each function.
     for name, func in regime.get_all_functions().items():
         raw_func = regime.functions.get(name)
-        if isinstance(raw_func, PhaseVariant):
+        if _is_phase_dict(raw_func):
             # Discover params from both variants and take the union.
-            tree_solve = dt.create_tree_with_input_types({name: raw_func.solve})
-            tree_sim = dt.create_tree_with_input_types({name: raw_func.simulate})
+            tree_solve = dt.create_tree_with_input_types({name: raw_func["solve"]})  # ty: ignore[not-subscriptable]
+            tree_sim = dt.create_tree_with_input_types({name: raw_func["simulate"]})  # ty: ignore[not-subscriptable]
             tree = dict(tree_solve) | dict(tree_sim)
         else:
             tree = dt.create_tree_with_input_types({name: func})

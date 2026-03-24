@@ -30,13 +30,17 @@ from lcm.input_processing.util import (
 )
 from lcm.interfaces import (
     InternalRegime,
-    PhaseVariant,
     SimulateFunctions,
     SolveFunctions,
     StateSpaceInfo,
 )
 from lcm.ndimage import map_coordinates
-from lcm.regime import MarkovTransition, Regime, _collect_state_transitions
+from lcm.regime import (
+    MarkovTransition,
+    Regime,
+    _collect_state_transitions,
+    _is_phase_dict,
+)
 from lcm.shocks import _ShockGrid
 from lcm.state_action_space import create_state_action_space
 from lcm.typing import (
@@ -249,7 +253,7 @@ class _IntermediateFunctions:
     """Intermediate container for functions produced during regime processing."""
 
     solve_functions: MappingProxyType[str, InternalUserFunction]
-    """Solve-phase functions (using solve variants for PhaseVariant entries)."""
+    """Solve-phase functions (using solve variants for phase dict entries)."""
 
     simulate_functions: MappingProxyType[str, InternalUserFunction]
     """Simulate-phase functions (with simulate overrides applied)."""
@@ -307,18 +311,17 @@ def _get_intermediate_functions(
     # Flatten nested transitions to get prefixed names like "regime__next_wealth"
     flat_nested_transitions = flatten_regime_namespace(nested_transitions)
 
-    # Collect PhaseVariant entries from regime.functions for separate handling.
-    phase_variant_entries: dict[str, PhaseVariant] = {
-        name: func
-        for name, func in regime.functions.items()
-        if isinstance(func, PhaseVariant)
+    # Collect phase dict entries from regime.functions for separate handling.
+    phase_variant_entries: dict[str, dict[str, UserFunction]] = {  # ty: ignore[invalid-assignment]
+        name: func for name, func in regime.functions.items() if _is_phase_dict(func)
     }
     # For the purpose of building all_functions, use the solve variant as
     # the representative callable.
     resolved_functions: dict[str, UserFunction] = {}
     for name, func in regime.functions.items():
         resolved_functions[name] = cast(
-            "UserFunction", func.solve if isinstance(func, PhaseVariant) else func
+            "UserFunction",
+            func["solve"] if _is_phase_dict(func) else func,  # ty: ignore[not-subscriptable]
         )
 
     # Build all_functions using nested_transitions (to get prefixed names)
@@ -367,12 +370,12 @@ def _get_intermediate_functions(
         if func_name in phase_variant_entries:
             pv = phase_variant_entries[func_name]
             functions[func_name] = _rename_params_to_qnames(
-                func=pv.solve,
+                func=pv["solve"],
                 regime_params_template=regime_params_template,
                 param_key=func_name,
             )
             simulate_overrides[func_name] = _rename_params_to_qnames(
-                func=pv.simulate,
+                func=pv["simulate"],
                 regime_params_template=regime_params_template,
                 param_key=func_name,
             )
@@ -522,8 +525,8 @@ def _classify_transitions(
 
 
 def _has_phase_variants(regime: Regime) -> bool:
-    """Check if any function in the regime is a PhaseVariant."""
-    return any(isinstance(f, PhaseVariant) for f in regime.functions.values())
+    """Check if any function in the regime is a phase dict."""
+    return any(_is_phase_dict(f) for f in regime.functions.values())
 
 
 def _extract_transitions_from_regime(

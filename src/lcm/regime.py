@@ -9,7 +9,6 @@ from dags.tree import QNAME_DELIMITER
 
 from lcm.exceptions import RegimeInitializationError, format_messages
 from lcm.grids import DiscreteGrid, Grid
-from lcm.interfaces import PhaseVariant
 from lcm.shocks._base import _ShockGrid
 from lcm.typing import (
     ActiveFunction,
@@ -199,8 +198,8 @@ class Regime:
         - State transitions from `self.state_transitions`
         - The regime transition (`self.transition`, keyed as `"next_regime"`)
 
-        For `PhaseVariant` entries, the solve variant is used as the representative
-        for signature discovery.
+        For phase dict entries (`{"solve": ..., "simulate": ...}`), the solve
+        variant is used as the representative for signature discovery.
 
         Returns:
             Read-only mapping of all regime functions.
@@ -209,7 +208,8 @@ class Regime:
         result: dict[str, UserFunction] = {}
         for name, func in self.functions.items():
             result[name] = cast(
-                "UserFunction", func.solve if isinstance(func, PhaseVariant) else func
+                "UserFunction",
+                func["solve"] if _is_phase_dict(func) else func,  # ty: ignore[not-subscriptable]
             )
         result |= dict(self.constraints)
         if callable(self.transition):
@@ -265,7 +265,7 @@ def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
                     error_messages.append(
                         f"function keys must be a strings, but is {k}."
                     )
-                if not callable(v) and not isinstance(v, PhaseVariant):
+                if not callable(v) and not _is_phase_dict(v):
                     error_messages.append(
                         f"function values must be a callable, but is {v}."
                     )
@@ -516,3 +516,8 @@ def _collect_state_transitions(
             _add_raw_transition(transitions, name, raw)
 
     return transitions
+
+
+def _is_phase_dict(value: object) -> bool:
+    """Check if value is a solve/simulate phase dict."""
+    return isinstance(value, Mapping) and set(value) == {"solve", "simulate"}

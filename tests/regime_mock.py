@@ -2,8 +2,7 @@ from dataclasses import dataclass, field
 from typing import cast
 
 from lcm.grids import Grid
-from lcm.interfaces import PhaseVariant
-from lcm.regime import _collect_state_transitions, _default_H
+from lcm.regime import _collect_state_transitions, _default_H, _is_phase_dict
 from lcm.typing import UserFunction
 
 
@@ -37,7 +36,8 @@ class RegimeMock:
         result: dict[str, UserFunction] = {}
         for name, func in self.functions.items():
             result[name] = cast(
-                "UserFunction", func.solve if isinstance(func, PhaseVariant) else func
+                "UserFunction",
+                func["solve"] if _is_phase_dict(func) else func,  # ty: ignore[not-subscriptable]
             )
         result |= dict(self.constraints)
         if self.states:
