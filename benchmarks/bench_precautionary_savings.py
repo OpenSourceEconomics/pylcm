@@ -43,45 +43,41 @@ def _clear_gpu_memory():
 
 
 class PrecautionarySavingsSolve:
-    params = [200, 500]
-    param_names = ["n_points"]
     timeout = 600
 
-    def setup(self, n_points):
+    def setup(self):
         self.model, self.model_params = _make_model(
-            wealth_n_points=n_points,
-            consumption_n_points=n_points,
+            wealth_n_points=500,
+            consumption_n_points=500,
         )
         start = time.perf_counter()
         self.model.solve(params=self.model_params, log_level="off")
         self._compile_time = time.perf_counter() - start
 
-    def time_execution(self, n_points):
+    def time_execution(self):
         self.model.solve(params=self.model_params, log_level="off")
 
-    def peakmem_execution(self, n_points):
+    def peakmem_execution(self):
         self.model.solve(params=self.model_params, log_level="off")
 
-    def teardown(self, n_points):
+    def teardown(self):
         _clear_gpu_memory()
 
-    def track_compilation_time(self, n_points):
+    def track_compilation_time(self):
         return self._compile_time
 
     track_compilation_time.unit = "seconds"
 
 
 class PrecautionarySavingsSimulate:
-    params = [[1_000_000]]
-    param_names = ["n_subjects"]
     timeout = 600
 
-    def setup(self, n_subjects):
+    def setup(self):
         self.model, self.model_params = _make_model()
         self.period_to_regime_to_V_arr = self.model.solve(
             params=self.model_params, log_level="off"
         )
-        self.initial_conditions = _make_initial_conditions(n_subjects)
+        self.initial_conditions = _make_initial_conditions(1_000_000)
         start = time.perf_counter()
         self.model.simulate(
             params=self.model_params,
@@ -92,7 +88,7 @@ class PrecautionarySavingsSimulate:
         )
         self._compile_time = time.perf_counter() - start
 
-    def time_execution(self, n_subjects):
+    def time_execution(self):
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
@@ -101,7 +97,7 @@ class PrecautionarySavingsSimulate:
             check_initial_conditions=False,
         )
 
-    def peakmem_execution(self, n_subjects):
+    def peakmem_execution(self):
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
@@ -110,10 +106,10 @@ class PrecautionarySavingsSimulate:
             check_initial_conditions=False,
         )
 
-    def teardown(self, n_subjects):
+    def teardown(self):
         _clear_gpu_memory()
 
-    def track_compilation_time(self, n_subjects):
+    def track_compilation_time(self):
         return self._compile_time
 
     track_compilation_time.unit = "seconds"
