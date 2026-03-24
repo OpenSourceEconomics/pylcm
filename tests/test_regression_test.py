@@ -26,7 +26,10 @@ from lcm_examples.mahler_yum_2024 import (
     START_PARAMS,
     create_inputs,
 )
+from tests.conftest import X64_ENABLED
 from tests.test_models.deterministic.regression import RegimeId, get_model, get_params
+
+_PRECISION_DIR = TEST_DATA / "regression_tests" / ("f64" if X64_ENABLED else "f32")
 
 _HAS_GPU = jax.devices()[0].platform == "gpu"
 _skip_no_gpu = pytest.mark.skipif(not _HAS_GPU, reason="requires GPU")
@@ -81,9 +84,7 @@ def test_regression_test():
 @_skip_no_gpu
 def test_regression_precautionary_savings():
     """Test that precautionary savings benchmark model output does not change."""
-    expected = pd.read_pickle(
-        TEST_DATA / "regression_tests" / "precautionary_savings_simulation.pkl"
-    )
+    expected = pd.read_pickle(_PRECISION_DIR / "precautionary_savings_simulation.pkl")
 
     model = ps_example.get_model(
         n_periods=5,
@@ -121,9 +122,7 @@ def test_regression_precautionary_savings():
 @_skip_no_gpu
 def test_regression_mortality():
     """Test that mortality benchmark model output does not change."""
-    expected = pd.read_pickle(
-        TEST_DATA / "regression_tests" / "mortality_simulation.pkl"
-    )
+    expected = pd.read_pickle(_PRECISION_DIR / "mortality_simulation.pkl")
 
     n_periods = 4
     model = mortality_example.get_model(n_periods=n_periods)
@@ -156,9 +155,7 @@ def test_regression_mortality():
 @_skip_no_gpu
 def test_regression_mahler_yum():
     """Test that Mahler & Yum benchmark model output does not change."""
-    expected = pd.read_pickle(
-        TEST_DATA / "regression_tests" / "mahler_yum_simulation.pkl"
-    )
+    expected = pd.read_pickle(_PRECISION_DIR / "mahler_yum_simulation.pkl")
 
     n_subjects = 4
     start_params_without_beta = {k: v for k, v in START_PARAMS.items() if k != "beta"}

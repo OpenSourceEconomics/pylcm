@@ -1,19 +1,28 @@
 """Generate regression test data for benchmark models.
 
 Run with:
-    pixi run -e tests-cuda13 python \\
-        tests/data/regression_tests/generate_benchmark_data.py
+    pixi run -e tests-cuda13 python \
+        tests/data/regression_tests/generate_benchmark_data.py --precision=64
+    pixi run -e tests-cuda13 python \
+        tests/data/regression_tests/generate_benchmark_data.py --precision=32
 
 Requires a GPU (Mahler & Yum is GPU-only). Regenerate when model internals change
 intentionally (e.g., numerical algorithm improvements, grid changes). The stored
 DataFrames pin the simulation output so accidental regressions are caught.
 """
 
+import argparse
 from pathlib import Path
 
 import jax
 
-jax.config.update("jax_enable_x64", val=True)
+_parser = argparse.ArgumentParser()
+_parser.add_argument(
+    "--precision", type=int, choices=[32, 64], default=64, help="32 or 64 bit"
+)
+_args = _parser.parse_args()
+
+jax.config.update("jax_enable_x64", val=(_args.precision == 64))
 
 import jax.numpy as jnp  # noqa: E402
 
@@ -27,7 +36,7 @@ from lcm_examples.mahler_yum_2024 import (  # noqa: E402
 DATA_DIR = Path(__file__).parent
 
 
-def _generate_precautionary_savings() -> None:
+def _generate_precautionary_savings(data_dir: Path) -> None:
     model = precautionary_savings.get_model(
         n_periods=5,
         shock_type="rouwenhorst",
@@ -53,10 +62,10 @@ def _generate_precautionary_savings() -> None:
         seed=12345,
         log_level="off",
     )
-    result.to_dataframe().to_pickle(DATA_DIR / "precautionary_savings_simulation.pkl")
+    result.to_dataframe().to_pickle(data_dir / "precautionary_savings_simulation.pkl")
 
 
-def _generate_mortality() -> None:
+def _generate_mortality(data_dir: Path) -> None:
     n_periods = 4
     model = mortality.get_model(n_periods=n_periods)
     params = mortality.get_params(n_periods=n_periods)
@@ -73,10 +82,10 @@ def _generate_mortality() -> None:
         seed=12345,
         log_level="off",
     )
-    result.to_dataframe().to_pickle(DATA_DIR / "mortality_simulation.pkl")
+    result.to_dataframe().to_pickle(data_dir / "mortality_simulation.pkl")
 
 
-def _generate_mahler_yum() -> None:
+def _generate_mahler_yum(data_dir: Path) -> None:
     n_subjects = 4
     start_params_without_beta = {k: v for k, v in START_PARAMS.items() if k != "beta"}
     common_params, initial_states, _discount_factor_type = create_inputs(
@@ -107,10 +116,12 @@ def _generate_mahler_yum() -> None:
         seed=12345,
         log_level="off",
     )
-    result.to_dataframe().to_pickle(DATA_DIR / "mahler_yum_simulation.pkl")
+    result.to_dataframe().to_pickle(data_dir / "mahler_yum_simulation.pkl")
 
 
 if __name__ == "__main__":
-    _generate_precautionary_savings()
-    _generate_mortality()
-    _generate_mahler_yum()
+    target = DATA_DIR / f"f{_args.precision}"
+    target.mkdir(exist_ok=True)
+    _generate_precautionary_savings(target)
+    _generate_mortality(target)
+    _generate_mahler_yum(target)
