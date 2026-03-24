@@ -50,9 +50,7 @@ def _generate_precautionary_savings() -> None:
         seed=12345,
         log_level="off",
     )
-    df = result.to_dataframe()
-    df.to_pickle(DATA_DIR / "precautionary_savings_simulation.pkl")
-    print(f"Wrote precautionary_savings_simulation.pkl  ({len(df)} rows)")  # noqa: T201
+    result.to_dataframe().to_pickle(DATA_DIR / "precautionary_savings_simulation.pkl")
 
 
 def _generate_mortality() -> None:
@@ -72,9 +70,7 @@ def _generate_mortality() -> None:
         seed=12345,
         log_level="off",
     )
-    df = result.to_dataframe()
-    df.to_pickle(DATA_DIR / "mortality_simulation.pkl")
-    print(f"Wrote mortality_simulation.pkl  ({len(df)} rows)")  # noqa: T201
+    result.to_dataframe().to_pickle(DATA_DIR / "mortality_simulation.pkl")
 
 
 def _generate_mahler_yum() -> None:
@@ -108,9 +104,7 @@ def _generate_mahler_yum() -> None:
         seed=12345,
         log_level="off",
     )
-    df = result.to_dataframe()
-    df.to_pickle(DATA_DIR / "mahler_yum_simulation.pkl")
-    print(f"Wrote mahler_yum_simulation.pkl  ({len(df)} rows)")  # noqa: T201
+    result.to_dataframe().to_pickle(DATA_DIR / "mahler_yum_simulation.pkl")
 
 
 if __name__ == "__main__":
