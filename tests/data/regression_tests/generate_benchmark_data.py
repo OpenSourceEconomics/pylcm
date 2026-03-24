@@ -1,6 +1,8 @@
 """Generate regression test data for benchmark models.
 
-Run with: pixi run -e tests-cuda13 python tests/data/regression_tests/generate_benchmark_data.py
+Run with:
+    pixi run -e tests-cuda13 python \\
+        tests/data/regression_tests/generate_benchmark_data.py
 
 Requires a GPU (Mahler & Yum is GPU-only). Regenerate when model internals change
 intentionally (e.g., numerical algorithm improvements, grid changes). The stored
@@ -10,17 +12,19 @@ DataFrames pin the simulation output so accidental regressions are caught.
 from pathlib import Path
 
 import jax
+import jax.numpy as jnp
 
-jax.config.update("jax_enable_x64", True)
-
-import jax.numpy as jnp  # noqa: E402
+from lcm_examples import mortality, precautionary_savings
+from lcm_examples.mahler_yum_2024 import (
+    MAHLER_YUM_MODEL,
+    START_PARAMS,
+    create_inputs,
+)
 
 DATA_DIR = Path(__file__).parent
 
 
 def _generate_precautionary_savings() -> None:
-    from lcm_examples import precautionary_savings
-
     model = precautionary_savings.get_model(
         n_periods=5,
         shock_type="rouwenhorst",
@@ -48,12 +52,10 @@ def _generate_precautionary_savings() -> None:
     )
     df = result.to_dataframe()
     df.to_pickle(DATA_DIR / "precautionary_savings_simulation.pkl")
-    print(f"Wrote precautionary_savings_simulation.pkl  ({len(df)} rows)")
+    print(f"Wrote precautionary_savings_simulation.pkl  ({len(df)} rows)")  # noqa: T201
 
 
 def _generate_mortality() -> None:
-    from lcm_examples import mortality
-
     n_periods = 4
     model = mortality.get_model(n_periods=n_periods)
     params = mortality.get_params(n_periods=n_periods)
@@ -72,16 +74,10 @@ def _generate_mortality() -> None:
     )
     df = result.to_dataframe()
     df.to_pickle(DATA_DIR / "mortality_simulation.pkl")
-    print(f"Wrote mortality_simulation.pkl  ({len(df)} rows)")
+    print(f"Wrote mortality_simulation.pkl  ({len(df)} rows)")  # noqa: T201
 
 
 def _generate_mahler_yum() -> None:
-    from lcm_examples.mahler_yum_2024 import (
-        MAHLER_YUM_MODEL,
-        START_PARAMS,
-        create_inputs,
-    )
-
     n_subjects = 4
     start_params_without_beta = {k: v for k, v in START_PARAMS.items() if k != "beta"}
     common_params, initial_states, _discount_factor_type = create_inputs(
@@ -114,10 +110,11 @@ def _generate_mahler_yum() -> None:
     )
     df = result.to_dataframe()
     df.to_pickle(DATA_DIR / "mahler_yum_simulation.pkl")
-    print(f"Wrote mahler_yum_simulation.pkl  ({len(df)} rows)")
+    print(f"Wrote mahler_yum_simulation.pkl  ({len(df)} rows)")  # noqa: T201
 
 
 if __name__ == "__main__":
+    jax.config.update("jax_enable_x64", val=True)
     _generate_precautionary_savings()
     _generate_mortality()
     _generate_mahler_yum()
