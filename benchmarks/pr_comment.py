@@ -11,6 +11,7 @@ can verify that benchmarks have been run.
 """
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -503,7 +504,18 @@ def _run_gh(
 
 
 def _get_current_pr_number() -> int | None:
-    """Return the PR number for the current branch, or None."""
+    """Return the PR number for the current branch, or None.
+
+    Checks the ``GITHUB_PR_NUMBER`` environment variable first (set by the
+    benchmark-pr workflow), falling back to ``gh pr view`` for local use.
+    """
+    env_number = os.environ.get("GITHUB_PR_NUMBER")
+    if env_number:
+        try:
+            return int(env_number)
+        except ValueError:
+            pass
+
     result = _run_gh(
         [
             "gh",
