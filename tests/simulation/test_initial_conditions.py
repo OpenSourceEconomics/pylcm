@@ -99,6 +99,8 @@ def test_build_initial_states_single_regime(model: Model) -> None:
 
     assert "active__wealth" in result
     assert "active__health" in result
+    # Terminal regime has no states, so no terminal__ keys should exist
+    assert not any(k.startswith("terminal__") for k in result)
 
 
 def test_validate_initial_conditions_valid_input(
