@@ -41,6 +41,7 @@ from lcm.shocks import _ShockGrid
 from lcm.state_action_space import create_state_action_space
 from lcm.typing import (
     Float1D,
+    FunctionsMapping,
     Int1D,
     InternalUserFunction,
     RegimeName,
@@ -248,16 +249,16 @@ def process_regimes(
 class _IntermediateFunctions:
     """Intermediate container for functions produced during regime processing."""
 
-    solve_functions: MappingProxyType[str, InternalUserFunction]
+    solve_functions: FunctionsMapping
     """Solve-phase functions (using solve variants for PhaseVariant entries)."""
 
-    simulate_functions: MappingProxyType[str, InternalUserFunction]
+    simulate_functions: FunctionsMapping
     """Simulate-phase functions (with simulate overrides applied)."""
 
-    solve_constraints: MappingProxyType[str, InternalUserFunction]
+    solve_constraints: FunctionsMapping
     """Constraint functions for solve phase."""
 
-    simulate_constraints: MappingProxyType[str, InternalUserFunction]
+    simulate_constraints: FunctionsMapping
     """Constraint functions for simulate phase."""
 
     transitions: TransitionFunctionsMapping

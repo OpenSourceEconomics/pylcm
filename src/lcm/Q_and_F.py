@@ -18,6 +18,7 @@ from lcm.typing import (
     BoolND,
     Float1D,
     FloatND,
+    FunctionsMapping,
     InternalUserFunction,
     QAndFFunction,
     RegimeName,
@@ -31,8 +32,8 @@ def get_Q_and_F(
     flat_param_names: frozenset[str],
     age: float,
     period: int,
-    functions: MappingProxyType[str, InternalUserFunction],
-    constraints: MappingProxyType[str, InternalUserFunction],
+    functions: FunctionsMapping,
+    constraints: FunctionsMapping,
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[str],
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
@@ -231,8 +232,8 @@ def get_Q_and_F_terminal(
     flat_param_names: frozenset[str],
     age: float,
     period: int,
-    functions: MappingProxyType[str, InternalUserFunction],
-    constraints: MappingProxyType[str, InternalUserFunction],
+    functions: FunctionsMapping,
+    constraints: FunctionsMapping,
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for the terminal period.
 
@@ -310,7 +311,7 @@ def _get_arg_names_of_Q_and_F(
 
 def _get_joint_weights_function(
     *,
-    transitions: MappingProxyType[str, InternalUserFunction],
+    transitions: FunctionsMapping,
     stochastic_transition_names: frozenset[str],
     regime_name: RegimeName,
 ) -> Callable[..., FloatND]:
@@ -346,8 +347,8 @@ def _get_joint_weights_function(
 
 def _get_U_and_F(
     *,
-    functions: MappingProxyType[str, InternalUserFunction],
-    constraints: MappingProxyType[str, InternalUserFunction],
+    functions: FunctionsMapping,
+    constraints: FunctionsMapping,
 ) -> Callable[..., tuple[FloatND, BoolND]]:
     """Get the instantaneous utility and feasibility function.
 
@@ -378,8 +379,8 @@ def _get_U_and_F(
 
 def _get_feasibility(
     *,
-    functions: MappingProxyType[str, InternalUserFunction],
-    constraints: MappingProxyType[str, InternalUserFunction],
+    functions: FunctionsMapping,
+    constraints: FunctionsMapping,
 ) -> InternalUserFunction:
     """Create a function that combines all constraint functions into a single one.
 

@@ -17,8 +17,8 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    FunctionsMapping,
     GridsDict,
-    InternalUserFunction,
     NextStateSimulationFunction,
     RegimeName,
     StochasticNextFunction,
@@ -28,8 +28,8 @@ from lcm.utils import flatten_regime_namespace
 
 def get_next_state_function_for_solution(
     *,
-    functions: MappingProxyType[str, InternalUserFunction],
-    transitions: MappingProxyType[str, InternalUserFunction],
+    functions: FunctionsMapping,
+    transitions: FunctionsMapping,
 ) -> NextStateSimulationFunction:
     """Get function that computes the next states during the solution.
 
@@ -57,8 +57,8 @@ def get_next_state_function_for_solution(
 
 def get_next_state_function_for_simulation(
     *,
-    functions: MappingProxyType[str, InternalUserFunction],
-    transitions: MappingProxyType[str, InternalUserFunction],
+    functions: FunctionsMapping,
+    transitions: FunctionsMapping,
     stochastic_transition_names: frozenset[str] = frozenset(),
     grids: GridsDict,
     gridspecs: MappingProxyType[str, Grid],
@@ -103,8 +103,8 @@ def get_next_state_function_for_simulation(
 
 def get_next_stochastic_weights_function(
     *,
-    functions: MappingProxyType[str, InternalUserFunction],
-    transitions: MappingProxyType[str, InternalUserFunction],
+    functions: FunctionsMapping,
+    transitions: FunctionsMapping,
     stochastic_transition_names: frozenset[str],
     regime_name: RegimeName,
 ) -> Callable[..., dict[str, Array]]:
@@ -138,7 +138,7 @@ def _extend_transitions_for_simulation(
     *,
     grids: GridsDict,
     gridspecs: MappingProxyType[str, Grid],
-    transitions: MappingProxyType[str, InternalUserFunction],
+    transitions: FunctionsMapping,
     variable_info: pd.DataFrame,
     stochastic_transition_names: frozenset[str],
 ) -> dict[str, Callable[..., Array]]:

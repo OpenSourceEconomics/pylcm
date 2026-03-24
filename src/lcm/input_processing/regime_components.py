@@ -24,6 +24,7 @@ from lcm.Q_and_F import get_Q_and_F, get_Q_and_F_terminal
 from lcm.regime import Regime
 from lcm.typing import (
     ArgmaxQOverAFunction,
+    FunctionsMapping,
     GridsDict,
     InternalUserFunction,
     MaxQOverAFunction,
@@ -43,8 +44,8 @@ def build_Q_and_F_functions(
     *,
     regime: Regime,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
-    functions: MappingProxyType[str, InternalUserFunction],
-    constraints: MappingProxyType[str, InternalUserFunction],
+    functions: FunctionsMapping,
+    constraints: FunctionsMapping,
     transitions: TransitionFunctionsMapping,
     regime_transition_probs: RegimeTransitionFunction | None,
     stochastic_transition_names: frozenset[str],
@@ -158,7 +159,7 @@ def _build_argmax_and_max_Q_over_a_function(
 
 def build_next_state_simulation_functions(
     *,
-    functions: MappingProxyType[str, InternalUserFunction],
+    functions: FunctionsMapping,
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[str],
     grids: GridsDict,
@@ -193,7 +194,7 @@ def build_next_state_simulation_functions(
 
 def build_regime_transition_probs_functions(
     *,
-    functions: MappingProxyType[str, InternalUserFunction],
+    functions: FunctionsMapping,
     regime_transition_probs: InternalUserFunction,
     grids: MappingProxyType[str, Array],
     regime_names_to_ids: RegimeNamesToIds,

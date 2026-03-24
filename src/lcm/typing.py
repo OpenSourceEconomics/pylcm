@@ -33,9 +33,9 @@ type RegimeNamesToIds = MappingProxyType[RegimeName, int]
 
 type GridsDict = MappingProxyType[RegimeName, MappingProxyType[str, Array]]
 
-type TransitionFunctionsMapping = MappingProxyType[
-    RegimeName, MappingProxyType[str, InternalUserFunction]
-]
+type FunctionsMapping = MappingProxyType[str, InternalUserFunction]
+
+type TransitionFunctionsMapping = MappingProxyType[RegimeName, FunctionsMapping]
 
 
 type UserParams = Mapping[

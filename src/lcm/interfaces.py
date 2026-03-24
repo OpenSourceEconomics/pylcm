@@ -20,7 +20,7 @@ from lcm.typing import (
     DiscreteAction,
     DiscreteState,
     FlatRegimeParams,
-    InternalUserFunction,
+    FunctionsMapping,
     MaxQOverAFunction,
     NextStateSimulationFunction,
     RegimeParamsTemplate,
@@ -165,10 +165,10 @@ class PhaseVariant[S, T]:
 class SolveFunctions:
     """Compiled functions for the backward-induction (solve) phase."""
 
-    functions: MappingProxyType[str, InternalUserFunction]
+    functions: FunctionsMapping
     """Immutable mapping of function names to internal user functions."""
 
-    constraints: MappingProxyType[str, InternalUserFunction]
+    constraints: FunctionsMapping
     """Immutable mapping of constraint names to internal user functions."""
 
     transitions: TransitionFunctionsMapping
@@ -188,10 +188,10 @@ class SolveFunctions:
 class SimulateFunctions:
     """Compiled functions for the forward-simulation phase."""
 
-    functions: MappingProxyType[str, InternalUserFunction]
+    functions: FunctionsMapping
     """Immutable mapping of function names to internal user functions."""
 
-    constraints: MappingProxyType[str, InternalUserFunction]
+    constraints: FunctionsMapping
     """Immutable mapping of constraint names to internal user functions."""
 
     transitions: TransitionFunctionsMapping
