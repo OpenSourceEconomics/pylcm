@@ -12,10 +12,13 @@ DataFrames pin the simulation output so accidental regressions are caught.
 from pathlib import Path
 
 import jax
-import jax.numpy as jnp
 
-from lcm_examples import mortality, precautionary_savings
-from lcm_examples.mahler_yum_2024 import (
+jax.config.update("jax_enable_x64", val=True)
+
+import jax.numpy as jnp  # noqa: E402
+
+from lcm_examples import mortality, precautionary_savings  # noqa: E402
+from lcm_examples.mahler_yum_2024 import (  # noqa: E402
     MAHLER_YUM_MODEL,
     START_PARAMS,
     create_inputs,
@@ -108,7 +111,6 @@ def _generate_mahler_yum() -> None:
 
 
 if __name__ == "__main__":
-    jax.config.update("jax_enable_x64", val=True)
     _generate_precautionary_savings()
     _generate_mortality()
     _generate_mahler_yum()
