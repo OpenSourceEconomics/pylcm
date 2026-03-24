@@ -11,6 +11,7 @@ can verify that benchmarks have been run.
 """
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -37,14 +38,20 @@ _CLASS_DISPLAY = {
 
 _METHOD_DISPLAY = {
     "time_execution": "execution time",
-    "peakmem_execution": "peak mem usage",
+    "track_gpu_peak_mem": "peak GPU mem",
     "track_compilation_time": "compilation time",
+    "peakmem_execution": "peak CPU mem",
 }
 
 _METHOD_SORT = {
     name: i
     for i, name in enumerate(
-        ("time_execution", "track_compilation_time", "peakmem_execution")
+        (
+            "time_execution",
+            "track_gpu_peak_mem",
+            "track_compilation_time",
+            "peakmem_execution",
+        )
     )
 }
 
@@ -421,7 +428,7 @@ def _expand_params(params: list[list[str]]) -> list[str]:
 
 def _format_value(bench_name: str, value: float) -> str:
     """Format a benchmark value with appropriate units."""
-    if "peakmem" in bench_name:
+    if "peakmem" in bench_name or "gpu_peak_mem" in bench_name:
         if value >= 1e9:
             return f"{value / 1e9:.2f} GB"
         return f"{value / 1e6:.0f} MB"
@@ -503,7 +510,18 @@ def _run_gh(
 
 
 def _get_current_pr_number() -> int | None:
-    """Return the PR number for the current branch, or None."""
+    """Return the PR number for the current branch, or None.
+
+    Checks the ``GITHUB_PR_NUMBER`` environment variable first (set by the
+    benchmark-pr workflow), falling back to ``gh pr view`` for local use.
+    """
+    env_number = os.environ.get("GITHUB_PR_NUMBER")
+    if env_number:
+        try:
+            return int(env_number)
+        except ValueError:
+            pass
+
     result = _run_gh(
         [
             "gh",
