@@ -137,17 +137,19 @@ def test_process_regimes():
     )
     assert internal_working_regime.gridspecs["labor_supply"].codes == (0, 1)
 
-    # Grids
+    # Grids (materialized from gridspecs)
     assert_array_equal(
-        internal_working_regime.grids["consumption"],
+        internal_working_regime.gridspecs["consumption"].to_jax(),
         working_life.actions["consumption"].to_jax(),
     )
     assert_array_equal(
-        internal_working_regime.grids["wealth"],
+        internal_working_regime.gridspecs["wealth"].to_jax(),
         working_life.states["wealth"].to_jax(),
     )
 
-    assert (internal_working_regime.grids["labor_supply"] == jnp.array([0, 1])).all()
+    assert (
+        internal_working_regime.gridspecs["labor_supply"].to_jax() == jnp.array([0, 1])
+    ).all()
 
     # Functions
     assert internal_working_regime.transitions is not None

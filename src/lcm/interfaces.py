@@ -173,9 +173,6 @@ class InternalRegime:
     terminal: bool
     """Whether this is a terminal regime."""
 
-    grids: MappingProxyType[str, Array]
-    """Immutable mapping of variable names to materialized JAX grid arrays."""
-
     gridspecs: MappingProxyType[str, Grid]
     """Immutable mapping of variable names to grid specification objects."""
 

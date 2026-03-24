@@ -199,7 +199,6 @@ def process_regimes(
         internal_regimes[name] = InternalRegime(
             name=name,
             terminal=regime.terminal,
-            grids=grids[name],
             gridspecs=gridspecs[name],
             variable_info=variable_info[name],
             functions=MappingProxyType(internal_functions.functions),

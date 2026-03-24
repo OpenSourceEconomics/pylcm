@@ -63,9 +63,13 @@ def create_regime_state_action_space(
         sn: states[f"{internal_regime.name}__{sn}"] for sn in relevant_state_names
     }
 
+    grids = MappingProxyType(
+        {name: spec.to_jax() for name, spec in internal_regime.gridspecs.items()}
+    )
+
     return create_state_action_space(
         variable_info=internal_regime.variable_info,
-        grids=internal_regime.grids,
+        grids=grids,
         states=states_for_state_action_space,
     )
 

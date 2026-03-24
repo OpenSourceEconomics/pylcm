@@ -490,9 +490,11 @@ def _check_regime_feasibility(
     if not action_names:
         return None
 
-    flat_actions = _build_flat_action_grid(
-        action_names=action_names, grids=internal_regime.grids
+    grids = MappingProxyType(
+        {name: spec.to_jax() for name, spec in internal_regime.gridspecs.items()}
     )
+
+    flat_actions = _build_flat_action_grid(action_names=action_names, grids=grids)
 
     filtered_params = {k: v for k, v in regime_params.items() if k in accepted}
     state_names = list(internal_regime.variable_info.query("is_state").index)
