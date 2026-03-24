@@ -38,14 +38,20 @@ _CLASS_DISPLAY = {
 
 _METHOD_DISPLAY = {
     "time_execution": "execution time",
-    "peakmem_execution": "peak mem usage",
+    "track_gpu_peak_mem": "peak GPU mem",
     "track_compilation_time": "compilation time",
+    "peakmem_execution": "peak CPU mem",
 }
 
 _METHOD_SORT = {
     name: i
     for i, name in enumerate(
-        ("time_execution", "track_compilation_time", "peakmem_execution")
+        (
+            "time_execution",
+            "track_gpu_peak_mem",
+            "track_compilation_time",
+            "peakmem_execution",
+        )
     )
 }
 
@@ -422,7 +428,7 @@ def _expand_params(params: list[list[str]]) -> list[str]:
 
 def _format_value(bench_name: str, value: float) -> str:
     """Format a benchmark value with appropriate units."""
-    if "peakmem" in bench_name:
+    if "peakmem" in bench_name or "gpu_peak_mem" in bench_name:
         if value >= 1e9:
             return f"{value / 1e9:.2f} GB"
         return f"{value / 1e6:.0f} MB"
