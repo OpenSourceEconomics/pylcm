@@ -1,5 +1,6 @@
 """Utilities for converting between pandas and LCM data structures."""
 
+import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import overload
@@ -213,130 +214,78 @@ def transition_probs_from_series(
 
 def array_from_series(
     *,
-    data: pd.Series,
-    ages: AgeGrid | None = None,
-    model: Model | None = None,
-    regime_name: str | None = None,
+    sr: pd.Series,
+    model: Model,
+    param_path: tuple[str, ...],
     categoricals: dict[str, DiscreteGrid] | None = None,
-    expected_levels: tuple[str, ...] | None = None,
 ) -> Array:
-    """Convert a pandas Series to a JAX array.
+    """Convert a pandas Series to a JAX array using param-path-based indexing.
 
-    When ``expected_levels`` is provided, the Series must have a MultiIndex
-    whose level names match exactly (after ``"period"`` → ``"age"`` rename).
-    Levels are reordered to match, and the result is an N-dimensional array
-    with one axis per level. This mode supports any number of categorical
-    levels.
+    Resolve the parameter's position in the model via `param_path`, inspect
+    the owning function's signature to determine indexing dimensions
+    (states, actions, period), and scatter the labeled Series into an
+    N-dimensional array.
 
-    When ``expected_levels`` is ``None``, behavior is inferred from the index:
+    The Series MultiIndex must use `"age"` (with actual age values) for the
+    age/period dimension, not `"period"`.
 
-    1. ``ages`` + simple index → 1D ``[n_periods]``, NaN for missing ages
-    2. ``ages`` + MultiIndex (age + 1 categorical) → 2D ``[n_periods, n_cats]``
-    3. No ``ages``, categorical index → 1D ``[n_cats]``
-    4. No ``ages``, no categoricals → 1D from raw values
-
-    Categorical levels are resolved from ``model`` state/action grids (auto)
-    and/or explicit ``categoricals`` (which take precedence). Every non-age
-    MultiIndex level **must** have a corresponding categorical or ValueError
-    is raised.
-
-    Missing grid points are filled with NaN.
+    Missing grid points are filled with NaN. Extra ages outside the model's
+    `AgeGrid` are silently dropped.
 
     Args:
-        data: pandas Series.
-        ages: ``AgeGrid`` for age-to-period alignment.
-        model: ``Model`` for auto-discovering state/action categoricals.
-        regime_name: Regime for action grid discovery (requires ``model``).
-        categoricals: Explicit categorical mappings (level name → grid).
-        expected_levels: Exact MultiIndex level names in output axis order.
-            Enables strict validation and N-categorical support.
+        sr: Labeled pandas Series.
+        model: The LCM Model instance.
+        param_path: Tuple of 1-3 elements identifying the parameter:
+            `(param,)`, `(func, param)`, or `(regime, func, param)`.
+        categoricals: Extra categorical mappings (level name to grid) for
+            derived variables not in the model's state/action grids.
 
     Returns:
-        JAX array.
+        JAX array with axes corresponding to the indexing parameters in
+        declaration order.
 
     Raises:
-        ValueError: If a non-age index level has no categorical mapping, or
-            if ``expected_levels`` doesn't match the Series MultiIndex.
+        ValueError: If `param_path` cannot be resolved, level names don't
+            match, or labels are invalid.
 
     """
+    indexing_params, regime_name = _resolve_param_indexing(
+        param_path=param_path, model=model
+    )
+
+    if not indexing_params:
+        return jnp.array(sr.to_numpy(), dtype=float)
+
     grids = _resolve_categoricals(
         model=model, regime_name=regime_name, categoricals=categoricals
     )
 
-    if expected_levels is not None:
-        level_mappings = _build_level_mappings_from_grids(
-            expected_levels, grids=grids, ages=ages
-        )
-        return _scatter_series(data, level_mappings)
+    # Replace internal "period" with user-facing "age"
+    display_params = ["age" if p == "period" else p for p in indexing_params]
 
-    if isinstance(data.index, pd.MultiIndex):
-        return _multiindex_series_to_array(data, ages=ages, grids=grids)
+    level_mappings = _build_level_mappings_for_param(display_params, grids, model.ages)
 
-    # Simple index — check if it's age-aligned or categorical
-    if ages is not None:
-        return _age_series_to_array(data, ages=ages)
+    if "age" in display_params:
+        sr = _filter_to_grid_ages(series=sr, ages=model.ages)
 
-    # Check if index name matches a categorical
-    idx_name = str(data.index.name) if data.index.name is not None else None
-    if idx_name is not None and idx_name in grids:
-        return _categorical_series_to_array(data, grid=grids[idx_name])
-
-    return jnp.array(data.to_numpy(), dtype=float)
-
-
-def _build_level_mappings_from_grids(
-    expected_levels: tuple[str, ...],
-    *,
-    grids: dict[str, DiscreteGrid],
-    ages: AgeGrid | None,
-) -> tuple[_LevelMapping, ...]:
-    """Build level mappings for `array_from_series` from level names and grids.
-
-    Args:
-        expected_levels: Level names in output axis order.
-        grids: Categorical grid lookup.
-        ages: ``AgeGrid`` for the age dimension (required if ``"age"`` is in
-            ``expected_levels``).
-
-    Returns:
-        Tuple of `_LevelMapping` instances.
-
-    """
-    mappings: list[_LevelMapping] = []
-    for level_name in expected_levels:
-        if level_name == "age":
-            if ages is None:
-                msg = "expected_levels contains 'age' but no AgeGrid was provided."
-                raise ValueError(msg)
-            mappings.append(_age_level_mapping(ages))
-        elif level_name in grids:
-            mappings.append(_grid_level_mapping(level_name, grids[level_name]))
-        else:
-            msg = (
-                f"No categorical mapping for level {level_name!r}. "
-                f"Provide it via `categoricals` or `model`. "
-                f"Available: {sorted(grids)}."
-            )
-            raise ValueError(msg)
-    return tuple(mappings)
+    return _scatter_series(sr, level_mappings)
 
 
 def array_mapping_from_dataframe(
     *,
     data: pd.DataFrame,
-    ages: AgeGrid | None = None,
-    model: Model | None = None,
-    regime_name: str | None = None,
+    model: Model,
+    param_path: tuple[str, ...],
     categoricals: dict[str, DiscreteGrid] | None = None,
 ) -> dict[str, Array]:
     """Convert each DataFrame column to a JAX array via `array_from_series`.
 
     Args:
         data: pandas DataFrame.
-        ages: ``AgeGrid`` for age-to-period alignment.
-        model: ``Model`` for auto-discovering state/action categoricals.
-        regime_name: Regime for action grid discovery (requires ``model``).
-        categoricals: Explicit categorical mappings (level name → grid).
+        model: The LCM Model instance.
+        param_path: Tuple of 1-3 elements identifying the parameter
+            (passed through to `array_from_series`).
+        categoricals: Extra categorical mappings (level name to grid).
 
     Returns:
         Dict mapping column names to JAX arrays.
@@ -344,10 +293,9 @@ def array_mapping_from_dataframe(
     """
     return {
         col: array_from_series(
-            data=data[col],
-            ages=ages,
+            sr=data[col],
             model=model,
-            regime_name=regime_name,
+            param_path=param_path,
             categoricals=categoricals,
         )
         for col in data.columns
@@ -356,19 +304,233 @@ def array_mapping_from_dataframe(
 
 def _resolve_categoricals(
     *,
-    model: Model | None,
+    model: Model,
     regime_name: str | None,
     categoricals: dict[str, DiscreteGrid] | None,
 ) -> dict[str, DiscreteGrid]:
-    """Build combined categorical lookup from model + explicit overrides."""
+    """Build combined categorical lookup from model grids and explicit overrides.
+
+    Args:
+        model: The LCM Model instance.
+        regime_name: Regime for action grid discovery.
+        categoricals: Explicit categorical mappings (level name to grid).
+
+    Returns:
+        Dict mapping variable names to `DiscreteGrid` instances.
+
+    Raises:
+        ValueError: If a key in `categoricals` already exists in the model
+            grids with different categories.
+
+    """
     grids: dict[str, DiscreteGrid] = {}
-    if model is not None:
-        grids.update(_build_discrete_grid_lookup(model.regimes))
-        if regime_name is not None:
-            grids.update(_build_discrete_action_lookup(model.regimes[regime_name]))
+    grids.update(_build_discrete_grid_lookup(model.regimes))
+    if regime_name is not None:
+        grids.update(_build_discrete_action_lookup(model.regimes[regime_name]))
     if categoricals is not None:
-        grids.update(categoricals)
+        for name, grid in categoricals.items():
+            if name in grids:
+                if grids[name].categories != grid.categories:
+                    msg = (
+                        f"Explicit categorical '{name}' conflicts with "
+                        f"model grid: {grid.categories} vs "
+                        f"{grids[name].categories}."
+                    )
+                    raise ValueError(msg)
+            else:
+                grids[name] = grid
     return grids
+
+
+def _get_func_indexing_params(
+    *,
+    func: Callable,
+    regime: Regime,
+) -> list[str]:
+    """Return indexing parameter names for a function in a regime.
+
+    Indexing parameters are function arguments that correspond to states,
+    actions, or `"period"` (the dimensions that define the array's axes).
+    Return them in signature declaration order.
+
+    Args:
+        func: The function to inspect.
+        regime: The regime providing state and action names.
+
+    Returns:
+        List of parameter names that are indexing variables.
+
+    """
+    sig = inspect.signature(func)
+    indexing_vars = {*regime.states, *regime.actions, "period"}
+    return [p for p in sig.parameters if p in indexing_vars]
+
+
+def _resolve_param_indexing(
+    *,
+    param_path: tuple[str, ...],
+    model: Model,
+) -> tuple[list[str], str | None]:
+    """Resolve a param path to indexing params and regime name.
+
+    Look up the parameter in the model's regimes. Find the function(s) that
+    use it, inspect their signatures, and return the indexing parameters
+    (states, actions, period) in declaration order.
+
+    If the path matches multiple functions, verify all have identical
+    indexing params.
+
+    Args:
+        param_path: Tuple of 1-3 elements identifying the parameter:
+            `(param,)`, `(func, param)`, or `(regime, func, param)`.
+        model: The LCM Model instance.
+
+    Returns:
+        Tuple of (indexing_params, regime_name). `regime_name` is `None`
+        when the path matches multiple regimes.
+
+    Raises:
+        ValueError: If the path has an invalid length, points to a
+            nonexistent regime/function/parameter, or matches functions
+            with inconsistent indexing params.
+
+    """
+    match param_path:
+        case (_, _, _):
+            return _resolve_3_part_path(param_path, model)
+        case (_, _):
+            return _resolve_2_part_path(param_path, model)
+        case (_,):
+            return _resolve_1_part_path(param_path, model)
+        case _:
+            msg = (
+                f"param_path must have 1-3 elements, "
+                f"got {len(param_path)}: {param_path}."
+            )
+            raise ValueError(msg)
+
+
+def _resolve_3_part_path(
+    param_path: tuple[str, ...],
+    model: Model,
+) -> tuple[list[str], str]:
+    """Resolve a fully qualified (regime, func, param) path."""
+    regime_name, func_name, param_name = param_path
+
+    if regime_name not in model.regimes:
+        msg = (
+            f"Regime '{regime_name}' not found in model. "
+            f"Available: {sorted(model.regimes)}."
+        )
+        raise ValueError(msg)
+
+    regime = model.regimes[regime_name]
+    all_funcs = regime.get_all_functions()
+    if func_name not in all_funcs:
+        msg = (
+            f"Function '{func_name}' not found in regime '{regime_name}'. "
+            f"Available: {sorted(all_funcs)}."
+        )
+        raise ValueError(msg)
+
+    func = all_funcs[func_name]
+    sig = inspect.signature(func)
+    if param_name not in sig.parameters:
+        msg = (
+            f"Parameter '{param_name}' not found in function '{func_name}' "
+            f"of regime '{regime_name}'. "
+            f"Available: {sorted(sig.parameters)}."
+        )
+        raise ValueError(msg)
+
+    return _get_func_indexing_params(func=func, regime=regime), regime_name
+
+
+def _resolve_2_part_path(
+    param_path: tuple[str, ...],
+    model: Model,
+) -> tuple[list[str], str | None]:
+    """Resolve a (func, param) path by scanning all regimes."""
+    func_name, param_name = param_path
+
+    matches: list[tuple[list[str], str]] = []
+    for regime_name, regime in model.regimes.items():
+        all_funcs = regime.get_all_functions()
+        if func_name not in all_funcs:
+            continue
+        func = all_funcs[func_name]
+        sig = inspect.signature(func)
+        if param_name not in sig.parameters:
+            continue
+        indexing = _get_func_indexing_params(func=func, regime=regime)
+        matches.append((indexing, regime_name))
+
+    if not matches:
+        msg = (
+            f"No function '{func_name}' with parameter '{param_name}' found "
+            f"in any regime."
+        )
+        raise ValueError(msg)
+
+    _fail_if_inconsistent_indexing(matches, param_path)
+
+    regime_name = matches[0][1] if len(matches) == 1 else None
+    return matches[0][0], regime_name
+
+
+def _resolve_1_part_path(
+    param_path: tuple[str, ...],
+    model: Model,
+) -> tuple[list[str], str | None]:
+    """Resolve a (param,) path by scanning all regimes and functions."""
+    (param_name,) = param_path
+
+    matches: list[tuple[list[str], str]] = []
+    for regime_name, regime in model.regimes.items():
+        all_funcs = regime.get_all_functions()
+        for func in all_funcs.values():
+            sig = inspect.signature(func)
+            if param_name not in sig.parameters:
+                continue
+            indexing = _get_func_indexing_params(func=func, regime=regime)
+            matches.append((indexing, regime_name))
+
+    if not matches:
+        msg = f"No function with parameter '{param_name}' found in any regime."
+        raise ValueError(msg)
+
+    _fail_if_inconsistent_indexing(matches, param_path)
+
+    regime_names = {m[1] for m in matches}
+    regime_name = matches[0][1] if len(regime_names) == 1 else None
+    return matches[0][0], regime_name
+
+
+def _fail_if_inconsistent_indexing(
+    matches: list[tuple[list[str], str]],
+    param_path: tuple[str, ...],
+) -> None:
+    """Raise if matched functions have different indexing params."""
+    indexing_sets = {tuple(m[0]) for m in matches}
+    if len(indexing_sets) > 1:
+        msg = (
+            f"param_path {param_path} matches functions with different "
+            f"indexing parameters: {sorted(indexing_sets)}. "
+            f"Use a fully qualified 3-part path (regime, func, param)."
+        )
+        raise ValueError(msg)
+
+
+def _filter_to_grid_ages(
+    *,
+    series: pd.Series,
+    ages: AgeGrid,
+) -> pd.Series:
+    """Keep only rows whose `"age"` level value is on the `AgeGrid`."""
+    grid_ages = {float(v) for v in ages.exact_values}
+    age_values = series.index.get_level_values("age")
+    mask = [float(a) in grid_ages for a in age_values]
+    return series.loc[mask]
 
 
 @dataclass(frozen=True)
@@ -406,6 +568,41 @@ def _grid_level_mapping(name: str, grid: DiscreteGrid) -> _LevelMapping:
         label_to_index=label_to_code.__getitem__,
         valid_labels=grid.categories,
     )
+
+
+def _build_level_mappings_for_param(
+    indexing_params: list[str],
+    all_grids: dict[str, DiscreteGrid],
+    ages: AgeGrid,
+) -> tuple[_LevelMapping, ...]:
+    """Build level mappings for `array_from_series` from indexing params.
+
+    Like `_build_level_mappings` but without an outcome mapping (used for
+    non-transition parameters).
+
+    Args:
+        indexing_params: Parameter names in output axis order, with
+            `"period"` already replaced by `"age"`.
+        all_grids: Categorical grid lookup.
+        ages: The model's `AgeGrid`.
+
+    Returns:
+        Tuple of `_LevelMapping` instances.
+
+    """
+    mappings: list[_LevelMapping] = []
+    for param in indexing_params:
+        if param == "age":
+            mappings.append(_age_level_mapping(ages))
+        elif param in all_grids:
+            mappings.append(_grid_level_mapping(param, all_grids[param]))
+        else:
+            msg = (
+                f"Unrecognised indexing parameter '{param}'. Expected 'age', "
+                f"or a discrete grid name ({sorted(all_grids)})."
+            )
+            raise ValueError(msg)
+    return tuple(mappings)
 
 
 def _scatter_series(
@@ -458,101 +655,6 @@ def _map_level(mapping: _LevelMapping, level_values: pd.Index) -> np.ndarray:
             f"Valid labels: {sorted(mapping.valid_labels)}."
         )
         raise ValueError(msg) from None
-
-
-def _age_series_to_array(series: pd.Series, *, ages: AgeGrid) -> Array:
-    """Convert a Series with age index to a 1D JAX array, NaN-filling gaps."""
-    grid_ages = {float(v) for v in ages.exact_values}
-    filtered = series.loc[[a for a in series.index if float(a) in grid_ages]]
-    period_indices = np.array([ages.age_to_period(float(a)) for a in filtered.index])
-
-    result = np.full(ages.n_periods, np.nan)
-    result[period_indices] = filtered.to_numpy()
-    return jnp.array(result)
-
-
-def _categorical_series_to_array(series: pd.Series, *, grid: DiscreteGrid) -> Array:
-    """Convert a Series indexed by categorical labels to a 1D JAX array."""
-    label_to_code = dict(zip(grid.categories, grid.codes, strict=True))
-    result = np.full(len(grid.categories), np.nan)
-    for label, value in series.items():
-        if label not in label_to_code:
-            msg = (
-                f"Invalid label {label!r} for categorical '{series.index.name}'. "
-                f"Valid labels: {list(grid.categories)}."
-            )
-            raise ValueError(msg)
-        result[label_to_code[label]] = float(value)
-    return jnp.array(result)
-
-
-def _multiindex_series_to_array(
-    series: pd.Series,
-    *,
-    ages: AgeGrid | None,
-    grids: dict[str, DiscreteGrid],
-) -> Array:
-    """Convert a MultiIndex Series to a JAX array using age + categorical mapping."""
-    index: pd.MultiIndex = series.index  # ty: ignore[invalid-assignment]
-    level_names = list(index.names)
-
-    has_age = "age" in level_names
-    cat_levels = [name for name in level_names if name != "age"]
-
-    # Validate: every non-age level must have a categorical
-    for level in cat_levels:
-        if level not in grids:
-            msg = (
-                f"No categorical mapping for index level {level!r}. "
-                f"Provide it via `categoricals` or `model`. "
-                f"Available: {sorted(grids)}."
-            )
-            raise ValueError(msg)
-
-    if len(cat_levels) != 1:
-        msg = f"Expected exactly one non-age index level, but got {cat_levels}."
-        raise ValueError(msg)
-
-    cat_level = str(cat_levels[0])
-    cat_grid = grids[cat_level]
-    label_to_code = dict(zip(cat_grid.categories, cat_grid.codes, strict=True))
-    n_cats = len(cat_grid.categories)
-
-    if has_age and ages is not None:
-        grid_ages = {float(v) for v in ages.exact_values}
-        result = np.full((ages.n_periods, n_cats), np.nan)
-
-        age_pos = level_names.index("age")
-        cat_pos = 1 - age_pos  # the other position
-        for idx, value in series.items():
-            tup = idx if isinstance(idx, tuple) else (idx,)
-            age_f = float(str(tup[age_pos]))
-            cat_label = str(tup[cat_pos])
-            if age_f not in grid_ages:
-                continue
-            if cat_label not in label_to_code:
-                msg = (
-                    f"Invalid label {cat_label!r} for level {cat_level!r}. "
-                    f"Valid: {list(cat_grid.categories)}."
-                )
-                raise ValueError(msg)
-            period = ages.age_to_period(age_f)
-            result[period, label_to_code[cat_label]] = float(value)
-    else:
-        # No age dimension — just categorical MultiIndex
-        result = np.full(n_cats, np.nan)
-        for idx, value in series.items():
-            tup = idx if isinstance(idx, tuple) else (idx,)
-            cat_label = str(tup[0])
-            if cat_label not in label_to_code:
-                msg = (
-                    f"Invalid label {cat_label!r} for level {cat_level!r}. "
-                    f"Valid: {list(cat_grid.categories)}."
-                )
-                raise ValueError(msg)
-            result[label_to_code[cat_label]] = float(value)
-
-    return jnp.array(result)
 
 
 def _infer_transition_target(series: pd.Series) -> str | None:

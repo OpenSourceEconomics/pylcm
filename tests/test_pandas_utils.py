@@ -17,7 +17,6 @@ from lcm.error_handling import validate_transition_probs
 from lcm.pandas_utils import (
     _build_discrete_grid_lookup,
     array_from_series,
-    array_mapping_from_dataframe,
     initial_conditions_from_dataframe,
     transition_probs_from_series,
 )
@@ -493,7 +492,7 @@ def test_transition_probs_infers_regime_name():
 
 def test_transition_probs_per_target_requires_regime_name():
     """Per-target dict with MarkovTransition requires explicit regime_name."""
-    from lcm import AgeGrid, MarkovTransition, Model  # noqa: PLC0415
+    from lcm import MarkovTransition, Model  # noqa: PLC0415
 
     @categorical(ordered=False)
     class RegimeId:
@@ -705,242 +704,270 @@ def test_validate_regime_transition_probs_not_markov_raises():
         validate_transition_probs(probs=arr, model=model, regime_name="working_life")
 
 
-_AGES_51_55 = AgeGrid(start=51, stop=55, step="Y")
+def _build_partner_probs_series(model):
+    """Build a Series with age x labor_supply x partner MultiIndex for probs_array."""
+    partner_labels = ("single", "partnered")
+    work_labels = ("work", "retire")
+    ages = model.ages.values  # noqa: PD011
 
+    records = []
+    val = 1.0
+    for period_idx in range(model.n_periods):
+        for w_label in work_labels:
+            for p_label in partner_labels:
+                records.append(((float(ages[period_idx]), w_label, p_label), val))
+                val += 1.0
 
-@categorical(ordered=True)
-class _AB:
-    a: int
-    b: int
-
-
-_AB_GRID = DiscreteGrid(_AB)
-
-
-def test_array_from_series_simple_age_index() -> None:
-    series = pd.Series(
-        [10.0, 20.0, 30.0, 40.0, 50.0],
-        index=pd.Index([51, 52, 53, 54, 55], name="age"),
-    )
-    result = array_from_series(data=series, ages=_AGES_51_55)
-    expected = jnp.array([10.0, 20.0, 30.0, 40.0, 50.0])
-    np.testing.assert_allclose(result, expected)
-
-
-def test_array_from_series_multiindex_with_categoricals() -> None:
     index = pd.MultiIndex.from_tuples(
-        [
-            (51, "a"),
-            (51, "b"),
-            (52, "a"),
-            (52, "b"),
-            (53, "a"),
-            (53, "b"),
-            (54, "a"),
-            (54, "b"),
-            (55, "a"),
-            (55, "b"),
-        ],
-        names=["age", "category"],
+        [r[0] for r in records],
+        names=["age", "labor_supply", "partner"],
     )
-    values = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
-    series = pd.Series(values, index=index)
+    return pd.Series([r[1] for r in records], index=index)
+
+
+def test_array_from_series_3_part_path() -> None:
+    """Fully qualified (regime, func, param) path produces correct shape."""
+    model = get_stochastic_model(3)
+    series = _build_partner_probs_series(model)
     result = array_from_series(
-        data=series, ages=_AGES_51_55, categoricals={"category": _AB_GRID}
+        sr=series,
+        model=model,
+        param_path=("working_life", "next_partner", "probs_array"),
     )
-    expected = jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0], [9.0, 10.0]])
-    np.testing.assert_allclose(result, expected)
+    assert result.shape == (3, 2, 2)
+    # First element: age=40, work, single
+    assert float(result[0, 0, 0]) == pytest.approx(1.0)
 
 
-def test_array_from_series_categorical_only() -> None:
-    """No ages, just categorical index → 1D array by category."""
-    series = pd.Series([100.0, 200.0], index=pd.Index(["a", "b"], name="category"))
-    result = array_from_series(data=series, categoricals={"category": _AB_GRID})
-    np.testing.assert_allclose(result, jnp.array([100.0, 200.0]))
+def test_array_from_series_2_part_path() -> None:
+    """Function-level path scans regimes for the function."""
+    model = get_stochastic_model(3)
+    series = _build_partner_probs_series(model)
+    # next_partner exists in both working_life and retirement, but with
+    # different indexing params (working_life has labor_supply action,
+    # retirement does not). So 2-part should fail with inconsistent indexing.
+    with pytest.raises(ValueError, match="different indexing"):
+        array_from_series(
+            sr=series,
+            model=model,
+            param_path=("next_partner", "probs_array"),
+        )
 
 
-def test_array_from_series_multiindex_no_categorical_raises() -> None:
-    """MultiIndex with non-age level but no categorical → ValueError."""
-    index = pd.MultiIndex.from_tuples([(51, "x"), (51, "y")], names=["age", "mystery"])
-    series = pd.Series([1.0, 2.0], index=index)
-    with pytest.raises(ValueError, match="No categorical mapping"):
-        array_from_series(data=series, ages=_AGES_51_55)
-
-
-def test_array_from_series_invalid_label_raises() -> None:
-    """Label not in categorical → ValueError."""
-    series = pd.Series([1.0], index=pd.Index(["z"], name="category"))
-    with pytest.raises(ValueError, match="Invalid label"):
-        array_from_series(data=series, categoricals={"category": _AB_GRID})
-
-
-def test_array_mapping_from_dataframe_simple_age_index() -> None:
-    df = pd.DataFrame(
-        {"x": [1.0, 2.0, 3.0, 4.0, 5.0], "y": [10.0, 20.0, 30.0, 40.0, 50.0]},
-        index=pd.Index([51, 52, 53, 54, 55], name="age"),
+def test_array_from_series_scalar_param() -> None:
+    """Scalar parameter (no indexing params) returns 1D array from values."""
+    model = get_stochastic_model(3)
+    # labor_income(is_working, wage) -- is_working is a function output, not
+    # a state or action, so wage has no indexing params.
+    series = pd.Series([10.0])
+    result = array_from_series(
+        sr=series,
+        model=model,
+        param_path=("working_life", "labor_income", "wage"),
     )
-    result = array_mapping_from_dataframe(data=df, ages=_AGES_51_55)
-    assert isinstance(result, dict)
-    assert set(result.keys()) == {"x", "y"}
-    np.testing.assert_allclose(result["x"], jnp.array([1.0, 2.0, 3.0, 4.0, 5.0]))
-    np.testing.assert_allclose(result["y"], jnp.array([10.0, 20.0, 30.0, 40.0, 50.0]))
+    np.testing.assert_allclose(result, jnp.array([10.0]))
 
 
-def test_array_mapping_from_dataframe_with_categoricals() -> None:
+def test_array_from_series_extra_ages_dropped() -> None:
+    """Ages outside the model's AgeGrid are silently dropped."""
+    model = get_stochastic_model(3)
+    # Model ages: 40, 50, 60. Add data for ages 30 and 70.
+    partner_labels = ("single", "partnered")
+    work_labels = ("work", "retire")
+    all_ages = [30.0, 40.0, 50.0, 60.0, 70.0]
+
+    records = []
+    val = 1.0
+    for age in all_ages:
+        for w_label in work_labels:
+            for p_label in partner_labels:
+                records.append(((age, w_label, p_label), val))
+                val += 1.0
+
     index = pd.MultiIndex.from_tuples(
-        [
-            (51, "a"),
-            (51, "b"),
-            (52, "a"),
-            (52, "b"),
-            (53, "a"),
-            (53, "b"),
-            (54, "a"),
-            (54, "b"),
-            (55, "a"),
-            (55, "b"),
-        ],
-        names=["age", "category"],
+        [r[0] for r in records],
+        names=["age", "labor_supply", "partner"],
     )
-    df = pd.DataFrame(
-        {"x": range(10), "y": range(10, 20)},
-        index=index,
-        dtype=float,
+    series = pd.Series([r[1] for r in records], index=index)
+    result = array_from_series(
+        sr=series,
+        model=model,
+        param_path=("working_life", "next_partner", "probs_array"),
     )
-    result = array_mapping_from_dataframe(
-        data=df, ages=_AGES_51_55, categoricals={"category": _AB_GRID}
-    )
-    assert isinstance(result, dict)
-    assert result["x"].shape == (5, 2)
-    np.testing.assert_allclose(
-        result["x"],
-        jnp.array([[0.0, 1.0], [2.0, 3.0], [4.0, 5.0], [6.0, 7.0], [8.0, 9.0]]),
-    )
+    assert result.shape == (3, 2, 2)
+    # age=30 was idx 0 in input (vals 1-4), age=40 was idx 1 (vals 5-8)
+    assert float(result[0, 0, 0]) == pytest.approx(5.0)
 
 
 def test_array_from_series_missing_ages_filled_with_nan() -> None:
     """Missing grid ages produce NaN instead of raising."""
-    series = pd.Series(
-        [10.0, 20.0, 30.0],
-        index=pd.Index([51, 52, 53], name="age"),
-    )
-    result = array_from_series(data=series, ages=_AGES_51_55)
-    assert result.shape == (5,)
-    np.testing.assert_allclose(result[:3], jnp.array([10.0, 20.0, 30.0]))
-    assert jnp.isnan(result[3])
-    assert jnp.isnan(result[4])
+    model = get_stochastic_model(3)
+    # Only provide data for age=40, not 50 or 60
+    records = []
+    val = 1.0
+    for w_label in ("work", "retire"):
+        for p_label in ("single", "partnered"):
+            records.append(((40.0, w_label, p_label), val))
+            val += 1.0
 
-
-def test_array_from_series_extra_ages_dropped() -> None:
-    series = pd.Series(
-        [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0],
-        index=pd.Index([49, 50, 51, 52, 53, 54, 55], name="age"),
-    )
-    result = array_from_series(data=series, ages=_AGES_51_55)
-    expected = jnp.array([30.0, 40.0, 50.0, 60.0, 70.0])
-    np.testing.assert_allclose(result, expected)
-
-
-def test_array_from_series_no_ages_no_categoricals() -> None:
-    """No ages, no categoricals → plain value conversion."""
-    series = pd.Series([1.0, 2.0, 3.0], index=["a", "b", "c"])
-    result = array_from_series(data=series)
-    expected = jnp.array([1.0, 2.0, 3.0])
-    np.testing.assert_allclose(result, expected)
-
-
-@categorical(ordered=False)
-class _CD:
-    c: int
-    d: int
-
-
-_CD_GRID = DiscreteGrid(_CD)
-
-
-def test_array_from_series_expected_levels_two_categoricals() -> None:
-    """expected_levels with two categorical levels → 2D array."""
     index = pd.MultiIndex.from_tuples(
-        [("a", "c"), ("a", "d"), ("b", "c"), ("b", "d")],
-        names=["category", "category2"],
+        [r[0] for r in records],
+        names=["age", "labor_supply", "partner"],
     )
-    series = pd.Series([1.0, 2.0, 3.0, 4.0], index=index)
+    series = pd.Series([r[1] for r in records], index=index)
     result = array_from_series(
-        data=series,
-        categoricals={"category": _AB_GRID, "category2": _CD_GRID},
-        expected_levels=("category", "category2"),
+        sr=series,
+        model=model,
+        param_path=("working_life", "next_partner", "probs_array"),
     )
-    expected = jnp.array([[1.0, 2.0], [3.0, 4.0]])
-    np.testing.assert_allclose(result, expected)
-
-
-def test_array_from_series_expected_levels_age_and_two_categoricals() -> None:
-    """expected_levels with age + two categoricals → 3D array."""
-    index = pd.MultiIndex.from_tuples(
-        [
-            (51, "a", "c"),
-            (51, "a", "d"),
-            (51, "b", "c"),
-            (51, "b", "d"),
-            (52, "a", "c"),
-            (52, "a", "d"),
-            (52, "b", "c"),
-            (52, "b", "d"),
-        ],
-        names=["age", "category", "category2"],
-    )
-    series = pd.Series([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], index=index)
-    result = array_from_series(
-        data=series,
-        ages=_AGES_51_55,
-        categoricals={"category": _AB_GRID, "category2": _CD_GRID},
-        expected_levels=("age", "category", "category2"),
-    )
-    assert result.shape == (5, 2, 2)
-    # age=51 filled
-    np.testing.assert_allclose(result[0], jnp.array([[1.0, 2.0], [3.0, 4.0]]))
-    # age=52 filled
-    np.testing.assert_allclose(result[1], jnp.array([[5.0, 6.0], [7.0, 8.0]]))
-    # age=53-55 NaN
+    assert result.shape == (3, 2, 2)
+    # age=40 (period 0) filled
+    assert not jnp.any(jnp.isnan(result[0]))
+    # age=50, age=60 all NaN
+    assert jnp.all(jnp.isnan(result[1]))
     assert jnp.all(jnp.isnan(result[2]))
 
 
-def test_array_from_series_expected_levels_reorders() -> None:
-    """Levels in the Series can be in any order; expected_levels controls output."""
-    index = pd.MultiIndex.from_tuples(
-        [("c", "a"), ("d", "a"), ("c", "b"), ("d", "b")],
-        names=["category2", "category"],
-    )
-    series = pd.Series([1.0, 2.0, 3.0, 4.0], index=index)
+def test_array_from_series_reordered_levels() -> None:
+    """MultiIndex with levels in different order still produces correct output."""
+    model = get_stochastic_model(3)
+    series = _build_partner_probs_series(model)
+    # Reorder: partner, labor_supply, age
+    series = series.reorder_levels(["partner", "labor_supply", "age"])
     result = array_from_series(
-        data=series,
-        categoricals={"category": _AB_GRID, "category2": _CD_GRID},
-        expected_levels=("category", "category2"),
+        sr=series,
+        model=model,
+        param_path=("working_life", "next_partner", "probs_array"),
     )
-    # Output axes: category (a,b) x category2 (c,d)
-    expected = jnp.array([[1.0, 2.0], [3.0, 4.0]])
-    np.testing.assert_allclose(result, expected)
+    assert result.shape == (3, 2, 2)
+    assert float(result[0, 0, 0]) == pytest.approx(1.0)
 
 
-def test_array_from_series_expected_levels_wrong_names_raises() -> None:
-    """Mismatched level names should raise ValueError."""
-    index = pd.MultiIndex.from_tuples([("a", "c")], names=["category", "wrong"])
+def test_array_from_series_invalid_label_raises() -> None:
+    """Invalid categorical label raises ValueError."""
+    model = get_stochastic_model(3)
+    index = pd.MultiIndex.from_tuples(
+        [(40.0, "work", "INVALID")],
+        names=["age", "labor_supply", "partner"],
+    )
     series = pd.Series([1.0], index=index)
-    with pytest.raises(ValueError, match="level names"):
+    with pytest.raises(ValueError, match="Invalid labels"):
         array_from_series(
-            data=series,
-            categoricals={"category": _AB_GRID, "category2": _CD_GRID},
-            expected_levels=("category", "category2"),
+            sr=series,
+            model=model,
+            param_path=("working_life", "next_partner", "probs_array"),
         )
 
 
-def test_array_from_series_expected_levels_unknown_level_raises() -> None:
-    """Level name not in grids should raise ValueError."""
-    index = pd.MultiIndex.from_tuples([("a", "x")], names=["category", "unknown"])
+def test_array_from_series_wrong_level_names_raises() -> None:
+    """Level names that don't match expected indexing params raise ValueError."""
+    model = get_stochastic_model(3)
+    index = pd.MultiIndex.from_tuples(
+        [(40.0, "work", "single")],
+        names=["age", "labor_supply", "wrong_name"],
+    )
     series = pd.Series([1.0], index=index)
-    with pytest.raises(ValueError, match="No categorical mapping"):
+    with pytest.raises(ValueError, match="level names"):
         array_from_series(
-            data=series,
-            categoricals={"category": _AB_GRID},
-            expected_levels=("category", "unknown"),
+            sr=series,
+            model=model,
+            param_path=("working_life", "next_partner", "probs_array"),
+        )
+
+
+def test_array_from_series_unknown_param_path_raises() -> None:
+    """Nonexistent param_path raises ValueError."""
+    model = get_stochastic_model(3)
+    series = pd.Series([1.0])
+    with pytest.raises(ValueError, match="not found"):
+        array_from_series(
+            sr=series,
+            model=model,
+            param_path=("working_life", "nonexistent_func", "some_param"),
+        )
+
+
+def test_array_from_series_unknown_1_part_param_raises() -> None:
+    """Nonexistent 1-part param_path raises ValueError."""
+    model = get_stochastic_model(3)
+    series = pd.Series([1.0])
+    with pytest.raises(ValueError, match="No function with parameter"):
+        array_from_series(
+            sr=series,
+            model=model,
+            param_path=("totally_fake_param",),
+        )
+
+
+def test_array_from_series_2_part_path_consistent() -> None:
+    """Function-level path succeeds when function is unique across regimes."""
+    model = get_stochastic_model(3)
+    # labor_income only exists in working_life. wage has no indexing params.
+    series = pd.Series([10.0])
+    result = array_from_series(
+        sr=series,
+        model=model,
+        param_path=("labor_income", "wage"),
+    )
+    np.testing.assert_allclose(result, jnp.array([10.0]))
+
+
+def test_array_from_series_1_part_path_consistent() -> None:
+    """Model-level path succeeds when param has consistent indexing."""
+    model = get_stochastic_model(3)
+    # wage only appears in working_life.labor_income — unique, no ambiguity
+    series = pd.Series([10.0])
+    result = array_from_series(
+        sr=series,
+        model=model,
+        param_path=("wage",),
+    )
+    np.testing.assert_allclose(result, jnp.array([10.0]))
+
+
+def test_array_from_series_invalid_path_length_raises() -> None:
+    """param_path with 0 or 4+ elements raises ValueError."""
+    model = get_stochastic_model(3)
+    series = pd.Series([1.0])
+    with pytest.raises(ValueError, match="1-3 elements"):
+        array_from_series(sr=series, model=model, param_path=())
+    with pytest.raises(ValueError, match="1-3 elements"):
+        array_from_series(sr=series, model=model, param_path=("a", "b", "c", "d"))
+
+
+def test_array_mapping_from_dataframe() -> None:
+    """Convert DataFrame columns to arrays via param_path."""
+    from lcm.pandas_utils import array_mapping_from_dataframe  # noqa: PLC0415
+
+    model = get_stochastic_model(3)
+    # Two scalar columns for labor_income's wage param (no indexing)
+    df = pd.DataFrame({"col_a": [1.0, 2.0], "col_b": [3.0, 4.0]})
+    result = array_mapping_from_dataframe(
+        data=df,
+        model=model,
+        param_path=("labor_income", "wage"),
+    )
+    assert isinstance(result, dict)
+    assert set(result.keys()) == {"col_a", "col_b"}
+    np.testing.assert_allclose(result["col_a"], jnp.array([1.0, 2.0]))
+    np.testing.assert_allclose(result["col_b"], jnp.array([3.0, 4.0]))
+
+
+def test_resolve_categoricals_conflict_raises() -> None:
+    """Categoricals that conflict with model grids raise ValueError."""
+    from lcm.pandas_utils import _resolve_categoricals  # noqa: PLC0415
+
+    model = get_stochastic_model(3)
+
+    @categorical(ordered=False)
+    class WrongPartner:
+        x: int
+        y: int
+
+    conflicting = {"partner": DiscreteGrid(WrongPartner)}
+    with pytest.raises(ValueError, match="conflicts with model grid"):
+        _resolve_categoricals(
+            model=model,
+            regime_name="working_life",
+            categoricals=conflicting,
         )
