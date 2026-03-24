@@ -204,8 +204,8 @@ def process_regimes(
             enable_jit=enable_jit,
         )
         next_state = build_next_state_simulation_functions(
-            transitions=transitions,
             functions=solve_funcs,
+            transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
             grids=grids,
             gridspecs=gridspecs[name],

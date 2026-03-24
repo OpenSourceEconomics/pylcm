@@ -28,30 +28,30 @@ from lcm.typing import (
 
 def get_Q_and_F(
     *,
-    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
-    period: int,
+    flat_param_names: frozenset[str],
     age: float,
-    next_state_space_infos: MappingProxyType[RegimeName, StateSpaceInfo],
+    period: int,
     functions: MappingProxyType[str, InternalUserFunction],
     constraints: MappingProxyType[str, InternalUserFunction],
     transitions: TransitionFunctionsMapping,
-    regime_transition_probs: RegimeTransitionFunction,
     stochastic_transition_names: frozenset[str],
-    flat_param_names: frozenset[str],
+    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    regime_transition_probs: RegimeTransitionFunction,
+    next_state_space_infos: MappingProxyType[RegimeName, StateSpaceInfo],
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
     Args:
-        regimes_to_active_periods: Mapping regime names to their active periods.
-        period: The current period.
+        flat_param_names: Frozenset of flat parameter names for the regime.
         age: The age corresponding to the current period.
-        next_state_space_infos: The state space information of the next period.
+        period: The current period.
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to internal user functions.
         transitions: Immutable mapping of transition names to transition functions.
-        regime_transition_probs: Regime transition probability function for solve.
         stochastic_transition_names: Frozenset of stochastic transition function names.
-        flat_param_names: Frozenset of flat parameter names for the regime.
+        regimes_to_active_periods: Mapping regime names to their active periods.
+        regime_transition_probs: Regime transition probability function for solve.
+        next_state_space_infos: The state space information of the next period.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -84,16 +84,16 @@ def get_Q_and_F(
         )
         next_stochastic_states_weights[target_regime_name] = (
             get_next_stochastic_weights_function(
-                regime_name=target_regime_name,
                 functions=functions,
                 transitions=target_transitions,
                 stochastic_transition_names=stochastic_transition_names,
+                regime_name=target_regime_name,
             )
         )
         joint_weights_from_marginals[target_regime_name] = _get_joint_weights_function(
-            regime_name=target_regime_name,
             transitions=target_transitions,
             stochastic_transition_names=stochastic_transition_names,
+            regime_name=target_regime_name,
         )
         V_arr_name = "next_V_arr"
         next_V_interpolator = get_V_interpolator(
@@ -228,20 +228,20 @@ def get_Q_and_F(
 
 def get_Q_and_F_terminal(
     *,
+    flat_param_names: frozenset[str],
+    age: float,
+    period: int,
     functions: MappingProxyType[str, InternalUserFunction],
     constraints: MappingProxyType[str, InternalUserFunction],
-    period: int,
-    age: float,
-    flat_param_names: frozenset[str],
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for the terminal period.
 
     Args:
+        flat_param_names: Frozenset of flat parameter names for the regime.
+        age: The age corresponding to the current period.
+        period: The current period.
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to internal user functions.
-        period: The current period.
-        age: The age corresponding to the current period.
-        flat_param_names: Frozenset of flat parameter names for the regime.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -310,9 +310,9 @@ def _get_arg_names_of_Q_and_F(
 
 def _get_joint_weights_function(
     *,
-    regime_name: RegimeName,
     transitions: MappingProxyType[str, InternalUserFunction],
     stochastic_transition_names: frozenset[str],
+    regime_name: RegimeName,
 ) -> Callable[..., FloatND]:
     """Get function that calculates the joint weights.
 
@@ -321,9 +321,9 @@ def _get_joint_weights_function(
     stochastic variables.
 
     Args:
-        regime_name: Name of the target regime.
         transitions: Transitions of the target regime.
         stochastic_transition_names: Frozenset of stochastic transition function names.
+        regime_name: Name of the target regime.
 
     Returns:
         A function that computes the outer product of the weights of the stochastic

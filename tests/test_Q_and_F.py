@@ -61,11 +61,11 @@ def test_get_Q_and_F_function():
     # Test terminal period Q_and_F where Q = U (no continuation value)
     solve = internal_regimes["working_life"].solve_functions
     Q_and_F = get_Q_and_F_terminal(
+        flat_param_names=flat_param_names,
+        age=ages.period_to_age(3),
+        period=3,
         functions=solve.functions,
         constraints=solve.constraints,
-        period=3,
-        age=ages.period_to_age(3),
-        flat_param_names=flat_param_names,
     )
 
     consumption = jnp.array([10, 20, 30])

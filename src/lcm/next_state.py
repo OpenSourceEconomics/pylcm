@@ -28,14 +28,14 @@ from lcm.utils import flatten_regime_namespace
 
 def get_next_state_function_for_solution(
     *,
-    transitions: MappingProxyType[str, InternalUserFunction],
     functions: MappingProxyType[str, InternalUserFunction],
+    transitions: MappingProxyType[str, InternalUserFunction],
 ) -> NextStateSimulationFunction:
     """Get function that computes the next states during the solution.
 
     Args:
-        transitions: Transitions to the next states of a regime.
         functions: Immutable mapping of auxiliary functions of a regime.
+        transitions: Transitions to the next states of a regime.
 
     Returns:
         Function that computes the next states. Depends on states and actions of the
@@ -57,22 +57,22 @@ def get_next_state_function_for_solution(
 
 def get_next_state_function_for_simulation(
     *,
-    transitions: MappingProxyType[str, InternalUserFunction],
     functions: MappingProxyType[str, InternalUserFunction],
+    transitions: MappingProxyType[str, InternalUserFunction],
+    stochastic_transition_names: frozenset[str] = frozenset(),
     grids: GridsDict,
     gridspecs: MappingProxyType[str, Grid],
     variable_info: pd.DataFrame,
-    stochastic_transition_names: frozenset[str] = frozenset(),
 ) -> NextStateSimulationFunction:
     """Get function that computes the next states during the simulation.
 
     Args:
+        functions: Immutable mapping of auxiliary functions of a regime.
+        transitions: Transitions to the next states of a regime.
+        stochastic_transition_names: Frozenset of stochastic transition function names.
         grids: Grids of a regime.
         gridspecs: The specifications of the current regimes grids.
         variable_info: Variable info of a regime.
-        transitions: Transitions to the next states of a regime.
-        functions: Immutable mapping of auxiliary functions of a regime.
-        stochastic_transition_names: Frozenset of stochastic transition function names.
 
     Returns:
         Function that computes the next states. Depends on states and actions of the
@@ -103,18 +103,18 @@ def get_next_state_function_for_simulation(
 
 def get_next_stochastic_weights_function(
     *,
-    regime_name: RegimeName,
     functions: MappingProxyType[str, InternalUserFunction],
     transitions: MappingProxyType[str, InternalUserFunction],
     stochastic_transition_names: frozenset[str],
+    regime_name: RegimeName,
 ) -> Callable[..., dict[str, Array]]:
     """Get function that computes the weights for the next stochastic states.
 
     Args:
-        regime_name: Name of the regime that the transitions target.
         functions: Immutable mapping of auxiliary functions of the model.
         transitions: Transitions to the target regime.
         stochastic_transition_names: Frozenset of stochastic transition function names.
+        regime_name: Name of the regime that the transitions target.
 
     Returns:
         Function that computes the weights for the next stochastic states.

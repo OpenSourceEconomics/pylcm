@@ -58,25 +58,25 @@ def build_Q_and_F_functions(
     for period, age in enumerate(ages.values):
         if regime.terminal:
             Q_and_F = get_Q_and_F_terminal(
+                flat_param_names=flat_param_names,
+                age=age,
+                period=period,
                 functions=functions,
                 constraints=constraints,
-                period=period,
-                age=age,
-                flat_param_names=flat_param_names,
             )
         else:
             assert regime_transition_probs is not None  # noqa: S101
             Q_and_F = get_Q_and_F(
-                regimes_to_active_periods=regimes_to_active_periods,
-                period=period,
+                flat_param_names=flat_param_names,
                 age=age,
-                next_state_space_infos=state_space_infos,
+                period=period,
                 functions=functions,
                 constraints=constraints,
                 transitions=transitions,
-                regime_transition_probs=regime_transition_probs,
                 stochastic_transition_names=stochastic_transition_names,
-                flat_param_names=flat_param_names,
+                regimes_to_active_periods=regimes_to_active_periods,
+                regime_transition_probs=regime_transition_probs,
+                next_state_space_infos=state_space_infos,
             )
         Q_and_F_functions[period] = Q_and_F
 
@@ -158,8 +158,8 @@ def _build_argmax_and_max_Q_over_a_function(
 
 def build_next_state_simulation_functions(
     *,
-    transitions: TransitionFunctionsMapping,
     functions: MappingProxyType[str, InternalUserFunction],
+    transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[str],
     grids: GridsDict,
     gridspecs: MappingProxyType[str, Grid],
@@ -168,12 +168,12 @@ def build_next_state_simulation_functions(
     enable_jit: bool,
 ) -> NextStateSimulationFunction:
     next_state = get_next_state_function_for_simulation(
-        transitions=flatten_regime_namespace(transitions),
         functions=functions,
-        variable_info=variable_info,
+        transitions=flatten_regime_namespace(transitions),
+        stochastic_transition_names=stochastic_transition_names,
         grids=grids,
         gridspecs=gridspecs,
-        stochastic_transition_names=stochastic_transition_names,
+        variable_info=variable_info,
     )
     sig_args = tuple(inspect.signature(next_state).parameters)
 
