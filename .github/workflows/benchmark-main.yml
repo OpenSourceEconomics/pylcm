@@ -27,10 +27,10 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install environment
-        run: pixi install -e tests-cuda12
+        run: pixi install -e tests-cuda13
       - name: Setup ASV machine
-        run: pixi run -e tests-cuda12 asv machine --yes
+        run: pixi run -e tests-cuda13 asv machine --yes
       - name: Run benchmarks and publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pixi run -e tests-cuda12 asv-run-and-publish-main
+        run: pixi run -e tests-cuda13 asv-run-and-publish-main
