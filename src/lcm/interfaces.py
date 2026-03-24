@@ -208,9 +208,6 @@ class InternalRegime:
     regime_params_template: RegimeParamsTemplate
     """Template for the parameter structure expected by this regime."""
 
-    state_space_info: StateSpaceInfo
-    """Metadata for working with function outputs on the state space."""
-
     max_Q_over_a_functions: MappingProxyType[int, MaxQOverAFunction]
     """Immutable mapping of period to max-Q-over-actions functions for solving."""
 

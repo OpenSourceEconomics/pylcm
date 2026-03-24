@@ -12,7 +12,7 @@ from jax import numpy as jnp
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, format_messages
 from lcm.grid_helpers import get_irreg_coordinate
-from lcm.grids import DiscreteGrid, Grid
+from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
 from lcm.input_processing.create_regime_params_template import (
     create_regime_params_template,
 )
@@ -31,11 +31,12 @@ from lcm.interfaces import (
     InternalFunctions,
     InternalRegime,
     PhaseVariant,
+    StateSpaceInfo,
 )
 from lcm.ndimage import map_coordinates
 from lcm.regime import MarkovTransition, Regime, _collect_state_transitions
 from lcm.shocks import _ShockGrid
-from lcm.state_action_space import create_state_action_space, create_state_space_info
+from lcm.state_action_space import create_state_action_space
 from lcm.typing import (
     Float1D,
     Int1D,
@@ -119,7 +120,7 @@ def process_regimes(
     )
 
     state_space_infos = MappingProxyType(
-        {n: create_state_space_info(r) for n, r in regimes.items()}
+        {n: _create_state_space_info(r) for n, r in regimes.items()}
     )
     state_action_spaces = MappingProxyType(
         {
@@ -208,7 +209,6 @@ def process_regimes(
             internal_functions=internal_functions,
             transitions=internal_functions.transitions,
             regime_params_template=regime_params_template,
-            state_space_info=state_space_infos[name],
             max_Q_over_a_functions=MappingProxyType(max_Q_over_a_functions),
             argmax_and_max_Q_over_a_functions=MappingProxyType(
                 argmax_and_max_Q_over_a_functions
@@ -903,3 +903,45 @@ def _get_simple_transition_discrete_grid(
         return None
     source_grid = regime.states[state_name]
     return source_grid if isinstance(source_grid, DiscreteGrid) else None
+
+
+def _create_state_space_info(regime: Regime) -> StateSpaceInfo:
+    """Create state space info for V-function interpolation.
+
+    For terminal regimes, only states entering concurrent valuation are included.
+
+    Args:
+        regime: Regime instance.
+
+    Returns:
+        State space information for the regime.
+
+    """
+    vi = get_variable_info(regime)
+    gridspecs = get_gridspecs(regime)
+
+    if regime.terminal:
+        vi = vi.query("enters_concurrent_valuation")
+
+    state_names = vi.query("is_state").index.tolist()
+
+    discrete_states = {
+        name: grid_spec
+        for name, grid_spec in gridspecs.items()
+        if (name in state_names and isinstance(grid_spec, DiscreteGrid))
+        or isinstance(grid_spec, _ShockGrid)
+    }
+
+    continuous_states = {
+        name: grid_spec
+        for name, grid_spec in gridspecs.items()
+        if name in state_names
+        and isinstance(grid_spec, ContinuousGrid)
+        and not isinstance(grid_spec, _ShockGrid)
+    }
+
+    return StateSpaceInfo(
+        state_names=tuple(state_names),
+        discrete_states=MappingProxyType(discrete_states),
+        continuous_states=MappingProxyType(continuous_states),
+    )
