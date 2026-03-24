@@ -33,11 +33,8 @@ jobs:
           fetch-depth: 0
       - name: Ensure main ref exists
         run: git fetch origin main:main || true
-      - uses: prefix-dev/setup-pixi@v0.9.4
-        with:
-          pixi-version: v0.63.2
-          environments: tests-cuda13
-          frozen: false
+      - name: Install environment
+        run: pixi install -e tests-cuda13
       - name: Setup ASV machine
         run: pixi run -e tests-cuda13 asv machine --yes
       - name: Run benchmarks and post PR comment
