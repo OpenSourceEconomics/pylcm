@@ -1,0 +1,36 @@
+---
+name: benchmark-main
+concurrency:
+  group: gpu-benchmarks
+  cancel-in-progress: false
+on:
+  push:
+    branches:
+      - main
+jobs:
+  run-benchmarks:
+    name: Run benchmarks on GPU and publish
+    runs-on:
+      - self-hosted
+      - gpu-benchmark
+    steps:
+      - name: Wait for GPU to be free
+        run: |
+          echo "Waiting for GPU to be free..."
+          while nvidia-smi --query-compute-apps=process_name --format=csv,noheader \
+                | grep -qi python; do
+            echo "$(date): GPU in use by Python process, retrying in 60s..."
+            sleep 60
+          done
+          echo "GPU is free."
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Install environment
+        run: pixi install -e tests-cuda12
+      - name: Setup ASV machine
+        run: pixi run -e tests-cuda12 asv machine --yes
+      - name: Run benchmarks and publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pixi run -e tests-cuda12 asv-run-and-publish-main
