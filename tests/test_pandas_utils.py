@@ -953,6 +953,104 @@ def test_array_mapping_from_dataframe() -> None:
     np.testing.assert_allclose(result["col_b"], jnp.array([3.0, 4.0]))
 
 
+def test_params_from_pandas_function_level_series() -> None:
+    """Series at function level is converted to array."""
+    from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
+
+    model = get_stochastic_model(3)
+    series = _build_partner_probs_series(model)
+    params = {
+        "working_life": {
+            "next_partner": {"probs_array": series},
+        },
+    }
+    result = params_from_pandas(params=params, model=model)
+    arr = result["working_life"]["next_partner"]["probs_array"]
+    assert arr.shape == (3, 2, 2)
+    assert float(arr[0, 0, 0]) == pytest.approx(1.0)
+
+
+def test_params_from_pandas_model_level_scalar_passthrough() -> None:
+    """Scalar values at model level pass through unchanged."""
+    from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
+
+    model = get_stochastic_model(3)
+    params = {"discount_factor": 0.95}
+    result = params_from_pandas(params=params, model=model)
+    assert result["discount_factor"] == 0.95
+
+
+def test_params_from_pandas_regime_level_series() -> None:
+    """Series at regime level is resolved via template and converted."""
+    from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
+
+    model = get_stochastic_model(3)
+    series = _build_partner_probs_series(model)
+    params = {
+        "working_life": {
+            "probs_array": series,
+        },
+    }
+    result = params_from_pandas(params=params, model=model)
+    arr = result["working_life"]["probs_array"]
+    assert arr.shape == (3, 2, 2)
+
+
+def test_params_from_pandas_mixed_dict() -> None:
+    """Mix of scalars, arrays, and Series in one params dict."""
+    from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
+
+    model = get_stochastic_model(3)
+    series = _build_partner_probs_series(model)
+    params = {
+        "discount_factor": 0.95,
+        "working_life": {
+            "utility": {"disutility_of_work": 0.5},
+            "next_partner": {"probs_array": series},
+            "next_wealth": {"interest_rate": 0.05},
+            "labor_income": {"wage": jnp.array([10.0])},
+        },
+    }
+    result = params_from_pandas(params=params, model=model)
+    assert result["discount_factor"] == 0.95
+    assert result["working_life"]["utility"]["disutility_of_work"] == 0.5
+    assert result["working_life"]["next_partner"]["probs_array"].shape == (3, 2, 2)
+    assert result["working_life"]["next_wealth"]["interest_rate"] == 0.05
+    np.testing.assert_allclose(
+        result["working_life"]["labor_income"]["wage"], jnp.array([10.0])
+    )
+
+
+def test_params_from_pandas_mapping_leaf() -> None:
+    """Series inside a MappingLeaf is converted."""
+    from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
+    from lcm.params import MappingLeaf  # noqa: PLC0415
+
+    model = get_stochastic_model(3)
+    series = _build_partner_probs_series(model)
+    leaf = MappingLeaf({"sub_key": series})
+    params = {
+        "working_life": {
+            "next_partner": {"probs_array": leaf},
+        },
+    }
+    result = params_from_pandas(params=params, model=model)
+    converted_leaf = result["working_life"]["next_partner"]["probs_array"]
+    assert isinstance(converted_leaf, MappingLeaf)
+    arr = converted_leaf.data["sub_key"]
+    assert arr.shape == (3, 2, 2)
+
+
+def test_params_from_pandas_unknown_param_raises() -> None:
+    """Unknown param name raises ValueError."""
+    from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
+
+    model = get_stochastic_model(3)
+    params = {"nonexistent_param": pd.Series([1.0])}
+    with pytest.raises(ValueError, match="No template match"):
+        params_from_pandas(params=params, model=model)
+
+
 def test_resolve_categoricals_conflict_raises() -> None:
     """Categoricals that conflict with model grids raise ValueError."""
     from lcm.pandas_utils import _resolve_categoricals  # noqa: PLC0415
