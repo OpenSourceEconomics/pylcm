@@ -108,11 +108,13 @@ def calculate_next_states(
     # Identify stochastic transitions and generate random keys
     # ---------------------------------------------------------------------------------
     stochastic_transition_names = (
-        internal_regime.internal_functions.stochastic_transition_names
+        internal_regime.simulate_functions.stochastic_transition_names
     )
     stochastic_next_function_names = [
         next_func_name
-        for next_func_name in flatten_regime_namespace(internal_regime.transitions)
+        for next_func_name in flatten_regime_namespace(
+            internal_regime.simulate_functions.transitions
+        )
         if tree_path_from_qname(next_func_name)[-1] in stochastic_transition_names
     ]
     # There is a bug that sometimes changes the order of the names,
@@ -127,7 +129,7 @@ def calculate_next_states(
 
     # Compute next states using regime's transition functions
     # ---------------------------------------------------------------------------------
-    next_state_vmapped = internal_regime.next_state_simulation_function
+    next_state_vmapped = internal_regime.simulate_functions.next_state
 
     states_with_next_prefix = next_state_vmapped(
         **state_action_space.states,
@@ -191,7 +193,7 @@ def calculate_next_regime_membership(
     # Compute regime transition probabilities
     # ---------------------------------------------------------------------------------
     regime_transition_probs: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
-        internal_regime.internal_functions.regime_transition_probs.simulate(  # ty: ignore[unresolved-attribute]
+        internal_regime.simulate_functions.regime_transition_probs(  # ty: ignore[call-non-callable]
             **state_action_space.states,
             **optimal_actions,
             period=period,

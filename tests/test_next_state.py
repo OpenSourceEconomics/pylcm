@@ -7,7 +7,6 @@ from pybaum import tree_equal
 
 from lcm.ages import AgeGrid
 from lcm.input_processing import process_regimes
-from lcm.interfaces import InternalFunctions, PhaseVariant
 from lcm.next_state import (
     _create_discrete_stochastic_next_func,
     get_next_state_function_for_simulation,
@@ -37,8 +36,8 @@ def test_get_next_state_function_with_solve_target():
     internal_working = internal_regimes["working_life"]
 
     got_func = get_next_state_function_for_solution(
-        transitions=internal_working.transitions["working_life"],
-        functions=internal_working.functions,
+        transitions=internal_working.solve_functions.transitions["working_life"],
+        functions=internal_working.solve_functions.functions,
     )
 
     flat_regime_params = {
@@ -72,22 +71,14 @@ def test_get_next_state_function_with_simulate_target():
     grids = MappingProxyType({"mock": MappingProxyType({"b": jnp.arange(2)})})
     gridspecs = MappingProxyType({})
     variable_info = pd.DataFrame({"is_shock": [False]})
-    mock_transition_solve = lambda *args, **kwargs: {"mock": 1.0}
-    mock_transition_simulate = lambda *args, **kwargs: {"mock": jnp.array([1.0])}
-    internal_functions = InternalFunctions(
-        constraints=MappingProxyType({}),
-        transitions=MappingProxyType({"next_a": f_a, "next_b": f_b}),  # ty: ignore[invalid-argument-type]
-        functions=MappingProxyType({"utility": lambda: 0, "f_weight_b": f_weight_b}),  # ty: ignore[invalid-argument-type]
-        regime_transition_probs=PhaseVariant(
-            solve=mock_transition_solve, simulate=mock_transition_simulate
-        ),
-    )
+    transitions = MappingProxyType({"next_a": f_a, "next_b": f_b})
+    functions = MappingProxyType({"utility": lambda: 0, "f_weight_b": f_weight_b})
     got_func = get_next_state_function_for_simulation(
         transitions=cast(
             "MappingProxyType[str, InternalUserFunction]",
-            internal_functions.transitions,
+            transitions,
         ),
-        functions=internal_functions.functions,
+        functions=functions,  # ty: ignore[invalid-argument-type]
         grids=grids,
         variable_info=variable_info,
         gridspecs=gridspecs,

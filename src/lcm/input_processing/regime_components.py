@@ -15,8 +15,6 @@ from lcm.dispatchers import simulation_spacemap, vmap_1d
 from lcm.grids import Grid
 from lcm.input_processing.params_processing import get_flat_param_names
 from lcm.interfaces import (
-    InternalFunctions,
-    PhaseVariant,
     StateActionSpace,
     StateSpaceInfo,
 )
@@ -35,6 +33,7 @@ from lcm.typing import (
     RegimeNamesToIds,
     RegimeParamsTemplate,
     RegimeTransitionFunction,
+    TransitionFunctionsMapping,
     VmappedRegimeTransitionFunction,
 )
 from lcm.utils import flatten_regime_namespace
@@ -44,7 +43,11 @@ def build_Q_and_F_functions(
     *,
     regime: Regime,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
-    internal_functions: InternalFunctions,
+    functions: MappingProxyType[str, InternalUserFunction],
+    constraints: MappingProxyType[str, InternalUserFunction],
+    transitions: TransitionFunctionsMapping,
+    regime_transition_probs: RegimeTransitionFunction | None,
+    stochastic_transition_names: frozenset[str],
     state_space_infos: MappingProxyType[RegimeName, StateSpaceInfo],
     ages: AgeGrid,
     regime_params_template: RegimeParamsTemplate,
@@ -55,18 +58,24 @@ def build_Q_and_F_functions(
     for period, age in enumerate(ages.values):
         if regime.terminal:
             Q_and_F = get_Q_and_F_terminal(
-                internal_functions=internal_functions,
+                functions=functions,
+                constraints=constraints,
                 period=period,
                 age=age,
                 flat_param_names=flat_param_names,
             )
         else:
+            assert regime_transition_probs is not None  # noqa: S101
             Q_and_F = get_Q_and_F(
                 regimes_to_active_periods=regimes_to_active_periods,
                 period=period,
                 age=age,
                 next_state_space_infos=state_space_infos,
-                internal_functions=internal_functions,
+                functions=functions,
+                constraints=constraints,
+                transitions=transitions,
+                regime_transition_probs=regime_transition_probs,
+                stochastic_transition_names=stochastic_transition_names,
                 flat_param_names=flat_param_names,
             )
         Q_and_F_functions[period] = Q_and_F
@@ -149,7 +158,9 @@ def _build_argmax_and_max_Q_over_a_function(
 
 def build_next_state_simulation_functions(
     *,
-    internal_functions: InternalFunctions,
+    transitions: TransitionFunctionsMapping,
+    functions: MappingProxyType[str, InternalUserFunction],
+    stochastic_transition_names: frozenset[str],
     grids: GridsDict,
     gridspecs: MappingProxyType[str, Grid],
     variable_info: pd.DataFrame,
@@ -157,12 +168,12 @@ def build_next_state_simulation_functions(
     enable_jit: bool,
 ) -> NextStateSimulationFunction:
     next_state = get_next_state_function_for_simulation(
-        transitions=flatten_regime_namespace(internal_functions.transitions),
-        functions=internal_functions.functions,
+        transitions=flatten_regime_namespace(transitions),
+        functions=functions,
         variable_info=variable_info,
         grids=grids,
         gridspecs=gridspecs,
-        stochastic_transition_names=internal_functions.stochastic_transition_names,
+        stochastic_transition_names=stochastic_transition_names,
     )
     sig_args = tuple(inspect.signature(next_state).parameters)
 
@@ -182,14 +193,29 @@ def build_next_state_simulation_functions(
 
 def build_regime_transition_probs_functions(
     *,
-    internal_functions: MappingProxyType[str, InternalUserFunction],
+    functions: MappingProxyType[str, InternalUserFunction],
     regime_transition_probs: InternalUserFunction,
     grids: MappingProxyType[str, Array],
     regime_names_to_ids: RegimeNamesToIds,
     regime_params_template: RegimeParamsTemplate,
     is_stochastic: bool,
     enable_jit: bool,
-) -> PhaseVariant[RegimeTransitionFunction, VmappedRegimeTransitionFunction]:
+) -> tuple[RegimeTransitionFunction, VmappedRegimeTransitionFunction]:
+    """Build regime transition probability functions for solve and simulate.
+
+    Args:
+        functions: Immutable mapping of function names to internal user functions.
+        regime_transition_probs: The user's next_regime function.
+        grids: Immutable mapping of grid names to grid arrays.
+        regime_names_to_ids: Mapping from regime names to integer indices.
+        regime_params_template: The regime's parameter template.
+        is_stochastic: Whether the regime transition is stochastic.
+        enable_jit: Whether to JIT-compile the functions.
+
+    Returns:
+        Tuple of (solve_func, simulate_func).
+
+    """
     # Wrap deterministic next_regime to return one-hot probability array
     if is_stochastic:
         probs_func = regime_transition_probs
@@ -203,7 +229,7 @@ def build_regime_transition_probs_functions(
         func=probs_func, regime_names_to_ids=regime_names_to_ids
     )
 
-    functions_pool = dict(internal_functions) | {
+    functions_pool = dict(functions) | {
         "regime_transition_probs": wrapped_regime_transition_probs
     }
 
@@ -231,10 +257,9 @@ def build_regime_transition_probs_functions(
         ),
     )
 
-    return PhaseVariant(
-        solve=jax.jit(next_regime) if enable_jit else next_regime,
-        simulate=jax.jit(next_regime_vmapped) if enable_jit else next_regime_vmapped,
-    )
+    solve_func = jax.jit(next_regime) if enable_jit else next_regime
+    simulate_func = jax.jit(next_regime_vmapped) if enable_jit else next_regime_vmapped
+    return solve_func, simulate_func
 
 
 def _get_vmap_params(

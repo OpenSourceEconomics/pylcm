@@ -12,7 +12,6 @@ from lcm.input_processing.params_processing import (
     get_flat_param_names,
     process_params,
 )
-from lcm.interfaces import InternalFunctions, PhaseVariant
 from lcm.Q_and_F import (
     _get_feasibility,
     _get_joint_weights_function,
@@ -60,8 +59,10 @@ def test_get_Q_and_F_function():
     )
 
     # Test terminal period Q_and_F where Q = U (no continuation value)
+    solve = internal_regimes["working_life"].solve_functions
     Q_and_F = get_Q_and_F_terminal(
-        internal_functions=internal_regimes["working_life"].internal_functions,
+        functions=solve.functions,
+        constraints=solve.constraints,
         period=3,
         age=ages.period_to_age(3),
         flat_param_names=flat_param_names,
@@ -118,33 +119,24 @@ def internal_functions_illustrative():
         # If an individual was retired last year, it must be retired this year
         return jnp.logical_or(retirement == 1, lagged_retirement == 0)
 
-    constraints = {
-        "mandatory_retirement_constraint": mandatory_retirement_constraint,
-        "mandatory_lagged_retirement_constraint": (
-            mandatory_lagged_retirement_constraint
-        ),
-        "absorbing_retirement_constraint": absorbing_retirement_constraint,
-    }
-
-    functions = {"age": age}
-
-    # create an internal regime instance where some attributes are set to None
-    # because they are not needed to create the feasibilty mask
-    mock_transition_solve = lambda *args, **kwargs: {"mock": 1.0}
-    mock_transition_simulate = lambda *args, **kwargs: {"mock": jnp.array([1.0])}
-    return InternalFunctions(
-        transitions=MappingProxyType({}),
-        constraints=constraints,  # ty: ignore[invalid-argument-type]
-        functions=MappingProxyType({"utility": lambda: 0, **functions}),  # ty: ignore[invalid-argument-type]
-        regime_transition_probs=PhaseVariant(
-            solve=mock_transition_solve, simulate=mock_transition_simulate
-        ),
+    constraints = MappingProxyType(
+        {
+            "mandatory_retirement_constraint": mandatory_retirement_constraint,
+            "mandatory_lagged_retirement_constraint": (
+                mandatory_lagged_retirement_constraint
+            ),
+            "absorbing_retirement_constraint": absorbing_retirement_constraint,
+        }
     )
+
+    functions = MappingProxyType({"utility": lambda: 0, "age": age})
+
+    return {"functions": functions, "constraints": constraints}
 
 
 @pytest.mark.illustrative
 def test_get_combined_constraint_illustrative(internal_functions_illustrative):
-    combined_constraint = _get_feasibility(internal_functions_illustrative)
+    combined_constraint = _get_feasibility(**internal_functions_illustrative)
 
     age, retirement, lagged_retirement = jnp.array(
         [
@@ -203,17 +195,10 @@ def test_get_combined_constraint():
     def h():
         return None
 
-    mock_transition_solve = lambda *args, **kwargs: {"mock": 1.0}
-    mock_transition_simulate = lambda *args, **kwargs: {"mock": jnp.array([1.0])}
-    internal_functions = InternalFunctions(
-        constraints={"f": f, "g": g},  # ty: ignore[invalid-argument-type]
-        transitions=MappingProxyType({}),
+    combined_constraint = _get_feasibility(
         functions=MappingProxyType({"utility": lambda: 0, "h": h}),  # ty: ignore[invalid-argument-type]
-        regime_transition_probs=PhaseVariant(
-            solve=mock_transition_solve, simulate=mock_transition_simulate
-        ),
+        constraints=MappingProxyType({"f": f, "g": g}),  # ty: ignore[invalid-argument-type]
     )
-    combined_constraint = _get_feasibility(internal_functions)
     feasibility: BoolND = combined_constraint()
     assert feasibility.item() is False
 
@@ -251,25 +236,16 @@ def test_get_U_and_F_with_annotated_constraints():
     ) -> jax.Array:
         return jnp.log(consumption + 1)
 
-    mock_transition_solve = lambda *args, **kwargs: {"mock": 1.0}
-    mock_transition_simulate = lambda *args, **kwargs: {"mock": jnp.array([1.0])}
-
-    internal_functions = InternalFunctions(
+    # This should not raise AnnotationMismatchError
+    U_and_F = _get_U_and_F(
+        functions=MappingProxyType({"utility": utility_func}),  # ty: ignore[invalid-argument-type]
         constraints=MappingProxyType(  # ty: ignore[invalid-argument-type]
             {
                 "budget_constraint": budget_constraint,
                 "positive_consumption_constraint": positive_consumption_constraint,
             }
         ),
-        transitions=MappingProxyType({}),
-        functions=MappingProxyType({"utility": utility_func}),  # ty: ignore[invalid-argument-type]
-        regime_transition_probs=PhaseVariant(
-            solve=mock_transition_solve, simulate=mock_transition_simulate
-        ),
     )
-
-    # This should not raise AnnotationMismatchError
-    U_and_F = _get_U_and_F(internal_functions)
 
     # Verify it works correctly
     U, F = U_and_F(consumption=5.0, wealth=10.0)

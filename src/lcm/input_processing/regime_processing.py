@@ -1,3 +1,4 @@
+import dataclasses
 import functools
 from collections.abc import Mapping
 from types import MappingProxyType
@@ -28,9 +29,10 @@ from lcm.input_processing.util import (
     get_variable_info,
 )
 from lcm.interfaces import (
-    InternalFunctions,
     InternalRegime,
     PhaseVariant,
+    SimulateFunctions,
+    SolveFunctions,
     StateSpaceInfo,
 )
 from lcm.ndimage import map_coordinates
@@ -44,8 +46,10 @@ from lcm.typing import (
     RegimeName,
     RegimeNamesToIds,
     RegimeParamsTemplate,
+    RegimeTransitionFunction,
     TransitionFunctionsMapping,
     UserFunction,
+    VmappedRegimeTransitionFunction,
 )
 from lcm.utils import (
     ensure_containers_are_immutable,
@@ -139,7 +143,7 @@ def process_regimes(
     for name, regime in regimes.items():
         regime_params_template = create_regime_params_template(regime)
 
-        internal_functions = _get_internal_functions(
+        intermediate = _get_intermediate_functions(
             regime=regime,
             regime_name=name,
             nested_transitions=nested_transitions[name],
@@ -151,22 +155,37 @@ def process_regimes(
             enable_jit=enable_jit,
         )
 
+        solve_funcs = intermediate.solve_functions
+        simulate_funcs = intermediate.simulate_functions
+        transitions = intermediate.transitions
+        stochastic_transition_names = intermediate.stochastic_transition_names
+
         # Build Q_and_F for solve (uses the default functions, i.e. solve variants).
         Q_and_F_solve = build_Q_and_F_functions(
             regime=regime,
             regimes_to_active_periods=regimes_to_active_periods,
-            internal_functions=internal_functions,
+            functions=solve_funcs,
+            constraints=intermediate.solve_constraints,
+            transitions=transitions,
+            regime_transition_probs=intermediate.solve_regime_transition_probs,
+            stochastic_transition_names=stochastic_transition_names,
             state_space_infos=state_space_infos,
             ages=ages,
             regime_params_template=regime_params_template,
         )
 
         # Build Q_and_F for simulate (uses simulate overrides if any).
+        # Note: regime_transition_probs always uses the solve (non-vmapped) version
+        # since Q_and_F evaluates on the Cartesian grid, not per-subject.
         if _has_phase_variants(regime):
             Q_and_F_simulate = build_Q_and_F_functions(
                 regime=regime,
                 regimes_to_active_periods=regimes_to_active_periods,
-                internal_functions=internal_functions.with_simulate_overrides(),
+                functions=simulate_funcs,
+                constraints=intermediate.simulate_constraints,
+                transitions=transitions,
+                regime_transition_probs=intermediate.solve_regime_transition_probs,
+                stochastic_transition_names=stochastic_transition_names,
                 state_space_infos=state_space_infos,
                 ages=ages,
                 regime_params_template=regime_params_template,
@@ -174,18 +193,20 @@ def process_regimes(
         else:
             Q_and_F_simulate = Q_and_F_solve
 
-        max_Q_over_a_functions = build_max_Q_over_a_functions(
+        max_Q_over_a = build_max_Q_over_a_functions(
             state_action_space=state_action_spaces[name],
             Q_and_F_functions=Q_and_F_solve,
             enable_jit=enable_jit,
         )
-        argmax_and_max_Q_over_a_functions = build_argmax_and_max_Q_over_a_functions(
+        argmax_and_max_Q_over_a = build_argmax_and_max_Q_over_a_functions(
             state_action_space=state_action_spaces[name],
             Q_and_F_functions=Q_and_F_simulate,
             enable_jit=enable_jit,
         )
-        next_state_simulation_function = build_next_state_simulation_functions(
-            internal_functions=internal_functions,
+        next_state = build_next_state_simulation_functions(
+            transitions=transitions,
+            functions=solve_funcs,
+            stochastic_transition_names=stochastic_transition_names,
             grids=grids,
             gridspecs=gridspecs[name],
             variable_info=variable_info[name],
@@ -193,33 +214,66 @@ def process_regimes(
             enable_jit=enable_jit,
         )
 
-        # ------------------------------------------------------------------------------
-        # Collect all components into the internal regime
-        # ------------------------------------------------------------------------------
         internal_regimes[name] = InternalRegime(
             name=name,
             terminal=regime.terminal,
             gridspecs=gridspecs[name],
             variable_info=variable_info[name],
-            functions=MappingProxyType(internal_functions.functions),
-            constraints=MappingProxyType(internal_functions.constraints),
             active_periods=tuple(regimes_to_active_periods[name]),
-            regime_transition_probs=internal_functions.regime_transition_probs,
-            internal_functions=internal_functions,
-            transitions=internal_functions.transitions,
             regime_params_template=regime_params_template,
-            max_Q_over_a_functions=MappingProxyType(max_Q_over_a_functions),
-            argmax_and_max_Q_over_a_functions=MappingProxyType(
-                argmax_and_max_Q_over_a_functions
+            solve_functions=SolveFunctions(
+                functions=MappingProxyType(solve_funcs),
+                constraints=MappingProxyType(intermediate.solve_constraints),
+                transitions=transitions,
+                regime_transition_probs=intermediate.solve_regime_transition_probs,
+                stochastic_transition_names=stochastic_transition_names,
+                max_Q_over_a=MappingProxyType(max_Q_over_a),
             ),
-            next_state_simulation_function=next_state_simulation_function,
+            simulate_functions=SimulateFunctions(
+                functions=MappingProxyType(simulate_funcs),
+                constraints=MappingProxyType(intermediate.simulate_constraints),
+                transitions=transitions,
+                regime_transition_probs=intermediate.simulate_regime_transition_probs,
+                stochastic_transition_names=stochastic_transition_names,
+                argmax_and_max_Q_over_a=MappingProxyType(argmax_and_max_Q_over_a),
+                next_state=next_state,
+            ),
             _base_state_action_space=state_action_spaces[name],
         )
 
     return ensure_containers_are_immutable(internal_regimes)
 
 
-def _get_internal_functions(
+@dataclasses.dataclass(frozen=True)
+class _IntermediateFunctions:
+    """Intermediate container for functions produced during regime processing."""
+
+    solve_functions: MappingProxyType[str, InternalUserFunction]
+    """Solve-phase functions (using solve variants for PhaseVariant entries)."""
+
+    simulate_functions: MappingProxyType[str, InternalUserFunction]
+    """Simulate-phase functions (with simulate overrides applied)."""
+
+    solve_constraints: MappingProxyType[str, InternalUserFunction]
+    """Constraint functions for solve phase."""
+
+    simulate_constraints: MappingProxyType[str, InternalUserFunction]
+    """Constraint functions for simulate phase."""
+
+    transitions: TransitionFunctionsMapping
+    """Immutable mapping of transition names to transition functions."""
+
+    solve_regime_transition_probs: RegimeTransitionFunction | None
+    """Regime transition probability function for solve, or `None`."""
+
+    simulate_regime_transition_probs: VmappedRegimeTransitionFunction | None
+    """Regime transition probability function for simulate, or `None`."""
+
+    stochastic_transition_names: frozenset[str]
+    """Frozenset of stochastic transition function names."""
+
+
+def _get_intermediate_functions(
     *,
     regime: Regime,
     regime_name: str,
@@ -230,7 +284,7 @@ def _get_internal_functions(
     gridspecs: MappingProxyType[str, Grid],
     variable_info: pd.DataFrame,
     enable_jit: bool,
-) -> InternalFunctions:
+) -> _IntermediateFunctions:
     """Process the user provided regime functions.
 
     Args:
@@ -246,18 +300,12 @@ def _get_internal_functions(
         enable_jit: Whether to jit the internal functions.
 
     Returns:
-        The processed regime functions.
+        Intermediate functions container with solve and simulate variants.
 
     """
     flat_grids = flatten_regime_namespace(grids)
     # Flatten nested transitions to get prefixed names like "regime__next_wealth"
     flat_nested_transitions = flatten_regime_namespace(nested_transitions)
-
-    # ==================================================================================
-    # Rename function parameters to qualified names
-    # ==================================================================================
-    # We rename user function parameters to qualified names (e.g.,
-    # risk_aversion -> utility__risk_aversion) so they can be matched with flat params.
 
     # Collect PhaseVariant entries from regime.functions for separate handling.
     phase_variant_entries: dict[str, PhaseVariant] = {
@@ -266,7 +314,7 @@ def _get_internal_functions(
         if isinstance(func, PhaseVariant)
     }
     # For the purpose of building all_functions, use the solve variant as
-    # the representative callable (get_all_functions already does this).
+    # the representative callable.
     resolved_functions: dict[str, UserFunction] = {}
     for name, func in regime.functions.items():
         resolved_functions[name] = cast(
@@ -287,18 +335,8 @@ def _get_internal_functions(
         if isinstance(raw, Mapping) and not isinstance(raw, MarkovTransition)
     )
 
-    # Compute stochastic state names from regime.state_transitions
-    markov_state_names: set[str] = set()
-    for name in regime.state_transitions:
-        raw = regime.state_transitions[name]
-        if isinstance(raw, MarkovTransition) or (
-            isinstance(raw, Mapping)
-            and any(isinstance(v, MarkovTransition) for v in raw.values())
-        ):
-            markov_state_names.add(name)
-    shock_state_names = set(variable_info.query("is_shock").index.tolist())
-    stochastic_transition_names = frozenset(
-        f"next_{name}" for name in markov_state_names | shock_state_names
+    stochastic_transition_names = _compute_stochastic_transition_names(
+        regime=regime, variable_info=variable_info
     )
 
     stochastic_transition_functions = {
@@ -386,20 +424,31 @@ def _get_internal_functions(
         {func_name: functions[func_name] for func_name in regime.constraints}
     )
     excluded_from_functions = set(flat_nested_transitions) | set(regime.constraints)
-    internal_functions = MappingProxyType(
+    solve_functions = MappingProxyType(
         {
             func_name: functions[func_name]
             for func_name in functions
             if func_name not in excluded_from_functions
         }
     )
+
+    # Build simulate functions: merge overrides on top of solve functions
+    if simulate_overrides:
+        simulate_functions = MappingProxyType(
+            dict(solve_functions) | simulate_overrides
+        )
+    else:
+        simulate_functions = solve_functions
+
     is_stochastic_regime_transition = regime.stochastic_regime_transition
+    transitions = _wrap_transitions(unflatten_regime_namespace(internal_transition))
 
     if regime.terminal:
-        internal_regime_transition_probs = None
+        solve_regime_tp = None
+        simulate_regime_tp = None
     else:
-        internal_regime_transition_probs = build_regime_transition_probs_functions(
-            internal_functions=internal_functions,
+        solve_regime_tp, simulate_regime_tp = build_regime_transition_probs_functions(
+            functions=solve_functions,
             regime_transition_probs=functions["next_regime"],
             grids=grids[regime_name],
             regime_names_to_ids=regime_names_to_ids,
@@ -407,14 +456,43 @@ def _get_internal_functions(
             is_stochastic=is_stochastic_regime_transition,
             enable_jit=enable_jit,
         )
-    return InternalFunctions(
-        functions=internal_functions,
-        constraints=internal_constraints,
-        transitions=_wrap_transitions(unflatten_regime_namespace(internal_transition)),
-        regime_transition_probs=internal_regime_transition_probs,
+    return _IntermediateFunctions(
+        solve_functions=solve_functions,
+        simulate_functions=simulate_functions,
+        solve_constraints=internal_constraints,
+        simulate_constraints=internal_constraints,
+        transitions=transitions,
+        solve_regime_transition_probs=solve_regime_tp,
+        simulate_regime_transition_probs=simulate_regime_tp,
         stochastic_transition_names=stochastic_transition_names,
-        simulate_overrides=MappingProxyType(simulate_overrides),
     )
+
+
+def _compute_stochastic_transition_names(
+    *,
+    regime: Regime,
+    variable_info: pd.DataFrame,
+) -> frozenset[str]:
+    """Compute stochastic transition names from regime state transitions and shocks.
+
+    Args:
+        regime: The user regime.
+        variable_info: Variable info of the regime.
+
+    Returns:
+        Frozenset of stochastic transition function names (e.g., "next_health").
+
+    """
+    markov_state_names: set[str] = set()
+    for name in regime.state_transitions:
+        raw = regime.state_transitions[name]
+        if isinstance(raw, MarkovTransition) or (
+            isinstance(raw, Mapping)
+            and any(isinstance(v, MarkovTransition) for v in raw.values())
+        ):
+            markov_state_names.add(name)
+    shock_state_names = set(variable_info.query("is_shock").index.tolist())
+    return frozenset(f"next_{name}" for name in markov_state_names | shock_state_names)
 
 
 def _classify_transitions(
@@ -466,7 +544,7 @@ def _extract_transitions_from_regime(
         states_per_regime: Mapping of regime names to their state names.
 
     Returns:
-        Nested transitions dict in the format expected by _get_internal_functions.
+        Nested transitions dict in the format expected by `_get_intermediate_functions`.
 
     """
     if regime.terminal:

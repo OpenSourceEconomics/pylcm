@@ -1,6 +1,4 @@
 import dataclasses
-from dataclasses import dataclass, replace
-from enum import Enum
 from types import MappingProxyType
 from typing import cast
 
@@ -30,7 +28,7 @@ from lcm.typing import (
     TransitionFunctionsMapping,
     VmappedRegimeTransitionFunction,
 )
-from lcm.utils import first_non_none, flatten_regime_namespace
+from lcm.utils import first_non_none
 
 
 @dataclasses.dataclass(frozen=True)
@@ -164,6 +162,55 @@ class PhaseVariant[S, T]:
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
+class SolveFunctions:
+    """Compiled functions for the backward-induction (solve) phase."""
+
+    functions: MappingProxyType[str, InternalUserFunction]
+    """Immutable mapping of function names to internal user functions."""
+
+    constraints: MappingProxyType[str, InternalUserFunction]
+    """Immutable mapping of constraint names to internal user functions."""
+
+    transitions: TransitionFunctionsMapping
+    """Immutable mapping of transition names to transition functions."""
+
+    regime_transition_probs: RegimeTransitionFunction | None
+    """Regime transition probability function for solve, or `None`."""
+
+    stochastic_transition_names: frozenset[str]
+    """Frozenset of stochastic transition function names."""
+
+    max_Q_over_a: MappingProxyType[int, MaxQOverAFunction]
+    """Immutable mapping of period to max-Q-over-actions functions."""
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class SimulateFunctions:
+    """Compiled functions for the forward-simulation phase."""
+
+    functions: MappingProxyType[str, InternalUserFunction]
+    """Immutable mapping of function names to internal user functions."""
+
+    constraints: MappingProxyType[str, InternalUserFunction]
+    """Immutable mapping of constraint names to internal user functions."""
+
+    transitions: TransitionFunctionsMapping
+    """Immutable mapping of transition names to transition functions."""
+
+    regime_transition_probs: VmappedRegimeTransitionFunction | None
+    """Regime transition probability function for simulate, or `None`."""
+
+    stochastic_transition_names: frozenset[str]
+    """Frozenset of stochastic transition function names."""
+
+    argmax_and_max_Q_over_a: MappingProxyType[int, ArgmaxQOverAFunction]
+    """Immutable mapping of period to argmax-and-max-Q functions."""
+
+    next_state: NextStateSimulationFunction
+    """Compiled function to compute next-period states."""
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class InternalRegime:
     """Internal representation of a user regime."""
 
@@ -179,45 +226,21 @@ class InternalRegime:
     variable_info: pd.DataFrame
     """DataFrame with variable metadata (is_state, is_action, etc.)."""
 
-    constraints: MappingProxyType[str, InternalUserFunction]
-    """Immutable mapping of constraint names to compiled constraint functions."""
-
-    transitions: TransitionFunctionsMapping
-    """Immutable mapping of state transition names to compiled transition functions."""
-
-    functions: MappingProxyType[str, InternalUserFunction]
-    """Immutable mapping of function names to compiled user functions."""
-
     active_periods: tuple[int, ...]
     """Period indices during which this regime is active."""
-
-    regime_transition_probs: (
-        PhaseVariant[RegimeTransitionFunction, VmappedRegimeTransitionFunction] | None
-    )
-    """Regime transition probability functions for solve and simulate, or `None`."""
-
-    internal_functions: InternalFunctions
-    """All compiled functions for this regime.
-
-    Includes user functions, constraints, and transitions.
-    """
 
     regime_params_template: RegimeParamsTemplate
     """Template for the parameter structure expected by this regime."""
 
-    max_Q_over_a_functions: MappingProxyType[int, MaxQOverAFunction]
-    """Immutable mapping of period to max-Q-over-actions functions for solving."""
+    solve_functions: SolveFunctions
+    """Compiled functions for the backward-induction (solve) phase."""
 
-    argmax_and_max_Q_over_a_functions: MappingProxyType[int, ArgmaxQOverAFunction]
-    """Immutable mapping of period to argmax-and-max-Q functions for simulation."""
-
-    next_state_simulation_function: NextStateSimulationFunction
-    """Compiled function to compute next-period states during simulation."""
+    simulate_functions: SimulateFunctions
+    """Compiled functions for the forward-simulation phase."""
 
     _base_state_action_space: StateActionSpace = dataclasses.field(repr=False)
     """Base state-action space before runtime grid substitution."""
 
-    # Resolved fixed params (flat) for this regime, used by to_dataframe targets
     resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
     """Flat resolved fixed params for this regime, used by to_dataframe targets."""
 
@@ -284,74 +307,3 @@ class PeriodRegimeSimulationData:
 
     in_regime: Bool1D
     """Boolean mask indicating which subjects are in this regime at this period."""
-
-
-class Target(Enum):
-    """Target of the function."""
-
-    SOLVE = "solve"
-    SIMULATE = "simulate"
-
-
-@dataclass(frozen=True)
-class InternalFunctions:
-    """All functions that are used in the regime."""
-
-    functions: MappingProxyType[str, InternalUserFunction]
-    """Immutable mapping of function names to internal user functions."""
-
-    constraints: MappingProxyType[str, InternalUserFunction]
-    """Immutable mapping of constraint names to internal user functions."""
-
-    transitions: TransitionFunctionsMapping
-    """Immutable mapping of transition names to transition functions."""
-
-    regime_transition_probs: (
-        PhaseVariant[RegimeTransitionFunction, VmappedRegimeTransitionFunction] | None
-    )
-    """Regime transition probability functions, or None for terminal regimes."""
-
-    stochastic_transition_names: frozenset[str] = frozenset()
-    """Frozenset of stochastic transition function names."""
-
-    simulate_overrides: MappingProxyType[str, InternalUserFunction] = MappingProxyType(
-        {}
-    )
-    """Simulate-phase overrides for functions that have PhaseVariant entries.
-
-    Keys are function names whose simulate variant differs from the solve variant
-    stored in `functions`.
-    """
-
-    def with_simulate_overrides(self) -> InternalFunctions:
-        """Return a copy with simulate overrides applied to functions.
-
-        For functions with phase variants, replaces the solve variant
-        with the simulate variant.
-
-        """
-        if not self.simulate_overrides:
-            return self
-        merged = dict(self.functions) | dict(self.simulate_overrides)
-        return replace(self, functions=MappingProxyType(merged))
-
-    def get_all_functions(self) -> MappingProxyType[str, InternalUserFunction]:
-        """Get all regime functions including utility, constraints, and transitions.
-
-        Returns:
-            Read-only mapping of all regime functions to the functions.
-
-        """
-        functions_pool = {
-            **self.functions,
-            **self.constraints,
-            **self.transitions,
-        }
-        if self.regime_transition_probs is not None:
-            functions_pool["regime_transition_probs_solve"] = (
-                self.regime_transition_probs.solve
-            )
-            functions_pool["regime_transition_probs_simulate"] = (
-                self.regime_transition_probs.simulate
-            )
-        return MappingProxyType(flatten_regime_namespace(functions_pool))

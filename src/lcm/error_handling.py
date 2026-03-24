@@ -249,9 +249,8 @@ def _validate_regime_transition_single(
     variables it accepts, using `jax.vmap` for vectorised evaluation.
 
     """
-    regime_transition_func = (
-        internal_regime.regime_transition_probs.solve  # ty: ignore[unresolved-attribute]
-    )
+    regime_transition_func = internal_regime.solve_functions.regime_transition_probs
+    assert regime_transition_func is not None  # noqa: S101
 
     state_action_space = internal_regime.state_action_space(
         regime_params=regime_params,
