@@ -34,11 +34,11 @@ jobs:
       - name: Ensure main ref exists
         run: git fetch origin main:main || true
       - name: Install environment
-        run: pixi install -e tests-cuda13
+        run: pixi install -e tests-cuda12
       - name: Setup ASV machine
-        run: pixi run -e tests-cuda13 asv machine --yes
+        run: pixi run -e tests-cuda12 asv machine --yes
       - name: Run benchmarks and post PR comment
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: pixi run -e tests-cuda13 asv-run-and-pr-comment
+        run: pixi run -e tests-cuda12 asv-run-and-pr-comment
