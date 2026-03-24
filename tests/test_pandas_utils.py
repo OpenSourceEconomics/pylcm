@@ -79,7 +79,7 @@ def test_build_discrete_grid_lookup_basic():
             functions={"utility": lambda: 0.0},
         ),
     }
-    lookup = _build_discrete_grid_lookup(regimes)
+    lookup = _build_discrete_grid_lookup(regimes=regimes)
     assert "health" in lookup
     assert lookup["health"].categories == ("bad", "good")
 
@@ -95,7 +95,7 @@ def test_build_discrete_grid_lookup_ignores_continuous():
             functions={"utility": lambda: 0.0},
         ),
     }
-    lookup = _build_discrete_grid_lookup(regimes)
+    lookup = _build_discrete_grid_lookup(regimes=regimes)
     assert "wealth" not in lookup
     assert "health" in lookup
 
@@ -119,7 +119,7 @@ def test_build_discrete_grid_lookup_inconsistent_raises():
         ),
     }
     with pytest.raises(ValueError, match="Inconsistent DiscreteGrid"):
-        _build_discrete_grid_lookup(regimes)
+        _build_discrete_grid_lookup(regimes=regimes)
 
 
 def test_continuous_states_and_age():
@@ -486,7 +486,12 @@ def test_transition_probs_infers_regime_name():
     model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
     series = _array_to_series(arr, model)
-    result = transition_probs_from_series(series=series, model=model)
+    # next_partner has different indexing in working_life vs retirement
+    # (working_life has labor_supply action, retirement doesn't), so
+    # inference requires explicit regime_name.
+    result = transition_probs_from_series(
+        series=series, model=model, regime_name="working_life"
+    )
     np.testing.assert_allclose(result, arr, atol=1e-7)
 
 
@@ -739,14 +744,13 @@ def test_array_from_series_3_part_path() -> None:
     assert float(result[0, 0, 0]) == pytest.approx(1.0)
 
 
-def test_array_from_series_2_part_path() -> None:
-    """Function-level path scans regimes for the function."""
+def test_array_from_series_2_part_path_ambiguous_regime() -> None:
+    """2-part path with ambiguous regime fails at grid resolution."""
     model = get_stochastic_model(3)
     series = _build_partner_probs_series(model)
-    # next_partner exists in both working_life and retirement, but with
-    # different indexing params (working_life has labor_supply action,
-    # retirement does not). So 2-part should fail with inconsistent indexing.
-    with pytest.raises(ValueError, match="different indexing"):
+    # next_partner exists in both regimes. With no specific regime, action
+    # grids (labor_supply) are not discovered → unrecognised indexing param.
+    with pytest.raises(ValueError, match="Unrecognised indexing parameter"):
         array_from_series(
             sr=series,
             model=model,

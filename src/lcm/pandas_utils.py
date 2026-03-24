@@ -12,7 +12,10 @@ from dags.tree import tree_path_from_qname
 from jax import Array
 
 from lcm.ages import AgeGrid
-from lcm.error_handling import _extract_markov_transition, _get_indexing_params
+from lcm.error_handling import (
+    _extract_markov_transition,
+    _get_func_indexing_params,
+)
 from lcm.grids import DiscreteGrid
 from lcm.model import Model
 from lcm.params import MappingLeaf
@@ -64,9 +67,11 @@ def initial_conditions_from_dataframe(
     regime_names = df["regime"].tolist()
 
     state_columns = {col for col in df.columns if col != "regime"}
-    _validate_state_columns(state_columns, model.regimes, regime_names)
+    _validate_state_columns(
+        state_columns=state_columns, regimes=model.regimes, initial_regimes=regime_names
+    )
 
-    discrete_lookup = _build_discrete_grid_lookup(model.regimes)
+    discrete_lookup = _build_discrete_grid_lookup(regimes=model.regimes)
 
     initial_conditions: dict[str, Array] = {}
     for col in df.columns:
@@ -170,7 +175,7 @@ def transition_probs_from_series(
             inference fails.
 
     """
-    state_name = _infer_transition_target(series)
+    state_name = _infer_transition_target(series=series)
     if regime_name is None:
         regime_name = _infer_regime_name(
             model=model,
@@ -186,14 +191,14 @@ def transition_probs_from_series(
     if state_name is not None:
         raw_transition = regime.state_transitions[state_name]
         markov = _extract_markov_transition(
-            raw_transition,
+            raw_transition=raw_transition,
             state_name=state_name,
             regime_name=regime_name,
             target_regime_name=target_regime_name,
         )
         func = markov.func
         outcome_mapping = _grid_level_mapping(
-            f"next_{state_name}", all_grids[state_name]
+            name=f"next_{state_name}", grid=all_grids[state_name]
         )
     else:
         if not isinstance(regime.transition, MarkovTransition):
@@ -212,7 +217,13 @@ def transition_probs_from_series(
             valid_labels=tuple(regime_ids),
         )
 
-    return _build_probs_array(func, outcome_mapping, all_grids, model, series)
+    return _build_probs_array(
+        func=func,
+        outcome_mapping=outcome_mapping,
+        all_grids=all_grids,
+        model=model,
+        series=series,
+    )
 
 
 def array_from_series(
@@ -266,12 +277,14 @@ def array_from_series(
     # Replace internal "period" with user-facing "age"
     display_params = ["age" if p == "period" else p for p in indexing_params]
 
-    level_mappings = _build_level_mappings_for_param(display_params, grids, model.ages)
+    level_mappings = _build_level_mappings_for_param(
+        indexing_params=display_params, all_grids=grids, ages=model.ages
+    )
 
     if "age" in display_params:
         sr = _filter_to_grid_ages(series=sr, ages=model.ages)
 
-    return _scatter_series(sr, level_mappings)
+    return _scatter_series(series=sr, level_mappings=level_mappings)
 
 
 def array_mapping_from_dataframe(
@@ -345,7 +358,7 @@ def params_from_pandas(
         )
         param_path = tree_path_from_qname(template_qname)
         converted_flat[user_qname] = _convert_param_value(
-            value, model=model, param_path=param_path
+            value=value, model=model, param_path=param_path
         )
 
     return unflatten_regime_namespace(converted_flat)
@@ -404,8 +417,8 @@ def _find_template_qname(
 
 
 def _convert_param_value(
-    value: object,
     *,
+    value: object,
     model: Model,
     param_path: tuple[str, ...],
 ) -> object:
@@ -447,9 +460,9 @@ def _resolve_categoricals(
 
     """
     grids: dict[str, DiscreteGrid] = {}
-    grids.update(_build_discrete_grid_lookup(model.regimes))
+    grids.update(_build_discrete_grid_lookup(regimes=model.regimes))
     if regime_name is not None:
-        grids.update(_build_discrete_action_lookup(model.regimes[regime_name]))
+        grids.update(_build_discrete_action_lookup(regime=model.regimes[regime_name]))
     if categoricals is not None:
         for name, grid in categoricals.items():
             if name in grids:
@@ -463,30 +476,6 @@ def _resolve_categoricals(
             else:
                 grids[name] = grid
     return grids
-
-
-def _get_func_indexing_params(
-    *,
-    func: Callable,
-    regime: Regime,
-) -> list[str]:
-    """Return indexing parameter names for a function in a regime.
-
-    Indexing parameters are function arguments that correspond to states,
-    actions, or `"period"` (the dimensions that define the array's axes).
-    Return them in signature declaration order.
-
-    Args:
-        func: The function to inspect.
-        regime: The regime providing state and action names.
-
-    Returns:
-        List of parameter names that are indexing variables.
-
-    """
-    sig = inspect.signature(func)
-    indexing_vars = {*regime.states, *regime.actions, "period"}
-    return [p for p in sig.parameters if p in indexing_vars]
 
 
 def _resolve_param_indexing(
@@ -520,11 +509,11 @@ def _resolve_param_indexing(
     """
     match param_path:
         case (_, _, _):
-            return _resolve_3_part_path(param_path, model)
+            return _resolve_3_part_path(param_path=param_path, model=model)
         case (_, _):
-            return _resolve_2_part_path(param_path, model)
+            return _resolve_2_part_path(param_path=param_path, model=model)
         case (_,):
-            return _resolve_1_part_path(param_path, model)
+            return _resolve_1_part_path(param_path=param_path, model=model)
         case _:
             msg = (
                 f"param_path must have 1-3 elements, "
@@ -534,6 +523,7 @@ def _resolve_param_indexing(
 
 
 def _resolve_3_part_path(
+    *,
     param_path: tuple[str, ...],
     model: Model,
 ) -> tuple[list[str], str]:
@@ -566,10 +556,11 @@ def _resolve_3_part_path(
         )
         raise ValueError(msg)
 
-    return _get_func_indexing_params(func=func, regime=regime), regime_name
+    return _get_func_indexing_params(func=func), regime_name
 
 
 def _resolve_2_part_path(
+    *,
     param_path: tuple[str, ...],
     model: Model,
 ) -> tuple[list[str], str | None]:
@@ -585,7 +576,7 @@ def _resolve_2_part_path(
         sig = inspect.signature(func)
         if param_name not in sig.parameters:
             continue
-        indexing = _get_func_indexing_params(func=func, regime=regime)
+        indexing = _get_func_indexing_params(func=func)
         matches.append((indexing, regime_name))
 
     if not matches:
@@ -595,13 +586,14 @@ def _resolve_2_part_path(
         )
         raise ValueError(msg)
 
-    _fail_if_inconsistent_indexing(matches, param_path)
+    _fail_if_inconsistent_indexing(matches=matches, param_path=param_path)
 
     regime_name = matches[0][1] if len(matches) == 1 else None
     return matches[0][0], regime_name
 
 
 def _resolve_1_part_path(
+    *,
     param_path: tuple[str, ...],
     model: Model,
 ) -> tuple[list[str], str | None]:
@@ -615,14 +607,14 @@ def _resolve_1_part_path(
             sig = inspect.signature(func)
             if param_name not in sig.parameters:
                 continue
-            indexing = _get_func_indexing_params(func=func, regime=regime)
+            indexing = _get_func_indexing_params(func=func)
             matches.append((indexing, regime_name))
 
     if not matches:
         msg = f"No function with parameter '{param_name}' found in any regime."
         raise ValueError(msg)
 
-    _fail_if_inconsistent_indexing(matches, param_path)
+    _fail_if_inconsistent_indexing(matches=matches, param_path=param_path)
 
     regime_names = {m[1] for m in matches}
     regime_name = matches[0][1] if len(regime_names) == 1 else None
@@ -630,6 +622,7 @@ def _resolve_1_part_path(
 
 
 def _fail_if_inconsistent_indexing(
+    *,
     matches: list[tuple[list[str], str]],
     param_path: tuple[str, ...],
 ) -> None:
@@ -673,7 +666,7 @@ class _LevelMapping:
     """Valid label names, for error messages. Empty for age levels."""
 
 
-def _age_level_mapping(ages: AgeGrid) -> _LevelMapping:
+def _age_level_mapping(*, ages: AgeGrid) -> _LevelMapping:
     """Create a `_LevelMapping` for the age dimension."""
     return _LevelMapping(
         name="age",
@@ -682,7 +675,7 @@ def _age_level_mapping(ages: AgeGrid) -> _LevelMapping:
     )
 
 
-def _grid_level_mapping(name: str, grid: DiscreteGrid) -> _LevelMapping:
+def _grid_level_mapping(*, name: str, grid: DiscreteGrid) -> _LevelMapping:
     """Create a `_LevelMapping` for a categorical dimension."""
     label_to_code = dict(zip(grid.categories, grid.codes, strict=True))
     return _LevelMapping(
@@ -694,6 +687,7 @@ def _grid_level_mapping(name: str, grid: DiscreteGrid) -> _LevelMapping:
 
 
 def _build_level_mappings_for_param(
+    *,
     indexing_params: list[str],
     all_grids: dict[str, DiscreteGrid],
     ages: AgeGrid,
@@ -716,9 +710,9 @@ def _build_level_mappings_for_param(
     mappings: list[_LevelMapping] = []
     for param in indexing_params:
         if param == "age":
-            mappings.append(_age_level_mapping(ages))
+            mappings.append(_age_level_mapping(ages=ages))
         elif param in all_grids:
-            mappings.append(_grid_level_mapping(param, all_grids[param]))
+            mappings.append(_grid_level_mapping(name=param, grid=all_grids[param]))
         else:
             msg = (
                 f"Unrecognised indexing parameter '{param}'. Expected 'age', "
@@ -729,9 +723,9 @@ def _build_level_mappings_for_param(
 
 
 def _scatter_series(
+    *,
     series: pd.Series,
     level_mappings: tuple[_LevelMapping, ...],
-    *,
     fill_value: float = np.nan,
 ) -> Array:
     """Scatter a MultiIndex Series into an N-dimensional JAX array.
@@ -750,11 +744,15 @@ def _scatter_series(
 
     """
     expected_levels = [m.name for m in level_mappings]
-    series = _validate_and_reorder_levels(series, expected_levels)
+    series = _validate_and_reorder_levels(
+        series=series, expected_levels=expected_levels
+    )
 
     shape = [m.size for m in level_mappings]
     index_arrays = [
-        _map_level(mapping, series.index.get_level_values(mapping.name))
+        _map_level(
+            mapping=mapping, level_values=series.index.get_level_values(mapping.name)
+        )
         for mapping in level_mappings
     ]
 
@@ -763,7 +761,7 @@ def _scatter_series(
     return jnp.array(result)
 
 
-def _map_level(mapping: _LevelMapping, level_values: pd.Index) -> np.ndarray:
+def _map_level(*, mapping: _LevelMapping, level_values: pd.Index) -> np.ndarray:
     """Map label values from one MultiIndex level to integer indices."""
     try:
         return np.array([mapping.label_to_index(v) for v in level_values])
@@ -780,7 +778,7 @@ def _map_level(mapping: _LevelMapping, level_values: pd.Index) -> np.ndarray:
         raise ValueError(msg) from None
 
 
-def _infer_transition_target(series: pd.Series) -> str | None:
+def _infer_transition_target(*, series: pd.Series) -> str | None:
     """Find the ``next_*`` level in the MultiIndex.
 
     Args:
@@ -842,7 +840,7 @@ def _infer_regime_name(
         candidates = [
             name
             for name, regime in model.regimes.items()
-            if _has_markov_on_state(regime, state_name)
+            if _has_markov_on_state(regime=regime, state_name=state_name)
         ]
 
     if not candidates:
@@ -852,17 +850,23 @@ def _infer_regime_name(
             msg = f"No regime with a MarkovTransition on state '{state_name}' found."
         raise ValueError(msg)
 
-    _fail_if_per_target_candidate(candidates, state_name, model)
+    _fail_if_per_target_candidate(
+        candidates=candidates, state_name=state_name, model=model
+    )
 
     if len(candidates) == 1:
         return candidates[0]
 
     return _pick_among_multiple_candidates(
-        candidates, state_name, target_regime_name, model
+        candidates=candidates,
+        state_name=state_name,
+        target_regime_name=target_regime_name,
+        model=model,
     )
 
 
 def _fail_if_per_target_candidate(
+    *,
     candidates: list[str],
     state_name: str | None,
     model: Model,
@@ -882,6 +886,7 @@ def _fail_if_per_target_candidate(
 
 
 def _pick_among_multiple_candidates(
+    *,
     candidates: list[str],
     state_name: str | None,
     target_regime_name: str | None,
@@ -899,7 +904,7 @@ def _pick_among_multiple_candidates(
         if state_name is not None:
             raw = regime.state_transitions[state_name]
             markov = _extract_markov_transition(
-                raw,
+                raw_transition=raw,
                 state_name=state_name,
                 regime_name=cand_name,
                 target_regime_name=target_regime_name,
@@ -907,7 +912,7 @@ def _pick_among_multiple_candidates(
             func = markov.func
         else:
             func = regime.transition.func  # ty: ignore[unresolved-attribute]
-        param_sets.add(tuple(_get_indexing_params(func)))
+        param_sets.add(tuple(_get_func_indexing_params(func=func)))
 
     if len(param_sets) == 1:
         return candidates[0]
@@ -919,7 +924,7 @@ def _pick_among_multiple_candidates(
     raise ValueError(msg)
 
 
-def _has_markov_on_state(regime: Regime, state_name: str) -> bool:
+def _has_markov_on_state(*, regime: Regime, state_name: str) -> bool:
     """Return True if `regime` has a MarkovTransition on `state_name`."""
     if state_name not in regime.state_transitions:
         return False
@@ -932,6 +937,7 @@ def _has_markov_on_state(regime: Regime, state_name: str) -> bool:
 
 
 def _build_probs_array(
+    *,
     func: Callable,
     outcome_mapping: _LevelMapping,
     all_grids: dict[str, DiscreteGrid],
@@ -952,14 +958,18 @@ def _build_probs_array(
         declaration order) followed by the outcome axis.
 
     """
-    indexing_params = _get_indexing_params(func)
+    indexing_params = _get_func_indexing_params(func=func)
     level_mappings = _build_level_mappings(
-        indexing_params, all_grids, model.ages, outcome_mapping
+        indexing_params=indexing_params,
+        all_grids=all_grids,
+        ages=model.ages,
+        outcome_mapping=outcome_mapping,
     )
-    return _scatter_series(series, level_mappings)
+    return _scatter_series(series=series, level_mappings=level_mappings)
 
 
 def _build_level_mappings(
+    *,
     indexing_params: list[str],
     all_grids: dict[str, DiscreteGrid],
     ages: AgeGrid,
@@ -974,9 +984,9 @@ def _build_level_mappings(
     mappings: list[_LevelMapping] = []
     for param in indexing_params:
         if param == "period":
-            mappings.append(_age_level_mapping(ages))
+            mappings.append(_age_level_mapping(ages=ages))
         elif param in all_grids:
-            mappings.append(_grid_level_mapping(param, all_grids[param]))
+            mappings.append(_grid_level_mapping(name=param, grid=all_grids[param]))
         else:
             msg = (
                 f"Unrecognised indexing parameter '{param}'. Expected 'period', "
@@ -988,6 +998,7 @@ def _build_level_mappings(
 
 
 def _validate_and_reorder_levels(
+    *,
     series: pd.Series,
     expected_levels: list[str],
 ) -> pd.Series:
@@ -1022,12 +1033,15 @@ def _validate_and_reorder_levels(
 
 
 def _validate_state_columns(
+    *,
     state_columns: set[str],
     regimes: Mapping[str, Regime],
     initial_regimes: list[str],
 ) -> None:
     """Validate that DataFrame columns match model states."""
-    all_states = _collect_all_state_names(regimes, initial_regimes)
+    all_states = _collect_all_state_names(
+        regimes=regimes, initial_regimes=initial_regimes
+    )
 
     unknown = state_columns - all_states
     if unknown:
@@ -1047,6 +1061,7 @@ def _validate_state_columns(
 
 
 def _collect_all_state_names(
+    *,
     regimes: Mapping[str, Regime],
     initial_regimes: list[str],
 ) -> set[str]:
@@ -1063,6 +1078,7 @@ def _collect_all_state_names(
 
 
 def _build_discrete_grid_lookup(
+    *,
     regimes: Mapping[str, Regime],
 ) -> dict[str, DiscreteGrid]:
     """Collect all DiscreteGrid instances across regimes, verifying consistency.
@@ -1095,7 +1111,7 @@ def _build_discrete_grid_lookup(
     return lookup
 
 
-def _build_discrete_action_lookup(regime: Regime) -> dict[str, DiscreteGrid]:
+def _build_discrete_action_lookup(*, regime: Regime) -> dict[str, DiscreteGrid]:
     """Collect DiscreteGrid instances from a regime's actions.
 
     Args:
