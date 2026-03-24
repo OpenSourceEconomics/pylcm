@@ -35,6 +35,13 @@ def _make_initial_conditions(n_subjects):
     }
 
 
+def _get_gpu_peak_bytes():
+    import jax
+
+    stats = jax.local_devices()[0].memory_stats()
+    return stats["peak_bytes_in_use"]
+
+
 def _clear_gpu_memory():
     import jax
 
@@ -62,6 +69,11 @@ class PrecautionarySavingsSolve:
 
     def teardown(self):
         _clear_gpu_memory()
+
+    def track_gpu_peak_mem(self):
+        return _get_gpu_peak_bytes()
+
+    track_gpu_peak_mem.unit = "bytes"
 
     def track_compilation_time(self):
         return self._compile_time
@@ -109,6 +121,11 @@ class PrecautionarySavingsSimulate:
     def teardown(self):
         _clear_gpu_memory()
 
+    def track_gpu_peak_mem(self):
+        return _get_gpu_peak_bytes()
+
+    track_gpu_peak_mem.unit = "bytes"
+
     def track_compilation_time(self):
         return self._compile_time
 
@@ -154,6 +171,11 @@ class PrecautionarySavingsSimulateWithSolve:
 
     def teardown(self):
         _clear_gpu_memory()
+
+    def track_gpu_peak_mem(self):
+        return _get_gpu_peak_bytes()
+
+    track_gpu_peak_mem.unit = "bytes"
 
     def track_compilation_time(self):
         return self._compile_time
@@ -201,6 +223,11 @@ class PrecautionarySavingsSimulateWithSolveIrreg:
 
     def teardown(self):
         _clear_gpu_memory()
+
+    def track_gpu_peak_mem(self):
+        return _get_gpu_peak_bytes()
+
+    track_gpu_peak_mem.unit = "bytes"
 
     def track_compilation_time(self):
         return self._compile_time

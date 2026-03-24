@@ -3,6 +3,14 @@
 import gc
 import time
 
+
+def _get_gpu_peak_bytes():
+    import jax
+
+    stats = jax.local_devices()[0].memory_stats()
+    return stats["peak_bytes_in_use"]
+
+
 _N_SUBJECTS = 100
 
 
@@ -75,6 +83,11 @@ class MahlerYum:
 
         jax.clear_caches()
         gc.collect()
+
+    def track_gpu_peak_mem(self):
+        return _get_gpu_peak_bytes()
+
+    track_gpu_peak_mem.unit = "bytes"
 
     def track_compilation_time(self):
         return self._compile_time
