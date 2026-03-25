@@ -174,11 +174,11 @@ class SolveFunctions:
     transitions: TransitionFunctionsMapping
     """Immutable mapping of transition names to transition functions."""
 
-    regime_transition_probs: RegimeTransitionFunction | None
-    """Regime transition probability function for solve, or `None`."""
-
     stochastic_transition_names: frozenset[str]
     """Frozenset of stochastic transition function names."""
+
+    regime_transition_probs: RegimeTransitionFunction | None
+    """Regime transition probability function for solve, or `None`."""
 
     max_Q_over_a: MappingProxyType[int, MaxQOverAFunction]
     """Immutable mapping of period to max-Q-over-actions functions."""
@@ -197,11 +197,11 @@ class SimulateFunctions:
     transitions: TransitionFunctionsMapping
     """Immutable mapping of transition names to transition functions."""
 
-    regime_transition_probs: VmappedRegimeTransitionFunction | None
-    """Regime transition probability function for simulate, or `None`."""
-
     stochastic_transition_names: frozenset[str]
     """Frozenset of stochastic transition function names."""
+
+    regime_transition_probs: VmappedRegimeTransitionFunction | None
+    """Regime transition probability function for simulate, or `None`."""
 
     argmax_and_max_Q_over_a: MappingProxyType[int, ArgmaxQOverAFunction]
     """Immutable mapping of period to argmax-and-max-Q functions."""
