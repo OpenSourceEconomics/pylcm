@@ -201,16 +201,6 @@ def get_simulation_output_dtypes(
     return MappingProxyType(dtypes)
 
 
-class _CoreResult(NamedTuple):
-    """Result of core regime function processing for one phase."""
-
-    functions: FunctionsMapping
-    constraints: FunctionsMapping
-    transitions: TransitionFunctionsMapping
-    stochastic_transition_names: frozenset[str]
-    next_regime_func: InternalUserFunction | None
-
-
 def _build_solve_functions(
     *,
     regime: Regime,
@@ -446,6 +436,16 @@ def _build_simulate_functions(
     )
 
 
+class _CoreResult(NamedTuple):
+    """Result of core regime function processing for one phase."""
+
+    functions: FunctionsMapping
+    constraints: FunctionsMapping
+    transitions: TransitionFunctionsMapping
+    stochastic_transition_names: frozenset[str]
+    next_regime_func: InternalUserFunction | None
+
+
 def _process_regime_core(
     *,
     regime: Regime,
@@ -612,68 +612,6 @@ def _process_regime_core(
     )
 
 
-def _wrap_transitions(
-    transitions: dict[RegimeName, dict[str, InternalUserFunction]],
-) -> TransitionFunctionsMapping:
-    """Wrap nested transitions dict in MappingProxyType."""
-    return MappingProxyType(
-        {name: MappingProxyType(inner) for name, inner in transitions.items()}
-    )
-
-
-def _compute_stochastic_transition_names(
-    *,
-    regime: Regime,
-    variable_info: pd.DataFrame,
-) -> frozenset[str]:
-    """Compute stochastic transition names from regime state transitions and shocks.
-
-    Args:
-        regime: The user regime.
-        variable_info: Variable info of the regime.
-
-    Returns:
-        Frozenset of stochastic transition function names (e.g., "next_health").
-
-    """
-    markov_state_names: set[str] = set()
-    for name in regime.state_transitions:
-        raw = regime.state_transitions[name]
-        if isinstance(raw, MarkovTransition) or (
-            isinstance(raw, Mapping)
-            and any(isinstance(v, MarkovTransition) for v in raw.values())
-        ):
-            markov_state_names.add(name)
-    shock_state_names = set(variable_info.query("is_shock").index.tolist())
-    return frozenset(f"next_{name}" for name in markov_state_names | shock_state_names)
-
-
-def _classify_transitions(
-    state_transitions: dict[str, UserFunction],
-) -> tuple[dict[str, UserFunction], dict[str, dict[str, UserFunction]]]:
-    """Split collected transitions into simple and per-target groups.
-
-    Qualified names like "next_health__working" (produced by
-    `_collect_state_transitions` for per-target dicts) are decomposed via
-    `tree_path_from_qname`.
-
-    Returns:
-        Tuple of (simple_transitions, per_target_transitions).
-
-    """
-    simple: dict[str, UserFunction] = {}
-    per_target: dict[str, dict[str, UserFunction]] = {}
-    for key, func in state_transitions.items():
-        path = tree_path_from_qname(key)
-        if len(path) == 1:
-            simple[key] = func
-        else:
-            state_key = path[0]
-            target_name = qname_from_tree_path(path[1:])
-            per_target.setdefault(state_key, {})[target_name] = func
-    return simple, per_target
-
-
 def _extract_transitions_from_regime(
     *,
     regime: Regime,
@@ -726,25 +664,66 @@ def _extract_transitions_from_regime(
     return nested
 
 
-def _extract_param_key(
-    func_name: str,
-    per_target_next_names: frozenset[str] = frozenset(),
-) -> str:
-    """Extract the param template key from a possibly prefixed function name.
+def _classify_transitions(
+    state_transitions: dict[str, UserFunction],
+) -> tuple[dict[str, UserFunction], dict[str, dict[str, UserFunction]]]:
+    """Split collected transitions into simple and per-target groups.
 
-    For prefixed names like "work__next_wealth", returns "next_wealth".
-    For per-target transitions like "work__next_health" where "next_health" is in
-    `per_target_next_names`, returns "to_work_next_health" to match the template key.
-    For unprefixed names like "next_regime", returns the name unchanged.
+    Qualified names like "next_health__working" (produced by
+    `_collect_state_transitions` for per-target dicts) are decomposed via
+    `tree_path_from_qname`.
+
+    Returns:
+        Tuple of (simple_transitions, per_target_transitions).
 
     """
-    path = tree_path_from_qname(func_name)
-    if len(path) > 1:
-        suffix = qname_from_tree_path(path[1:])
-        if suffix in per_target_next_names:
-            return f"to_{path[0]}_{suffix}"
-        return suffix
-    return func_name
+    simple: dict[str, UserFunction] = {}
+    per_target: dict[str, dict[str, UserFunction]] = {}
+    for key, func in state_transitions.items():
+        path = tree_path_from_qname(key)
+        if len(path) == 1:
+            simple[key] = func
+        else:
+            state_key = path[0]
+            target_name = qname_from_tree_path(path[1:])
+            per_target.setdefault(state_key, {})[target_name] = func
+    return simple, per_target
+
+
+def _wrap_transitions(
+    transitions: dict[RegimeName, dict[str, InternalUserFunction]],
+) -> TransitionFunctionsMapping:
+    """Wrap nested transitions dict in MappingProxyType."""
+    return MappingProxyType(
+        {name: MappingProxyType(inner) for name, inner in transitions.items()}
+    )
+
+
+def _compute_stochastic_transition_names(
+    *,
+    regime: Regime,
+    variable_info: pd.DataFrame,
+) -> frozenset[str]:
+    """Compute stochastic transition names from regime state transitions and shocks.
+
+    Args:
+        regime: The user regime.
+        variable_info: Variable info of the regime.
+
+    Returns:
+        Frozenset of stochastic transition function names (e.g., "next_health").
+
+    """
+    markov_state_names: set[str] = set()
+    for name in regime.state_transitions:
+        raw = regime.state_transitions[name]
+        if isinstance(raw, MarkovTransition) or (
+            isinstance(raw, Mapping)
+            and any(isinstance(v, MarkovTransition) for v in raw.values())
+        ):
+            markov_state_names.add(name)
+    shock_state_names = set(variable_info.query("is_shock").index.tolist())
+    return frozenset(f"next_{name}" for name in markov_state_names | shock_state_names)
 
 
 def _rename_params_to_qnames(
@@ -772,6 +751,27 @@ def _rename_params_to_qnames(
     mapper = {p: qname_from_tree_path((param_key, p)) for p in param_names}
 
     return cast("InternalUserFunction", rename_arguments(func, mapper=mapper))
+
+
+def _extract_param_key(
+    func_name: str,
+    per_target_next_names: frozenset[str] = frozenset(),
+) -> str:
+    """Extract the param template key from a possibly prefixed function name.
+
+    For prefixed names like "work__next_wealth", returns "next_wealth".
+    For per-target transitions like "work__next_health" where "next_health" is in
+    `per_target_next_names`, returns "to_work_next_health" to match the template key.
+    For unprefixed names like "next_regime", returns the name unchanged.
+
+    """
+    path = tree_path_from_qname(func_name)
+    if len(path) > 1:
+        suffix = qname_from_tree_path(path[1:])
+        if suffix in per_target_next_names:
+            return f"to_{path[0]}_{suffix}"
+        return suffix
+    return func_name
 
 
 def _get_discrete_markov_next_function(
