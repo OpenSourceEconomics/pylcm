@@ -9,7 +9,7 @@ from dags.tree import QNAME_DELIMITER
 
 from lcm.exceptions import RegimeInitializationError, format_messages
 from lcm.grids import DiscreteGrid, Grid
-from lcm.interfaces import PhaseVariant
+from lcm.interfaces import SolveSimulateFunctionPair
 from lcm.shocks._base import _ShockGrid
 from lcm.typing import (
     ActiveFunction,
@@ -199,8 +199,8 @@ class Regime:
         - State transitions from `self.state_transitions`
         - The regime transition (`self.transition`, keyed as `"next_regime"`)
 
-        For `PhaseVariant` entries, the solve variant is used as the representative
-        for signature discovery.
+        For `SolveSimulateFunctionPair` entries, the solve variant is used
+        as the representative for signature discovery.
 
         Returns:
             Read-only mapping of all regime functions.
@@ -209,7 +209,8 @@ class Regime:
         result: dict[str, UserFunction] = {}
         for name, func in self.functions.items():
             result[name] = cast(
-                "UserFunction", func.solve if isinstance(func, PhaseVariant) else func
+                "UserFunction",
+                func.solve if isinstance(func, SolveSimulateFunctionPair) else func,
             )
         result |= dict(self.constraints)
         if callable(self.transition):
@@ -265,7 +266,7 @@ def _validate_attribute_types(regime: Regime) -> None:  # noqa: C901, PLR0912
                     error_messages.append(
                         f"function keys must be a strings, but is {k}."
                     )
-                if not callable(v) and not isinstance(v, PhaseVariant):
+                if not callable(v) and not isinstance(v, SolveSimulateFunctionPair):
                     error_messages.append(
                         f"function values must be a callable, but is {v}."
                     )

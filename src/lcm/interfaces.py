@@ -140,7 +140,7 @@ class StateSpaceInfo:
     """Immutable mapping of continuous state names to their grids."""
 
 
-class PhaseVariant[S, T]:
+class SolveSimulateFunctionPair[S, T]:
     """Container for phase-specific function variants.
 
     Use this to provide different implementations of a function for the solve

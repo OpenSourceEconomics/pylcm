@@ -30,9 +30,9 @@ from lcm.input_processing.util import (
 )
 from lcm.interfaces import (
     InternalRegime,
-    PhaseVariant,
     SimulateFunctions,
     SolveFunctions,
+    SolveSimulateFunctionPair,
     StateSpaceInfo,
 )
 from lcm.ndimage import map_coordinates
@@ -250,7 +250,7 @@ class _IntermediateFunctions:
     """Intermediate container for functions produced during regime processing."""
 
     solve_functions: FunctionsMapping
-    """Solve-phase functions (using solve variants for PhaseVariant entries)."""
+    """Solve-phase functions (using solve variants for function pairs)."""
 
     simulate_functions: FunctionsMapping
     """Simulate-phase functions (with simulate overrides applied)."""
@@ -308,18 +308,19 @@ def _get_intermediate_functions(
     # Flatten nested transitions to get prefixed names like "regime__next_wealth"
     flat_nested_transitions = flatten_regime_namespace(nested_transitions)
 
-    # Collect PhaseVariant entries from regime.functions for separate handling.
-    phase_variant_entries: dict[str, PhaseVariant] = {
+    # Collect function pairs from regime.functions for separate handling.
+    phase_variant_entries: dict[str, SolveSimulateFunctionPair] = {
         name: func
         for name, func in regime.functions.items()
-        if isinstance(func, PhaseVariant)
+        if isinstance(func, SolveSimulateFunctionPair)
     }
     # For the purpose of building all_functions, use the solve variant as
     # the representative callable.
     resolved_functions: dict[str, UserFunction] = {}
     for name, func in regime.functions.items():
         resolved_functions[name] = cast(
-            "UserFunction", func.solve if isinstance(func, PhaseVariant) else func
+            "UserFunction",
+            func.solve if isinstance(func, SolveSimulateFunctionPair) else func,
         )
 
     # Build all_functions using nested_transitions (to get prefixed names)
@@ -523,8 +524,10 @@ def _classify_transitions(
 
 
 def _has_phase_variants(regime: Regime) -> bool:
-    """Check if any function in the regime is a PhaseVariant."""
-    return any(isinstance(f, PhaseVariant) for f in regime.functions.values())
+    """Check if any function in the regime is a SolveSimulateFunctionPair."""
+    return any(
+        isinstance(f, SolveSimulateFunctionPair) for f in regime.functions.values()
+    )
 
 
 def _extract_transitions_from_regime(

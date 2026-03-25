@@ -122,7 +122,7 @@ def get_Q_and_F(
 
     # Determine which qname params H accepts so we can filter at runtime.
     # This is necessary when the params template is the union of multiple
-    # PhaseVariant signatures but each variant only uses its own subset.
+    # SolveSimulateFunctionPair signatures but each variant only uses its own subset.
     _H_func = functions["H"]
     _H_accepted_params = frozenset(
         get_union_of_args([_H_func]) - {"utility", "E_next_V"}
