@@ -1,8 +1,7 @@
-import dataclasses
 import functools
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any, Literal, NamedTuple, cast
 
 import pandas as pd
 from dags.signature import rename_arguments, with_signature
@@ -34,6 +33,7 @@ from lcm.interfaces import (
     SimulateFunctions,
     SolveFunctions,
     SolveSimulateFunctionPair,
+    StateActionSpace,
 )
 from lcm.ndimage import map_coordinates
 from lcm.regime import MarkovTransition, Regime, _collect_state_transitions
@@ -50,22 +50,12 @@ from lcm.typing import (
     RegimeTransitionFunction,
     TransitionFunctionsMapping,
     UserFunction,
-    VmappedRegimeTransitionFunction,
 )
 from lcm.utils import (
     ensure_containers_are_immutable,
     flatten_regime_namespace,
     unflatten_regime_namespace,
 )
-
-
-def _wrap_transitions(
-    transitions: dict[RegimeName, dict[str, InternalUserFunction]],
-) -> TransitionFunctionsMapping:
-    """Wrap nested transitions dict in MappingProxyType."""
-    return MappingProxyType(
-        {name: MappingProxyType(inner) for name, inner in transitions.items()}
-    )
 
 
 def process_regimes(
@@ -77,7 +67,7 @@ def process_regimes(
 ) -> MappingProxyType[RegimeName, InternalRegime]:
     """Process user regimes into internal regimes.
 
-    Extracts state transitions from `regime.state_transitions` and
+    Extract state transitions from `regime.state_transitions` and
     regime transitions from `regime.transition`. For fixed states (value `None`
     in `state_transitions`), an identity transition is auto-generated. ShockGrid
     transitions are generated from the grid's intrinsic transition logic.
@@ -92,10 +82,6 @@ def process_regimes(
         The processed regimes.
 
     """
-
-    # ----------------------------------------------------------------------------------
-    # Extract transitions from grid attributes and regime transition
-    # ----------------------------------------------------------------------------------
     states_per_regime: dict[str, set[str]] = {
         name: set(regime.states.keys()) for name, regime in regimes.items()
     }
@@ -108,9 +94,6 @@ def process_regimes(
         )
     _validate_categoricals(regimes)
 
-    # ----------------------------------------------------------------------------------
-    # Stage 1: Initialize regime components that do not depend on other regimes
-    # ----------------------------------------------------------------------------------
     variable_info = MappingProxyType(
         {n: get_variable_info(r) for n, r in regimes.items()}
     )
@@ -131,83 +114,41 @@ def process_regimes(
         {n: ages.get_periods_where(r.active) for n, r in regimes.items()}
     )
 
-    # ----------------------------------------------------------------------------------
-    # Stage 2: Initialize regime components that depend on other regimes
-    # ----------------------------------------------------------------------------------
     internal_regimes = {}
     for name, regime in regimes.items():
         regime_params_template = create_regime_params_template(regime)
 
-        intermediate = _get_intermediate_functions(
+        solve_functions = _build_solve_functions(
             regime=regime,
             regime_name=name,
             nested_transitions=nested_transitions[name],
+            all_grids=all_grids,
             regime_params_template=regime_params_template,
             regime_names_to_ids=regime_names_to_ids,
-            all_grids=all_grids,
             variable_info=variable_info[name],
-            enable_jit=enable_jit,
-        )
-
-        solve_funcs = intermediate.solve_functions
-        simulate_funcs = intermediate.simulate_functions
-        transitions = intermediate.transitions
-        stochastic_transition_names = intermediate.stochastic_transition_names
-
-        # Build Q_and_F for solve (uses the default functions, i.e. solve variants).
-        Q_and_F_solve = build_Q_and_F_functions(
-            regime=regime,
             regimes_to_active_periods=regimes_to_active_periods,
-            functions=solve_funcs,
-            constraints=intermediate.solve_constraints,
-            transitions=transitions,
-            stochastic_transition_names=stochastic_transition_names,
-            compute_regime_transition_probs=intermediate.solve_compute_regime_transition_probs,
             regime_to_state_space_info=regime_to_state_space_info,
+            state_action_space=state_action_spaces[name],
             ages=ages,
-            regime_params_template=regime_params_template,
-        )
-
-        # Build Q_and_F for simulate (uses simulate overrides if any).
-        # Note: regime_transition_probs always uses the solve (non-vmapped) version
-        # since Q_and_F evaluates on the Cartesian grid, not per-subject.
-        if _has_function_pairs(regime):
-            Q_and_F_simulate = build_Q_and_F_functions(
-                regime=regime,
-                regimes_to_active_periods=regimes_to_active_periods,
-                functions=simulate_funcs,
-                constraints=intermediate.simulate_constraints,
-                transitions=transitions,
-                stochastic_transition_names=stochastic_transition_names,
-                compute_regime_transition_probs=intermediate.solve_compute_regime_transition_probs,
-                regime_to_state_space_info=regime_to_state_space_info,
-                ages=ages,
-                regime_params_template=regime_params_template,
-            )
-        else:
-            Q_and_F_simulate = Q_and_F_solve
-
-        max_Q_over_a = build_max_Q_over_a_functions(
-            state_action_space=state_action_spaces[name],
-            Q_and_F_functions=Q_and_F_solve,
             enable_jit=enable_jit,
         )
-        argmax_and_max_Q_over_a = build_argmax_and_max_Q_over_a_functions(
-            state_action_space=state_action_spaces[name],
-            Q_and_F_functions=Q_and_F_simulate,
-            enable_jit=enable_jit,
-        )
-        # Note: next_state uses solve_funcs (not simulate_funcs) because
-        # state transitions don't participate in SolveSimulateFunctionPair —
-        # only utility/H functions have phase variants.
-        next_state = build_next_state_simulation_functions(
-            functions=solve_funcs,
-            transitions=transitions,
-            stochastic_transition_names=stochastic_transition_names,
+
+        simulate_functions = _build_simulate_functions(
+            regime=regime,
+            regime_name=name,
+            nested_transitions=nested_transitions[name],
             all_grids=all_grids,
-            variable_info=variable_info[name],
             regime_params_template=regime_params_template,
+            regime_names_to_ids=regime_names_to_ids,
+            variable_info=variable_info[name],
+            regimes_to_active_periods=regimes_to_active_periods,
+            regime_to_state_space_info=regime_to_state_space_info,
+            state_action_space=state_action_spaces[name],
+            ages=ages,
             enable_jit=enable_jit,
+            solve_transitions=solve_functions.transitions,
+            solve_stochastic_transition_names=solve_functions.stochastic_transition_names,
+            solve_compute_regime_transition_probs=solve_functions.compute_regime_transition_probs,
         )
 
         internal_regimes[name] = InternalRegime(
@@ -217,113 +158,348 @@ def process_regimes(
             variable_info=variable_info[name],
             active_periods=tuple(regimes_to_active_periods[name]),
             regime_params_template=regime_params_template,
-            solve_functions=SolveFunctions(
-                functions=solve_funcs,
-                constraints=intermediate.solve_constraints,
-                transitions=transitions,
-                stochastic_transition_names=stochastic_transition_names,
-                compute_regime_transition_probs=intermediate.solve_compute_regime_transition_probs,
-                max_Q_over_a=MappingProxyType(max_Q_over_a),
-            ),
-            simulate_functions=SimulateFunctions(
-                functions=simulate_funcs,
-                constraints=intermediate.simulate_constraints,
-                transitions=transitions,
-                stochastic_transition_names=stochastic_transition_names,
-                compute_regime_transition_probs=intermediate.simulate_compute_regime_transition_probs,
-                argmax_and_max_Q_over_a=MappingProxyType(argmax_and_max_Q_over_a),
-                next_state=next_state,
-            ),
+            solve_functions=solve_functions,
+            simulate_functions=simulate_functions,
             _base_state_action_space=state_action_spaces[name],
         )
 
     return ensure_containers_are_immutable(internal_regimes)
 
 
-@dataclasses.dataclass(frozen=True)
-class _IntermediateFunctions:
-    """Intermediate container for functions produced during regime processing."""
+def get_simulation_output_dtypes(
+    regimes: Mapping[str, Regime],
+    regime_names_to_ids: Mapping[str, int],
+) -> MappingProxyType[str, pd.CategoricalDtype]:
+    """Compute pandas CategoricalDtype for all discrete output columns.
 
-    solve_functions: FunctionsMapping
-    """Solve-phase functions (using solve variants for function pairs)."""
+    Merge ordered categories across regimes via topological sort. This must be
+    called after model validation (which guarantees merges succeed).
 
-    simulate_functions: FunctionsMapping
-    """Simulate-phase functions (with simulate overrides applied)."""
+    Args:
+        regimes: Mapping of regime names to Regime instances.
+        regime_names_to_ids: Mapping of regime names to integer IDs.
 
-    solve_constraints: FunctionsMapping
-    """Constraint functions for solve phase."""
+    Returns:
+        Immutable mapping of variable name to `pd.CategoricalDtype`. Includes
+        all discrete state/action variables plus the ``"regime"`` column.
 
-    simulate_constraints: FunctionsMapping
-    """Constraint functions for simulate phase."""
+    """
+    merged_categories, ordered_flags = _compute_merged_discrete_categories(regimes)
 
+    dtypes: dict[str, pd.CategoricalDtype] = {}
+    for var_name, categories in merged_categories.items():
+        dtypes[var_name] = pd.CategoricalDtype(
+            categories=list(categories),
+            ordered=ordered_flags[var_name],
+        )
+
+    dtypes["regime"] = pd.CategoricalDtype(
+        categories=list(regime_names_to_ids.keys()),
+        ordered=False,
+    )
+
+    return MappingProxyType(dtypes)
+
+
+class _CoreResult(NamedTuple):
+    """Result of core regime function processing for one phase."""
+
+    functions: FunctionsMapping
+    constraints: FunctionsMapping
     transitions: TransitionFunctionsMapping
-    """Immutable mapping of transition names to transition functions."""
-
-    solve_compute_regime_transition_probs: RegimeTransitionFunction | None
-    """Regime transition probability function for solve, or `None`."""
-
-    simulate_compute_regime_transition_probs: VmappedRegimeTransitionFunction | None
-    """Regime transition probability function for simulate, or `None`."""
-
     stochastic_transition_names: frozenset[str]
-    """Frozenset of stochastic transition function names."""
+    next_regime_func: InternalUserFunction | None
 
 
-def _get_intermediate_functions(
+def _build_solve_functions(
     *,
     regime: Regime,
     regime_name: str,
     nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
+    all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
     regime_params_template: RegimeParamsTemplate,
     regime_names_to_ids: RegimeNamesToIds,
-    all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
     variable_info: pd.DataFrame,
+    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    regime_to_state_space_info: MappingProxyType[RegimeName, StateSpaceInfo],
+    state_action_space: StateActionSpace,
+    ages: AgeGrid,
     enable_jit: bool,
-) -> _IntermediateFunctions:
-    """Process the user provided regime functions.
+) -> SolveFunctions:
+    """Build all compiled functions for the backward-induction (solve) phase.
 
     Args:
-        regime: The regime as provided by the user.
+        regime: The user regime.
         regime_name: The name of the regime.
         nested_transitions: Nested transitions dict for internal processing.
-            Format: {"regime_name": {"next_state": func, ...}, "next_regime": func}
+        all_grids: Immutable mapping of regime names to Grid spec objects.
         regime_params_template: The regime's parameter template.
         regime_names_to_ids: Mapping from regime names to integer indices.
-        all_grids: Immutable mapping of regime names to Grid spec objects.
         variable_info: Variable info of the regime.
+        regimes_to_active_periods: Mapping of regime names to active period tuples.
+        regime_to_state_space_info: Mapping of regime names to state space info.
+        state_action_space: The state-action space for this regime.
+        ages: The AgeGrid for the model.
         enable_jit: Whether to jit the internal functions.
 
     Returns:
-        Intermediate functions container with solve and simulate variants.
+        Complete solve functions container.
+
+    """
+    core = _process_regime_core(
+        regime=regime,
+        regime_name=regime_name,
+        nested_transitions=nested_transitions,
+        all_grids=all_grids,
+        regime_params_template=regime_params_template,
+        variable_info=variable_info,
+        phase="solve",
+    )
+
+    if regime.terminal:
+        solve_regime_tp = None
+    else:
+        assert core.next_regime_func is not None  # noqa: S101
+        solve_regime_tp, _simulate_regime_tp = build_regime_transition_probs_functions(
+            functions=core.functions,
+            compute_regime_transition_probs=core.next_regime_func,
+            grids=all_grids[regime_name],
+            regime_names_to_ids=regime_names_to_ids,
+            regime_params_template=regime_params_template,
+            is_stochastic=regime.stochastic_regime_transition,
+            enable_jit=enable_jit,
+        )
+
+    Q_and_F = build_Q_and_F_functions(
+        regime=regime,
+        regimes_to_active_periods=regimes_to_active_periods,
+        functions=core.functions,
+        constraints=core.constraints,
+        transitions=core.transitions,
+        stochastic_transition_names=core.stochastic_transition_names,
+        compute_regime_transition_probs=solve_regime_tp,
+        regime_to_state_space_info=regime_to_state_space_info,
+        ages=ages,
+        regime_params_template=regime_params_template,
+    )
+
+    max_Q_over_a = build_max_Q_over_a_functions(
+        state_action_space=state_action_space,
+        Q_and_F_functions=Q_and_F,
+        enable_jit=enable_jit,
+    )
+
+    return SolveFunctions(
+        functions=core.functions,
+        constraints=core.constraints,
+        transitions=core.transitions,
+        stochastic_transition_names=core.stochastic_transition_names,
+        compute_regime_transition_probs=solve_regime_tp,
+        max_Q_over_a=max_Q_over_a,
+    )
+
+
+def _build_simulate_functions(
+    *,
+    regime: Regime,
+    regime_name: str,
+    nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
+    all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
+    regime_params_template: RegimeParamsTemplate,
+    regime_names_to_ids: RegimeNamesToIds,
+    variable_info: pd.DataFrame,
+    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    regime_to_state_space_info: MappingProxyType[RegimeName, StateSpaceInfo],
+    state_action_space: StateActionSpace,
+    ages: AgeGrid,
+    enable_jit: bool,
+    solve_transitions: TransitionFunctionsMapping,
+    solve_stochastic_transition_names: frozenset[str],
+    solve_compute_regime_transition_probs: RegimeTransitionFunction | None,
+) -> SimulateFunctions:
+    """Build all compiled functions for the forward-simulation phase.
+
+    When the regime has `SolveSimulateFunctionPair` entries, simulate-specific
+    function variants are resolved. Otherwise, functions and constraints are
+    identical to the solve phase.
+
+    Q_and_F always uses the solve (non-vmapped) regime transition probs because
+    it evaluates on the Cartesian grid, not per-subject.
+
+    Args:
+        regime: The user regime.
+        regime_name: The name of the regime.
+        nested_transitions: Nested transitions dict for internal processing.
+        all_grids: Immutable mapping of regime names to Grid spec objects.
+        regime_params_template: The regime's parameter template.
+        regime_names_to_ids: Mapping from regime names to integer indices.
+        variable_info: Variable info of the regime.
+        regimes_to_active_periods: Mapping of regime names to active period tuples.
+        regime_to_state_space_info: Mapping of regime names to state space info.
+        state_action_space: The state-action space for this regime.
+        ages: The AgeGrid for the model.
+        enable_jit: Whether to jit the internal functions.
+        solve_transitions: Transitions from the solve phase (reused).
+        solve_stochastic_transition_names: Stochastic transition names from solve
+            (reused).
+        solve_compute_regime_transition_probs: Solve-phase regime transition prob
+            function, used for Q_and_F in both phases.
+
+    Returns:
+        Complete simulate functions container.
+
+    """
+    has_pairs = any(
+        isinstance(f, SolveSimulateFunctionPair) for f in regime.functions.values()
+    )
+
+    if has_pairs:
+        core = _process_regime_core(
+            regime=regime,
+            regime_name=regime_name,
+            nested_transitions=nested_transitions,
+            all_grids=all_grids,
+            regime_params_template=regime_params_template,
+            variable_info=variable_info,
+            phase="simulate",
+        )
+        sim_functions = core.functions
+        sim_constraints = core.constraints
+    else:
+        # No function pairs: reuse solve-phase core processing results.
+        core = _process_regime_core(
+            regime=regime,
+            regime_name=regime_name,
+            nested_transitions=nested_transitions,
+            all_grids=all_grids,
+            regime_params_template=regime_params_template,
+            variable_info=variable_info,
+            phase="solve",
+        )
+        sim_functions = core.functions
+        sim_constraints = core.constraints
+
+    if regime.terminal:
+        simulate_regime_tp = None
+    else:
+        assert core.next_regime_func is not None  # noqa: S101
+        _solve_regime_tp, simulate_regime_tp = build_regime_transition_probs_functions(
+            functions=sim_functions,
+            compute_regime_transition_probs=core.next_regime_func,
+            grids=all_grids[regime_name],
+            regime_names_to_ids=regime_names_to_ids,
+            regime_params_template=regime_params_template,
+            is_stochastic=regime.stochastic_regime_transition,
+            enable_jit=enable_jit,
+        )
+
+    # Q_and_F uses the solve (non-vmapped) regime transition probs since it
+    # evaluates on the Cartesian grid, not per-subject.
+    Q_and_F = build_Q_and_F_functions(
+        regime=regime,
+        regimes_to_active_periods=regimes_to_active_periods,
+        functions=sim_functions,
+        constraints=sim_constraints,
+        transitions=solve_transitions,
+        stochastic_transition_names=solve_stochastic_transition_names,
+        compute_regime_transition_probs=solve_compute_regime_transition_probs,
+        regime_to_state_space_info=regime_to_state_space_info,
+        ages=ages,
+        regime_params_template=regime_params_template,
+    )
+
+    argmax_and_max_Q_over_a = build_argmax_and_max_Q_over_a_functions(
+        state_action_space=state_action_space,
+        Q_and_F_functions=Q_and_F,
+        enable_jit=enable_jit,
+    )
+
+    # next_state uses solve functions because state transitions don't participate
+    # in SolveSimulateFunctionPair — only utility/H functions have phase variants.
+    solve_core = _process_regime_core(
+        regime=regime,
+        regime_name=regime_name,
+        nested_transitions=nested_transitions,
+        all_grids=all_grids,
+        regime_params_template=regime_params_template,
+        variable_info=variable_info,
+        phase="solve",
+    )
+    next_state = build_next_state_simulation_functions(
+        functions=solve_core.functions,
+        transitions=solve_transitions,
+        stochastic_transition_names=solve_stochastic_transition_names,
+        all_grids=all_grids,
+        variable_info=variable_info,
+        regime_params_template=regime_params_template,
+        enable_jit=enable_jit,
+    )
+
+    return SimulateFunctions(
+        functions=sim_functions,
+        constraints=sim_constraints,
+        transitions=solve_transitions,
+        stochastic_transition_names=solve_stochastic_transition_names,
+        compute_regime_transition_probs=simulate_regime_tp,
+        argmax_and_max_Q_over_a=argmax_and_max_Q_over_a,
+        next_state=next_state,
+    )
+
+
+def _process_regime_core(
+    *,
+    regime: Regime,
+    regime_name: str,
+    nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
+    all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
+    regime_params_template: RegimeParamsTemplate,
+    variable_info: pd.DataFrame,
+    phase: Literal["solve", "simulate"],
+) -> _CoreResult:
+    """Process regime functions and transitions for a single phase.
+
+    Resolve `SolveSimulateFunctionPair` entries by picking the variant matching
+    `phase`, rename params to qualified names, classify and process transitions.
+
+    Args:
+        regime: The user regime.
+        regime_name: The name of the regime.
+        nested_transitions: Nested transitions dict for internal processing.
+        all_grids: Immutable mapping of regime names to Grid spec objects.
+        regime_params_template: The regime's parameter template.
+        variable_info: Variable info of the regime.
+        phase: Which phase variant to use for function pairs.
+
+    Returns:
+        Core processing result with functions, constraints, transitions, stochastic
+        transition names, and the next_regime function.
 
     """
     flat_grids = flatten_regime_namespace(all_grids)
-    # Flatten nested transitions to get prefixed names like "regime__next_wealth"
     flat_nested_transitions = flatten_regime_namespace(nested_transitions)
 
-    # Collect function pairs from regime.functions for separate handling.
+    # Resolve function pairs for this phase.
     function_pair_entries: dict[str, SolveSimulateFunctionPair] = {
         name: func
         for name, func in regime.functions.items()
         if isinstance(func, SolveSimulateFunctionPair)
     }
-    # For the purpose of building all_functions, use the solve variant as
-    # the representative callable.
     resolved_functions: dict[str, UserFunction] = {}
     for name, func in regime.functions.items():
-        resolved_functions[name] = cast(
-            "UserFunction",
-            func.solve if isinstance(func, SolveSimulateFunctionPair) else func,
-        )
+        if isinstance(func, SolveSimulateFunctionPair):
+            resolved_functions[name] = cast(
+                "UserFunction",
+                func.solve if phase == "solve" else func.simulate,
+            )
+        else:
+            resolved_functions[name] = func
 
-    # Build all_functions using nested_transitions (to get prefixed names)
     all_functions: dict[str, UserFunction] = {
         **resolved_functions,
         **regime.constraints,
         **flat_nested_transitions,
     }
 
-    # Compute per-target next names for param key extraction
     per_target_next_names = frozenset(
         f"next_{name}"
         for name, raw in regime.state_transitions.items()
@@ -356,18 +532,15 @@ def _get_intermediate_functions(
     }
 
     functions: dict[str, InternalUserFunction] = {}
-    simulate_overrides: dict[str, InternalUserFunction] = {}
 
     for func_name, func in deterministic_functions.items():
         if func_name in function_pair_entries:
             function_pair = function_pair_entries[func_name]
-            functions[func_name] = _rename_params_to_qnames(
-                func=function_pair.solve,
-                regime_params_template=regime_params_template,
-                param_key=func_name,
+            variant = (
+                function_pair.solve if phase == "solve" else function_pair.simulate
             )
-            simulate_overrides[func_name] = _rename_params_to_qnames(
-                func=function_pair.simulate,
+            functions[func_name] = _rename_params_to_qnames(
+                func=variant,
                 regime_params_template=regime_params_template,
                 param_key=func_name,
             )
@@ -387,9 +560,6 @@ def _get_intermediate_functions(
         )
 
     for func_name, func in stochastic_transition_functions.items():
-        # The user-specified next function is the weighting function for the
-        # stochastic transition. For the solution, we must also define a next function
-        # that returns the whole grid of possible values.
         param_key = _extract_param_key(func_name, per_target_next_names)
         functions[f"weight_{func_name}"] = _rename_params_to_qnames(
             func=func,
@@ -400,6 +570,7 @@ def _get_intermediate_functions(
             func=func,
             grid=flat_grids[func_name.replace("next_", "")].to_jax(),
         )
+
     for shock_name in variable_info.query("is_shock").index.tolist():
         relative_name = f"{regime_name}__next_{shock_name}"
         functions[f"weight_{relative_name}"] = _get_weights_func_for_shock(
@@ -410,16 +581,17 @@ def _get_intermediate_functions(
             name=shock_name,
             grid=flat_grids[relative_name.replace("next_", "")].to_jax(),
         )
+
     internal_transition = {
         func_name: functions[func_name]
         for func_name in flat_nested_transitions
         if func_name != "next_regime"
     }
-    internal_constraints = MappingProxyType(
+    constraints = MappingProxyType(
         {func_name: functions[func_name] for func_name in regime.constraints}
     )
     excluded_from_functions = set(flat_nested_transitions) | set(regime.constraints)
-    solve_functions = MappingProxyType(
+    phase_functions = MappingProxyType(
         {
             func_name: functions[func_name]
             for func_name in functions
@@ -427,39 +599,25 @@ def _get_intermediate_functions(
         }
     )
 
-    # Build simulate functions: merge overrides on top of solve functions
-    if simulate_overrides:
-        simulate_functions = MappingProxyType(
-            dict(solve_functions) | simulate_overrides
-        )
-    else:
-        simulate_functions = solve_functions
-
-    is_stochastic_regime_transition = regime.stochastic_regime_transition
     transitions = _wrap_transitions(unflatten_regime_namespace(internal_transition))
 
-    if regime.terminal:
-        solve_regime_tp = None
-        simulate_regime_tp = None
-    else:
-        solve_regime_tp, simulate_regime_tp = build_regime_transition_probs_functions(
-            functions=solve_functions,
-            compute_regime_transition_probs=functions["next_regime"],
-            grids=all_grids[regime_name],
-            regime_names_to_ids=regime_names_to_ids,
-            regime_params_template=regime_params_template,
-            is_stochastic=is_stochastic_regime_transition,
-            enable_jit=enable_jit,
-        )
-    return _IntermediateFunctions(
-        solve_functions=solve_functions,
-        simulate_functions=simulate_functions,
-        solve_constraints=internal_constraints,
-        simulate_constraints=internal_constraints,
+    next_regime_func = functions.get("next_regime")
+
+    return _CoreResult(
+        functions=phase_functions,
+        constraints=constraints,
         transitions=transitions,
-        solve_compute_regime_transition_probs=solve_regime_tp,
-        simulate_compute_regime_transition_probs=simulate_regime_tp,
         stochastic_transition_names=stochastic_transition_names,
+        next_regime_func=next_regime_func,
+    )
+
+
+def _wrap_transitions(
+    transitions: dict[RegimeName, dict[str, InternalUserFunction]],
+) -> TransitionFunctionsMapping:
+    """Wrap nested transitions dict in MappingProxyType."""
+    return MappingProxyType(
+        {name: MappingProxyType(inner) for name, inner in transitions.items()}
     )
 
 
@@ -516,13 +674,6 @@ def _classify_transitions(
     return simple, per_target
 
 
-def _has_function_pairs(regime: Regime) -> bool:
-    """Check if any function in the regime is a SolveSimulateFunctionPair."""
-    return any(
-        isinstance(f, SolveSimulateFunctionPair) for f in regime.functions.values()
-    )
-
-
 def _extract_transitions_from_regime(
     *,
     regime: Regime,
@@ -541,7 +692,7 @@ def _extract_transitions_from_regime(
         states_per_regime: Mapping of regime names to their state names.
 
     Returns:
-        Nested transitions dict in the format expected by `_get_intermediate_functions`.
+        Nested transitions dict for internal processing.
 
     """
     if regime.terminal:
@@ -758,41 +909,6 @@ def _validate_categoricals(
         raise ModelInitializationError(format_messages(error_messages))
 
 
-def get_simulation_output_dtypes(
-    regimes: Mapping[str, Regime],
-    regime_names_to_ids: Mapping[str, int],
-) -> MappingProxyType[str, pd.CategoricalDtype]:
-    """Compute pandas CategoricalDtype for all discrete output columns.
-
-    Merge ordered categories across regimes via topological sort. This must be
-    called after model validation (which guarantees merges succeed).
-
-    Args:
-        regimes: Mapping of regime names to Regime instances.
-        regime_names_to_ids: Mapping of regime names to integer IDs.
-
-    Returns:
-        Immutable mapping of variable name to `pd.CategoricalDtype`. Includes
-        all discrete state/action variables plus the ``"regime"`` column.
-
-    """
-    merged_categories, ordered_flags = _compute_merged_discrete_categories(regimes)
-
-    dtypes: dict[str, pd.CategoricalDtype] = {}
-    for var_name, categories in merged_categories.items():
-        dtypes[var_name] = pd.CategoricalDtype(
-            categories=list(categories),
-            ordered=ordered_flags[var_name],
-        )
-
-    dtypes["regime"] = pd.CategoricalDtype(
-        categories=list(regime_names_to_ids.keys()),
-        ordered=False,
-    )
-
-    return MappingProxyType(dtypes)
-
-
 def _compute_merged_discrete_categories(
     regimes: Mapping[str, Regime],
 ) -> tuple[dict[str, tuple[str, ...]], dict[str, bool]]:
@@ -840,9 +956,9 @@ def _validate_ordered_flags(
     """Validate that the ordered flag is consistent for each discrete variable.
 
     For each discrete state/action variable that appears in multiple regimes:
-    - Mixed ordered flags (True in one, False in another) → error.
-    - Both ordered with different categories → merge via topological sort; ambiguous
-      or contradictory merges → error.
+    - Mixed ordered flags (True in one, False in another) -> error.
+    - Both ordered with different categories -> merge via topological sort; ambiguous
+      or contradictory merges -> error.
     """
     # Collect per-variable: list of (regime_name, grid)
     var_grids: dict[str, list[tuple[str, DiscreteGrid]]] = {}
