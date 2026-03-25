@@ -18,7 +18,6 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     InternalUserFunction,
-    MaterializedGrids,
     NextStateSimulationFunction,
     RegimeName,
     StochasticNextFunction,
@@ -59,19 +58,17 @@ def get_next_state_function_for_simulation(
     *,
     transitions: MappingProxyType[str, InternalUserFunction],
     functions: MappingProxyType[str, InternalUserFunction],
-    materialized_grids: MaterializedGrids,
-    grids: MappingProxyType[str, Grid],
+    grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
     variable_info: pd.DataFrame,
     stochastic_transition_names: frozenset[str] = frozenset(),
 ) -> NextStateSimulationFunction:
     """Get function that computes the next states during the simulation.
 
     Args:
-        materialized_grids: Materialized grid arrays of all regimes.
-        grids: Grid objects for the current regime.
-        variable_info: Variable info of a regime.
         transitions: Transitions to the next states of a regime.
         functions: Immutable mapping of auxiliary functions of a regime.
+        grids: Immutable mapping of regime names to Grid spec objects.
+        variable_info: Variable info of a regime.
         stochastic_transition_names: Frozenset of stochastic transition function names.
 
     Returns:
@@ -84,7 +81,6 @@ def get_next_state_function_for_simulation(
     # For the simulation target, we need to extend the functions dictionary with
     # stochastic next states functions and their weights.
     extended_transitions = _extend_transitions_for_simulation(
-        materialized_grids=materialized_grids,
         grids=grids,
         transitions=transitions,
         variable_info=variable_info,
@@ -136,8 +132,7 @@ def get_next_stochastic_weights_function(
 
 def _extend_transitions_for_simulation(
     *,
-    materialized_grids: MaterializedGrids,
-    grids: MappingProxyType[str, Grid],
+    grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
     transitions: MappingProxyType[str, InternalUserFunction],
     variable_info: pd.DataFrame,
     stochastic_transition_names: frozenset[str],
@@ -145,8 +140,7 @@ def _extend_transitions_for_simulation(
     """Extend the functions dictionary for the simulation target.
 
     Args:
-        materialized_grids: Materialized grid arrays of all regimes.
-        grids: Grid objects for the current regime.
+        grids: Immutable mapping of regime names to Grid spec objects.
         transitions: Immutable mapping of transitions to extend.
         variable_info: Variable info of the current regime.
         stochastic_transition_names: Frozenset of stochastic transition function names.
@@ -156,7 +150,7 @@ def _extend_transitions_for_simulation(
 
     """
     shock_names = set(variable_info.query("is_shock").index.to_list())
-    flat_grids = flatten_regime_namespace(materialized_grids)
+    flat_grids = flatten_regime_namespace(grids)
     discrete_stochastic_targets = [
         func_name
         for func_name in transitions
@@ -180,12 +174,12 @@ def _extend_transitions_for_simulation(
     # ----------------------------------------------------------------------------------
     discrete_stochastic_next = {
         name: _create_discrete_stochastic_next_func(
-            name, labels=flat_grids[name.replace("next_", "")]
+            name, labels=flat_grids[name.replace("next_", "")].to_jax()
         )
         for name in discrete_stochastic_targets
     }
     continuous_stochastic_next = {
-        name: _create_continuous_stochastic_next_func(name, grids=grids)
+        name: _create_continuous_stochastic_next_func(name, flat_grids=flat_grids)
         for name in continuous_stochastic_targets
     }
 
@@ -228,7 +222,7 @@ def _create_discrete_stochastic_next_func(
 
 
 def _create_continuous_stochastic_next_func(
-    name: str, *, grids: MappingProxyType[str, Grid]
+    name: str, *, flat_grids: MappingProxyType[str, Grid]
 ) -> StochasticNextFunction:
     """Get function that simulates the next state of a stochastic variable.
 
@@ -237,15 +231,17 @@ def _create_continuous_stochastic_next_func(
     before calling the shock calculation function.
 
     Args:
-        name: Name of the stochastic variable.
-        grids: Grid objects for the current regime.
+        name: Name of the stochastic variable (e.g. `"regime__next_shock"`).
+        flat_grids: Flattened immutable mapping of regime-qualified names to Grid spec
+            objects.
 
     Returns:
         A function that simulates the next state of the stochastic variable.
 
     """
     prev_state_name = name.split("next_")[1]
-    gridspec: _ShockGrid = grids[prev_state_name]  # ty: ignore [invalid-assignment]
+    flat_key = name.replace("next_", "")
+    gridspec: _ShockGrid = flat_grids[flat_key]  # ty: ignore [invalid-assignment]
 
     if isinstance(gridspec, _ShockGridAR1):
         return _create_ar1_next_func(name, prev_state_name, gridspec=gridspec)
