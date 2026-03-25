@@ -1,7 +1,7 @@
 ---
 name: benchmark-main
 concurrency:
-  group: gpu-benchmarks
+  group: gpu-benchmarks-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: false
 on:
   push:
@@ -9,7 +9,8 @@ on:
       - main
 jobs:
   run-benchmarks:
-    name: Run benchmarks on GPU and publish
+    name: Run benchmarks on GPU and publish to open-econ.org/pylcm-benchmarks
+    timeout-minutes: 14400  # 10 days (max is 35790 for self-hosted)
     runs-on:
       - self-hosted
       - gpu-benchmark
