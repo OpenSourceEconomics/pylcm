@@ -1,8 +1,8 @@
 ---
 name: benchmark-pr
 concurrency:
-  group: gpu-benchmarks
-  cancel-in-progress: false
+  group: gpu-benchmarks-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
 on:
   pull_request:
     branches:
