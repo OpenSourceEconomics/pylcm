@@ -1,7 +1,7 @@
 ---
 name: benchmark-main
 concurrency:
-  group: gpu-benchmarks
+  group: gpu-benchmarks-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: false
 on:
   push:
