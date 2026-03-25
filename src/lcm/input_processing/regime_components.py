@@ -12,13 +12,13 @@ from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.dispatchers import simulation_spacemap, vmap_1d
+from lcm.function_representation import StateSpaceInfo
 from lcm.grids import Grid
 from lcm.input_processing.params_processing import get_flat_param_names
 from lcm.interfaces import (
     InternalFunctions,
     PhaseVariant,
     StateActionSpace,
-    StateSpaceInfo,
 )
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a, get_max_Q_over_a
 from lcm.next_state import get_next_state_function_for_simulation

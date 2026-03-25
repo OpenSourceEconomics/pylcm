@@ -11,6 +11,7 @@ from jax import numpy as jnp
 
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, format_messages
+from lcm.function_representation import StateSpaceInfo
 from lcm.grid_helpers import get_irreg_coordinate
 from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
 from lcm.input_processing.create_regime_params_template import (
@@ -31,7 +32,6 @@ from lcm.interfaces import (
     InternalFunctions,
     InternalRegime,
     PhaseVariant,
-    StateSpaceInfo,
 )
 from lcm.ndimage import map_coordinates
 from lcm.regime import MarkovTransition, Regime, _collect_state_transitions

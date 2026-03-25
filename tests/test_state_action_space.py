@@ -5,9 +5,10 @@ import jax.numpy as jnp
 import pandas as pd
 from numpy.testing import assert_array_equal
 
+from lcm.function_representation import StateSpaceInfo
 from lcm.grids import DiscreteGrid, LinSpacedGrid
 from lcm.input_processing.regime_processing import _create_state_space_info
-from lcm.interfaces import StateActionSpace, StateSpaceInfo
+from lcm.interfaces import StateActionSpace
 from lcm.regime import Regime
 from lcm.state_action_space import create_state_action_space
 

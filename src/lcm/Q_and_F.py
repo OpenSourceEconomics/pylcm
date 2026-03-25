@@ -7,9 +7,9 @@ from dags import concatenate_functions, with_signature
 from jax import Array
 
 from lcm.dispatchers import productmap
-from lcm.function_representation import get_V_interpolator
+from lcm.function_representation import StateSpaceInfo, get_V_interpolator
 from lcm.functools import get_union_of_args
-from lcm.interfaces import InternalFunctions, StateSpaceInfo
+from lcm.interfaces import InternalFunctions
 from lcm.next_state import (
     get_next_state_function_for_solution,
     get_next_stochastic_weights_function,
