@@ -3,7 +3,7 @@ import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, TypeAliasType, cast, overload
+from typing import Any, Literal, TypeAliasType, cast, overload
 
 from dags.tree import QNAME_DELIMITER
 
@@ -190,17 +190,23 @@ class Regime:
         make_immutable("actions")
         make_immutable("constraints")
 
-    def get_all_functions(self) -> MappingProxyType[str, UserFunction]:
+    def get_all_functions(
+        self,
+        phase: Literal["solve", "simulate"] = "solve",
+    ) -> MappingProxyType[str, UserFunction]:
         """Get all regime functions including utility, constraints, and transitions.
 
-        Collects functions from four sources:
+        Collect functions from four sources:
         - `self.functions` (utility, helpers, H)
         - `self.constraints`
         - State transitions from `self.state_transitions`
         - The regime transition (`self.transition`, keyed as `"next_regime"`)
 
-        For `SolveSimulateFunctionPair` entries, the solve variant is used
-        as the representative for signature discovery.
+        For `SolveSimulateFunctionPair` entries, the variant matching `phase` is
+        used.
+
+        Args:
+            phase: Which variant to use for `SolveSimulateFunctionPair` entries.
 
         Returns:
             Read-only mapping of all regime functions.
@@ -208,10 +214,13 @@ class Regime:
         """
         result: dict[str, UserFunction] = {}
         for name, func in self.functions.items():
-            result[name] = cast(
-                "UserFunction",
-                func.solve if isinstance(func, SolveSimulateFunctionPair) else func,
-            )
+            if isinstance(func, SolveSimulateFunctionPair):
+                result[name] = cast(
+                    "UserFunction",
+                    func.solve if phase == "solve" else func.simulate,
+                )
+            else:
+                result[name] = func
         result |= dict(self.constraints)
         if callable(self.transition):
             result |= _collect_state_transitions(self.states, self.state_transitions)

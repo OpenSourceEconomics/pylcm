@@ -74,7 +74,8 @@ def _indicator_enters_concurrent_valuation(
         "utility",
         *list(regime.constraints),
     ]
-    user_functions = dict(regime.get_all_functions())
+    # TODO(#293): remove once enters_concurrent_valuation is gone
+    user_functions = dict(regime.get_all_functions(phase="solve"))
     ancestors = get_ancestors(
         user_functions,
         targets=enters_Q_and_F_func_names,
@@ -100,7 +101,8 @@ def _indicator_enters_transition(
     Special variables such as the "period" or parameters will be ignored.
 
     """
-    user_functions = dict(regime.get_all_functions())
+    # TODO(#293): remove once enters_transition is gone
+    user_functions = dict(regime.get_all_functions(phase="solve"))
     next_func_names = [
         name
         for name in user_functions

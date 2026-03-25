@@ -45,7 +45,7 @@ def create_regime_params_template(  # noqa: C901
 
     function_params: dict[str, dict[str, str]] = {}
     # Use dags.tree to discover parameters and their type annotations for each function.
-    for name, func in regime.get_all_functions().items():
+    for name, func in regime.get_all_functions(phase="solve").items():
         raw_func = regime.functions.get(name)
         if isinstance(raw_func, SolveSimulateFunctionPair):
             # Discover params from both variants and take the union.
