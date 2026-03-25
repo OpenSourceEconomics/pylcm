@@ -17,7 +17,6 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
-    GridsDict,
     InternalUserFunction,
     NextStateSimulationFunction,
     RegimeName,
@@ -59,19 +58,17 @@ def get_next_state_function_for_simulation(
     *,
     transitions: MappingProxyType[str, InternalUserFunction],
     functions: MappingProxyType[str, InternalUserFunction],
-    grids: GridsDict,
-    gridspecs: MappingProxyType[str, Grid],
+    all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
     variable_info: pd.DataFrame,
     stochastic_transition_names: frozenset[str] = frozenset(),
 ) -> NextStateSimulationFunction:
     """Get function that computes the next states during the simulation.
 
     Args:
-        grids: Grids of a regime.
-        gridspecs: The specifications of the current regimes grids.
-        variable_info: Variable info of a regime.
         transitions: Transitions to the next states of a regime.
         functions: Immutable mapping of auxiliary functions of a regime.
+        all_grids: Immutable mapping of regime names to Grid spec objects.
+        variable_info: Variable info of a regime.
         stochastic_transition_names: Frozenset of stochastic transition function names.
 
     Returns:
@@ -84,8 +81,7 @@ def get_next_state_function_for_simulation(
     # For the simulation target, we need to extend the functions dictionary with
     # stochastic next states functions and their weights.
     extended_transitions = _extend_transitions_for_simulation(
-        grids=grids,
-        gridspecs=gridspecs,
+        all_grids=all_grids,
         transitions=transitions,
         variable_info=variable_info,
         stochastic_transition_names=stochastic_transition_names,
@@ -136,8 +132,7 @@ def get_next_stochastic_weights_function(
 
 def _extend_transitions_for_simulation(
     *,
-    grids: GridsDict,
-    gridspecs: MappingProxyType[str, Grid],
+    all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
     transitions: MappingProxyType[str, InternalUserFunction],
     variable_info: pd.DataFrame,
     stochastic_transition_names: frozenset[str],
@@ -145,8 +140,7 @@ def _extend_transitions_for_simulation(
     """Extend the functions dictionary for the simulation target.
 
     Args:
-        grids: Immutable mapping of grids.
-        gridspecs: The specifications of the current regimes grids.
+        all_grids: Immutable mapping of regime names to Grid spec objects.
         transitions: Immutable mapping of transitions to extend.
         variable_info: Variable info of the current regime.
         stochastic_transition_names: Frozenset of stochastic transition function names.
@@ -156,7 +150,7 @@ def _extend_transitions_for_simulation(
 
     """
     shock_names = set(variable_info.query("is_shock").index.to_list())
-    flat_grids = flatten_regime_namespace(grids)
+    flat_grids = flatten_regime_namespace(all_grids)
     discrete_stochastic_targets = [
         func_name
         for func_name in transitions
@@ -180,12 +174,12 @@ def _extend_transitions_for_simulation(
     # ----------------------------------------------------------------------------------
     discrete_stochastic_next = {
         name: _create_discrete_stochastic_next_func(
-            name, labels=flat_grids[name.replace("next_", "")]
+            name, labels=flat_grids[name.replace("next_", "")].to_jax()
         )
         for name in discrete_stochastic_targets
     }
     continuous_stochastic_next = {
-        name: _create_continuous_stochastic_next_func(name, gridspecs=gridspecs)
+        name: _create_continuous_stochastic_next_func(name, flat_grids=flat_grids)
         for name in continuous_stochastic_targets
     }
 
@@ -228,7 +222,7 @@ def _create_discrete_stochastic_next_func(
 
 
 def _create_continuous_stochastic_next_func(
-    name: str, *, gridspecs: MappingProxyType[str, Grid]
+    name: str, *, flat_grids: MappingProxyType[str, Grid]
 ) -> StochasticNextFunction:
     """Get function that simulates the next state of a stochastic variable.
 
@@ -237,39 +231,41 @@ def _create_continuous_stochastic_next_func(
     before calling the shock calculation function.
 
     Args:
-        name: Name of the stochastic variable.
-        gridspecs: The specifications of the current regimes grids.
+        name: Name of the stochastic variable (e.g. `"regime__next_shock"`).
+        flat_grids: Flattened immutable mapping of regime-qualified names to Grid spec
+            objects.
 
     Returns:
         A function that simulates the next state of the stochastic variable.
 
     """
     prev_state_name = name.split("next_")[1]
-    gridspec: _ShockGrid = gridspecs[prev_state_name]  # ty: ignore [invalid-assignment]
+    flat_key = name.replace("next_", "")
+    grid: _ShockGrid = flat_grids[flat_key]  # ty: ignore [invalid-assignment]
 
-    if isinstance(gridspec, _ShockGridAR1):
-        return _create_ar1_next_func(name, prev_state_name, gridspec=gridspec)
-    if isinstance(gridspec, _ShockGridIID):
-        return _create_iid_next_func(name, prev_state_name, gridspec=gridspec)
+    if isinstance(grid, _ShockGridAR1):
+        return _create_ar1_next_func(name, prev_state_name, grid=grid)
+    if isinstance(grid, _ShockGridIID):
+        return _create_iid_next_func(name, prev_state_name, grid=grid)
 
-    msg = f"Expected _ShockGridIID or _ShockGridAR1, got {type(gridspec)}"
+    msg = f"Expected _ShockGridIID or _ShockGridAR1, got {type(grid)}"
     raise TypeError(msg)
 
 
 def _create_ar1_next_func(
-    name: str, prev_state_name: str, *, gridspec: _ShockGridAR1
+    name: str, prev_state_name: str, *, grid: _ShockGridAR1
 ) -> StochasticNextFunction:
-    fixed_params = dict(gridspec.params)
+    fixed_params = dict(grid.params)
     runtime_param_names = {
         qname_from_tree_path((prev_state_name, p)): p
-        for p in gridspec.params_to_pass_at_runtime
+        for p in grid.params_to_pass_at_runtime
     }
     args: dict[str, str] = {
         f"key_{name}": "dict[str, Array]",
         prev_state_name: "ContinuousState",
         **dict.fromkeys(runtime_param_names, "float"),
     }
-    _draw_shock = gridspec.draw_shock
+    _draw_shock = grid.draw_shock
 
     @with_signature(args=args, return_annotation="ContinuousState")
     def next_stochastic_state(**kwargs: FloatND) -> ContinuousState:
@@ -289,18 +285,18 @@ def _create_ar1_next_func(
 
 
 def _create_iid_next_func(
-    name: str, prev_state_name: str, *, gridspec: _ShockGridIID
+    name: str, prev_state_name: str, *, grid: _ShockGridIID
 ) -> StochasticNextFunction:
-    fixed_params = dict(gridspec.params)
+    fixed_params = dict(grid.params)
     runtime_param_names = {
         qname_from_tree_path((prev_state_name, p)): p
-        for p in gridspec.params_to_pass_at_runtime
+        for p in grid.params_to_pass_at_runtime
     }
     args: dict[str, str] = {
         f"key_{name}": "dict[str, Array]",
         **dict.fromkeys(runtime_param_names, "float"),
     }
-    _draw_shock = gridspec.draw_shock
+    _draw_shock = grid.draw_shock
 
     @with_signature(args=args, return_annotation="ContinuousState")
     def next_stochastic_state(**kwargs: FloatND) -> ContinuousState:

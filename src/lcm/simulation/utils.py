@@ -320,7 +320,7 @@ def build_initial_states(
             key = f"{regime_name}__{state_name}"
             if state_name in initial_states:
                 flat[key] = initial_states[state_name]
-            elif isinstance(internal_regime.gridspecs[state_name], DiscreteGrid):
+            elif isinstance(internal_regime.grids[state_name], DiscreteGrid):
                 flat[key] = jnp.full(n_subjects, MISSING_CAT_CODE, dtype=jnp.int32)
             else:
                 flat[key] = jnp.full(n_subjects, jnp.nan)

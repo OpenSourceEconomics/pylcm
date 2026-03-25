@@ -6,6 +6,7 @@ import pandas as pd
 from pybaum import tree_equal
 
 from lcm.ages import AgeGrid
+from lcm.grids import DiscreteGrid, categorical
 from lcm.input_processing import process_regimes
 from lcm.interfaces import InternalFunctions, PhaseVariant
 from lcm.next_state import (
@@ -69,8 +70,14 @@ def test_get_next_state_function_with_simulate_target():
     def f_weight_b(state: ContinuousState) -> FloatND:
         return jnp.array([0.0, 1.0])
 
-    grids = MappingProxyType({"mock": MappingProxyType({"b": jnp.arange(2)})})
-    gridspecs = MappingProxyType({})
+    @categorical(ordered=False)
+    class MockCategory:
+        cat_0: int
+        cat_1: int
+
+    all_grids = MappingProxyType(
+        {"mock": MappingProxyType({"b": DiscreteGrid(MockCategory)})}
+    )
     variable_info = pd.DataFrame({"is_shock": [False]})
     mock_transition_solve = lambda *args, **kwargs: {"mock": 1.0}
     mock_transition_simulate = lambda *args, **kwargs: {"mock": jnp.array([1.0])}
@@ -88,9 +95,8 @@ def test_get_next_state_function_with_simulate_target():
             internal_functions.transitions,
         ),
         functions=internal_functions.functions,
-        grids=grids,
         variable_info=variable_info,
-        gridspecs=gridspecs,
+        all_grids=all_grids,
     )
 
     key = jnp.arange(2, dtype="uint32")

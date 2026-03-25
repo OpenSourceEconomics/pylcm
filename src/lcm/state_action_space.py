@@ -3,13 +3,14 @@ from types import MappingProxyType
 import pandas as pd
 from jax import Array
 
+from lcm.grids import Grid
 from lcm.interfaces import StateActionSpace
 
 
 def create_state_action_space(
     *,
     variable_info: pd.DataFrame,
-    grids: MappingProxyType[str, Array],
+    grids: MappingProxyType[str, Grid],
     states: dict[str, Array] | None = None,
 ) -> StateActionSpace:
     """Create a state-action-space.
@@ -19,7 +20,7 @@ def create_state_action_space(
 
     Args:
         variable_info: The variable info table as returned by get_variable_info.
-        grids: A dictionary of grids as returned by get_grids.
+        grids: Immutable mapping of variable names to Grid spec objects.
         states: A dictionary of states. If None, the grids as specified in the regime
             are used.
 
@@ -30,7 +31,9 @@ def create_state_action_space(
 
     """
     if states is None:
-        _states = {sn: grids[sn] for sn in variable_info.query("is_state").index}
+        _states = {
+            sn: grids[sn].to_jax() for sn in variable_info.query("is_state").index
+        }
     else:
         _validate_all_states_present(
             provided_states=states,
@@ -39,11 +42,11 @@ def create_state_action_space(
         _states = states
 
     discrete_actions = {
-        name: grids[name]
+        name: grids[name].to_jax()
         for name in variable_info.query("is_action & is_discrete").index
     }
     continuous_actions = {
-        name: grids[name]
+        name: grids[name].to_jax()
         for name in variable_info.query("is_action & is_continuous").index
     }
     state_and_discrete_action_names = tuple(

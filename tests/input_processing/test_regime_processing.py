@@ -13,7 +13,7 @@ from lcm.input_processing.regime_processing import (
     _rename_params_to_qnames,
     process_regimes,
 )
-from lcm.input_processing.util import get_grids, get_gridspecs, get_variable_info
+from lcm.input_processing.util import get_grids, get_variable_info
 from tests.regime_mock import RegimeMock
 from tests.test_models.deterministic.base import dead, working_life
 
@@ -53,31 +53,6 @@ def test_get_variable_info(binary_category_class):
     assert_frame_equal(got.loc[exp.index], exp)  # we don't care about the id order here
 
 
-def test_get_gridspecs(binary_category_class):
-    def next_c(a, b):
-        pass
-
-    regime_mock = RegimeMock(
-        actions={
-            "a": DiscreteGrid(binary_category_class),
-        },
-        states={
-            "c": DiscreteGrid(binary_category_class),
-        },
-        state_transitions={"c": next_c},
-        functions={"utility": lambda _c: None},
-    )
-
-    got = get_gridspecs(regime_mock)  # ty: ignore[invalid-argument-type]
-    assert isinstance(got["a"], DiscreteGrid)
-    assert got["a"].categories == ("cat0", "cat1")
-    assert got["a"].codes == (0, 1)
-
-    assert isinstance(got["c"], DiscreteGrid)
-    assert got["c"].categories == ("cat0", "cat1")
-    assert got["c"].codes == (0, 1)
-
-
 def test_get_grids(binary_category_class):
     def next_c(a, b):
         pass
@@ -94,8 +69,13 @@ def test_get_grids(binary_category_class):
     )
 
     got = get_grids(regime_mock)  # ty: ignore[invalid-argument-type]
-    assert_array_equal(got["a"], jnp.array([0, 1]))
-    assert_array_equal(got["c"], jnp.array([0, 1]))
+    assert isinstance(got["a"], DiscreteGrid)
+    assert got["a"].categories == ("cat0", "cat1")
+    assert got["a"].codes == (0, 1)
+
+    assert isinstance(got["c"], DiscreteGrid)
+    assert got["c"].categories == ("cat0", "cat1")
+    assert got["c"].codes == (0, 1)
 
 
 def test_process_regimes():
@@ -123,31 +103,33 @@ def test_process_regimes():
         == np.array([False, True, True])
     ).all()
 
-    # Gridspecs — compare the grid objects (which now include transition attributes)
-    assert internal_working_regime.gridspecs["wealth"] == working_life.states["wealth"]
+    # Grids — compare the grid objects (which now include transition attributes)
+    assert internal_working_regime.grids["wealth"] == working_life.states["wealth"]
     assert (
-        internal_working_regime.gridspecs["consumption"]
+        internal_working_regime.grids["consumption"]
         == working_life.actions["consumption"]
     )
 
-    assert isinstance(internal_working_regime.gridspecs["labor_supply"], DiscreteGrid)
-    assert internal_working_regime.gridspecs["labor_supply"].categories == (
+    assert isinstance(internal_working_regime.grids["labor_supply"], DiscreteGrid)
+    assert internal_working_regime.grids["labor_supply"].categories == (
         "work",
         "retire",
     )
-    assert internal_working_regime.gridspecs["labor_supply"].codes == (0, 1)
+    assert internal_working_regime.grids["labor_supply"].codes == (0, 1)
 
-    # Grids
+    # Materialized grids
     assert_array_equal(
-        internal_working_regime.grids["consumption"],
+        internal_working_regime.grids["consumption"].to_jax(),
         working_life.actions["consumption"].to_jax(),
     )
     assert_array_equal(
-        internal_working_regime.grids["wealth"],
+        internal_working_regime.grids["wealth"].to_jax(),
         working_life.states["wealth"].to_jax(),
     )
 
-    assert (internal_working_regime.grids["labor_supply"] == jnp.array([0, 1])).all()
+    assert (
+        internal_working_regime.grids["labor_supply"].to_jax() == jnp.array([0, 1])
+    ).all()
 
     # Functions
     assert internal_working_regime.transitions is not None

@@ -26,7 +26,6 @@ from lcm.Q_and_F import get_Q_and_F, get_Q_and_F_terminal
 from lcm.regime import Regime
 from lcm.typing import (
     ArgmaxQOverAFunction,
-    GridsDict,
     InternalUserFunction,
     MaxQOverAFunction,
     NextStateSimulationFunction,
@@ -150,8 +149,7 @@ def _build_argmax_and_max_Q_over_a_function(
 def build_next_state_simulation_functions(
     *,
     internal_functions: InternalFunctions,
-    grids: GridsDict,
-    gridspecs: MappingProxyType[str, Grid],
+    all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
     variable_info: pd.DataFrame,
     regime_params_template: RegimeParamsTemplate,
     enable_jit: bool,
@@ -160,8 +158,7 @@ def build_next_state_simulation_functions(
         transitions=flatten_regime_namespace(internal_functions.transitions),
         functions=internal_functions.functions,
         variable_info=variable_info,
-        grids=grids,
-        gridspecs=gridspecs,
+        all_grids=all_grids,
         stochastic_transition_names=internal_functions.stochastic_transition_names,
     )
     sig_args = tuple(inspect.signature(next_state).parameters)
@@ -184,7 +181,7 @@ def build_regime_transition_probs_functions(
     *,
     internal_functions: MappingProxyType[str, InternalUserFunction],
     regime_transition_probs: InternalUserFunction,
-    grids: MappingProxyType[str, Array],
+    grids: MappingProxyType[str, Grid],
     regime_names_to_ids: RegimeNamesToIds,
     regime_params_template: RegimeParamsTemplate,
     is_stochastic: bool,
