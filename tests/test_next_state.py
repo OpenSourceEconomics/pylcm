@@ -69,8 +69,10 @@ def test_get_next_state_function_with_simulate_target():
     def f_weight_b(state: ContinuousState) -> FloatND:
         return jnp.array([0.0, 1.0])
 
-    grids = MappingProxyType({"mock": MappingProxyType({"b": jnp.arange(2)})})
-    gridspecs = MappingProxyType({})
+    materialized_grids = MappingProxyType(
+        {"mock": MappingProxyType({"b": jnp.arange(2)})}
+    )
+    grids = MappingProxyType({})
     variable_info = pd.DataFrame({"is_shock": [False]})
     mock_transition_solve = lambda *args, **kwargs: {"mock": 1.0}
     mock_transition_simulate = lambda *args, **kwargs: {"mock": jnp.array([1.0])}
@@ -88,9 +90,9 @@ def test_get_next_state_function_with_simulate_target():
             internal_functions.transitions,
         ),
         functions=internal_functions.functions,
-        grids=grids,
+        materialized_grids=materialized_grids,
         variable_info=variable_info,
-        gridspecs=gridspecs,
+        grids=grids,
     )
 
     key = jnp.arange(2, dtype="uint32")

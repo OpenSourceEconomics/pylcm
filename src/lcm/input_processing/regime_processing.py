@@ -24,7 +24,7 @@ from lcm.input_processing.regime_components import (
     build_regime_transition_probs_functions,
 )
 from lcm.input_processing.util import (
-    get_gridspecs,
+    get_grids,
     get_variable_info,
 )
 from lcm.interfaces import (
@@ -109,11 +109,11 @@ def process_regimes(
     variable_info = MappingProxyType(
         {n: get_variable_info(r) for n, r in regimes.items()}
     )
-    gridspecs = MappingProxyType({n: get_gridspecs(r) for n, r in regimes.items()})
-    grids = MappingProxyType(
+    grids = MappingProxyType({n: get_grids(r) for n, r in regimes.items()})
+    materialized_grids = MappingProxyType(
         {
             n: MappingProxyType(
-                {name: spec.to_jax() for name, spec in gridspecs[n].items()}
+                {name: spec.to_jax() for name, spec in grids[n].items()}
             )
             for n in regimes
         }
@@ -124,7 +124,9 @@ def process_regimes(
     )
     state_action_spaces = MappingProxyType(
         {
-            n: create_state_action_space(variable_info=variable_info[n], grids=grids[n])
+            n: create_state_action_space(
+                variable_info=variable_info[n], grids=materialized_grids[n]
+            )
             for n in regimes
         }
     )
@@ -143,10 +145,10 @@ def process_regimes(
             regime=regime,
             regime_name=name,
             nested_transitions=nested_transitions[name],
-            grids=grids,
+            materialized_grids=materialized_grids,
             regime_params_template=regime_params_template,
             regime_names_to_ids=regime_names_to_ids,
-            gridspecs=gridspecs[name],
+            grids=grids[name],
             variable_info=variable_info[name],
             enable_jit=enable_jit,
         )
@@ -186,8 +188,8 @@ def process_regimes(
         )
         next_state_simulation_function = build_next_state_simulation_functions(
             internal_functions=internal_functions,
-            grids=grids,
-            gridspecs=gridspecs[name],
+            materialized_grids=materialized_grids,
+            grids=grids[name],
             variable_info=variable_info[name],
             regime_params_template=regime_params_template,
             enable_jit=enable_jit,
@@ -199,7 +201,7 @@ def process_regimes(
         internal_regimes[name] = InternalRegime(
             name=name,
             terminal=regime.terminal,
-            gridspecs=gridspecs[name],
+            grids=grids[name],
             variable_info=variable_info[name],
             functions=MappingProxyType(internal_functions.functions),
             constraints=MappingProxyType(internal_functions.constraints),
@@ -224,10 +226,10 @@ def _get_internal_functions(
     regime: Regime,
     regime_name: str,
     nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
-    grids: MappingProxyType[RegimeName, MappingProxyType[str, Array]],
+    materialized_grids: MappingProxyType[RegimeName, MappingProxyType[str, Array]],
     regime_params_template: RegimeParamsTemplate,
     regime_names_to_ids: RegimeNamesToIds,
-    gridspecs: MappingProxyType[str, Grid],
+    grids: MappingProxyType[str, Grid],
     variable_info: pd.DataFrame,
     enable_jit: bool,
 ) -> InternalFunctions:
@@ -238,10 +240,11 @@ def _get_internal_functions(
         regime_name: The name of the regime.
         nested_transitions: Nested transitions dict for internal processing.
             Format: {"regime_name": {"next_state": func, ...}, "next_regime": func}
-        grids: Immutable mapping of regime names to grid arrays.
+        materialized_grids: Immutable mapping of regime names to materialized grid
+            arrays.
         regime_params_template: The regime's parameter template.
         regime_names_to_ids: Mapping from regime names to integer indices.
-        gridspecs: The specifications of the current regimes grids.
+        grids: Grid objects for the current regime.
         variable_info: Variable info of the regime.
         enable_jit: Whether to jit the internal functions.
 
@@ -249,7 +252,7 @@ def _get_internal_functions(
         The processed regime functions.
 
     """
-    flat_grids = flatten_regime_namespace(grids)
+    flat_grids = flatten_regime_namespace(materialized_grids)
     # Flatten nested transitions to get prefixed names like "regime__next_wealth"
     flat_nested_transitions = flatten_regime_namespace(nested_transitions)
 
@@ -371,7 +374,7 @@ def _get_internal_functions(
         relative_name = f"{regime_name}__next_{shock_name}"
         functions[f"weight_{relative_name}"] = _get_weights_func_for_shock(
             name=shock_name,
-            gridspec=cast("_ShockGrid", gridspecs[shock_name]),
+            gridspec=cast("_ShockGrid", grids[shock_name]),
         )
         functions[relative_name] = _get_stochastic_next_function_for_shock(
             name=shock_name,
@@ -401,7 +404,7 @@ def _get_internal_functions(
         internal_regime_transition_probs = build_regime_transition_probs_functions(
             internal_functions=internal_functions,
             regime_transition_probs=functions["next_regime"],
-            grids=grids[regime_name],
+            grids=grids,
             regime_names_to_ids=regime_names_to_ids,
             regime_params_template=regime_params_template,
             is_stochastic=is_stochastic_regime_transition,
@@ -917,7 +920,7 @@ def _create_state_space_info(regime: Regime) -> StateSpaceInfo:
 
     """
     vi = get_variable_info(regime)
-    gridspecs = get_gridspecs(regime)
+    grids = get_grids(regime)
 
     if regime.terminal:
         vi = vi.query("enters_concurrent_valuation")
@@ -926,14 +929,14 @@ def _create_state_space_info(regime: Regime) -> StateSpaceInfo:
 
     discrete_states = {
         name: grid_spec
-        for name, grid_spec in gridspecs.items()
+        for name, grid_spec in grids.items()
         if (name in state_names and isinstance(grid_spec, DiscreteGrid))
         or isinstance(grid_spec, _ShockGrid)
     }
 
     continuous_states = {
         name: grid_spec
-        for name, grid_spec in gridspecs.items()
+        for name, grid_spec in grids.items()
         if name in state_names
         and isinstance(grid_spec, ContinuousGrid)
         and not isinstance(grid_spec, _ShockGrid)

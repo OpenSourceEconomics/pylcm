@@ -173,8 +173,8 @@ class InternalRegime:
     terminal: bool
     """Whether this is a terminal regime."""
 
-    gridspecs: MappingProxyType[str, Grid]
-    """Immutable mapping of variable names to grid specification objects."""
+    grids: MappingProxyType[str, Grid]
+    """Immutable mapping of variable names to grid objects."""
 
     variable_info: pd.DataFrame
     """DataFrame with variable metadata (is_state, is_action, etc.)."""
@@ -238,7 +238,7 @@ class InternalRegime:
         """
         all_params = {**self.resolved_fixed_params, **regime_params}
         replacements: dict[str, ContinuousState | DiscreteState] = {}
-        for state_name, spec in self.gridspecs.items():
+        for state_name, spec in self.grids.items():
             if state_name not in self._base_state_action_space.states:
                 continue
             if isinstance(spec, IrregSpacedGrid) and spec.pass_points_at_runtime:

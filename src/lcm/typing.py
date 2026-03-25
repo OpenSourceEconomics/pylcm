@@ -31,7 +31,7 @@ type Age = int | float
 type RegimeName = str
 type RegimeNamesToIds = MappingProxyType[RegimeName, int]
 
-type GridsDict = MappingProxyType[RegimeName, MappingProxyType[str, Array]]
+type MaterializedGrids = MappingProxyType[RegimeName, MappingProxyType[str, Array]]
 
 type TransitionFunctionsMapping = MappingProxyType[
     RegimeName, MappingProxyType[str, InternalUserFunction]

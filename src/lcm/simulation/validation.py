@@ -369,7 +369,7 @@ def _validate_discrete_state_values(
         for state_name in internal_regime.variable_info.query(
             "is_state and is_discrete"
         ).index:
-            gridspec = internal_regime.gridspecs[state_name]
+            gridspec = internal_regime.grids[state_name]
             if isinstance(gridspec, DiscreteGrid):
                 discrete_valid_codes[state_name] = set(gridspec.codes)
 
@@ -491,7 +491,7 @@ def _check_regime_feasibility(
         return None
 
     grids = MappingProxyType(
-        {name: spec.to_jax() for name, spec in internal_regime.gridspecs.items()}
+        {name: spec.to_jax() for name, spec in internal_regime.grids.items()}
     )
 
     flat_actions = _build_flat_action_grid(action_names=action_names, grids=grids)
@@ -587,7 +587,7 @@ def _format_infeasibility_message(
     state_df.index.name = "subject"
 
     # Convert discrete codes to labels
-    for name, gridspec in internal_regime.gridspecs.items():
+    for name, gridspec in internal_regime.grids.items():
         if isinstance(gridspec, DiscreteGrid) and name in state_df.columns:
             state_df[name] = [gridspec.categories[int(v)] for v in state_df[name]]
 

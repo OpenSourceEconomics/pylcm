@@ -19,7 +19,7 @@ def create_state_action_space(
 
     Args:
         variable_info: The variable info table as returned by get_variable_info.
-        grids: A dictionary of grids as returned by get_grids.
+        grids: A dictionary of materialized grids.
         states: A dictionary of states. If None, the grids as specified in the regime
             are used.
 
