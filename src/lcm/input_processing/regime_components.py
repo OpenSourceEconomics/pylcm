@@ -12,13 +12,13 @@ from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.dispatchers import simulation_spacemap, vmap_1d
+from lcm.function_representation import StateSpaceInfo
 from lcm.grids import Grid
 from lcm.input_processing.params_processing import get_flat_param_names
 from lcm.interfaces import (
     InternalFunctions,
     PhaseVariant,
     StateActionSpace,
-    StateSpaceInfo,
 )
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a, get_max_Q_over_a
 from lcm.next_state import get_next_state_function_for_simulation
@@ -44,7 +44,7 @@ def build_Q_and_F_functions(
     regime: Regime,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     internal_functions: InternalFunctions,
-    state_space_infos: MappingProxyType[RegimeName, StateSpaceInfo],
+    regime_to_state_space_info: MappingProxyType[RegimeName, StateSpaceInfo],
     ages: AgeGrid,
     regime_params_template: RegimeParamsTemplate,
 ) -> MappingProxyType[int, QAndFFunction]:
@@ -64,7 +64,7 @@ def build_Q_and_F_functions(
                 regimes_to_active_periods=regimes_to_active_periods,
                 period=period,
                 age=age,
-                next_state_space_infos=state_space_infos,
+                regime_to_state_space_info=regime_to_state_space_info,
                 internal_functions=internal_functions,
                 flat_param_names=flat_param_names,
             )

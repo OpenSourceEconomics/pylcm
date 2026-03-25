@@ -1,4 +1,6 @@
+import dataclasses
 from collections.abc import Callable
+from types import MappingProxyType
 
 import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
@@ -7,10 +9,29 @@ from jax import Array
 
 from lcm.functools import all_as_kwargs
 from lcm.grid_helpers import get_irreg_coordinate
-from lcm.grids import ContinuousGrid, IrregSpacedGrid
-from lcm.interfaces import StateSpaceInfo
+from lcm.grids import ContinuousGrid, DiscreteGrid, IrregSpacedGrid
 from lcm.ndimage import map_coordinates
+from lcm.shocks import _ShockGrid
 from lcm.typing import FloatND, ScalarFloat, ScalarInt
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class StateSpaceInfo:
+    """Information to work with the output of a function evaluated on a state space.
+
+    An example is the value function array, which is the output of the value function
+    evaluated on the state space.
+
+    """
+
+    state_names: tuple[str, ...]
+    """Tuple of state variable names."""
+
+    discrete_states: MappingProxyType[str, DiscreteGrid | _ShockGrid]
+    """Immutable mapping of discrete state names to their grids."""
+
+    continuous_states: MappingProxyType[str, ContinuousGrid]
+    """Immutable mapping of continuous state names to their grids."""
 
 
 def get_V_interpolator(

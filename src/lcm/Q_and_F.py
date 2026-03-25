@@ -7,9 +7,9 @@ from dags import concatenate_functions, with_signature
 from jax import Array
 
 from lcm.dispatchers import productmap
-from lcm.function_representation import get_V_interpolator
+from lcm.function_representation import StateSpaceInfo, get_V_interpolator
 from lcm.functools import get_union_of_args
-from lcm.interfaces import InternalFunctions, StateSpaceInfo
+from lcm.interfaces import InternalFunctions
 from lcm.next_state import (
     get_next_state_function_for_solution,
     get_next_stochastic_weights_function,
@@ -29,7 +29,7 @@ def get_Q_and_F(
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     period: int,
     age: float,
-    next_state_space_infos: MappingProxyType[RegimeName, StateSpaceInfo],
+    regime_to_state_space_info: MappingProxyType[RegimeName, StateSpaceInfo],
     internal_functions: InternalFunctions,
     flat_param_names: frozenset[str],
 ) -> QAndFFunction:
@@ -39,7 +39,7 @@ def get_Q_and_F(
         regimes_to_active_periods: Mapping regime names to their active periods.
         period: The current period.
         age: The age corresponding to the current period.
-        next_state_space_infos: The state space information of the next period.
+        regime_to_state_space_info: The state space information of the next period.
         internal_functions: Internal functions instance.
         flat_param_names: Frozenset of flat parameter names for the regime.
 
@@ -92,7 +92,7 @@ def get_Q_and_F(
         )
         V_arr_name = "next_V_arr"
         next_V_interpolator = get_V_interpolator(
-            state_space_info=next_state_space_infos[target_regime_name],
+            state_space_info=regime_to_state_space_info[target_regime_name],
             state_prefix="next_",
             V_arr_name=V_arr_name,
         )

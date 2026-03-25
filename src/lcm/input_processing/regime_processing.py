@@ -11,6 +11,7 @@ from jax import numpy as jnp
 
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, format_messages
+from lcm.function_representation import StateSpaceInfo
 from lcm.grid_helpers import get_irreg_coordinate
 from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
 from lcm.input_processing.create_regime_params_template import (
@@ -31,7 +32,6 @@ from lcm.interfaces import (
     InternalFunctions,
     InternalRegime,
     PhaseVariant,
-    StateSpaceInfo,
 )
 from lcm.ndimage import map_coordinates
 from lcm.regime import MarkovTransition, Regime, _collect_state_transitions
@@ -111,7 +111,7 @@ def process_regimes(
     )
     all_grids = MappingProxyType({n: get_grids(r) for n, r in regimes.items()})
 
-    state_space_infos = MappingProxyType(
+    regime_to_state_space_info = MappingProxyType(
         {n: _create_state_space_info(r) for n, r in regimes.items()}
     )
     state_action_spaces = MappingProxyType(
@@ -149,7 +149,7 @@ def process_regimes(
             regime=regime,
             regimes_to_active_periods=regimes_to_active_periods,
             internal_functions=internal_functions,
-            state_space_infos=state_space_infos,
+            regime_to_state_space_info=regime_to_state_space_info,
             ages=ages,
             regime_params_template=regime_params_template,
         )
@@ -160,7 +160,7 @@ def process_regimes(
                 regime=regime,
                 regimes_to_active_periods=regimes_to_active_periods,
                 internal_functions=internal_functions.with_simulate_overrides(),
-                state_space_infos=state_space_infos,
+                regime_to_state_space_info=regime_to_state_space_info,
                 ages=ages,
                 regime_params_template=regime_params_template,
             )
