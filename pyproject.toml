@@ -208,6 +208,7 @@ ini_options.addopts = [
 ini_options.filterwarnings = []
 ini_options.markers = [
   "illustrative: Tests are designed for illustrative purposes",
+  "gpu: Tests that require a GPU (skipped on CPU-only machines)",
 ]
 ini_options.norecursedirs = [ "docs" ]
 
