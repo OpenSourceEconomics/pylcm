@@ -7,12 +7,7 @@ from typing import cast
 import pandas as pd
 from jax import Array
 
-from lcm.grids import (
-    ContinuousGrid,
-    DiscreteGrid,
-    Grid,
-    IrregSpacedGrid,
-)
+from lcm.grids import Grid, IrregSpacedGrid
 from lcm.shocks import _ShockGrid
 from lcm.typing import (
     ArgmaxQOverAFunction,
@@ -123,25 +118,6 @@ class StateActionSpace:
         )
 
 
-@dataclasses.dataclass(frozen=True, kw_only=True)
-class StateSpaceInfo:
-    """Information to work with the output of a function evaluated on a state space.
-
-    An example is the value function array, which is the output of the value function
-    evaluated on the state space.
-
-    """
-
-    state_names: tuple[str, ...]
-    """Tuple of state variable names."""
-
-    discrete_states: MappingProxyType[str, DiscreteGrid | _ShockGrid]
-    """Immutable mapping of discrete state names to their grids."""
-
-    continuous_states: MappingProxyType[str, ContinuousGrid]
-    """Immutable mapping of continuous state names to their grids."""
-
-
 class PhaseVariant[S, T]:
     """Container for phase-specific function variants.
 
@@ -207,9 +183,6 @@ class InternalRegime:
 
     regime_params_template: RegimeParamsTemplate
     """Template for the parameter structure expected by this regime."""
-
-    state_space_info: StateSpaceInfo
-    """Metadata for working with function outputs on the state space."""
 
     max_Q_over_a_functions: MappingProxyType[int, MaxQOverAFunction]
     """Immutable mapping of period to max-Q-over-actions functions for solving."""

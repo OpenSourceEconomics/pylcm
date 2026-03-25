@@ -5,13 +5,12 @@ import jax.numpy as jnp
 import pandas as pd
 from numpy.testing import assert_array_equal
 
+from lcm.function_representation import StateSpaceInfo
 from lcm.grids import DiscreteGrid, LinSpacedGrid
-from lcm.interfaces import StateActionSpace, StateSpaceInfo
+from lcm.input_processing.regime_processing import _create_state_space_info
+from lcm.interfaces import StateActionSpace
 from lcm.regime import Regime
-from lcm.state_action_space import (
-    create_state_action_space,
-    create_state_space_info,
-)
+from lcm.state_action_space import create_state_action_space
 
 
 def _create_variable_info(
@@ -132,7 +131,7 @@ def test_create_state_space_info():
         active=lambda age: age < 5,
     )
 
-    state_space_info = create_state_space_info(regime)
+    state_space_info = _create_state_space_info(regime)
 
     assert isinstance(state_space_info, StateSpaceInfo)
     assert set(state_space_info.state_names) == {"wealth", "health"}
