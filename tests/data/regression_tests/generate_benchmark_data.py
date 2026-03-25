@@ -9,6 +9,12 @@ Run with:
 Requires a GPU (Mahler & Yum is GPU-only). Regenerate when model internals change
 intentionally (e.g., numerical algorithm improvements, grid changes). The stored
 DataFrames pin the simulation output so accidental regressions are caught.
+
+**Float32 caveat:** XLA compiles different fused kernels across process invocations,
+changing float32 accumulation order and producing ~1e-3 value diffs for large models
+(Mahler & Yum). The Mahler & Yum regression test is therefore skipped at 32-bit
+precision. The smaller benchmark models (precautionary savings, mortality) are
+reproducible at float32.
 """
 
 import argparse
