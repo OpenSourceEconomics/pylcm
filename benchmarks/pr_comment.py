@@ -13,12 +13,15 @@ can verify that benchmarks have been run.
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any, NamedTuple
 
 _REPO_URL = "https://github.com/OpenSourceEconomics/pylcm"
+_SITE_REPO = "https://github.com/OpenSourceEconomics/OpenSourceEconomics.github.io.git"
+_SITE_RESULTS_SUBDIR = "pylcm-benchmarks/results"
 
 _MARKER = "<!-- benchmark-check -->"
 _RESULTS_DIR = Path(".asv/results")
@@ -123,6 +126,8 @@ def _try_comparison(
 
     base_sha = base_sha_full[:8]
     base_file = _find_result_file(machine_dir, base_sha)
+    if base_file is None:
+        base_file = _fetch_baseline_from_site(machine_dir, base_sha)
     if base_file is None:
         print(
             f"No results for merge-base {base_sha} — "
@@ -644,6 +649,79 @@ def _ensure_head_result(
     new_path.write_text(json.dumps(data, indent=4), encoding="utf-8")
 
     return new_path
+
+
+def _fetch_baseline_from_site(
+    machine_dir: Path,
+    base_sha: str,
+) -> Path | None:
+    """Download merge-base results from the published benchmark site.
+
+    The main-branch workflow publishes ASV results to the github.io repo.
+    This function clones that repo (shallow) and copies the matching result
+    file into the local ``.asv/results/`` directory so ``asv compare`` can
+    find it.
+
+    Args:
+        machine_dir: Local ASV machine results directory.
+        base_sha: Short (8-char) hash of the merge-base commit.
+
+    Returns:
+        Path to the copied result file, or None if not found.
+
+    """
+    import tempfile
+
+    machine_name = machine_dir.name
+    print(f"Fetching baseline results for {base_sha} from published benchmarks...")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            subprocess.run(
+                [
+                    "git",
+                    "clone",
+                    "--depth",
+                    "1",
+                    "--filter=blob:none",
+                    "--sparse",
+                    _SITE_REPO,
+                    tmp,
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "sparse-checkout", "set", _SITE_RESULTS_SUBDIR],
+                cwd=tmp,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError:
+            print("Could not clone benchmark site repo.")
+            return None
+
+        site_machine_dir = Path(tmp) / _SITE_RESULTS_SUBDIR / machine_name
+        if not site_machine_dir.is_dir():
+            print(f"No results directory for machine '{machine_name}' on site.")
+            return None
+
+        matches = [
+            p
+            for p in site_machine_dir.glob(f"{base_sha}*.json")
+            if "-compare" not in p.name
+        ]
+        if not matches:
+            print(f"No result file for {base_sha} on published site.")
+            return None
+
+        src = matches[0]
+        dst = machine_dir / src.name
+        shutil.copy2(src, dst)
+        print(f"Copied baseline {src.name} to {machine_dir}")
+        return dst
 
 
 if __name__ == "__main__":
