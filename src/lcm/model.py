@@ -617,24 +617,24 @@ def _partial_fixed_params_into_regimes(
         )
 
         # Build new simulate_functions with partialled functions
-        sim = regime.simulate_functions
+        simulate_funcs = regime.simulate_functions
         new_simulate = dataclasses.replace(
-            sim,
+            simulate_funcs,
             argmax_and_max_Q_over_a=MappingProxyType(
                 {
                     period: functools.partial(func, **regime_fixed)
-                    for period, func in sim.argmax_and_max_Q_over_a.items()
+                    for period, func in simulate_funcs.argmax_and_max_Q_over_a.items()
                 }
             ),
-            next_state=functools.partial(sim.next_state, **regime_fixed),
+            next_state=functools.partial(simulate_funcs.next_state, **regime_fixed),
             regime_transition_probs=(
                 functools.partial(
-                    sim.regime_transition_probs,
+                    simulate_funcs.regime_transition_probs,
                     **_filter_kwargs_for_func(
-                        func=sim.regime_transition_probs, kwargs=regime_fixed
+                        func=simulate_funcs.regime_transition_probs, kwargs=regime_fixed
                     ),
                 )
-                if sim.regime_transition_probs is not None
+                if simulate_funcs.regime_transition_probs is not None
                 else None
             ),
         )

@@ -178,7 +178,7 @@ def process_regimes(
         # Build Q_and_F for simulate (uses simulate overrides if any).
         # Note: regime_transition_probs always uses the solve (non-vmapped) version
         # since Q_and_F evaluates on the Cartesian grid, not per-subject.
-        if _has_phase_variants(regime):
+        if _has_function_pairs(regime):
             Q_and_F_simulate = build_Q_and_F_functions(
                 regime=regime,
                 regimes_to_active_periods=regimes_to_active_periods,
@@ -204,6 +204,9 @@ def process_regimes(
             Q_and_F_functions=Q_and_F_simulate,
             enable_jit=enable_jit,
         )
+        # Note: next_state uses solve_funcs (not simulate_funcs) because
+        # state transitions don't participate in SolveSimulateFunctionPair —
+        # only utility/H functions have phase variants.
         next_state = build_next_state_simulation_functions(
             functions=solve_funcs,
             transitions=transitions,
@@ -223,16 +226,16 @@ def process_regimes(
             active_periods=tuple(regimes_to_active_periods[name]),
             regime_params_template=regime_params_template,
             solve_functions=SolveFunctions(
-                functions=MappingProxyType(solve_funcs),
-                constraints=MappingProxyType(intermediate.solve_constraints),
+                functions=solve_funcs,
+                constraints=intermediate.solve_constraints,
                 transitions=transitions,
                 regime_transition_probs=intermediate.solve_regime_transition_probs,
                 stochastic_transition_names=stochastic_transition_names,
                 max_Q_over_a=MappingProxyType(max_Q_over_a),
             ),
             simulate_functions=SimulateFunctions(
-                functions=MappingProxyType(simulate_funcs),
-                constraints=MappingProxyType(intermediate.simulate_constraints),
+                functions=simulate_funcs,
+                constraints=intermediate.simulate_constraints,
                 transitions=transitions,
                 regime_transition_probs=intermediate.simulate_regime_transition_probs,
                 stochastic_transition_names=stochastic_transition_names,
@@ -309,7 +312,7 @@ def _get_intermediate_functions(
     flat_nested_transitions = flatten_regime_namespace(nested_transitions)
 
     # Collect function pairs from regime.functions for separate handling.
-    phase_variant_entries: dict[str, SolveSimulateFunctionPair] = {
+    function_pair_entries: dict[str, SolveSimulateFunctionPair] = {
         name: func
         for name, func in regime.functions.items()
         if isinstance(func, SolveSimulateFunctionPair)
@@ -366,15 +369,15 @@ def _get_intermediate_functions(
     simulate_overrides: dict[str, InternalUserFunction] = {}
 
     for func_name, func in deterministic_functions.items():
-        if func_name in phase_variant_entries:
-            pv = phase_variant_entries[func_name]
+        if func_name in function_pair_entries:
+            function_pair = function_pair_entries[func_name]
             functions[func_name] = _rename_params_to_qnames(
-                func=pv.solve,
+                func=function_pair.solve,
                 regime_params_template=regime_params_template,
                 param_key=func_name,
             )
             simulate_overrides[func_name] = _rename_params_to_qnames(
-                func=pv.simulate,
+                func=function_pair.simulate,
                 regime_params_template=regime_params_template,
                 param_key=func_name,
             )
@@ -523,7 +526,7 @@ def _classify_transitions(
     return simple, per_target
 
 
-def _has_phase_variants(regime: Regime) -> bool:
+def _has_function_pairs(regime: Regime) -> bool:
     """Check if any function in the regime is a SolveSimulateFunctionPair."""
     return any(
         isinstance(f, SolveSimulateFunctionPair) for f in regime.functions.values()
