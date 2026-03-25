@@ -54,7 +54,7 @@ def solve(
             state_action_space = internal_regime.state_action_space(
                 regime_params=internal_params[name],
             )
-            max_Q_over_a = internal_regime.max_Q_over_a_functions[period]
+            max_Q_over_a = internal_regime.solve_functions.max_Q_over_a[period]
 
             # evaluate Q-function on states and actions, and maximize over actions
             V_arr = max_Q_over_a(

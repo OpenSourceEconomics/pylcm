@@ -9,6 +9,7 @@ from dags.exceptions import InvalidFunctionArgumentsError
 from lcm import LinSpacedGrid
 from lcm.dispatchers import productmap
 from lcm.function_representation import (
+    StateSpaceInfo,
     _fail_if_interpolation_axes_are_not_last,
     _get_coordinate_finder,
     _get_interpolator,
@@ -17,9 +18,6 @@ from lcm.function_representation import (
     get_V_interpolator,
 )
 from lcm.grids import ContinuousGrid, DiscreteGrid
-from lcm.interfaces import (
-    StateSpaceInfo,
-)
 
 
 @pytest.fixture

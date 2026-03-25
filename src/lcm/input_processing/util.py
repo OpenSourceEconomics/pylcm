@@ -2,7 +2,6 @@ from types import MappingProxyType
 
 import pandas as pd
 from dags import get_ancestors
-from jax import Array
 
 from lcm.grids import ContinuousGrid, Grid
 from lcm.regime import Regime
@@ -75,7 +74,8 @@ def _indicator_enters_concurrent_valuation(
         "utility",
         *list(regime.constraints),
     ]
-    user_functions = dict(regime.get_all_functions())
+    # TODO(#293): remove once enters_concurrent_valuation is gone
+    user_functions = dict(regime.get_all_functions(phase="solve"))
     ancestors = get_ancestors(
         user_functions,
         targets=enters_Q_and_F_func_names,
@@ -101,7 +101,8 @@ def _indicator_enters_transition(
     Special variables such as the "period" or parameters will be ignored.
 
     """
-    user_functions = dict(regime.get_all_functions())
+    # TODO(#293): remove once enters_transition is gone
+    user_functions = dict(regime.get_all_functions(phase="solve"))
     next_func_names = [
         name
         for name in user_functions
@@ -119,10 +120,10 @@ def _indicator_enters_transition(
     )
 
 
-def get_gridspecs(
+def get_grids(
     regime: Regime,
 ) -> MappingProxyType[str, Grid]:
-    """Create a dictionary of grid specifications for each variable in the regime.
+    """Create a dictionary of grid objects for each variable in the regime.
 
     Args:
         regime: The regime as provided by the user.
@@ -139,24 +140,3 @@ def get_gridspecs(
     raw_variables = dict(regime.states) | dict(regime.actions)
     order = variable_info.index.tolist()
     return MappingProxyType({k: raw_variables[k] for k in order})
-
-
-def get_grids(
-    regime: Regime,
-) -> MappingProxyType[str, Array]:
-    """Create a dictionary of array grids for each variable in the regime.
-
-    Args:
-        regime: The regime as provided by the user.
-
-    Returns:
-        Immutable dictionary containing all variables of the regime. The keys are the
-        names of the variables. The values are the grids.
-
-    """
-    variable_info = get_variable_info(regime)
-    gridspecs = get_gridspecs(regime)
-
-    grids = {name: spec.to_jax() for name, spec in gridspecs.items()}
-    order = variable_info.index.tolist()
-    return MappingProxyType({k: grids[k] for k in order})

@@ -20,18 +20,16 @@ from lcm.input_processing.params_processing import (
 )
 from lcm.input_processing.regime_processing import (
     InternalRegime,
-    get_simulation_output_dtypes,
     process_regimes,
 )
 from lcm.input_processing.util import get_variable_info
-from lcm.interfaces import PhaseVariant
 from lcm.logging import LogLevel, get_logger
 from lcm.persistence import (
     save_simulate_snapshot,
     save_solve_snapshot,
 )
 from lcm.regime import Regime
-from lcm.simulation.result import SimulationResult
+from lcm.simulation.result import SimulationResult, get_simulation_output_dtypes
 from lcm.simulation.simulate import simulate
 from lcm.simulation.validation import validate_initial_conditions
 from lcm.solution.solve_brute import solve
@@ -595,60 +593,56 @@ def _partial_fixed_params_into_regimes(
             result[name] = regime
             continue
 
-        # Partial into per-period solve functions
-        new_max_Q = {
-            period: functools.partial(func, **regime_fixed)
-            for period, func in regime.max_Q_over_a_functions.items()
-        }
-
-        # Partial into per-period simulate functions
-        new_argmax_max_Q = {
-            period: functools.partial(func, **regime_fixed)
-            for period, func in regime.argmax_and_max_Q_over_a_functions.items()
-        }
-
-        # Partial into next-state simulation function
-        new_next_state = functools.partial(
-            regime.next_state_simulation_function, **regime_fixed
+        # Build new solve_functions with partialled functions
+        solve = regime.solve_functions
+        new_solve = dataclasses.replace(
+            solve,
+            max_Q_over_a=MappingProxyType(
+                {
+                    period: functools.partial(func, **regime_fixed)
+                    for period, func in solve.max_Q_over_a.items()
+                }
+            ),
+            compute_regime_transition_probs=(
+                functools.partial(
+                    solve.compute_regime_transition_probs,
+                    **_filter_kwargs_for_func(
+                        func=solve.compute_regime_transition_probs, kwargs=regime_fixed
+                    ),
+                )
+                if solve.compute_regime_transition_probs is not None
+                else None
+            ),
         )
 
-        # Partial into regime transition probs — only include params that the
-        # function actually accepts to avoid signature mismatches during
-        # inspect.signature (used by dags.concatenate_functions in to_dataframe).
-        if regime.regime_transition_probs is not None:
-            new_regime_tp = PhaseVariant(
-                solve=functools.partial(
-                    regime.regime_transition_probs.solve,
+        # Build new simulate_functions with partialled functions
+        simulate_funcs = regime.simulate_functions
+        new_simulate = dataclasses.replace(
+            simulate_funcs,
+            argmax_and_max_Q_over_a=MappingProxyType(
+                {
+                    period: functools.partial(func, **regime_fixed)
+                    for period, func in simulate_funcs.argmax_and_max_Q_over_a.items()
+                }
+            ),
+            next_state=functools.partial(simulate_funcs.next_state, **regime_fixed),
+            compute_regime_transition_probs=(
+                functools.partial(
+                    simulate_funcs.compute_regime_transition_probs,
                     **_filter_kwargs_for_func(
-                        func=regime.regime_transition_probs.solve, kwargs=regime_fixed
-                    ),
-                ),
-                simulate=functools.partial(
-                    regime.regime_transition_probs.simulate,
-                    **_filter_kwargs_for_func(
-                        func=regime.regime_transition_probs.simulate,
+                        func=simulate_funcs.compute_regime_transition_probs,
                         kwargs=regime_fixed,
                     ),
-                ),
-            )
-        else:
-            new_regime_tp = None
-
-        # Also update the nested internal_functions so simulation code
-        # (which reads from internal_functions.regime_transition_probs) sees
-        # the partialled version.
-        new_internal_functions = dataclasses.replace(
-            regime.internal_functions,
-            regime_transition_probs=new_regime_tp,
+                )
+                if simulate_funcs.compute_regime_transition_probs is not None
+                else None
+            ),
         )
 
         result[name] = dataclasses.replace(
             regime,
-            max_Q_over_a_functions=MappingProxyType(new_max_Q),
-            argmax_and_max_Q_over_a_functions=MappingProxyType(new_argmax_max_Q),
-            next_state_simulation_function=new_next_state,
-            regime_transition_probs=new_regime_tp,
-            internal_functions=new_internal_functions,
+            solve_functions=new_solve,
+            simulate_functions=new_simulate,
             resolved_fixed_params=MappingProxyType(regime_fixed),
         )
     return MappingProxyType(result)

@@ -250,8 +250,9 @@ def _validate_regime_transition_single(
 
     """
     regime_transition_func = (
-        internal_regime.regime_transition_probs.solve  # ty: ignore[unresolved-attribute]
+        internal_regime.solve_functions.compute_regime_transition_probs
     )
+    assert regime_transition_func is not None  # noqa: S101
 
     state_action_space = internal_regime.state_action_space(
         regime_params=regime_params,

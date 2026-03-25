@@ -18,6 +18,7 @@ from jax import Array
 from lcm.ages import AgeGrid
 from lcm.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
+from lcm.input_processing.regime_processing import _compute_merged_discrete_categories
 from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
 from lcm.persistence import atomic_dump
 from lcm.typing import (
@@ -217,6 +218,41 @@ class SimulationResult:
         )
 
 
+def get_simulation_output_dtypes(
+    regimes: Mapping[str, Any],
+    regime_names_to_ids: Mapping[str, int],
+) -> MappingProxyType[str, pd.CategoricalDtype]:
+    """Compute pandas CategoricalDtype for all discrete output columns.
+
+    Merge ordered categories across regimes via topological sort. This must be
+    called after model validation (which guarantees merges succeed).
+
+    Args:
+        regimes: Mapping of regime names to Regime instances.
+        regime_names_to_ids: Mapping of regime names to integer IDs.
+
+    Returns:
+        Immutable mapping of variable name to `pd.CategoricalDtype`. Includes
+        all discrete state/action variables plus the ``"regime"`` column.
+
+    """
+    merged_categories, ordered_flags = _compute_merged_discrete_categories(regimes)
+
+    dtypes: dict[str, pd.CategoricalDtype] = {}
+    for var_name, categories in merged_categories.items():
+        dtypes[var_name] = pd.CategoricalDtype(
+            categories=list(categories),
+            ordered=ordered_flags[var_name],
+        )
+
+    dtypes["regime"] = pd.CategoricalDtype(
+        categories=list(regime_names_to_ids.keys()),
+        ordered=False,
+    )
+
+    return MappingProxyType(dtypes)
+
+
 @dataclass(frozen=True)
 class SimulationMetadata:
     """Pre-computed metadata about the simulation."""
@@ -360,9 +396,10 @@ def _collect_all_available_targets(
 def _get_available_targets_for_regime(regime: InternalRegime) -> set[str]:
     """Get available target names for a single regime."""
     excluded = {"H"} | _get_stochastic_weight_function_names(regime)
+    sim = regime.simulate_functions
     return {
-        name for name in regime.functions if name not in excluded
-    } | regime.constraints.keys()
+        name for name in sim.functions if name not in excluded
+    } | sim.constraints.keys()
 
 
 def _get_stochastic_weight_function_names(regime: InternalRegime) -> set[str]:
@@ -371,8 +408,8 @@ def _get_stochastic_weight_function_names(regime: InternalRegime) -> set[str]:
     These are functions named `weight_{transition_name}` that return probability arrays
     for stochastic state transitions. They should not be exposed as available targets.
     """
-    stochastic_transition_names = regime.internal_functions.stochastic_transition_names
-    flat_transitions = flatten_regime_namespace(regime.transitions)
+    stochastic_transition_names = regime.simulate_functions.stochastic_transition_names
+    flat_transitions = flatten_regime_namespace(regime.simulate_functions.transitions)
     return {
         f"weight_{name}"
         for name in flat_transitions
@@ -661,14 +698,13 @@ def _compute_targets(
 
 def _build_functions_pool(internal_regime: InternalRegime) -> dict[str, UserFunction]:
     """Build pool of available functions for target computation."""
+    sim = internal_regime.simulate_functions
     pool: dict[str, UserFunction] = {
-        **{k: v for k, v in internal_regime.functions.items() if k != "H"},
-        **internal_regime.constraints,
+        **{k: v for k, v in sim.functions.items() if k != "H"},
+        **sim.constraints,
     }
-    if internal_regime.regime_transition_probs is not None:
-        pool["regime_transition_probs"] = (
-            internal_regime.regime_transition_probs.simulate
-        )
+    if sim.compute_regime_transition_probs is not None:
+        pool["regime_transition_probs"] = sim.compute_regime_transition_probs
     return pool
 
 

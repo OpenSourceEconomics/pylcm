@@ -7,9 +7,8 @@ from dags import concatenate_functions, with_signature
 from jax import Array
 
 from lcm.dispatchers import productmap
-from lcm.function_representation import get_V_interpolator
+from lcm.function_representation import StateSpaceInfo, get_V_interpolator
 from lcm.functools import get_union_of_args
-from lcm.interfaces import InternalFunctions, StateSpaceInfo
 from lcm.next_state import (
     get_next_state_function_for_solution,
     get_next_stochastic_weights_function,
@@ -18,48 +17,55 @@ from lcm.typing import (
     BoolND,
     Float1D,
     FloatND,
+    FunctionsMapping,
     InternalUserFunction,
     QAndFFunction,
     RegimeName,
+    RegimeTransitionFunction,
+    TransitionFunctionsMapping,
 )
 
 
 def get_Q_and_F(
     *,
-    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
-    period: int,
-    age: float,
-    next_state_space_infos: MappingProxyType[RegimeName, StateSpaceInfo],
-    internal_functions: InternalFunctions,
     flat_param_names: frozenset[str],
+    age: float,
+    period: int,
+    functions: FunctionsMapping,
+    constraints: FunctionsMapping,
+    transitions: TransitionFunctionsMapping,
+    stochastic_transition_names: frozenset[str],
+    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    compute_regime_transition_probs: RegimeTransitionFunction,
+    regime_to_state_space_info: MappingProxyType[RegimeName, StateSpaceInfo],
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
     Args:
-        regimes_to_active_periods: Mapping regime names to their active periods.
-        period: The current period.
-        age: The age corresponding to the current period.
-        next_state_space_infos: The state space information of the next period.
-        internal_functions: Internal functions instance.
         flat_param_names: Frozenset of flat parameter names for the regime.
+        age: The age corresponding to the current period.
+        period: The current period.
+        functions: Immutable mapping of function names to internal user functions.
+        constraints: Immutable mapping of constraint names to internal user functions.
+        transitions: Immutable mapping of transition names to transition functions.
+        stochastic_transition_names: Frozenset of stochastic transition function names.
+        regimes_to_active_periods: Mapping regime names to their active periods.
+        compute_regime_transition_probs: Regime transition probability function
+            for solve.
+        regime_to_state_space_info: The state space information of the next period.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
         for a non-terminal period.
 
     """
-    # ----------------------------------------------------------------------------------
-    # Generate dynamic functions
-    # ----------------------------------------------------------------------------------
-    U_and_F = _get_U_and_F(internal_functions)
-    regime_transition_probs_func = internal_functions.regime_transition_probs.solve  # ty: ignore[unresolved-attribute]
-    stochastic_transition_names = internal_functions.stochastic_transition_names
+    U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
     state_transitions = {}
     next_stochastic_states_weights = {}
     joint_weights_from_marginals = {}
     next_V = {}
 
-    target_regime_names = tuple(internal_functions.transitions)
+    target_regime_names = tuple(transitions)
     active_regimes_next_period = tuple(
         target_regime_name
         for target_regime_name in target_regime_names
@@ -69,42 +75,43 @@ def get_Q_and_F(
 
     for target_regime_name in active_regimes_next_period:
         # Transitions from the current regime to the target regime
-        transitions = internal_functions.transitions[target_regime_name]
+        target_transitions = transitions[target_regime_name]
 
         # Functions required to calculate the expected continuation values
-        # Note: grids is not used for Target.SOLVE, but we pass the full dict for typing
         state_transitions[target_regime_name] = get_next_state_function_for_solution(
-            functions=internal_functions.functions,
-            transitions=transitions,
+            functions=functions,
+            transitions=target_transitions,
         )
         next_stochastic_states_weights[target_regime_name] = (
             get_next_stochastic_weights_function(
-                regime_name=target_regime_name,
-                functions=internal_functions.functions,
-                transitions=transitions,
+                functions=functions,
+                transitions=target_transitions,
                 stochastic_transition_names=stochastic_transition_names,
+                regime_name=target_regime_name,
             )
         )
         joint_weights_from_marginals[target_regime_name] = _get_joint_weights_function(
-            regime_name=target_regime_name,
-            transitions=transitions,
+            transitions=target_transitions,
             stochastic_transition_names=stochastic_transition_names,
+            regime_name=target_regime_name,
         )
         V_arr_name = "next_V_arr"
         next_V_interpolator = get_V_interpolator(
-            state_space_info=next_state_space_infos[target_regime_name],
+            state_space_info=regime_to_state_space_info[target_regime_name],
             state_prefix="next_",
             V_arr_name=V_arr_name,
         )
         # Determine extra kwargs needed by next_V beyond next_states and next_V_arr
         # (e.g. wealth__points for IrregSpacedGrid with runtime-supplied points).
         next_V_extra_param_names[target_regime_name] = frozenset(
-            get_union_of_args([next_V_interpolator]) - set(transitions) - {V_arr_name}
+            get_union_of_args([next_V_interpolator])
+            - set(target_transitions)
+            - {V_arr_name}
         )
         next_V[target_regime_name] = productmap(
             func=next_V_interpolator,
             variables=tuple(
-                key for key in transitions if key in stochastic_transition_names
+                key for key in target_transitions if key in stochastic_transition_names
             ),
         )
 
@@ -114,8 +121,8 @@ def get_Q_and_F(
 
     # Determine which qname params H accepts so we can filter at runtime.
     # This is necessary when the params template is the union of multiple
-    # PhaseVariant signatures but each variant only uses its own subset.
-    _H_func = internal_functions.functions["H"]
+    # SolveSimulateFunctionPair signatures but each variant only uses its own subset.
+    _H_func = functions["H"]
     _H_accepted_params = frozenset(
         get_union_of_args([_H_func]) - {"utility", "E_next_V"}
     )
@@ -123,7 +130,7 @@ def get_Q_and_F(
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         [
             U_and_F,
-            regime_transition_probs_func,
+            compute_regime_transition_probs,
             *list(state_transitions.values()),
             *list(next_stochastic_states_weights.values()),
         ],
@@ -149,7 +156,7 @@ def get_Q_and_F(
 
         """
         regime_transition_probs: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
-            regime_transition_probs_func(
+            compute_regime_transition_probs(
                 **states_actions_params,
                 period=period,
                 age=age,
@@ -221,25 +228,27 @@ def get_Q_and_F(
 
 def get_Q_and_F_terminal(
     *,
-    internal_functions: InternalFunctions,
-    period: int,
-    age: float,
     flat_param_names: frozenset[str],
+    age: float,
+    period: int,
+    functions: FunctionsMapping,
+    constraints: FunctionsMapping,
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for the terminal period.
 
     Args:
-        internal_functions: Internal functions instance.
-        period: The current period.
-        age: The age corresponding to the current period.
         flat_param_names: Frozenset of flat parameter names for the regime.
+        age: The age corresponding to the current period.
+        period: The current period.
+        functions: Immutable mapping of function names to internal user functions.
+        constraints: Immutable mapping of constraint names to internal user functions.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
         for the terminal period.
 
     """
-    U_and_F = _get_U_and_F(internal_functions)
+    U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         [U_and_F],
@@ -301,9 +310,9 @@ def _get_arg_names_of_Q_and_F(
 
 def _get_joint_weights_function(
     *,
-    regime_name: RegimeName,
-    transitions: MappingProxyType[str, InternalUserFunction],
+    transitions: FunctionsMapping,
     stochastic_transition_names: frozenset[str],
+    regime_name: RegimeName,
 ) -> Callable[..., FloatND]:
     """Get function that calculates the joint weights.
 
@@ -312,9 +321,9 @@ def _get_joint_weights_function(
     stochastic variables.
 
     Args:
-        regime_name: Name of the target regime.
         transitions: Transitions of the target regime.
         stochastic_transition_names: Frozenset of stochastic transition function names.
+        regime_name: Name of the target regime.
 
     Returns:
         A function that computes the outer product of the weights of the stochastic
@@ -336,7 +345,9 @@ def _get_joint_weights_function(
 
 
 def _get_U_and_F(
-    internal_functions: InternalFunctions,
+    *,
+    functions: FunctionsMapping,
+    constraints: FunctionsMapping,
 ) -> Callable[..., tuple[FloatND, BoolND]]:
     """Get the instantaneous utility and feasibility function.
 
@@ -346,39 +357,44 @@ def _get_U_and_F(
     executed if they matter for the value of U.
 
     Args:
-        internal_functions: Internal functions instance.
+        functions: Immutable mapping of function names to internal user functions.
+        constraints: Immutable mapping of constraint names to internal user functions.
 
     Returns:
         The instantaneous utility and feasibility function.
 
     """
-    functions = {
-        "feasibility": _get_feasibility(internal_functions),
-        **{k: v for k, v in internal_functions.functions.items() if k != "H"},
+    combined = {
+        "feasibility": _get_feasibility(functions=functions, constraints=constraints),
+        **{k: v for k, v in functions.items() if k != "H"},
     }
     return concatenate_functions(
-        functions=functions,
+        functions=combined,
         targets=["utility", "feasibility"],
         enforce_signature=False,
         set_annotations=True,
     )
 
 
-def _get_feasibility(internal_functions: InternalFunctions) -> InternalUserFunction:
+def _get_feasibility(
+    *,
+    functions: FunctionsMapping,
+    constraints: FunctionsMapping,
+) -> InternalUserFunction:
     """Create a function that combines all constraint functions into a single one.
 
     Args:
-        internal_functions: Internal functions instance.
+        functions: Immutable mapping of function names to internal user functions.
+        constraints: Immutable mapping of constraint names to internal user functions.
 
     Returns:
         The combined constraint function (feasibility).
 
     """
-    if internal_functions.constraints:
+    if constraints:
         combined_constraint = concatenate_functions(
-            functions=dict(internal_functions.constraints)
-            | dict(internal_functions.functions),
-            targets=list(internal_functions.constraints),
+            functions=dict(constraints) | dict(functions),
+            targets=list(constraints),
             aggregator=jnp.logical_and,
             aggregator_return_type="Feasibility",
             set_annotations=True,

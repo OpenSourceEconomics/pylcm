@@ -2,7 +2,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 
 import jax
-from dags.tree import qname_from_tree_path, tree_path_from_qname
+from dags.tree import tree_path_from_qname
 from jax import Array, vmap
 from jax import numpy as jnp
 
@@ -104,11 +104,13 @@ def calculate_next_states(
     # Identify stochastic transitions and generate random keys
     # ---------------------------------------------------------------------------------
     stochastic_transition_names = (
-        internal_regime.internal_functions.stochastic_transition_names
+        internal_regime.simulate_functions.stochastic_transition_names
     )
     stochastic_next_function_names = [
         next_func_name
-        for next_func_name in flatten_regime_namespace(internal_regime.transitions)
+        for next_func_name in flatten_regime_namespace(
+            internal_regime.simulate_functions.transitions
+        )
         if tree_path_from_qname(next_func_name)[-1] in stochastic_transition_names
     ]
     # There is a bug that sometimes changes the order of the names,
@@ -123,7 +125,7 @@ def calculate_next_states(
 
     # Compute next states using regime's transition functions
     # ---------------------------------------------------------------------------------
-    next_state_vmapped = internal_regime.next_state_simulation_function
+    next_state_vmapped = internal_regime.simulate_functions.next_state
 
     states_with_next_prefix = next_state_vmapped(
         **state_action_space.states,
@@ -187,7 +189,7 @@ def calculate_next_regime_membership(
     # Compute regime transition probabilities
     # ---------------------------------------------------------------------------------
     regime_transition_probs: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
-        internal_regime.internal_functions.regime_transition_probs.simulate(  # ty: ignore[unresolved-attribute]
+        internal_regime.simulate_functions.compute_regime_transition_probs(  # ty: ignore[call-non-callable]
             **state_action_space.states,
             **optimal_actions,
             period=period,
@@ -281,10 +283,8 @@ def _update_states_for_subjects(
     """
     updated_states = dict(all_states)
     for next_state_name, next_state_values in computed_next_states.items():
-        # State names may be prefixed with regime (e.g., "working__next_wealth")
-        # We need to strip "next_" from the final component to get "working__wealth"
-        path = tree_path_from_qname(next_state_name)
-        state_name = qname_from_tree_path((*path[:-1], path[-1].removeprefix("next_")))
+        # Namespaced outputs: "regime__next_wealth" → "regime__wealth"
+        state_name = next_state_name.replace("__next_", "__", 1)
         updated_states[state_name] = jnp.where(
             subject_indices,
             next_state_values,
@@ -294,48 +294,37 @@ def _update_states_for_subjects(
     return MappingProxyType(updated_states)
 
 
-def convert_initial_states_to_nested(
+def build_initial_states(
     *,
     initial_states: Mapping[str, Array],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-) -> dict[RegimeName, dict[str, Array]]:
-    """Convert flat initial_states dict to nested format.
+) -> MappingProxyType[str, Array]:
+    """Build flat regime-namespaced state dict from user-provided initial states.
 
-    Takes user-provided flat format and converts to the nested format
-    expected by internal simulation code. States not present in
-    `initial_states` (e.g. states that only exist in a target regime no
-    subject starts in) are filled with `jnp.nan` (continuous) or
-    `MISSING_CAT_CODE` (discrete).
+    For each regime, copies provided states and fills missing ones with
+    `jnp.nan` (continuous) or `MISSING_CAT_CODE` (discrete).
 
     Args:
         initial_states: Mapping of state names to arrays.
-            Example: {"wealth": arr, "health": arr}
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
 
     Returns:
-        Nested dict mapping regime names to state dicts.
-            Example: {"work": {"wealth": arr, "health": arr}, ...}
+        Immutable mapping of regime-namespaced state names to arrays.
+        Example: `{"work__wealth": arr, "work__health": arr, ...}`
 
     """
-    nested: dict[RegimeName, dict[str, Array]] = {}
+    flat: dict[str, Array] = {}
     n_subjects = len(next(iter(initial_states.values())))
 
     for regime_name, internal_regime in internal_regimes.items():
-        regime_state_names = get_regime_state_names(internal_regime)
-        regime_states: dict[str, Array] = {}
-        for state_name in regime_state_names:
+        for state_name in get_regime_state_names(internal_regime):
+            key = f"{regime_name}__{state_name}"
             if state_name in initial_states:
-                regime_states[state_name] = initial_states[state_name]
-            elif isinstance(
-                internal_regime.gridspecs[state_name],
-                DiscreteGrid,
-            ):
-                regime_states[state_name] = jnp.full(
-                    n_subjects, MISSING_CAT_CODE, dtype=jnp.int32
-                )
+                flat[key] = initial_states[state_name]
+            elif isinstance(internal_regime.grids[state_name], DiscreteGrid):
+                flat[key] = jnp.full(n_subjects, MISSING_CAT_CODE, dtype=jnp.int32)
             else:
-                regime_states[state_name] = jnp.full(n_subjects, jnp.nan)
-        nested[regime_name] = regime_states
+                flat[key] = jnp.full(n_subjects, jnp.nan)
 
-    return nested
+    return MappingProxyType(flat)

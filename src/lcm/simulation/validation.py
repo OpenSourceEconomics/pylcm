@@ -369,9 +369,9 @@ def _validate_discrete_state_values(
         for state_name in internal_regime.variable_info.query(
             "is_state and is_discrete"
         ).index:
-            gridspec = internal_regime.gridspecs[state_name]
-            if isinstance(gridspec, DiscreteGrid):
-                discrete_valid_codes[state_name] = set(gridspec.codes)
+            grid = internal_regime.grids[state_name]
+            if isinstance(grid, DiscreteGrid):
+                discrete_valid_codes[state_name] = set(grid.codes)
 
     for state_name, valid_codes in discrete_valid_codes.items():
         if state_name not in initial_states:
@@ -483,16 +483,21 @@ def _check_regime_feasibility(
         An error message string if any subjects are infeasible, or None.
 
     """
-    feasibility_func = _get_feasibility(internal_regime.internal_functions)
+    feasibility_func = _get_feasibility(
+        functions=internal_regime.simulate_functions.functions,
+        constraints=internal_regime.simulate_functions.constraints,
+    )
     accepted = get_union_of_args([feasibility_func])
 
     action_names = list(internal_regime.variable_info.query("is_action").index)
     if not action_names:
         return None
 
-    flat_actions = _build_flat_action_grid(
-        action_names=action_names, grids=internal_regime.grids
+    grids = MappingProxyType(
+        {name: spec.to_jax() for name, spec in internal_regime.grids.items()}
     )
+
+    flat_actions = _build_flat_action_grid(action_names=action_names, grids=grids)
 
     filtered_params = {k: v for k, v in regime_params.items() if k in accepted}
     state_names = list(internal_regime.variable_info.query("is_state").index)
@@ -585,12 +590,12 @@ def _format_infeasibility_message(
     state_df.index.name = "subject"
 
     # Convert discrete codes to labels
-    for name, gridspec in internal_regime.gridspecs.items():
-        if isinstance(gridspec, DiscreteGrid) and name in state_df.columns:
-            state_df[name] = [gridspec.categories[int(v)] for v in state_df[name]]
+    for name, grid in internal_regime.grids.items():
+        if isinstance(grid, DiscreteGrid) and name in state_df.columns:
+            state_df[name] = [grid.categories[int(v)] for v in state_df[name]]
 
     # Constraint names
-    constraint_names = list(internal_regime.constraints.keys())
+    constraint_names = list(internal_regime.simulate_functions.constraints.keys())
     constraints_str = "\n".join(f"  - {name}" for name in constraint_names)
 
     # Truncate for large groups
