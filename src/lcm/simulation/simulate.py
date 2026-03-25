@@ -24,9 +24,9 @@ from lcm.random import draw_random_seed
 from lcm.simulation.result import SimulationResult
 from lcm.simulation.utils import (
     MISSING_CAT_CODE,
+    build_initial_states,
     calculate_next_regime_membership,
     calculate_next_states,
-    convert_initial_states_to_nested,
     create_regime_state_action_space,
 )
 from lcm.typing import (
@@ -37,7 +37,6 @@ from lcm.typing import (
     RegimeName,
     RegimeNamesToIds,
 )
-from lcm.utils import flatten_regime_namespace
 
 
 def simulate(
@@ -87,16 +86,13 @@ def simulate(
     # Extract state arrays from initial conditions, which include the regime on top.
     initial_states = {k: v for k, v in initial_conditions.items() if k != "regime"}
 
-    # Convert flat initial_states to nested format
-    nested_initial_states = convert_initial_states_to_nested(
-        initial_states=initial_states, internal_regimes=internal_regimes
-    )
-
     # Preparations
     key = jax.random.key(seed=seed)
 
     # The following variables are updated during the forward simulation
-    states = MappingProxyType(flatten_regime_namespace(nested_initial_states))
+    states = build_initial_states(
+        initial_states=initial_states, internal_regimes=internal_regimes
+    )
     starting_periods = _compute_starting_periods(
         initial_ages=initial_states["age"], ages=ages
     )
