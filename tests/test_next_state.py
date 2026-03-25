@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast
 
@@ -6,6 +7,7 @@ import pandas as pd
 from pybaum import tree_equal
 
 from lcm.ages import AgeGrid
+from lcm.grids import DiscreteGrid
 from lcm.input_processing import process_regimes
 from lcm.next_state import (
     _create_discrete_stochastic_next_func,
@@ -68,8 +70,14 @@ def test_get_next_state_function_with_simulate_target():
     def f_weight_b(state: ContinuousState) -> FloatND:
         return jnp.array([0.0, 1.0])
 
-    grids = MappingProxyType({"mock": MappingProxyType({"b": jnp.arange(2)})})
-    gridspecs = MappingProxyType({})
+    @dataclass
+    class MockCategory:
+        cat_0: int = 0
+        cat_1: int = 1
+
+    all_grids = MappingProxyType(
+        {"mock": MappingProxyType({"b": DiscreteGrid(MockCategory)})}
+    )
     variable_info = pd.DataFrame({"is_shock": [False]})
     transitions = MappingProxyType({"next_a": f_a, "next_b": f_b})
     functions = MappingProxyType({"utility": lambda: 0, "f_weight_b": f_weight_b})
@@ -79,9 +87,8 @@ def test_get_next_state_function_with_simulate_target():
             transitions,
         ),
         functions=functions,  # ty: ignore[invalid-argument-type]
-        grids=grids,
+        all_grids=all_grids,
         variable_info=variable_info,
-        gridspecs=gridspecs,
     )
 
     key = jnp.arange(2, dtype="uint32")

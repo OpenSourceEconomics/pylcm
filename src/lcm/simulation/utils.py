@@ -63,13 +63,9 @@ def create_regime_state_action_space(
         sn: states[f"{internal_regime.name}__{sn}"] for sn in relevant_state_names
     }
 
-    grids = MappingProxyType(
-        {name: spec.to_jax() for name, spec in internal_regime.gridspecs.items()}
-    )
-
     return create_state_action_space(
         variable_info=internal_regime.variable_info,
-        grids=grids,
+        grids=internal_regime.grids,
         states=states_for_state_action_space,
     )
 
@@ -326,7 +322,7 @@ def build_initial_states(
             key = f"{regime_name}__{state_name}"
             if state_name in initial_states:
                 flat[key] = initial_states[state_name]
-            elif isinstance(internal_regime.gridspecs[state_name], DiscreteGrid):
+            elif isinstance(internal_regime.grids[state_name], DiscreteGrid):
                 flat[key] = jnp.full(n_subjects, MISSING_CAT_CODE, dtype=jnp.int32)
             else:
                 flat[key] = jnp.full(n_subjects, jnp.nan)

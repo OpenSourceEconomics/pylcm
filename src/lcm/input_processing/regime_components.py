@@ -12,12 +12,10 @@ from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.dispatchers import simulation_spacemap, vmap_1d
+from lcm.function_representation import StateSpaceInfo
 from lcm.grids import Grid
 from lcm.input_processing.params_processing import get_flat_param_names
-from lcm.interfaces import (
-    StateActionSpace,
-    StateSpaceInfo,
-)
+from lcm.interfaces import StateActionSpace
 from lcm.max_Q_over_a import get_argmax_and_max_Q_over_a, get_max_Q_over_a
 from lcm.next_state import get_next_state_function_for_simulation
 from lcm.Q_and_F import get_Q_and_F, get_Q_and_F_terminal
@@ -25,7 +23,6 @@ from lcm.regime import Regime
 from lcm.typing import (
     ArgmaxQOverAFunction,
     FunctionsMapping,
-    GridsDict,
     InternalUserFunction,
     MaxQOverAFunction,
     NextStateSimulationFunction,
@@ -49,7 +46,7 @@ def build_Q_and_F_functions(
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[str],
     regime_transition_probs: RegimeTransitionFunction | None,
-    state_space_infos: MappingProxyType[RegimeName, StateSpaceInfo],
+    regime_to_state_space_info: MappingProxyType[RegimeName, StateSpaceInfo],
     ages: AgeGrid,
     regime_params_template: RegimeParamsTemplate,
 ) -> MappingProxyType[int, QAndFFunction]:
@@ -77,7 +74,7 @@ def build_Q_and_F_functions(
                 stochastic_transition_names=stochastic_transition_names,
                 regimes_to_active_periods=regimes_to_active_periods,
                 regime_transition_probs=regime_transition_probs,
-                next_state_space_infos=state_space_infos,
+                regime_to_state_space_info=regime_to_state_space_info,
             )
         Q_and_F_functions[period] = Q_and_F
 
@@ -162,8 +159,7 @@ def build_next_state_simulation_functions(
     functions: FunctionsMapping,
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[str],
-    grids: GridsDict,
-    gridspecs: MappingProxyType[str, Grid],
+    all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
     variable_info: pd.DataFrame,
     regime_params_template: RegimeParamsTemplate,
     enable_jit: bool,
@@ -172,8 +168,7 @@ def build_next_state_simulation_functions(
         functions=functions,
         transitions=flatten_regime_namespace(transitions),
         stochastic_transition_names=stochastic_transition_names,
-        grids=grids,
-        gridspecs=gridspecs,
+        all_grids=all_grids,
         variable_info=variable_info,
     )
     sig_args = tuple(inspect.signature(next_state).parameters)
@@ -196,7 +191,7 @@ def build_regime_transition_probs_functions(
     *,
     functions: FunctionsMapping,
     regime_transition_probs: InternalUserFunction,
-    grids: MappingProxyType[str, Array],
+    grids: MappingProxyType[str, Grid],
     regime_names_to_ids: RegimeNamesToIds,
     regime_params_template: RegimeParamsTemplate,
     is_stochastic: bool,

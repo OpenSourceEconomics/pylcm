@@ -12,6 +12,7 @@ from jax import numpy as jnp
 
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, format_messages
+from lcm.function_representation import StateSpaceInfo
 from lcm.grid_helpers import get_irreg_coordinate
 from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
 from lcm.input_processing.create_regime_params_template import (
@@ -25,7 +26,7 @@ from lcm.input_processing.regime_components import (
     build_regime_transition_probs_functions,
 )
 from lcm.input_processing.util import (
-    get_gridspecs,
+    get_grids,
     get_variable_info,
 )
 from lcm.interfaces import (
@@ -33,7 +34,6 @@ from lcm.interfaces import (
     SimulateFunctions,
     SolveFunctions,
     SolveSimulateFunctionPair,
-    StateSpaceInfo,
 )
 from lcm.ndimage import map_coordinates
 from lcm.regime import MarkovTransition, Regime, _collect_state_transitions
@@ -114,22 +114,16 @@ def process_regimes(
     variable_info = MappingProxyType(
         {n: get_variable_info(r) for n, r in regimes.items()}
     )
-    gridspecs = MappingProxyType({n: get_gridspecs(r) for n, r in regimes.items()})
-    grids = MappingProxyType(
-        {
-            n: MappingProxyType(
-                {name: spec.to_jax() for name, spec in gridspecs[n].items()}
-            )
-            for n in regimes
-        }
-    )
+    all_grids = MappingProxyType({n: get_grids(r) for n, r in regimes.items()})
 
-    state_space_infos = MappingProxyType(
+    regime_to_state_space_info = MappingProxyType(
         {n: _create_state_space_info(r) for n, r in regimes.items()}
     )
     state_action_spaces = MappingProxyType(
         {
-            n: create_state_action_space(variable_info=variable_info[n], grids=grids[n])
+            n: create_state_action_space(
+                variable_info=variable_info[n], grids=all_grids[n]
+            )
             for n in regimes
         }
     )
@@ -148,10 +142,9 @@ def process_regimes(
             regime=regime,
             regime_name=name,
             nested_transitions=nested_transitions[name],
-            grids=grids,
             regime_params_template=regime_params_template,
             regime_names_to_ids=regime_names_to_ids,
-            gridspecs=gridspecs[name],
+            all_grids=all_grids,
             variable_info=variable_info[name],
             enable_jit=enable_jit,
         )
@@ -170,7 +163,7 @@ def process_regimes(
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
             regime_transition_probs=intermediate.solve_regime_transition_probs,
-            state_space_infos=state_space_infos,
+            regime_to_state_space_info=regime_to_state_space_info,
             ages=ages,
             regime_params_template=regime_params_template,
         )
@@ -187,7 +180,7 @@ def process_regimes(
                 transitions=transitions,
                 stochastic_transition_names=stochastic_transition_names,
                 regime_transition_probs=intermediate.solve_regime_transition_probs,
-                state_space_infos=state_space_infos,
+                regime_to_state_space_info=regime_to_state_space_info,
                 ages=ages,
                 regime_params_template=regime_params_template,
             )
@@ -211,8 +204,7 @@ def process_regimes(
             functions=solve_funcs,
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
-            grids=grids,
-            gridspecs=gridspecs[name],
+            all_grids=all_grids,
             variable_info=variable_info[name],
             regime_params_template=regime_params_template,
             enable_jit=enable_jit,
@@ -221,7 +213,7 @@ def process_regimes(
         internal_regimes[name] = InternalRegime(
             name=name,
             terminal=regime.terminal,
-            gridspecs=gridspecs[name],
+            grids=all_grids[name],
             variable_info=variable_info[name],
             active_periods=tuple(regimes_to_active_periods[name]),
             regime_params_template=regime_params_template,
@@ -282,10 +274,9 @@ def _get_intermediate_functions(
     regime: Regime,
     regime_name: str,
     nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
-    grids: MappingProxyType[RegimeName, MappingProxyType[str, Array]],
     regime_params_template: RegimeParamsTemplate,
     regime_names_to_ids: RegimeNamesToIds,
-    gridspecs: MappingProxyType[str, Grid],
+    all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
     variable_info: pd.DataFrame,
     enable_jit: bool,
 ) -> _IntermediateFunctions:
@@ -296,10 +287,9 @@ def _get_intermediate_functions(
         regime_name: The name of the regime.
         nested_transitions: Nested transitions dict for internal processing.
             Format: {"regime_name": {"next_state": func, ...}, "next_regime": func}
-        grids: Immutable mapping of regime names to grid arrays.
         regime_params_template: The regime's parameter template.
         regime_names_to_ids: Mapping from regime names to integer indices.
-        gridspecs: The specifications of the current regimes grids.
+        all_grids: Immutable mapping of regime names to Grid spec objects.
         variable_info: Variable info of the regime.
         enable_jit: Whether to jit the internal functions.
 
@@ -307,7 +297,7 @@ def _get_intermediate_functions(
         Intermediate functions container with solve and simulate variants.
 
     """
-    flat_grids = flatten_regime_namespace(grids)
+    flat_grids = flatten_regime_namespace(all_grids)
     # Flatten nested transitions to get prefixed names like "regime__next_wealth"
     flat_nested_transitions = flatten_regime_namespace(nested_transitions)
 
@@ -408,17 +398,17 @@ def _get_intermediate_functions(
         )
         functions[func_name] = _get_discrete_markov_next_function(
             func=func,
-            grid=flat_grids[func_name.replace("next_", "")],
+            grid=flat_grids[func_name.replace("next_", "")].to_jax(),
         )
     for shock_name in variable_info.query("is_shock").index.tolist():
         relative_name = f"{regime_name}__next_{shock_name}"
         functions[f"weight_{relative_name}"] = _get_weights_func_for_shock(
             name=shock_name,
-            gridspec=cast("_ShockGrid", gridspecs[shock_name]),
+            grid=cast("_ShockGrid", all_grids[regime_name][shock_name]),
         )
         functions[relative_name] = _get_stochastic_next_function_for_shock(
             name=shock_name,
-            grid=flat_grids[relative_name.replace("next_", "")],
+            grid=flat_grids[relative_name.replace("next_", "")].to_jax(),
         )
     internal_transition = {
         func_name: functions[func_name]
@@ -455,7 +445,7 @@ def _get_intermediate_functions(
         solve_regime_tp, simulate_regime_tp = build_regime_transition_probs_functions(
             functions=solve_functions,
             regime_transition_probs=functions["next_regime"],
-            grids=grids[regime_name],
+            grids=all_grids[regime_name],
             regime_names_to_ids=regime_names_to_ids,
             regime_params_template=regime_params_template,
             is_stochastic=is_stochastic_regime_transition,
@@ -656,19 +646,18 @@ def _get_stochastic_next_function_for_shock(
     return next_func
 
 
-def _get_weights_func_for_shock(*, name: str, gridspec: _ShockGrid) -> UserFunction:
+def _get_weights_func_for_shock(*, name: str, grid: _ShockGrid) -> UserFunction:
     """Get function that uses linear interpolation to calculate the shock weights.
 
     For shocks whose params are supplied at runtime, the grid points and transition
     probabilities are computed inside JIT from those runtime params.
 
     """
-    if gridspec.params_to_pass_at_runtime:
-        n_points = gridspec.n_points
-        fixed_params = dict(gridspec.params)
+    if grid.params_to_pass_at_runtime:
+        n_points = grid.n_points
+        fixed_params = dict(grid.params)
         runtime_param_names = {
-            qname_from_tree_path((name, p)): p
-            for p in gridspec.params_to_pass_at_runtime
+            qname_from_tree_path((name, p)): p for p in grid.params_to_pass_at_runtime
         }
         args = {name: "ContinuousState", **dict.fromkeys(runtime_param_names, "float")}
 
@@ -678,8 +667,8 @@ def _get_weights_func_for_shock(*, name: str, gridspec: _ShockGrid) -> UserFunct
                 **fixed_params,
                 **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
             }
-            gridpoints = gridspec.compute_gridpoints(**shock_kw)
-            transition_probs = gridspec.compute_transition_probs(**shock_kw)
+            gridpoints = grid.compute_gridpoints(**shock_kw)
+            transition_probs = grid.compute_transition_probs(**shock_kw)
             coord = get_irreg_coordinate(value=kwargs[name], points=gridpoints)
             return map_coordinates(
                 input=transition_probs,
@@ -691,8 +680,8 @@ def _get_weights_func_for_shock(*, name: str, gridspec: _ShockGrid) -> UserFunct
 
         return weights_func_runtime
 
-    gridpoints = gridspec.get_gridpoints()
-    transition_probs = gridspec.get_transition_probs()
+    gridpoints = grid.get_gridpoints()
+    transition_probs = grid.get_transition_probs()
 
     @with_signature(
         args={f"{name}": "ContinuousState"},
@@ -704,8 +693,8 @@ def _get_weights_func_for_shock(*, name: str, gridspec: _ShockGrid) -> UserFunct
         return map_coordinates(
             input=transition_probs,
             coordinates=[
-                jnp.full(gridspec.n_points, fill_value=coordinate),
-                jnp.arange(gridspec.n_points),
+                jnp.full(grid.n_points, fill_value=coordinate),
+                jnp.arange(grid.n_points),
             ],
         )
 
@@ -1002,7 +991,7 @@ def _create_state_space_info(regime: Regime) -> StateSpaceInfo:
 
     """
     vi = get_variable_info(regime)
-    gridspecs = get_gridspecs(regime)
+    grids = get_grids(regime)
 
     if regime.terminal:
         vi = vi.query("enters_concurrent_valuation")
@@ -1011,14 +1000,14 @@ def _create_state_space_info(regime: Regime) -> StateSpaceInfo:
 
     discrete_states = {
         name: grid_spec
-        for name, grid_spec in gridspecs.items()
+        for name, grid_spec in grids.items()
         if (name in state_names and isinstance(grid_spec, DiscreteGrid))
         or isinstance(grid_spec, _ShockGrid)
     }
 
     continuous_states = {
         name: grid_spec
-        for name, grid_spec in gridspecs.items()
+        for name, grid_spec in grids.items()
         if name in state_names
         and isinstance(grid_spec, ContinuousGrid)
         and not isinstance(grid_spec, _ShockGrid)

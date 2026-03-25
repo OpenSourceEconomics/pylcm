@@ -5,12 +5,7 @@ from typing import cast
 import pandas as pd
 from jax import Array
 
-from lcm.grids import (
-    ContinuousGrid,
-    DiscreteGrid,
-    Grid,
-    IrregSpacedGrid,
-)
+from lcm.grids import Grid, IrregSpacedGrid
 from lcm.shocks import _ShockGrid
 from lcm.typing import (
     ArgmaxQOverAFunction,
@@ -121,25 +116,6 @@ class StateActionSpace:
         )
 
 
-@dataclasses.dataclass(frozen=True, kw_only=True)
-class StateSpaceInfo:
-    """Information to work with the output of a function evaluated on a state space.
-
-    An example is the value function array, which is the output of the value function
-    evaluated on the state space.
-
-    """
-
-    state_names: tuple[str, ...]
-    """Tuple of state variable names."""
-
-    discrete_states: MappingProxyType[str, DiscreteGrid | _ShockGrid]
-    """Immutable mapping of discrete state names to their grids."""
-
-    continuous_states: MappingProxyType[str, ContinuousGrid]
-    """Immutable mapping of continuous state names to their grids."""
-
-
 class SolveSimulateFunctionPair[S, T]:
     """Container for phase-specific function variants.
 
@@ -220,8 +196,8 @@ class InternalRegime:
     terminal: bool
     """Whether this is a terminal regime."""
 
-    gridspecs: MappingProxyType[str, Grid]
-    """Immutable mapping of variable names to grid specification objects."""
+    grids: MappingProxyType[str, Grid]
+    """Immutable mapping of variable names to grid objects."""
 
     variable_info: pd.DataFrame
     """DataFrame with variable metadata (is_state, is_action, etc.)."""
@@ -261,7 +237,7 @@ class InternalRegime:
         """
         all_params = {**self.resolved_fixed_params, **regime_params}
         replacements: dict[str, ContinuousState | DiscreteState] = {}
-        for state_name, spec in self.gridspecs.items():
+        for state_name, spec in self.grids.items():
             if state_name not in self._base_state_action_space.states:
                 continue
             if isinstance(spec, IrregSpacedGrid) and spec.pass_points_at_runtime:
