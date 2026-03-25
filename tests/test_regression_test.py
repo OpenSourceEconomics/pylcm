@@ -153,6 +153,15 @@ def test_regression_mortality():
 
 @pytest.mark.gpu
 @_skip_no_gpu
+@pytest.mark.skipif(
+    not X64_ENABLED,
+    reason=(
+        "Mahler & Yum is too large for a float32 regression test. "
+        "XLA compiles different fused kernels across processes, changing "
+        "float32 accumulation order and producing ~1e-3 value diffs. "
+        "Smaller benchmarks (precautionary savings, mortality) are reproducible."
+    ),
+)
 def test_regression_mahler_yum():
     """Test that Mahler & Yum benchmark model output does not change."""
     expected = pd.read_pickle(_PRECISION_DIR / "mahler_yum_simulation.pkl")
