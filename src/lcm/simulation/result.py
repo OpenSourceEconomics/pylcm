@@ -667,8 +667,8 @@ def _build_functions_pool(internal_regime: InternalRegime) -> dict[str, UserFunc
         **{k: v for k, v in sim.functions.items() if k != "H"},
         **sim.constraints,
     }
-    if sim.regime_transition_probs is not None:
-        pool["regime_transition_probs"] = sim.regime_transition_probs
+    if sim.compute_regime_transition_probs is not None:
+        pool["regime_transition_probs"] = sim.compute_regime_transition_probs
     return pool
 
 

@@ -162,7 +162,7 @@ def process_regimes(
             constraints=intermediate.solve_constraints,
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
-            regime_transition_probs=intermediate.solve_regime_transition_probs,
+            compute_regime_transition_probs=intermediate.solve_compute_regime_transition_probs,
             regime_to_state_space_info=regime_to_state_space_info,
             ages=ages,
             regime_params_template=regime_params_template,
@@ -179,7 +179,7 @@ def process_regimes(
                 constraints=intermediate.simulate_constraints,
                 transitions=transitions,
                 stochastic_transition_names=stochastic_transition_names,
-                regime_transition_probs=intermediate.solve_regime_transition_probs,
+                compute_regime_transition_probs=intermediate.solve_compute_regime_transition_probs,
                 regime_to_state_space_info=regime_to_state_space_info,
                 ages=ages,
                 regime_params_template=regime_params_template,
@@ -222,7 +222,7 @@ def process_regimes(
                 constraints=intermediate.solve_constraints,
                 transitions=transitions,
                 stochastic_transition_names=stochastic_transition_names,
-                regime_transition_probs=intermediate.solve_regime_transition_probs,
+                compute_regime_transition_probs=intermediate.solve_compute_regime_transition_probs,
                 max_Q_over_a=MappingProxyType(max_Q_over_a),
             ),
             simulate_functions=SimulateFunctions(
@@ -230,7 +230,7 @@ def process_regimes(
                 constraints=intermediate.simulate_constraints,
                 transitions=transitions,
                 stochastic_transition_names=stochastic_transition_names,
-                regime_transition_probs=intermediate.simulate_regime_transition_probs,
+                compute_regime_transition_probs=intermediate.simulate_compute_regime_transition_probs,
                 argmax_and_max_Q_over_a=MappingProxyType(argmax_and_max_Q_over_a),
                 next_state=next_state,
             ),
@@ -259,10 +259,10 @@ class _IntermediateFunctions:
     transitions: TransitionFunctionsMapping
     """Immutable mapping of transition names to transition functions."""
 
-    solve_regime_transition_probs: RegimeTransitionFunction | None
+    solve_compute_regime_transition_probs: RegimeTransitionFunction | None
     """Regime transition probability function for solve, or `None`."""
 
-    simulate_regime_transition_probs: VmappedRegimeTransitionFunction | None
+    simulate_compute_regime_transition_probs: VmappedRegimeTransitionFunction | None
     """Regime transition probability function for simulate, or `None`."""
 
     stochastic_transition_names: frozenset[str]
@@ -444,7 +444,7 @@ def _get_intermediate_functions(
     else:
         solve_regime_tp, simulate_regime_tp = build_regime_transition_probs_functions(
             functions=solve_functions,
-            regime_transition_probs=functions["next_regime"],
+            compute_regime_transition_probs=functions["next_regime"],
             grids=all_grids[regime_name],
             regime_names_to_ids=regime_names_to_ids,
             regime_params_template=regime_params_template,
@@ -457,8 +457,8 @@ def _get_intermediate_functions(
         solve_constraints=internal_constraints,
         simulate_constraints=internal_constraints,
         transitions=transitions,
-        solve_regime_transition_probs=solve_regime_tp,
-        simulate_regime_transition_probs=simulate_regime_tp,
+        solve_compute_regime_transition_probs=solve_regime_tp,
+        simulate_compute_regime_transition_probs=simulate_regime_tp,
         stochastic_transition_names=stochastic_transition_names,
     )
 

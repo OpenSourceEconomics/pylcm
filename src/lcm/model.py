@@ -604,14 +604,14 @@ def _partial_fixed_params_into_regimes(
                     for period, func in solve.max_Q_over_a.items()
                 }
             ),
-            regime_transition_probs=(
+            compute_regime_transition_probs=(
                 functools.partial(
-                    solve.regime_transition_probs,
+                    solve.compute_regime_transition_probs,
                     **_filter_kwargs_for_func(
-                        func=solve.regime_transition_probs, kwargs=regime_fixed
+                        func=solve.compute_regime_transition_probs, kwargs=regime_fixed
                     ),
                 )
-                if solve.regime_transition_probs is not None
+                if solve.compute_regime_transition_probs is not None
                 else None
             ),
         )
@@ -627,14 +627,15 @@ def _partial_fixed_params_into_regimes(
                 }
             ),
             next_state=functools.partial(simulate_funcs.next_state, **regime_fixed),
-            regime_transition_probs=(
+            compute_regime_transition_probs=(
                 functools.partial(
-                    simulate_funcs.regime_transition_probs,
+                    simulate_funcs.compute_regime_transition_probs,
                     **_filter_kwargs_for_func(
-                        func=simulate_funcs.regime_transition_probs, kwargs=regime_fixed
+                        func=simulate_funcs.compute_regime_transition_probs,
+                        kwargs=regime_fixed,
                     ),
                 )
-                if simulate_funcs.regime_transition_probs is not None
+                if simulate_funcs.compute_regime_transition_probs is not None
                 else None
             ),
         )

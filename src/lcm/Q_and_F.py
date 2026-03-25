@@ -36,7 +36,7 @@ def get_Q_and_F(
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[str],
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
-    regime_transition_probs: RegimeTransitionFunction,
+    compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_state_space_info: MappingProxyType[RegimeName, StateSpaceInfo],
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
@@ -50,7 +50,8 @@ def get_Q_and_F(
         transitions: Immutable mapping of transition names to transition functions.
         stochastic_transition_names: Frozenset of stochastic transition function names.
         regimes_to_active_periods: Mapping regime names to their active periods.
-        regime_transition_probs: Regime transition probability function for solve.
+        compute_regime_transition_probs: Regime transition probability function
+            for solve.
         regime_to_state_space_info: The state space information of the next period.
 
     Returns:
@@ -59,7 +60,6 @@ def get_Q_and_F(
 
     """
     U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
-    regime_transition_probs_func = regime_transition_probs
     state_transitions = {}
     next_stochastic_states_weights = {}
     joint_weights_from_marginals = {}
@@ -130,7 +130,7 @@ def get_Q_and_F(
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         [
             U_and_F,
-            regime_transition_probs_func,
+            compute_regime_transition_probs,
             *list(state_transitions.values()),
             *list(next_stochastic_states_weights.values()),
         ],
@@ -156,7 +156,7 @@ def get_Q_and_F(
 
         """
         regime_transition_probs: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
-            regime_transition_probs_func(
+            compute_regime_transition_probs(
                 **states_actions_params,
                 period=period,
                 age=age,

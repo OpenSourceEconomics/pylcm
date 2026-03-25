@@ -44,7 +44,7 @@ def build_Q_and_F_functions(
     constraints: FunctionsMapping,
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[str],
-    regime_transition_probs: RegimeTransitionFunction | None,
+    compute_regime_transition_probs: RegimeTransitionFunction | None,
     regime_to_state_space_info: MappingProxyType[RegimeName, StateSpaceInfo],
     ages: AgeGrid,
     regime_params_template: RegimeParamsTemplate,
@@ -62,7 +62,7 @@ def build_Q_and_F_functions(
                 constraints=constraints,
             )
         else:
-            assert regime_transition_probs is not None  # noqa: S101
+            assert compute_regime_transition_probs is not None  # noqa: S101
             Q_and_F = get_Q_and_F(
                 flat_param_names=flat_param_names,
                 age=age,
@@ -72,7 +72,7 @@ def build_Q_and_F_functions(
                 transitions=transitions,
                 stochastic_transition_names=stochastic_transition_names,
                 regimes_to_active_periods=regimes_to_active_periods,
-                regime_transition_probs=regime_transition_probs,
+                compute_regime_transition_probs=compute_regime_transition_probs,
                 regime_to_state_space_info=regime_to_state_space_info,
             )
         Q_and_F_functions[period] = Q_and_F
@@ -189,7 +189,7 @@ def build_next_state_simulation_functions(
 def build_regime_transition_probs_functions(
     *,
     functions: FunctionsMapping,
-    regime_transition_probs: InternalUserFunction,
+    compute_regime_transition_probs: InternalUserFunction,
     grids: MappingProxyType[str, Grid],
     regime_names_to_ids: RegimeNamesToIds,
     regime_params_template: RegimeParamsTemplate,
@@ -200,7 +200,7 @@ def build_regime_transition_probs_functions(
 
     Args:
         functions: Immutable mapping of function names to internal user functions.
-        regime_transition_probs: The user's next_regime function.
+        compute_regime_transition_probs: The user's next_regime function.
         grids: Immutable mapping of grid names to grid arrays.
         regime_names_to_ids: Mapping from regime names to integer indices.
         regime_params_template: The regime's parameter template.
@@ -213,10 +213,11 @@ def build_regime_transition_probs_functions(
     """
     # Wrap deterministic next_regime to return one-hot probability array
     if is_stochastic:
-        probs_func = regime_transition_probs
+        probs_func = compute_regime_transition_probs
     else:
         probs_func = _wrap_deterministic_regime_transition(
-            func=regime_transition_probs, regime_names_to_ids=regime_names_to_ids
+            func=compute_regime_transition_probs,
+            regime_names_to_ids=regime_names_to_ids,
         )
 
     # Wrap to convert array output to dict format

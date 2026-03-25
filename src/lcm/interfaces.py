@@ -153,7 +153,7 @@ class SolveFunctions:
     stochastic_transition_names: frozenset[str]
     """Frozenset of stochastic transition function names."""
 
-    regime_transition_probs: RegimeTransitionFunction | None
+    compute_regime_transition_probs: RegimeTransitionFunction | None
     """Regime transition probability function for solve, or `None`."""
 
     max_Q_over_a: MappingProxyType[int, MaxQOverAFunction]
@@ -176,7 +176,7 @@ class SimulateFunctions:
     stochastic_transition_names: frozenset[str]
     """Frozenset of stochastic transition function names."""
 
-    regime_transition_probs: VmappedRegimeTransitionFunction | None
+    compute_regime_transition_probs: VmappedRegimeTransitionFunction | None
     """Regime transition probability function for simulate, or `None`."""
 
     argmax_and_max_Q_over_a: MappingProxyType[int, ArgmaxQOverAFunction]
