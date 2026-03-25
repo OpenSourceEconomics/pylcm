@@ -119,7 +119,7 @@ def process_regimes(
         }
     )
 
-    state_space_infos = MappingProxyType(
+    regime_to_state_space_info = MappingProxyType(
         {n: _create_state_space_info(r) for n, r in regimes.items()}
     )
     state_action_spaces = MappingProxyType(
@@ -156,7 +156,7 @@ def process_regimes(
             regime=regime,
             regimes_to_active_periods=regimes_to_active_periods,
             internal_functions=internal_functions,
-            state_space_infos=state_space_infos,
+            regime_to_state_space_info=regime_to_state_space_info,
             ages=ages,
             regime_params_template=regime_params_template,
         )
@@ -167,7 +167,7 @@ def process_regimes(
                 regime=regime,
                 regimes_to_active_periods=regimes_to_active_periods,
                 internal_functions=internal_functions.with_simulate_overrides(),
-                state_space_infos=state_space_infos,
+                regime_to_state_space_info=regime_to_state_space_info,
                 ages=ages,
                 regime_params_template=regime_params_template,
             )
