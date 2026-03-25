@@ -44,12 +44,14 @@ same label mapping.
 ## Transition Probabilities from a Series
 
 Build a transition probability array from a pandas Series with a named `MultiIndex`,
-replacing manual array construction where axis ordering is error-prone.
+replacing manual array construction where axis ordering is error-prone. Use
+`array_from_series` with a `param_path` that points to a `next_*` function:
 
 ```python
-from lcm import transition_probs_from_series
+from lcm.pandas_utils import array_from_series
 
 # Series with named MultiIndex levels — use "age" (not "period")
+# Include both the indexing params AND the outcome level ("next_health")
 probs = pd.Series(
     [0.9, 0.1, 0.3, 0.7, 0.8, 0.2, 0.4, 0.6],
     index=pd.MultiIndex.from_tuples(
@@ -67,30 +69,21 @@ probs = pd.Series(
     ),
 )
 
-health_probs = transition_probs_from_series(
+health_probs = array_from_series(
     sr=probs,
     model=model,
-    regime_name="working",
+    param_path=("working", "next_health", "probs_array"),
 )
 ```
 
-The transition type is inferred from the `"next_*"` level in the MultiIndex:
-`"next_health"` means a state transition on `"health"`, while `"next_regime"` means a
-regime transition. The `regime_name` can also be omitted when inference is unambiguous:
+When `param_path` points to a `next_*` function, `array_from_series` automatically
+detects this and appends the outcome axis. The MultiIndex must include levels for both the
+indexing parameters and the outcome (`"next_health"` for state transitions,
+`"next_regime"` for regime transitions).
 
-```python
-regime_probs = transition_probs_from_series(
-    sr=regime_series,
-    model=model,
-)
-```
-
-The MultiIndex level names must match the indexing parameters of the transition function
-(in any order) plus the outcome level (`"next_{state_name}"` for state transitions,
-`"next_regime"` for regime transitions). Use `"age"` with actual age values from the
-model's `AgeGrid` for the age dimension (not `"period"`). The function reorders levels to
-match the declaration order automatically, so you don't need to worry about getting the
-level order right.
+Use `"age"` with actual age values from the model's `AgeGrid` for the age dimension (not
+`"period"`). The function reorders levels to match the declaration order automatically, so
+you don't need to worry about getting the level order right.
 
 Discrete state and action labels are mapped to integer codes using the same grids defined
 in the model. Age values are converted to period indices automatically.
@@ -118,7 +111,7 @@ Raises `ValueError` if:
 - Any value is outside $[0, 1]$
 - Any row (slice along the last axis) doesn't sum to 1
 
-Call this after `transition_probs_from_series` or after manual array construction to catch
+Call this after `array_from_series` or after manual array construction to catch
 mistakes early.
 
 ## See Also

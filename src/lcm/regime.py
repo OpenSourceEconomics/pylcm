@@ -306,6 +306,16 @@ def _validate_logical_consistency(regime: Regime) -> None:
             f"{invalid_function_names}.",
         )
 
+    # Validate function names do not start with "next_" (reserved for
+    # auto-generated state transition functions)
+    next_prefixed = [name for name in all_function_names if name.startswith("next_")]
+    if next_prefixed:
+        error_messages.append(
+            f"Function names must not start with 'next_' — this prefix is "
+            f"reserved for auto-generated state transition functions. "
+            f"Invalid names: {next_prefixed}.",
+        )
+
     # Validate state and action names do not contain the separator
     all_variable_names = [*regime.states.keys(), *regime.actions.keys()]
     invalid_variable_names = [

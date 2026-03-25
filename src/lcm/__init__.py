@@ -24,7 +24,6 @@ from lcm.model import Model
 from lcm.pandas_utils import (
     initial_conditions_from_dataframe,
     params_from_pandas,
-    transition_probs_from_series,
 )
 from lcm.persistence import (
     SimulateSnapshot,
@@ -67,6 +66,5 @@ __all__ = [
     "params_from_pandas",
     "save_solution",
     "shocks",
-    "transition_probs_from_series",
     "validate_transition_probs",
 ]

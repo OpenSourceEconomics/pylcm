@@ -3,7 +3,6 @@
 import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import overload
 
 import jax.numpy as jnp
 import numpy as np
@@ -13,13 +12,12 @@ from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.error_handling import (
-    _extract_markov_transition,
     _get_func_indexing_params,
 )
 from lcm.grids import DiscreteGrid
 from lcm.model import Model
 from lcm.params import MappingLeaf
-from lcm.regime import MarkovTransition, Regime
+from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
 from lcm.utils import flatten_regime_namespace, unflatten_regime_namespace
 
@@ -299,124 +297,6 @@ def _convert_param_value(
     return value
 
 
-@overload
-def transition_probs_from_series(
-    *,
-    sr: pd.Series,
-    model: Model,
-    regime_name: str | None = ...,
-    categoricals: dict[str, DiscreteGrid] | None = ...,
-) -> Array: ...
-
-
-@overload
-def transition_probs_from_series(
-    *,
-    sr: pd.Series,
-    model: Model,
-    regime_name: str | None = ...,
-    target_regime_name: str,
-    categoricals: dict[str, DiscreteGrid] | None = ...,
-) -> Array: ...
-
-
-def transition_probs_from_series(
-    *,
-    sr: pd.Series,
-    model: Model,
-    regime_name: str | None = None,
-    target_regime_name: str | None = None,
-    categoricals: dict[str, DiscreteGrid] | None = None,
-) -> Array:
-    """Convert a labeled pandas Series to a transition probability array.
-
-    Build a transition probability array from a Series with a named MultiIndex,
-    eliminating manual array construction with opaque axis ordering. The
-    transition type (state vs. regime) is inferred from the `"next_*"` level in
-    the MultiIndex: `"next_health"` means a state transition on `"health"`,
-    while `"next_regime"` means a regime transition.
-
-    The MultiIndex must use `"age"` (with actual age values from the model's
-    `AgeGrid`) for the age/period dimension — not `"period"`.
-
-    For per-target state transitions (where `state_transitions[state_name]` is a
-    dict mapping target regime names to `MarkovTransition` instances), pass
-    `target_regime_name` to select the specific transition.
-
-    Args:
-        sr: Series with a named MultiIndex. Level names must match the
-            indexing parameters of the transition function (with `"period"`
-            replaced by `"age"`) plus the outcome level
-            (`"next_{state_name}"` or `"next_regime"`).
-        model: The LCM Model instance.
-        regime_name: Name of the regime containing the transition. If `None`,
-            inferred by scanning regimes for a matching `MarkovTransition`.
-        target_regime_name: Target regime name for per-target state transitions.
-            Required when the state transition is a per-target dict.
-        categoricals: Extra categorical mappings (level name → grid) for
-            derived variables not in the model's state/action grids.
-
-    Returns:
-        JAX array with axes corresponding to the indexing parameters in
-        declaration order, followed by the outcome axis.
-
-    Raises:
-        TypeError: If the transition is not a `MarkovTransition`.
-        ValueError: If level names don't match, labels are invalid, or
-            inference fails.
-
-    """
-    state_name = _infer_transition_target(sr)
-    if regime_name is None:
-        regime_name = _infer_regime_name(
-            model=model,
-            state_name=state_name,
-            target_regime_name=target_regime_name,
-        )
-
-    regime = model.regimes[regime_name]
-    all_grids = _resolve_categoricals(
-        model=model, regime_name=regime_name, categoricals=categoricals
-    )
-
-    if state_name is not None:
-        raw_transition = regime.state_transitions[state_name]
-        markov = _extract_markov_transition(
-            raw_transition=raw_transition,
-            state_name=state_name,
-            regime_name=regime_name,
-            target_regime_name=target_regime_name,
-        )
-        func = markov.func
-        outcome_mapping = _grid_level_mapping(
-            name=f"next_{state_name}", grid=all_grids[state_name]
-        )
-    else:
-        if not isinstance(regime.transition, MarkovTransition):
-            msg = (
-                f"Regime '{regime_name}' does not have a stochastic regime "
-                f"transition. Got {type(regime.transition).__name__}."
-            )
-            raise TypeError(msg)
-
-        func = regime.transition.func
-        regime_ids = dict(model.regime_names_to_ids)
-        outcome_mapping = _LevelMapping(
-            name="next_regime",
-            size=len(regime_ids),
-            label_to_index=regime_ids.__getitem__,  # ty: ignore[invalid-argument-type]
-            valid_labels=tuple(regime_ids),
-        )
-
-    return _build_probs_array(
-        func=func,
-        outcome_mapping=outcome_mapping,
-        all_grids=all_grids,
-        model=model,
-        series=sr,
-    )
-
-
 def array_from_series(
     *,
     sr: pd.Series,
@@ -454,11 +334,11 @@ def array_from_series(
             match, or labels are invalid.
 
     """
-    indexing_params, regime_name = _resolve_param_indexing(
+    indexing_params, regime_name, func_name = _resolve_param_indexing(
         param_path=param_path, model=model
     )
 
-    if not indexing_params:
+    if not indexing_params and not func_name.startswith("next_"):
         return jnp.array(sr.to_numpy(), dtype=float)
 
     grids = _resolve_categoricals(
@@ -472,7 +352,15 @@ def array_from_series(
         indexing_params=display_params, all_grids=grids, ages=model.ages
     )
 
+    # Append outcome axis for transition functions (next_* functions)
+    if func_name.startswith("next_"):
+        outcome_mapping = _build_outcome_mapping(
+            func_name=func_name, all_grids=grids, model=model
+        )
+        level_mappings = (*level_mappings, outcome_mapping)
+
     if "age" in display_params:
+        _fail_if_period_level(sr)
         sr = _filter_to_grid_ages(series=sr, ages=model.ages)
 
     return _scatter_series(series=sr, level_mappings=level_mappings)
@@ -522,8 +410,8 @@ def _resolve_param_indexing(
     *,
     param_path: tuple[str, ...],
     model: Model,
-) -> tuple[list[str], str | None]:
-    """Resolve a param path to indexing params and regime name.
+) -> tuple[list[str], str | None, str]:
+    """Resolve a param path to indexing params, regime name, and function name.
 
     Look up the parameter in the model's regimes. Find the function(s) that
     use it, inspect their signatures, and return the indexing parameters
@@ -538,8 +426,8 @@ def _resolve_param_indexing(
         model: The LCM Model instance.
 
     Returns:
-        Tuple of (indexing_params, regime_name). `regime_name` is `None`
-        when the path matches multiple regimes.
+        Tuple of (indexing_params, regime_name, func_name). `regime_name`
+        is `None` when the path matches multiple regimes.
 
     Raises:
         ValueError: If the path has an invalid length, points to a
@@ -566,7 +454,7 @@ def _resolve_3_part_path(
     *,
     param_path: tuple[str, ...],
     model: Model,
-) -> tuple[list[str], str]:
+) -> tuple[list[str], str, str]:
     """Resolve a fully qualified (regime, func, param) path."""
     regime_name, func_name, param_name = param_path
 
@@ -596,14 +484,14 @@ def _resolve_3_part_path(
         )
         raise ValueError(msg)
 
-    return _get_func_indexing_params(func), regime_name
+    return _get_func_indexing_params(func), regime_name, func_name
 
 
 def _resolve_2_part_path(
     *,
     param_path: tuple[str, ...],
     model: Model,
-) -> tuple[list[str], str | None]:
+) -> tuple[list[str], str | None, str]:
     """Resolve a (func, param) path by scanning all regimes."""
     func_name, param_name = param_path
 
@@ -629,36 +517,38 @@ def _resolve_2_part_path(
     _fail_if_inconsistent_indexing(matches=matches, param_path=param_path)
 
     regime_name = matches[0][1] if len(matches) == 1 else None
-    return matches[0][0], regime_name
+    return matches[0][0], regime_name, func_name
 
 
 def _resolve_1_part_path(
     *,
     param_path: tuple[str, ...],
     model: Model,
-) -> tuple[list[str], str | None]:
+) -> tuple[list[str], str | None, str]:
     """Resolve a (param,) path by scanning all regimes and functions."""
     (param_name,) = param_path
 
-    matches: list[tuple[list[str], str]] = []
+    matches: list[tuple[list[str], str, str]] = []
     for regime_name, regime in model.regimes.items():
         all_funcs = regime.get_all_functions()
-        for func in all_funcs.values():
+        for fn_name, func in all_funcs.items():
             sig = inspect.signature(func)
             if param_name not in sig.parameters:
                 continue
             indexing = _get_func_indexing_params(func)
-            matches.append((indexing, regime_name))
+            matches.append((indexing, regime_name, fn_name))
 
     if not matches:
         msg = f"No function with parameter '{param_name}' found in any regime."
         raise ValueError(msg)
 
-    _fail_if_inconsistent_indexing(matches=matches, param_path=param_path)
+    _fail_if_inconsistent_indexing(
+        matches=[(m[0], m[1]) for m in matches], param_path=param_path
+    )
 
     regime_names = {m[1] for m in matches}
     regime_name = matches[0][1] if len(regime_names) == 1 else None
-    return matches[0][0], regime_name
+    return matches[0][0], regime_name, matches[0][2]
 
 
 def _fail_if_inconsistent_indexing(
@@ -682,6 +572,16 @@ def _fail_if_inconsistent_indexing(
             f"param_path {param_path} matches functions with different "
             f"indexing parameters: {sorted(indexing_sets)}. "
             f"Use a fully qualified 3-part path (regime, func, param)."
+        )
+        raise ValueError(msg)
+
+
+def _fail_if_period_level(sr: pd.Series) -> None:
+    """Raise if the Series has a 'period' level instead of 'age'."""
+    if "period" in sr.index.names:
+        msg = (
+            "Use 'age' (with actual age values) as the MultiIndex level name "
+            "instead of 'period'."
         )
         raise ValueError(msg)
 
@@ -789,6 +689,39 @@ def _build_level_mappings_for_param(
     return tuple(mappings)
 
 
+def _build_outcome_mapping(
+    *,
+    func_name: str,
+    all_grids: dict[str, DiscreteGrid],
+    model: Model,
+) -> _LevelMapping:
+    """Build a `_LevelMapping` for the outcome axis of a `next_*` function.
+
+    For state transitions (e.g. `"next_partner"`), look up the state grid.
+    For regime transitions (`"next_regime"`), use `model.regime_names_to_ids`.
+
+    Args:
+        func_name: Function name starting with `"next_"`.
+        all_grids: Categorical grid lookup.
+        model: The LCM Model instance.
+
+    Returns:
+        `_LevelMapping` for the outcome (last) axis.
+
+    """
+    if func_name == "next_regime":
+        regime_ids = dict(model.regime_names_to_ids)
+        return _LevelMapping(
+            name="next_regime",
+            size=len(regime_ids),
+            label_to_index=regime_ids.__getitem__,  # ty: ignore[invalid-argument-type]
+            valid_labels=tuple(regime_ids),
+        )
+
+    state_name = func_name.removeprefix("next_")
+    return _grid_level_mapping(name=func_name, grid=all_grids[state_name])
+
+
 def _scatter_series(
     *,
     series: pd.Series,
@@ -816,6 +749,10 @@ def _scatter_series(
     )
 
     shape = [m.size for m in level_mappings]
+
+    if len(series) == 0:
+        return jnp.full(shape, fill_value)
+
     index_arrays = [
         _map_level(
             mapping=mapping, level_values=series.index.get_level_values(mapping.name)
@@ -855,225 +792,6 @@ def _map_level(*, mapping: _LevelMapping, level_values: pd.Index) -> np.ndarray:
             f"Valid labels: {sorted(mapping.valid_labels)}."
         )
         raise ValueError(msg) from None
-
-
-def _infer_transition_target(series: pd.Series) -> str | None:
-    """Find the `next_*` level in the MultiIndex.
-
-    Args:
-        series: Series whose MultiIndex must contain exactly one `next_*` level.
-
-    Returns:
-        The state name (e.g. `"health"` for `"next_health"`), or `None`
-        for regime transitions (`"next_regime"`).
-
-    Raises:
-        ValueError: If no `next_*` level is found.
-
-    """
-    next_levels = [
-        name
-        for name in series.index.names
-        if isinstance(name, str) and name.startswith("next_")
-    ]
-    if not next_levels:
-        msg = (
-            "No 'next_*' level found in the Series MultiIndex. "
-            "Expected a level like 'next_health' or 'next_regime'."
-        )
-        raise ValueError(msg)
-    suffix = next_levels[0].removeprefix("next_")
-    return None if suffix == "regime" else suffix
-
-
-def _infer_regime_name(
-    *,
-    model: Model,
-    state_name: str | None,
-    target_regime_name: str | None,
-) -> str:
-    """Infer the regime name by scanning for a matching MarkovTransition.
-
-    Args:
-        model: The LCM Model instance.
-        state_name: Name of the state variable, or `None` for regime
-            transitions.
-        target_regime_name: Target regime name for per-target dicts.
-
-    Returns:
-        The inferred regime name.
-
-    Raises:
-        TypeError: If a candidate regime uses a per-target dict for the state.
-        ValueError: If no matching regime is found or multiple regimes match
-            with different transition function signatures.
-
-    """
-    if state_name is None:
-        candidates = [
-            name
-            for name, regime in model.regimes.items()
-            if isinstance(regime.transition, MarkovTransition)
-        ]
-    else:
-        candidates = [
-            name
-            for name, regime in model.regimes.items()
-            if _has_markov_on_state(regime=regime, state_name=state_name)
-        ]
-
-    if not candidates:
-        if state_name is None:
-            msg = "No regime with a stochastic regime transition found."
-        else:
-            msg = f"No regime with a MarkovTransition on state '{state_name}' found."
-        raise ValueError(msg)
-
-    _fail_if_per_target_candidate(
-        candidates=candidates, state_name=state_name, model=model
-    )
-
-    if len(candidates) == 1:
-        return candidates[0]
-
-    return _pick_among_multiple_candidates(
-        candidates=candidates,
-        state_name=state_name,
-        target_regime_name=target_regime_name,
-        model=model,
-    )
-
-
-def _fail_if_per_target_candidate(
-    *,
-    candidates: list[str],
-    state_name: str | None,
-    model: Model,
-) -> None:
-    """Raise if any candidate uses a per-target dict for `state_name`."""
-    if state_name is None:
-        return
-    for cand_name in candidates:
-        raw = model.regimes[cand_name].state_transitions[state_name]
-        if isinstance(raw, Mapping):
-            msg = (
-                f"State '{state_name}' in regime '{cand_name}' uses "
-                f"per-target transitions. Pass `regime_name` and "
-                f"`target_regime_name` explicitly."
-            )
-            raise TypeError(msg)
-
-
-def _pick_among_multiple_candidates(
-    *,
-    candidates: list[str],
-    state_name: str | None,
-    target_regime_name: str | None,
-    model: Model,
-) -> str:
-    """Pick a regime when multiple candidates have a matching MarkovTransition.
-
-    Return the first candidate if all have identical indexing params.
-    Raise if signatures differ.
-
-    """
-    param_sets: set[tuple[str, ...]] = set()
-    for cand_name in candidates:
-        regime = model.regimes[cand_name]
-        if state_name is not None:
-            raw = regime.state_transitions[state_name]
-            markov = _extract_markov_transition(
-                raw_transition=raw,
-                state_name=state_name,
-                regime_name=cand_name,
-                target_regime_name=target_regime_name,
-            )
-            func = markov.func
-        else:
-            func = regime.transition.func  # ty: ignore[unresolved-attribute]
-        param_sets.add(tuple(_get_func_indexing_params(func)))
-
-    if len(param_sets) == 1:
-        return candidates[0]
-
-    msg = (
-        f"Multiple regimes have a MarkovTransition that matches, but with "
-        f"different signatures: {candidates}. Pass regime_name explicitly."
-    )
-    raise ValueError(msg)
-
-
-def _has_markov_on_state(*, regime: Regime, state_name: str) -> bool:
-    """Return True if `regime` has a MarkovTransition on `state_name`."""
-    if state_name not in regime.state_transitions:
-        return False
-    raw = regime.state_transitions[state_name]
-    if isinstance(raw, MarkovTransition):
-        return True
-    return isinstance(raw, Mapping) and any(
-        isinstance(v, MarkovTransition) for v in raw.values()
-    )
-
-
-def _build_probs_array(
-    *,
-    func: Callable,
-    outcome_mapping: _LevelMapping,
-    all_grids: dict[str, DiscreteGrid],
-    model: Model,
-    series: pd.Series,
-) -> Array:
-    """Build a probability array from a transition function and labeled Series.
-
-    Args:
-        func: The transition function whose signature defines the axis order.
-        outcome_mapping: `_LevelMapping` for the outcome (last) axis.
-        all_grids: dict of discrete grid names to `DiscreteGrid` instances.
-        model: The LCM Model instance (used for age-to-period mapping).
-        series: Series with a named MultiIndex containing the probability values.
-
-    Returns:
-        JAX array with axes matching the function's indexing parameters (in
-        declaration order) followed by the outcome axis.
-
-    """
-    indexing_params = _get_func_indexing_params(func)
-    level_mappings = _build_level_mappings(
-        indexing_params=indexing_params,
-        all_grids=all_grids,
-        ages=model.ages,
-        outcome_mapping=outcome_mapping,
-    )
-    return _scatter_series(series=series, level_mappings=level_mappings)
-
-
-def _build_level_mappings(
-    *,
-    indexing_params: list[str],
-    all_grids: dict[str, DiscreteGrid],
-    ages: AgeGrid,
-    outcome_mapping: _LevelMapping,
-) -> tuple[_LevelMapping, ...]:
-    """Build level mappings from function indexing params + outcome.
-
-    Replaces the internal `"period"` parameter name with `"age"` and
-    constructs a `_LevelMapping` for each level.
-
-    """
-    mappings: list[_LevelMapping] = []
-    for param in indexing_params:
-        if param == "period":
-            mappings.append(_age_level_mapping(ages))
-        elif param in all_grids:
-            mappings.append(_grid_level_mapping(name=param, grid=all_grids[param]))
-        else:
-            msg = (
-                f"Unrecognised indexing parameter '{param}'. Expected 'period', "
-                f"or a discrete grid name ({sorted(all_grids)})."
-            )
-            raise ValueError(msg)
-    mappings.append(outcome_mapping)
-    return tuple(mappings)
 
 
 def _validate_and_reorder_levels(

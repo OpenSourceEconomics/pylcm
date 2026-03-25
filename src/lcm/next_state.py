@@ -161,13 +161,13 @@ def _extend_transitions_for_simulation(
         func_name
         for func_name in transitions
         if tree_path_from_qname(func_name)[-1] in stochastic_transition_names
-        and tree_path_from_qname(func_name)[-1].replace("next_", "") not in shock_names
+        and tree_path_from_qname(func_name)[-1].removeprefix("next_") not in shock_names
     ]
     continuous_stochastic_targets = [
         func_name
         for func_name in transitions
         if tree_path_from_qname(func_name)[-1] in stochastic_transition_names
-        and tree_path_from_qname(func_name)[-1].replace("next_", "") in shock_names
+        and tree_path_from_qname(func_name)[-1].removeprefix("next_") in shock_names
     ]
     # Handle stochastic next states functions
     # ----------------------------------------------------------------------------------

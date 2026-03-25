@@ -7,7 +7,6 @@ import pytest
 from pandas.api.types import CategoricalDtype
 
 from lcm import (
-    AgeGrid,
     DiscreteGrid,
     LinSpacedGrid,
     Regime,
@@ -18,7 +17,6 @@ from lcm.pandas_utils import (
     _build_discrete_grid_lookup,
     array_from_series,
     initial_conditions_from_dataframe,
-    transition_probs_from_series,
 )
 from tests.test_models.basic_discrete import (
     Health,
@@ -349,65 +347,69 @@ def _array_to_series(arr, model):
     return pd.Series([r[1] for r in records], index=index)
 
 
-def test_transition_probs_basic_round_trip():
+def test_array_from_series_transition_basic_round_trip():
+    """4D transition probs via array_from_series with param_path."""
     model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
     series = _array_to_series(arr, model)
-    result = transition_probs_from_series(
-        sr=series, model=model, regime_name="working_life"
+    result = array_from_series(
+        sr=series,
+        model=model,
+        param_path=("working_life", "next_partner", "probs_array"),
     )
     np.testing.assert_allclose(result, arr, atol=1e-7)
 
 
-def test_transition_probs_categorical_labels():
+def test_array_from_series_transition_categorical_labels():
+    """Verify specific label-based values in transition probs array."""
     model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
     series = _array_to_series(arr, model)
-    result = transition_probs_from_series(
-        sr=series, model=model, regime_name="working_life"
+    result = array_from_series(
+        sr=series,
+        model=model,
+        param_path=("working_life", "next_partner", "probs_array"),
     )
-    # Verify specific values by label
-    assert float(result[0, 0, 0, 1]) == pytest.approx(
-        0.7
-    )  # age=40, work, single->partnered
-    assert float(result[1, 1, 1, 0]) == pytest.approx(
-        0.7
-    )  # age=50, retire, partnered->single
+    # age=40, work, single->partnered
+    assert float(result[0, 0, 0, 1]) == pytest.approx(0.7)
+    # age=50, retire, partnered->single
+    assert float(result[1, 1, 1, 0]) == pytest.approx(0.7)
 
 
-def test_transition_probs_reordered_levels():
+def test_array_from_series_transition_reordered_levels():
+    """Reordered MultiIndex levels still produce correct output."""
     model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
     series = _array_to_series(arr, model)
     # Reorder levels: put next_partner first, then partner, work, age
     series = series.reorder_levels(["next_partner", "partner", "labor_supply", "age"])
-    result = transition_probs_from_series(
-        sr=series, model=model, regime_name="working_life"
+    result = array_from_series(
+        sr=series,
+        model=model,
+        param_path=("working_life", "next_partner", "probs_array"),
     )
     np.testing.assert_allclose(result, arr, atol=1e-7)
 
 
-def test_transition_probs_not_markov_raises():
-    model = get_basic_model()  # health transition is None (fixed), not MarkovTransition
-    index = pd.MultiIndex.from_tuples([(25.0, "bad")], names=["age", "next_health"])
-    series = pd.Series([1.0], index=index)
-    with pytest.raises(TypeError, match="not a MarkovTransition"):
-        transition_probs_from_series(sr=series, model=model, regime_name="working_life")
-
-
-def test_transition_probs_wrong_level_names_raises():
+def test_array_from_series_transition_wrong_level_names_raises():
+    """Wrong MultiIndex level names raise ValueError."""
     model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
     series = _array_to_series(arr, model)
-    # Rename a level to something wrong
+    # Rename outcome level to something wrong
     series.index = series.index.set_names(
         ["age", "labor_supply", "partner", "wrong_name"]
     )
-    with pytest.raises(ValueError, match="No 'next_\\*' level"):
-        transition_probs_from_series(sr=series, model=model, regime_name="working_life")
+    with pytest.raises(ValueError, match="level names"):
+        array_from_series(
+            sr=series,
+            model=model,
+            param_path=("working_life", "next_partner", "probs_array"),
+        )
 
 
-def test_transition_probs_invalid_label_raises():
+def test_array_from_series_transition_invalid_label_raises():
+    """Invalid categorical label in transition probs raises ValueError."""
     model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
     series = _array_to_series(arr, model)
@@ -415,10 +417,14 @@ def test_transition_probs_invalid_label_raises():
     new_index = series.index.set_levels(["single", "INVALID"], level="partner")
     series.index = new_index
     with pytest.raises(ValueError, match="Invalid labels"):
-        transition_probs_from_series(sr=series, model=model, regime_name="working_life")
+        array_from_series(
+            sr=series,
+            model=model,
+            param_path=("working_life", "next_partner", "probs_array"),
+        )
 
 
-def test_transition_probs_period_level_raises():
+def test_array_from_series_transition_period_level_raises():
     """Using 'period' instead of 'age' should raise a clear error."""
     model = get_stochastic_model(3)
     index = pd.MultiIndex.from_tuples(
@@ -427,10 +433,14 @@ def test_transition_probs_period_level_raises():
     )
     series = pd.Series([1.0], index=index)
     with pytest.raises(ValueError, match="age"):
-        transition_probs_from_series(sr=series, model=model, regime_name="working_life")
+        array_from_series(
+            sr=series,
+            model=model,
+            param_path=("working_life", "next_partner", "probs_array"),
+        )
 
 
-def test_transition_probs_duplicate_level_names_raises():
+def test_array_from_series_transition_duplicate_level_names_raises():
     """Duplicate MultiIndex level names should raise."""
     model = get_stochastic_model(3)
     index = pd.MultiIndex.from_tuples(
@@ -439,11 +449,15 @@ def test_transition_probs_duplicate_level_names_raises():
     )
     series = pd.Series([1.0], index=index)
     with pytest.raises(ValueError, match="duplicate"):
-        transition_probs_from_series(sr=series, model=model, regime_name="working_life")
+        array_from_series(
+            sr=series,
+            model=model,
+            param_path=("working_life", "next_partner", "probs_array"),
+        )
 
 
-def test_transition_probs_invalid_age_raises():
-    """Age values not on the model's AgeGrid should raise."""
+def test_array_from_series_transition_invalid_age_dropped():
+    """Age values not on the model's AgeGrid are silently dropped (all NaN)."""
     model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
     series = _array_to_series(arr, model)
@@ -451,88 +465,16 @@ def test_transition_probs_invalid_age_raises():
     series.index = series.index.set_codes([0] * len(series), level="age").set_levels(
         [999.0], level="age"
     )
-    with pytest.raises(ValueError, match="not a valid grid point"):
-        transition_probs_from_series(sr=series, model=model, regime_name="working_life")
-
-
-def test_transition_probs_no_next_level_raises():
-    """Series without a 'next_*' MultiIndex level should raise."""
-    model = get_stochastic_model(3)
-    index = pd.MultiIndex.from_tuples(
-        [(40.0, "work", "single")],
-        names=["age", "labor_supply", "partner"],
+    result = array_from_series(
+        sr=series,
+        model=model,
+        param_path=("working_life", "next_partner", "probs_array"),
     )
-    series = pd.Series([1.0], index=index)
-    with pytest.raises(ValueError, match="No 'next_\\*' level"):
-        transition_probs_from_series(sr=series, model=model, regime_name="working_life")
+    # All ages are invalid, so all positions should be NaN
+    assert jnp.all(jnp.isnan(result))
 
 
-def test_transition_probs_infers_regime_name():
-    """regime_name omitted — should infer 'working_life' from model."""
-    model = get_stochastic_model(3)
-    arr = _make_partner_probs_array()
-    series = _array_to_series(arr, model)
-    # next_partner has different indexing in working_life vs retirement
-    # (working_life has labor_supply action, retirement doesn't), so
-    # inference requires explicit regime_name.
-    result = transition_probs_from_series(
-        sr=series, model=model, regime_name="working_life"
-    )
-    np.testing.assert_allclose(result, arr, atol=1e-7)
-
-
-def test_transition_probs_per_target_requires_regime_name():
-    """Per-target dict with MarkovTransition requires explicit regime_name."""
-    from lcm import MarkovTransition, Model  # noqa: PLC0415
-
-    @categorical(ordered=False)
-    class RegimeId:
-        working: int
-        retired: int
-
-    from lcm.typing import DiscreteState, FloatND  # noqa: PLC0415
-
-    def _health_probs(health: DiscreteState, probs_array: FloatND) -> FloatND:
-        return probs_array[health]
-
-    working = Regime(
-        states={
-            "health": DiscreteGrid(Health),
-            "wealth": LinSpacedGrid(start=0, stop=10, n_points=5),
-        },
-        state_transitions={
-            "health": {
-                "working": MarkovTransition(_health_probs),
-                "retired": MarkovTransition(_health_probs),
-            },
-            "wealth": lambda wealth: wealth,
-        },
-        functions={"utility": lambda health, wealth: wealth + health},
-        transition=lambda age: jnp.where(age >= 1, RegimeId.retired, RegimeId.working),
-        active=lambda age: age < 2,
-    )
-    retired = Regime(
-        transition=None,
-        states={
-            "health": DiscreteGrid(Health),
-            "wealth": LinSpacedGrid(start=0, stop=10, n_points=5),
-        },
-        functions={"utility": lambda health, wealth: wealth + health},
-    )
-
-    model = Model(
-        regimes={"working": working, "retired": retired},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
-        regime_id_class=RegimeId,
-    )
-
-    index = pd.MultiIndex.from_tuples([(0.0, "bad")], names=["age", "next_health"])
-    series = pd.Series([1.0], index=index)
-    with pytest.raises(TypeError, match="per-target"):
-        transition_probs_from_series(sr=series, model=model)
-
-
-def test_transition_probs_sparse_input_fills_nan():
+def test_array_from_series_transition_sparse_input_fills_nan():
     """Unfilled positions should be NaN, not zero."""
     model = get_stochastic_model(3)
     # Provide data for only the first age — other ages should be NaN
@@ -544,8 +486,10 @@ def test_transition_probs_sparse_input_fills_nan():
         names=["age", "labor_supply", "partner", "next_partner"],
     )
     series = pd.Series([0.3, 0.7], index=index)
-    result = transition_probs_from_series(
-        sr=series, model=model, regime_name="working_life"
+    result = array_from_series(
+        sr=series,
+        model=model,
+        param_path=("working_life", "next_partner", "probs_array"),
     )
     # age=40 (period 0), work (0), single (0) → provided
     np.testing.assert_allclose(result[0, 0, 0], jnp.array([0.3, 0.7]), atol=1e-7)
@@ -627,50 +571,60 @@ def _regime_array_to_series(arr, model):
     return pd.Series([r[1] for r in records], index=index)
 
 
-def test_regime_transition_probs_basic_round_trip():
+def test_array_from_series_regime_transition_basic_round_trip():
+    """Regime transition probs via array_from_series with param_path."""
     model = get_regime_markov_model()
     arr = _make_regime_probs_array()
     series = _regime_array_to_series(arr, model)
-    result = transition_probs_from_series(sr=series, model=model)
+    result = array_from_series(
+        sr=series,
+        model=model,
+        param_path=("alive", "next_regime", "probs_array"),
+    )
     np.testing.assert_allclose(result, arr, atol=1e-7)
 
 
-def test_regime_transition_probs_reordered_levels():
+def test_array_from_series_regime_transition_reordered_levels():
+    """Reordered MultiIndex levels for regime transitions."""
     model = get_regime_markov_model()
     arr = _make_regime_probs_array()
     series = _regime_array_to_series(arr, model)
     series = series.reorder_levels(["next_regime", "health", "age"])
-    result = transition_probs_from_series(sr=series, model=model)
+    result = array_from_series(
+        sr=series,
+        model=model,
+        param_path=("alive", "next_regime", "probs_array"),
+    )
     np.testing.assert_allclose(result, arr, atol=1e-7)
 
 
-def test_regime_transition_probs_not_markov_raises():
-    model = get_basic_model()  # deterministic regime transition
-    index = pd.MultiIndex.from_tuples(
-        [(25.0, "working_life")], names=["age", "next_regime"]
-    )
-    series = pd.Series([1.0], index=index)
-    with pytest.raises(TypeError, match="stochastic regime transition"):
-        transition_probs_from_series(sr=series, model=model, regime_name="working_life")
-
-
-def test_regime_transition_probs_wrong_level_names_raises():
+def test_array_from_series_regime_transition_wrong_level_names_raises():
+    """Wrong MultiIndex level names for regime transition raise ValueError."""
     model = get_regime_markov_model()
     arr = _make_regime_probs_array()
     series = _regime_array_to_series(arr, model)
     series.index = series.index.set_names(["age", "health", "wrong_name"])
-    with pytest.raises(ValueError, match="No 'next_\\*' level"):
-        transition_probs_from_series(sr=series, model=model, regime_name="alive")
+    with pytest.raises(ValueError, match="level names"):
+        array_from_series(
+            sr=series,
+            model=model,
+            param_path=("alive", "next_regime", "probs_array"),
+        )
 
 
-def test_regime_transition_probs_invalid_label_raises():
+def test_array_from_series_regime_transition_invalid_label_raises():
+    """Invalid regime label in transition probs raises ValueError."""
     model = get_regime_markov_model()
     arr = _make_regime_probs_array()
     series = _regime_array_to_series(arr, model)
     new_index = series.index.set_levels(["alive", "INVALID"], level="next_regime")
     series.index = new_index
     with pytest.raises(ValueError, match="Invalid labels"):
-        transition_probs_from_series(sr=series, model=model, regime_name="alive")
+        array_from_series(
+            sr=series,
+            model=model,
+            param_path=("alive", "next_regime", "probs_array"),
+        )
 
 
 def test_validate_regime_transition_probs_valid():
@@ -694,7 +648,7 @@ def test_validate_regime_transition_probs_not_markov_raises():
 
 
 def _build_partner_probs_series(model):
-    """Build a Series with age x labor_supply x partner MultiIndex for probs_array."""
+    """Build a 4D Series with age x labor_supply x partner x next_partner MultiIndex."""
     partner_labels = ("single", "partnered")
     work_labels = ("work", "retire")
     ages = model.ages.values  # noqa: PD011
@@ -704,18 +658,24 @@ def _build_partner_probs_series(model):
     for period_idx in range(model.n_periods):
         for w_label in work_labels:
             for p_label in partner_labels:
-                records.append(((float(ages[period_idx]), w_label, p_label), val))
-                val += 1.0
+                for np_label in partner_labels:
+                    records.append(
+                        (
+                            (float(ages[period_idx]), w_label, p_label, np_label),
+                            val,
+                        )
+                    )
+                    val += 1.0
 
     index = pd.MultiIndex.from_tuples(
         [r[0] for r in records],
-        names=["age", "labor_supply", "partner"],
+        names=["age", "labor_supply", "partner", "next_partner"],
     )
     return pd.Series([r[1] for r in records], index=index)
 
 
 def test_array_from_series_3_part_path() -> None:
-    """Fully qualified (regime, func, param) path produces correct shape."""
+    """Fully qualified (regime, func, param) path produces correct 4D shape."""
     model = get_stochastic_model(3)
     series = _build_partner_probs_series(model)
     result = array_from_series(
@@ -723,9 +683,9 @@ def test_array_from_series_3_part_path() -> None:
         model=model,
         param_path=("working_life", "next_partner", "probs_array"),
     )
-    assert result.shape == (3, 2, 2)
-    # First element: age=40, work, single
-    assert float(result[0, 0, 0]) == pytest.approx(1.0)
+    assert result.shape == (3, 2, 2, 2)
+    # First element: age=40, work, single, single
+    assert float(result[0, 0, 0, 0]) == pytest.approx(1.0)
 
 
 def test_array_from_series_2_part_path_ambiguous_regime() -> None:
@@ -733,7 +693,7 @@ def test_array_from_series_2_part_path_ambiguous_regime() -> None:
     model = get_stochastic_model(3)
     series = _build_partner_probs_series(model)
     # next_partner exists in both regimes. With no specific regime, action
-    # grids (labor_supply) are not discovered → unrecognised indexing param.
+    # grids (labor_supply) are not discovered -> unrecognised indexing param.
     with pytest.raises(ValueError, match="Unrecognised indexing parameter"):
         array_from_series(
             sr=series,
@@ -769,12 +729,13 @@ def test_array_from_series_extra_ages_dropped() -> None:
     for age in all_ages:
         for w_label in work_labels:
             for p_label in partner_labels:
-                records.append(((age, w_label, p_label), val))
-                val += 1.0
+                for np_label in partner_labels:
+                    records.append(((age, w_label, p_label, np_label), val))
+                    val += 1.0
 
     index = pd.MultiIndex.from_tuples(
         [r[0] for r in records],
-        names=["age", "labor_supply", "partner"],
+        names=["age", "labor_supply", "partner", "next_partner"],
     )
     series = pd.Series([r[1] for r in records], index=index)
     result = array_from_series(
@@ -782,9 +743,9 @@ def test_array_from_series_extra_ages_dropped() -> None:
         model=model,
         param_path=("working_life", "next_partner", "probs_array"),
     )
-    assert result.shape == (3, 2, 2)
-    # age=30 was idx 0 in input (vals 1-4), age=40 was idx 1 (vals 5-8)
-    assert float(result[0, 0, 0]) == pytest.approx(5.0)
+    assert result.shape == (3, 2, 2, 2)
+    # age=30 was idx 0 in input (vals 1-8), age=40 was idx 1 (vals 9-16)
+    assert float(result[0, 0, 0, 0]) == pytest.approx(9.0)
 
 
 def test_array_from_series_missing_ages_filled_with_nan() -> None:
@@ -795,12 +756,13 @@ def test_array_from_series_missing_ages_filled_with_nan() -> None:
     val = 1.0
     for w_label in ("work", "retire"):
         for p_label in ("single", "partnered"):
-            records.append(((40.0, w_label, p_label), val))
-            val += 1.0
+            for np_label in ("single", "partnered"):
+                records.append(((40.0, w_label, p_label, np_label), val))
+                val += 1.0
 
     index = pd.MultiIndex.from_tuples(
         [r[0] for r in records],
-        names=["age", "labor_supply", "partner"],
+        names=["age", "labor_supply", "partner", "next_partner"],
     )
     series = pd.Series([r[1] for r in records], index=index)
     result = array_from_series(
@@ -808,7 +770,7 @@ def test_array_from_series_missing_ages_filled_with_nan() -> None:
         model=model,
         param_path=("working_life", "next_partner", "probs_array"),
     )
-    assert result.shape == (3, 2, 2)
+    assert result.shape == (3, 2, 2, 2)
     # age=40 (period 0) filled
     assert not jnp.any(jnp.isnan(result[0]))
     # age=50, age=60 all NaN
@@ -820,23 +782,23 @@ def test_array_from_series_reordered_levels() -> None:
     """MultiIndex with levels in different order still produces correct output."""
     model = get_stochastic_model(3)
     series = _build_partner_probs_series(model)
-    # Reorder: partner, labor_supply, age
-    series = series.reorder_levels(["partner", "labor_supply", "age"])
+    # Reorder: next_partner, partner, labor_supply, age
+    series = series.reorder_levels(["next_partner", "partner", "labor_supply", "age"])
     result = array_from_series(
         sr=series,
         model=model,
         param_path=("working_life", "next_partner", "probs_array"),
     )
-    assert result.shape == (3, 2, 2)
-    assert float(result[0, 0, 0]) == pytest.approx(1.0)
+    assert result.shape == (3, 2, 2, 2)
+    assert float(result[0, 0, 0, 0]) == pytest.approx(1.0)
 
 
 def test_array_from_series_invalid_label_raises() -> None:
     """Invalid categorical label raises ValueError."""
     model = get_stochastic_model(3)
     index = pd.MultiIndex.from_tuples(
-        [(40.0, "work", "INVALID")],
-        names=["age", "labor_supply", "partner"],
+        [(40.0, "work", "INVALID", "single")],
+        names=["age", "labor_supply", "partner", "next_partner"],
     )
     series = pd.Series([1.0], index=index)
     with pytest.raises(ValueError, match="Invalid labels"):
@@ -851,8 +813,8 @@ def test_array_from_series_wrong_level_names_raises() -> None:
     """Level names that don't match expected indexing params raise ValueError."""
     model = get_stochastic_model(3)
     index = pd.MultiIndex.from_tuples(
-        [(40.0, "work", "single")],
-        names=["age", "labor_supply", "wrong_name"],
+        [(40.0, "work", "single", "single")],
+        names=["age", "labor_supply", "wrong_name", "next_partner"],
     )
     series = pd.Series([1.0], index=index)
     with pytest.raises(ValueError, match="level names"):
@@ -924,7 +886,7 @@ def test_array_from_series_invalid_path_length_raises() -> None:
 
 
 def test_params_from_pandas_function_level_series() -> None:
-    """Series at function level is converted to array."""
+    """Series at function level is converted to 4D transition prob array."""
     from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
 
     model = get_stochastic_model(3)
@@ -936,8 +898,8 @@ def test_params_from_pandas_function_level_series() -> None:
     }
     result = params_from_pandas(params=params, model=model)
     arr = result["working_life"]["next_partner"]["probs_array"]
-    assert arr.shape == (3, 2, 2)
-    assert float(arr[0, 0, 0]) == pytest.approx(1.0)
+    assert arr.shape == (3, 2, 2, 2)
+    assert float(arr[0, 0, 0, 0]) == pytest.approx(1.0)
 
 
 def test_params_from_pandas_model_level_scalar_passthrough() -> None:
@@ -963,7 +925,7 @@ def test_params_from_pandas_regime_level_series() -> None:
     }
     result = params_from_pandas(params=params, model=model)
     arr = result["working_life"]["probs_array"]
-    assert arr.shape == (3, 2, 2)
+    assert arr.shape == (3, 2, 2, 2)
 
 
 def test_params_from_pandas_mixed_dict() -> None:
@@ -984,7 +946,7 @@ def test_params_from_pandas_mixed_dict() -> None:
     result = params_from_pandas(params=params, model=model)
     assert result["discount_factor"] == 0.95
     assert result["working_life"]["utility"]["disutility_of_work"] == 0.5
-    assert result["working_life"]["next_partner"]["probs_array"].shape == (3, 2, 2)
+    assert result["working_life"]["next_partner"]["probs_array"].shape == (3, 2, 2, 2)
     assert result["working_life"]["next_wealth"]["interest_rate"] == 0.05
     np.testing.assert_allclose(
         result["working_life"]["labor_income"]["wage"], jnp.array([10.0])
@@ -1008,7 +970,7 @@ def test_params_from_pandas_mapping_leaf() -> None:
     converted_leaf = result["working_life"]["next_partner"]["probs_array"]
     assert isinstance(converted_leaf, MappingLeaf)
     arr = converted_leaf.data["sub_key"]
-    assert arr.shape == (3, 2, 2)
+    assert arr.shape == (3, 2, 2, 2)
 
 
 def test_params_from_pandas_unknown_param_raises() -> None:
@@ -1039,19 +1001,25 @@ def test_params_from_pandas_with_categoricals() -> None:
     model = get_stochastic_model(3)
     labor_grid = DiscreteGrid(LaborSupply)
 
-    # Build a Series indexed by age x labor_supply x partner
+    # Build a Series indexed by age x labor_supply x partner x next_partner
     ages = model.ages.values  # noqa: PD011
     records = []
     val = 1.0
     for period_idx in range(model.n_periods):
         for w_label in ("work", "retire"):
             for p_label in ("single", "partnered"):
-                records.append(((float(ages[period_idx]), w_label, p_label), val))
-                val += 1.0
+                for np_label in ("single", "partnered"):
+                    records.append(
+                        (
+                            (float(ages[period_idx]), w_label, p_label, np_label),
+                            val,
+                        )
+                    )
+                    val += 1.0
 
     index = pd.MultiIndex.from_tuples(
         [r[0] for r in records],
-        names=["age", "labor_supply", "partner"],
+        names=["age", "labor_supply", "partner", "next_partner"],
     )
     series = pd.Series([r[1] for r in records], index=index)
 
@@ -1068,7 +1036,7 @@ def test_params_from_pandas_with_categoricals() -> None:
         categoricals={"labor_supply": labor_grid},
     )
     arr = result["retirement"]["next_partner"]["probs_array"]
-    assert arr.shape == (3, 2, 2)
+    assert arr.shape == (3, 2, 2, 2)
 
 
 def test_resolve_categoricals_conflict_raises() -> None:
