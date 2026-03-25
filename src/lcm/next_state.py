@@ -241,31 +241,31 @@ def _create_continuous_stochastic_next_func(
     """
     prev_state_name = name.split("next_")[1]
     flat_key = name.replace("next_", "")
-    gridspec: _ShockGrid = flat_grids[flat_key]  # ty: ignore [invalid-assignment]
+    grid: _ShockGrid = flat_grids[flat_key]  # ty: ignore [invalid-assignment]
 
-    if isinstance(gridspec, _ShockGridAR1):
-        return _create_ar1_next_func(name, prev_state_name, gridspec=gridspec)
-    if isinstance(gridspec, _ShockGridIID):
-        return _create_iid_next_func(name, prev_state_name, gridspec=gridspec)
+    if isinstance(grid, _ShockGridAR1):
+        return _create_ar1_next_func(name, prev_state_name, grid=grid)
+    if isinstance(grid, _ShockGridIID):
+        return _create_iid_next_func(name, prev_state_name, grid=grid)
 
-    msg = f"Expected _ShockGridIID or _ShockGridAR1, got {type(gridspec)}"
+    msg = f"Expected _ShockGridIID or _ShockGridAR1, got {type(grid)}"
     raise TypeError(msg)
 
 
 def _create_ar1_next_func(
-    name: str, prev_state_name: str, *, gridspec: _ShockGridAR1
+    name: str, prev_state_name: str, *, grid: _ShockGridAR1
 ) -> StochasticNextFunction:
-    fixed_params = dict(gridspec.params)
+    fixed_params = dict(grid.params)
     runtime_param_names = {
         qname_from_tree_path((prev_state_name, p)): p
-        for p in gridspec.params_to_pass_at_runtime
+        for p in grid.params_to_pass_at_runtime
     }
     args: dict[str, str] = {
         f"key_{name}": "dict[str, Array]",
         prev_state_name: "ContinuousState",
         **dict.fromkeys(runtime_param_names, "float"),
     }
-    _draw_shock = gridspec.draw_shock
+    _draw_shock = grid.draw_shock
 
     @with_signature(args=args, return_annotation="ContinuousState")
     def next_stochastic_state(**kwargs: FloatND) -> ContinuousState:
@@ -285,18 +285,18 @@ def _create_ar1_next_func(
 
 
 def _create_iid_next_func(
-    name: str, prev_state_name: str, *, gridspec: _ShockGridIID
+    name: str, prev_state_name: str, *, grid: _ShockGridIID
 ) -> StochasticNextFunction:
-    fixed_params = dict(gridspec.params)
+    fixed_params = dict(grid.params)
     runtime_param_names = {
         qname_from_tree_path((prev_state_name, p)): p
-        for p in gridspec.params_to_pass_at_runtime
+        for p in grid.params_to_pass_at_runtime
     }
     args: dict[str, str] = {
         f"key_{name}": "dict[str, Array]",
         **dict.fromkeys(runtime_param_names, "float"),
     }
-    _draw_shock = gridspec.draw_shock
+    _draw_shock = grid.draw_shock
 
     @with_signature(args=args, return_annotation="ContinuousState")
     def next_stochastic_state(**kwargs: FloatND) -> ContinuousState:

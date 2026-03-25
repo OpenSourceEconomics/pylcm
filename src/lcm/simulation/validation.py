@@ -369,9 +369,9 @@ def _validate_discrete_state_values(
         for state_name in internal_regime.variable_info.query(
             "is_state and is_discrete"
         ).index:
-            gridspec = internal_regime.grids[state_name]
-            if isinstance(gridspec, DiscreteGrid):
-                discrete_valid_codes[state_name] = set(gridspec.codes)
+            grid = internal_regime.grids[state_name]
+            if isinstance(grid, DiscreteGrid):
+                discrete_valid_codes[state_name] = set(grid.codes)
 
     for state_name, valid_codes in discrete_valid_codes.items():
         if state_name not in initial_states:
@@ -587,9 +587,9 @@ def _format_infeasibility_message(
     state_df.index.name = "subject"
 
     # Convert discrete codes to labels
-    for name, gridspec in internal_regime.grids.items():
-        if isinstance(gridspec, DiscreteGrid) and name in state_df.columns:
-            state_df[name] = [gridspec.categories[int(v)] for v in state_df[name]]
+    for name, grid in internal_regime.grids.items():
+        if isinstance(grid, DiscreteGrid) and name in state_df.columns:
+            state_df[name] = [grid.categories[int(v)] for v in state_df[name]]
 
     # Constraint names
     constraint_names = list(internal_regime.constraints.keys())

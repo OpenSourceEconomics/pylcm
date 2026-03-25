@@ -361,7 +361,7 @@ def _get_internal_functions(
         relative_name = f"{regime_name}__next_{shock_name}"
         functions[f"weight_{relative_name}"] = _get_weights_func_for_shock(
             name=shock_name,
-            gridspec=cast("_ShockGrid", all_grids[regime_name][shock_name]),
+            grid=cast("_ShockGrid", all_grids[regime_name][shock_name]),
         )
         functions[relative_name] = _get_stochastic_next_function_for_shock(
             name=shock_name,
@@ -561,19 +561,18 @@ def _get_stochastic_next_function_for_shock(
     return next_func
 
 
-def _get_weights_func_for_shock(*, name: str, gridspec: _ShockGrid) -> UserFunction:
+def _get_weights_func_for_shock(*, name: str, grid: _ShockGrid) -> UserFunction:
     """Get function that uses linear interpolation to calculate the shock weights.
 
     For shocks whose params are supplied at runtime, the grid points and transition
     probabilities are computed inside JIT from those runtime params.
 
     """
-    if gridspec.params_to_pass_at_runtime:
-        n_points = gridspec.n_points
-        fixed_params = dict(gridspec.params)
+    if grid.params_to_pass_at_runtime:
+        n_points = grid.n_points
+        fixed_params = dict(grid.params)
         runtime_param_names = {
-            qname_from_tree_path((name, p)): p
-            for p in gridspec.params_to_pass_at_runtime
+            qname_from_tree_path((name, p)): p for p in grid.params_to_pass_at_runtime
         }
         args = {name: "ContinuousState", **dict.fromkeys(runtime_param_names, "float")}
 
@@ -583,8 +582,8 @@ def _get_weights_func_for_shock(*, name: str, gridspec: _ShockGrid) -> UserFunct
                 **fixed_params,
                 **{raw: kwargs[qn] for qn, raw in runtime_param_names.items()},
             }
-            gridpoints = gridspec.compute_gridpoints(**shock_kw)
-            transition_probs = gridspec.compute_transition_probs(**shock_kw)
+            gridpoints = grid.compute_gridpoints(**shock_kw)
+            transition_probs = grid.compute_transition_probs(**shock_kw)
             coord = get_irreg_coordinate(value=kwargs[name], points=gridpoints)
             return map_coordinates(
                 input=transition_probs,
@@ -596,8 +595,8 @@ def _get_weights_func_for_shock(*, name: str, gridspec: _ShockGrid) -> UserFunct
 
         return weights_func_runtime
 
-    gridpoints = gridspec.get_gridpoints()
-    transition_probs = gridspec.get_transition_probs()
+    gridpoints = grid.get_gridpoints()
+    transition_probs = grid.get_transition_probs()
 
     @with_signature(
         args={f"{name}": "ContinuousState"},
@@ -609,8 +608,8 @@ def _get_weights_func_for_shock(*, name: str, gridspec: _ShockGrid) -> UserFunct
         return map_coordinates(
             input=transition_probs,
             coordinates=[
-                jnp.full(gridspec.n_points, fill_value=coordinate),
-                jnp.arange(gridspec.n_points),
+                jnp.full(grid.n_points, fill_value=coordinate),
+                jnp.arange(grid.n_points),
             ],
         )
 
