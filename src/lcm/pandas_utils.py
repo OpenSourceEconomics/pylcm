@@ -211,7 +211,17 @@ def _collect_template_matches(
     template_flat: Mapping[str, object],
     regime_names: frozenset[str],
 ) -> list[str]:
-    """Collect template qnames that match a user-provided path."""
+    """Collect template qnames that match a user-provided path.
+
+    Args:
+        user_path: Parsed user qname as a tuple of path segments.
+        template_flat: Flattened params template (3-part qnames).
+        regime_names: Frozenset of regime names in the model.
+
+    Returns:
+        List of matching template qnames.
+
+    """
     param_name = user_path[-1]
     matches: list[str] = []
 
@@ -256,8 +266,8 @@ def _fail_if_inconsistent_template_matches(
 
 
 def _convert_param_value(
-    value: object,
     *,
+    value: object,
     model: Model,
     param_path: tuple[str, ...],
     categoricals: dict[str, DiscreteGrid] | None = None,
@@ -455,7 +465,19 @@ def _resolve_3_part_path(
     param_path: tuple[str, ...],
     model: Model,
 ) -> tuple[list[str], str, str]:
-    """Resolve a fully qualified (regime, func, param) path."""
+    """Resolve a fully qualified (regime, func, param) path.
+
+    Args:
+        param_path: 3-element tuple `(regime, func, param)`.
+        model: The LCM Model instance.
+
+    Returns:
+        Tuple of (indexing_params, regime_name, func_name).
+
+    Raises:
+        ValueError: If regime, function, or parameter is not found.
+
+    """
     regime_name, func_name, param_name = param_path
 
     if regime_name not in model.regimes:
@@ -492,7 +514,20 @@ def _resolve_2_part_path(
     param_path: tuple[str, ...],
     model: Model,
 ) -> tuple[list[str], str | None, str]:
-    """Resolve a (func, param) path by scanning all regimes."""
+    """Resolve a (func, param) path by scanning all regimes.
+
+    Args:
+        param_path: 2-element tuple `(func, param)`.
+        model: The LCM Model instance.
+
+    Returns:
+        Tuple of (indexing_params, regime_name, func_name). `regime_name`
+        is `None` when multiple regimes match.
+
+    Raises:
+        ValueError: If no match is found or indexing params are inconsistent.
+
+    """
     func_name, param_name = param_path
 
     matches: list[tuple[list[str], str]] = []
@@ -525,18 +560,31 @@ def _resolve_1_part_path(
     param_path: tuple[str, ...],
     model: Model,
 ) -> tuple[list[str], str | None, str]:
-    """Resolve a (param,) path by scanning all regimes and functions."""
+    """Resolve a (param,) path by scanning all regimes and functions.
+
+    Args:
+        param_path: 1-element tuple `(param,)`.
+        model: The LCM Model instance.
+
+    Returns:
+        Tuple of (indexing_params, regime_name, func_name). `regime_name`
+        is `None` when multiple regimes match.
+
+    Raises:
+        ValueError: If no match is found or indexing params are inconsistent.
+
+    """
     (param_name,) = param_path
 
     matches: list[tuple[list[str], str, str]] = []
     for regime_name, regime in model.regimes.items():
         all_funcs = regime.get_all_functions()
-        for fn_name, func in all_funcs.items():
+        for func_name, func in all_funcs.items():
             sig = inspect.signature(func)
             if param_name not in sig.parameters:
                 continue
             indexing = _get_func_indexing_params(func)
-            matches.append((indexing, regime_name, fn_name))
+            matches.append((indexing, regime_name, func_name))
 
     if not matches:
         msg = f"No function with parameter '{param_name}' found in any regime."
@@ -602,9 +650,8 @@ def _filter_to_grid_ages(
 
     """
     grid_ages = {float(v) for v in ages.exact_values}
-    age_values = series.index.get_level_values("age")
-    mask = [float(a) in grid_ages for a in age_values]
-    return series.loc[mask]
+    age_values = series.index.get_level_values("age").astype(float)
+    return series.loc[age_values.isin(grid_ages)]
 
 
 @dataclass(frozen=True)
@@ -660,9 +707,6 @@ def _build_level_mappings_for_param(
     ages: AgeGrid,
 ) -> tuple[_LevelMapping, ...]:
     """Build level mappings for `array_from_series` from indexing params.
-
-    Like `_build_level_mappings` but without an outcome mapping (used for
-    non-transition parameters).
 
     Args:
         indexing_params: Parameter names in output axis order, with

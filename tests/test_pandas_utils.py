@@ -9,6 +9,7 @@ from pandas.api.types import CategoricalDtype
 from lcm import (
     DiscreteGrid,
     LinSpacedGrid,
+    Model,
     Regime,
     categorical,
 )
@@ -647,7 +648,7 @@ def test_validate_regime_transition_probs_not_markov_raises():
         validate_transition_probs(probs=arr, model=model, regime_name="working_life")
 
 
-def _build_partner_probs_series(model):
+def _build_partner_probs_series(model: Model) -> pd.Series:
     """Build a 4D Series with age x labor_supply x partner x next_partner MultiIndex."""
     partner_labels = ("single", "partnered")
     work_labels = ("work", "retire")
@@ -783,7 +784,7 @@ def test_array_from_series_reordered_levels() -> None:
     model = get_stochastic_model(3)
     series = _build_partner_probs_series(model)
     # Reorder: next_partner, partner, labor_supply, age
-    series = series.reorder_levels(["next_partner", "partner", "labor_supply", "age"])
+    series = series.reorder_levels(["next_partner", "partner", "labor_supply", "age"])  # ty: ignore[invalid-argument-type]
     result = array_from_series(
         sr=series,
         model=model,

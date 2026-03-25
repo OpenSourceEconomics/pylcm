@@ -389,7 +389,16 @@ def _slice_references_params(
     slice_node: ast.expr,
     param_names: set[str],
 ) -> bool:
-    """Check if any `ast.Name` in the slice is a function parameter."""
+    """Check if any `ast.Name` in the slice is a function parameter.
+
+    Args:
+        slice_node: AST node for the subscript slice.
+        param_names: Set of function parameter names.
+
+    Returns:
+        `True` if any bare name in the slice matches a parameter.
+
+    """
     return any(
         isinstance(node, ast.Name) and node.id in param_names
         for node in ast.walk(slice_node)
@@ -480,7 +489,16 @@ def _collect_subscripts(
     tree: ast.Module,
     param_name: str,
 ) -> list[ast.expr]:
-    """Find all `param_name[...]` subscript slice nodes in an AST."""
+    """Find all `param_name[...]` subscript slice nodes in an AST.
+
+    Args:
+        tree: Parsed AST module.
+        param_name: Name of the parameter to search for subscripts.
+
+    Returns:
+        List of AST slice nodes from matching subscripts.
+
+    """
     return [
         node.slice
         for node in ast.walk(tree)
@@ -493,7 +511,7 @@ def _collect_subscripts(
 def _extract_bare_names(slice_node: ast.expr) -> list[str] | None:
     """Extract bare variable names from a subscript slice.
 
-    Return ``None`` if any index element is not a bare `ast.Name` (e.g. a
+    Return `None` if any index element is not a bare `ast.Name` (e.g. a
     `BinOp` or `Call`).
     """
     if isinstance(slice_node, ast.Name):
