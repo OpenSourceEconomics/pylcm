@@ -20,7 +20,6 @@ from lcm.input_processing.params_processing import (
 )
 from lcm.input_processing.regime_processing import (
     InternalRegime,
-    get_simulation_output_dtypes,
     process_regimes,
 )
 from lcm.input_processing.util import get_variable_info
@@ -30,7 +29,7 @@ from lcm.persistence import (
     save_solve_snapshot,
 )
 from lcm.regime import Regime
-from lcm.simulation.result import SimulationResult
+from lcm.simulation.result import SimulationResult, get_simulation_output_dtypes
 from lcm.simulation.simulate import simulate
 from lcm.simulation.validation import validate_initial_conditions
 from lcm.solution.solve_brute import solve

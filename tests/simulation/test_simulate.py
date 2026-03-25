@@ -10,9 +10,8 @@ from pandas.testing import assert_frame_equal
 from lcm import Model
 from lcm.ages import AgeGrid
 from lcm.input_processing import process_regimes
-from lcm.input_processing.regime_processing import get_simulation_output_dtypes
 from lcm.logging import get_logger
-from lcm.simulation.result import SimulationResult
+from lcm.simulation.result import SimulationResult, get_simulation_output_dtypes
 from lcm.simulation.simulate import (
     _lookup_values_from_indices,
     simulate,

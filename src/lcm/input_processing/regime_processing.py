@@ -166,41 +166,6 @@ def process_regimes(
     return ensure_containers_are_immutable(internal_regimes)
 
 
-def get_simulation_output_dtypes(
-    regimes: Mapping[str, Regime],
-    regime_names_to_ids: Mapping[str, int],
-) -> MappingProxyType[str, pd.CategoricalDtype]:
-    """Compute pandas CategoricalDtype for all discrete output columns.
-
-    Merge ordered categories across regimes via topological sort. This must be
-    called after model validation (which guarantees merges succeed).
-
-    Args:
-        regimes: Mapping of regime names to Regime instances.
-        regime_names_to_ids: Mapping of regime names to integer IDs.
-
-    Returns:
-        Immutable mapping of variable name to `pd.CategoricalDtype`. Includes
-        all discrete state/action variables plus the ``"regime"`` column.
-
-    """
-    merged_categories, ordered_flags = _compute_merged_discrete_categories(regimes)
-
-    dtypes: dict[str, pd.CategoricalDtype] = {}
-    for var_name, categories in merged_categories.items():
-        dtypes[var_name] = pd.CategoricalDtype(
-            categories=list(categories),
-            ordered=ordered_flags[var_name],
-        )
-
-    dtypes["regime"] = pd.CategoricalDtype(
-        categories=list(regime_names_to_ids.keys()),
-        ordered=False,
-    )
-
-    return MappingProxyType(dtypes)
-
-
 def _build_solve_functions(
     *,
     regime: Regime,
