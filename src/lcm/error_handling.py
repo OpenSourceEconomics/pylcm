@@ -359,6 +359,15 @@ def _get_func_indexing_params(func: Callable) -> list[str]:
         if names is not None and all(n in param_names for n in names):
             return names
 
+        if names is not None and not all(n in param_names for n in names):
+            non_params = [n for n in names if n not in param_names]
+            msg = (
+                f"Function '{func_name}' indexes `{param_name}` with names "
+                f"{non_params} that are not function parameters. All subscript "
+                f"indices must be function parameters (not aliased variables)."
+            )
+            raise ValueError(msg)
+
         if names is None and _slice_references_params(
             slice_node=subscripts[0], param_names=param_names
         ):
@@ -588,6 +597,18 @@ def validate_transition_probs(
         n_outcomes = len(model.regime_names_to_ids)
 
     indexing_params = _get_func_indexing_params(func)
+
+    # Cross-check subscript order against signature order
+    sig = inspect.signature(func)
+    sig_order = [
+        p for p in sig.parameters if p != "probs_array" and p in indexing_params
+    ]
+    _validate_array_param_indexing(
+        func=func,
+        array_param_name="probs_array",
+        indexing_params=sig_order,
+    )
+
     expected_shape = _build_expected_shape(
         indexing_params=indexing_params,
         n_outcomes=n_outcomes,

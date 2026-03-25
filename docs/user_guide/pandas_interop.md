@@ -68,7 +68,7 @@ probs = pd.Series(
 )
 
 health_probs = transition_probs_from_series(
-    series=probs,
+    sr=probs,
     model=model,
     regime_name="working",
 )
@@ -80,7 +80,7 @@ regime transition. The `regime_name` can also be omitted when inference is unamb
 
 ```python
 regime_probs = transition_probs_from_series(
-    series=regime_series,
+    sr=regime_series,
     model=model,
 )
 ```

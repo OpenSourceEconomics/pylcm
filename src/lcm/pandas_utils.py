@@ -146,6 +146,7 @@ def params_from_pandas(
             user_qname=user_qname,
             template_flat=template_flat,
             regime_names=regime_names,
+            model=model,
         )
         param_path = tree_path_from_qname(template_qname)
         converted_flat[user_qname] = _convert_param_value(
@@ -163,6 +164,7 @@ def _find_template_qname(
     user_qname: str,
     template_flat: Mapping[str, object],
     regime_names: frozenset[str],
+    model: Model,
 ) -> str:
     """Find the 3-part template qname matching a user-provided qname.
 
@@ -172,42 +174,87 @@ def _find_template_qname(
     Args:
         user_qname: Flattened qname from the user params dict.
         template_flat: Flattened params template (3-part qnames).
-        regime_names: Set of regime names in the model.
+        regime_names: Frozenset of regime names in the model.
+        model: The LCM Model instance.
 
     Returns:
         The matching 3-part template qname.
 
     Raises:
-        ValueError: If no match is found.
+        ValueError: If no match is found, or if multiple matches have
+            inconsistent indexing parameters.
 
     """
     if user_qname in template_flat:
         return user_qname
 
     user_path = tree_path_from_qname(user_qname)
-    param_name = user_path[-1]
-
-    matches: list[str] = []
-    for template_qname in template_flat:
-        template_path = tree_path_from_qname(template_qname)
-        if len(user_path) == 1 and template_path[-1] == param_name:
-            matches.append(template_qname)
-        elif len(user_path) == 2:  # noqa: PLR2004
-            if user_path[0] in regime_names:
-                if template_path[0] == user_path[0] and template_path[-1] == param_name:
-                    matches.append(template_qname)
-            elif (
-                len(template_path) == 3  # noqa: PLR2004
-                and template_path[1] == user_path[0]
-                and template_path[-1] == param_name
-            ):
-                matches.append(template_qname)
+    matches = _collect_template_matches(
+        user_path=user_path,
+        template_flat=template_flat,
+        regime_names=regime_names,
+    )
 
     if not matches:
         msg = f"No template match for parameter '{user_qname}'."
         raise ValueError(msg)
 
+    if len(matches) > 1:
+        _fail_if_inconsistent_template_matches(
+            matches=matches, user_qname=user_qname, model=model
+        )
+
     return matches[0]
+
+
+def _collect_template_matches(
+    *,
+    user_path: tuple[str, ...],
+    template_flat: Mapping[str, object],
+    regime_names: frozenset[str],
+) -> list[str]:
+    """Collect template qnames that match a user-provided path."""
+    param_name = user_path[-1]
+    matches: list[str] = []
+
+    for template_qname in template_flat:
+        tp = tree_path_from_qname(template_qname)
+        if len(user_path) == 1 and tp[-1] == param_name:
+            matches.append(template_qname)
+        elif len(user_path) == 2 and user_path[0] in regime_names:  # noqa: PLR2004
+            if tp[0] == user_path[0] and tp[-1] == param_name:
+                matches.append(template_qname)
+        elif (
+            len(user_path) == 2  # noqa: PLR2004
+            and len(tp) == 3  # noqa: PLR2004
+            and tp[1] == user_path[0]
+            and tp[-1] == param_name
+        ):
+            matches.append(template_qname)
+
+    return matches
+
+
+def _fail_if_inconsistent_template_matches(
+    *,
+    matches: list[str],
+    user_qname: str,
+    model: Model,
+) -> None:
+    """Raise if matched template qnames have different indexing params."""
+    indexing_sets: set[tuple[str, ...]] = set()
+    for match_qname in matches:
+        match_path = tree_path_from_qname(match_qname)
+        regime = model.regimes[match_path[0]]
+        func = regime.get_all_functions()[match_path[1]]
+        indexing_sets.add(tuple(_get_func_indexing_params(func)))
+    if len(indexing_sets) > 1:
+        msg = (
+            f"Parameter '{user_qname}' matches functions with different "
+            f"indexing parameters: {sorted(indexing_sets)}. "
+            f"Use a fully qualified 3-part path (regime, func, param)."
+        )
+        raise ValueError(msg)
 
 
 def _convert_param_value(
@@ -217,7 +264,19 @@ def _convert_param_value(
     param_path: tuple[str, ...],
     categoricals: dict[str, DiscreteGrid] | None = None,
 ) -> object:
-    """Convert a single param value, dispatching on type."""
+    """Convert a single param value, dispatching on type.
+
+    Args:
+        value: The parameter value (Series, MappingLeaf, or passthrough).
+        model: The LCM Model instance.
+        param_path: Tuple identifying the parameter in the model.
+        categoricals: Extra categorical mappings (level name to grid).
+
+    Returns:
+        Converted value: JAX array for Series, MappingLeaf with converted
+        Series entries, or the original value unchanged.
+
+    """
     if isinstance(value, pd.Series):
         return array_from_series(
             sr=value, model=model, param_path=param_path, categoricals=categoricals
@@ -243,7 +302,7 @@ def _convert_param_value(
 @overload
 def transition_probs_from_series(
     *,
-    series: pd.Series,
+    sr: pd.Series,
     model: Model,
     regime_name: str | None = ...,
     categoricals: dict[str, DiscreteGrid] | None = ...,
@@ -253,7 +312,7 @@ def transition_probs_from_series(
 @overload
 def transition_probs_from_series(
     *,
-    series: pd.Series,
+    sr: pd.Series,
     model: Model,
     regime_name: str | None = ...,
     target_regime_name: str,
@@ -263,7 +322,7 @@ def transition_probs_from_series(
 
 def transition_probs_from_series(
     *,
-    series: pd.Series,
+    sr: pd.Series,
     model: Model,
     regime_name: str | None = None,
     target_regime_name: str | None = None,
@@ -280,17 +339,17 @@ def transition_probs_from_series(
     The MultiIndex must use `"age"` (with actual age values from the model's
     `AgeGrid`) for the age/period dimension — not `"period"`.
 
-    For per-target state transitions (where ``state_transitions[state_name]`` is a
+    For per-target state transitions (where `state_transitions[state_name]` is a
     dict mapping target regime names to `MarkovTransition` instances), pass
-    ``target_regime_name`` to select the specific transition.
+    `target_regime_name` to select the specific transition.
 
     Args:
-        series: Series with a named MultiIndex. Level names must match the
+        sr: Series with a named MultiIndex. Level names must match the
             indexing parameters of the transition function (with `"period"`
             replaced by `"age"`) plus the outcome level
             (`"next_{state_name}"` or `"next_regime"`).
         model: The LCM Model instance.
-        regime_name: Name of the regime containing the transition. If ``None``,
+        regime_name: Name of the regime containing the transition. If `None`,
             inferred by scanning regimes for a matching `MarkovTransition`.
         target_regime_name: Target regime name for per-target state transitions.
             Required when the state transition is a per-target dict.
@@ -307,7 +366,7 @@ def transition_probs_from_series(
             inference fails.
 
     """
-    state_name = _infer_transition_target(series)
+    state_name = _infer_transition_target(sr)
     if regime_name is None:
         regime_name = _infer_regime_name(
             model=model,
@@ -354,7 +413,7 @@ def transition_probs_from_series(
         outcome_mapping=outcome_mapping,
         all_grids=all_grids,
         model=model,
-        series=series,
+        series=sr,
     )
 
 
@@ -417,37 +476,6 @@ def array_from_series(
         sr = _filter_to_grid_ages(series=sr, ages=model.ages)
 
     return _scatter_series(series=sr, level_mappings=level_mappings)
-
-
-def array_mapping_from_dataframe(
-    *,
-    data: pd.DataFrame,
-    model: Model,
-    param_path: tuple[str, ...],
-    categoricals: dict[str, DiscreteGrid] | None = None,
-) -> dict[str, Array]:
-    """Convert each DataFrame column to a JAX array via `array_from_series`.
-
-    Args:
-        data: pandas DataFrame.
-        model: The LCM Model instance.
-        param_path: Tuple of 1-3 elements identifying the parameter
-            (passed through to `array_from_series`).
-        categoricals: Extra categorical mappings (level name to grid).
-
-    Returns:
-        Dict mapping column names to JAX arrays.
-
-    """
-    return {
-        col: array_from_series(
-            sr=data[col],
-            model=model,
-            param_path=param_path,
-            categoricals=categoricals,
-        )
-        for col in data.columns
-    }
 
 
 def _resolve_categoricals(
@@ -638,7 +666,16 @@ def _fail_if_inconsistent_indexing(
     matches: list[tuple[list[str], str]],
     param_path: tuple[str, ...],
 ) -> None:
-    """Raise if matched functions have different indexing params."""
+    """Raise if matched functions have different indexing params.
+
+    Args:
+        matches: List of (indexing_params, regime_name) tuples.
+        param_path: The user-provided param path (for error messages).
+
+    Raises:
+        ValueError: If matches have inconsistent indexing parameters.
+
+    """
     indexing_sets = {tuple(m[0]) for m in matches}
     if len(indexing_sets) > 1:
         msg = (
@@ -654,7 +691,16 @@ def _filter_to_grid_ages(
     series: pd.Series,
     ages: AgeGrid,
 ) -> pd.Series:
-    """Keep only rows whose `"age"` level value is on the `AgeGrid`."""
+    """Keep only rows whose `"age"` level value is on the `AgeGrid`.
+
+    Args:
+        series: Series with an `"age"` MultiIndex level.
+        ages: The model's `AgeGrid`.
+
+    Returns:
+        Filtered Series containing only rows with valid grid ages.
+
+    """
     grid_ages = {float(v) for v in ages.exact_values}
     age_values = series.index.get_level_values("age")
     mask = [float(a) in grid_ages for a in age_values]
@@ -688,7 +734,16 @@ def _age_level_mapping(ages: AgeGrid) -> _LevelMapping:
 
 
 def _grid_level_mapping(*, name: str, grid: DiscreteGrid) -> _LevelMapping:
-    """Create a `_LevelMapping` for a categorical dimension."""
+    """Create a `_LevelMapping` for a categorical dimension.
+
+    Args:
+        name: Level name in the MultiIndex.
+        grid: The `DiscreteGrid` defining valid categories.
+
+    Returns:
+        `_LevelMapping` mapping category labels to integer codes.
+
+    """
     label_to_code = dict(zip(grid.categories, grid.codes, strict=True))
     return _LevelMapping(
         name=name,
@@ -752,7 +807,7 @@ def _scatter_series(
         fill_value: Value for positions not present in the Series.
 
     Returns:
-        JAX array with shape ``[m.size for m in level_mappings]``.
+        JAX array with shape `[m.size for m in level_mappings]`.
 
     """
     expected_levels = [m.name for m in level_mappings]
@@ -774,7 +829,19 @@ def _scatter_series(
 
 
 def _map_level(*, mapping: _LevelMapping, level_values: pd.Index) -> np.ndarray:
-    """Map label values from one MultiIndex level to integer indices."""
+    """Map label values from one MultiIndex level to integer indices.
+
+    Args:
+        mapping: The `_LevelMapping` for this level.
+        level_values: Index values from the Series MultiIndex level.
+
+    Returns:
+        NumPy array of integer indices.
+
+    Raises:
+        ValueError: If any label is not valid for the mapping.
+
+    """
     try:
         return np.array([mapping.label_to_index(v) for v in level_values])
     except ValueError:
@@ -791,17 +858,17 @@ def _map_level(*, mapping: _LevelMapping, level_values: pd.Index) -> np.ndarray:
 
 
 def _infer_transition_target(series: pd.Series) -> str | None:
-    """Find the ``next_*`` level in the MultiIndex.
+    """Find the `next_*` level in the MultiIndex.
 
     Args:
-        series: Series whose MultiIndex must contain exactly one ``next_*`` level.
+        series: Series whose MultiIndex must contain exactly one `next_*` level.
 
     Returns:
-        The state name (e.g. ``"health"`` for ``"next_health"``), or ``None``
-        for regime transitions (``"next_regime"``).
+        The state name (e.g. `"health"` for `"next_health"`), or `None`
+        for regime transitions (`"next_regime"`).
 
     Raises:
-        ValueError: If no ``next_*`` level is found.
+        ValueError: If no `next_*` level is found.
 
     """
     next_levels = [
@@ -829,7 +896,7 @@ def _infer_regime_name(
 
     Args:
         model: The LCM Model instance.
-        state_name: Name of the state variable, or ``None`` for regime
+        state_name: Name of the state variable, or `None` for regime
             transitions.
         target_regime_name: Target regime name for per-target dicts.
 
@@ -989,7 +1056,7 @@ def _build_level_mappings(
 ) -> tuple[_LevelMapping, ...]:
     """Build level mappings from function indexing params + outcome.
 
-    Replaces the internal ``"period"`` parameter name with ``"age"`` and
+    Replaces the internal `"period"` parameter name with `"age"` and
     constructs a `_LevelMapping` for each level.
 
     """

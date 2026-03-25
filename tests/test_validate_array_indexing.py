@@ -85,12 +85,9 @@ def _aliased_variable(period: int, health: int, probs_array: Any) -> Any:
 
 
 def test_aliased_variable_detected_by_ast() -> None:
-    """Aliased variable `idx` is not a function param → not all-param subscript."""
-    # idx is not a function parameter, so the subscript [idx, health] is not
-    # recognized as an all-param indexing pattern. The function has no
-    # recognized array indexing.
-    result = _get_func_indexing_params(func=_aliased_variable)
-    assert result == []
+    """Aliased variable `idx` is not a function param → raises ValueError."""
+    with pytest.raises(ValueError, match="not function parameters"):
+        _get_func_indexing_params(func=_aliased_variable)
 
 
 def _no_subscript(period: int, health: int, probs_array: Any) -> Any:  # noqa: ARG001
