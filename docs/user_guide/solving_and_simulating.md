@@ -245,6 +245,28 @@ df = result.to_dataframe(additional_targets="all")
 df.groupby("period")["wealth"].mean()
 ```
 
+## Float32 GPU Reproducibility
+
+```{note}
+At float32 precision, GPU simulation results are **not reproducible across process
+invocations**. XLA compiles different fused kernels each time a process starts, changing
+float32 accumulation order and producing ~1e-3 value function differences for large
+models. This is a property of XLA's GPU compiler, not a pylcm bug.
+
+**Key facts:**
+
+- Float64 results are reproducible across processes.
+- Float32 results are deterministic *within* a single process (repeated calls give
+  identical output).
+- `--xla_gpu_deterministic_ops=true` does **not** help — it only guarantees determinism
+  within a single compiled program, not across separate compilations.
+- Smaller models may be reproducible at float32 because XLA chooses the same kernel
+  fusion strategy; larger models are not.
+
+If you need bitwise-reproducible results for testing or validation, use float64 precision
+(`jax.config.update("jax_enable_x64", True)`).
+```
+
 ## See Also
 
 - [Defining Models](defining_models.md) — constructing the `Model`
