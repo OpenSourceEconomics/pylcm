@@ -3,7 +3,7 @@
 import functools
 import inspect
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Literal
 
 import jax
 import pandas as pd
@@ -195,20 +195,19 @@ def build_regime_transition_probs_functions(
     regime_params_template: RegimeParamsTemplate,
     is_stochastic: bool,
     enable_jit: bool,
-) -> tuple[RegimeTransitionFunction, VmappedRegimeTransitionFunction]:
-    """Build regime transition probability functions for solve and simulate.
+    phase: Literal["solve", "simulate"],
+) -> RegimeTransitionFunction | VmappedRegimeTransitionFunction:
+    """Build a regime transition probability function for the given phase.
 
     Args:
         functions: Immutable mapping of function names to internal user functions.
         compute_regime_transition_probs: The user's next_regime function.
-        grids: Immutable mapping of grid names to grid arrays.
+        grids: Immutable mapping of grid names to grid objects.
         regime_names_to_ids: Mapping from regime names to integer indices.
         regime_params_template: The regime's parameter template.
         is_stochastic: Whether the regime transition is stochastic.
         enable_jit: Whether to JIT-compile the functions.
-
-    Returns:
-        Tuple of (solve_func, simulate_func).
+        phase: Which phase to build for.
 
     """
     # Wrap deterministic next_regime to return one-hot probability array
@@ -253,9 +252,9 @@ def build_regime_transition_probs_functions(
         ),
     )
 
-    solve_func = jax.jit(next_regime) if enable_jit else next_regime
-    simulate_func = jax.jit(next_regime_vmapped) if enable_jit else next_regime_vmapped
-    return solve_func, simulate_func
+    if phase == "solve":
+        return jax.jit(next_regime) if enable_jit else next_regime
+    return jax.jit(next_regime_vmapped) if enable_jit else next_regime_vmapped
 
 
 def _get_vmap_params(

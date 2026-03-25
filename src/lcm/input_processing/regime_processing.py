@@ -212,17 +212,17 @@ def _build_solve_functions(
     )
 
     if regime.terminal:
-        solve_regime_tp = None
+        compute_regime_transition_probs = None
     else:
-        assert core.next_regime_func is not None  # noqa: S101
-        solve_regime_tp, _simulate_regime_tp = build_regime_transition_probs_functions(
+        compute_regime_transition_probs = build_regime_transition_probs_functions(
             functions=core.functions,
-            compute_regime_transition_probs=core.next_regime_func,
+            compute_regime_transition_probs=core.next_regime_func,  # ty: ignore[invalid-argument-type]
             grids=all_grids[regime_name],
             regime_names_to_ids=regime_names_to_ids,
             regime_params_template=regime_params_template,
             is_stochastic=regime.stochastic_regime_transition,
             enable_jit=enable_jit,
+            phase="solve",
         )
 
     Q_and_F = build_Q_and_F_functions(
@@ -232,7 +232,7 @@ def _build_solve_functions(
         constraints=core.constraints,
         transitions=core.transitions,
         stochastic_transition_names=core.stochastic_transition_names,
-        compute_regime_transition_probs=solve_regime_tp,
+        compute_regime_transition_probs=compute_regime_transition_probs,
         regime_to_state_space_info=regime_to_state_space_info,
         ages=ages,
         regime_params_template=regime_params_template,
@@ -249,7 +249,7 @@ def _build_solve_functions(
         constraints=core.constraints,
         transitions=core.transitions,
         stochastic_transition_names=core.stochastic_transition_names,
-        compute_regime_transition_probs=solve_regime_tp,
+        compute_regime_transition_probs=compute_regime_transition_probs,
         max_Q_over_a=max_Q_over_a,
     )
 
@@ -304,48 +304,30 @@ def _build_simulate_functions(
         Complete simulate functions container.
 
     """
-    has_pairs = any(
-        isinstance(f, SolveSimulateFunctionPair) for f in regime.functions.values()
+    core = _process_regime_core(
+        regime=regime,
+        regime_name=regime_name,
+        nested_transitions=nested_transitions,
+        all_grids=all_grids,
+        regime_params_template=regime_params_template,
+        variable_info=variable_info,
+        phase="simulate",
     )
-
-    if has_pairs:
-        core = _process_regime_core(
-            regime=regime,
-            regime_name=regime_name,
-            nested_transitions=nested_transitions,
-            all_grids=all_grids,
-            regime_params_template=regime_params_template,
-            variable_info=variable_info,
-            phase="simulate",
-        )
-        sim_functions = core.functions
-        sim_constraints = core.constraints
-    else:
-        # No function pairs: reuse solve-phase core processing results.
-        core = _process_regime_core(
-            regime=regime,
-            regime_name=regime_name,
-            nested_transitions=nested_transitions,
-            all_grids=all_grids,
-            regime_params_template=regime_params_template,
-            variable_info=variable_info,
-            phase="solve",
-        )
-        sim_functions = core.functions
-        sim_constraints = core.constraints
+    functions = core.functions
+    constraints = core.constraints
 
     if regime.terminal:
-        simulate_regime_tp = None
+        compute_regime_transition_probs = None
     else:
-        assert core.next_regime_func is not None  # noqa: S101
-        _solve_regime_tp, simulate_regime_tp = build_regime_transition_probs_functions(
-            functions=sim_functions,
-            compute_regime_transition_probs=core.next_regime_func,
+        compute_regime_transition_probs = build_regime_transition_probs_functions(
+            functions=functions,
+            compute_regime_transition_probs=core.next_regime_func,  # ty: ignore[invalid-argument-type]
             grids=all_grids[regime_name],
             regime_names_to_ids=regime_names_to_ids,
             regime_params_template=regime_params_template,
             is_stochastic=regime.stochastic_regime_transition,
             enable_jit=enable_jit,
+            phase="simulate",
         )
 
     # Q_and_F uses the solve (non-vmapped) regime transition probs since it
@@ -353,8 +335,8 @@ def _build_simulate_functions(
     Q_and_F = build_Q_and_F_functions(
         regime=regime,
         regimes_to_active_periods=regimes_to_active_periods,
-        functions=sim_functions,
-        constraints=sim_constraints,
+        functions=functions,
+        constraints=constraints,
         transitions=solve_transitions,
         stochastic_transition_names=solve_stochastic_transition_names,
         compute_regime_transition_probs=solve_compute_regime_transition_probs,
@@ -371,17 +353,8 @@ def _build_simulate_functions(
 
     # next_state uses solve functions because state transitions don't participate
     # in SolveSimulateFunctionPair — only utility/H functions have phase variants.
-    solve_core = _process_regime_core(
-        regime=regime,
-        regime_name=regime_name,
-        nested_transitions=nested_transitions,
-        all_grids=all_grids,
-        regime_params_template=regime_params_template,
-        variable_info=variable_info,
-        phase="solve",
-    )
     next_state = build_next_state_simulation_functions(
-        functions=solve_core.functions,
+        functions=core.functions,
         transitions=solve_transitions,
         stochastic_transition_names=solve_stochastic_transition_names,
         all_grids=all_grids,
@@ -391,11 +364,11 @@ def _build_simulate_functions(
     )
 
     return SimulateFunctions(
-        functions=sim_functions,
-        constraints=sim_constraints,
+        functions=functions,
+        constraints=constraints,
         transitions=solve_transitions,
         stochastic_transition_names=solve_stochastic_transition_names,
-        compute_regime_transition_probs=simulate_regime_tp,
+        compute_regime_transition_probs=compute_regime_transition_probs,
         argmax_and_max_Q_over_a=argmax_and_max_Q_over_a,
         next_state=next_state,
     )
