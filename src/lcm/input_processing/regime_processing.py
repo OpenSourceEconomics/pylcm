@@ -520,6 +520,13 @@ def _process_regime_core(
             grid=flat_grids[relative_name.replace("next_", "")].to_jax(),
         )
 
+    _add_cross_regime_shock_functions(
+        functions=functions,
+        regime_name=regime_name,
+        shock_names=variable_info.query("is_shock").index.tolist(),
+        all_grids=all_grids,
+    )
+
     internal_transition = {
         func_name: functions[func_name]
         for func_name in flat_nested_transitions
@@ -548,6 +555,42 @@ def _process_regime_core(
         stochastic_transition_names=stochastic_transition_names,
         next_regime_func=next_regime_func,
     )
+
+
+def _add_cross_regime_shock_functions(
+    *,
+    functions: dict[str, InternalUserFunction],
+    regime_name: str,
+    shock_names: list[str],
+    all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
+) -> None:
+    """Override shock stubs with proper weight functions for cross-regime targets.
+
+    When a source regime has shock states and can transition to a target regime
+    that also has those shock states, the stubs created by
+    ``_collect_state_transitions`` must be replaced with weight and next
+    functions derived from the **target** regime's shock grid.  The
+    self-transition is handled separately (lines 512-521 of
+    ``_process_regime_core``).
+
+    Mutates *functions* in place.
+    """
+    for target_name, target_grids in all_grids.items():
+        if target_name == regime_name:
+            continue
+        for shock_name in shock_names:
+            target_grid = target_grids.get(shock_name)
+            if not isinstance(target_grid, _ShockGrid):
+                continue
+            cross_name = f"{target_name}__next_{shock_name}"
+            functions[f"weight_{cross_name}"] = _get_weights_func_for_shock(
+                name=shock_name,
+                grid=target_grid,
+            )
+            functions[cross_name] = _get_stochastic_next_function_for_shock(
+                name=shock_name,
+                grid=target_grid.to_jax(),
+            )
 
 
 def _extract_transitions_from_regime(
