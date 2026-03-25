@@ -10,7 +10,8 @@ on:
   workflow_dispatch: null
 jobs:
   run-benchmarks:
-    name: Run benchmarks on GPU
+    name: Run benchmarks on GPU and make PR comment
+    timeout-minutes: 14400  # 10 days (max is 35790 for self-hosted)
     if: >-
       github.event_name == 'workflow_dispatch'
       || github.event.pull_request.head.repo.full_name == github.repository
