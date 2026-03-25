@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import cast
 
 import jax.numpy as jnp
 import pandas as pd
@@ -17,7 +16,6 @@ from lcm.next_state import (
 from lcm.typing import (
     ContinuousState,
     FloatND,
-    InternalUserFunction,
 )
 from tests.test_models.deterministic.regression import dead, working_life
 
@@ -79,13 +77,12 @@ def test_get_next_state_function_with_simulate_target():
         {"mock": MappingProxyType({"b": DiscreteGrid(MockCategory)})}
     )
     variable_info = pd.DataFrame({"is_shock": [False]})
-    transitions = MappingProxyType({"next_a": f_a, "next_b": f_b})
+    transitions = MappingProxyType(
+        {"mock": MappingProxyType({"next_a": f_a, "next_b": f_b})}
+    )
     functions = MappingProxyType({"utility": lambda: 0, "f_weight_b": f_weight_b})
     got_func = get_next_state_function_for_simulation(
-        transitions=cast(
-            "MappingProxyType[str, InternalUserFunction]",
-            transitions,
-        ),
+        transitions=transitions,  # ty: ignore[invalid-argument-type]
         functions=functions,  # ty: ignore[invalid-argument-type]
         all_grids=all_grids,
         variable_info=variable_info,

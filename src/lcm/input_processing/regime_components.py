@@ -34,7 +34,6 @@ from lcm.typing import (
     TransitionFunctionsMapping,
     VmappedRegimeTransitionFunction,
 )
-from lcm.utils import flatten_regime_namespace
 
 
 def build_Q_and_F_functions(
@@ -166,7 +165,7 @@ def build_next_state_simulation_functions(
 ) -> NextStateSimulationFunction:
     next_state = get_next_state_function_for_simulation(
         functions=functions,
-        transitions=flatten_regime_namespace(transitions),
+        transitions=transitions,
         stochastic_transition_names=stochastic_transition_names,
         all_grids=all_grids,
         variable_info=variable_info,
