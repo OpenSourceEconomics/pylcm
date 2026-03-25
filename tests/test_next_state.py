@@ -75,7 +75,7 @@ def test_get_next_state_function_with_simulate_target():
         cat_0: int
         cat_1: int
 
-    grids = MappingProxyType(
+    all_grids = MappingProxyType(
         {"mock": MappingProxyType({"b": DiscreteGrid(MockCategory)})}
     )
     variable_info = pd.DataFrame({"is_shock": [False]})
@@ -96,7 +96,7 @@ def test_get_next_state_function_with_simulate_target():
         ),
         functions=internal_functions.functions,
         variable_info=variable_info,
-        grids=grids,
+        all_grids=all_grids,
     )
 
     key = jnp.arange(2, dtype="uint32")

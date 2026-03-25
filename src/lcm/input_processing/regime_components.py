@@ -149,7 +149,7 @@ def _build_argmax_and_max_Q_over_a_function(
 def build_next_state_simulation_functions(
     *,
     internal_functions: InternalFunctions,
-    grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
+    all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
     variable_info: pd.DataFrame,
     regime_params_template: RegimeParamsTemplate,
     enable_jit: bool,
@@ -158,7 +158,7 @@ def build_next_state_simulation_functions(
         transitions=flatten_regime_namespace(internal_functions.transitions),
         functions=internal_functions.functions,
         variable_info=variable_info,
-        grids=grids,
+        all_grids=all_grids,
         stochastic_transition_names=internal_functions.stochastic_transition_names,
     )
     sig_args = tuple(inspect.signature(next_state).parameters)

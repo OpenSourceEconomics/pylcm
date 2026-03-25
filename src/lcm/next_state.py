@@ -58,7 +58,7 @@ def get_next_state_function_for_simulation(
     *,
     transitions: MappingProxyType[str, InternalUserFunction],
     functions: MappingProxyType[str, InternalUserFunction],
-    grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
+    all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
     variable_info: pd.DataFrame,
     stochastic_transition_names: frozenset[str] = frozenset(),
 ) -> NextStateSimulationFunction:
@@ -67,7 +67,7 @@ def get_next_state_function_for_simulation(
     Args:
         transitions: Transitions to the next states of a regime.
         functions: Immutable mapping of auxiliary functions of a regime.
-        grids: Immutable mapping of regime names to Grid spec objects.
+        all_grids: Immutable mapping of regime names to Grid spec objects.
         variable_info: Variable info of a regime.
         stochastic_transition_names: Frozenset of stochastic transition function names.
 
@@ -81,7 +81,7 @@ def get_next_state_function_for_simulation(
     # For the simulation target, we need to extend the functions dictionary with
     # stochastic next states functions and their weights.
     extended_transitions = _extend_transitions_for_simulation(
-        grids=grids,
+        all_grids=all_grids,
         transitions=transitions,
         variable_info=variable_info,
         stochastic_transition_names=stochastic_transition_names,
@@ -132,7 +132,7 @@ def get_next_stochastic_weights_function(
 
 def _extend_transitions_for_simulation(
     *,
-    grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
+    all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
     transitions: MappingProxyType[str, InternalUserFunction],
     variable_info: pd.DataFrame,
     stochastic_transition_names: frozenset[str],
@@ -140,7 +140,7 @@ def _extend_transitions_for_simulation(
     """Extend the functions dictionary for the simulation target.
 
     Args:
-        grids: Immutable mapping of regime names to Grid spec objects.
+        all_grids: Immutable mapping of regime names to Grid spec objects.
         transitions: Immutable mapping of transitions to extend.
         variable_info: Variable info of the current regime.
         stochastic_transition_names: Frozenset of stochastic transition function names.
@@ -150,7 +150,7 @@ def _extend_transitions_for_simulation(
 
     """
     shock_names = set(variable_info.query("is_shock").index.to_list())
-    flat_grids = flatten_regime_namespace(grids)
+    flat_grids = flatten_regime_namespace(all_grids)
     discrete_stochastic_targets = [
         func_name
         for func_name in transitions
