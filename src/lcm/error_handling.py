@@ -248,17 +248,17 @@ def _validate_regime_transition_single(
     variables it accepts, using `jax.vmap` for vectorised evaluation.
 
     """
+    # Non-None guaranteed: only called for non-terminal regimes
     regime_transition_func = (
         internal_regime.solve_functions.compute_regime_transition_probs
     )
-    assert regime_transition_func is not None  # noqa: S101
 
     state_action_space = internal_regime.state_action_space(
         regime_params=regime_params,
     )
 
     # Filter params to only those accepted by the transition function
-    accepted_params = set(inspect.signature(regime_transition_func).parameters)
+    accepted_params = set(inspect.signature(regime_transition_func).parameters)  # ty: ignore[invalid-argument-type]
     filtered_params = {k: v for k, v in regime_params.items() if k in accepted_params}
 
     # Collect only grid variables the transition function accepts
@@ -293,7 +293,7 @@ def _validate_regime_transition_single(
         point = dict(zip(grid_var_names, flat_arrays, strict=True))
     else:
         regime_transition_probs: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
-            regime_transition_func(
+            regime_transition_func(  # ty: ignore[call-non-callable]
                 **filtered_params,
                 period=period,
                 age=ages.values[period],  # noqa: PD011
