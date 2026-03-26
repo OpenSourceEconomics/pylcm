@@ -256,7 +256,9 @@ def _simulate_regime_in_period(
     # The Q-function values contain the information of how much value each
     # action combination is worth. To find the optimal discrete action, we
     # therefore only need to maximize the Q-function values over all actions.
-    argmax_and_max_Q_over_a = internal_regime.argmax_and_max_Q_over_a_functions[period]
+    argmax_and_max_Q_over_a = (
+        internal_regime.simulate_functions.argmax_and_max_Q_over_a[period]
+    )
 
     indices_optimal_actions, V_arr = argmax_and_max_Q_over_a(
         **state_action_space.states,

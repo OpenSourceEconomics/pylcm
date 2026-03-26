@@ -483,7 +483,10 @@ def _check_regime_feasibility(
         An error message string if any subjects are infeasible, or None.
 
     """
-    feasibility_func = _get_feasibility(internal_regime.internal_functions)
+    feasibility_func = _get_feasibility(
+        functions=internal_regime.simulate_functions.functions,
+        constraints=internal_regime.simulate_functions.constraints,
+    )
     accepted = get_union_of_args([feasibility_func])
 
     action_names = list(internal_regime.variable_info.query("is_action").index)
@@ -592,7 +595,7 @@ def _format_infeasibility_message(
             state_df[name] = [grid.categories[int(v)] for v in state_df[name]]
 
     # Constraint names
-    constraint_names = list(internal_regime.constraints.keys())
+    constraint_names = list(internal_regime.simulate_functions.constraints.keys())
     constraints_str = "\n".join(f"  - {name}" for name in constraint_names)
 
     # Truncate for large groups

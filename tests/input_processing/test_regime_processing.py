@@ -132,9 +132,9 @@ def test_process_regimes():
     ).all()
 
     # Functions
-    assert internal_working_regime.transitions is not None
-    assert internal_working_regime.constraints is not None
-    assert "utility" in internal_working_regime.functions
+    assert internal_working_regime.solve_functions.transitions is not None
+    assert internal_working_regime.solve_functions.constraints is not None
+    assert "utility" in internal_working_regime.solve_functions.functions
 
 
 def test_variable_info_with_continuous_constraint_has_unique_index():

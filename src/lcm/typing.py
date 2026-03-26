@@ -31,9 +31,9 @@ type Age = int | float
 type RegimeName = str
 type RegimeNamesToIds = MappingProxyType[RegimeName, int]
 
-type TransitionFunctionsMapping = MappingProxyType[
-    RegimeName, MappingProxyType[str, InternalUserFunction]
-]
+type FunctionsMapping = MappingProxyType[str, InternalUserFunction]
+
+type TransitionFunctionsMapping = MappingProxyType[RegimeName, FunctionsMapping]
 
 
 type UserParams = Mapping[

@@ -17,18 +17,19 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
-    InternalUserFunction,
+    FunctionsMapping,
     NextStateSimulationFunction,
     RegimeName,
     StochasticNextFunction,
+    TransitionFunctionsMapping,
 )
 from lcm.utils import flatten_regime_namespace
 
 
 def get_next_state_function_for_solution(
     *,
-    transitions: MappingProxyType[str, InternalUserFunction],
-    functions: MappingProxyType[str, InternalUserFunction],
+    transitions: FunctionsMapping,
+    functions: FunctionsMapping,
 ) -> NextStateSimulationFunction:
     """Get function that computes the next states during the solution.
 
@@ -56,8 +57,8 @@ def get_next_state_function_for_solution(
 
 def get_next_state_function_for_simulation(
     *,
-    transitions: MappingProxyType[str, InternalUserFunction],
-    functions: MappingProxyType[str, InternalUserFunction],
+    transitions: TransitionFunctionsMapping,
+    functions: FunctionsMapping,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
     variable_info: pd.DataFrame,
     stochastic_transition_names: frozenset[str] = frozenset(),
@@ -65,7 +66,7 @@ def get_next_state_function_for_simulation(
     """Get function that computes the next states during the simulation.
 
     Args:
-        transitions: Transitions to the next states of a regime.
+        transitions: Nested mapping of target regime names to transition functions.
         functions: Immutable mapping of auxiliary functions of a regime.
         all_grids: Immutable mapping of regime names to Grid spec objects.
         variable_info: Variable info of a regime.
@@ -78,11 +79,13 @@ def get_next_state_function_for_simulation(
         corresponds to the names of stochastic next functions.
 
     """
+    flat_transitions = flatten_regime_namespace(transitions)
+
     # For the simulation target, we need to extend the functions dictionary with
     # stochastic next states functions and their weights.
     extended_transitions = _extend_transitions_for_simulation(
         all_grids=all_grids,
-        transitions=transitions,
+        flat_transitions=flat_transitions,
         variable_info=variable_info,
         stochastic_transition_names=stochastic_transition_names,
     )
@@ -90,7 +93,7 @@ def get_next_state_function_for_simulation(
 
     return concatenate_functions(
         functions=functions_to_concatenate,
-        targets=list(transitions.keys()),
+        targets=list(flat_transitions.keys()),
         return_type="dict",
         enforce_signature=False,
         set_annotations=True,
@@ -100,8 +103,8 @@ def get_next_state_function_for_simulation(
 def get_next_stochastic_weights_function(
     *,
     regime_name: RegimeName,
-    functions: MappingProxyType[str, InternalUserFunction],
-    transitions: MappingProxyType[str, InternalUserFunction],
+    functions: FunctionsMapping,
+    transitions: FunctionsMapping,
     stochastic_transition_names: frozenset[str],
 ) -> Callable[..., dict[str, Array]]:
     """Get function that computes the weights for the next stochastic states.
@@ -133,7 +136,7 @@ def get_next_stochastic_weights_function(
 def _extend_transitions_for_simulation(
     *,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
-    transitions: MappingProxyType[str, InternalUserFunction],
+    flat_transitions: FunctionsMapping,
     variable_info: pd.DataFrame,
     stochastic_transition_names: frozenset[str],
 ) -> dict[str, Callable[..., Array]]:
@@ -141,7 +144,7 @@ def _extend_transitions_for_simulation(
 
     Args:
         all_grids: Immutable mapping of regime names to Grid spec objects.
-        transitions: Immutable mapping of transitions to extend.
+        flat_transitions: Flattened mapping of transition names to functions.
         variable_info: Variable info of the current regime.
         stochastic_transition_names: Frozenset of stochastic transition function names.
 
@@ -153,13 +156,13 @@ def _extend_transitions_for_simulation(
     flat_grids = flatten_regime_namespace(all_grids)
     discrete_stochastic_targets = [
         func_name
-        for func_name in transitions
+        for func_name in flat_transitions
         if tree_path_from_qname(func_name)[-1] in stochastic_transition_names
         and tree_path_from_qname(func_name)[-1].replace("next_", "") not in shock_names
     ]
     continuous_stochastic_targets = [
         func_name
-        for func_name in transitions
+        for func_name in flat_transitions
         if tree_path_from_qname(func_name)[-1] in stochastic_transition_names
         and tree_path_from_qname(func_name)[-1].replace("next_", "") in shock_names
     ]
@@ -185,7 +188,9 @@ def _extend_transitions_for_simulation(
 
     # Overwrite regime transitions with generated stochastic next states functions
     # ----------------------------------------------------------------------------------
-    return dict(transitions) | discrete_stochastic_next | continuous_stochastic_next
+    return (
+        dict(flat_transitions) | discrete_stochastic_next | continuous_stochastic_next
+    )
 
 
 def _create_discrete_stochastic_next_func(

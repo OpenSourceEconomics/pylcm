@@ -2,11 +2,10 @@
 
 Usage: pixi run asv-run-and-publish-main
 
-Runs `asv publish` to generate the HTML dashboard, generates a comparison
-against main (if results exist for the merge-base), then copies the results
-and HTML to the org site repo under pylcm-benchmarks/.  This is intended
-for the main branch only — PR branches should use ``asv-run-and-pr-comment``
-instead.
+Downloads previous results from the org site, merges them with the new run,
+generates the HTML dashboard via ``asv publish``, then pushes everything back.
+This is intended for the main branch only — PR branches should use
+``asv-run-and-pr-comment`` instead.
 """
 
 import json
@@ -25,12 +24,8 @@ _SUBDIR = "pylcm-benchmarks"
 
 def publish() -> None:
     """Publish benchmark results and dashboard to the org site."""
-    html_dir = Path(".asv/html")
     results_dir = Path(".asv/results")
-
-    if not html_dir.exists():
-        msg = "No ASV HTML output. Run `asv publish` first."
-        raise FileNotFoundError(msg)
+    html_dir = Path(".asv/html")
 
     commit_sha_short = subprocess.run(
         ["git", "rev-parse", "--short=12", "HEAD"],
@@ -41,19 +36,20 @@ def publish() -> None:
 
     print(f"Publishing benchmarks for {commit_sha_short}")
 
-    _generate_comparison(results_dir)
+    _ensure_site_clone()
+    _download_previous_results(results_dir)
 
+    subprocess.run(["asv", "publish"], check=True)
     _patch_html_title(html_dir / "index.html")
 
-    _ensure_site_clone()
+    _generate_comparison(results_dir)
+
     root = _SITE_DIR / _SUBDIR
 
-    # Copy ASV HTML dashboard
     if root.exists():
         shutil.rmtree(root)
     shutil.copytree(html_dir, root)
 
-    # Copy ASV results (used by CI check)
     results_dest = root / "results"
     if results_dir.exists():
         shutil.copytree(results_dir, results_dest)
@@ -62,11 +58,41 @@ def publish() -> None:
     print("Done.")
 
 
+def _download_previous_results(results_dir: Path) -> None:
+    """Copy previous benchmark results from the org site into .asv/results/.
+
+    This ensures ``asv publish`` sees the full history, not just the current run.
+    Existing local results (from the current run) take precedence over downloaded
+    ones.
+    """
+    site_results = _SITE_DIR / _SUBDIR / "results"
+    if not site_results.is_dir():
+        print("No previous results on org site.")
+        return
+
+    for machine_dir in site_results.iterdir():
+        if not machine_dir.is_dir():
+            continue
+
+        local_machine_dir = results_dir / machine_dir.name
+        local_machine_dir.mkdir(parents=True, exist_ok=True)
+
+        count = 0
+        for result_file in machine_dir.iterdir():
+            dest = local_machine_dir / result_file.name
+            if not dest.exists():
+                shutil.copy2(result_file, dest)
+                count += 1
+
+        if count:
+            print(f"Downloaded {count} previous result(s) for {machine_dir.name}")
+
+
 def _generate_comparison(results_dir: Path) -> None:
     """Generate a comparison JSON file against the main merge-base.
 
-    Finds the merge-base commit between main and HEAD, checks if local ASV
-    results exist for it, and if so runs `asv compare` and saves the output.
+    Find the merge-base commit between main and HEAD, check if local ASV
+    results exist for it, and if so run ``asv compare`` and save the output.
     This is best-effort — failures are logged but do not stop publishing.
     """
     try:

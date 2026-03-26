@@ -1,14 +1,13 @@
+from dataclasses import dataclass
 from types import MappingProxyType
-from typing import cast
 
 import jax.numpy as jnp
 import pandas as pd
 from pybaum import tree_equal
 
 from lcm.ages import AgeGrid
-from lcm.grids import DiscreteGrid, categorical
+from lcm.grids import DiscreteGrid
 from lcm.input_processing import process_regimes
-from lcm.interfaces import InternalFunctions, PhaseVariant
 from lcm.next_state import (
     _create_discrete_stochastic_next_func,
     get_next_state_function_for_simulation,
@@ -17,7 +16,6 @@ from lcm.next_state import (
 from lcm.typing import (
     ContinuousState,
     FloatND,
-    InternalUserFunction,
 )
 from tests.test_models.deterministic.regression import dead, working_life
 
@@ -38,8 +36,8 @@ def test_get_next_state_function_with_solve_target():
     internal_working = internal_regimes["working_life"]
 
     got_func = get_next_state_function_for_solution(
-        transitions=internal_working.transitions["working_life"],
-        functions=internal_working.functions,
+        transitions=internal_working.solve_functions.transitions["working_life"],
+        functions=internal_working.solve_functions.functions,
     )
 
     flat_regime_params = {
@@ -70,33 +68,24 @@ def test_get_next_state_function_with_simulate_target():
     def f_weight_b(state: ContinuousState) -> FloatND:
         return jnp.array([0.0, 1.0])
 
-    @categorical(ordered=False)
+    @dataclass
     class MockCategory:
-        cat_0: int
-        cat_1: int
+        cat_0: int = 0
+        cat_1: int = 1
 
     all_grids = MappingProxyType(
         {"mock": MappingProxyType({"b": DiscreteGrid(MockCategory)})}
     )
     variable_info = pd.DataFrame({"is_shock": [False]})
-    mock_transition_solve = lambda *args, **kwargs: {"mock": 1.0}
-    mock_transition_simulate = lambda *args, **kwargs: {"mock": jnp.array([1.0])}
-    internal_functions = InternalFunctions(
-        constraints=MappingProxyType({}),
-        transitions=MappingProxyType({"next_a": f_a, "next_b": f_b}),  # ty: ignore[invalid-argument-type]
-        functions=MappingProxyType({"utility": lambda: 0, "f_weight_b": f_weight_b}),  # ty: ignore[invalid-argument-type]
-        regime_transition_probs=PhaseVariant(
-            solve=mock_transition_solve, simulate=mock_transition_simulate
-        ),
+    transitions = MappingProxyType(
+        {"mock": MappingProxyType({"next_a": f_a, "next_b": f_b})}
     )
+    functions = MappingProxyType({"utility": lambda: 0, "f_weight_b": f_weight_b})
     got_func = get_next_state_function_for_simulation(
-        transitions=cast(
-            "MappingProxyType[str, InternalUserFunction]",
-            internal_functions.transitions,
-        ),
-        functions=internal_functions.functions,
-        variable_info=variable_info,
+        transitions=transitions,  # ty: ignore[invalid-argument-type]
+        functions=functions,  # ty: ignore[invalid-argument-type]
         all_grids=all_grids,
+        variable_info=variable_info,
     )
 
     key = jnp.arange(2, dtype="uint32")

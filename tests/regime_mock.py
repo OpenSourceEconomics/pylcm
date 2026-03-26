@@ -1,8 +1,8 @@
 from dataclasses import dataclass, field
-from typing import cast
+from typing import Literal, cast
 
 from lcm.grids import Grid
-from lcm.interfaces import PhaseVariant
+from lcm.interfaces import SolveSimulateFunctionPair
 from lcm.regime import _collect_state_transitions, _default_H
 from lcm.typing import UserFunction
 
@@ -32,13 +32,19 @@ class RegimeMock:
         if not self.terminal and "H" not in self.functions:
             self.functions = {**self.functions, "H": _default_H}
 
-    def get_all_functions(self) -> dict[str, UserFunction]:
+    def get_all_functions(
+        self, phase: Literal["solve", "simulate"] = "solve"
+    ) -> dict[str, UserFunction]:
         """Get all regime functions including utility, constraints, and transitions."""
         result: dict[str, UserFunction] = {}
         for name, func in self.functions.items():
-            result[name] = cast(
-                "UserFunction", func.solve if isinstance(func, PhaseVariant) else func
-            )
+            if isinstance(func, SolveSimulateFunctionPair):
+                result[name] = cast(
+                    "UserFunction",
+                    func.solve if phase == "solve" else func.simulate,
+                )
+            else:
+                result[name] = func
         result |= dict(self.constraints)
         if self.states:
             result |= _collect_state_transitions(
