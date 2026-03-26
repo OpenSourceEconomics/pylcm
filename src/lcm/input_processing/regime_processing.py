@@ -203,7 +203,6 @@ def _build_solve_functions(
     """
     core = _process_regime_core(
         regime=regime,
-        regime_name=regime_name,
         nested_transitions=nested_transitions,
         all_grids=all_grids,
         regime_params_template=regime_params_template,
@@ -306,7 +305,6 @@ def _build_simulate_functions(
     """
     core = _process_regime_core(
         regime=regime,
-        regime_name=regime_name,
         nested_transitions=nested_transitions,
         all_grids=all_grids,
         regime_params_template=regime_params_template,
@@ -398,7 +396,6 @@ class _CoreResult(NamedTuple):
 def _process_regime_core(
     *,
     regime: Regime,
-    regime_name: str,
     nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
     regime_params_template: RegimeParamsTemplate,
@@ -412,7 +409,6 @@ def _process_regime_core(
 
     Args:
         regime: The user regime.
-        regime_name: The name of the regime.
         nested_transitions: Nested transitions dict for internal processing.
         all_grids: Immutable mapping of regime names to Grid spec objects.
         regime_params_template: The regime's parameter template.
@@ -504,32 +500,42 @@ def _process_regime_core(
             grid=flat_grids[func_name.replace("next_", "")].to_jax(),
         )
 
-    for shock_name in variable_info.query("is_shock").index.tolist():
-        relative_name = f"{regime_name}__next_{shock_name}"
-        functions[f"weight_{relative_name}"] = _get_weights_func_for_shock(
-            name=shock_name,
-            grid=cast("_ShockGrid", all_grids[regime_name][shock_name]),
+    # Shock transitions bypass the stub pipeline entirely. Build weight and
+    # next functions for ALL target regimes directly from each target's grid.
+    shock_names = variable_info.query("is_shock").index.tolist()
+    target_shock_grids: dict[tuple[str, str], _ShockGrid] = {  # ty: ignore[invalid-assignment]
+        (regime, shock): grids[shock]
+        for regime, grids in all_grids.items()
+        for shock in shock_names
+        if isinstance(grids.get(shock), _ShockGrid)
+    }
+    functions |= {
+        f"weight_{regime}__next_{shock}": _get_weights_func_for_shock(
+            name=shock, grid=grid
         )
-        functions[relative_name] = _get_stochastic_next_function_for_shock(
-            name=shock_name,
-            grid=flat_grids[relative_name.replace("next_", "")].to_jax(),
+        for (regime, shock), grid in target_shock_grids.items()
+    } | {
+        f"{regime}__next_{shock}": _get_stochastic_next_function_for_shock(
+            name=shock, grid=grid.to_jax()
         )
+        for (regime, shock), grid in target_shock_grids.items()
+    }
 
-    functions |= _get_cross_regime_shock_functions(
-        regime_name=regime_name,
-        shock_names=variable_info.query("is_shock").index.tolist(),
-        all_grids=all_grids,
-    )
-
+    shock_transition_keys = {
+        f"{regime}__next_{shock}" for regime, shock in target_shock_grids
+    }
     internal_transition = {
         func_name: functions[func_name]
         for func_name in flat_nested_transitions
         if func_name != "next_regime"
-    }
+    } | {key: functions[key] for key in shock_transition_keys}
+
     constraints = MappingProxyType(
         {func_name: functions[func_name] for func_name in regime.constraints}
     )
-    excluded_from_functions = set(flat_nested_transitions) | set(regime.constraints)
+    excluded_from_functions = (
+        set(flat_nested_transitions) | set(regime.constraints) | shock_transition_keys
+    )
     phase_functions = MappingProxyType(
         {
             func_name: functions[func_name]
@@ -549,40 +555,6 @@ def _process_regime_core(
         stochastic_transition_names=stochastic_transition_names,
         next_regime_func=next_regime_func,
     )
-
-
-def _get_cross_regime_shock_functions(
-    *,
-    regime_name: str,
-    shock_names: list[str],
-    all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
-) -> dict[str, InternalUserFunction]:
-    """Create weight and next functions for cross-regime shock transitions.
-
-    When a source regime has shock states and can transition to a target regime
-    that also has those shock states, the `lambda: None` stubs from
-    `_collect_state_transitions` must be replaced with proper functions derived
-    from the **target** regime's shock grid.  The self-transition is handled
-    separately in `_process_regime_core`.
-    """
-    result: dict[str, InternalUserFunction] = {}
-    for target_regime_name, target_grids in all_grids.items():
-        if target_regime_name == regime_name:
-            continue
-        for shock_name in shock_names:
-            target_grid = target_grids.get(shock_name)
-            if not isinstance(target_grid, _ShockGrid):
-                continue
-            cross_name = f"{target_regime_name}__next_{shock_name}"
-            result[f"weight_{cross_name}"] = _get_weights_func_for_shock(
-                name=shock_name,
-                grid=target_grid,
-            )
-            result[cross_name] = _get_stochastic_next_function_for_shock(
-                name=shock_name,
-                grid=target_grid.to_jax(),
-            )
-    return result
 
 
 def _extract_transitions_from_regime(
