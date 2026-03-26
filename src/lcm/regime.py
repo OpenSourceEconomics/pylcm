@@ -512,8 +512,8 @@ def _collect_state_transitions(
     """
     transitions: dict[str, UserFunction] = {}
     for name, grid in states.items():
+        # Shock transitions built directly in _process_regime_core
         if isinstance(grid, _ShockGrid):
-            transitions[f"next_{name}"] = lambda: None
             continue
 
         if name not in state_transitions:
