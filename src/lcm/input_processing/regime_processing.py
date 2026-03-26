@@ -1,7 +1,8 @@
 import functools
 from collections.abc import Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Literal, NamedTuple, cast
+from typing import Any, Literal, cast
 
 import pandas as pd
 from dags.signature import rename_arguments, with_signature
@@ -374,7 +375,8 @@ def _build_simulate_functions(
     )
 
 
-class _CoreResult(NamedTuple):
+@dataclass(frozen=True)
+class _CoreResult:
     """Result of core regime function processing for one phase."""
 
     functions: FunctionsMapping
