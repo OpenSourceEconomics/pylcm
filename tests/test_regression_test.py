@@ -190,7 +190,7 @@ def test_regression_mahler_yum():
     }
 
     got = model.simulate(
-        params=params,  # ty: ignore[invalid-argument-type]
+        params=params,
         initial_conditions=initial_conditions,
         period_to_regime_to_V_arr=None,
         seed=12345,

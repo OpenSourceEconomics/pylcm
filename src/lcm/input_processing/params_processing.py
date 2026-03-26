@@ -13,7 +13,6 @@ from lcm.typing import (
     ParamsTemplate,
     RegimeName,
     RegimeParamsTemplate,
-    UserParams,
 )
 from lcm.utils import (
     ensure_containers_are_immutable,
@@ -25,7 +24,7 @@ _NUM_PARTS_FUNCTION_PARAM = 3
 
 def process_params(
     *,
-    params: UserParams,
+    params: Mapping,
     params_template: ParamsTemplate,
 ) -> InternalParams:
     """Process user-provided params into internal params.

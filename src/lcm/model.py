@@ -13,6 +13,7 @@ from jax import Array
 from lcm.ages import AgeGrid
 from lcm.error_handling import validate_regime_transitions_all_periods
 from lcm.exceptions import ModelInitializationError, format_messages
+from lcm.grids import DiscreteGrid
 from lcm.input_processing.params_processing import (
     broadcast_to_template,
     create_params_template,
@@ -159,7 +160,9 @@ class Model:
     def solve(
         self,
         *,
-        params: UserParams,
+        params: Mapping,
+        derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
+        | None = None,
         log_level: LogLevel = "progress",
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
@@ -167,7 +170,7 @@ class Model:
         """Solve the model using the pre-computed functions.
 
         Args:
-            params: Model parameters compatible with `get_params_template()`
+            params: Model parameters compatible with `get_params_template()`.
                 Parameters can be provided at exactly one of three levels:
                 - Model level: {"arg_0": 0.0} - propagates to all functions needing
                   arg_0
@@ -175,6 +178,12 @@ class Model:
                   regime_0
                 - Function level: {"regime_0": {"func": {"arg_0": 0.0}}} - direct
                   specification
+                Values may be `pd.Series` with labeled indices; they are
+                auto-converted to JAX arrays.
+            derived_categoricals: Extra categorical mappings (level name to
+                `DiscreteGrid`) for derived variables not in the model's
+                state/action grids. Pass per-regime mappings as
+                `{"var": {"regime_a": grid_a, ...}}`.
             log_level: Logging verbosity. `"off"` suppresses output, `"warning"` shows
                 NaN/Inf warnings, `"progress"` adds timing, `"debug"` adds stats and
                 requires `log_path`.
@@ -189,6 +198,9 @@ class Model:
         _validate_log_args(log_level=log_level, log_path=log_path)
         internal_params = process_params(
             params=params, params_template=self._params_template
+        )
+        internal_params = _maybe_convert_series(
+            internal_params, model=self, derived_categoricals=derived_categoricals
         )
         validate_regime_transitions_all_periods(
             internal_regimes=self.internal_regimes,
@@ -214,7 +226,9 @@ class Model:
     def simulate(
         self,
         *,
-        params: UserParams,
+        params: Mapping,
+        derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
+        | None = None,
         initial_conditions: Mapping[str, Array],
         period_to_regime_to_V_arr: MappingProxyType[
             int, MappingProxyType[RegimeName, FloatND]
@@ -241,10 +255,17 @@ class Model:
                   regime_0
                 - Function level: {"regime_0": {"func": {"arg_0": 0.0}}} - direct
                   specification
+                Values may be `pd.Series` with labeled indices; they are
+                auto-converted to JAX arrays.
+            derived_categoricals: Extra categorical mappings (level name to
+                `DiscreteGrid`) for derived variables not in the model's
+                state/action grids. Pass per-regime mappings as
+                `{"var": {"regime_a": grid_a, ...}}`.
             initial_conditions: Mapping of state names (plus `"regime"`) to arrays.
                 All arrays must have the same length (number of subjects). The
                 `"regime"` entry must contain integer regime codes (from
-                `model.regime_names_to_ids`).
+                `model.regime_names_to_ids`). May also be a `pd.DataFrame`
+                with a `"regime"` column (auto-converted).
             period_to_regime_to_V_arr: Value function arrays from `solve()`.
                 When `None`, the model is solved automatically before simulating.
             check_initial_conditions: Whether to validate initial conditions.
@@ -262,8 +283,12 @@ class Model:
 
         """
         _validate_log_args(log_level=log_level, log_path=log_path)
+        initial_conditions = _maybe_convert_dataframe(initial_conditions, model=self)
         internal_params = process_params(
             params=params, params_template=self._params_template
+        )
+        internal_params = _maybe_convert_series(
+            internal_params, model=self, derived_categoricals=derived_categoricals
         )
         if check_initial_conditions:
             validate_initial_conditions(
@@ -308,6 +333,40 @@ class Model:
                 log_keep_n_latest=log_keep_n_latest,
             )
         return result
+
+
+def _maybe_convert_series(
+    internal_params: InternalParams,
+    *,
+    model: Model,
+    derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
+    | None,
+) -> InternalParams:
+    """Convert pd.Series leaves in params to JAX arrays if any are present."""
+    from lcm.pandas_utils import convert_series_in_params, has_series  # noqa: PLC0415
+
+    if derived_categoricals is not None or has_series(internal_params):
+        return convert_series_in_params(
+            internal_params=internal_params,
+            model=model,
+            derived_categoricals=derived_categoricals,
+        )
+    return internal_params
+
+
+def _maybe_convert_dataframe(
+    initial_conditions: Mapping[str, Array],
+    *,
+    model: Model,
+) -> Mapping[str, Array]:
+    """Convert a DataFrame to initial_conditions dict if needed."""
+    import pandas as pd  # noqa: PLC0415
+
+    if isinstance(initial_conditions, pd.DataFrame):
+        from lcm.pandas_utils import initial_conditions_from_dataframe  # noqa: PLC0415
+
+        return initial_conditions_from_dataframe(df=initial_conditions, model=model)
+    return initial_conditions
 
 
 def _validate_log_args(*, log_level: LogLevel, log_path: str | Path | None) -> None:

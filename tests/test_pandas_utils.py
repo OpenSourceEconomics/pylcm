@@ -15,11 +15,12 @@ from lcm import (
     categorical,
 )
 from lcm.error_handling import validate_transition_probs
+from lcm.input_processing.params_processing import broadcast_to_template
 from lcm.pandas_utils import (
     _build_discrete_grid_lookup,
     array_from_series,
+    convert_series_in_params,
     initial_conditions_from_dataframe,
-    params_from_pandas,
 )
 from tests.test_models.basic_discrete import (
     Health,
@@ -410,7 +411,10 @@ def test_convert_series_heterogeneous_grids() -> None:
     ages = model.ages.exact_values
     sr = pd.Series([1.0, 2.0, 3.0, 4.0], index=pd.Index(ages, name="age"))
     # Should not raise despite heterogeneous health grids
-    params_from_pandas(params={"bonus": sr}, model=model)
+    internal = broadcast_to_template(
+        params={"bonus": sr}, template=model._params_template, required=False
+    )
+    convert_series_in_params(internal_params=internal, model=model)
 
 
 def test_convert_series_next_function_no_outcome_axis() -> None:
@@ -448,7 +452,10 @@ def test_convert_series_next_function_no_outcome_axis() -> None:
     ages = m.ages.exact_values
     sr = pd.Series(range(len(ages)), index=pd.Index(ages, name="age"), dtype=float)
     # Should not raise KeyError on continuous state 'wealth'
-    result = params_from_pandas(params={"rate": sr}, model=m)
+    internal = broadcast_to_template(
+        params={"rate": sr}, template=m._params_template, required=False
+    )
+    result = convert_series_in_params(internal_params=internal, model=m)
     assert result is not None
 
 
@@ -1049,10 +1056,8 @@ def test_array_from_series_scalar_param_explicit_lookup() -> None:
     np.testing.assert_allclose(result, jnp.array([10.0]))
 
 
-def test_params_from_pandas_function_level_series() -> None:
+def test_convert_series_function_level_series() -> None:
     """Series at function level is converted to 4D transition prob array."""
-    from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
-
     model = get_stochastic_model(3)
     series = _build_partner_probs_series(model)
     params = {
@@ -1060,28 +1065,30 @@ def test_params_from_pandas_function_level_series() -> None:
             "next_partner": {"probs_array": series},
         },
     }
-    result = params_from_pandas(params=params, model=model)
+    internal = broadcast_to_template(
+        params=params, template=model._params_template, required=False
+    )
+    result = convert_series_in_params(internal_params=internal, model=model)
     arr = result["working_life"]["next_partner__probs_array"]
-    assert arr.shape == (3, 2, 2, 2)
-    assert float(arr[0, 0, 0, 0]) == pytest.approx(1.0)
+    assert arr.shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
+    assert float(arr[0, 0, 0, 0]) == pytest.approx(1.0)  # ty: ignore[not-subscriptable]
 
 
-def test_params_from_pandas_model_level_scalar_passthrough() -> None:
+def test_convert_series_model_level_scalar_passthrough() -> None:
     """Scalar values at model level pass through unchanged."""
-    from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
-
     model = get_stochastic_model(3)
     params = {"discount_factor": 0.95}
-    result = params_from_pandas(params=params, model=model)
+    internal = broadcast_to_template(
+        params=params, template=model._params_template, required=False
+    )
+    result = convert_series_in_params(internal_params=internal, model=model)
     # Model-level param is broadcast to all regimes/functions that need it
     assert result["working_life"]["H__discount_factor"] == 0.95
     assert result["retirement"]["H__discount_factor"] == 0.95
 
 
-def test_params_from_pandas_regime_level_series() -> None:
+def test_convert_series_regime_level_series() -> None:
     """Series at regime level is resolved via template and converted."""
-    from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
-
     model = get_stochastic_model(3)
     series = _build_partner_probs_series(model)
     params = {
@@ -1089,15 +1096,16 @@ def test_params_from_pandas_regime_level_series() -> None:
             "probs_array": series,
         },
     }
-    result = params_from_pandas(params=params, model=model)
+    internal = broadcast_to_template(
+        params=params, template=model._params_template, required=False
+    )
+    result = convert_series_in_params(internal_params=internal, model=model)
     arr = result["working_life"]["next_partner__probs_array"]
-    assert arr.shape == (3, 2, 2, 2)
+    assert arr.shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
 
 
-def test_params_from_pandas_mixed_dict() -> None:
+def test_convert_series_mixed_dict() -> None:
     """Mix of scalars, arrays, and Series in one params dict."""
-    from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
-
     model = get_stochastic_model(3)
     series = _build_partner_probs_series(model)
     params = {
@@ -1109,19 +1117,21 @@ def test_params_from_pandas_mixed_dict() -> None:
             "labor_income": {"wage": jnp.array([10.0])},
         },
     }
-    result = params_from_pandas(params=params, model=model)
+    internal = broadcast_to_template(
+        params=params, template=model._params_template, required=False
+    )
+    result = convert_series_in_params(internal_params=internal, model=model)
     assert result["working_life"]["H__discount_factor"] == 0.95
     assert result["working_life"]["utility__disutility_of_work"] == 0.5
-    assert result["working_life"]["next_partner__probs_array"].shape == (3, 2, 2, 2)
+    assert result["working_life"]["next_partner__probs_array"].shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
     assert result["working_life"]["next_wealth__interest_rate"] == 0.05
     np.testing.assert_allclose(
         result["working_life"]["labor_income__wage"], jnp.array([10.0])
     )
 
 
-def test_params_from_pandas_mapping_leaf() -> None:
+def test_convert_series_mapping_leaf() -> None:
     """Series inside a MappingLeaf is converted."""
-    from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
     from lcm.params import MappingLeaf  # noqa: PLC0415
 
     model = get_stochastic_model(3)
@@ -1132,16 +1142,18 @@ def test_params_from_pandas_mapping_leaf() -> None:
             "next_partner": {"probs_array": leaf},
         },
     }
-    result = params_from_pandas(params=params, model=model)
+    internal = broadcast_to_template(
+        params=params, template=model._params_template, required=False
+    )
+    result = convert_series_in_params(internal_params=internal, model=model)
     converted_leaf = result["working_life"]["next_partner__probs_array"]
     assert isinstance(converted_leaf, MappingLeaf)
     arr = converted_leaf.data["sub_key"]
     assert arr.shape == (3, 2, 2, 2)
 
 
-def test_params_from_pandas_nested_mapping_leaf() -> None:
+def test_convert_series_nested_mapping_leaf() -> None:
     """Series inside nested MappingLeaf is recursively converted."""
-    from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
     from lcm.params import MappingLeaf  # noqa: PLC0415
 
     model = get_stochastic_model(3)
@@ -1153,7 +1165,10 @@ def test_params_from_pandas_nested_mapping_leaf() -> None:
             "next_partner": {"probs_array": outer},
         },
     }
-    result = params_from_pandas(params=params, model=model)
+    internal = broadcast_to_template(
+        params=params, template=model._params_template, required=False
+    )
+    result = convert_series_in_params(internal_params=internal, model=model)
     converted = result["working_life"]["next_partner__probs_array"]
     assert isinstance(converted, MappingLeaf)
     inner_converted = converted.data["inner_leaf"]
@@ -1162,21 +1177,20 @@ def test_params_from_pandas_nested_mapping_leaf() -> None:
     assert inner_converted.data["sub"].shape == (3, 2, 2, 2)
 
 
-def test_params_from_pandas_unknown_param_raises() -> None:
+def test_convert_series_unknown_param_raises() -> None:
     """Unknown param name raises InvalidParamsError."""
     from lcm.exceptions import InvalidParamsError  # noqa: PLC0415
-    from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
 
     model = get_stochastic_model(3)
     params = {"nonexistent_param": pd.Series([1.0])}
     with pytest.raises(InvalidParamsError, match="Unknown keys"):
-        params_from_pandas(params=params, model=model)
+        broadcast_to_template(
+            params=params, template=model._params_template, required=False
+        )
 
 
-def test_params_from_pandas_with_categoricals() -> None:
-    """Derived variable indexing requires explicit categoricals."""
-    from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
-
+def test_convert_series_with_derived_categoricals() -> None:
+    """Derived variable indexing requires explicit derived_categoricals."""
     # In the stochastic model, next_partner(period, labor_supply, partner, probs_array)
     # uses labor_supply — which is a DiscreteGrid action in working_life.
     # Simulate the case where the converter needs extra categoricals by building
@@ -1185,7 +1199,7 @@ def test_params_from_pandas_with_categoricals() -> None:
     # which IS in the working_life action grids. But for the retirement regime,
     # labor_supply is NOT an action — it's a fixed param. So if we provide
     # probs_array for retirement's next_partner (which also indexes by
-    # labor_supply in the source code), we need categoricals to resolve it.
+    # labor_supply in the source code), we need derived_categoricals to resolve it.
     from tests.test_models.stochastic import LaborSupply  # noqa: PLC0415
 
     model = get_stochastic_model(3)
@@ -1213,26 +1227,28 @@ def test_params_from_pandas_with_categoricals() -> None:
     )
     series = pd.Series([r[1] for r in records], index=index)
 
-    # Without categoricals, this should fail (retirement doesn't have
+    # Without derived_categoricals, this should fail (retirement doesn't have
     # labor_supply as an action)
     params = {"retirement": {"next_partner": {"probs_array": series}}}
+    internal = broadcast_to_template(
+        params=params, template=model._params_template, required=False
+    )
     with pytest.raises(ValueError, match="Unrecognised indexing parameter"):
-        params_from_pandas(params=params, model=model)
+        convert_series_in_params(internal_params=internal, model=model)
 
-    # With categoricals providing the labor_supply grid, it succeeds
-    result = params_from_pandas(
-        params=params,
+    # With derived_categoricals providing the labor_supply grid, it succeeds
+    result = convert_series_in_params(
+        internal_params=internal,
         model=model,
-        categoricals={"labor_supply": labor_grid},
+        derived_categoricals={"labor_supply": labor_grid},
     )
     arr = result["retirement"]["next_partner__probs_array"]
-    assert arr.shape == (3, 2, 2, 2)
+    assert arr.shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
 
 
-def test_params_from_pandas_per_target_transition() -> None:
-    """Per-target state transitions should be convertible via params_from_pandas."""
+def test_convert_series_per_target_transition() -> None:
+    """Per-target state transitions should be convertible."""
     from lcm import AgeGrid, MarkovTransition  # noqa: PLC0415
-    from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
     from lcm.typing import DiscreteState, FloatND, Period  # noqa: PLC0415
 
     @categorical(ordered=False)
@@ -1297,9 +1313,12 @@ def test_params_from_pandas_per_target_transition() -> None:
     sr = pd.Series([0.9, 0.1, 0.2, 0.8, 0.8, 0.2, 0.3, 0.7], index=index)
 
     params = {"working": {"to_working_next_health": {"probs_array": sr}}}
-    result = params_from_pandas(params=params, model=model)
+    internal = broadcast_to_template(
+        params=params, template=model._params_template, required=False
+    )
+    result = convert_series_in_params(internal_params=internal, model=model)
     arr = result["working"]["to_working_next_health__probs_array"]
-    assert arr.shape == (3, 2, 2)
+    assert arr.shape == (3, 2, 2)  # ty: ignore[unresolved-attribute]
 
 
 def test_build_outcome_mapping_qualified_func_name() -> None:
@@ -1317,10 +1336,9 @@ def test_build_outcome_mapping_qualified_func_name() -> None:
     assert result.name == "next_health"
 
 
-def test_params_from_pandas_structured_categoricals() -> None:
-    """Regime-level categoricals should allow different grids per regime."""
+def test_convert_series_structured_derived_categoricals() -> None:
+    """Regime-level derived_categoricals should allow different grids per regime."""
     from lcm import AgeGrid  # noqa: PLC0415
-    from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
     from lcm.typing import FloatND  # noqa: PLC0415
 
     @categorical(ordered=False)
@@ -1380,27 +1398,30 @@ def test_params_from_pandas_structured_categoricals() -> None:
     sr_a = pd.Series([1.0, 2.0], index=pd.Index(["x", "y"], name="derived"))
     sr_b = pd.Series([1.0, 2.0, 3.0], index=pd.Index(["x", "y", "z"], name="derived"))
 
-    result_both = params_from_pandas(
-        params={
-            "regime_a": {"utility": {"rates": sr_a}},
-            "regime_b": {"utility": {"rates": sr_b}},
-        },
+    params = {
+        "regime_a": {"utility": {"rates": sr_a}},
+        "regime_b": {"utility": {"rates": sr_b}},
+    }
+    internal = broadcast_to_template(
+        params=params, template=model._params_template, required=False
+    )
+    result_both = convert_series_in_params(
+        internal_params=internal,
         model=model,
-        categoricals={
+        derived_categoricals={
             "derived": {
                 "regime_a": DiscreteGrid(_ChoiceA),
                 "regime_b": DiscreteGrid(_ChoiceB),
             },
         },
     )
-    assert result_both["regime_a"]["utility__rates"].shape == (2,)
-    assert result_both["regime_b"]["utility__rates"].shape == (3,)
+    assert result_both["regime_a"]["utility__rates"].shape == (2,)  # ty: ignore[unresolved-attribute]
+    assert result_both["regime_b"]["utility__rates"].shape == (3,)  # ty: ignore[unresolved-attribute]
 
 
-def test_params_from_pandas_runtime_grid_param() -> None:
+def test_convert_series_runtime_grid_param() -> None:
     """Runtime grid points should be convertible or give a clear error."""
     from lcm import AgeGrid, IrregSpacedGrid  # noqa: PLC0415
-    from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
 
     @categorical(ordered=False)
     class _RId:
@@ -1427,20 +1448,25 @@ def test_params_from_pandas_runtime_grid_param() -> None:
 
     sr = pd.Series([1.0, 2.0, 5.0, 10.0])
     params = {"alive": {"wealth": {"points": sr}}}
-    result = params_from_pandas(params=params, model=model)
+    internal = broadcast_to_template(
+        params=params, template=model._params_template, required=False
+    )
+    result = convert_series_in_params(internal_params=internal, model=model)
     np.testing.assert_allclose(result["alive"]["wealth__points"], sr.to_numpy())
 
 
-def test_params_from_pandas_sequence_leaf_traversal() -> None:
+def test_convert_series_sequence_leaf_traversal() -> None:
     """Series inside a SequenceLeaf should be converted to JAX arrays."""
-    from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
     from lcm.params.sequence_leaf import SequenceLeaf  # noqa: PLC0415
 
     model = get_stochastic_model(3)
     sr = pd.Series([10.0])
     leaf = SequenceLeaf((sr, 42))
     params = {"working_life": {"labor_income": {"wage": leaf}}}
-    result = params_from_pandas(params=params, model=model)
+    internal = broadcast_to_template(
+        params=params, template=model._params_template, required=False
+    )
+    result = convert_series_in_params(internal_params=internal, model=model)
     converted = result["working_life"]["labor_income__wage"]
     assert isinstance(converted, SequenceLeaf)
     assert not isinstance(converted.data[0], pd.Series)
@@ -1448,7 +1474,7 @@ def test_params_from_pandas_sequence_leaf_traversal() -> None:
 
 
 def test_resolve_categoricals_conflict_raises() -> None:
-    """Categoricals that conflict with model grids raise ValueError."""
+    """Derived categoricals that conflict with model grids raise ValueError."""
     from lcm.pandas_utils import _resolve_categoricals  # noqa: PLC0415
 
     model = get_stochastic_model(3)
@@ -1463,5 +1489,5 @@ def test_resolve_categoricals_conflict_raises() -> None:
         _resolve_categoricals(
             model=model,
             regime_name="working_life",
-            categoricals=conflicting,
+            derived_categoricals=conflicting,
         )

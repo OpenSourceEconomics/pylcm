@@ -2,6 +2,8 @@
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -14,18 +16,28 @@ from lcm.error_handling import (
     _get_func_indexing_params,
 )
 from lcm.grids import DiscreteGrid, IrregSpacedGrid
-from lcm.input_processing.params_processing import broadcast_to_template
 from lcm.model import Model
 from lcm.params import MappingLeaf
 from lcm.params.sequence_leaf import SequenceLeaf
 from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
+from lcm.typing import InternalParams
 
-type _PandasLeaf = bool | float | Array | pd.Series | MappingLeaf | SequenceLeaf
-type PandasUserParams = Mapping[
-    str,
-    _PandasLeaf | Mapping[str, _PandasLeaf | Mapping[str, _PandasLeaf]],
-]
+
+def has_series(params: Mapping) -> bool:
+    """Check if any leaf value in a params mapping is a pd.Series."""
+    for value in params.values():
+        if isinstance(value, pd.Series):
+            return True
+        if isinstance(value, Mapping) and has_series(value):
+            return True
+        if isinstance(value, (MappingLeaf, SequenceLeaf)):
+            items = (
+                value.data.values() if isinstance(value, MappingLeaf) else value.data
+            )
+            if any(isinstance(v, pd.Series) for v in items):
+                return True
+    return False
 
 
 def initial_conditions_from_dataframe(
@@ -125,46 +137,36 @@ def initial_conditions_from_dataframe(
     return initial_conditions
 
 
-def params_from_pandas(
+def convert_series_in_params(
     *,
-    params: PandasUserParams,
+    internal_params: Mapping[str, Mapping[str, object]],
     model: Model,
-    categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]] | None = None,
-) -> dict:
-    """Convert a params dict, replacing `pd.Series` values with JAX arrays.
+    derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
+    | None = None,
+) -> InternalParams:
+    """Convert pd.Series leaves in already-broadcast internal params to JAX arrays.
 
-    Broadcast `params` (which may use model, regime, or function-level
-    nesting) against the model's params template, then convert any
-    `pd.Series` leaf values via `array_from_series`. `MappingLeaf` and
-    `SequenceLeaf` values are traversed and any Series inside are
-    converted. Other values (scalars, existing arrays) pass through
-    unchanged.
-
-    The output is template-shaped (`{regime: {func__param: value}}`).
-    Pass it to `model.solve(params=...)` or `model.simulate(params=...)`.
+    Iterate over the template-shaped `internal_params` (produced by
+    `process_params`) and convert any `pd.Series` leaf values via
+    `array_from_series`. `MappingLeaf` and `SequenceLeaf` values are
+    traversed and any Series inside are converted. Other values (scalars,
+    existing arrays) pass through unchanged.
 
     Args:
-        params: User params dict with `pd.Series` in place of array values.
+        internal_params: Already-broadcast params in template shape
+            (`{regime: {func__param: value}}`).
         model: The LCM Model instance.
-        categoricals: Extra categorical mappings (level name to grid) for
-            derived variables not in the model's state/action grids.
+        derived_categoricals: Extra categorical mappings (level name to
+            grid) for derived variables not in the model's state/action
+            grids.
 
     Returns:
-        Dict with template structure, Series replaced by JAX arrays.
-
-    Raises:
-        ValueError: If a param name cannot be resolved in the model's
-            template.
+        Immutable mapping with the same structure, Series replaced by JAX
+        arrays.
 
     """
-    resolved = broadcast_to_template(
-        params=params,
-        template=model.get_params_template(),
-        required=False,
-    )
-
     result: dict[str, dict[str, object]] = {}
-    for regime_name, regime_params in resolved.items():
+    for regime_name, regime_params in internal_params.items():
         regime = model.regimes[regime_name]
         all_funcs = regime.get_all_functions()
         converted_regime: dict[str, object] = {}
@@ -182,7 +184,7 @@ def params_from_pandas(
                     func_name=template_func_name,
                     model=model,
                     regime_name=regime_name,
-                    categoricals=categoricals,
+                    derived_categoricals=derived_categoricals,
                 )
                 continue
 
@@ -201,10 +203,13 @@ def params_from_pandas(
                 func_name=resolved_func_name,
                 model=model,
                 regime_name=regime_name,
-                categoricals=categoricals,
+                derived_categoricals=derived_categoricals,
             )
         result[regime_name] = converted_regime
-    return result
+    return cast(
+        "InternalParams",
+        MappingProxyType({k: MappingProxyType(v) for k, v in result.items()}),
+    )
 
 
 def _convert_param_value(
@@ -215,7 +220,8 @@ def _convert_param_value(
     func_name: str,
     model: Model,
     regime_name: str | None,
-    categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]] | None = None,
+    derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
+    | None = None,
 ) -> object:
     """Convert a single param value, dispatching on type.
 
@@ -227,7 +233,8 @@ def _convert_param_value(
         func_name: Function name (for `next_*` outcome axis detection).
         model: The LCM Model instance.
         regime_name: Regime name for action grid lookup.
-        categoricals: Extra categorical mappings (level name to grid).
+        derived_categoricals: Extra categorical mappings (level name to
+            grid).
 
     Returns:
         Converted value: JAX array for Series, MappingLeaf with converted
@@ -243,7 +250,7 @@ def _convert_param_value(
             func_name=func_name,
             model=model,
             regime_name=regime_name,
-            categoricals=categoricals,
+            derived_categoricals=derived_categoricals,
         )
 
     if isinstance(value, pd.Series):
@@ -254,7 +261,7 @@ def _convert_param_value(
             func_name=func_name,
             model=model,
             regime_name=regime_name,
-            categoricals=categoricals,
+            derived_categoricals=derived_categoricals,
         )
     if isinstance(value, MappingLeaf):
         return MappingLeaf({k: _recurse(v) for k, v in value.data.items()})
@@ -271,7 +278,8 @@ def array_from_series(
     func_name: str,
     model: Model,
     regime_name: str | None = None,
-    categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]] | None = None,
+    derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
+    | None = None,
 ) -> Array:
     """Convert a pandas Series to a JAX array.
 
@@ -292,8 +300,9 @@ def array_from_series(
         func_name: Function name (for `next_*` outcome axis detection).
         model: The LCM Model instance.
         regime_name: Regime for action grid lookup.
-        categoricals: Extra categorical mappings (level name to grid) for
-            derived variables not in the model's state/action grids.
+        derived_categoricals: Extra categorical mappings (level name to
+            grid) for derived variables not in the model's state/action
+            grids.
 
     Returns:
         JAX array with axes corresponding to the indexing parameters in
@@ -312,7 +321,9 @@ def array_from_series(
         return jnp.array(sr.to_numpy(), dtype=float)
 
     grids = _resolve_categoricals(
-        model=model, regime_name=regime_name, categoricals=categoricals
+        model=model,
+        regime_name=regime_name,
+        derived_categoricals=derived_categoricals,
     )
 
     # Replace internal "period" with user-facing "age"
@@ -345,11 +356,12 @@ def _resolve_categoricals(
     *,
     model: Model,
     regime_name: str | None,
-    categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]] | None,
+    derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
+    | None,
 ) -> dict[str, DiscreteGrid]:
     """Build combined categorical lookup from model grids and explicit overrides.
 
-    Categoricals can be provided at two levels:
+    Derived categoricals can be provided at two levels:
 
     - Model-level: `{"var": grid}` — applies to all regimes.
     - Regime-level: `{"var": {"regime_a": grid_a, "regime_b": grid_b}}` —
@@ -359,16 +371,16 @@ def _resolve_categoricals(
         model: The LCM Model instance.
         regime_name: Regime for action grid discovery and regime-level
             categorical resolution.
-        categoricals: Explicit categorical mappings. Values are either a
-            `DiscreteGrid` (model-level) or a `Mapping` from regime names
-            to `DiscreteGrid` (regime-level).
+        derived_categoricals: Explicit categorical mappings. Values are
+            either a `DiscreteGrid` (model-level) or a `Mapping` from
+            regime names to `DiscreteGrid` (regime-level).
 
     Returns:
         Dict mapping variable names to `DiscreteGrid` instances.
 
     Raises:
-        ValueError: If a key in `categoricals` already exists in the model
-            grids with different categories.
+        ValueError: If a key in `derived_categoricals` already exists in
+            the model grids with different categories.
 
     """
     grids: dict[str, DiscreteGrid] = {}
@@ -382,8 +394,8 @@ def _resolve_categoricals(
         grids.update(_build_discrete_action_lookup(regime))
     else:
         grids.update(_build_discrete_grid_lookup(model.regimes))
-    if categoricals is not None:
-        for name, entry in categoricals.items():
+    if derived_categoricals is not None:
+        for name, entry in derived_categoricals.items():
             grid = _resolve_categorical_entry(
                 name=name, entry=entry, regime_name=regime_name
             )
@@ -408,7 +420,7 @@ def _resolve_categorical_entry(
     entry: DiscreteGrid | Mapping[str, DiscreteGrid],
     regime_name: str | None,
 ) -> DiscreteGrid | None:
-    """Resolve a single categoricals entry to a grid.
+    """Resolve a single derived_categoricals entry to a grid.
 
     Args:
         name: Variable name.
@@ -589,8 +601,11 @@ def _build_level_mappings_for_param(
             mappings.append(_grid_level_mapping(name=param, grid=all_grids[param]))
         else:
             msg = (
-                f"Unrecognised indexing parameter '{param}'. Expected 'age', "
-                f"or a discrete grid name ({sorted(all_grids)})."
+                f"Unrecognised indexing parameter '{param}'. Expected 'age' "
+                f"or a discrete grid name ({sorted(all_grids)}). If "
+                f"'{param}' is a DAG function output, pass "
+                f'derived_categoricals={{"{param}": DiscreteGrid(...)}} '
+                f"to solve() / simulate()."
             )
             raise ValueError(msg)
     return tuple(mappings)
