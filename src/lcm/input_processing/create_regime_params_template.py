@@ -6,61 +6,51 @@ from dags.tree import tree_path_from_qname
 from lcm.exceptions import InvalidNameError
 from lcm.grids import IrregSpacedGrid
 from lcm.interfaces import SolveSimulateFunctionPair
-from lcm.regime import Regime
+from lcm.regime import Regime, _collect_state_transitions
 from lcm.shocks import _ShockGrid
-from lcm.typing import RegimeParamsTemplate
+from lcm.typing import RegimeParamsTemplate, UserFunction
 
 
-def create_regime_params_template(  # noqa: C901
+def create_regime_params_template(
     regime: Regime,
 ) -> RegimeParamsTemplate:
     """Create parameter template from a regime specification.
 
-    Uses dags.tree.create_tree_with_input_types() to discover parameters and their
-    type annotations from function signatures. Parameters are identified as function
-    arguments that are not states, actions, other regime functions, or special variables
-    (period, age, E_next_V).
+    Discover parameters from function signatures via `dags.tree`. Parameters are
+    function arguments that are not states, actions, other regime functions, or
+    special variables (period, age, E_next_V).
 
-    Grids with runtime-supplied values (IrregSpacedGrid without points, _ShockGrid
-    without full shock_params) add entries to the template under pseudo-function keys
-    matching the state name.
+    For `SolveSimulateFunctionPair` entries, the template contains the **union**
+    of both variants' parameters so the user can provide a single flat params
+    dict that satisfies both phases.
+
+    Grids with runtime-supplied values (IrregSpacedGrid without points,
+    `_ShockGrid` without full shock_params) add entries to the template under
+    pseudo-function keys matching the state name.
 
     Args:
         regime: The regime as provided by the user.
 
     Returns:
-        The regime parameter template with type annotations as values. Contains a
-        dictionary for each regime function containing the parameters required by that
-        function.
+        The regime parameter template with type annotations as values.
 
     """
-    # Collect all variables that H may receive: regime functions, special variables
-    # (period, age) and E_next_V.
     H_variables = {*regime.functions, "period", "age", "E_next_V"}
-    # Other functions may receive states/actions, too.
-    variables = H_variables | {
-        *regime.actions,
-        *regime.states,
-    }
+    variables = H_variables | set(regime.actions) | set(regime.states)
 
     function_params: dict[str, dict[str, str]] = {}
-    # Use dags.tree to discover parameters and their type annotations for each function.
-    for name, func in regime.get_all_functions(phase="solve").items():
-        raw_func = regime.functions.get(name)
-        if isinstance(raw_func, SolveSimulateFunctionPair):
-            # Discover params from both variants and take the union.
-            tree_solve = dt.create_tree_with_input_types({name: raw_func.solve})
-            tree_sim = dt.create_tree_with_input_types({name: raw_func.simulate})
+
+    for name, func in _collect_all_functions_for_template(regime).items():
+        if isinstance(func, SolveSimulateFunctionPair):
+            tree_solve = dt.create_tree_with_input_types({name: func.solve})
+            tree_sim = dt.create_tree_with_input_types({name: func.simulate})
             tree = dict(tree_solve) | dict(tree_sim)
         else:
             tree = dt.create_tree_with_input_types({name: func})
+
         excl = H_variables if name == "H" else variables
-        # Filter out variables to get only the parameters
         params = {k: v for k, v in sorted(tree.items()) if k not in excl}
 
-        # Per-target dict transitions produce qualified names like
-        # "next_health__working". Convert to "to_working_next_health" so each
-        # target variant gets its own template key (no __ in keys).
         path = tree_path_from_qname(name)
         template_key = f"to_{path[1]}_{path[0]}" if len(path) > 1 else name
 
@@ -69,20 +59,8 @@ def create_regime_params_template(  # noqa: C901
         else:
             function_params[template_key] = params
 
-    # Validate that no discovered parameter shadows a state or action name.
-    # In practice, only H can trigger this since other functions already exclude
-    # states/actions from their parameter discovery.
-    state_action_names = set(regime.states) | set(regime.actions)
-    for func_name, params in function_params.items():
-        shadows = set(params) & state_action_names
-        if shadows:
-            raise InvalidNameError(
-                f"Function '{func_name}' has parameter(s) {sorted(shadows)} that "
-                f"shadow state/action variable(s) with the same name. Please rename "
-                f"the parameter(s) or the state(s)/action(s) to avoid ambiguity."
-            )
+    _validate_no_shadowing(function_params, regime)
 
-    # Add entries for grids whose points/params are supplied at runtime
     for state_name, grid in regime.states.items():
         if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:
             if state_name in function_params:
@@ -104,3 +82,36 @@ def create_regime_params_template(  # noqa: C901
     return MappingProxyType(
         {k: MappingProxyType(v) for k, v in function_params.items()}
     )
+
+
+def _collect_all_functions_for_template(
+    regime: Regime,
+) -> dict[str, UserFunction | SolveSimulateFunctionPair]:
+    """Collect all regime functions, preserving `SolveSimulateFunctionPair` entries.
+
+    Unlike `regime.get_all_functions(phase=...)` which resolves pairs to a single
+    variant, this returns pairs as-is so the caller can union both variants'
+    parameters.
+    """
+    result: dict[str, UserFunction | SolveSimulateFunctionPair] = dict(regime.functions)
+    result |= dict(regime.constraints)
+    if callable(regime.transition):
+        result |= _collect_state_transitions(regime.states, regime.state_transitions)
+        result["next_regime"] = regime.transition
+    return result
+
+
+def _validate_no_shadowing(
+    function_params: dict[str, dict[str, str]],
+    regime: Regime,
+) -> None:
+    """Raise if any discovered parameter shadows a state or action name."""
+    state_action_names = set(regime.states) | set(regime.actions)
+    for func_name, params in function_params.items():
+        shadows = set(params) & state_action_names
+        if shadows:
+            raise InvalidNameError(
+                f"Function '{func_name}' has parameter(s) {sorted(shadows)} that "
+                f"shadow state/action variable(s) with the same name. Please rename "
+                f"the parameter(s) or the state(s)/action(s) to avoid ambiguity."
+            )

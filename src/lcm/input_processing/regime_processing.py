@@ -1042,6 +1042,8 @@ def _get_simple_transition_discrete_grid(
 def _create_state_space_info(regime: Regime) -> StateSpaceInfo:
     """Create state space info for V-function interpolation.
 
+    For terminal regimes, only states entering concurrent valuation are included.
+
     Args:
         regime: Regime instance.
 
@@ -1051,6 +1053,9 @@ def _create_state_space_info(regime: Regime) -> StateSpaceInfo:
     """
     vi = get_variable_info(regime)
     grids = get_grids(regime)
+
+    if regime.terminal:
+        vi = vi.query("enters_concurrent_valuation")
 
     state_names = vi.query("is_state").index.tolist()
 
