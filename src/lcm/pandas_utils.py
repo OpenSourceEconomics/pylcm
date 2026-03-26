@@ -57,43 +57,54 @@ def initial_conditions_from_dataframe(
         )
         raise ValueError(msg)
 
-    regime_names = df["regime"].tolist()
-
     state_columns = {col for col in df.columns if col != "regime"}
-    _validate_state_columns(state_columns, model.regimes, regime_names)
+    _validate_state_columns(state_columns, model.regimes, df["regime"].tolist())
 
-    discrete_lookup = _build_discrete_grid_lookup(model.regimes)
+    n_subjects = len(df)
+    state_cols = [col for col in df.columns if col != "regime"]
 
-    initial_conditions: dict[str, Array] = {}
-    for col in df.columns:
-        if col == "regime":
-            continue
+    # Pre-allocate result arrays
+    result_arrays: dict[str, np.ndarray] = {
+        col: np.empty(n_subjects, dtype=float) for col in state_cols
+    }
 
-        if col in discrete_lookup:
-            grid = discrete_lookup[col]
-            label_to_code = dict(zip(grid.categories, grid.codes, strict=True))
+    # Process per regime group (vectorised .map() within each group)
+    for regime_name, group in df.groupby("regime"):
+        regime = model.regimes[str(regime_name)]
+        idx = group.index
+        discrete_grids = {
+            name: grid
+            for name, grid in regime.states.items()
+            if isinstance(grid, DiscreteGrid)
+        }
 
-            values = df[col]
-            # Convert categorical dtype to string values
+        for col in state_cols:
+            values = group[col]
             if hasattr(values, "cat"):
                 values = values.astype(str)
 
-            invalid_labels = set(values) - set(grid.categories)
-            if invalid_labels:
-                msg = (
-                    f"Invalid labels for discrete state '{col}': "
-                    f"{sorted(invalid_labels)}. "
-                    f"Valid labels: {list(grid.categories)}."
-                )
-                raise ValueError(msg)
+            if col in discrete_grids:
+                grid = discrete_grids[col]
+                label_to_code = dict(zip(grid.categories, grid.codes, strict=True))
+                mapped = values.map(label_to_code)
+                unmapped = mapped.isna() & values.notna()
+                if unmapped.any():
+                    bad = set(values[unmapped])
+                    msg = (
+                        f"Invalid labels for state '{col}' in regime "
+                        f"'{regime_name}': {sorted(bad)}. "
+                        f"Valid: {list(grid.categories)}."
+                    )
+                    raise ValueError(msg)
+                result_arrays[col][idx] = mapped.to_numpy()
+            else:
+                result_arrays[col][idx] = values.to_numpy(dtype=float)
 
-            initial_conditions[col] = jnp.array([label_to_code[v] for v in values])
-        else:
-            initial_conditions[col] = jnp.array(df[col].values)
-
-    # Convert regime names to integer codes
+    initial_conditions: dict[str, Array] = {
+        col: jnp.array(arr) for col, arr in result_arrays.items()
+    }
     initial_conditions["regime"] = jnp.array(
-        [model.regime_names_to_ids[name] for name in regime_names]
+        df["regime"].map(dict(model.regime_names_to_ids)).to_numpy()
     )
 
     return initial_conditions
