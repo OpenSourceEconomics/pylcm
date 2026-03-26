@@ -82,6 +82,16 @@ Each `pd.Series` must have:
 Level order does not matter — levels are reordered to match the function signature
 automatically.
 
+### What happens during conversion
+
+Your model functions work with plain JAX arrays and integer indexing — nothing about
+pandas enters the model at runtime. The Series is purely an input convenience. Before any
+model code runs, the conversion inspects the function signature to determine which
+dimensions the array is indexed over, maps each label to an integer position using the
+model's grids (e.g., `"good"` → `0`, `"bad"` → `1`), and scatters the Series values into
+a JAX array of the correct shape. The function receives a normal `jnp.ndarray` and never
+sees pandas.
+
 ## Why Labeled Indices Matter
 
 Every discrete variable axis must use string labels from the model's categorical classes,
