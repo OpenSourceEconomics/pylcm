@@ -55,9 +55,7 @@ def create_regime_state_action_space(
         The state-action space for the subjects in the regime.
 
     """
-    query = "is_state and (enters_concurrent_valuation | enters_transition)"
-
-    relevant_state_names = internal_regime.variable_info.query(query).index
+    relevant_state_names = internal_regime.variable_info.query("is_state").index
 
     states_for_state_action_space = {
         sn: states[f"{internal_regime.name}__{sn}"] for sn in relevant_state_names

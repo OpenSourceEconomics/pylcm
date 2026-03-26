@@ -1,7 +1,6 @@
 from types import MappingProxyType
 
 import pandas as pd
-from dags import get_ancestors
 
 from lcm.grids import ContinuousGrid, Grid
 from lcm.regime import Regime
@@ -35,16 +34,6 @@ def get_variable_info(regime: Regime) -> pd.DataFrame:
     ]
     info["is_discrete"] = ~info["is_continuous"]
 
-    info["enters_concurrent_valuation"] = _indicator_enters_concurrent_valuation(
-        state_and_action_names=list(variables),
-        regime=regime,
-    )
-
-    info["enters_transition"] = _indicator_enters_transition(
-        state_and_action_names=list(variables),
-        regime=regime,
-    )
-
     order = info.query("is_discrete & is_state").index.tolist()
     order += info.query("is_discrete & is_action").index.tolist()
     order += info.query("is_continuous & is_state").index.tolist()
@@ -54,70 +43,6 @@ def get_variable_info(regime: Regime) -> pd.DataFrame:
         raise ValueError("Order and index do not match.")
 
     return info.loc[order]
-
-
-def _indicator_enters_concurrent_valuation(
-    *,
-    state_and_action_names: list[str],
-    regime: Regime,
-) -> pd.Series[bool]:
-    """Determine which states and actions enter the concurrent valuation.
-
-    The concurrent valuation is the evaluation of the Q_and_F function. Hence, all
-    variables that (directly or indirectly) influence the "utility" (Q) or the
-    constraints (F), count as relevant for the concurrent valuation.
-
-    Special variables such as the "period" or parameters will be ignored.
-
-    """
-    enters_Q_and_F_func_names = [
-        "utility",
-        *list(regime.constraints),
-    ]
-    # TODO(#293): remove once enters_concurrent_valuation is gone
-    user_functions = dict(regime.get_all_functions(phase="solve"))
-    ancestors = get_ancestors(
-        user_functions,
-        targets=enters_Q_and_F_func_names,
-        include_targets=False,
-    )
-    return pd.Series(
-        [var in ancestors for var in state_and_action_names],
-        index=state_and_action_names,
-    )
-
-
-def _indicator_enters_transition(
-    *,
-    state_and_action_names: list[str],
-    regime: Regime,
-) -> pd.Series[bool]:
-    """Determine which states and actions enter the transition.
-
-    Transition functions correspond to the "next_" functions in the regime (both
-    state transitions from grid attributes and the regime transition). This function
-    returns all state and action variables that occur as inputs to these functions.
-
-    Special variables such as the "period" or parameters will be ignored.
-
-    """
-    # TODO(#293): remove once enters_transition is gone
-    user_functions = dict(regime.get_all_functions(phase="solve"))
-    next_func_names = [
-        name
-        for name in user_functions
-        if name.startswith("next_")
-        and not getattr(user_functions[name], "_is_auto_identity", False)
-    ]
-    ancestors = get_ancestors(
-        user_functions,
-        targets=next_func_names,
-        include_targets=False,
-    )
-    return pd.Series(
-        [var in ancestors for var in state_and_action_names],
-        index=state_and_action_names,
-    )
 
 
 def get_grids(

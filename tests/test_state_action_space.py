@@ -27,8 +27,6 @@ def _create_variable_info(
     info["is_action"] = ~info["is_state"]
     info["is_discrete"] = info.index.isin(discrete_states + discrete_actions)
     info["is_continuous"] = ~info["is_discrete"]
-    info["enters_concurrent_valuation"] = True
-    info["enters_transition"] = True
     return info
 
 
