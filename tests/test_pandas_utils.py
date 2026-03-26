@@ -7,6 +7,7 @@ import pytest
 from pandas.api.types import CategoricalDtype
 
 from lcm import (
+    AgeGrid,
     DiscreteGrid,
     LinSpacedGrid,
     Model,
@@ -310,6 +311,80 @@ def test_round_trip_with_discrete_model():
     df_raw = result_raw.to_dataframe()
     df_from_df = result_df.to_dataframe()
     pd.testing.assert_frame_equal(df_raw, df_from_df)
+
+
+@categorical(ordered=True)
+class HealthWithDisability:
+    disabled: int
+    bad: int
+    good: int
+
+
+@categorical(ordered=False)
+class _HetRegimeId:
+    pre65: int
+    post65: int
+    dead: int
+
+
+def _get_heterogeneous_health_model() -> Model:
+    """Model where 'health' has different categories per regime."""
+    pre65 = Regime(
+        transition=lambda: _HetRegimeId.dead,
+        states={
+            "health": DiscreteGrid(HealthWithDisability),
+            "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
+        },
+        state_transitions={"health": None, "wealth": lambda wealth: wealth},
+        functions={"utility": lambda wealth, health: wealth + health},
+    )
+    post65 = Regime(
+        transition=lambda: _HetRegimeId.dead,
+        states={
+            "health": DiscreteGrid(Health),
+            "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
+        },
+        state_transitions={"health": None, "wealth": lambda wealth: wealth},
+        functions={"utility": lambda wealth, health: wealth + health},
+    )
+    dead = Regime(
+        transition=None,
+        functions={"utility": lambda: 0.0},
+    )
+    return Model(
+        regimes={"pre65": pre65, "post65": post65, "dead": dead},
+        ages=AgeGrid(start=50, stop=80, step="10Y"),
+        regime_id_class=_HetRegimeId,
+    )
+
+
+def test_initial_conditions_heterogeneous_health_grids() -> None:
+    """Handle regimes with different categories for the same state."""
+    model = _get_heterogeneous_health_model()
+    df = pd.DataFrame(
+        {
+            "regime": ["pre65", "pre65", "post65", "post65"],
+            "health": ["disabled", "good", "bad", "good"],
+            "wealth": [10.0, 50.0, 30.0, 70.0],
+            "age": [50.0, 50.0, 70.0, 70.0],
+        }
+    )
+    result = initial_conditions_from_dataframe(df, model=model)
+
+    # pre65: disabled=0, good=2; post65: bad=0, good=1
+    assert jnp.array_equal(result["health"], jnp.array([0, 2, 0, 1]))
+    assert jnp.allclose(result["wealth"], jnp.array([10.0, 50.0, 30.0, 70.0]))
+    assert jnp.array_equal(
+        result["regime"],
+        jnp.array(
+            [
+                _HetRegimeId.pre65,
+                _HetRegimeId.pre65,
+                _HetRegimeId.post65,
+                _HetRegimeId.post65,
+            ]
+        ),
+    )
 
 
 def _make_partner_probs_array():
