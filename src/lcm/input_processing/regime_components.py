@@ -235,6 +235,9 @@ def build_regime_transition_probs_functions(
         enforce_signature=False,
         set_annotations=True,
     )
+    if phase == "solve":
+        return jax.jit(next_regime) if enable_jit else next_regime
+
     sig_args = list(inspect.signature(next_regime).parameters)
 
     # We do this because a transition function without any parameters will throw
@@ -252,8 +255,6 @@ def build_regime_transition_probs_functions(
         ),
     )
 
-    if phase == "solve":
-        return jax.jit(next_regime) if enable_jit else next_regime
     return jax.jit(next_regime_vmapped) if enable_jit else next_regime_vmapped
 
 

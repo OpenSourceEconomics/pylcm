@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import cast
+from typing import Literal, cast
 
 from lcm.grids import Grid
 from lcm.interfaces import SolveSimulateFunctionPair
@@ -32,7 +32,9 @@ class RegimeMock:
         if not self.terminal and "H" not in self.functions:
             self.functions = {**self.functions, "H": _default_H}
 
-    def get_all_functions(self, phase: str = "solve") -> dict[str, UserFunction]:
+    def get_all_functions(
+        self, phase: Literal["solve", "simulate"] = "solve"
+    ) -> dict[str, UserFunction]:
         """Get all regime functions including utility, constraints, and transitions."""
         result: dict[str, UserFunction] = {}
         for name, func in self.functions.items():

@@ -21,6 +21,7 @@ from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.input_processing.regime_processing import _compute_merged_discrete_categories
 from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
 from lcm.persistence import atomic_dump
+from lcm.regime import Regime
 from lcm.typing import (
     FlatRegimeParams,
     FloatND,
@@ -219,7 +220,7 @@ class SimulationResult:
 
 
 def get_simulation_output_dtypes(
-    regimes: Mapping[str, Any],
+    regimes: Mapping[str, Regime],
     regime_names_to_ids: Mapping[str, int],
 ) -> MappingProxyType[str, pd.CategoricalDtype]:
     """Compute pandas CategoricalDtype for all discrete output columns.
@@ -233,7 +234,7 @@ def get_simulation_output_dtypes(
 
     Returns:
         Immutable mapping of variable name to `pd.CategoricalDtype`. Includes
-        all discrete state/action variables plus the ``"regime"`` column.
+        all discrete state/action variables plus the `"regime"` column.
 
     """
     merged_categories, ordered_flags = _compute_merged_discrete_categories(regimes)

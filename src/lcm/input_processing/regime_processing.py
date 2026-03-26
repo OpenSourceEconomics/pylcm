@@ -313,6 +313,8 @@ def _build_simulate_functions(
         variable_info=variable_info,
         phase="simulate",
     )
+    # Only functions/constraints vary by phase; core.transitions and
+    # core.stochastic_transition_names are phase-independent and reused from solve.
     functions = core.functions
     constraints = core.constraints
 
@@ -351,8 +353,8 @@ def _build_simulate_functions(
         enable_jit=enable_jit,
     )
 
-    # next_state uses solve functions because state transitions don't participate
-    # in SolveSimulateFunctionPair — only utility/H functions have phase variants.
+    # State transitions are phase-independent (only utility/H have phase variants),
+    # so core.functions from either phase produces the same transitions.
     next_state = build_next_state_simulation_functions(
         functions=core.functions,
         transitions=solve_transitions,
@@ -378,10 +380,19 @@ class _CoreResult(NamedTuple):
     """Result of core regime function processing for one phase."""
 
     functions: FunctionsMapping
+    """User functions (utility, helpers) with params renamed to qnames."""
+
     constraints: FunctionsMapping
+    """Constraint functions with params renamed to qnames."""
+
     transitions: TransitionFunctionsMapping
+    """Nested mapping of transition names to transition functions."""
+
     stochastic_transition_names: frozenset[str]
+    """Frozenset of stochastic transition function names."""
+
     next_regime_func: InternalUserFunction | None
+    """The regime transition function, or `None` for terminal regimes."""
 
 
 def _process_regime_core(
@@ -417,11 +428,6 @@ def _process_regime_core(
     flat_nested_transitions = flatten_regime_namespace(nested_transitions)
 
     # Resolve function pairs for this phase.
-    function_pair_entries: dict[str, SolveSimulateFunctionPair] = {
-        name: func
-        for name, func in regime.functions.items()
-        if isinstance(func, SolveSimulateFunctionPair)
-    }
     resolved_functions: dict[str, UserFunction] = {}
     for name, func in regime.functions.items():
         if isinstance(func, SolveSimulateFunctionPair):
@@ -444,7 +450,7 @@ def _process_regime_core(
         if isinstance(raw, Mapping) and not isinstance(raw, MarkovTransition)
     )
 
-    stochastic_transition_names = _compute_stochastic_transition_names(
+    stochastic_transition_names = _get_stochastic_transition_names(
         regime=regime, variable_info=variable_info
     )
 
@@ -472,22 +478,11 @@ def _process_regime_core(
     functions: dict[str, InternalUserFunction] = {}
 
     for func_name, func in deterministic_functions.items():
-        if func_name in function_pair_entries:
-            function_pair = function_pair_entries[func_name]
-            variant = (
-                function_pair.solve if phase == "solve" else function_pair.simulate
-            )
-            functions[func_name] = _rename_params_to_qnames(
-                func=variant,
-                regime_params_template=regime_params_template,
-                param_key=func_name,
-            )
-        else:
-            functions[func_name] = _rename_params_to_qnames(
-                func=func,
-                regime_params_template=regime_params_template,
-                param_key=func_name,
-            )
+        functions[func_name] = _rename_params_to_qnames(
+            func=func,
+            regime_params_template=regime_params_template,
+            param_key=func_name,
+        )
 
     for func_name, func in deterministic_transition_functions.items():
         param_key = _extract_param_key(func_name, per_target_next_names)
@@ -680,7 +675,7 @@ def _wrap_transitions(
     )
 
 
-def _compute_stochastic_transition_names(
+def _get_stochastic_transition_names(
     *,
     regime: Regime,
     variable_info: pd.DataFrame,
