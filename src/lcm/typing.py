@@ -2,6 +2,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, Protocol
 
+import pandas as pd
 from jax import Array
 from jaxtyping import Bool, Float, Int, Scalar
 
@@ -36,22 +37,10 @@ type FunctionsMapping = MappingProxyType[str, InternalUserFunction]
 type TransitionFunctionsMapping = MappingProxyType[RegimeName, FunctionsMapping]
 
 
+type _ParamsLeaf = bool | float | Array | pd.Series | MappingLeaf | SequenceLeaf
 type UserParams = Mapping[
     str,
-    bool
-    | float
-    | Array
-    | MappingLeaf
-    | SequenceLeaf
-    | Mapping[
-        str,
-        bool
-        | float
-        | Array
-        | MappingLeaf
-        | SequenceLeaf
-        | Mapping[str, bool | float | Array | MappingLeaf | SequenceLeaf],
-    ],
+    _ParamsLeaf | Mapping[str, _ParamsLeaf | Mapping[str, _ParamsLeaf]],
 ]
 
 # Internal regime parameters: A flat mapping with function-qualified names.

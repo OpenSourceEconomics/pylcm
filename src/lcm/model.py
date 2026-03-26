@@ -160,7 +160,7 @@ class Model:
     def solve(
         self,
         *,
-        params: Mapping,
+        params: UserParams,
         derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
         | None = None,
         log_level: LogLevel = "progress",
@@ -226,7 +226,7 @@ class Model:
     def simulate(
         self,
         *,
-        params: Mapping,
+        params: UserParams,
         derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
         | None = None,
         initial_conditions: Mapping[str, Array],

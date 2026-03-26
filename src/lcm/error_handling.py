@@ -1,7 +1,6 @@
 import ast
 import inspect
 import textwrap
-import warnings
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import TYPE_CHECKING, overload
@@ -313,6 +312,7 @@ def _validate_regime_transition_single(
 
 
 def _get_func_indexing_params(
+    *,
     func: Callable,
     array_param_name: str,
 ) -> list[str]:
@@ -357,6 +357,14 @@ def _get_func_indexing_params(
     subscripts = _collect_subscripts(tree=tree, param_name=array_param_name)
     if not subscripts:
         return []
+
+    if len(subscripts) > 1:
+        msg = (
+            f"Function '{func_name}' has multiple `{array_param_name}[...]` "
+            f"subscripts. Use exactly one subscript so the indexing order "
+            f"can be determined unambiguously."
+        )
+        raise ValueError(msg)
 
     names = _extract_bare_names(subscripts[0])
 
@@ -405,85 +413,6 @@ def _slice_references_params(
         isinstance(node, ast.Name) and node.id in param_names
         for node in ast.walk(slice_node)
     )
-
-
-def _validate_array_param_indexing(
-    *,
-    func: Callable,
-    array_param_name: str,
-    indexing_params: list[str],
-) -> None:
-    """Check that array parameter indexing order matches expected order.
-
-    Handles two cases reliably:
-
-    - Single index: `param[health]`
-    - Tuple of bare names: `param[period, health]`
-
-    For computed indices (`param[period - 1, health]`), variable aliasing,
-    or multiple subscripts in different branches, a warning is emitted instead.
-
-    Args:
-        func: The function to inspect.
-        array_param_name: Name of the array parameter (e.g., `"probs_array"`).
-        indexing_params: Expected indexing parameter names in declaration order.
-
-    Raises:
-        ValueError: If bare-name indices don't match the expected parameter order.
-
-    """
-    sig = inspect.signature(func)
-    if array_param_name not in sig.parameters:
-        return
-
-    try:
-        source = textwrap.dedent(inspect.getsource(func))
-        tree = ast.parse(source)
-    except OSError, TypeError:
-        return
-
-    func_name = getattr(func, "__name__", "<unknown>")
-    subscripts = _collect_subscripts(tree=tree, param_name=array_param_name)
-
-    if not subscripts:
-        warnings.warn(
-            f"Function '{func_name}' has a `{array_param_name}` parameter but "
-            f"no `{array_param_name}[...]` subscript was found. "
-            f"Cannot validate indexing order.",
-            UserWarning,
-            stacklevel=2,
-        )
-        return
-
-    if len(subscripts) > 1:
-        warnings.warn(
-            f"Function '{func_name}' has multiple `{array_param_name}[...]` "
-            f"subscripts. Cannot validate indexing order automatically.",
-            UserWarning,
-            stacklevel=2,
-        )
-        return
-
-    index_names = _extract_bare_names(subscripts[0])
-
-    if index_names is None:
-        warnings.warn(
-            f"Function '{func_name}' uses computed indices in "
-            f"`{array_param_name}[...]`. "
-            f"Cannot validate indexing order automatically.",
-            UserWarning,
-            stacklevel=2,
-        )
-        return
-
-    if index_names != indexing_params:
-        msg = (
-            f"In function '{func_name}', `{array_param_name}` is indexed as "
-            f"`{array_param_name}[{', '.join(index_names)}]` but the expected "
-            f"order (from the function signature) is "
-            f"`{array_param_name}[{', '.join(indexing_params)}]`."
-        )
-        raise ValueError(msg)
 
 
 def _collect_subscripts(
@@ -616,18 +545,23 @@ def validate_transition_probs(
         all_grids = _build_all_grids(regime)
         n_outcomes = len(model.regime_names_to_ids)
 
-    indexing_params = _get_func_indexing_params(func, array_param_name="probs_array")
+    indexing_params = _get_func_indexing_params(
+        func=func, array_param_name="probs_array"
+    )
 
     # Cross-check subscript order against signature order
     sig = inspect.signature(func)
     sig_order = [
         p for p in sig.parameters if p != "probs_array" and p in indexing_params
     ]
-    _validate_array_param_indexing(
-        func=func,
-        array_param_name="probs_array",
-        indexing_params=sig_order,
-    )
+    if indexing_params != sig_order:
+        func_name = getattr(func, "__name__", "<unknown>")
+        msg = (
+            f"In function '{func_name}', `probs_array` is indexed as "
+            f"`probs_array[{', '.join(indexing_params)}]` but the signature "
+            f"order is `probs_array[{', '.join(sig_order)}]`."
+        )
+        raise ValueError(msg)
 
     expected_shape = _build_expected_shape(
         indexing_params=indexing_params,

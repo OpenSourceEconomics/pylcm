@@ -176,7 +176,7 @@ def convert_series_in_params(
             param_name = parts[-1]
 
             # Runtime grid/shock params are scalar — no AST inspection
-            if _is_runtime_grid_param(template_func_name, regime):
+            if _is_runtime_grid_param(func_name=template_func_name, regime=regime):
                 converted_regime[func_param] = _convert_param_value(
                     value=value,
                     func=None,
@@ -315,7 +315,7 @@ def array_from_series(
     if func is None:
         return jnp.array(sr.to_numpy(), dtype=float)
 
-    indexing_params = _get_func_indexing_params(func, param_name)
+    indexing_params = _get_func_indexing_params(func=func, array_param_name=param_name)
 
     if not indexing_params:
         return jnp.array(sr.to_numpy(), dtype=float)
@@ -489,7 +489,7 @@ def _resolve_per_target_template_key(
     return None
 
 
-def _is_runtime_grid_param(func_name: str, regime: Regime) -> bool:
+def _is_runtime_grid_param(*, func_name: str, regime: Regime) -> bool:
     """Check if a template function key refers to a runtime grid param."""
     if func_name not in regime.states:
         return False

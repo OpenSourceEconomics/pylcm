@@ -116,7 +116,7 @@ def _generate_mahler_yum(data_dir: Path) -> None:
     }
 
     result = model.simulate(
-        params=params,
+        params=params,  # ty: ignore[invalid-argument-type]
         initial_conditions=initial_conditions,
         period_to_regime_to_V_arr=None,
         seed=12345,
