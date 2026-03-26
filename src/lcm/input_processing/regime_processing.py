@@ -515,8 +515,7 @@ def _process_regime_core(
             grid=flat_grids[relative_name.replace("next_", "")].to_jax(),
         )
 
-    _add_cross_regime_shock_functions(
-        functions=functions,
+    functions |= _get_cross_regime_shock_functions(
         regime_name=regime_name,
         shock_names=variable_info.query("is_shock").index.tolist(),
         all_grids=all_grids,
@@ -552,40 +551,38 @@ def _process_regime_core(
     )
 
 
-def _add_cross_regime_shock_functions(
+def _get_cross_regime_shock_functions(
     *,
-    functions: dict[str, InternalUserFunction],
     regime_name: str,
     shock_names: list[str],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
-) -> None:
-    """Override shock stubs with proper weight functions for cross-regime targets.
+) -> dict[str, InternalUserFunction]:
+    """Create weight and next functions for cross-regime shock transitions.
 
     When a source regime has shock states and can transition to a target regime
-    that also has those shock states, the stubs created by
-    ``_collect_state_transitions`` must be replaced with weight and next
-    functions derived from the **target** regime's shock grid.  The
-    self-transition is handled separately (lines 512-521 of
-    ``_process_regime_core``).
-
-    Mutates *functions* in place.
+    that also has those shock states, the `lambda: None` stubs from
+    `_collect_state_transitions` must be replaced with proper functions derived
+    from the **target** regime's shock grid.  The self-transition is handled
+    separately in `_process_regime_core`.
     """
-    for target_name, target_grids in all_grids.items():
-        if target_name == regime_name:
+    result: dict[str, InternalUserFunction] = {}
+    for target_regime_name, target_grids in all_grids.items():
+        if target_regime_name == regime_name:
             continue
         for shock_name in shock_names:
             target_grid = target_grids.get(shock_name)
             if not isinstance(target_grid, _ShockGrid):
                 continue
-            cross_name = f"{target_name}__next_{shock_name}"
-            functions[f"weight_{cross_name}"] = _get_weights_func_for_shock(
+            cross_name = f"{target_regime_name}__next_{shock_name}"
+            result[f"weight_{cross_name}"] = _get_weights_func_for_shock(
                 name=shock_name,
                 grid=target_grid,
             )
-            functions[cross_name] = _get_stochastic_next_function_for_shock(
+            result[cross_name] = _get_stochastic_next_function_for_shock(
                 name=shock_name,
                 grid=target_grid.to_jax(),
             )
+    return result
 
 
 def _extract_transitions_from_regime(

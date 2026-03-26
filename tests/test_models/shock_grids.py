@@ -14,6 +14,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     ScalarInt,
+    UserParams,
 )
 
 _SHOCK_GRID_CLASSES = {
@@ -141,7 +142,7 @@ def get_multi_regime_model(
         "uniform", "normal", "lognormal", "tauchen", "rouwenhorst"
     ],
 ) -> Model:
-    """Model with two non-terminal regimes that each have shock grids.
+    """Create a model with two non-terminal regimes that each have shock grids.
 
     Triggers cross-regime shock transitions (work → retire), which is the
     scenario that fails when shock stubs leak across regime boundaries.
@@ -207,8 +208,8 @@ def get_multi_regime_params(
     distribution_type: Literal[
         "uniform", "normal", "lognormal", "tauchen", "rouwenhorst"
     ] = "tauchen",
-) -> dict:
-    """Parameter dict for the multi-regime shock model."""
+) -> UserParams:
+    """Return parameter dict for the multi-regime shock model."""
     shock_params = _SHOCK_PARAMS[distribution_type]
     health_probs = jnp.full((2, 2), fill_value=0.5)
     regime_params = {

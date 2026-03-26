@@ -72,11 +72,11 @@ def test_model_with_shock(distribution_type):
     "distribution_type", ["uniform", "normal", "lognormal", "tauchen", "rouwenhorst"]
 )
 def test_model_with_cross_regime_shocks(distribution_type: str) -> None:
-    """Two non-terminal regimes with shock grids can transition between each other.
+    """Verify cross-regime transitions work when both regimes have shock grids.
 
-    Reproducer for a crash where shock-state ``lambda: None`` stubs leak from the
-    source regime into cross-regime transition dicts, causing a ``vmap`` error in
-    ``joint_weights_from_marginals`` (receives ``None`` instead of arrays).
+    Reproducer for a crash where shock-state `lambda: None` stubs leak from the
+    source regime into cross-regime transition dicts, causing a `vmap` error in
+    `joint_weights_from_marginals` (receives `None` instead of arrays).
     """
     model = get_multi_regime_model(n_periods=6, distribution_type=distribution_type)
     params = get_multi_regime_params(distribution_type)  # ty: ignore[invalid-argument-type]
@@ -93,7 +93,7 @@ def test_model_with_cross_regime_shocks(distribution_type: str) -> None:
         period_to_regime_to_V_arr=None,
         seed=42,
     ).to_dataframe()
-    assert len(result) > 0
+    assert set(result["regime"]) >= {"work", "retire"}
 
 
 _GRID_CLASSES_WITH_GH_KWARG = [
