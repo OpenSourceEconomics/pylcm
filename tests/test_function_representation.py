@@ -4,7 +4,6 @@ from types import MappingProxyType
 
 import jax.numpy as jnp
 import pytest
-from dags.exceptions import InvalidFunctionArgumentsError
 
 from lcm import LinSpacedGrid
 from lcm.dispatchers import productmap
@@ -13,7 +12,6 @@ from lcm.function_representation import (
     _fail_if_interpolation_axes_are_not_last,
     _get_coordinate_finder,
     _get_interpolator,
-    _get_label_translator,
     _get_lookup_function,
     get_V_interpolator,
 )
@@ -150,31 +148,6 @@ def test_function_evaluator(binary_discrete_grid):
     assert jnp.allclose(out, 801.5)
 
 
-def test_get_label_translator_with_args():
-    func = _get_label_translator(
-        in_name="schooling",
-    )
-    assert func(1) == 1
-
-
-def test_get_label_translator_with_kwargs():
-    func = _get_label_translator(
-        in_name="schooling",
-    )
-    assert func(schooling=1) == 1
-
-
-def test_get_label_translator_wrong_kwarg():
-    func = _get_label_translator(
-        in_name="schooling",
-    )
-    with pytest.raises(
-        InvalidFunctionArgumentsError,
-        match="translate_label got unexpected keyword argument health",
-    ):
-        func(health=1)
-
-
 def test_get_lookup_function():
     array = jnp.arange(6).reshape(3, 2)
     func = _get_lookup_function(array_name="my_array", axis_names=["a", "b"])
@@ -291,7 +264,6 @@ def test_get_interpolator_illustrative():
 @pytest.mark.illustrative
 def test_fail_if_interpolation_axes_are_not_last_illustrative(dummy_continuous_grid):
     # Empty intersection of var_names and continuous_vars
-    # ==================================================================================
 
     state_space_info = StateSpaceInfo(
         state_names=("a", "b"),
@@ -306,7 +278,6 @@ def test_fail_if_interpolation_axes_are_not_last_illustrative(dummy_continuous_g
     _fail_if_interpolation_axes_are_not_last(state_space_info)  # does not fail
 
     # Non-empty intersection but correct order
-    # ==================================================================================
 
     state_space_info = StateSpaceInfo(
         state_names=("a", "b", "c"),
@@ -323,7 +294,6 @@ def test_fail_if_interpolation_axes_are_not_last_illustrative(dummy_continuous_g
     _fail_if_interpolation_axes_are_not_last(state_space_info)  # does not fail
 
     # Non-empty intersection and in-correct order
-    # ==================================================================================
 
     state_space_info = StateSpaceInfo(
         state_names=("b", "c", "a"),  # "b", "c" are not last anymore
