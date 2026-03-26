@@ -417,11 +417,6 @@ def _process_regime_core(
     flat_nested_transitions = flatten_regime_namespace(nested_transitions)
 
     # Resolve function pairs for this phase.
-    function_pair_entries: dict[str, SolveSimulateFunctionPair] = {
-        name: func
-        for name, func in regime.functions.items()
-        if isinstance(func, SolveSimulateFunctionPair)
-    }
     resolved_functions: dict[str, UserFunction] = {}
     for name, func in regime.functions.items():
         if isinstance(func, SolveSimulateFunctionPair):
@@ -472,22 +467,11 @@ def _process_regime_core(
     functions: dict[str, InternalUserFunction] = {}
 
     for func_name, func in deterministic_functions.items():
-        if func_name in function_pair_entries:
-            function_pair = function_pair_entries[func_name]
-            variant = (
-                function_pair.solve if phase == "solve" else function_pair.simulate
-            )
-            functions[func_name] = _rename_params_to_qnames(
-                func=variant,
-                regime_params_template=regime_params_template,
-                param_key=func_name,
-            )
-        else:
-            functions[func_name] = _rename_params_to_qnames(
-                func=func,
-                regime_params_template=regime_params_template,
-                param_key=func_name,
-            )
+        functions[func_name] = _rename_params_to_qnames(
+            func=func,
+            regime_params_template=regime_params_template,
+            param_key=func_name,
+        )
 
     for func_name, func in deterministic_transition_functions.items():
         param_key = _extract_param_key(func_name, per_target_next_names)
