@@ -1040,11 +1040,6 @@ def test_params_from_pandas_with_categoricals() -> None:
     assert arr.shape == (3, 2, 2, 2)
 
 
-@pytest.mark.xfail(
-    reason="Template key 'to_working_next_health' != get_all_functions() key "
-    "'next_health__working'",
-    raises=(ValueError, KeyError),
-)
 def test_params_from_pandas_per_target_transition() -> None:
     """Per-target state transitions should be convertible via params_from_pandas."""
     from lcm import AgeGrid, MarkovTransition  # noqa: PLC0415
@@ -1061,6 +1056,12 @@ def test_params_from_pandas_per_target_transition() -> None:
     ) -> FloatND:
         return probs_array[period, health]
 
+    def _utility(health: DiscreteState, wealth: float) -> FloatND:
+        return wealth + health
+
+    def _next_wealth(wealth: float) -> float:
+        return wealth
+
     working = Regime(
         states={
             "health": DiscreteGrid(Health),
@@ -1071,9 +1072,9 @@ def test_params_from_pandas_per_target_transition() -> None:
                 "working": MarkovTransition(_health_probs),
                 "retired": MarkovTransition(_health_probs),
             },
-            "wealth": lambda wealth: wealth,
+            "wealth": _next_wealth,
         },
-        functions={"utility": lambda health, wealth: wealth + health},
+        functions={"utility": _utility},
         transition=lambda age: jnp.where(age >= 1, _RId.retired, _RId.working),
         active=lambda age: age < 2,
     )
@@ -1083,7 +1084,7 @@ def test_params_from_pandas_per_target_transition() -> None:
             "health": DiscreteGrid(Health),
             "wealth": LinSpacedGrid(start=0, stop=10, n_points=5),
         },
-        functions={"utility": lambda health, wealth: wealth + health},
+        functions={"utility": _utility},
     )
     model = Model(
         regimes={"working": working, "retired": retired},
@@ -1109,13 +1110,9 @@ def test_params_from_pandas_per_target_transition() -> None:
     params = {"working": {"to_working_next_health": {"probs_array": sr}}}
     result = params_from_pandas(params=params, model=model)
     arr = result["working"]["to_working_next_health"]["probs_array"]
-    assert arr.shape == (2, 2, 2)
+    assert arr.shape == (3, 2, 2)
 
 
-@pytest.mark.xfail(
-    reason="removeprefix('next_') gives 'health__working', KeyError on grid lookup",
-    raises=KeyError,
-)
 def test_build_outcome_mapping_qualified_func_name() -> None:
     """`_build_outcome_mapping` should handle qualified names."""
     from lcm.pandas_utils import _build_outcome_mapping  # noqa: PLC0415
@@ -1131,10 +1128,6 @@ def test_build_outcome_mapping_qualified_func_name() -> None:
     assert result.name == "next_health"
 
 
-@pytest.mark.xfail(
-    reason="categoricals is flat dict, not structured by regime; "
-    "different cardinalities per regime not supported",
-)
 def test_params_from_pandas_structured_categoricals() -> None:
     """Regime-level categoricals should allow different grids per regime."""
     from lcm import AgeGrid  # noqa: PLC0415
@@ -1166,25 +1159,26 @@ def test_params_from_pandas_structured_categoricals() -> None:
     def func_b(wealth: float, derived: FloatND, rates: FloatND) -> FloatND:  # noqa: ARG001
         return rates[derived]
 
+    def _derived_a(wealth: float) -> FloatND:
+        return jnp.where(wealth > 5, 1, 0)
+
+    def _derived_b(wealth: float) -> FloatND:
+        return jnp.where(wealth > 7, 2, jnp.where(wealth > 3, 1, 0))
+
+    def _next_wealth_sc(wealth: float) -> float:
+        return wealth
+
     regime_a = Regime(
         transition=lambda age: jnp.where(age >= 1, _RId.regime_b, _RId.regime_a),
         active=lambda age: age < 1,
         states={"wealth": LinSpacedGrid(start=0, stop=10, n_points=5)},
-        state_transitions={"wealth": lambda wealth: wealth},
-        functions={
-            "utility": func_a,
-            "derived": lambda wealth: jnp.where(wealth > 5, 1, 0),
-        },
+        state_transitions={"wealth": _next_wealth_sc},
+        functions={"utility": func_a, "derived": _derived_a},
     )
     regime_b = Regime(
         transition=None,
         states={"wealth": LinSpacedGrid(start=0, stop=10, n_points=5)},
-        functions={
-            "utility": func_b,
-            "derived": lambda wealth: jnp.where(
-                wealth > 7, 2, jnp.where(wealth > 3, 1, 0)
-            ),
-        },
+        functions={"utility": func_b, "derived": _derived_b},
     )
     model = Model(
         regimes={"regime_a": regime_a, "regime_b": regime_b},
@@ -1203,19 +1197,17 @@ def test_params_from_pandas_structured_categoricals() -> None:
             "regime_b": {"utility": {"rates": sr_b}},
         },
         model=model,
-        categoricals={  # ty: ignore[invalid-argument-type]
-            "regime_a": {"derived": DiscreteGrid(_ChoiceA)},
-            "regime_b": {"derived": DiscreteGrid(_ChoiceB)},
+        categoricals={
+            "derived": {
+                "regime_a": DiscreteGrid(_ChoiceA),
+                "regime_b": DiscreteGrid(_ChoiceB),
+            },
         },
     )
     assert result_both["regime_a"]["utility"]["rates"].shape == (2,)
     assert result_both["regime_b"]["utility"]["rates"].shape == (3,)
 
 
-@pytest.mark.xfail(
-    reason="Runtime grid params appear in template but not in get_all_functions(); "
-    "error says 'Function not found' instead of explaining runtime grid params",
-)
 def test_params_from_pandas_runtime_grid_param() -> None:
     """Runtime grid points should be convertible or give a clear error."""
     from lcm import AgeGrid, IrregSpacedGrid  # noqa: PLC0415
@@ -1250,10 +1242,6 @@ def test_params_from_pandas_runtime_grid_param() -> None:
     np.testing.assert_allclose(result["alive"]["wealth"]["points"], sr.to_numpy())
 
 
-@pytest.mark.xfail(
-    reason="_convert_param_value passes SequenceLeaf through unchanged "
-    "without traversing for Series conversion",
-)
 def test_params_from_pandas_sequence_leaf_traversal() -> None:
     """Series inside a SequenceLeaf should be converted to JAX arrays."""
     from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415

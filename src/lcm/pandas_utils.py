@@ -14,9 +14,10 @@ from lcm.ages import AgeGrid
 from lcm.error_handling import (
     _get_func_indexing_params,
 )
-from lcm.grids import DiscreteGrid
+from lcm.grids import DiscreteGrid, IrregSpacedGrid
 from lcm.model import Model
 from lcm.params import MappingLeaf
+from lcm.params.sequence_leaf import SequenceLeaf
 from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
 from lcm.utils import flatten_regime_namespace, unflatten_regime_namespace
@@ -108,7 +109,7 @@ def params_from_pandas(
     *,
     params: dict,
     model: Model,
-    categoricals: dict[str, DiscreteGrid] | None = None,
+    categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]] | None = None,
 ) -> dict:
     """Convert a params dict, replacing `pd.Series` values with JAX arrays.
 
@@ -270,7 +271,7 @@ def _convert_param_value(
     value: object,
     model: Model,
     param_path: tuple[str, ...],
-    categoricals: dict[str, DiscreteGrid] | None = None,
+    categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]] | None = None,
 ) -> object:
     """Convert a single param value, dispatching on type.
 
@@ -304,6 +305,19 @@ def _convert_param_value(
             for k, v in value.data.items()
         }
         return MappingLeaf(converted_data)
+    if isinstance(value, SequenceLeaf):
+        converted_data_seq = tuple(
+            array_from_series(
+                sr=v,
+                model=model,
+                param_path=param_path,
+                categoricals=categoricals,
+            )
+            if isinstance(v, pd.Series)
+            else v
+            for v in value.data
+        )
+        return SequenceLeaf(converted_data_seq)
     return value
 
 
@@ -312,7 +326,7 @@ def array_from_series(
     sr: pd.Series,
     model: Model,
     param_path: tuple[str, ...],
-    categoricals: dict[str, DiscreteGrid] | None = None,
+    categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]] | None = None,
 ) -> Array:
     """Convert a pandas Series to a JAX array using param-path-based indexing.
 
@@ -380,14 +394,23 @@ def _resolve_categoricals(
     *,
     model: Model,
     regime_name: str | None,
-    categoricals: dict[str, DiscreteGrid] | None,
+    categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]] | None,
 ) -> dict[str, DiscreteGrid]:
     """Build combined categorical lookup from model grids and explicit overrides.
 
+    Categoricals can be provided at two levels:
+
+    - Model-level: `{"var": grid}` — applies to all regimes.
+    - Regime-level: `{"var": {"regime_a": grid_a, "regime_b": grid_b}}` —
+      the grid for `regime_name` is selected.
+
     Args:
         model: The LCM Model instance.
-        regime_name: Regime for action grid discovery.
-        categoricals: Explicit categorical mappings (level name to grid).
+        regime_name: Regime for action grid discovery and regime-level
+            categorical resolution.
+        categoricals: Explicit categorical mappings. Values are either a
+            `DiscreteGrid` (model-level) or a `Mapping` from regime names
+            to `DiscreteGrid` (regime-level).
 
     Returns:
         Dict mapping variable names to `DiscreteGrid` instances.
@@ -402,7 +425,12 @@ def _resolve_categoricals(
     if regime_name is not None:
         grids.update(_build_discrete_action_lookup(model.regimes[regime_name]))
     if categoricals is not None:
-        for name, grid in categoricals.items():
+        for name, entry in categoricals.items():
+            grid = _resolve_categorical_entry(
+                name=name, entry=entry, regime_name=regime_name
+            )
+            if grid is None:
+                continue
             if name in grids:
                 if grids[name].categories != grid.categories:
                     msg = (
@@ -414,6 +442,43 @@ def _resolve_categoricals(
             else:
                 grids[name] = grid
     return grids
+
+
+def _resolve_categorical_entry(
+    *,
+    name: str,
+    entry: DiscreteGrid | Mapping[str, DiscreteGrid],
+    regime_name: str | None,
+) -> DiscreteGrid | None:
+    """Resolve a single categoricals entry to a grid.
+
+    Args:
+        name: Variable name.
+        entry: Either a `DiscreteGrid` (model-level) or a `Mapping` from
+            regime names to `DiscreteGrid` (regime-level).
+        regime_name: Current regime name for regime-level resolution.
+
+    Returns:
+        The resolved `DiscreteGrid`, or `None` if the regime-level entry
+        doesn't have a grid for the current regime.
+
+    """
+    if isinstance(entry, DiscreteGrid):
+        return entry
+    if isinstance(entry, Mapping):
+        if regime_name is None:
+            msg = (
+                f"Regime-level categorical '{name}' requires a resolved "
+                f"regime_name, but regime_name is None. Use a fully "
+                f"qualified 3-part param_path."
+            )
+            raise ValueError(msg)
+        return entry.get(regime_name)
+    msg = (
+        f"Categorical '{name}' must be a DiscreteGrid or a Mapping "
+        f"from regime names to DiscreteGrid. Got {type(entry).__name__}."
+    )
+    raise TypeError(msg)
 
 
 def _resolve_param_indexing(
@@ -488,7 +553,25 @@ def _resolve_3_part_path(
         raise ValueError(msg)
 
     regime = model.regimes[regime_name]
+
+    # Runtime grid/shock params: state names used as pseudo-function keys
+    # in the template (e.g., {"wealth": {"points": "Float1D"}}).
+    if func_name in regime.states:
+        grid = regime.states[func_name]
+        if (isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime) or (
+            isinstance(grid, _ShockGrid) and grid.params_to_pass_at_runtime
+        ):
+            return [], regime_name, func_name
+
     all_funcs = regime.get_all_functions()
+
+    # Per-target template keys: template uses "to_{target}_{next_state}"
+    # but get_all_functions() uses "next_{state}__{target}".
+    if func_name not in all_funcs:
+        resolved = _resolve_per_target_template_key(func_name=func_name, regime=regime)
+        if resolved is not None:
+            func_name = resolved
+
     if func_name not in all_funcs:
         msg = (
             f"Function '{func_name}' not found in regime '{regime_name}'. "
@@ -507,6 +590,46 @@ def _resolve_3_part_path(
         raise ValueError(msg)
 
     return _get_func_indexing_params(func), regime_name, func_name
+
+
+def _resolve_per_target_template_key(
+    *,
+    func_name: str,
+    regime: Regime,
+) -> str | None:
+    """Translate a per-target template key to `get_all_functions()` format.
+
+    Template uses `to_{target}_{next_state}` (e.g., `to_working_next_health`).
+    `get_all_functions()` uses `next_{state}__{target}` (e.g.,
+    `next_health__working`). Return the translated key if `func_name`
+    matches the template pattern, or `None` if it doesn't.
+
+    Args:
+        func_name: The function name from the template
+            (e.g., `to_working_next_health`).
+        regime: The regime to check for per-target transitions.
+
+    Returns:
+        The `get_all_functions()` key, or `None` if not a per-target key.
+
+    """
+    if not func_name.startswith("to_"):
+        return None
+
+    # Per-target template keys have the form "to_{target}_{next_state}".
+    # Find matching per-target transitions in the regime.
+    for state_name, raw in regime.state_transitions.items():
+        if isinstance(raw, Mapping):
+            for target_name in raw:
+                target = str(target_name)
+                next_state = f"next_{state_name}"
+                template_key = f"to_{target}_{next_state}"
+                if template_key == func_name:
+                    from dags.tree import qname_from_tree_path  # noqa: PLC0415
+
+                    return qname_from_tree_path((next_state, target))
+
+    return None
 
 
 def _resolve_2_part_path(
@@ -762,8 +885,9 @@ def _build_outcome_mapping(
             valid_labels=tuple(regime_ids),
         )
 
-    state_name = func_name.removeprefix("next_")
-    return _grid_level_mapping(name=func_name, grid=all_grids[state_name])
+    path = tree_path_from_qname(func_name)
+    state_name = path[0].removeprefix("next_")
+    return _grid_level_mapping(name=f"next_{state_name}", grid=all_grids[state_name])
 
 
 def _scatter_series(
