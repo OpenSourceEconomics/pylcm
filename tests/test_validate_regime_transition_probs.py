@@ -162,14 +162,14 @@ def test_raises_for_inf_values():
 
 def test_format_sum_violation_with_scalar_input():
     """A 0-d array (scalar) input does not raise IndexError."""
-    result = _format_sum_violation(jnp.array(0.5))
+    result = _format_sum_violation(sum_all=jnp.array(0.5))
     assert "1 of 1 probability vectors do not sum to 1.0" in result
 
 
 def test_format_sum_violation_with_scalar_input_and_state_action_values():
     """0-d inputs for both sum_all and state_action_values work correctly."""
     result = _format_sum_violation(
-        jnp.array(0.5),
+        sum_all=jnp.array(0.5),
         state_action_values=MappingProxyType({"wealth": jnp.array(10.0)}),
     )
     assert "1 of 1 probability vectors do not sum to 1.0" in result

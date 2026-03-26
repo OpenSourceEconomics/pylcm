@@ -6,16 +6,17 @@ import inspect
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import cast
 
 from dags import get_ancestors
-from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
+from dags.tree import QNAME_DELIMITER, qname_from_tree_path
 from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.error_handling import validate_regime_transitions_all_periods
 from lcm.exceptions import ModelInitializationError, format_messages
+from lcm.grids import DiscreteGrid
 from lcm.input_processing.params_processing import (
+    broadcast_to_template,
     create_params_template,
     process_params,
 )
@@ -45,7 +46,6 @@ from lcm.typing import (
 from lcm.utils import (
     ensure_containers_are_immutable,
     ensure_containers_are_mutable,
-    flatten_regime_namespace,
     get_field_names_and_values,
 )
 
@@ -161,6 +161,8 @@ class Model:
         self,
         *,
         params: UserParams,
+        derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
+        | None = None,
         log_level: LogLevel = "progress",
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
@@ -168,7 +170,7 @@ class Model:
         """Solve the model using the pre-computed functions.
 
         Args:
-            params: Model parameters compatible with `get_params_template()`
+            params: Model parameters compatible with `get_params_template()`.
                 Parameters can be provided at exactly one of three levels:
                 - Model level: {"arg_0": 0.0} - propagates to all functions needing
                   arg_0
@@ -176,6 +178,12 @@ class Model:
                   regime_0
                 - Function level: {"regime_0": {"func": {"arg_0": 0.0}}} - direct
                   specification
+                Values may be `pd.Series` with labeled indices; they are
+                auto-converted to JAX arrays.
+            derived_categoricals: Extra categorical mappings (level name to
+                `DiscreteGrid`) for derived variables not in the model's
+                state/action grids. Pass per-regime mappings as
+                `{"var": {"regime_a": grid_a, ...}}`.
             log_level: Logging verbosity. `"off"` suppresses output, `"warning"` shows
                 NaN/Inf warnings, `"progress"` adds timing, `"debug"` adds stats and
                 requires `log_path`.
@@ -190,6 +198,9 @@ class Model:
         _validate_log_args(log_level=log_level, log_path=log_path)
         internal_params = process_params(
             params=params, params_template=self._params_template
+        )
+        internal_params = _maybe_convert_series(
+            internal_params, model=self, derived_categoricals=derived_categoricals
         )
         validate_regime_transitions_all_periods(
             internal_regimes=self.internal_regimes,
@@ -216,6 +227,8 @@ class Model:
         self,
         *,
         params: UserParams,
+        derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
+        | None = None,
         initial_conditions: Mapping[str, Array],
         period_to_regime_to_V_arr: MappingProxyType[
             int, MappingProxyType[RegimeName, FloatND]
@@ -242,10 +255,17 @@ class Model:
                   regime_0
                 - Function level: {"regime_0": {"func": {"arg_0": 0.0}}} - direct
                   specification
+                Values may be `pd.Series` with labeled indices; they are
+                auto-converted to JAX arrays.
+            derived_categoricals: Extra categorical mappings (level name to
+                `DiscreteGrid`) for derived variables not in the model's
+                state/action grids. Pass per-regime mappings as
+                `{"var": {"regime_a": grid_a, ...}}`.
             initial_conditions: Mapping of state names (plus `"regime"`) to arrays.
                 All arrays must have the same length (number of subjects). The
                 `"regime"` entry must contain integer regime codes (from
-                `model.regime_names_to_ids`).
+                `model.regime_names_to_ids`). May also be a `pd.DataFrame`
+                with a `"regime"` column (auto-converted).
             period_to_regime_to_V_arr: Value function arrays from `solve()`.
                 When `None`, the model is solved automatically before simulating.
             check_initial_conditions: Whether to validate initial conditions.
@@ -263,8 +283,12 @@ class Model:
 
         """
         _validate_log_args(log_level=log_level, log_path=log_path)
+        initial_conditions = _maybe_convert_dataframe(initial_conditions, model=self)
         internal_params = process_params(
             params=params, params_template=self._params_template
+        )
+        internal_params = _maybe_convert_series(
+            internal_params, model=self, derived_categoricals=derived_categoricals
         )
         if check_initial_conditions:
             validate_initial_conditions(
@@ -309,6 +333,40 @@ class Model:
                 log_keep_n_latest=log_keep_n_latest,
             )
         return result
+
+
+def _maybe_convert_series(
+    internal_params: InternalParams,
+    *,
+    model: Model,
+    derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
+    | None,
+) -> InternalParams:
+    """Convert pd.Series leaves in params to JAX arrays if any are present."""
+    from lcm.pandas_utils import convert_series_in_params, has_series  # noqa: PLC0415
+
+    if derived_categoricals is not None or has_series(internal_params):
+        return convert_series_in_params(
+            internal_params=internal_params,
+            model=model,
+            derived_categoricals=derived_categoricals,
+        )
+    return internal_params
+
+
+def _maybe_convert_dataframe(
+    initial_conditions: Mapping[str, Array],
+    *,
+    model: Model,
+) -> Mapping[str, Array]:
+    """Convert a DataFrame to initial_conditions dict if needed."""
+    import pandas as pd  # noqa: PLC0415
+
+    if isinstance(initial_conditions, pd.DataFrame):
+        from lcm.pandas_utils import initial_conditions_from_dataframe  # noqa: PLC0415
+
+        return initial_conditions_from_dataframe(df=initial_conditions, model=model)
+    return initial_conditions
 
 
 def _validate_log_args(*, log_level: LogLevel, log_path: str | Path | None) -> None:
@@ -470,30 +528,6 @@ def _validate_all_variables_used(regimes: Mapping[str, Regime]) -> list[str]:
     return error_messages
 
 
-def _find_candidates(
-    *,
-    qname: str,
-    params_flat: Mapping[str, object],
-) -> list[str]:
-    """Find candidate matches for a template qname at exact / regime / model levels."""
-    tree_path = tree_path_from_qname(qname)
-    param_name = tree_path[-1]
-    candidates: list[str] = []
-
-    if qname in params_flat:
-        candidates.append(qname)
-
-    if len(tree_path) == 3:  # noqa: PLR2004
-        regime_level_qname = qname_from_tree_path((tree_path[0], param_name))
-        if regime_level_qname in params_flat:
-            candidates.append(regime_level_qname)
-
-    if param_name in params_flat:
-        candidates.append(param_name)
-
-    return candidates
-
-
 def _resolve_fixed_params(
     *,
     fixed_params: dict[str, object],
@@ -501,48 +535,14 @@ def _resolve_fixed_params(
 ) -> InternalParams:
     """Resolve fixed_params against the params template.
 
-    Like process_params, supports model/regime/function level specification, but
-    does NOT require all template keys to be present — only matches what's provided.
+    Like `process_params`, support model/regime/function level specification, but
+    do NOT require all template keys to be present — only match what's provided.
 
     """
-    template_flat = flatten_regime_namespace(template)
-    params_flat = flatten_regime_namespace(fixed_params)
-
-    result_flat: dict[str, object] = {}
-    used_keys: set[str] = set()
-
-    for qname in template_flat:
-        candidates = _find_candidates(qname=qname, params_flat=params_flat)
-
-        if len(candidates) > 1:
-            raise ModelInitializationError(
-                f"Ambiguous fixed_params specification for {qname!r}. "
-                f"Found values at: {candidates}"
-            )
-        if candidates:
-            result_flat[qname] = params_flat[candidates[0]]
-            used_keys.add(candidates[0])
-
-    unknown = set(params_flat) - used_keys
-    if unknown:
-        raise ModelInitializationError(
-            f"Unknown keys in fixed_params: {sorted(unknown)}"
-        )
-
-    # Split by regime
-    result: dict[str, dict[str, object]] = {}
-    for qname, value in result_flat.items():
-        tree_path = tree_path_from_qname(qname)
-        regime_name = tree_path[0]
-        remainder = qname_from_tree_path(tree_path[1:])
-        result.setdefault(regime_name, {})[remainder] = value
-
-    for regime_name in template:
-        result.setdefault(regime_name, {})
-
-    return cast(
-        "InternalParams",
-        MappingProxyType({k: MappingProxyType(v) for k, v in result.items()}),
+    return broadcast_to_template(
+        params=fixed_params,
+        template=template,
+        required=False,
     )
 
 

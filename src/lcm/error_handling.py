@@ -1,7 +1,6 @@
 import ast
 import inspect
 import textwrap
-import warnings
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import TYPE_CHECKING, overload
@@ -115,7 +114,7 @@ def validate_regime_transition_probs(
     sum_all = jnp.sum(all_probs, axis=0)
     if not jnp.allclose(sum_all, 1.0):
         detail = _format_sum_violation(
-            sum_all,
+            sum_all=sum_all,
             state_action_values=state_action_values,
         )
         raise InvalidRegimeTransitionProbabilitiesError(
@@ -135,8 +134,8 @@ def validate_regime_transition_probs(
 
 
 def _format_sum_violation(
-    sum_all: Array,
     *,
+    sum_all: Array,
     state_action_values: MappingProxyType[str, Array] | None = None,
 ) -> str:
     """Format a human-readable description of probability sum violations.
@@ -312,100 +311,138 @@ def _validate_regime_transition_single(
     )
 
 
-def _get_indexing_params(func: Callable) -> list[str]:
-    """Return indexing parameter names (all except `probs_array`)."""
-    sig = inspect.signature(func)
-    param_names = list(sig.parameters.keys())
-    return [name for name in param_names if name != "probs_array"]
+def _get_func_indexing_params(
+    *,
+    func: Callable,
+    array_param_name: str,
+) -> list[str]:
+    """Return indexing parameter names by inspecting array subscripts.
 
-
-def _validate_probs_array_indexing(func: Callable) -> None:
-    """Check that `probs_array[...]` indexing order matches parameter order.
-
-    Handles two cases reliably:
-
-    - Single index: `probs_array[health]`
-    - Tuple of bare names: `probs_array[period, health]`
-
-    For computed indices (`probs_array[period - 1, health]`), variable aliasing,
-    or multiple subscripts in different branches, a warning is emitted instead.
+    Inspect `array_param_name`'s subscripts in the function source for
+    `param[x, y, ...]` patterns where all index elements are bare names
+    that are also function parameters.
 
     Args:
-        func: The transition function to inspect.
+        func: The function to inspect.
+        array_param_name: The array parameter whose subscripts to inspect.
+
+    Returns:
+        List of indexing parameter names, or empty list if no array
+        subscripts are found (scalar function).
 
     Raises:
-        ValueError: If bare-name indices don't match the expected parameter order.
+        TypeError: If the function source cannot be inspected (e.g., lambda).
+        ValueError: If computed indices are used instead of bare names.
 
     """
-    sig = inspect.signature(func)
-    if "probs_array" not in sig.parameters:
-        return
+    func_name = getattr(func, "__name__", "<unknown>")
+
+    if func_name == "<lambda>":
+        msg = "Cannot inspect lambda functions. Define a named function instead."
+        raise TypeError(msg)
 
     try:
         source = textwrap.dedent(inspect.getsource(func))
-        tree = ast.parse(source)
     except OSError, TypeError:
-        return
-
-    expected = _get_indexing_params(func)
-    func_name = getattr(func, "__name__", "<unknown>")
-
-    subscripts = _collect_probs_array_subscripts(tree)
-
-    if not subscripts:
-        warnings.warn(
-            f"Function '{func_name}' has a `probs_array` parameter but no "
-            f"`probs_array[...]` subscript was found. Cannot validate indexing order.",
-            UserWarning,
-            stacklevel=2,
+        msg = (
+            f"Cannot inspect source of '{func_name}'. "
+            f"Define a named function instead of a lambda."
         )
-        return
+        raise TypeError(msg) from None
+
+    tree = ast.parse(source)
+    sig = inspect.signature(func)
+    param_names = set(sig.parameters)
+
+    subscripts = _collect_subscripts(tree=tree, param_name=array_param_name)
+    if not subscripts:
+        return []
 
     if len(subscripts) > 1:
-        warnings.warn(
-            f"Function '{func_name}' has multiple `probs_array[...]` subscripts. "
-            f"Cannot validate indexing order automatically.",
-            UserWarning,
-            stacklevel=2,
-        )
-        return
-
-    index_names = _extract_bare_names(subscripts[0])
-
-    if index_names is None:
-        warnings.warn(
-            f"Function '{func_name}' uses computed indices in "
-            f"`probs_array[...]`. Cannot validate indexing order automatically.",
-            UserWarning,
-            stacklevel=2,
-        )
-        return
-
-    if index_names != expected:
         msg = (
-            f"In function '{func_name}', `probs_array` is indexed as "
-            f"`probs_array[{', '.join(index_names)}]` but the expected order "
-            f"(from the function signature) is "
-            f"`probs_array[{', '.join(expected)}]`."
+            f"Function '{func_name}' has multiple `{array_param_name}[...]` "
+            f"subscripts. Use exactly one subscript so the indexing order "
+            f"can be determined unambiguously."
         )
         raise ValueError(msg)
 
+    names = _extract_bare_names(subscripts[0])
 
-def _collect_probs_array_subscripts(tree: ast.Module) -> list[ast.expr]:
-    """Find all `probs_array[...]` subscript slice nodes in an AST."""
+    if names is not None and all(n in param_names for n in names):
+        return names
+
+    if names is not None:
+        non_params = [n for n in names if n not in param_names]
+        msg = (
+            f"Function '{func_name}' indexes `{array_param_name}` with names "
+            f"{non_params} that are not function parameters. All subscript "
+            f"indices must be function parameters (not aliased variables)."
+        )
+        raise ValueError(msg)
+
+    if _slice_references_params(slice_node=subscripts[0], param_names=param_names):
+        msg = (
+            f"Function '{func_name}' uses computed indices in "
+            f"`{array_param_name}[...]`. Use bare parameter names as indices. "
+            f"If you need a computed index, extract it into a separate "
+            f"function in the regime (e.g., "
+            f"`adjusted_period(period): return period - 1`) "
+            f"and use the function output as the index."
+        )
+        raise ValueError(msg)
+
+    return []
+
+
+def _slice_references_params(
+    *,
+    slice_node: ast.expr,
+    param_names: set[str],
+) -> bool:
+    """Check if any `ast.Name` in the slice is a function parameter.
+
+    Args:
+        slice_node: AST node for the subscript slice.
+        param_names: Set of function parameter names.
+
+    Returns:
+        `True` if any bare name in the slice matches a parameter.
+
+    """
+    return any(
+        isinstance(node, ast.Name) and node.id in param_names
+        for node in ast.walk(slice_node)
+    )
+
+
+def _collect_subscripts(
+    *,
+    tree: ast.Module,
+    param_name: str,
+) -> list[ast.expr]:
+    """Find all `param_name[...]` subscript slice nodes in an AST.
+
+    Args:
+        tree: Parsed AST module.
+        param_name: Name of the parameter to search for subscripts.
+
+    Returns:
+        List of AST slice nodes from matching subscripts.
+
+    """
     return [
         node.slice
         for node in ast.walk(tree)
         if isinstance(node, ast.Subscript)
         and isinstance(node.value, ast.Name)
-        and node.value.id == "probs_array"
+        and node.value.id == param_name
     ]
 
 
 def _extract_bare_names(slice_node: ast.expr) -> list[str] | None:
     """Extract bare variable names from a subscript slice.
 
-    Return ``None`` if any index element is not a bare `ast.Name` (e.g. a
+    Return `None` if any index element is not a bare `ast.Name` (e.g. a
     `BinOp` or `Call`).
     """
     if isinstance(slice_node, ast.Name):
@@ -489,7 +526,7 @@ def validate_transition_probs(
     if state_name is not None:
         raw_transition = regime.state_transitions[state_name]
         markov = _extract_markov_transition(
-            raw_transition,
+            raw_transition=raw_transition,
             state_name=state_name,
             regime_name=regime_name,
             target_regime_name=target_regime_name,
@@ -508,11 +545,29 @@ def validate_transition_probs(
         all_grids = _build_all_grids(regime)
         n_outcomes = len(model.regime_names_to_ids)
 
-    _validate_probs_array_indexing(func)
+    indexing_params = _get_func_indexing_params(
+        func=func, array_param_name="probs_array"
+    )
 
-    indexing_params = _get_indexing_params(func)
+    # Cross-check subscript order against signature order
+    sig = inspect.signature(func)
+    sig_order = [
+        p for p in sig.parameters if p != "probs_array" and p in indexing_params
+    ]
+    if indexing_params != sig_order:
+        func_name = getattr(func, "__name__", "<unknown>")
+        msg = (
+            f"In function '{func_name}', `probs_array` is indexed as "
+            f"`probs_array[{', '.join(indexing_params)}]` but the signature "
+            f"order is `probs_array[{', '.join(sig_order)}]`."
+        )
+        raise ValueError(msg)
+
     expected_shape = _build_expected_shape(
-        indexing_params, n_outcomes, all_grids, model
+        indexing_params=indexing_params,
+        n_outcomes=n_outcomes,
+        all_grids=all_grids,
+        model=model,
     )
 
     if probs.shape != expected_shape:
@@ -530,8 +585,8 @@ def validate_transition_probs(
 
 
 def _extract_markov_transition(
-    raw_transition: object,
     *,
+    raw_transition: object,
     state_name: str,
     regime_name: str,
     target_regime_name: str | None,
@@ -582,6 +637,7 @@ def _build_all_grids(regime: Regime) -> dict[str, DiscreteGrid]:
 
 
 def _build_expected_shape(
+    *,
     indexing_params: list[str],
     n_outcomes: int,
     all_grids: dict[str, DiscreteGrid],

@@ -21,10 +21,6 @@ from lcm.grids import (
 )
 from lcm.interfaces import SolveSimulateFunctionPair
 from lcm.model import Model
-from lcm.pandas_utils import (
-    initial_conditions_from_dataframe,
-    transition_probs_from_series,
-)
 from lcm.persistence import (
     SimulateSnapshot,
     SolveSnapshot,
@@ -60,11 +56,9 @@ __all__ = [
     "SolveSimulateFunctionPair",
     "SolveSnapshot",
     "categorical",
-    "initial_conditions_from_dataframe",
     "load_snapshot",
     "load_solution",
     "save_solution",
     "shocks",
-    "transition_probs_from_series",
     "validate_transition_probs",
 ]
