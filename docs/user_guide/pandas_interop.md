@@ -41,17 +41,51 @@ Continuous states are passed through as-is.
 Columns with pandas `Categorical` dtype are also supported and converted to codes via the
 same label mapping.
 
-## Transition Probabilities from a Series
+## Parameters from Pandas
 
-Build a transition probability array from a pandas Series with a named `MultiIndex`,
-replacing manual array construction where axis ordering is error-prone. Use
-`array_from_series` with a `param_path` that points to a `next_*` function:
+When parameters include array values — transition probabilities, wage profiles, or any
+array indexed by states — it is natural to prepare them as labeled `pd.Series` with a
+named `MultiIndex`. `params_from_pandas` converts an entire params dict in one call,
+replacing every `pd.Series` with the correctly shaped JAX array:
+
+```python
+from lcm import params_from_pandas
+
+params = {
+    "discount_factor": 0.95,
+    "working": {
+        "next_health": {
+            "probs_array": health_probs_series,  # pd.Series with MultiIndex
+        },
+        "utility": {"risk_aversion": 1.5},
+    },
+}
+
+converted = params_from_pandas(params=params, model=model)
+model.simulate(params=converted, ...)
+```
+
+The function broadcasts params at any nesting level (model / regime / function) against
+the model's params template — the same resolution rules as `model.solve(params=...)`.
+Scalars, existing arrays, and `MappingLeaf` / `SequenceLeaf` values pass through
+unchanged; only `pd.Series` values are converted.
+
+Each Series must have a named `MultiIndex` (or named `Index` for 1-D arrays) whose level
+names match the function's indexing parameters. Use `"age"` with actual age values for
+the age dimension, not `"period"`. Levels are reordered automatically, so you don't need
+to worry about getting the order right. For transition functions (`next_*`), include the
+outcome level too (`"next_health"` for state transitions, `"next_regime"` for regime
+transitions).
+
+## Under the Hood: `array_from_series`
+
+`params_from_pandas` calls `array_from_series` for each Series value. If you need
+fine-grained control over a single parameter — or want to inspect the conversion
+step by step — you can call it directly:
 
 ```python
 from lcm.pandas_utils import array_from_series
 
-# Series with named MultiIndex levels — use "age" (not "period")
-# Include both the indexing params AND the outcome level ("next_health")
 probs = pd.Series(
     [0.9, 0.1, 0.3, 0.7, 0.8, 0.2, 0.4, 0.6],
     index=pd.MultiIndex.from_tuples(
@@ -76,17 +110,13 @@ health_probs = array_from_series(
 )
 ```
 
-When `param_path` points to a `next_*` function, `array_from_series` automatically
-detects this and appends the outcome axis. The MultiIndex must include levels for both the
-indexing parameters and the outcome (`"next_health"` for state transitions,
-`"next_regime"` for regime transitions).
-
-Use `"age"` with actual age values from the model's `AgeGrid` for the age dimension (not
-`"period"`). The function reorders levels to match the declaration order automatically, so
-you don't need to worry about getting the level order right.
+`param_path` is a 1-to-3 element tuple identifying the parameter in the model:
+`(param,)`, `(func, param)`, or `(regime, func, param)`. When the path points to a
+`next_*` function, the outcome axis is appended automatically.
 
 Discrete state and action labels are mapped to integer codes using the same grids defined
-in the model. Age values are converted to period indices automatically.
+in the model. Age values outside the model's `AgeGrid` are silently dropped; missing grid
+points are filled with NaN.
 
 ## Validating Transition Probabilities
 
@@ -111,7 +141,7 @@ Raises `ValueError` if:
 - Any value is outside $[0, 1]$
 - Any row (slice along the last axis) doesn't sum to 1
 
-Call this after `array_from_series` or after manual array construction to catch
+Call this after `params_from_pandas` or after manual array construction to catch
 mistakes early.
 
 ## See Also
