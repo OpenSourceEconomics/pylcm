@@ -312,15 +312,20 @@ def _validate_regime_transition_single(
     )
 
 
-def _get_func_indexing_params(func: Callable) -> list[str]:
+def _get_func_indexing_params(
+    func: Callable,
+    array_param_name: str | None = None,
+) -> list[str]:
     """Return indexing parameter names by inspecting array subscripts.
 
-    Scan the function source for `param[x, y, ...]` subscripts where all
-    index elements are bare names that are also function parameters. Return
-    those index names in the order they appear in the subscript.
+    When `array_param_name` is given, inspect only that parameter's
+    subscripts. Otherwise scan all parameters to discover which one is
+    used as an array.
 
     Args:
         func: The function to inspect.
+        array_param_name: If known, the name of the array parameter to
+            inspect. Avoids false positives from other subscripted params.
 
     Returns:
         List of indexing parameter names, or empty list if no array
@@ -350,7 +355,9 @@ def _get_func_indexing_params(func: Callable) -> list[str]:
     sig = inspect.signature(func)
     param_names = set(sig.parameters)
 
-    for param_name in sig.parameters:
+    candidates = [array_param_name] if array_param_name is not None else sig.parameters
+
+    for param_name in candidates:
         subscripts = _collect_subscripts(tree=tree, param_name=param_name)
         if not subscripts:
             continue
@@ -615,7 +622,7 @@ def validate_transition_probs(
         all_grids = _build_all_grids(regime)
         n_outcomes = len(model.regime_names_to_ids)
 
-    indexing_params = _get_func_indexing_params(func)
+    indexing_params = _get_func_indexing_params(func, array_param_name="probs_array")
 
     # Cross-check subscript order against signature order
     sig = inspect.signature(func)

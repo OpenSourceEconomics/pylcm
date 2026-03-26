@@ -155,3 +155,18 @@ def test_dict_subscript_not_confused_with_array() -> None:
     """Dict subscripts (string keys) are not mistaken for array indexing."""
     result = _get_func_indexing_params(func=_dict_subscript)
     assert result == ["period"]
+
+
+def _param_subscripted_before_array(
+    lookup: Any, period: int, health: int, arr: Any
+) -> Any:
+    threshold = lookup[period]  # noqa: F841
+    return arr[period, health]
+
+
+def test_array_param_name_skips_false_positive() -> None:
+    """Passing array_param_name avoids false positive from earlier subscripts."""
+    result = _get_func_indexing_params(
+        func=_param_subscripted_before_array, array_param_name="arr"
+    )
+    assert result == ["period", "health"]

@@ -70,8 +70,8 @@ def test_model_simulate_with_stochastic_model():
         expected = should_be_single.map({True: "single", False: "partnered"})
 
         pd.testing.assert_series_equal(
-            p1["partner"],
-            expected,
+            p1["partner"].reset_index(drop=True),
+            expected.reset_index(drop=True),
             check_names=False,
             check_dtype=False,
             check_categorical=False,

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
-from dags.tree import tree_path_from_qname
+from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import Array
 
 from lcm.ages import AgeGrid
@@ -481,7 +481,11 @@ def _resolve_3_part_path(
         )
         raise ValueError(msg)
 
-    return _get_func_indexing_params(func), regime_name, func_name
+    return (
+        _get_func_indexing_params(func, array_param_name=param_name),
+        regime_name,
+        func_name,
+    )
 
 
 def _resolve_per_target_template_key(
@@ -517,8 +521,6 @@ def _resolve_per_target_template_key(
                 next_state = f"next_{state_name}"
                 template_key = f"to_{target}_{next_state}"
                 if template_key == func_name:
-                    from dags.tree import qname_from_tree_path  # noqa: PLC0415
-
                     return qname_from_tree_path((next_state, target))
 
     return None
@@ -554,7 +556,7 @@ def _resolve_2_part_path(
         sig = inspect.signature(func)
         if param_name not in sig.parameters:
             continue
-        indexing = _get_func_indexing_params(func)
+        indexing = _get_func_indexing_params(func, array_param_name=param_name)
         matches.append((indexing, regime_name))
 
     if not matches:
@@ -598,7 +600,7 @@ def _resolve_1_part_path(
             sig = inspect.signature(func)
             if param_name not in sig.parameters:
                 continue
-            indexing = _get_func_indexing_params(func)
+            indexing = _get_func_indexing_params(func, array_param_name=param_name)
             matches.append((indexing, regime_name, func_name))
 
     if not matches:
