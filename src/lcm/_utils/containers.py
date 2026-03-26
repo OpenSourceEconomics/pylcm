@@ -1,15 +1,8 @@
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import fields
-from itertools import chain
 from types import MappingProxyType
 from typing import Any, TypeVar, cast
-
-from dags.tree import flatten_to_qnames, unflatten_from_qnames
-
-from lcm.params import MappingLeaf
-from lcm.params.sequence_leaf import SequenceLeaf
-from lcm.typing import RegimeName
 
 T = TypeVar("T")
 
@@ -23,6 +16,9 @@ class Unset:
 
 def _make_immutable(value: Any) -> Any:  # noqa: ANN401
     """Recursively convert a value to its immutable equivalent."""
+    from lcm.params import MappingLeaf  # noqa: PLC0415
+    from lcm.params.sequence_leaf import SequenceLeaf  # noqa: PLC0415
+
     if isinstance(value, (MappingLeaf, SequenceLeaf)):
         return value  # already immutable by construction
     if isinstance(value, (MappingProxyType, tuple, frozenset)):
@@ -62,6 +58,9 @@ def ensure_containers_are_immutable[K, V](
 
 def _make_mutable(value: Any) -> Any:  # noqa: ANN401, PLR0911
     """Recursively convert a value to its mutable equivalent."""
+    from lcm.params import MappingLeaf  # noqa: PLC0415
+    from lcm.params.sequence_leaf import SequenceLeaf  # noqa: PLC0415
+
     if isinstance(value, MappingLeaf):
         return {k: _make_mutable(v) for k, v in value.data.items()}
     if isinstance(value, SequenceLeaf):
@@ -100,6 +99,8 @@ def ensure_containers_are_mutable[K, V](value: Mapping[K, V]) -> dict[K, V]:
 
 
 def find_duplicates(*containers: Iterable[T]) -> set[T]:
+    from itertools import chain  # noqa: PLC0415
+
     combined = chain.from_iterable(containers)
     counts = Counter(combined)
     return {v for v, count in counts.items() if count > 1}
@@ -138,11 +139,3 @@ def first_non_none(*args: T | None) -> T:
         if arg is not None:
             return arg
     raise ValueError("All arguments are None")
-
-
-def flatten_regime_namespace(d: Mapping[RegimeName, Any]) -> MappingProxyType[str, Any]:
-    return MappingProxyType(flatten_to_qnames(d))
-
-
-def unflatten_regime_namespace(d: dict[str, Any]) -> dict[RegimeName, Any]:
-    return unflatten_from_qnames(d)  # ty: ignore[invalid-return-type]

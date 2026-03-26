@@ -2,7 +2,7 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_equal
 
-from lcm.ndimage import (
+from lcm.regime_building.ndimage import (
     _compute_indices_and_weights,
     _multiply_all,
     _round_half_away_from_zero,

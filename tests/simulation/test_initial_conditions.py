@@ -8,8 +8,8 @@ import pytest
 from lcm import DiscreteGrid, IrregSpacedGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidInitialConditionsError
-from lcm.input_processing.params_processing import process_params
-from lcm.simulation.utils import build_initial_states
+from lcm.params.processing import process_params
+from lcm.simulation.transitions import build_initial_states
 from lcm.simulation.validation import validate_initial_conditions
 from lcm.typing import (
     BoolND,

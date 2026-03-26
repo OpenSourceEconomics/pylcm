@@ -1,34 +1,26 @@
 import functools
+import inspect
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal, cast
 
+import jax
 import pandas as pd
-from dags.signature import rename_arguments, with_signature
+from dags import concatenate_functions, get_annotations, with_signature
+from dags.signature import rename_arguments
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import Array
 from jax import numpy as jnp
 
+from lcm._utils.containers import ensure_containers_are_immutable
+from lcm._utils.dispatchers import vmap_1d
+from lcm._utils.namespace import flatten_regime_namespace, unflatten_regime_namespace
+from lcm._utils.state_action_space import create_state_action_space
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, format_messages
-from lcm.function_representation import StateSpaceInfo
-from lcm.grid_helpers import get_irreg_coordinate
-from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
-from lcm.input_processing.create_regime_params_template import (
-    create_regime_params_template,
-)
-from lcm.input_processing.regime_components import (
-    build_argmax_and_max_Q_over_a_functions,
-    build_max_Q_over_a_functions,
-    build_next_state_simulation_functions,
-    build_Q_and_F_functions,
-    build_regime_transition_probs_functions,
-)
-from lcm.input_processing.util import (
-    get_grids,
-    get_variable_info,
-)
+from lcm.grids import DiscreteGrid, Grid
+from lcm.grids.helpers import get_irreg_coordinate
 from lcm.interfaces import (
     InternalRegime,
     SimulateFunctions,
@@ -36,10 +28,19 @@ from lcm.interfaces import (
     SolveSimulateFunctionPair,
     StateActionSpace,
 )
-from lcm.ndimage import map_coordinates
+from lcm.params.regime_template import create_regime_params_template
 from lcm.regime import MarkovTransition, Regime, _collect_state_transitions
+from lcm.regime_building.max_Q_over_a import (
+    _get_vmap_params,
+    build_argmax_and_max_Q_over_a_functions,
+    build_max_Q_over_a_functions,
+)
+from lcm.regime_building.ndimage import map_coordinates
+from lcm.regime_building.next_state import build_next_state_simulation_functions
+from lcm.regime_building.Q_and_F import build_Q_and_F_functions
+from lcm.regime_building.V import StateSpaceInfo
+from lcm.regime_building.variable_info import get_grids, get_variable_info
 from lcm.shocks import _ShockGrid
-from lcm.state_action_space import create_state_action_space
 from lcm.typing import (
     Float1D,
     FunctionsMapping,
@@ -51,11 +52,7 @@ from lcm.typing import (
     RegimeTransitionFunction,
     TransitionFunctionsMapping,
     UserFunction,
-)
-from lcm.utils import (
-    ensure_containers_are_immutable,
-    flatten_regime_namespace,
-    unflatten_regime_namespace,
+    VmappedRegimeTransitionFunction,
 )
 
 
@@ -1051,28 +1048,161 @@ def _create_state_space_info(regime: Regime) -> StateSpaceInfo:
         State space information for the regime.
 
     """
-    vi = get_variable_info(regime)
-    grids = get_grids(regime)
+    from lcm.regime_building.V import create_state_space_info  # noqa: PLC0415
 
-    state_names = vi.query("is_state").index.tolist()
+    return create_state_space_info(regime)
 
-    discrete_states = {
-        name: grid_spec
-        for name, grid_spec in grids.items()
-        if (name in state_names and isinstance(grid_spec, DiscreteGrid))
-        or isinstance(grid_spec, _ShockGrid)
-    }
 
-    continuous_states = {
-        name: grid_spec
-        for name, grid_spec in grids.items()
-        if name in state_names
-        and isinstance(grid_spec, ContinuousGrid)
-        and not isinstance(grid_spec, _ShockGrid)
-    }
+def build_regime_transition_probs_functions(
+    *,
+    functions: FunctionsMapping,
+    compute_regime_transition_probs: InternalUserFunction,
+    grids: MappingProxyType[str, Grid],
+    regime_names_to_ids: RegimeNamesToIds,
+    regime_params_template: RegimeParamsTemplate,
+    is_stochastic: bool,
+    enable_jit: bool,
+    phase: Literal["solve", "simulate"],
+) -> RegimeTransitionFunction | VmappedRegimeTransitionFunction:
+    """Build a regime transition probability function for the given phase.
 
-    return StateSpaceInfo(
-        state_names=tuple(state_names),
-        discrete_states=MappingProxyType(discrete_states),
-        continuous_states=MappingProxyType(continuous_states),
+    Args:
+        functions: Immutable mapping of function names to internal user functions.
+        compute_regime_transition_probs: The user's next_regime function.
+        grids: Immutable mapping of grid names to grid objects.
+        regime_names_to_ids: Mapping from regime names to integer indices.
+        regime_params_template: The regime's parameter template.
+        is_stochastic: Whether the regime transition is stochastic.
+        enable_jit: Whether to JIT-compile the functions.
+        phase: Which phase to build for.
+
+    """
+    # Wrap deterministic next_regime to return one-hot probability array
+    if is_stochastic:
+        probs_func = compute_regime_transition_probs
+    else:
+        probs_func = _wrap_deterministic_regime_transition(
+            func=compute_regime_transition_probs,
+            regime_names_to_ids=regime_names_to_ids,
+        )
+
+    # Wrap to convert array output to dict format
+    wrapped_regime_transition_probs = _wrap_regime_transition_probs(
+        func=probs_func, regime_names_to_ids=regime_names_to_ids
     )
+
+    functions_pool = dict(functions) | {
+        "regime_transition_probs": wrapped_regime_transition_probs
+    }
+
+    next_regime = concatenate_functions(
+        functions=functions_pool,
+        targets="regime_transition_probs",
+        return_type="dict",
+        enforce_signature=False,
+        set_annotations=True,
+    )
+    if phase == "solve":
+        return jax.jit(next_regime) if enable_jit else next_regime
+
+    sig_args = list(inspect.signature(next_regime).parameters)
+
+    # We do this because a transition function without any parameters will throw
+    # an error with vmap
+    next_regime_accepting_all = with_signature(
+        next_regime,
+        args=sig_args + [state for state in grids if state not in sig_args],
+    )
+
+    next_regime_vmapped = vmap_1d(
+        func=next_regime_accepting_all,
+        variables=_get_vmap_params(
+            all_args=tuple(inspect.signature(next_regime_accepting_all).parameters),
+            regime_params_template=regime_params_template,
+        ),
+    )
+
+    return jax.jit(next_regime_vmapped) if enable_jit else next_regime_vmapped
+
+
+def _wrap_regime_transition_probs(
+    *,
+    func: InternalUserFunction,
+    regime_names_to_ids: RegimeNamesToIds,
+) -> InternalUserFunction:
+    """Wrap next_regime function to convert array output to dict format.
+
+    The next_regime function returns a JAX array of probabilities indexed by
+    the regime's id. This wrapper converts the array to dict format for internal
+    processing.
+
+    Args:
+        func: The user's next_regime function (with qname parameters).
+        regime_names_to_ids: Mapping from regime names to integer indices.
+
+    Returns:
+        A wrapped function that returns MappingProxyType[str, float|Array].
+
+    """
+    # Get regime names in index order from regime_names_to_ids
+    regime_names_by_id: list[tuple[int, str]] = sorted(
+        [(idx, name) for name, idx in regime_names_to_ids.items()],
+        key=lambda x: x[0],
+    )
+    regime_names = [name for _, name in regime_names_by_id]
+
+    annotations = get_annotations(func)
+    return_annotation = annotations.pop("return", "dict[str, Any]")
+
+    @with_signature(
+        args=annotations,
+        return_annotation=return_annotation,
+    )
+    @functools.wraps(func)
+    def wrapped(
+        *args: Array | int,
+        **kwargs: Array | int,
+    ) -> MappingProxyType[str, Any]:
+        result = func(*args, **kwargs)
+        # Convert array to dict using ordering by regime id
+        return MappingProxyType(
+            {name: result[idx] for idx, name in enumerate(regime_names)}
+        )
+
+    return wrapped
+
+
+def _wrap_deterministic_regime_transition(
+    *,
+    func: InternalUserFunction,
+    regime_names_to_ids: RegimeNamesToIds,
+) -> InternalUserFunction:
+    """Wrap deterministic next_regime to return one-hot probability array.
+
+    Converts a deterministic regime transition function that returns an integer
+    regime ID to a function that returns a one-hot probability array, matching
+    the interface of stochastic regime transitions.
+
+    Args:
+        func: The user's deterministic next_regime function (returns int).
+        regime_names_to_ids: Mapping from regime names to integer indices.
+
+    Returns:
+        A wrapped function that returns a one-hot probability array.
+
+    """
+    n_regimes = len(regime_names_to_ids)
+
+    # Preserve original annotations but update return type
+    annotations = {k: v for k, v in get_annotations(func).items() if k != "return"}
+
+    @with_signature(args=annotations, return_annotation="Array")
+    @functools.wraps(func)
+    def wrapped(
+        *args: Array | int,
+        **kwargs: Array | int,
+    ) -> Array:
+        regime_idx = func(*args, **kwargs)
+        return jax.nn.one_hot(regime_idx, n_regimes)
+
+    return wrapped

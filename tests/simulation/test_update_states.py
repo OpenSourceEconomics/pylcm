@@ -3,7 +3,7 @@ from types import MappingProxyType
 import jax.numpy as jnp
 from numpy.testing import assert_array_equal
 
-from lcm.simulation.utils import _update_states_for_subjects
+from lcm.simulation.transitions import _update_states_for_subjects
 
 
 def test_update_states_strips_next_prefix():

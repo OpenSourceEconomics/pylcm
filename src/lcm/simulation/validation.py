@@ -7,16 +7,16 @@ import pandas as pd
 from jax import Array
 from jax import numpy as jnp
 
+from lcm._utils.functools import get_union_of_args
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
     InvalidInitialConditionsError,
     format_messages,
 )
-from lcm.functools import get_union_of_args
 from lcm.grids import DiscreteGrid
 from lcm.interfaces import InternalRegime
-from lcm.Q_and_F import _get_feasibility
-from lcm.simulation.utils import get_regime_state_names
+from lcm.regime_building.Q_and_F import _get_feasibility
+from lcm.simulation.transitions import get_regime_state_names
 from lcm.typing import (
     InternalParams,
     RegimeName,

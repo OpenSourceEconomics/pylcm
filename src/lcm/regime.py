@@ -7,6 +7,9 @@ from typing import Any, Literal, TypeAliasType, cast, overload
 
 from dags.tree import QNAME_DELIMITER
 
+from lcm._utils.containers import (
+    ensure_containers_are_immutable,
+)
 from lcm.exceptions import RegimeInitializationError, format_messages
 from lcm.grids import DiscreteGrid, Grid
 from lcm.interfaces import SolveSimulateFunctionPair
@@ -17,9 +20,6 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     UserFunction,
-)
-from lcm.utils import (
-    ensure_containers_are_immutable,
 )
 
 

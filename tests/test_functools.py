@@ -6,7 +6,7 @@ import pytest
 from jax import vmap
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm.functools import (
+from lcm._utils.functools import (
     all_as_args,
     all_as_kwargs,
     allow_args,

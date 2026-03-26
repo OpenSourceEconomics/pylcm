@@ -7,8 +7,8 @@ with contextlib.suppress(ImportError):
     import pdbp  # noqa: F401
 
 from lcm import shocks
+from lcm._utils.error_handling import validate_transition_probs
 from lcm.ages import AgeGrid
-from lcm.error_handling import validate_transition_probs
 from lcm.grids import (
     DiscreteGrid,
     IrregSpacedGrid,

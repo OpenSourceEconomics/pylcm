@@ -6,6 +6,8 @@ from typing import Any, cast
 
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
 
+from lcm._utils.containers import ensure_containers_are_immutable
+from lcm._utils.namespace import flatten_regime_namespace
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.interfaces import InternalRegime
 from lcm.typing import (
@@ -14,10 +16,6 @@ from lcm.typing import (
     RegimeName,
     RegimeParamsTemplate,
     UserParams,
-)
-from lcm.utils import (
-    ensure_containers_are_immutable,
-    flatten_regime_namespace,
 )
 
 _NUM_PARTS_FUNCTION_PARAM = 3

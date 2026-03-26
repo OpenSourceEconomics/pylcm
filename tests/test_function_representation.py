@@ -6,8 +6,9 @@ import jax.numpy as jnp
 import pytest
 
 from lcm import LinSpacedGrid
-from lcm.dispatchers import productmap
-from lcm.function_representation import (
+from lcm._utils.dispatchers import productmap
+from lcm.grids import ContinuousGrid, DiscreteGrid
+from lcm.regime_building.V import (
     StateSpaceInfo,
     _fail_if_interpolation_axes_are_not_last,
     _get_coordinate_finder,
@@ -15,7 +16,6 @@ from lcm.function_representation import (
     _get_lookup_function,
     get_V_interpolator,
 )
-from lcm.grids import ContinuousGrid, DiscreteGrid
 
 
 @pytest.fixture

@@ -5,8 +5,8 @@ from typing import Literal, TypeVar, cast
 
 from jax import Array, vmap
 
-from lcm.functools import allow_args, allow_only_kwargs
-from lcm.utils import find_duplicates
+from lcm._utils.containers import find_duplicates
+from lcm._utils.functools import allow_args, allow_only_kwargs
 
 FunctionWithArrayReturn = TypeVar(
     "FunctionWithArrayReturn",

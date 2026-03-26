@@ -11,10 +11,10 @@ import pandas as pd
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import Array
 
-from lcm.ages import AgeGrid
-from lcm.error_handling import (
+from lcm._utils.error_handling import (
     _get_func_indexing_params,
 )
+from lcm.ages import AgeGrid
 from lcm.grids import DiscreteGrid, IrregSpacedGrid
 from lcm.model import Model
 from lcm.params import MappingLeaf

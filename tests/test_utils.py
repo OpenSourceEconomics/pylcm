@@ -1,6 +1,6 @@
 from types import MappingProxyType
 
-from lcm.utils import (
+from lcm._utils.containers import (
     ensure_containers_are_immutable,
     ensure_containers_are_mutable,
     find_duplicates,

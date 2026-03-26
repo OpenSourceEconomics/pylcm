@@ -9,11 +9,11 @@ from pandas.testing import assert_frame_equal
 
 from lcm import DiscreteGrid
 from lcm.ages import AgeGrid
-from lcm.input_processing.regime_processing import (
+from lcm.regime_building.processing import (
     _rename_params_to_qnames,
     process_regimes,
 )
-from lcm.input_processing.util import get_grids, get_variable_info
+from lcm.regime_building.variable_info import get_grids, get_variable_info
 from tests.regime_mock import RegimeMock
 from tests.test_models.deterministic.base import dead, working_life
 

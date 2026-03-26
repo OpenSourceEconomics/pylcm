@@ -137,11 +137,11 @@ per-file-ignores."explanations/*" = [
   "T201",   # print found
   "T203",   # pprint found
 ]
-per-file-ignores."src/lcm/functools.py" = [
+per-file-ignores."src/lcm/_utils/functools.py" = [
   "ANN401", # Dynamically typed expressions (Any)
 ]
-per-file-ignores."src/lcm/*Q_*.py" = [
-  "N999", # Module name mixing uppercase and lowercase
+per-file-ignores."src/lcm/**/*[A-Z]*.py" = [
+  "N999", # Module name mixing uppercase and lowercase (Q_and_F.py, V.py, max_Q_over_a.py)
 ]
 per-file-ignores."tests/*" = [
   "ANN",     # Annotations

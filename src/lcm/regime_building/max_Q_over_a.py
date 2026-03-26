@@ -2,19 +2,24 @@ import inspect
 from collections.abc import Callable
 from types import MappingProxyType
 
+import jax
 import jax.numpy as jnp
 from dags import with_signature
 from jax import Array
 
-from lcm.argmax import argmax_and_max
-from lcm.dispatchers import productmap
+from lcm._utils.dispatchers import productmap, simulation_spacemap
+from lcm.interfaces import StateActionSpace
+from lcm.params.processing import get_flat_param_names
+from lcm.regime_building.argmax import argmax_and_max
 from lcm.typing import (
     ArgmaxQOverAFunction,
     BoolND,
     FloatND,
     IntND,
     MaxQOverAFunction,
+    QAndFFunction,
     RegimeName,
+    RegimeParamsTemplate,
 )
 
 
@@ -171,3 +176,87 @@ def _get_extra_param_names(
         and param.kind
         not in {inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL}
     )
+
+
+def build_max_Q_over_a_functions(
+    *,
+    state_action_space: StateActionSpace,
+    Q_and_F_functions: MappingProxyType[int, QAndFFunction],
+    enable_jit: bool,
+) -> MappingProxyType[int, MaxQOverAFunction]:
+    max_Q_over_a_functions = {}
+    for period, Q_and_F in Q_and_F_functions.items():
+        max_Q_over_a_functions[period] = _build_max_Q_over_a_function(
+            state_action_space=state_action_space,
+            Q_and_F=Q_and_F,
+            enable_jit=enable_jit,
+        )
+    return MappingProxyType(max_Q_over_a_functions)
+
+
+def _build_max_Q_over_a_function(
+    *,
+    state_action_space: StateActionSpace,
+    Q_and_F: QAndFFunction,
+    enable_jit: bool,
+) -> MaxQOverAFunction:
+    max_Q_over_a = get_max_Q_over_a(
+        Q_and_F=Q_and_F,
+        action_names=state_action_space.action_names,
+        state_names=state_action_space.state_names,
+    )
+
+    if enable_jit:
+        max_Q_over_a = jax.jit(max_Q_over_a)
+
+    return max_Q_over_a
+
+
+def build_argmax_and_max_Q_over_a_functions(
+    *,
+    state_action_space: StateActionSpace,
+    Q_and_F_functions: MappingProxyType[int, QAndFFunction],
+    enable_jit: bool,
+) -> MappingProxyType[int, ArgmaxQOverAFunction]:
+    argmax_and_max_Q_over_a_functions = {}
+    for period, Q_and_F in Q_and_F_functions.items():
+        func = _build_argmax_and_max_Q_over_a_function(
+            state_action_space=state_action_space,
+            Q_and_F=Q_and_F,
+            enable_jit=enable_jit,
+        )
+        argmax_and_max_Q_over_a_functions[period] = simulation_spacemap(
+            func=func,
+            action_names=(),
+            state_names=tuple(state_action_space.states),
+        )
+    return MappingProxyType(argmax_and_max_Q_over_a_functions)
+
+
+def _build_argmax_and_max_Q_over_a_function(
+    *,
+    state_action_space: StateActionSpace,
+    Q_and_F: QAndFFunction,
+    enable_jit: bool,
+) -> ArgmaxQOverAFunction:
+    argmax_and_max_Q_over_a = get_argmax_and_max_Q_over_a(
+        Q_and_F=Q_and_F,
+        action_names=state_action_space.action_names,
+        state_names=state_action_space.state_names,
+    )
+
+    if enable_jit:
+        argmax_and_max_Q_over_a = jax.jit(argmax_and_max_Q_over_a)
+
+    return argmax_and_max_Q_over_a
+
+
+def _get_vmap_params(
+    *,
+    all_args: tuple[str, ...],
+    regime_params_template: RegimeParamsTemplate,
+) -> tuple[str, ...]:
+    """Get parameter names that should be vmapped (states and actions)."""
+    non_vmap = {"period", "age"} | get_flat_param_names(regime_params_template)
+    # Filter for states and actions
+    return tuple(arg for arg in all_args if arg not in non_vmap)

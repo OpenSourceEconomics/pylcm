@@ -25,7 +25,7 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.dispatchers import _base_productmap
+from lcm._utils.dispatchers import _base_productmap
 from lcm.typing import (
     BoolND,
     ContinuousAction,
