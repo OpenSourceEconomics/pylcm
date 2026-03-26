@@ -12,7 +12,7 @@ from lcm.grid_helpers import get_irreg_coordinate
 from lcm.grids import ContinuousGrid, DiscreteGrid, IrregSpacedGrid
 from lcm.ndimage import map_coordinates
 from lcm.shocks import _ShockGrid
-from lcm.typing import FloatND, ScalarFloat, ScalarInt
+from lcm.typing import FloatND, ScalarFloat
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -65,7 +65,8 @@ def get_V_interpolator(
 
     The resulting function roughly does the following steps:
 
-    - It translates values of discrete variables into positions.
+    - It looks up values at discrete variable positions (integer codes index directly
+      into the array).
     - It translates values of continuous variables into coordinates needed for
       interpolation via jax.scipy.ndimage.map_coordinates.
     - It performs the interpolation.
@@ -90,32 +91,19 @@ def get_V_interpolator(
             state space as an analytical function.
 
     """
-    # ==================================================================================
-    # check inputs
-    # ==================================================================================
     _fail_if_interpolation_axes_are_not_last(state_space_info)
     _need_interpolation = bool(state_space_info.continuous_states)
 
-    # ==================================================================================
-    # create functions to look up position of discrete variables from labels
-    # ==================================================================================
     funcs: dict[
         str,
-        Callable[..., ScalarInt] | Callable[..., ScalarFloat] | Callable[..., FloatND],
+        Callable[..., ScalarFloat] | Callable[..., FloatND],
     ] = {}
 
-    for var in state_space_info.discrete_states:
-        funcs[f"__{var}_pos__"] = _get_label_translator(
-            in_name=state_prefix + var,
-        )
-
-    # ==================================================================================
-    # create a function for the discrete lookup
-    # ==================================================================================
-    # lookup is positional, so the inputs of the wrapper functions need to be the
-    # outcomes of tranlating labels into positions
-    _internal_axes = [f"__{var}_pos__" for var in state_space_info.state_names]
-    _discrete_axes = [ax for ax in _internal_axes if ax in funcs]
+    _discrete_axes = [
+        state_prefix + var
+        for var in state_space_info.state_names
+        if var in state_space_info.discrete_states
+    ]
 
     _out_name = "__interpolation_data__" if _need_interpolation else "__fval__"
     funcs[_out_name] = _get_lookup_function(
@@ -124,18 +112,12 @@ def get_V_interpolator(
     )
 
     if _need_interpolation:
-        # ==============================================================================
-        # create functions to find coordinates for the interpolation
-        # ==============================================================================
         for var, grid_spec in state_space_info.continuous_states.items():
             funcs[f"__{var}_coord__"] = _get_coordinate_finder(
                 in_name=state_prefix + var,
                 grid=grid_spec,
             )
 
-        # ==============================================================================
-        # create interpolation function
-        # ==============================================================================
         _continuous_axes = [
             f"__{var}_coord__"
             for var in state_space_info.state_names
@@ -151,32 +133,6 @@ def get_V_interpolator(
         targets="__fval__",
         set_annotations=True,
     )
-
-
-def _get_label_translator(
-    in_name: str,
-) -> Callable[..., ScalarInt]:
-    """Create a function that translates a label into a position in a list of labels.
-
-    Currently, only labels are supported that are themselves indices. The label
-    translator in this case is thus just the identity function.
-
-    Args:
-        in_name: Name of the variable that provides the label in the signature of the
-            resulting function.
-
-    Returns:
-        A callable with the keyword only argument `in_name` that converts a label into a
-        position in a list of labels.
-
-    """
-
-    @with_signature(args=dict.fromkeys([in_name], "Array"), return_annotation="Array")
-    def translate_label(*args: Array, **kwargs: Array) -> Array:
-        kwargs = all_as_kwargs(args=args, kwargs=kwargs, arg_names=[in_name])
-        return kwargs[in_name]
-
-    return translate_label
 
 
 def _get_lookup_function(
