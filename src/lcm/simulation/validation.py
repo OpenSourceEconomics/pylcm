@@ -371,7 +371,8 @@ def _validate_discrete_state_values(
         ).index:
             grid = internal_regime.grids[state_name]
             if isinstance(grid, DiscreteGrid):
-                discrete_valid_codes[state_name] = set(grid.codes)
+                existing = discrete_valid_codes.get(state_name, set())
+                discrete_valid_codes[state_name] = existing | set(grid.codes)
 
     for state_name, valid_codes in discrete_valid_codes.items():
         if state_name not in initial_states:
