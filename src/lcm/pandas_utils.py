@@ -308,7 +308,7 @@ def array_from_series(
 
     indexing_params = _get_func_indexing_params(func, param_name)
 
-    if not indexing_params and not func_name.startswith("next_"):
+    if not indexing_params:
         return jnp.array(sr.to_numpy(), dtype=float)
 
     grids = _resolve_categoricals(
@@ -322,12 +322,17 @@ def array_from_series(
         indexing_params=display_params, all_grids=grids, ages=model.ages
     )
 
-    # Append outcome axis for transition functions (next_* functions)
-    if func_name.startswith("next_"):
-        outcome_mapping = _build_outcome_mapping(
-            func_name=func_name, all_grids=grids, model=model
-        )
-        level_mappings = (*level_mappings, outcome_mapping)
+    # Append outcome axis for transition probability arrays (next_* functions
+    # where the Series has a next_* level in its MultiIndex)
+    if func_name.startswith("next_") and isinstance(sr.index, pd.MultiIndex):
+        next_levels = [
+            n for n in sr.index.names if isinstance(n, str) and n.startswith("next_")
+        ]
+        if next_levels:
+            outcome_mapping = _build_outcome_mapping(
+                func_name=func_name, all_grids=grids, model=model
+            )
+            level_mappings = (*level_mappings, outcome_mapping)
 
     if "age" in display_params:
         _fail_if_period_level(sr)
@@ -367,9 +372,16 @@ def _resolve_categoricals(
 
     """
     grids: dict[str, DiscreteGrid] = {}
-    grids.update(_build_discrete_grid_lookup(model.regimes))
     if regime_name is not None:
-        grids.update(_build_discrete_action_lookup(model.regimes[regime_name]))
+        # Use only this regime's grids (avoids cross-regime inconsistencies
+        # like health having different categories pre-65 vs post-65).
+        regime = model.regimes[regime_name]
+        grids.update(
+            {n: g for n, g in regime.states.items() if isinstance(g, DiscreteGrid)}
+        )
+        grids.update(_build_discrete_action_lookup(regime))
+    else:
+        grids.update(_build_discrete_grid_lookup(model.regimes))
     if categoricals is not None:
         for name, entry in categoricals.items():
             grid = _resolve_categorical_entry(
@@ -729,7 +741,7 @@ def _validate_state_columns(
     *,
     state_columns: set[str],
     regimes: Mapping[str, Regime],
-    initial_regimes: pd.Series,
+    initial_regimes: list[str],
 ) -> None:
     """Validate that DataFrame columns match model states."""
     all_states = _collect_all_state_names(
@@ -756,11 +768,11 @@ def _validate_state_columns(
 def _collect_all_state_names(
     *,
     regimes: Mapping[str, Regime],
-    initial_regimes: pd.Series,
+    initial_regimes: list[str],
 ) -> set[str]:
     """Collect all non-shock state names from regimes present in initial_regimes."""
     state_names: set[str] = set()
-    for regime_name in initial_regimes.unique():
+    for regime_name in set(initial_regimes):
         regime = regimes[regime_name]
         for name, grid in regime.states.items():
             if not isinstance(grid, _ShockGrid):

@@ -19,6 +19,7 @@ from lcm.pandas_utils import (
     _build_discrete_grid_lookup,
     array_from_series,
     initial_conditions_from_dataframe,
+    params_from_pandas,
 )
 from tests.test_models.basic_discrete import (
     Health,
@@ -327,29 +328,45 @@ class _HetRegimeId:
     dead: int
 
 
+def _het_next_regime() -> int:
+    return _HetRegimeId.dead
+
+
+def _het_utility(wealth: float, health: int, bonus: float) -> float:
+    return wealth + health + bonus
+
+
+def _het_next_wealth(wealth: float) -> float:
+    return wealth
+
+
+def _het_dead_utility() -> float:
+    return 0.0
+
+
 def _get_heterogeneous_health_model() -> Model:
     """Model where 'health' has different categories per regime."""
     pre65 = Regime(
-        transition=lambda: _HetRegimeId.dead,
+        transition=_het_next_regime,
         states={
             "health": DiscreteGrid(HealthWithDisability),
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
         },
-        state_transitions={"health": None, "wealth": lambda wealth: wealth},
-        functions={"utility": lambda wealth, health: wealth + health},
+        state_transitions={"health": None, "wealth": _het_next_wealth},
+        functions={"utility": _het_utility},
     )
     post65 = Regime(
-        transition=lambda: _HetRegimeId.dead,
+        transition=_het_next_regime,
         states={
             "health": DiscreteGrid(Health),
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
         },
-        state_transitions={"health": None, "wealth": lambda wealth: wealth},
-        functions={"utility": lambda wealth, health: wealth + health},
+        state_transitions={"health": None, "wealth": _het_next_wealth},
+        functions={"utility": _het_utility},
     )
     dead = Regime(
         transition=None,
-        functions={"utility": lambda: 0.0},
+        functions={"utility": _het_dead_utility},
     )
     return Model(
         regimes={"pre65": pre65, "post65": post65, "dead": dead},
@@ -369,7 +386,7 @@ def test_initial_conditions_heterogeneous_health_grids() -> None:
             "age": [50.0, 50.0, 70.0, 70.0],
         }
     )
-    result = initial_conditions_from_dataframe(df, model=model)
+    result = initial_conditions_from_dataframe(df=df, model=model)
 
     # pre65: disabled=0, good=2; post65: bad=0, good=1
     assert jnp.array_equal(result["health"], jnp.array([0, 2, 0, 1]))
@@ -385,6 +402,54 @@ def test_initial_conditions_heterogeneous_health_grids() -> None:
             ]
         ),
     )
+
+
+def test_convert_series_heterogeneous_grids() -> None:
+    """convert_series_in_params handles per-regime grid lookup."""
+    model = _get_heterogeneous_health_model()
+    ages = model.ages.exact_values
+    sr = pd.Series([1.0, 2.0, 3.0, 4.0], index=pd.Index(ages, name="age"))
+    # Should not raise despite heterogeneous health grids
+    params_from_pandas(params={"bonus": sr}, model=model)
+
+
+def test_convert_series_next_function_no_outcome_axis() -> None:
+    """Period-indexed Series on a next_* function should not get outcome axis."""
+
+    @categorical(ordered=False)
+    class _RId:
+        a: int
+        dead: int
+
+    def _next_regime() -> int:
+        return _RId.dead
+
+    def _next_wealth(wealth: float, rate: float, period: int) -> float:  # noqa: ARG001
+        return wealth * rate
+
+    def _utility(wealth: float) -> float:
+        return wealth
+
+    def _dead_utility() -> float:
+        return 0.0
+
+    a = Regime(
+        transition=_next_regime,
+        states={"wealth": LinSpacedGrid(start=0, stop=100, n_points=5)},
+        state_transitions={"wealth": _next_wealth},
+        functions={"utility": _utility},
+    )
+    dead = Regime(transition=None, functions={"utility": _dead_utility})
+    m = Model(
+        regimes={"a": a, "dead": dead},
+        ages=AgeGrid(start=25, stop=75, step="10Y"),
+        regime_id_class=_RId,
+    )
+    ages = m.ages.exact_values
+    sr = pd.Series(range(len(ages)), index=pd.Index(ages, name="age"), dtype=float)
+    # Should not raise KeyError on continuous state 'wealth'
+    result = params_from_pandas(params={"rate": sr}, model=m)
+    assert result is not None
 
 
 def _make_partner_probs_array():
