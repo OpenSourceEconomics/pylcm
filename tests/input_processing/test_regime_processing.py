@@ -44,8 +44,6 @@ def test_get_variable_info(binary_category_class):
             "is_action": [True, False],
             "is_continuous": [False, False],
             "is_discrete": [True, True],
-            "enters_concurrent_valuation": [False, True],
-            "enters_transition": [True, False],
         },
         index=pd.Index(["a", "c"]),
     )

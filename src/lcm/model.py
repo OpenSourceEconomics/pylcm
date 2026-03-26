@@ -8,6 +8,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import cast
 
+from dags import get_ancestors
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
 from jax import Array
 
@@ -22,7 +23,6 @@ from lcm.input_processing.regime_processing import (
     InternalRegime,
     process_regimes,
 )
-from lcm.input_processing.util import get_variable_info
 from lcm.logging import LogLevel, get_logger
 from lcm.persistence import (
     save_simulate_snapshot,
@@ -430,20 +430,27 @@ def _validate_all_variables_used(regimes: Mapping[str, Regime]) -> list[str]:
     error_messages = []
 
     for regime_name, regime in regimes.items():
-        variable_info = get_variable_info(regime)
-        is_used = (
-            variable_info["enters_concurrent_valuation"]
-            | variable_info["enters_transition"]
+        variable_names = set(regime.states) | set(regime.actions)
+        user_functions = dict(regime.get_all_functions(phase="solve"))
+
+        targets = [
+            "utility",
+            *list(regime.constraints),
+            *(
+                name
+                for name in user_functions
+                if name.startswith("next_")
+                and not getattr(user_functions[name], "_is_auto_identity", False)
+            ),
+        ]
+        reachable = get_ancestors(
+            user_functions, targets=targets, include_targets=False
         )
-        unused_variables = variable_info.index[~is_used].tolist()
+        unused_variables = sorted(variable_names - reachable)
 
         if unused_variables:
-            unused_states = [
-                v for v in unused_variables if variable_info.loc[v, "is_state"]
-            ]
-            unused_actions = [
-                v for v in unused_variables if variable_info.loc[v, "is_action"]
-            ]
+            unused_states = [v for v in unused_variables if v in regime.states]
+            unused_actions = [v for v in unused_variables if v in regime.actions]
 
             msg_parts = []
             if unused_states:
