@@ -22,6 +22,12 @@ from lcm.params.sequence_leaf import SequenceLeaf
 from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
 
+type _PandasLeaf = bool | float | Array | pd.Series | MappingLeaf | SequenceLeaf
+type PandasUserParams = Mapping[
+    str,
+    _PandasLeaf | Mapping[str, _PandasLeaf | Mapping[str, _PandasLeaf]],
+]
+
 
 def initial_conditions_from_dataframe(
     *,
@@ -93,13 +99,13 @@ def initial_conditions_from_dataframe(
                 )
                 raise ValueError(msg)
 
-            initial_conditions[col] = jnp.array([label_to_code[v] for v in values])
+            initial_conditions[col] = jnp.array(values.map(label_to_code).to_numpy())
         else:
-            initial_conditions[col] = jnp.array(df[col].values)
+            initial_conditions[col] = jnp.array(df[col].to_numpy())
 
     # Convert regime names to integer codes
     initial_conditions["regime"] = jnp.array(
-        [model.regime_names_to_ids[name] for name in df["regime"]]
+        df["regime"].map(dict(model.regime_names_to_ids)).to_numpy()
     )
 
     return initial_conditions
@@ -107,7 +113,7 @@ def initial_conditions_from_dataframe(
 
 def params_from_pandas(
     *,
-    params: dict,
+    params: PandasUserParams,
     model: Model,
     categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]] | None = None,
 ) -> dict:
@@ -183,33 +189,29 @@ def _convert_param_value(
             sr=value, model=model, param_path=param_path, categoricals=categoricals
         )
     if isinstance(value, MappingLeaf):
-        converted_data = {
-            k: (
-                array_from_series(
-                    sr=v,
+        return MappingLeaf(
+            {
+                k: _convert_param_value(
+                    value=v,
                     model=model,
                     param_path=param_path,
                     categoricals=categoricals,
                 )
-                if isinstance(v, pd.Series)
-                else v
-            )
-            for k, v in value.data.items()
-        }
-        return MappingLeaf(converted_data)
-    if isinstance(value, SequenceLeaf):
-        converted_data_seq = tuple(
-            array_from_series(
-                sr=v,
-                model=model,
-                param_path=param_path,
-                categoricals=categoricals,
-            )
-            if isinstance(v, pd.Series)
-            else v
-            for v in value.data
+                for k, v in value.data.items()
+            }
         )
-        return SequenceLeaf(converted_data_seq)
+    if isinstance(value, SequenceLeaf):
+        return SequenceLeaf(
+            tuple(
+                _convert_param_value(
+                    value=v,
+                    model=model,
+                    param_path=param_path,
+                    categoricals=categoricals,
+                )
+                for v in value.data
+            )
+        )
     return value
 
 

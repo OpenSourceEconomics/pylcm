@@ -23,6 +23,36 @@ from lcm.utils import (
 _NUM_PARTS_FUNCTION_PARAM = 3
 
 
+def process_params(
+    *,
+    params: UserParams,
+    params_template: ParamsTemplate,
+) -> InternalParams:
+    """Process user-provided params into internal params.
+
+    Users can provide parameters at exactly one of three levels:
+
+    - Model level: `{"arg_0": 0.0}` — propagates to all functions needing arg_0
+    - Regime level: `{"regime_0": {"arg_0": 0.0}}` — propagates within regime_0
+    - Function level: `{"regime_0": {"func": {"arg_0": 0.0}}}` — direct specification
+
+    The output always matches the params_template skeleton.
+
+    Args:
+        params: User-provided parameters dictionary.
+        params_template: Template from `model.get_params_template()`.
+
+    Returns:
+        Immutable mapping with the same structure as params_template.
+
+    Raises:
+        InvalidParamsError: If params contains unexpected keys or type mismatches.
+        InvalidNameError: If the same parameter is specified at multiple levels.
+
+    """
+    return broadcast_to_template(params=params, template=params_template, required=True)
+
+
 def broadcast_to_template(
     *,
     params: Mapping,
@@ -86,36 +116,6 @@ def broadcast_to_template(
         "InternalParams",
         MappingProxyType({k: MappingProxyType(v) for k, v in result.items()}),
     )
-
-
-def process_params(
-    *,
-    params: UserParams,
-    params_template: ParamsTemplate,
-) -> InternalParams:
-    """Process user-provided params into internal params.
-
-    Users can provide parameters at exactly one of three levels:
-
-    - Model level: `{"arg_0": 0.0}` — propagates to all functions needing arg_0
-    - Regime level: `{"regime_0": {"arg_0": 0.0}}` — propagates within regime_0
-    - Function level: `{"regime_0": {"func": {"arg_0": 0.0}}}` — direct specification
-
-    The output always matches the params_template skeleton.
-
-    Args:
-        params: User-provided parameters dictionary.
-        params_template: Template from `model.get_params_template()`.
-
-    Returns:
-        Immutable mapping with the same structure as params_template.
-
-    Raises:
-        InvalidParamsError: If params contains unexpected keys or type mismatches.
-        InvalidNameError: If the same parameter is specified at multiple levels.
-
-    """
-    return broadcast_to_template(params=params, template=params_template, required=True)
 
 
 def _find_candidates(

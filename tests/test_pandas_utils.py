@@ -976,6 +976,29 @@ def test_params_from_pandas_mapping_leaf() -> None:
     assert arr.shape == (3, 2, 2, 2)
 
 
+def test_params_from_pandas_nested_mapping_leaf() -> None:
+    """Series inside nested MappingLeaf is recursively converted."""
+    from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
+    from lcm.params import MappingLeaf  # noqa: PLC0415
+
+    model = get_stochastic_model(3)
+    series = _build_partner_probs_series(model)
+    inner = MappingLeaf({"sub": series})
+    outer = MappingLeaf({"inner_leaf": inner})
+    params = {
+        "working_life": {
+            "next_partner": {"probs_array": outer},
+        },
+    }
+    result = params_from_pandas(params=params, model=model)
+    converted = result["working_life"]["next_partner__probs_array"]
+    assert isinstance(converted, MappingLeaf)
+    inner_converted = converted.data["inner_leaf"]
+    assert isinstance(inner_converted, MappingLeaf)
+    assert not isinstance(inner_converted.data["sub"], pd.Series)
+    assert inner_converted.data["sub"].shape == (3, 2, 2, 2)
+
+
 def test_params_from_pandas_unknown_param_raises() -> None:
     """Unknown param name raises InvalidParamsError."""
     from lcm.exceptions import InvalidParamsError  # noqa: PLC0415

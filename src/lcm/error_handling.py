@@ -314,18 +314,17 @@ def _validate_regime_transition_single(
 
 def _get_func_indexing_params(
     func: Callable,
-    array_param_name: str | None = None,
+    array_param_name: str,
 ) -> list[str]:
     """Return indexing parameter names by inspecting array subscripts.
 
-    When `array_param_name` is given, inspect only that parameter's
-    subscripts. Otherwise scan all parameters to discover which one is
-    used as an array.
+    Inspect `array_param_name`'s subscripts in the function source for
+    `param[x, y, ...]` patterns where all index elements are bare names
+    that are also function parameters.
 
     Args:
         func: The function to inspect.
-        array_param_name: If known, the name of the array parameter to
-            inspect. Avoids false positives from other subscripted params.
+        array_param_name: The array parameter whose subscripts to inspect.
 
     Returns:
         List of indexing parameter names, or empty list if no array
@@ -355,39 +354,34 @@ def _get_func_indexing_params(
     sig = inspect.signature(func)
     param_names = set(sig.parameters)
 
-    candidates = [array_param_name] if array_param_name is not None else sig.parameters
+    subscripts = _collect_subscripts(tree=tree, param_name=array_param_name)
+    if not subscripts:
+        return []
 
-    for param_name in candidates:
-        subscripts = _collect_subscripts(tree=tree, param_name=param_name)
-        if not subscripts:
-            continue
+    names = _extract_bare_names(subscripts[0])
 
-        names = _extract_bare_names(subscripts[0])
+    if names is not None and all(n in param_names for n in names):
+        return names
 
-        if names is not None and all(n in param_names for n in names):
-            return names
+    if names is not None:
+        non_params = [n for n in names if n not in param_names]
+        msg = (
+            f"Function '{func_name}' indexes `{array_param_name}` with names "
+            f"{non_params} that are not function parameters. All subscript "
+            f"indices must be function parameters (not aliased variables)."
+        )
+        raise ValueError(msg)
 
-        if names is not None and not all(n in param_names for n in names):
-            non_params = [n for n in names if n not in param_names]
-            msg = (
-                f"Function '{func_name}' indexes `{param_name}` with names "
-                f"{non_params} that are not function parameters. All subscript "
-                f"indices must be function parameters (not aliased variables)."
-            )
-            raise ValueError(msg)
-
-        if names is None and _slice_references_params(
-            slice_node=subscripts[0], param_names=param_names
-        ):
-            msg = (
-                f"Function '{func_name}' uses computed indices in "
-                f"`{param_name}[...]`. Use bare parameter names as indices. "
-                f"If you need a computed index, extract it into a separate "
-                f"function in the regime (e.g., "
-                f"`adjusted_period(period): return period - 1`) "
-                f"and use the function output as the index."
-            )
-            raise ValueError(msg)
+    if _slice_references_params(slice_node=subscripts[0], param_names=param_names):
+        msg = (
+            f"Function '{func_name}' uses computed indices in "
+            f"`{array_param_name}[...]`. Use bare parameter names as indices. "
+            f"If you need a computed index, extract it into a separate "
+            f"function in the regime (e.g., "
+            f"`adjusted_period(period): return period - 1`) "
+            f"and use the function output as the index."
+        )
+        raise ValueError(msg)
 
     return []
 
