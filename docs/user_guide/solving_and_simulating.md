@@ -65,12 +65,10 @@ result = model.simulate(
 ### From a DataFrame
 
 The standard way to supply initial conditions is as a pandas DataFrame with one row per
-agent. Use `initial_conditions_from_dataframe` to convert it to the format expected by
-`simulate()`:
+agent. Pass it directly to `simulate()`:
 
 ```python
 import pandas as pd
-from lcm import initial_conditions_from_dataframe
 
 df = pd.DataFrame({
     "regime": ["working_life", "working_life", "retirement", "working_life"],
@@ -79,7 +77,11 @@ df = pd.DataFrame({
     "health": ["good", "bad", "bad", "good"],  # string labels, auto-converted
 })
 
-initial_conditions = initial_conditions_from_dataframe(df=df, model=model)
+result = model.simulate(
+    params=params,
+    initial_conditions=df,
+    period_to_regime_to_V_arr=None,
+)
 ```
 
 Discrete states (those backed by a `DiscreteGrid`) are mapped from string labels to
@@ -213,7 +215,7 @@ result.period_to_regime_to_V_arr       # value function arrays from solve()
 ```python
 import numpy as np
 import pandas as pd
-from lcm import Model, initial_conditions_from_dataframe
+from lcm import Model
 
 # 1. Define model (see previous pages)
 model = Model(regimes={...}, ages=..., regime_id_class=...)
@@ -225,18 +227,17 @@ params = {
     ...
 }
 
-# 3. Prepare initial conditions
+# 3. Prepare initial conditions as a DataFrame
 initial_df = pd.DataFrame({
     "regime": "working_life",
     "age": model.ages.values[0],
     "wealth": np.linspace(1, 50, 100),
 })
-initial_conditions = initial_conditions_from_dataframe(df=initial_df, model=model)
 
 # 4. Simulate (solves automatically when period_to_regime_to_V_arr=None)
 result = model.simulate(
     params=params,
-    initial_conditions=initial_conditions,
+    initial_conditions=initial_df,
     period_to_regime_to_V_arr=None,
 )
 

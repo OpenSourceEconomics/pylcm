@@ -18,7 +18,6 @@ learning the pylcm API.
 ```python
 import numpy as np
 import pandas as pd
-from lcm import initial_conditions_from_dataframe
 from lcm_examples.tiny import get_model, get_params
 
 model = get_model()
@@ -30,11 +29,9 @@ initial_df = pd.DataFrame({
     "wealth": np.linspace(1, 20, 100),
 })
 
-initial_conditions = initial_conditions_from_dataframe(df=initial_df, model=model)
-
 result = model.simulate(
     params=params,
-    initial_conditions=initial_conditions,
+    initial_conditions=initial_df,
     period_to_regime_to_V_arr=None,
 )
 
