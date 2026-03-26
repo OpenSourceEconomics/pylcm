@@ -94,6 +94,7 @@ def initial_conditions_from_dataframe(
     result_arrays: dict[str, np.ndarray] = {
         col: np.empty(n_subjects, dtype=float) for col in state_cols
     }
+    discrete_state_names: set[str] = set()
 
     # Process per regime group (vectorised .map() within each group)
     for regime_name, group in df.groupby("regime"):
@@ -104,6 +105,7 @@ def initial_conditions_from_dataframe(
             for name, grid in regime.states.items()
             if isinstance(grid, DiscreteGrid)
         }
+        discrete_state_names |= discrete_grids.keys()
 
         for col in state_cols:
             values = group[col]
@@ -111,30 +113,52 @@ def initial_conditions_from_dataframe(
                 values = values.astype(str)
 
             if col in discrete_grids:
-                grid = discrete_grids[col]
-                label_to_code = dict(zip(grid.categories, grid.codes, strict=True))
-                mapped = values.map(label_to_code)
-                unmapped = mapped.isna() & values.notna()
-                if unmapped.any():
-                    bad = set(values[unmapped])
-                    msg = (
-                        f"Invalid labels for state '{col}' in regime "
-                        f"'{regime_name}': {sorted(bad)}. "
-                        f"Valid: {list(grid.categories)}."
-                    )
-                    raise ValueError(msg)
-                result_arrays[col][idx] = mapped.to_numpy()
+                _map_discrete_labels(
+                    values=values,
+                    grid=discrete_grids[col],
+                    result_array=result_arrays[col],
+                    idx=idx,
+                    col=col,
+                    regime_name=str(regime_name),
+                )
             else:
                 result_arrays[col][idx] = values.to_numpy(dtype=float)
 
     initial_conditions: dict[str, Array] = {
-        col: jnp.array(arr) for col, arr in result_arrays.items()
+        col: jnp.array(arr, dtype=jnp.int32)
+        if col in discrete_state_names
+        else jnp.array(arr)
+        for col, arr in result_arrays.items()
     }
     initial_conditions["regime"] = jnp.array(
         df["regime"].map(dict(model.regime_names_to_ids)).to_numpy()
     )
 
     return initial_conditions
+
+
+def _map_discrete_labels(
+    *,
+    values: pd.Series,
+    grid: DiscreteGrid,
+    result_array: np.ndarray,
+    idx: pd.Index,
+    col: str,
+    regime_name: str,
+) -> None:
+    """Map string labels to integer codes for a discrete state column in-place."""
+    label_to_code = dict(zip(grid.categories, grid.codes, strict=True))
+    mapped = values.map(label_to_code)
+    unmapped = mapped.isna() & values.notna()
+    if unmapped.any():
+        bad = set(values[unmapped])
+        msg = (
+            f"Invalid labels for state '{col}' in regime "
+            f"'{regime_name}': {sorted(bad)}. "
+            f"Valid: {list(grid.categories)}."
+        )
+        raise ValueError(msg)
+    result_array[idx] = mapped.to_numpy()
 
 
 def convert_series_in_params(

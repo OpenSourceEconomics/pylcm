@@ -349,6 +349,7 @@ def _get_heterogeneous_health_model() -> Model:
     """Model where 'health' has different categories per regime."""
     pre65 = Regime(
         transition=_het_next_regime,
+        active=lambda age: age < 65,
         states={
             "health": DiscreteGrid(HealthWithDisability),
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
@@ -358,6 +359,7 @@ def _get_heterogeneous_health_model() -> Model:
     )
     post65 = Regime(
         transition=_het_next_regime,
+        active=lambda age: 65 <= age < 80,
         states={
             "health": DiscreteGrid(Health),
             "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
@@ -457,6 +459,62 @@ def test_convert_series_next_function_no_outcome_axis() -> None:
     )
     result = convert_series_in_params(internal_params=internal, model=m)
     assert result is not None
+
+
+def test_heterogeneous_health_solve_simulate() -> None:
+    """Solve and simulate with heterogeneous discrete grids, check DataFrame output."""
+    model = _get_heterogeneous_health_model()
+    df = pd.DataFrame(
+        {
+            "regime": ["pre65", "pre65", "post65", "post65"],
+            "health": ["disabled", "good", "bad", "good"],
+            "wealth": [10.0, 50.0, 30.0, 70.0],
+            "age": [50.0, 50.0, 70.0, 70.0],
+        }
+    )
+    ic = initial_conditions_from_dataframe(df=df, model=model)
+    result = model.simulate(
+        params={"bonus": 0.0, "discount_factor": 0.95},
+        initial_conditions=ic,
+        period_to_regime_to_V_arr=None,
+    )
+    out = result.to_dataframe()
+
+    # health column should be Categorical with merged ordered categories
+    assert isinstance(out["health"].dtype, CategoricalDtype)
+    assert list(out["health"].cat.categories) == ["disabled", "bad", "good"]
+    assert out["health"].cat.ordered
+
+    # Period 0: pre65 subjects have correct health labels
+    period_0 = out.query("period == 0").sort_values("subject_id")
+    assert list(period_0["health"]) == ["disabled", "good"]
+
+    # Period 2: post65 subjects have correct health labels
+    period_2 = out.query("period == 2 and regime == 'post65'").sort_values("subject_id")
+    assert list(period_2["health"]) == ["bad", "good"]
+
+
+def test_heterogeneous_health_simulate_use_labels_false() -> None:
+    """With use_labels=False, health column contains raw integer codes."""
+    model = _get_heterogeneous_health_model()
+    df = pd.DataFrame(
+        {
+            "regime": ["pre65", "post65"],
+            "health": ["disabled", "good"],
+            "wealth": [10.0, 70.0],
+            "age": [50.0, 70.0],
+        }
+    )
+    ic = initial_conditions_from_dataframe(df=df, model=model)
+    result = model.simulate(
+        params={"bonus": 0.0, "discount_factor": 0.95},
+        initial_conditions=ic,
+        period_to_regime_to_V_arr=None,
+    )
+    out = result.to_dataframe(use_labels=False)
+
+    # health column should contain integer codes, not Categorical
+    assert not isinstance(out["health"].dtype, CategoricalDtype)
 
 
 def _make_partner_probs_array():
