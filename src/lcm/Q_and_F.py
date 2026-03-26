@@ -52,7 +52,7 @@ def get_Q_and_F(
         regimes_to_active_periods: Mapping regime names to their active periods.
         compute_regime_transition_probs: Regime transition probability function
             for solve.
-        regime_to_state_space_info: The state space information of the next period.
+        regime_to_state_space_info: Mapping of regime names to state space information.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)

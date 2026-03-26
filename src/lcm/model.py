@@ -594,23 +594,24 @@ def _partial_fixed_params_into_regimes(
             continue
 
         # Build new solve_functions with partialled functions
-        solve = regime.solve_functions
+        solve_funcs = regime.solve_functions
         new_solve = dataclasses.replace(
-            solve,
+            solve_funcs,
             max_Q_over_a=MappingProxyType(
                 {
                     period: functools.partial(func, **regime_fixed)
-                    for period, func in solve.max_Q_over_a.items()
+                    for period, func in solve_funcs.max_Q_over_a.items()
                 }
             ),
             compute_regime_transition_probs=(
                 functools.partial(
-                    solve.compute_regime_transition_probs,
+                    solve_funcs.compute_regime_transition_probs,
                     **_filter_kwargs_for_func(
-                        func=solve.compute_regime_transition_probs, kwargs=regime_fixed
+                        func=solve_funcs.compute_regime_transition_probs,
+                        kwargs=regime_fixed,
                     ),
                 )
-                if solve.compute_regime_transition_probs is not None
+                if solve_funcs.compute_regime_transition_probs is not None
                 else None
             ),
         )

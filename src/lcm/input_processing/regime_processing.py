@@ -313,6 +313,8 @@ def _build_simulate_functions(
         variable_info=variable_info,
         phase="simulate",
     )
+    # Only functions/constraints vary by phase; core.transitions and
+    # core.stochastic_transition_names are phase-independent and reused from solve.
     functions = core.functions
     constraints = core.constraints
 
@@ -351,8 +353,8 @@ def _build_simulate_functions(
         enable_jit=enable_jit,
     )
 
-    # next_state uses solve functions because state transitions don't participate
-    # in SolveSimulateFunctionPair — only utility/H functions have phase variants.
+    # State transitions are phase-independent (only utility/H have phase variants),
+    # so core.functions from either phase produces the same transitions.
     next_state = build_next_state_simulation_functions(
         functions=core.functions,
         transitions=solve_transitions,
@@ -378,10 +380,19 @@ class _CoreResult(NamedTuple):
     """Result of core regime function processing for one phase."""
 
     functions: FunctionsMapping
+    """User functions (utility, helpers) with params renamed to qnames."""
+
     constraints: FunctionsMapping
+    """Constraint functions with params renamed to qnames."""
+
     transitions: TransitionFunctionsMapping
+    """Nested mapping of transition names to transition functions."""
+
     stochastic_transition_names: frozenset[str]
+    """Frozenset of stochastic transition function names."""
+
     next_regime_func: InternalUserFunction | None
+    """The regime transition function, or `None` for terminal regimes."""
 
 
 def _process_regime_core(
@@ -439,7 +450,7 @@ def _process_regime_core(
         if isinstance(raw, Mapping) and not isinstance(raw, MarkovTransition)
     )
 
-    stochastic_transition_names = _compute_stochastic_transition_names(
+    stochastic_transition_names = _get_stochastic_transition_names(
         regime=regime, variable_info=variable_info
     )
 
@@ -621,7 +632,7 @@ def _wrap_transitions(
     )
 
 
-def _compute_stochastic_transition_names(
+def _get_stochastic_transition_names(
     *,
     regime: Regime,
     variable_info: pd.DataFrame,
