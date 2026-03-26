@@ -15,12 +15,12 @@ from lcm.error_handling import (
     _get_func_indexing_params,
 )
 from lcm.grids import DiscreteGrid, IrregSpacedGrid
+from lcm.input_processing.params_processing import broadcast_to_template
 from lcm.model import Model
 from lcm.params import MappingLeaf
 from lcm.params.sequence_leaf import SequenceLeaf
 from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
-from lcm.utils import flatten_regime_namespace, unflatten_regime_namespace
 
 
 def initial_conditions_from_dataframe(
@@ -113,13 +113,15 @@ def params_from_pandas(
 ) -> dict:
     """Convert a params dict, replacing `pd.Series` values with JAX arrays.
 
-    Walk the params dict (which may use model, regime, or function-level
-    nesting) and convert any `pd.Series` leaf values via `array_from_series`.
-    `MappingLeaf` values are traversed and any Series inside are converted.
-    Other values (scalars, existing arrays) pass through unchanged.
+    Broadcast `params` (which may use model, regime, or function-level
+    nesting) against the model's params template, then convert any
+    `pd.Series` leaf values via `array_from_series`. `MappingLeaf` and
+    `SequenceLeaf` values are traversed and any Series inside are
+    converted. Other values (scalars, existing arrays) pass through
+    unchanged.
 
-    The output preserves the same nesting structure as the input. Pass it
-    to `model.solve(params=...)` or `model.simulate(params=...)`.
+    The output is template-shaped (`{regime: {func__param: value}}`).
+    Pass it to `model.solve(params=...)` or `model.simulate(params=...)`.
 
     Args:
         params: User params dict with `pd.Series` in place of array values.
@@ -128,142 +130,32 @@ def params_from_pandas(
             derived variables not in the model's state/action grids.
 
     Returns:
-        New dict with the same structure, Series replaced by JAX arrays.
+        Dict with template structure, Series replaced by JAX arrays.
 
     Raises:
         ValueError: If a param name cannot be resolved in the model's
             template.
 
     """
-    template_flat = flatten_regime_namespace(model.get_params_template())
-    params_flat = flatten_regime_namespace(params)
-    regime_names = frozenset(model.regimes)
-
-    converted_flat: dict[str, object] = {}
-    for user_qname, value in params_flat.items():
-        template_qname = _find_template_qname(
-            user_qname=user_qname,
-            template_flat=template_flat,
-            regime_names=regime_names,
-            model=model,
-        )
-        param_path = tree_path_from_qname(template_qname)
-        converted_flat[user_qname] = _convert_param_value(
-            value=value,
-            model=model,
-            param_path=param_path,
-            categoricals=categoricals,
-        )
-
-    return unflatten_regime_namespace(converted_flat)
-
-
-def _find_template_qname(
-    *,
-    user_qname: str,
-    template_flat: Mapping[str, object],
-    regime_names: frozenset[str],
-    model: Model,
-) -> str:
-    """Find the 3-part template qname matching a user-provided qname.
-
-    Use the same resolution logic as `process_params`: exact match first,
-    then regime-level or function-level match, then model-level match.
-
-    Args:
-        user_qname: Flattened qname from the user params dict.
-        template_flat: Flattened params template (3-part qnames).
-        regime_names: Frozenset of regime names in the model.
-        model: The LCM Model instance.
-
-    Returns:
-        The matching 3-part template qname.
-
-    Raises:
-        ValueError: If no match is found, or if multiple matches have
-            inconsistent indexing parameters.
-
-    """
-    if user_qname in template_flat:
-        return user_qname
-
-    user_path = tree_path_from_qname(user_qname)
-    matches = _collect_template_matches(
-        user_path=user_path,
-        template_flat=template_flat,
-        regime_names=regime_names,
+    resolved = broadcast_to_template(
+        params=params,
+        template=model.get_params_template(),
+        required=False,
     )
 
-    if not matches:
-        msg = f"No template match for parameter '{user_qname}'."
-        raise ValueError(msg)
-
-    if len(matches) > 1:
-        _fail_if_inconsistent_template_matches(
-            matches=matches, user_qname=user_qname, model=model
-        )
-
-    return matches[0]
-
-
-def _collect_template_matches(
-    *,
-    user_path: tuple[str, ...],
-    template_flat: Mapping[str, object],
-    regime_names: frozenset[str],
-) -> list[str]:
-    """Collect template qnames that match a user-provided path.
-
-    Args:
-        user_path: Parsed user qname as a tuple of path segments.
-        template_flat: Flattened params template (3-part qnames).
-        regime_names: Frozenset of regime names in the model.
-
-    Returns:
-        List of matching template qnames.
-
-    """
-    param_name = user_path[-1]
-    matches: list[str] = []
-
-    for template_qname in template_flat:
-        tp = tree_path_from_qname(template_qname)
-        if len(user_path) == 1 and tp[-1] == param_name:
-            matches.append(template_qname)
-        elif len(user_path) == 2 and user_path[0] in regime_names:  # noqa: PLR2004
-            if tp[0] == user_path[0] and tp[-1] == param_name:
-                matches.append(template_qname)
-        elif (
-            len(user_path) == 2  # noqa: PLR2004
-            and len(tp) == 3  # noqa: PLR2004
-            and tp[1] == user_path[0]
-            and tp[-1] == param_name
-        ):
-            matches.append(template_qname)
-
-    return matches
-
-
-def _fail_if_inconsistent_template_matches(
-    *,
-    matches: list[str],
-    user_qname: str,
-    model: Model,
-) -> None:
-    """Raise if matched template qnames have different indexing params."""
-    indexing_sets: set[tuple[str, ...]] = set()
-    for match_qname in matches:
-        match_path = tree_path_from_qname(match_qname)
-        regime = model.regimes[match_path[0]]
-        func = regime.get_all_functions()[match_path[1]]
-        indexing_sets.add(tuple(_get_func_indexing_params(func)))
-    if len(indexing_sets) > 1:
-        msg = (
-            f"Parameter '{user_qname}' matches functions with different "
-            f"indexing parameters: {sorted(indexing_sets)}. "
-            f"Use a fully qualified 3-part path (regime, func, param)."
-        )
-        raise ValueError(msg)
+    result: dict[str, dict[str, object]] = {}
+    for regime_name, regime_params in resolved.items():
+        converted_regime: dict[str, object] = {}
+        for func_param, value in regime_params.items():
+            param_path = (regime_name, *tree_path_from_qname(func_param))
+            converted_regime[func_param] = _convert_param_value(
+                value=value,
+                model=model,
+                param_path=param_path,
+                categoricals=categoricals,
+            )
+        result[regime_name] = converted_regime
+    return result
 
 
 def _convert_param_value(

@@ -898,7 +898,7 @@ def test_params_from_pandas_function_level_series() -> None:
         },
     }
     result = params_from_pandas(params=params, model=model)
-    arr = result["working_life"]["next_partner"]["probs_array"]
+    arr = result["working_life"]["next_partner__probs_array"]
     assert arr.shape == (3, 2, 2, 2)
     assert float(arr[0, 0, 0, 0]) == pytest.approx(1.0)
 
@@ -910,7 +910,9 @@ def test_params_from_pandas_model_level_scalar_passthrough() -> None:
     model = get_stochastic_model(3)
     params = {"discount_factor": 0.95}
     result = params_from_pandas(params=params, model=model)
-    assert result["discount_factor"] == 0.95
+    # Model-level param is broadcast to all regimes/functions that need it
+    assert result["working_life"]["H__discount_factor"] == 0.95
+    assert result["retirement"]["H__discount_factor"] == 0.95
 
 
 def test_params_from_pandas_regime_level_series() -> None:
@@ -925,7 +927,7 @@ def test_params_from_pandas_regime_level_series() -> None:
         },
     }
     result = params_from_pandas(params=params, model=model)
-    arr = result["working_life"]["probs_array"]
+    arr = result["working_life"]["next_partner__probs_array"]
     assert arr.shape == (3, 2, 2, 2)
 
 
@@ -945,12 +947,12 @@ def test_params_from_pandas_mixed_dict() -> None:
         },
     }
     result = params_from_pandas(params=params, model=model)
-    assert result["discount_factor"] == 0.95
-    assert result["working_life"]["utility"]["disutility_of_work"] == 0.5
-    assert result["working_life"]["next_partner"]["probs_array"].shape == (3, 2, 2, 2)
-    assert result["working_life"]["next_wealth"]["interest_rate"] == 0.05
+    assert result["working_life"]["H__discount_factor"] == 0.95
+    assert result["working_life"]["utility__disutility_of_work"] == 0.5
+    assert result["working_life"]["next_partner__probs_array"].shape == (3, 2, 2, 2)
+    assert result["working_life"]["next_wealth__interest_rate"] == 0.05
     np.testing.assert_allclose(
-        result["working_life"]["labor_income"]["wage"], jnp.array([10.0])
+        result["working_life"]["labor_income__wage"], jnp.array([10.0])
     )
 
 
@@ -968,19 +970,20 @@ def test_params_from_pandas_mapping_leaf() -> None:
         },
     }
     result = params_from_pandas(params=params, model=model)
-    converted_leaf = result["working_life"]["next_partner"]["probs_array"]
+    converted_leaf = result["working_life"]["next_partner__probs_array"]
     assert isinstance(converted_leaf, MappingLeaf)
     arr = converted_leaf.data["sub_key"]
     assert arr.shape == (3, 2, 2, 2)
 
 
 def test_params_from_pandas_unknown_param_raises() -> None:
-    """Unknown param name raises ValueError."""
+    """Unknown param name raises InvalidParamsError."""
+    from lcm.exceptions import InvalidParamsError  # noqa: PLC0415
     from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
 
     model = get_stochastic_model(3)
     params = {"nonexistent_param": pd.Series([1.0])}
-    with pytest.raises(ValueError, match="No template match"):
+    with pytest.raises(InvalidParamsError, match="Unknown keys"):
         params_from_pandas(params=params, model=model)
 
 
@@ -1036,7 +1039,7 @@ def test_params_from_pandas_with_categoricals() -> None:
         model=model,
         categoricals={"labor_supply": labor_grid},
     )
-    arr = result["retirement"]["next_partner"]["probs_array"]
+    arr = result["retirement"]["next_partner__probs_array"]
     assert arr.shape == (3, 2, 2, 2)
 
 
@@ -1109,7 +1112,7 @@ def test_params_from_pandas_per_target_transition() -> None:
 
     params = {"working": {"to_working_next_health": {"probs_array": sr}}}
     result = params_from_pandas(params=params, model=model)
-    arr = result["working"]["to_working_next_health"]["probs_array"]
+    arr = result["working"]["to_working_next_health__probs_array"]
     assert arr.shape == (3, 2, 2)
 
 
@@ -1204,8 +1207,8 @@ def test_params_from_pandas_structured_categoricals() -> None:
             },
         },
     )
-    assert result_both["regime_a"]["utility"]["rates"].shape == (2,)
-    assert result_both["regime_b"]["utility"]["rates"].shape == (3,)
+    assert result_both["regime_a"]["utility__rates"].shape == (2,)
+    assert result_both["regime_b"]["utility__rates"].shape == (3,)
 
 
 def test_params_from_pandas_runtime_grid_param() -> None:
@@ -1239,7 +1242,7 @@ def test_params_from_pandas_runtime_grid_param() -> None:
     sr = pd.Series([1.0, 2.0, 5.0, 10.0])
     params = {"alive": {"wealth": {"points": sr}}}
     result = params_from_pandas(params=params, model=model)
-    np.testing.assert_allclose(result["alive"]["wealth"]["points"], sr.to_numpy())
+    np.testing.assert_allclose(result["alive"]["wealth__points"], sr.to_numpy())
 
 
 def test_params_from_pandas_sequence_leaf_traversal() -> None:
@@ -1252,7 +1255,7 @@ def test_params_from_pandas_sequence_leaf_traversal() -> None:
     leaf = SequenceLeaf((sr, 42))
     params = {"working_life": {"labor_income": {"wage": leaf}}}
     result = params_from_pandas(params=params, model=model)
-    converted = result["working_life"]["labor_income"]["wage"]
+    converted = result["working_life"]["labor_income__wage"]
     assert isinstance(converted, SequenceLeaf)
     assert not isinstance(converted.data[0], pd.Series)
     np.testing.assert_allclose(converted.data[0], jnp.array([10.0]))

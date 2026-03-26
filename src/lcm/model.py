@@ -6,15 +6,15 @@ import inspect
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import cast
 
-from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
+from dags.tree import QNAME_DELIMITER, qname_from_tree_path
 from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.error_handling import validate_regime_transitions_all_periods
 from lcm.exceptions import ModelInitializationError, format_messages
 from lcm.input_processing.params_processing import (
+    broadcast_to_template,
     create_params_template,
     process_params,
 )
@@ -45,7 +45,6 @@ from lcm.typing import (
 from lcm.utils import (
     ensure_containers_are_immutable,
     ensure_containers_are_mutable,
-    flatten_regime_namespace,
     get_field_names_and_values,
 )
 
@@ -463,30 +462,6 @@ def _validate_all_variables_used(regimes: Mapping[str, Regime]) -> list[str]:
     return error_messages
 
 
-def _find_candidates(
-    *,
-    qname: str,
-    params_flat: Mapping[str, object],
-) -> list[str]:
-    """Find candidate matches for a template qname at exact / regime / model levels."""
-    tree_path = tree_path_from_qname(qname)
-    param_name = tree_path[-1]
-    candidates: list[str] = []
-
-    if qname in params_flat:
-        candidates.append(qname)
-
-    if len(tree_path) == 3:  # noqa: PLR2004
-        regime_level_qname = qname_from_tree_path((tree_path[0], param_name))
-        if regime_level_qname in params_flat:
-            candidates.append(regime_level_qname)
-
-    if param_name in params_flat:
-        candidates.append(param_name)
-
-    return candidates
-
-
 def _resolve_fixed_params(
     *,
     fixed_params: dict[str, object],
@@ -494,48 +469,14 @@ def _resolve_fixed_params(
 ) -> InternalParams:
     """Resolve fixed_params against the params template.
 
-    Like process_params, supports model/regime/function level specification, but
-    does NOT require all template keys to be present — only matches what's provided.
+    Like `process_params`, support model/regime/function level specification, but
+    do NOT require all template keys to be present — only match what's provided.
 
     """
-    template_flat = flatten_regime_namespace(template)
-    params_flat = flatten_regime_namespace(fixed_params)
-
-    result_flat: dict[str, object] = {}
-    used_keys: set[str] = set()
-
-    for qname in template_flat:
-        candidates = _find_candidates(qname=qname, params_flat=params_flat)
-
-        if len(candidates) > 1:
-            raise ModelInitializationError(
-                f"Ambiguous fixed_params specification for {qname!r}. "
-                f"Found values at: {candidates}"
-            )
-        if candidates:
-            result_flat[qname] = params_flat[candidates[0]]
-            used_keys.add(candidates[0])
-
-    unknown = set(params_flat) - used_keys
-    if unknown:
-        raise ModelInitializationError(
-            f"Unknown keys in fixed_params: {sorted(unknown)}"
-        )
-
-    # Split by regime
-    result: dict[str, dict[str, object]] = {}
-    for qname, value in result_flat.items():
-        tree_path = tree_path_from_qname(qname)
-        regime_name = tree_path[0]
-        remainder = qname_from_tree_path(tree_path[1:])
-        result.setdefault(regime_name, {})[remainder] = value
-
-    for regime_name in template:
-        result.setdefault(regime_name, {})
-
-    return cast(
-        "InternalParams",
-        MappingProxyType({k: MappingProxyType(v) for k, v in result.items()}),
+    return broadcast_to_template(
+        params=fixed_params,
+        template=template,
+        required=False,
     )
 
 
