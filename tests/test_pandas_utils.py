@@ -349,14 +349,18 @@ def _array_to_series(arr, model):
 
 
 def test_array_from_series_transition_basic_round_trip():
-    """4D transition probs via array_from_series with param_path."""
+    """4D transition probs via array_from_series."""
     model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
     series = _array_to_series(arr, model)
+    func = model.regimes["working_life"].get_all_functions()["next_partner"]
     result = array_from_series(
         sr=series,
+        func=func,
+        param_name="probs_array",
+        func_name="next_partner",
         model=model,
-        param_path=("working_life", "next_partner", "probs_array"),
+        regime_name="working_life",
     )
     np.testing.assert_allclose(result, arr, atol=1e-7)
 
@@ -366,10 +370,14 @@ def test_array_from_series_transition_categorical_labels():
     model = get_stochastic_model(3)
     arr = _make_partner_probs_array()
     series = _array_to_series(arr, model)
+    func = model.regimes["working_life"].get_all_functions()["next_partner"]
     result = array_from_series(
         sr=series,
+        func=func,
+        param_name="probs_array",
+        func_name="next_partner",
         model=model,
-        param_path=("working_life", "next_partner", "probs_array"),
+        regime_name="working_life",
     )
     # age=40, work, single->partnered
     assert float(result[0, 0, 0, 1]) == pytest.approx(0.7)
@@ -384,10 +392,14 @@ def test_array_from_series_transition_reordered_levels():
     series = _array_to_series(arr, model)
     # Reorder levels: put next_partner first, then partner, work, age
     series = series.reorder_levels(["next_partner", "partner", "labor_supply", "age"])
+    func = model.regimes["working_life"].get_all_functions()["next_partner"]
     result = array_from_series(
         sr=series,
+        func=func,
+        param_name="probs_array",
+        func_name="next_partner",
         model=model,
-        param_path=("working_life", "next_partner", "probs_array"),
+        regime_name="working_life",
     )
     np.testing.assert_allclose(result, arr, atol=1e-7)
 
@@ -401,11 +413,15 @@ def test_array_from_series_transition_wrong_level_names_raises():
     series.index = series.index.set_names(
         ["age", "labor_supply", "partner", "wrong_name"]
     )
+    func = model.regimes["working_life"].get_all_functions()["next_partner"]
     with pytest.raises(ValueError, match="level names"):
         array_from_series(
             sr=series,
+            func=func,
+            param_name="probs_array",
+            func_name="next_partner",
             model=model,
-            param_path=("working_life", "next_partner", "probs_array"),
+            regime_name="working_life",
         )
 
 
@@ -417,11 +433,15 @@ def test_array_from_series_transition_invalid_label_raises():
     # Replace one label with an invalid one
     new_index = series.index.set_levels(["single", "INVALID"], level="partner")
     series.index = new_index
+    func = model.regimes["working_life"].get_all_functions()["next_partner"]
     with pytest.raises(ValueError, match="Invalid labels"):
         array_from_series(
             sr=series,
+            func=func,
+            param_name="probs_array",
+            func_name="next_partner",
             model=model,
-            param_path=("working_life", "next_partner", "probs_array"),
+            regime_name="working_life",
         )
 
 
@@ -433,11 +453,15 @@ def test_array_from_series_transition_period_level_raises():
         names=["period", "labor_supply", "partner", "next_partner"],
     )
     series = pd.Series([1.0], index=index)
+    func = model.regimes["working_life"].get_all_functions()["next_partner"]
     with pytest.raises(ValueError, match="age"):
         array_from_series(
             sr=series,
+            func=func,
+            param_name="probs_array",
+            func_name="next_partner",
             model=model,
-            param_path=("working_life", "next_partner", "probs_array"),
+            regime_name="working_life",
         )
 
 
@@ -449,11 +473,15 @@ def test_array_from_series_transition_duplicate_level_names_raises():
         names=["age", "labor_supply", "labor_supply", "next_partner"],
     )
     series = pd.Series([1.0], index=index)
+    func = model.regimes["working_life"].get_all_functions()["next_partner"]
     with pytest.raises(ValueError, match="duplicate"):
         array_from_series(
             sr=series,
+            func=func,
+            param_name="probs_array",
+            func_name="next_partner",
             model=model,
-            param_path=("working_life", "next_partner", "probs_array"),
+            regime_name="working_life",
         )
 
 
@@ -466,10 +494,14 @@ def test_array_from_series_transition_invalid_age_dropped():
     series.index = series.index.set_codes([0] * len(series), level="age").set_levels(
         [999.0], level="age"
     )
+    func = model.regimes["working_life"].get_all_functions()["next_partner"]
     result = array_from_series(
         sr=series,
+        func=func,
+        param_name="probs_array",
+        func_name="next_partner",
         model=model,
-        param_path=("working_life", "next_partner", "probs_array"),
+        regime_name="working_life",
     )
     # All ages are invalid, so all positions should be NaN
     assert jnp.all(jnp.isnan(result))
@@ -487,10 +519,14 @@ def test_array_from_series_transition_sparse_input_fills_nan():
         names=["age", "labor_supply", "partner", "next_partner"],
     )
     series = pd.Series([0.3, 0.7], index=index)
+    func = model.regimes["working_life"].get_all_functions()["next_partner"]
     result = array_from_series(
         sr=series,
+        func=func,
+        param_name="probs_array",
+        func_name="next_partner",
         model=model,
-        param_path=("working_life", "next_partner", "probs_array"),
+        regime_name="working_life",
     )
     # age=40 (period 0), work (0), single (0) → provided
     np.testing.assert_allclose(result[0, 0, 0], jnp.array([0.3, 0.7]), atol=1e-7)
@@ -573,14 +609,18 @@ def _regime_array_to_series(arr, model):
 
 
 def test_array_from_series_regime_transition_basic_round_trip():
-    """Regime transition probs via array_from_series with param_path."""
+    """Regime transition probs via array_from_series."""
     model = get_regime_markov_model()
     arr = _make_regime_probs_array()
     series = _regime_array_to_series(arr, model)
+    func = model.regimes["alive"].get_all_functions()["next_regime"]
     result = array_from_series(
         sr=series,
+        func=func,
+        param_name="probs_array",
+        func_name="next_regime",
         model=model,
-        param_path=("alive", "next_regime", "probs_array"),
+        regime_name="alive",
     )
     np.testing.assert_allclose(result, arr, atol=1e-7)
 
@@ -591,10 +631,14 @@ def test_array_from_series_regime_transition_reordered_levels():
     arr = _make_regime_probs_array()
     series = _regime_array_to_series(arr, model)
     series = series.reorder_levels(["next_regime", "health", "age"])
+    func = model.regimes["alive"].get_all_functions()["next_regime"]
     result = array_from_series(
         sr=series,
+        func=func,
+        param_name="probs_array",
+        func_name="next_regime",
         model=model,
-        param_path=("alive", "next_regime", "probs_array"),
+        regime_name="alive",
     )
     np.testing.assert_allclose(result, arr, atol=1e-7)
 
@@ -605,11 +649,15 @@ def test_array_from_series_regime_transition_wrong_level_names_raises():
     arr = _make_regime_probs_array()
     series = _regime_array_to_series(arr, model)
     series.index = series.index.set_names(["age", "health", "wrong_name"])
+    func = model.regimes["alive"].get_all_functions()["next_regime"]
     with pytest.raises(ValueError, match="level names"):
         array_from_series(
             sr=series,
+            func=func,
+            param_name="probs_array",
+            func_name="next_regime",
             model=model,
-            param_path=("alive", "next_regime", "probs_array"),
+            regime_name="alive",
         )
 
 
@@ -620,11 +668,15 @@ def test_array_from_series_regime_transition_invalid_label_raises():
     series = _regime_array_to_series(arr, model)
     new_index = series.index.set_levels(["alive", "INVALID"], level="next_regime")
     series.index = new_index
+    func = model.regimes["alive"].get_all_functions()["next_regime"]
     with pytest.raises(ValueError, match="Invalid labels"):
         array_from_series(
             sr=series,
+            func=func,
+            param_name="probs_array",
+            func_name="next_regime",
             model=model,
-            param_path=("alive", "next_regime", "probs_array"),
+            regime_name="alive",
         )
 
 
@@ -675,32 +727,22 @@ def _build_partner_probs_series(model: Model) -> pd.Series:
     return pd.Series([r[1] for r in records], index=index)
 
 
-def test_array_from_series_3_part_path() -> None:
-    """Fully qualified (regime, func, param) path produces correct 4D shape."""
+def test_array_from_series_fully_qualified() -> None:
+    """Fully qualified func/param/regime produces correct 4D shape."""
     model = get_stochastic_model(3)
     series = _build_partner_probs_series(model)
+    func = model.regimes["working_life"].get_all_functions()["next_partner"]
     result = array_from_series(
         sr=series,
+        func=func,
+        param_name="probs_array",
+        func_name="next_partner",
         model=model,
-        param_path=("working_life", "next_partner", "probs_array"),
+        regime_name="working_life",
     )
     assert result.shape == (3, 2, 2, 2)
     # First element: age=40, work, single, single
     assert float(result[0, 0, 0, 0]) == pytest.approx(1.0)
-
-
-def test_array_from_series_2_part_path_ambiguous_regime() -> None:
-    """2-part path with ambiguous regime fails at grid resolution."""
-    model = get_stochastic_model(3)
-    series = _build_partner_probs_series(model)
-    # next_partner exists in both regimes. With no specific regime, action
-    # grids (labor_supply) are not discovered -> unrecognised indexing param.
-    with pytest.raises(ValueError, match="Unrecognised indexing parameter"):
-        array_from_series(
-            sr=series,
-            model=model,
-            param_path=("next_partner", "probs_array"),
-        )
 
 
 def test_array_from_series_scalar_param() -> None:
@@ -709,10 +751,14 @@ def test_array_from_series_scalar_param() -> None:
     # labor_income(is_working, wage) -- is_working is a function output, not
     # a state or action, so wage has no indexing params.
     series = pd.Series([10.0])
+    func = model.regimes["working_life"].get_all_functions()["labor_income"]
     result = array_from_series(
         sr=series,
+        func=func,
+        param_name="wage",
+        func_name="labor_income",
         model=model,
-        param_path=("working_life", "labor_income", "wage"),
+        regime_name="working_life",
     )
     np.testing.assert_allclose(result, jnp.array([10.0]))
 
@@ -739,10 +785,14 @@ def test_array_from_series_extra_ages_dropped() -> None:
         names=["age", "labor_supply", "partner", "next_partner"],
     )
     series = pd.Series([r[1] for r in records], index=index)
+    func = model.regimes["working_life"].get_all_functions()["next_partner"]
     result = array_from_series(
         sr=series,
+        func=func,
+        param_name="probs_array",
+        func_name="next_partner",
         model=model,
-        param_path=("working_life", "next_partner", "probs_array"),
+        regime_name="working_life",
     )
     assert result.shape == (3, 2, 2, 2)
     # age=30 was idx 0 in input (vals 1-8), age=40 was idx 1 (vals 9-16)
@@ -766,10 +816,14 @@ def test_array_from_series_missing_ages_filled_with_nan() -> None:
         names=["age", "labor_supply", "partner", "next_partner"],
     )
     series = pd.Series([r[1] for r in records], index=index)
+    func = model.regimes["working_life"].get_all_functions()["next_partner"]
     result = array_from_series(
         sr=series,
+        func=func,
+        param_name="probs_array",
+        func_name="next_partner",
         model=model,
-        param_path=("working_life", "next_partner", "probs_array"),
+        regime_name="working_life",
     )
     assert result.shape == (3, 2, 2, 2)
     # age=40 (period 0) filled
@@ -785,10 +839,14 @@ def test_array_from_series_reordered_levels() -> None:
     series = _build_partner_probs_series(model)
     # Reorder: next_partner, partner, labor_supply, age
     series = series.reorder_levels(["next_partner", "partner", "labor_supply", "age"])  # ty: ignore[invalid-argument-type]
+    func = model.regimes["working_life"].get_all_functions()["next_partner"]
     result = array_from_series(
         sr=series,
+        func=func,
+        param_name="probs_array",
+        func_name="next_partner",
         model=model,
-        param_path=("working_life", "next_partner", "probs_array"),
+        regime_name="working_life",
     )
     assert result.shape == (3, 2, 2, 2)
     assert float(result[0, 0, 0, 0]) == pytest.approx(1.0)
@@ -802,11 +860,15 @@ def test_array_from_series_invalid_label_raises() -> None:
         names=["age", "labor_supply", "partner", "next_partner"],
     )
     series = pd.Series([1.0], index=index)
+    func = model.regimes["working_life"].get_all_functions()["next_partner"]
     with pytest.raises(ValueError, match="Invalid labels"):
         array_from_series(
             sr=series,
+            func=func,
+            param_name="probs_array",
+            func_name="next_partner",
             model=model,
-            param_path=("working_life", "next_partner", "probs_array"),
+            regime_name="working_life",
         )
 
 
@@ -818,72 +880,33 @@ def test_array_from_series_wrong_level_names_raises() -> None:
         names=["age", "labor_supply", "wrong_name", "next_partner"],
     )
     series = pd.Series([1.0], index=index)
+    func = model.regimes["working_life"].get_all_functions()["next_partner"]
     with pytest.raises(ValueError, match="level names"):
         array_from_series(
             sr=series,
+            func=func,
+            param_name="probs_array",
+            func_name="next_partner",
             model=model,
-            param_path=("working_life", "next_partner", "probs_array"),
+            regime_name="working_life",
         )
 
 
-def test_array_from_series_unknown_param_path_raises() -> None:
-    """Nonexistent param_path raises ValueError."""
-    model = get_stochastic_model(3)
-    series = pd.Series([1.0])
-    with pytest.raises(ValueError, match="not found"):
-        array_from_series(
-            sr=series,
-            model=model,
-            param_path=("working_life", "nonexistent_func", "some_param"),
-        )
-
-
-def test_array_from_series_unknown_1_part_param_raises() -> None:
-    """Nonexistent 1-part param_path raises ValueError."""
-    model = get_stochastic_model(3)
-    series = pd.Series([1.0])
-    with pytest.raises(ValueError, match="No function with parameter"):
-        array_from_series(
-            sr=series,
-            model=model,
-            param_path=("totally_fake_param",),
-        )
-
-
-def test_array_from_series_2_part_path_consistent() -> None:
-    """Function-level path succeeds when function is unique across regimes."""
+def test_array_from_series_scalar_param_explicit_lookup() -> None:
+    """Scalar parameter with explicit func lookup returns 1D array."""
     model = get_stochastic_model(3)
     # labor_income only exists in working_life. wage has no indexing params.
     series = pd.Series([10.0])
+    func = model.regimes["working_life"].get_all_functions()["labor_income"]
     result = array_from_series(
         sr=series,
+        func=func,
+        param_name="wage",
+        func_name="labor_income",
         model=model,
-        param_path=("labor_income", "wage"),
+        regime_name="working_life",
     )
     np.testing.assert_allclose(result, jnp.array([10.0]))
-
-
-def test_array_from_series_1_part_path_consistent() -> None:
-    """Model-level path succeeds when param has consistent indexing."""
-    model = get_stochastic_model(3)
-    # wage only appears in working_life.labor_income — unique, no ambiguity
-    series = pd.Series([10.0])
-    result = array_from_series(
-        sr=series,
-        model=model,
-        param_path=("wage",),
-    )
-    np.testing.assert_allclose(result, jnp.array([10.0]))
-
-
-def test_array_from_series_invalid_path_length_raises() -> None:
-    """param_path with 0 or 4+ elements raises ValueError."""
-    model = get_stochastic_model(3)
-    series = pd.Series([1.0])
-    with pytest.raises(ValueError, match="1-3 elements"):
-        array_from_series(sr=series, model=model, param_path=())
-    with pytest.raises(ValueError, match="1-3 elements"):
-        array_from_series(sr=series, model=model, param_path=("a", "b", "c", "d"))
 
 
 def test_params_from_pandas_function_level_series() -> None:

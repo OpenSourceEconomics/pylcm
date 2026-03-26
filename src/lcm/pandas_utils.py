@@ -1,6 +1,5 @@
 """Utilities for converting between pandas and LCM data structures."""
 
-import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
@@ -151,13 +150,42 @@ def params_from_pandas(
 
     result: dict[str, dict[str, object]] = {}
     for regime_name, regime_params in resolved.items():
+        regime = model.regimes[regime_name]
+        all_funcs = regime.get_all_functions()
         converted_regime: dict[str, object] = {}
         for func_param, value in regime_params.items():
-            param_path = (regime_name, *tree_path_from_qname(func_param))
+            parts = tree_path_from_qname(func_param)
+            template_func_name = parts[0] if len(parts) > 1 else func_param
+            param_name = parts[-1]
+
+            # Runtime grid/shock params are scalar — no AST inspection
+            if _is_runtime_grid_param(template_func_name, regime):
+                converted_regime[func_param] = _convert_param_value(
+                    value=value,
+                    func=None,
+                    param_name=param_name,
+                    func_name=template_func_name,
+                    model=model,
+                    regime_name=regime_name,
+                    categoricals=categoricals,
+                )
+                continue
+
+            # Resolve per-target template key before function lookup
+            resolved_func_name = (
+                _resolve_per_target_template_key(
+                    func_name=template_func_name, regime=regime
+                )
+                or template_func_name
+            )
+            func = all_funcs[resolved_func_name]
             converted_regime[func_param] = _convert_param_value(
                 value=value,
+                func=func,
+                param_name=param_name,
+                func_name=resolved_func_name,
                 model=model,
-                param_path=param_path,
+                regime_name=regime_name,
                 categoricals=categoricals,
             )
         result[regime_name] = converted_regime
@@ -167,16 +195,23 @@ def params_from_pandas(
 def _convert_param_value(
     *,
     value: object,
+    func: Callable | None,
+    param_name: str,
+    func_name: str,
     model: Model,
-    param_path: tuple[str, ...],
+    regime_name: str | None,
     categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]] | None = None,
 ) -> object:
     """Convert a single param value, dispatching on type.
 
     Args:
         value: The parameter value (Series, MappingLeaf, or passthrough).
+        func: The function that uses this parameter (`None` for runtime
+            grid params — triggers scalar passthrough).
+        param_name: Parameter name in the function.
+        func_name: Function name (for `next_*` outcome axis detection).
         model: The LCM Model instance.
-        param_path: Tuple identifying the parameter in the model.
+        regime_name: Regime name for action grid lookup.
         categoricals: Extra categorical mappings (level name to grid).
 
     Returns:
@@ -184,50 +219,49 @@ def _convert_param_value(
         Series entries, or the original value unchanged.
 
     """
+
+    def _recurse(inner_value: object) -> object:
+        return _convert_param_value(
+            value=inner_value,
+            func=func,
+            param_name=param_name,
+            func_name=func_name,
+            model=model,
+            regime_name=regime_name,
+            categoricals=categoricals,
+        )
+
     if isinstance(value, pd.Series):
         return array_from_series(
-            sr=value, model=model, param_path=param_path, categoricals=categoricals
+            sr=value,
+            func=func,
+            param_name=param_name,
+            func_name=func_name,
+            model=model,
+            regime_name=regime_name,
+            categoricals=categoricals,
         )
     if isinstance(value, MappingLeaf):
-        return MappingLeaf(
-            {
-                k: _convert_param_value(
-                    value=v,
-                    model=model,
-                    param_path=param_path,
-                    categoricals=categoricals,
-                )
-                for k, v in value.data.items()
-            }
-        )
+        return MappingLeaf({k: _recurse(v) for k, v in value.data.items()})
     if isinstance(value, SequenceLeaf):
-        return SequenceLeaf(
-            tuple(
-                _convert_param_value(
-                    value=v,
-                    model=model,
-                    param_path=param_path,
-                    categoricals=categoricals,
-                )
-                for v in value.data
-            )
-        )
+        return SequenceLeaf(tuple(_recurse(v) for v in value.data))
     return value
 
 
 def array_from_series(
     *,
     sr: pd.Series,
+    func: Callable | None,
+    param_name: str,
+    func_name: str,
     model: Model,
-    param_path: tuple[str, ...],
+    regime_name: str | None = None,
     categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]] | None = None,
 ) -> Array:
-    """Convert a pandas Series to a JAX array using param-path-based indexing.
+    """Convert a pandas Series to a JAX array.
 
-    Resolve the parameter's position in the model via `param_path`, inspect
-    the owning function's signature to determine indexing dimensions
-    (states, actions, period), and scatter the labeled Series into an
-    N-dimensional array.
+    Inspect `func` to determine indexing dimensions (states, actions,
+    period) and scatter the labeled Series into an N-dimensional array.
 
     The Series MultiIndex must use `"age"` (with actual age values) for the
     age/period dimension, not `"period"`.
@@ -237,9 +271,12 @@ def array_from_series(
 
     Args:
         sr: Labeled pandas Series.
+        func: The function that uses this array parameter. `None` for
+            runtime grid/shock params (triggers scalar passthrough).
+        param_name: The array parameter name in `func`.
+        func_name: Function name (for `next_*` outcome axis detection).
         model: The LCM Model instance.
-        param_path: Tuple of 1-3 elements identifying the parameter:
-            `(param,)`, `(func, param)`, or `(regime, func, param)`.
+        regime_name: Regime for action grid lookup.
         categoricals: Extra categorical mappings (level name to grid) for
             derived variables not in the model's state/action grids.
 
@@ -248,13 +285,13 @@ def array_from_series(
         declaration order.
 
     Raises:
-        ValueError: If `param_path` cannot be resolved, level names don't
-            match, or labels are invalid.
+        ValueError: If level names don't match or labels are invalid.
 
     """
-    indexing_params, regime_name, func_name = _resolve_param_indexing(
-        param_path=param_path, model=model
-    )
+    if func is None:
+        return jnp.array(sr.to_numpy(), dtype=float)
+
+    indexing_params = _get_func_indexing_params(func, param_name)
 
     if not indexing_params and not func_name.startswith("next_"):
         return jnp.array(sr.to_numpy(), dtype=float)
@@ -375,121 +412,6 @@ def _resolve_categorical_entry(
     raise TypeError(msg)
 
 
-def _resolve_param_indexing(
-    *,
-    param_path: tuple[str, ...],
-    model: Model,
-) -> tuple[list[str], str | None, str]:
-    """Resolve a param path to indexing params, regime name, and function name.
-
-    Look up the parameter in the model's regimes. Find the function(s) that
-    use it, inspect their signatures, and return the indexing parameters
-    (states, actions, period) in declaration order.
-
-    If the path matches multiple functions, verify all have identical
-    indexing params.
-
-    Args:
-        param_path: Tuple of 1-3 elements identifying the parameter:
-            `(param,)`, `(func, param)`, or `(regime, func, param)`.
-        model: The LCM Model instance.
-
-    Returns:
-        Tuple of (indexing_params, regime_name, func_name). `regime_name`
-        is `None` when the path matches multiple regimes.
-
-    Raises:
-        ValueError: If the path has an invalid length, points to a
-            nonexistent regime/function/parameter, or matches functions
-            with inconsistent indexing params.
-
-    """
-    match param_path:
-        case (_, _, _):
-            return _resolve_3_part_path(param_path=param_path, model=model)
-        case (_, _):
-            return _resolve_2_part_path(param_path=param_path, model=model)
-        case (_,):
-            return _resolve_1_part_path(param_path=param_path, model=model)
-        case _:
-            msg = (
-                f"param_path must have 1-3 elements, "
-                f"got {len(param_path)}: {param_path}."
-            )
-            raise ValueError(msg)
-
-
-def _resolve_3_part_path(
-    *,
-    param_path: tuple[str, ...],
-    model: Model,
-) -> tuple[list[str], str, str]:
-    """Resolve a fully qualified (regime, func, param) path.
-
-    Args:
-        param_path: 3-element tuple `(regime, func, param)`.
-        model: The LCM Model instance.
-
-    Returns:
-        Tuple of (indexing_params, regime_name, func_name).
-
-    Raises:
-        ValueError: If regime, function, or parameter is not found.
-
-    """
-    regime_name, func_name, param_name = param_path
-
-    if regime_name not in model.regimes:
-        msg = (
-            f"Regime '{regime_name}' not found in model. "
-            f"Available: {sorted(model.regimes)}."
-        )
-        raise ValueError(msg)
-
-    regime = model.regimes[regime_name]
-
-    # Runtime grid/shock params: state names used as pseudo-function keys
-    # in the template (e.g., {"wealth": {"points": "Float1D"}}).
-    if func_name in regime.states:
-        grid = regime.states[func_name]
-        if (isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime) or (
-            isinstance(grid, _ShockGrid) and grid.params_to_pass_at_runtime
-        ):
-            return [], regime_name, func_name
-
-    all_funcs = regime.get_all_functions()
-
-    # Per-target template keys: template uses "to_{target}_{next_state}"
-    # but get_all_functions() uses "next_{state}__{target}".
-    if func_name not in all_funcs:
-        resolved = _resolve_per_target_template_key(func_name=func_name, regime=regime)
-        if resolved is not None:
-            func_name = resolved
-
-    if func_name not in all_funcs:
-        msg = (
-            f"Function '{func_name}' not found in regime '{regime_name}'. "
-            f"Available: {sorted(all_funcs)}."
-        )
-        raise ValueError(msg)
-
-    func = all_funcs[func_name]
-    sig = inspect.signature(func)
-    if param_name not in sig.parameters:
-        msg = (
-            f"Parameter '{param_name}' not found in function '{func_name}' "
-            f"of regime '{regime_name}'. "
-            f"Available: {sorted(sig.parameters)}."
-        )
-        raise ValueError(msg)
-
-    return (
-        _get_func_indexing_params(func, array_param_name=param_name),
-        regime_name,
-        func_name,
-    )
-
-
 def _resolve_per_target_template_key(
     *,
     func_name: str,
@@ -528,119 +450,14 @@ def _resolve_per_target_template_key(
     return None
 
 
-def _resolve_2_part_path(
-    *,
-    param_path: tuple[str, ...],
-    model: Model,
-) -> tuple[list[str], str | None, str]:
-    """Resolve a (func, param) path by scanning all regimes.
-
-    Args:
-        param_path: 2-element tuple `(func, param)`.
-        model: The LCM Model instance.
-
-    Returns:
-        Tuple of (indexing_params, regime_name, func_name). `regime_name`
-        is `None` when multiple regimes match.
-
-    Raises:
-        ValueError: If no match is found or indexing params are inconsistent.
-
-    """
-    func_name, param_name = param_path
-
-    matches: list[tuple[list[str], str]] = []
-    for regime_name, regime in model.regimes.items():
-        all_funcs = regime.get_all_functions()
-        if func_name not in all_funcs:
-            continue
-        func = all_funcs[func_name]
-        sig = inspect.signature(func)
-        if param_name not in sig.parameters:
-            continue
-        indexing = _get_func_indexing_params(func, array_param_name=param_name)
-        matches.append((indexing, regime_name))
-
-    if not matches:
-        msg = (
-            f"No function '{func_name}' with parameter '{param_name}' found "
-            f"in any regime."
-        )
-        raise ValueError(msg)
-
-    _fail_if_inconsistent_indexing(matches=matches, param_path=param_path)
-
-    regime_name = matches[0][1] if len(matches) == 1 else None
-    return matches[0][0], regime_name, func_name
-
-
-def _resolve_1_part_path(
-    *,
-    param_path: tuple[str, ...],
-    model: Model,
-) -> tuple[list[str], str | None, str]:
-    """Resolve a (param,) path by scanning all regimes and functions.
-
-    Args:
-        param_path: 1-element tuple `(param,)`.
-        model: The LCM Model instance.
-
-    Returns:
-        Tuple of (indexing_params, regime_name, func_name). `regime_name`
-        is `None` when multiple regimes match.
-
-    Raises:
-        ValueError: If no match is found or indexing params are inconsistent.
-
-    """
-    (param_name,) = param_path
-
-    matches: list[tuple[list[str], str, str]] = []
-    for regime_name, regime in model.regimes.items():
-        all_funcs = regime.get_all_functions()
-        for func_name, func in all_funcs.items():
-            sig = inspect.signature(func)
-            if param_name not in sig.parameters:
-                continue
-            indexing = _get_func_indexing_params(func, array_param_name=param_name)
-            matches.append((indexing, regime_name, func_name))
-
-    if not matches:
-        msg = f"No function with parameter '{param_name}' found in any regime."
-        raise ValueError(msg)
-
-    _fail_if_inconsistent_indexing(
-        matches=[(m[0], m[1]) for m in matches], param_path=param_path
+def _is_runtime_grid_param(func_name: str, regime: Regime) -> bool:
+    """Check if a template function key refers to a runtime grid param."""
+    if func_name not in regime.states:
+        return False
+    grid = regime.states[func_name]
+    return (isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime) or (
+        isinstance(grid, _ShockGrid) and bool(grid.params_to_pass_at_runtime)
     )
-
-    regime_names = {m[1] for m in matches}
-    regime_name = matches[0][1] if len(regime_names) == 1 else None
-    return matches[0][0], regime_name, matches[0][2]
-
-
-def _fail_if_inconsistent_indexing(
-    *,
-    matches: list[tuple[list[str], str]],
-    param_path: tuple[str, ...],
-) -> None:
-    """Raise if matched functions have different indexing params.
-
-    Args:
-        matches: List of (indexing_params, regime_name) tuples.
-        param_path: The user-provided param path (for error messages).
-
-    Raises:
-        ValueError: If matches have inconsistent indexing parameters.
-
-    """
-    indexing_sets = {tuple(m[0]) for m in matches}
-    if len(indexing_sets) > 1:
-        msg = (
-            f"param_path {param_path} matches functions with different "
-            f"indexing parameters: {sorted(indexing_sets)}. "
-            f"Use a fully qualified 3-part path (regime, func, param)."
-        )
-        raise ValueError(msg)
 
 
 def _fail_if_period_level(sr: pd.Series) -> None:

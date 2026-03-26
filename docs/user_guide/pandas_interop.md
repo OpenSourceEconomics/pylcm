@@ -81,7 +81,7 @@ transitions).
 
 `params_from_pandas` calls `array_from_series` for each Series value. If you need
 fine-grained control over a single parameter — or want to inspect the conversion
-step by step — you can call it directly:
+step by step — you can call it directly by passing the function object:
 
 ```python
 from lcm.pandas_utils import array_from_series
@@ -103,16 +103,22 @@ probs = pd.Series(
     ),
 )
 
+# Look up the function that uses probs_array
+next_health_func = model.regimes["working"].get_all_functions()["next_health"]
+
 health_probs = array_from_series(
     sr=probs,
+    func=next_health_func,
+    param_name="probs_array",
+    func_name="next_health",
     model=model,
-    param_path=("working", "next_health", "probs_array"),
+    regime_name="working",
 )
 ```
 
-`param_path` is a 1-to-3 element tuple identifying the parameter in the model:
-`(param,)`, `(func, param)`, or `(regime, func, param)`. When the path points to a
-`next_*` function, the outcome axis is appended automatically.
+`func` is the function object whose source is inspected to determine indexing dimensions.
+`param_name` identifies which parameter in the function is the array. When `func_name`
+starts with `next_`, the outcome axis is appended automatically.
 
 Discrete state and action labels are mapped to integer codes using the same grids defined
 in the model. Age values outside the model's `AgeGrid` are silently dropped; missing grid
