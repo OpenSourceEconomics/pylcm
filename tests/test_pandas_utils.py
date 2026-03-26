@@ -1040,6 +1040,236 @@ def test_params_from_pandas_with_categoricals() -> None:
     assert arr.shape == (3, 2, 2, 2)
 
 
+@pytest.mark.xfail(
+    reason="Template key 'to_working_next_health' != get_all_functions() key "
+    "'next_health__working'",
+    raises=(ValueError, KeyError),
+)
+def test_params_from_pandas_per_target_transition() -> None:
+    """Per-target state transitions should be convertible via params_from_pandas."""
+    from lcm import AgeGrid, MarkovTransition  # noqa: PLC0415
+    from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
+    from lcm.typing import DiscreteState, FloatND, Period  # noqa: PLC0415
+
+    @categorical(ordered=False)
+    class _RId:
+        working: int
+        retired: int
+
+    def _health_probs(
+        period: Period, health: DiscreteState, probs_array: FloatND
+    ) -> FloatND:
+        return probs_array[period, health]
+
+    working = Regime(
+        states={
+            "health": DiscreteGrid(Health),
+            "wealth": LinSpacedGrid(start=0, stop=10, n_points=5),
+        },
+        state_transitions={
+            "health": {
+                "working": MarkovTransition(_health_probs),
+                "retired": MarkovTransition(_health_probs),
+            },
+            "wealth": lambda wealth: wealth,
+        },
+        functions={"utility": lambda health, wealth: wealth + health},
+        transition=lambda age: jnp.where(age >= 1, _RId.retired, _RId.working),
+        active=lambda age: age < 2,
+    )
+    retired = Regime(
+        transition=None,
+        states={
+            "health": DiscreteGrid(Health),
+            "wealth": LinSpacedGrid(start=0, stop=10, n_points=5),
+        },
+        functions={"utility": lambda health, wealth: wealth + health},
+    )
+    model = Model(
+        regimes={"working": working, "retired": retired},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=_RId,
+    )
+
+    index = pd.MultiIndex.from_tuples(
+        [
+            (0.0, "bad", "bad"),
+            (0.0, "bad", "good"),
+            (0.0, "good", "bad"),
+            (0.0, "good", "good"),
+            (1.0, "bad", "bad"),
+            (1.0, "bad", "good"),
+            (1.0, "good", "bad"),
+            (1.0, "good", "good"),
+        ],
+        names=["age", "health", "next_health"],
+    )
+    sr = pd.Series([0.9, 0.1, 0.2, 0.8, 0.8, 0.2, 0.3, 0.7], index=index)
+
+    params = {"working": {"to_working_next_health": {"probs_array": sr}}}
+    result = params_from_pandas(params=params, model=model)
+    arr = result["working"]["to_working_next_health"]["probs_array"]
+    assert arr.shape == (2, 2, 2)
+
+
+@pytest.mark.xfail(
+    reason="removeprefix('next_') gives 'health__working', KeyError on grid lookup",
+    raises=KeyError,
+)
+def test_build_outcome_mapping_qualified_func_name() -> None:
+    """`_build_outcome_mapping` should handle qualified names."""
+    from lcm.pandas_utils import _build_outcome_mapping  # noqa: PLC0415
+
+    model = get_stochastic_model(3)
+    from lcm.pandas_utils import _build_discrete_grid_lookup  # noqa: PLC0415
+
+    grids = _build_discrete_grid_lookup(model.regimes)
+    result = _build_outcome_mapping(
+        func_name="next_health__working", all_grids=grids, model=model
+    )
+    assert result.size == 2
+    assert result.name == "next_health"
+
+
+@pytest.mark.xfail(
+    reason="categoricals is flat dict, not structured by regime; "
+    "different cardinalities per regime not supported",
+)
+def test_params_from_pandas_structured_categoricals() -> None:
+    """Regime-level categoricals should allow different grids per regime."""
+    from lcm import AgeGrid  # noqa: PLC0415
+    from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
+    from lcm.typing import FloatND  # noqa: PLC0415
+
+    @categorical(ordered=False)
+    class _RId:
+        regime_a: int
+        regime_b: int
+
+    @categorical(ordered=False)
+    class _ChoiceA:
+        x: int
+        y: int
+
+    @categorical(ordered=False)
+    class _ChoiceB:
+        x: int
+        y: int
+        z: int
+
+    # "derived" is a DAG function output used as an index in both regimes,
+    # but with different cardinalities (2 vs 3 categories). Since it's a
+    # function output (not a state/action), it needs external categoricals.
+    def func_a(wealth: float, derived: FloatND, rates: FloatND) -> FloatND:  # noqa: ARG001
+        return rates[derived]
+
+    def func_b(wealth: float, derived: FloatND, rates: FloatND) -> FloatND:  # noqa: ARG001
+        return rates[derived]
+
+    regime_a = Regime(
+        transition=lambda age: jnp.where(age >= 1, _RId.regime_b, _RId.regime_a),
+        active=lambda age: age < 1,
+        states={"wealth": LinSpacedGrid(start=0, stop=10, n_points=5)},
+        state_transitions={"wealth": lambda wealth: wealth},
+        functions={
+            "utility": func_a,
+            "derived": lambda wealth: jnp.where(wealth > 5, 1, 0),
+        },
+    )
+    regime_b = Regime(
+        transition=None,
+        states={"wealth": LinSpacedGrid(start=0, stop=10, n_points=5)},
+        functions={
+            "utility": func_b,
+            "derived": lambda wealth: jnp.where(
+                wealth > 7, 2, jnp.where(wealth > 3, 1, 0)
+            ),
+        },
+    )
+    model = Model(
+        regimes={"regime_a": regime_a, "regime_b": regime_b},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=_RId,
+    )
+
+    # "derived" has 2 outcomes in regime_a (_ChoiceA: x,y) and 3 in
+    # regime_b (_ChoiceB: x,y,z). Need per-regime categoricals.
+    sr_a = pd.Series([1.0, 2.0], index=pd.Index(["x", "y"], name="derived"))
+    sr_b = pd.Series([1.0, 2.0, 3.0], index=pd.Index(["x", "y", "z"], name="derived"))
+
+    result_both = params_from_pandas(
+        params={
+            "regime_a": {"utility": {"rates": sr_a}},
+            "regime_b": {"utility": {"rates": sr_b}},
+        },
+        model=model,
+        categoricals={  # ty: ignore[invalid-argument-type]
+            "regime_a": {"derived": DiscreteGrid(_ChoiceA)},
+            "regime_b": {"derived": DiscreteGrid(_ChoiceB)},
+        },
+    )
+    assert result_both["regime_a"]["utility"]["rates"].shape == (2,)
+    assert result_both["regime_b"]["utility"]["rates"].shape == (3,)
+
+
+@pytest.mark.xfail(
+    reason="Runtime grid params appear in template but not in get_all_functions(); "
+    "error says 'Function not found' instead of explaining runtime grid params",
+)
+def test_params_from_pandas_runtime_grid_param() -> None:
+    """Runtime grid points should be convertible or give a clear error."""
+    from lcm import AgeGrid, IrregSpacedGrid  # noqa: PLC0415
+    from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
+
+    @categorical(ordered=False)
+    class _RId:
+        alive: int
+        dead: int
+
+    alive = Regime(
+        transition=lambda age: jnp.where(age >= 1, _RId.dead, _RId.alive),
+        active=lambda age: age < 1,
+        states={"wealth": IrregSpacedGrid(n_points=4)},
+        state_transitions={"wealth": lambda wealth: wealth},
+        functions={"utility": lambda wealth: wealth},
+    )
+    dead = Regime(
+        transition=None,
+        states={"wealth": IrregSpacedGrid(n_points=4)},
+        functions={"utility": lambda wealth: wealth},
+    )
+    model = Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=_RId,
+    )
+
+    sr = pd.Series([1.0, 2.0, 5.0, 10.0])
+    params = {"alive": {"wealth": {"points": sr}}}
+    result = params_from_pandas(params=params, model=model)
+    np.testing.assert_allclose(result["alive"]["wealth"]["points"], sr.to_numpy())
+
+
+@pytest.mark.xfail(
+    reason="_convert_param_value passes SequenceLeaf through unchanged "
+    "without traversing for Series conversion",
+)
+def test_params_from_pandas_sequence_leaf_traversal() -> None:
+    """Series inside a SequenceLeaf should be converted to JAX arrays."""
+    from lcm.pandas_utils import params_from_pandas  # noqa: PLC0415
+    from lcm.params.sequence_leaf import SequenceLeaf  # noqa: PLC0415
+
+    model = get_stochastic_model(3)
+    sr = pd.Series([10.0])
+    leaf = SequenceLeaf((sr, 42))
+    params = {"working_life": {"labor_income": {"wage": leaf}}}
+    result = params_from_pandas(params=params, model=model)
+    converted = result["working_life"]["labor_income"]["wage"]
+    assert isinstance(converted, SequenceLeaf)
+    assert not isinstance(converted.data[0], pd.Series)
+    np.testing.assert_allclose(converted.data[0], jnp.array([10.0]))
+
+
 def test_resolve_categoricals_conflict_raises() -> None:
     """Categoricals that conflict with model grids raise ValueError."""
     from lcm.pandas_utils import _resolve_categoricals  # noqa: PLC0415
