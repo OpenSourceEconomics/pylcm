@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
 
-import numpy as np
 import pandas as pd
 from jax import Array
 
@@ -381,13 +380,14 @@ def _check_leaf(value: object, path: str) -> None:
     if isinstance(value, (float, int, bool)):
         return
     if hasattr(value, "dtype") and hasattr(value, "shape"):
-        if isinstance(value, np.ndarray):
-            msg = (
-                f"Parameter '{path}' is a numpy array (shape {value.shape}). "
-                f"Use jax.numpy.array() or pass a pd.Series with a named index."
-            )
-            raise InvalidParamsError(msg)
-        return  # JAX array
+        if isinstance(value, Array):
+            return
+        type_name = type(value).__module__ + "." + type(value).__name__
+        msg = (
+            f"Parameter '{path}' is a {type_name} (shape {value.shape}). "
+            f"Use jax.numpy.array() or pass a pd.Series with a named index."
+        )
+        raise InvalidParamsError(msg)
     type_name = type(value).__module__ + "." + type(value).__name__
     msg = f"Parameter '{path}' has unexpected type {type_name}."
     raise InvalidParamsError(msg)

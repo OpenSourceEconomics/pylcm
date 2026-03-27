@@ -52,7 +52,7 @@ def _make_model() -> Model:
 def test_numpy_array_param_rejected() -> None:
     """Passing a numpy array as a param should raise InvalidParamsError."""
     model = _make_model()
-    with pytest.raises(InvalidParamsError, match="numpy array"):
+    with pytest.raises(InvalidParamsError, match=r"numpy\.ndarray"):
         model.solve(params={"bonus": np.array(1.0), "discount_factor": 0.95})  # ty: ignore[invalid-argument-type]
 
 
