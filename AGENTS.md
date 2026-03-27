@@ -109,7 +109,7 @@ to transition functions for target-dependent transitions.
 - `tests/test_models/`: Shared test models (deterministic, stochastic variants)
 - `tests/solution/`: Tests for solution algorithms
 - `tests/simulation/`: Tests for simulation functionality
-- `tests/input_processing/`: Tests for model processing pipeline
+- `tests/regime_building/`: Tests for regime compilation pipeline
 - `tests/data/`: Analytical solutions and regression test data
 
 ## Model and Regime Interface

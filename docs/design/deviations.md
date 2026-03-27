@@ -45,7 +45,23 @@ The old config had `per-file-ignores."src/lcm/functools.py"` for ANN401 and
 - `per-file-ignores."src/lcm/**/*[A-Z]*.py"` for N999 (covers `Q_and_F.py`,
   `V.py`, `max_Q_over_a.py`)
 
-## 5. `lcm_examples` import updated
+## 5. `process_params` re-export in `params/__init__.py` uses `__getattr__`
+
+**Problem:** Adding `from lcm.params.processing import process_params` eagerly
+to `params/__init__.py` creates a circular import: `typing` → `params` →
+`params/processing` → `_utils/namespace` → `typing`.
+
+**Fix:** `params/__init__.py` uses a module-level `__getattr__` to lazily
+import `process_params` on first access. This keeps `from lcm.params import
+process_params` working without triggering the cycle at import time.
+
+## 6. Lazy import in `next_state.py` for `_get_vmap_params` is required
+
+The code review flagged `from lcm.regime_building.max_Q_over_a import
+_get_vmap_params` as an unnecessary lazy import. Moving it to top-level caused
+the same `typing` circular import chain. The lazy import stays.
+
+## 7. `lcm_examples` import updated
 
 `src/lcm_examples/mahler_yum_2024/_model.py` imported from
 `lcm.dispatchers` — updated to `lcm._utils.dispatchers`. This file was not
