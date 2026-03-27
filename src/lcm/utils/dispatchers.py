@@ -7,7 +7,7 @@ from typing import Literal, TypeVar, cast
 import jax
 from jax import Array, vmap
 
-from lcm.functools import allow_args, allow_only_kwargs, all_as_kwargs
+from lcm.functools import allow_args, allow_only_kwargs
 from lcm.typing import Float1D, FloatND
 from lcm.utils import find_duplicates
 
@@ -186,9 +186,11 @@ def productmap(
     func_callable_with_args = allow_args(func)
 
     if batch_sizes is None:
-        batch_sizes = {var:0 for var in variables}
+        batch_sizes = dict.fromkeys(variables, 0)
 
-    vmapped = _base_productmap_batched(func_callable_with_args, variables, batch_sizes=batch_sizes)
+    vmapped = _base_productmap_batched(
+        func_callable_with_args, variables, batch_sizes=batch_sizes
+    )
 
     # Callables do not necessarily have a __signature__ attribute.
     vmapped.__signature__ = inspect.signature(func_callable_with_args)  # ty: ignore[unresolved-attribute]
@@ -269,6 +271,7 @@ def _base_productmap_batched(
                 )
 
             return new_mapped_func
+
         # Loop over all product axes
         for axis in reversed(product_axes):
             func_with_partialled_args = map_one_more(func_with_partialled_args, axis)
