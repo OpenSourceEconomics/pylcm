@@ -96,6 +96,7 @@ extend-ignore = [
   "TC003",   # Move standard library import into a type-checking block
   "TRY003",  # Long messages outside exception class
   "UP047",   # Generic function should use type parameters
+  "F722",    # https://docs.kidger.site/jaxtyping/faq/#flake8-or-ruff-are-throwing-an-error
 ]
 per-file-ignores."benchmarks/*" = [
   "ANN",     # Annotations
@@ -125,7 +126,6 @@ per-file-ignores."docs/**/*" = [
   "D104",   # Missing docstring in public package
   "PD011",  # Use `.to_numpy()` — false positive on JAX .values
   "S101",   # Use of assert
-  "PD011",  # Use `.to_numpy()` instead of `.values`
   "RUF001", # Ambiguous Unicode characters (Greek letters in plot titles)
   "T201",   # print found
   "T203",   # pprint found
