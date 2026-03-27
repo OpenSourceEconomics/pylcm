@@ -71,7 +71,6 @@ project:
         - file: development/setup.md
         - file: development/conventions.md
         - file: development/benchmarking.md
-        - file: design/migration-mapping.md
   error_rules:
     - rule: link-resolves
       severity: ignore
