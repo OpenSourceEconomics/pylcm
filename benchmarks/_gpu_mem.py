@@ -17,6 +17,7 @@ warm-up) followed by ``time_execution()`` (cold = compile + run), then prints
 ``peak_bytes_in_use``.
 """
 
+import os
 import subprocess
 import sys
 
@@ -32,11 +33,16 @@ def measure_gpu_peak(bench_module: str, bench_class: str) -> int:
         Peak GPU memory in bytes (including compilation).
 
     """
+    # Disable JAX pre-allocation in the subprocess so it does not compete with the
+    # parent ASV process for GPU memory.  peak_bytes_in_use still reflects actual
+    # allocation peaks regardless of pre-allocation mode.
+    env = {**os.environ, "XLA_PYTHON_CLIENT_PREALLOCATE": "false"}
     result = subprocess.run(
         [sys.executable, "-m", "benchmarks._gpu_mem", bench_module, bench_class],
         capture_output=True,
         text=True,
         check=True,
+        env=env,
     )
     return int(result.stdout.strip())
 
