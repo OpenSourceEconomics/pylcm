@@ -4,9 +4,10 @@ title: Shocks
 
 # Shocks
 
-Shock grids represent stochastic variables that define their own transition probabilities
-(based on the discretization method). Unlike regular grids, they compute their own grid
-points and transition matrices — you don't specify them in `state_transitions`.
+Shock grids represent stochastic variables that define their own transition
+probabilities (based on the discretization method). Unlike regular grids, they compute
+their own grid points and transition matrices — you don't specify them in
+`state_transitions`.
 
 ## Import Convention
 
@@ -17,7 +18,9 @@ import lcm.shocks.iid
 import lcm.shocks.ar1
 
 # Recommended
-shock = lcm.shocks.iid.Normal(n_points=5, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=2.0)
+shock = lcm.shocks.iid.Normal(
+    n_points=5, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=2.0
+)
 
 # Not recommended — can cause name collisions (e.g., Normal from scipy)
 from lcm.shocks.iid import Normal  # noqa
@@ -76,7 +79,13 @@ $\varepsilon \sim p_1 \, N(\mu_1, \sigma_1^2) + (1 - p_1) \, N(\mu_2, \sigma_2^2
 
 ```python
 lcm.shocks.iid.NormalMixture(
-    n_points=9, n_std=2.0, p1=0.9, mu1=0.0, sigma1=0.1, mu2=0.0, sigma2=1.0,
+    n_points=9,
+    n_std=2.0,
+    p1=0.9,
+    mu1=0.0,
+    sigma1=0.1,
+    mu2=0.0,
+    sigma2=1.0,
 )
 ```
 
@@ -90,7 +99,8 @@ The process is $y_t = \mu + \rho \, y_{t-1} + \varepsilon_t$. The innovation
 distribution depends on the method:
 
 - **Tauchen** and **Rouwenhorst**: $\varepsilon_t \sim N(0, \sigma^2)$
-- **TauchenNormalMixture**: $\varepsilon_t \sim p_1 \, N(\mu_1, \sigma_1^2) + (1 - p_1) \, N(\mu_2, \sigma_2^2)$
+- **TauchenNormalMixture**:
+  $\varepsilon_t \sim p_1 \, N(\mu_1, \sigma_1^2) + (1 - p_1) \, N(\mu_2, \sigma_2^2)$
 
 ### Tauchen
 
@@ -98,7 +108,12 @@ Discretization via @tauchen1986. Uses CDF-based transition probabilities.
 
 ```python
 lcm.shocks.ar1.Tauchen(
-    n_points=7, gauss_hermite=False, rho=0.9, sigma=0.1, mu=0.0, n_std=2.0,
+    n_points=7,
+    gauss_hermite=False,
+    rho=0.9,
+    sigma=0.1,
+    mu=0.0,
+    n_std=2.0,
 )
 ```
 
@@ -108,8 +123,8 @@ lcm.shocks.ar1.Tauchen(
 
 ### Rouwenhorst
 
-Discretization via @rouwenhorst1995 / @kopecky2010. Better for highly
-persistent processes ($\rho$ close to 1).
+Discretization via @rouwenhorst1995 / @kopecky2010. Better for highly persistent
+processes ($\rho$ close to 1).
 
 ```python
 lcm.shocks.ar1.Rouwenhorst(n_points=7, rho=0.95, sigma=0.1, mu=0.0)
@@ -122,8 +137,15 @@ AR(1) with mixture-of-normals innovations, discretized via Tauchen. Following
 
 ```python
 lcm.shocks.ar1.TauchenNormalMixture(
-    n_points=9, rho=0.9, mu=0.0, n_std=2.0,
-    p1=0.9, mu1=0.0, sigma1=0.1, mu2=0.0, sigma2=1.0,
+    n_points=9,
+    rho=0.9,
+    mu=0.0,
+    n_std=2.0,
+    p1=0.9,
+    mu1=0.0,
+    sigma1=0.1,
+    mu2=0.0,
+    sigma2=1.0,
 )
 ```
 
@@ -141,7 +163,11 @@ working = Regime(
     states={
         "wealth": LinSpacedGrid(start=0, stop=100, n_points=50),
         "income_shock": lcm.shocks.iid.Normal(
-            n_points=5, gauss_hermite=False, mu=0.0, sigma=1.0, n_std=2.0,
+            n_points=5,
+            gauss_hermite=False,
+            mu=0.0,
+            sigma=1.0,
+            n_std=2.0,
         ),
     },
     state_transitions={
@@ -159,9 +185,9 @@ working = Regime(
 ## Key Rules
 
 1. Shock grids go in `states` (they define the values the shock can take).
-2. Shock grids must **not** have a `transition` parameter (validation error if they do).
-3. Shock parameters can be specified at init or deferred to runtime (set to `None`).
-4. Runtime params follow the same hierarchy as other params (see
+1. Shock grids must **not** have a `transition` parameter (validation error if they do).
+1. Shock parameters can be specified at init or deferred to runtime (set to `None`).
+1. Runtime params follow the same hierarchy as other params (see
    [Parameters](parameters.md)).
 
 ## Runtime Parameters

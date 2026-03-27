@@ -13,12 +13,12 @@ lifecycle model.
 from lcm import Model
 
 model = Model(
-    regimes=regimes,             # dict mapping names to Regime instances
-    ages=ages,                   # AgeGrid defining the lifecycle timeline
-    regime_id_class=RegimeId,    # @categorical dataclass mapping names to int indices
-    enable_jit=True,             # controls JAX compilation (default: True)
-    fixed_params={},             # optional params baked in at init time
-    description="",              # optional description string
+    regimes=regimes,  # dict mapping names to Regime instances
+    ages=ages,  # AgeGrid defining the lifecycle timeline
+    regime_id_class=RegimeId,  # @categorical dataclass mapping names to int indices
+    enable_jit=True,  # controls JAX compilation (default: True)
+    fixed_params={},  # optional params baked in at init time
+    description="",  # optional description string
 )
 ```
 
@@ -32,6 +32,7 @@ decorator to create it:
 
 ```python
 from lcm import categorical
+
 
 @categorical(ordered=False)
 class RegimeId:
@@ -59,6 +60,7 @@ ages = AgeGrid(start=25, stop=75, step="Y")  # annual steps, ages 25 to 75
 ```
 
 Step formats:
+
 - `"Y"` — 1 year
 - `"2Y"` — 2 years
 - `"Q"` — quarter (0.25 years)
@@ -99,10 +101,10 @@ The `Model` constructor validates:
 After construction, the model exposes several useful attributes:
 
 ```python
-model.regimes             # immutable mapping of user Regime objects
-model.internal_regimes    # processed internal representations
-model.n_periods           # number of periods
-model.regime_names_to_ids # name -> integer mapping
+model.regimes  # immutable mapping of user Regime objects
+model.internal_regimes  # processed internal representations
+model.n_periods  # number of periods
+model.regime_names_to_ids  # name -> integer mapping
 model.get_params_template()  # mutable copy of the parameter template
 ```
 
@@ -133,7 +135,9 @@ def next_wealth(wealth, consumption, interest_rate):
 
 
 def next_regime(labor_supply):
-    return jnp.where(labor_supply == LaborSupply.work, RegimeId.working, RegimeId.retired)
+    return jnp.where(
+        labor_supply == LaborSupply.work, RegimeId.working, RegimeId.retired
+    )
 
 
 def utility(consumption, labor_supply, disutility_of_work):

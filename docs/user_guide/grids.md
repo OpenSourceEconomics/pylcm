@@ -10,13 +10,13 @@ take. They are passed via the `states` and `actions` mappings on a
 
 ## Quick Reference
 
-| Grid Type | Use Case | Key Parameters |
-|---|---|---|
-| `DiscreteGrid` | Categorical choices | `category_class` |
-| `LinSpacedGrid` | Evenly spaced continuous | `start`, `stop`, `n_points` |
-| `LogSpacedGrid` | Log-spaced continuous | `start`, `stop`, `n_points` |
-| `IrregSpacedGrid` | Custom point placement | `points` or `n_points` |
-| `PiecewiseLinSpacedGrid` | Dense in some regions | `pieces` (tuple of `Piece`) |
+| Grid Type                | Use Case                  | Key Parameters              |
+| ------------------------ | ------------------------- | --------------------------- |
+| `DiscreteGrid`           | Categorical choices       | `category_class`            |
+| `LinSpacedGrid`          | Evenly spaced continuous  | `start`, `stop`, `n_points` |
+| `LogSpacedGrid`          | Log-spaced continuous     | `start`, `stop`, `n_points` |
+| `IrregSpacedGrid`        | Custom point placement    | `points` or `n_points`      |
+| `PiecewiseLinSpacedGrid` | Dense in some regions     | `pieces` (tuple of `Piece`) |
 | `PiecewiseLogSpacedGrid` | Log-dense in some regions | `pieces` (tuple of `Piece`) |
 
 All grid classes are imported from `lcm`:
@@ -44,10 +44,12 @@ categories:
 ```python
 from lcm import DiscreteGrid, categorical
 
+
 @categorical(ordered=True)
 class LaborSupply:
     do_not_work: int
     work: int
+
 
 actions = {"labor_supply": DiscreteGrid(LaborSupply)}
 ```
@@ -56,8 +58,8 @@ Values are integer codes (0, 1, 2, ...) auto-assigned by `@categorical`. In simu
 output, labels are preserved via pandas Categorical.
 
 When used as an **action**, no further configuration is needed. When used as a
-**state**, the transition is specified via `state_transitions` on the `Regime` —
-see [Transitions](transitions.ipynb).
+**state**, the transition is specified via `state_transitions` on the `Regime` — see
+[Transitions](transitions.ipynb).
 
 ## Continuous Grids
 
