@@ -4,14 +4,22 @@ from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
 
+import pandas as pd
 from jax import Array
 
 from lcm.ages import AgeGrid
+from lcm.exceptions import InvalidParamsError
 from lcm.grids import DiscreteGrid
 from lcm.model_processing import (
     build_regimes_and_template,
     validate_model_inputs,
 )
+from lcm.pandas_utils import (
+    convert_series_in_params,
+    has_series,
+    initial_conditions_from_dataframe,
+)
+from lcm.params import MappingLeaf, SequenceLeaf
 from lcm.params.processing import (
     process_params,
 )
@@ -195,6 +203,7 @@ class Model:
         internal_params = _maybe_convert_series(
             internal_params, model=self, derived_categoricals=derived_categoricals
         )
+        _validate_param_types(internal_params)
         validate_regime_transitions_all_periods(
             internal_regimes=self.internal_regimes,
             internal_params=internal_params,
@@ -283,6 +292,7 @@ class Model:
         internal_params = _maybe_convert_series(
             internal_params, model=self, derived_categoricals=derived_categoricals
         )
+        _validate_param_types(internal_params)
         if check_initial_conditions:
             validate_initial_conditions(
                 initial_conditions=initial_conditions,
@@ -336,8 +346,6 @@ def _maybe_convert_series(
     | None,
 ) -> InternalParams:
     """Convert pd.Series leaves in params to JAX arrays if any are present."""
-    from lcm.pandas_utils import convert_series_in_params, has_series  # noqa: PLC0415
-
     if derived_categoricals is not None or has_series(internal_params):
         return convert_series_in_params(
             internal_params=internal_params,
@@ -347,17 +355,51 @@ def _maybe_convert_series(
     return internal_params
 
 
+def _validate_param_types(internal_params: InternalParams) -> None:
+    """Raise if any param leaf is not a Python scalar or JAX array.
+
+    After processing, every leaf value (including inside MappingLeaf /
+    SequenceLeaf containers) must be a Python scalar (float, int, bool) or a
+    JAX array. Notably, numpy arrays and pandas Series are not accepted.
+    """
+    for regime_name, regime_params in internal_params.items():
+        for key, value in regime_params.items():
+            _check_leaf(value, f"{regime_name}__{key}")
+
+
+def _check_leaf(value: object, path: str) -> None:
+    """Check a single leaf value, recursing into MappingLeaf/SequenceLeaf."""
+    if isinstance(value, MappingLeaf):
+        for k, v in value.data.items():
+            _check_leaf(v, f"{path}.{k}")
+        return
+    if isinstance(value, SequenceLeaf):
+        for i, v in enumerate(value.data):
+            _check_leaf(v, f"{path}[{i}]")
+        return
+    if isinstance(value, (float, int, bool)):
+        return
+    if hasattr(value, "dtype") and hasattr(value, "shape"):
+        if isinstance(value, Array):
+            return
+        type_name = type(value).__module__ + "." + type(value).__name__
+        msg = (
+            f"Parameter '{path}' is a {type_name} (shape {value.shape}). "
+            f"Use jax.numpy.array() or pass a pd.Series with a named index."
+        )
+        raise InvalidParamsError(msg)
+    type_name = type(value).__module__ + "." + type(value).__name__
+    msg = f"Parameter '{path}' has unexpected type {type_name}."
+    raise InvalidParamsError(msg)
+
+
 def _maybe_convert_dataframe(
     initial_conditions: Mapping[str, Array],
     *,
     model: Model,
 ) -> Mapping[str, Array]:
     """Convert a DataFrame to initial_conditions dict if needed."""
-    import pandas as pd  # noqa: PLC0415
-
     if isinstance(initial_conditions, pd.DataFrame):
-        from lcm.pandas_utils import initial_conditions_from_dataframe  # noqa: PLC0415
-
         return initial_conditions_from_dataframe(df=initial_conditions, model=model)
     return initial_conditions
 

@@ -1097,6 +1097,27 @@ def test_array_from_series_wrong_level_names_raises() -> None:
         )
 
 
+def test_array_from_series_integer_labels_rejected() -> None:
+    """Integer labels on a categorical level raise ValueError."""
+    model = get_stochastic_model(3)
+    # Use integer labels (0, 1) instead of string category names
+    index = pd.MultiIndex.from_tuples(
+        [(40.0, 0, "single", "single"), (40.0, 1, "single", "single")],
+        names=["age", "labor_supply", "partner", "next_partner"],
+    )
+    series = pd.Series([0.5, 0.5], index=index)
+    func = model.regimes["working_life"].get_all_functions()["next_partner"]
+    with pytest.raises(ValueError, match="non-string labels"):
+        array_from_series(
+            sr=series,
+            func=func,
+            param_name="probs_array",
+            func_name="next_partner",
+            model=model,
+            regime_name="working_life",
+        )
+
+
 def test_array_from_series_scalar_param_explicit_lookup() -> None:
     """Scalar parameter with explicit func lookup returns 1D array."""
     model = get_stochastic_model(3)
