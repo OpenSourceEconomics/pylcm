@@ -3,7 +3,7 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -13,8 +13,10 @@ from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.grids import DiscreteGrid, IrregSpacedGrid
-from lcm.model import Model
 from lcm.params import MappingLeaf
+
+if TYPE_CHECKING:
+    from lcm.model import Model
 from lcm.params.sequence_leaf import SequenceLeaf
 from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
