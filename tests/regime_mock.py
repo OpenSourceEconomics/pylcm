@@ -3,7 +3,8 @@ from typing import Literal, cast
 
 from lcm.grids import Grid
 from lcm.interfaces import SolveSimulateFunctionPair
-from lcm.regime import _collect_state_transitions, _default_H
+from lcm.regime import _default_H
+from lcm.regime_building.validation import collect_state_transitions
 from lcm.typing import UserFunction
 
 
@@ -47,7 +48,7 @@ class RegimeMock:
                 result[name] = func
         result |= dict(self.constraints)
         if self.states:
-            result |= _collect_state_transitions(
+            result |= collect_state_transitions(
                 {k: v for k, v in self.states.items() if v is not None},
                 self.state_transitions,
             )

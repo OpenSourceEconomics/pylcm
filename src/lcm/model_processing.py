@@ -1,0 +1,331 @@
+"""Model initialization helpers: validation, template creation, fixed-param handling.
+
+Extracted from `model.py` to keep the `Model` class focused on its public API.
+
+"""
+
+import dataclasses
+import functools
+import inspect
+from collections.abc import Callable, Mapping
+from types import MappingProxyType
+
+from dags import get_ancestors
+from dags.tree import QNAME_DELIMITER, qname_from_tree_path
+
+from lcm.ages import AgeGrid
+from lcm.exceptions import ModelInitializationError, format_messages
+from lcm.params.processing import (
+    broadcast_to_template,
+    create_params_template,
+)
+from lcm.regime import Regime
+from lcm.regime_building.processing import (
+    InternalRegime,
+    process_regimes,
+)
+from lcm.typing import (
+    InternalParams,
+    ParamsTemplate,
+    RegimeName,
+    RegimeNamesToIds,
+    UserParams,
+)
+from lcm.utils.containers import get_field_names_and_values
+
+
+def build_regimes_and_template(
+    *,
+    regimes: Mapping[str, Regime],
+    ages: AgeGrid,
+    regime_names_to_ids: RegimeNamesToIds,
+    enable_jit: bool,
+    fixed_params: UserParams,
+) -> tuple[MappingProxyType[RegimeName, InternalRegime], ParamsTemplate]:
+    """Build internal regimes and params template in a single pass.
+
+    Compose regime processing, template creation, and optional fixed-param partialling
+    so that each result is computed exactly once.
+
+    """
+    internal_regimes = process_regimes(
+        regimes=regimes,
+        ages=ages,
+        regime_names_to_ids=regime_names_to_ids,
+        enable_jit=enable_jit,
+    )
+    params_template = create_params_template(internal_regimes)
+
+    if fixed_params:
+        fixed_internal = _resolve_fixed_params(
+            fixed_params=dict(fixed_params), template=params_template
+        )
+        if any(v for v in fixed_internal.values()):
+            internal_regimes = _partial_fixed_params_into_regimes(
+                internal_regimes=internal_regimes, fixed_internal=fixed_internal
+            )
+            params_template = _remove_fixed_from_template(
+                template=params_template, fixed_internal=fixed_internal
+            )
+
+    return internal_regimes, params_template
+
+
+def validate_model_inputs(
+    *,
+    n_periods: int,
+    regimes: Mapping[str, Regime],
+    regime_id_class: type,
+) -> None:
+    """Validate model constructor inputs."""
+    # Early exit if regimes are not lcm.Regime instances
+    if not all(isinstance(regime, Regime) for regime in regimes.values()):
+        raise ModelInitializationError(
+            "All items in regimes must be instances of lcm.Regime."
+        )
+
+    error_messages: list[str] = []
+
+    if not isinstance(n_periods, int):
+        error_messages.append("n_periods must be an integer.")
+    elif n_periods <= 1:
+        error_messages.append("n_periods must be at least 2.")
+
+    if not regimes:
+        error_messages.append(
+            "At least one non-terminal and one terminal regime must be provided."
+        )
+
+    # Validate regime names don't contain separator
+    invalid_names = [name for name in regimes if QNAME_DELIMITER in name]
+    if invalid_names:
+        error_messages.append(
+            f"Regime names cannot contain the separator character "
+            f"'{QNAME_DELIMITER}'. The following names are invalid: {invalid_names}."
+        )
+
+    # Assume all items in regimes are lcm.Regime instances beyond this point
+    terminal_regimes = [name for name, r in regimes.items() if r.terminal]
+    if len(terminal_regimes) < 1:
+        error_messages.append("lcm.Model must have at least one terminal regime.")
+
+    non_terminal_regimes = {name: r for name, r in regimes.items() if not r.terminal}
+    if len(non_terminal_regimes) < 1:
+        error_messages.append("lcm.Model must have at least one non-terminal regime.")
+
+    regime_id_fields = sorted(get_field_names_and_values(regime_id_class).keys())
+    regime_names = sorted(regimes.keys())
+    if regime_id_fields != regime_names:
+        error_messages.append(
+            f"regime_id_cls fields must match regime names.\nGot:\n"
+            "regime_id_cls fields:\n"
+            f"    {regime_id_fields}\n"
+            "regime names:\n"
+            f"    {regime_names}."
+        )
+    error_messages.extend(_validate_all_variables_used(regimes))
+
+    if error_messages:
+        msg = format_messages(error_messages)
+        raise ModelInitializationError(msg)
+
+
+def _validate_all_variables_used(regimes: Mapping[str, Regime]) -> list[str]:
+    """Validate that all states and actions are used somewhere in each regime.
+
+    Each state or action must appear in at least one of:
+    - The concurrent valuation (utility or constraints)
+    - A transition function
+
+    Args:
+        regimes: Mapping of regime names to regimes to validate.
+
+    Returns:
+        A list of error messages. Empty list if validation passes.
+
+    """
+    error_messages = []
+
+    for regime_name, regime in regimes.items():
+        variable_names = set(regime.states) | set(regime.actions)
+        user_functions = dict(regime.get_all_functions(phase="solve"))
+
+        targets = [
+            "utility",
+            *list(regime.constraints),
+            *(
+                name
+                for name in user_functions
+                if name.startswith("next_")
+                and not getattr(user_functions[name], "_is_auto_identity", False)
+            ),
+        ]
+        reachable = get_ancestors(
+            user_functions, targets=targets, include_targets=False
+        )
+        unused_variables = sorted(variable_names - reachable)
+
+        if unused_variables:
+            unused_states = [v for v in unused_variables if v in regime.states]
+            unused_actions = [v for v in unused_variables if v in regime.actions]
+
+            msg_parts = []
+            if unused_states:
+                state_word = "state" if len(unused_states) == 1 else "states"
+                msg_parts.append(f"{state_word} {unused_states}")
+            if unused_actions:
+                action_word = "action" if len(unused_actions) == 1 else "actions"
+                msg_parts.append(f"{action_word} {unused_actions}")
+
+            error_messages.append(
+                f"The following variables are defined but never used in regime "
+                f"'{regime_name}': {' and '.join(msg_parts)}. "
+                f"Each state and action must be used in at least one of: "
+                f"utility, constraints, or transition functions."
+            )
+
+    return error_messages
+
+
+def _resolve_fixed_params(
+    *,
+    fixed_params: dict[str, object],
+    template: ParamsTemplate,
+) -> InternalParams:
+    """Resolve fixed_params against the params template.
+
+    Like `process_params`, support model/regime/function level specification, but
+    do NOT require all template keys to be present — only match what's provided.
+
+    """
+    return broadcast_to_template(
+        params=fixed_params,
+        template=template,
+        required=False,
+    )
+
+
+def _remove_fixed_from_template(
+    *,
+    template: ParamsTemplate,
+    fixed_internal: InternalParams,
+) -> ParamsTemplate:
+    """Remove fixed params from the params template.
+
+    After partialling fixed params into compiled functions, remove them from the
+    template so users don't need to supply them at solve/simulate time.
+
+    """
+    result: dict[str, dict[str, dict[str, str]]] = {}
+    for regime_name, regime_template in template.items():
+        regime_fixed = fixed_internal.get(regime_name, MappingProxyType({}))
+        new_regime: dict[str, dict[str, str]] = {}
+        for func_name, func_params in regime_template.items():
+            new_func_params = {
+                param_name: param_type
+                for param_name, param_type in func_params.items()
+                if qname_from_tree_path((func_name, param_name)) not in regime_fixed
+            }
+            if new_func_params:
+                new_regime[func_name] = new_func_params
+        if new_regime:
+            result[regime_name] = new_regime
+        else:
+            # Keep regime key even if empty (needed by process_params)
+            result[regime_name] = {}
+    return MappingProxyType(
+        {
+            regime_name: MappingProxyType(
+                {
+                    func_name: MappingProxyType(func_params)
+                    for func_name, func_params in regime.items()
+                }
+            )
+            for regime_name, regime in result.items()
+        }
+    )
+
+
+def _partial_fixed_params_into_regimes(
+    *,
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    fixed_internal: InternalParams,
+) -> MappingProxyType[RegimeName, InternalRegime]:
+    """Partial fixed params into all compiled functions on each InternalRegime."""
+    result = {}
+    for name, regime in internal_regimes.items():
+        regime_fixed = dict(fixed_internal.get(name, MappingProxyType({})))
+        if not regime_fixed:
+            result[name] = regime
+            continue
+
+        # Build new solve_functions with partialled functions
+        solve_funcs = regime.solve_functions
+        new_solve = dataclasses.replace(
+            solve_funcs,
+            max_Q_over_a=MappingProxyType(
+                {
+                    period: functools.partial(func, **regime_fixed)
+                    for period, func in solve_funcs.max_Q_over_a.items()
+                }
+            ),
+            compute_regime_transition_probs=(
+                functools.partial(
+                    solve_funcs.compute_regime_transition_probs,
+                    **_filter_kwargs_for_func(
+                        func=solve_funcs.compute_regime_transition_probs,
+                        kwargs=regime_fixed,
+                    ),
+                )
+                if solve_funcs.compute_regime_transition_probs is not None
+                else None
+            ),
+        )
+
+        # Build new simulate_functions with partialled functions
+        simulate_funcs = regime.simulate_functions
+        new_simulate = dataclasses.replace(
+            simulate_funcs,
+            argmax_and_max_Q_over_a=MappingProxyType(
+                {
+                    period: functools.partial(func, **regime_fixed)
+                    for period, func in simulate_funcs.argmax_and_max_Q_over_a.items()
+                }
+            ),
+            next_state=functools.partial(simulate_funcs.next_state, **regime_fixed),
+            compute_regime_transition_probs=(
+                functools.partial(
+                    simulate_funcs.compute_regime_transition_probs,
+                    **_filter_kwargs_for_func(
+                        func=simulate_funcs.compute_regime_transition_probs,
+                        kwargs=regime_fixed,
+                    ),
+                )
+                if simulate_funcs.compute_regime_transition_probs is not None
+                else None
+            ),
+        )
+
+        result[name] = dataclasses.replace(
+            regime,
+            solve_functions=new_solve,
+            simulate_functions=new_simulate,
+            resolved_fixed_params=MappingProxyType(regime_fixed),
+        )
+    return MappingProxyType(result)
+
+
+def _filter_kwargs_for_func(
+    *, func: Callable, kwargs: Mapping[str, object]
+) -> Mapping[str, object]:
+    """Filter kwargs to only those accepted by func's signature."""
+    try:
+        sig = inspect.signature(func)
+    except ValueError, TypeError:
+        # If we can't inspect the signature, pass all kwargs through
+        return kwargs
+    params = sig.parameters
+    # If the function accepts **kwargs, pass everything
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return kwargs
+    return {k: v for k, v in kwargs.items() if k in params}

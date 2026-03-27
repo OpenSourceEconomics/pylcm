@@ -1,4 +1,11 @@
-from collections.abc import Mapping
+"""Simulation-phase state and regime transitions.
+
+These functions apply pre-compiled transition functions to subject arrays during
+forward simulation. They are distinct from `lcm.regime_building`, which compiles
+transition functions from user-defined regimes; this module executes them.
+
+"""
+
 from types import MappingProxyType
 
 import jax
@@ -6,9 +13,9 @@ from dags.tree import tree_path_from_qname
 from jax import Array, vmap
 from jax import numpy as jnp
 
-from lcm.grids import DiscreteGrid
 from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.simulation.random import generate_simulation_keys
+from lcm.state_action_space import create_state_action_space
 from lcm.typing import (
     Bool1D,
     FlatRegimeParams,
@@ -17,27 +24,6 @@ from lcm.typing import (
     RegimeNamesToIds,
 )
 from lcm.utils.namespace import flatten_regime_namespace
-from lcm.utils.state_action_space import create_state_action_space
-
-# Sentinel for categorical states not in initial conditions.  Using int32 min
-# instead of -1 so that JAX indexing produces obviously wrong values rather than
-# silently returning the last element.
-MISSING_CAT_CODE = jnp.iinfo(jnp.int32).min
-
-
-def get_regime_state_names(
-    internal_regime: InternalRegime,
-) -> set[str]:
-    """Get state names from an internal regime's variable info.
-
-    Args:
-        internal_regime: The internal regime instance.
-
-    Returns:
-        Set of state variable names.
-
-    """
-    return set(internal_regime.variable_info.query("is_state").index)
 
 
 def create_regime_state_action_space(
@@ -290,39 +276,3 @@ def _update_states_for_subjects(
         )
 
     return MappingProxyType(updated_states)
-
-
-def build_initial_states(
-    *,
-    initial_states: Mapping[str, Array],
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-) -> MappingProxyType[str, Array]:
-    """Build flat regime-namespaced state dict from user-provided initial states.
-
-    For each regime, copies provided states and fills missing ones with
-    `jnp.nan` (continuous) or `MISSING_CAT_CODE` (discrete).
-
-    Args:
-        initial_states: Mapping of state names to arrays.
-        internal_regimes: Immutable mapping of regime names to internal regime
-            instances.
-
-    Returns:
-        Immutable mapping of regime-namespaced state names to arrays.
-        Example: `{"work__wealth": arr, "work__health": arr, ...}`
-
-    """
-    flat: dict[str, Array] = {}
-    n_subjects = len(next(iter(initial_states.values())))
-
-    for regime_name, internal_regime in internal_regimes.items():
-        for state_name in get_regime_state_names(internal_regime):
-            key = f"{regime_name}__{state_name}"
-            if state_name in initial_states:
-                flat[key] = initial_states[state_name]
-            elif isinstance(internal_regime.grids[state_name], DiscreteGrid):
-                flat[key] = jnp.full(n_subjects, MISSING_CAT_CODE, dtype=jnp.int32)
-            else:
-                flat[key] = jnp.full(n_subjects, jnp.nan)
-
-    return MappingProxyType(flat)

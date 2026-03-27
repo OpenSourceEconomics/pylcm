@@ -13,11 +13,13 @@ from lcm.interfaces import (
     InternalRegime,
     PeriodRegimeSimulationData,
 )
+from lcm.simulation.initial_conditions import (
+    MISSING_CAT_CODE,
+    build_initial_states,
+)
 from lcm.simulation.random import draw_random_seed
 from lcm.simulation.result import SimulationResult
 from lcm.simulation.transitions import (
-    MISSING_CAT_CODE,
-    build_initial_states,
     calculate_next_regime_membership,
     calculate_next_states,
     create_regime_state_action_space,

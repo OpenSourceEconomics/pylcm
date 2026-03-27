@@ -18,22 +18,22 @@ import from params). However, `_make_immutable` recursively handles `MappingLeaf
 the leaf modules (which are rarely instantiated directly) is the least disruptive
 solution.
 
-## 2. `create_state_space_info` uses lazy import for `variable_info`
+## 2. `create_v_interpolation_info` uses lazy import for `variable_info`
 
-**Problem:** Moving `_create_state_space_info` from `regime_processing.py` to `V.py`
+**Problem:** Moving `_create_v_interpolation_info` from `regime_processing.py` to `V.py`
 required importing `get_variable_info` and `get_grids` from `variable_info.py`. This
 would create a circular dependency since `variable_info` also imports grid types used by
 `V.py`.
 
-**Fix:** `create_state_space_info` in `V.py` uses a lazy import for `get_variable_info`
-and `get_grids` with `# noqa: PLC0415`.
+**Fix:** `create_v_interpolation_info` in `V.py` uses a lazy import for
+`get_variable_info` and `get_grids` with `# noqa: PLC0415`.
 
 ## 3. Type annotation weakened, then restored
 
-The agent initially changed `create_state_space_info(regime: Regime)` to
-`create_state_space_info(regime: object)` to avoid importing `Regime` in `V.py`. This
-was caught by `ty` and fixed by adding `from lcm.regime import Regime` — no circular
-dependency existed for this import path.
+The agent initially changed `create_v_interpolation_info(regime: Regime)` to
+`create_v_interpolation_info(regime: object)` to avoid importing `Regime` in `V.py`.
+This was caught by `ty` and fixed by adding `from lcm.regime import Regime` — no
+circular dependency existed for this import path.
 
 ## 4. Ruff per-file-ignores updated
 

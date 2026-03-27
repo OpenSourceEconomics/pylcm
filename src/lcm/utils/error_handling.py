@@ -499,18 +499,18 @@ def validate_transition_probs(
 ) -> None:
     """Validate a transition probability array for shape, values, and row sums.
 
-    When ``state_name`` is provided, validate a state transition probability array.
+    When `state_name` is provided, validate a state transition probability array.
     When omitted, validate a regime transition probability array.
 
-    For per-target state transitions (where ``state_transitions[state_name]`` is a
+    For per-target state transitions (where `state_transitions[state_name]` is a
     dict mapping target regime names to `MarkovTransition` instances), pass
-    ``target_regime_name`` to select the specific transition to validate.
+    `target_regime_name` to select the specific transition to validate.
 
     Args:
         probs: The transition probability array to validate.
         model: The LCM Model instance.
         regime_name: Name of the regime.
-        state_name: Name of the state with a `MarkovTransition`. If ``None``,
+        state_name: Name of the state with a `MarkovTransition`. If `None`,
             validate a regime transition instead.
         target_regime_name: Target regime name for per-target state transitions.
             Required when the state transition is a per-target dict.
