@@ -8,7 +8,7 @@ from dags.tree import qname_from_tree_path
 from jax import Array
 
 from lcm.grids import ContinuousGrid, DiscreteGrid, IrregSpacedGrid
-from lcm.grids.helpers import get_irreg_coordinate
+from lcm.grids.coordinates import get_irreg_coordinate
 from lcm.regime import Regime
 from lcm.regime_building.ndimage import map_coordinates
 from lcm.shocks import _ShockGrid

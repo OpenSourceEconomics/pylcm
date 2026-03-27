@@ -18,10 +18,10 @@ Detailed old → new path mapping for tracing git history across the restructuri
 | `src/lcm/argmax.py`                                         | `src/lcm/regime_building/argmax.py`        |
 | `src/lcm/ndimage.py`                                        | `src/lcm/regime_building/ndimage.py`       |
 | `src/lcm/random.py`                                         | `src/lcm/simulation/random.py`             |
-| `src/lcm/grid_helpers.py`                                   | `src/lcm/grids/helpers.py`                 |
+| `src/lcm/grid_helpers.py`                                   | `src/lcm/grids/coordinates.py`             |
 | `src/lcm/functools.py`                                      | `src/lcm/utils/functools.py`               |
 | `src/lcm/dispatchers.py`                                    | `src/lcm/utils/dispatchers.py`             |
-| `src/lcm/state_action_space.py`                             | `src/lcm/utils/state_action_space.py`      |
+| `src/lcm/state_action_space.py`                             | `src/lcm/state_action_space.py`            |
 | `src/lcm/error_handling.py`                                 | `src/lcm/utils/error_handling.py`          |
 | `src/lcm/logging.py`                                        | `src/lcm/utils/logging.py`                 |
 | `src/lcm/simulation/utils.py`                               | `src/lcm/simulation/transitions.py`        |

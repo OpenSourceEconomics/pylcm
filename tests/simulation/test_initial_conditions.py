@@ -9,8 +9,10 @@ from lcm import DiscreteGrid, IrregSpacedGrid, LinSpacedGrid, Model, Regime, cat
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidInitialConditionsError
 from lcm.params.processing import process_params
-from lcm.simulation.transitions import build_initial_states
-from lcm.simulation.validation import validate_initial_conditions
+from lcm.simulation.initial_conditions import (
+    build_initial_states,
+    validate_initial_conditions,
+)
 from lcm.typing import (
     BoolND,
     ContinuousAction,

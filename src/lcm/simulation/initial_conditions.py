@@ -1,3 +1,10 @@
+"""Build and validate initial conditions for simulation.
+
+Consolidates initial condition construction (`build_initial_states`) and validation
+(`validate_initial_conditions`) into a single module.
+
+"""
+
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 
@@ -15,13 +22,53 @@ from lcm.exceptions import (
 from lcm.grids import DiscreteGrid
 from lcm.interfaces import InternalRegime
 from lcm.regime_building.Q_and_F import _get_feasibility
-from lcm.simulation.transitions import get_regime_state_names
 from lcm.typing import (
     InternalParams,
     RegimeName,
     RegimeNamesToIds,
 )
 from lcm.utils.functools import get_union_of_args
+
+# Sentinel for categorical states not in initial conditions.  Using int32 min
+# instead of -1 so that JAX indexing produces obviously wrong values rather than
+# silently returning the last element.
+MISSING_CAT_CODE = jnp.iinfo(jnp.int32).min
+
+
+def build_initial_states(
+    *,
+    initial_states: Mapping[str, Array],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+) -> MappingProxyType[str, Array]:
+    """Build flat regime-namespaced state dict from user-provided initial states.
+
+    For each regime, copies provided states and fills missing ones with
+    `jnp.nan` (continuous) or `MISSING_CAT_CODE` (discrete).
+
+    Args:
+        initial_states: Mapping of state names to arrays.
+        internal_regimes: Immutable mapping of regime names to internal regime
+            instances.
+
+    Returns:
+        Immutable mapping of regime-namespaced state names to arrays.
+        Example: `{"work__wealth": arr, "work__health": arr, ...}`
+
+    """
+    flat: dict[str, Array] = {}
+    n_subjects = len(next(iter(initial_states.values())))
+
+    for regime_name, internal_regime in internal_regimes.items():
+        for state_name in _get_regime_state_names(internal_regime):
+            key = f"{regime_name}__{state_name}"
+            if state_name in initial_states:
+                flat[key] = initial_states[state_name]
+            elif isinstance(internal_regime.grids[state_name], DiscreteGrid):
+                flat[key] = jnp.full(n_subjects, MISSING_CAT_CODE, dtype=jnp.int32)
+            else:
+                flat[key] = jnp.full(n_subjects, jnp.nan)
+
+    return MappingProxyType(flat)
 
 
 def validate_initial_conditions(
@@ -112,6 +159,21 @@ def validate_initial_conditions(
         raise InvalidInitialConditionsError(format_messages(feasibility_errors))
 
 
+def _get_regime_state_names(
+    internal_regime: InternalRegime,
+) -> set[str]:
+    """Get state names from an internal regime's variable info.
+
+    Args:
+        internal_regime: The internal regime instance.
+
+    Returns:
+        Set of state variable names.
+
+    """
+    return set(internal_regime.variable_info.query("is_state").index)
+
+
 def _format_missing_states_message(missing: set[str], required: set[str]) -> str:
     """Format an error message for missing initial states.
 
@@ -170,7 +232,7 @@ def _collect_state_name_errors(
     # All known states (union across all regimes) — used for the "extra" check
     all_known_states: set[str] = {"age"}
     for internal_regime in internal_regimes.values():
-        all_known_states.update(get_regime_state_names(internal_regime))
+        all_known_states.update(_get_regime_state_names(internal_regime))
 
     # Required states — only from regimes subjects actually start in
     required_states: set[str] = {"age"}
@@ -179,7 +241,7 @@ def _collect_state_name_errors(
         ids_to_regime_names[int(i)] for i in used_ids if int(i) in ids_to_regime_names
     } & valid_regime_names
     for regime_name in used_regime_names:
-        required_states.update(get_regime_state_names(internal_regimes[regime_name]))
+        required_states.update(_get_regime_state_names(internal_regimes[regime_name]))
 
     provided_states = set(initial_states.keys())
 

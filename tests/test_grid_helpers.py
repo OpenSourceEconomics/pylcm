@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm.grids.helpers import (
+from lcm.grids.coordinates import (
     get_irreg_coordinate,
     get_linspace_coordinate,
     get_logspace_coordinate,

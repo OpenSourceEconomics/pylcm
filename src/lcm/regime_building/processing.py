@@ -16,7 +16,7 @@ from jax import numpy as jnp
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, format_messages
 from lcm.grids import DiscreteGrid, Grid
-from lcm.grids.helpers import get_irreg_coordinate
+from lcm.grids.coordinates import get_irreg_coordinate
 from lcm.interfaces import (
     InternalRegime,
     SimulateFunctions,
@@ -25,7 +25,7 @@ from lcm.interfaces import (
     StateActionSpace,
 )
 from lcm.params.regime_template import create_regime_params_template
-from lcm.regime import MarkovTransition, Regime, _collect_state_transitions
+from lcm.regime import MarkovTransition, Regime
 from lcm.regime_building.max_Q_over_a import (
     _get_vmap_params,
     build_argmax_and_max_Q_over_a_functions,
@@ -35,8 +35,10 @@ from lcm.regime_building.ndimage import map_coordinates
 from lcm.regime_building.next_state import build_next_state_simulation_functions
 from lcm.regime_building.Q_and_F import build_Q_and_F_functions
 from lcm.regime_building.V import StateSpaceInfo
+from lcm.regime_building.validation import collect_state_transitions
 from lcm.regime_building.variable_info import get_grids, get_variable_info
 from lcm.shocks import _ShockGrid
+from lcm.state_action_space import create_state_action_space
 from lcm.typing import (
     Float1D,
     FunctionsMapping,
@@ -53,7 +55,6 @@ from lcm.typing import (
 from lcm.utils.containers import ensure_containers_are_immutable
 from lcm.utils.dispatchers import vmap_1d
 from lcm.utils.namespace import flatten_regime_namespace, unflatten_regime_namespace
-from lcm.utils.state_action_space import create_state_action_space
 
 
 def process_regimes(
@@ -580,7 +581,7 @@ def _extract_transitions_from_regime(
     if regime.terminal:
         return {}
 
-    state_transitions = _collect_state_transitions(
+    state_transitions = collect_state_transitions(
         regime.states, regime.state_transitions
     )
     simple_transitions, per_target_transitions = _classify_transitions(
@@ -614,7 +615,7 @@ def _classify_transitions(
     """Split collected transitions into simple and per-target groups.
 
     Qualified names like "next_health__working" (produced by
-    `_collect_state_transitions` for per-target dicts) are decomposed via
+    `collect_state_transitions` for per-target dicts) are decomposed via
     `tree_path_from_qname`.
 
     Returns:

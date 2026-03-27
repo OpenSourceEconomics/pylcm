@@ -10,7 +10,7 @@ from lcm.interfaces import StateActionSpace
 from lcm.regime import Regime
 from lcm.regime_building.processing import _create_state_space_info
 from lcm.regime_building.V import StateSpaceInfo
-from lcm.utils.state_action_space import create_state_action_space
+from lcm.state_action_space import create_state_action_space
 
 
 def _create_variable_info(

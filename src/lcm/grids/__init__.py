@@ -1,3 +1,4 @@
+from lcm.grids.base import Grid
 from lcm.grids.categorical import (
     _validate_discrete_grid,
     categorical,
@@ -5,7 +6,6 @@ from lcm.grids.categorical import (
 )
 from lcm.grids.continuous import (
     ContinuousGrid,
-    Grid,
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,

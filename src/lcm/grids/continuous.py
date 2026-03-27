@@ -8,20 +8,12 @@ import jax.numpy as jnp
 from jax import Array
 
 from lcm.exceptions import GridInitializationError, format_messages
-from lcm.grids import helpers as grid_helpers
+from lcm.grids import coordinates as grid_coordinates
+from lcm.grids.base import Grid
 from lcm.typing import (
     Float1D,
-    Int1D,
     ScalarFloat,
 )
-
-
-class Grid(ABC):
-    """LCM Grid base class."""
-
-    @abstractmethod
-    def to_jax(self) -> Int1D | Float1D:
-        """Convert the grid to a Jax array."""
 
 
 class ContinuousGrid(Grid):
@@ -102,7 +94,7 @@ class LinSpacedGrid(UniformContinuousGrid):
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
-        return grid_helpers.linspace(
+        return grid_coordinates.linspace(
             start=self.start, stop=self.stop, n_points=self.n_points
         )
 
@@ -112,7 +104,7 @@ class LinSpacedGrid(UniformContinuousGrid):
     def get_coordinate(self, value: Array) -> Array: ...
     def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
-        return grid_helpers.get_linspace_coordinate(
+        return grid_coordinates.get_linspace_coordinate(
             value=value, start=self.start, stop=self.stop, n_points=self.n_points
         )
 
@@ -128,7 +120,7 @@ class LogSpacedGrid(UniformContinuousGrid):
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
-        return grid_helpers.logspace(
+        return grid_coordinates.logspace(
             start=self.start, stop=self.stop, n_points=self.n_points
         )
 
@@ -138,7 +130,7 @@ class LogSpacedGrid(UniformContinuousGrid):
     def get_coordinate(self, value: Array) -> Array: ...
     def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
-        return grid_helpers.get_logspace_coordinate(
+        return grid_coordinates.get_logspace_coordinate(
             value=value, start=self.start, stop=self.stop, n_points=self.n_points
         )
 
@@ -209,7 +201,7 @@ class IrregSpacedGrid(ContinuousGrid):
                 "initialization or use IrregSpacedGrid(n_points=...) and "
                 "supply points at runtime via params."
             )
-        return grid_helpers.get_irreg_coordinate(value=value, points=self.to_jax())
+        return grid_coordinates.get_irreg_coordinate(value=value, points=self.to_jax())
 
 
 def _validate_continuous_grid(
