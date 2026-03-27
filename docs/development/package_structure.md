@@ -51,12 +51,8 @@ model.simulate()  →  simulation/simulate.py  Forward simulation over periods
 
 ## `grids/`
 
-Split from a single 800-line `grids.py`. Public API unchanged —
-`from lcm.grids import LinSpacedGrid` still works via `__init__.py` re-exports.
-
 ```
 grids/
-├── __init__.py        Re-exports all public names
 ├── categorical.py     @categorical decorator and validate_category_class
 ├── continuous.py      Grid ABC, ContinuousGrid, LinSpacedGrid, LogSpacedGrid,
 │                      IrregSpacedGrid, UniformContinuousGrid
