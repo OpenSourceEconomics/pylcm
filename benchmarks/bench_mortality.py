@@ -3,13 +3,7 @@
 import gc
 import time
 
-
-def _get_gpu_peak_bytes():
-    import jax
-
-    stats = jax.local_devices()[0].memory_stats()
-    return stats["peak_bytes_in_use"]
-
+from benchmarks._gpu_mem import measure_gpu_peak
 
 _N_SUBJECTS = 100_000
 
@@ -17,7 +11,7 @@ _N_SUBJECTS = 100_000
 class Mortality:
     timeout = 600
 
-    def setup(self):
+    def _build(self):
         import jax.numpy as jnp
 
         from lcm_examples import mortality
@@ -29,6 +23,9 @@ class Mortality:
             "wealth": jnp.full(_N_SUBJECTS, 100.0),
             "regime": jnp.zeros(_N_SUBJECTS, dtype=jnp.int32),
         }
+
+    def setup(self):
+        self._build()
         start = time.perf_counter()
         self.model.simulate(
             params=self.model_params,
@@ -38,6 +35,9 @@ class Mortality:
             check_initial_conditions=False,
         )
         self._compile_time = time.perf_counter() - start
+
+    def setup_for_gpu_measurement(self):
+        self._build()
 
     def time_execution(self):
         self.model.simulate(
@@ -64,7 +64,7 @@ class Mortality:
         gc.collect()
 
     def track_gpu_peak_mem(self):
-        return _get_gpu_peak_bytes()
+        return measure_gpu_peak("benchmarks.bench_mortality", "Mortality")
 
     track_gpu_peak_mem.unit = "bytes"
 
