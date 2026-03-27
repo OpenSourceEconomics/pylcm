@@ -176,7 +176,7 @@ def process_regimes(
         max_Q_over_a_functions = build_max_Q_over_a_functions(
             state_action_space=state_action_spaces[name],
             state_space_info=state_space_infos[name],
-            Q_and_F_functions=Q_and_F_functions,
+            Q_and_F_functions=Q_and_F_solve,
             enable_jit=enable_jit,
         )
         argmax_and_max_Q_over_a_functions = build_argmax_and_max_Q_over_a_functions(
