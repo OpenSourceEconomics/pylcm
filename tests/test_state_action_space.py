@@ -8,8 +8,7 @@ from numpy.testing import assert_array_equal
 from lcm.grids import DiscreteGrid, IrregSpacedGrid, LinSpacedGrid, categorical
 from lcm.interfaces import StateActionSpace
 from lcm.regime import Regime
-from lcm.regime_building.processing import _create_state_space_info
-from lcm.regime_building.V import StateSpaceInfo
+from lcm.regime_building.V import StateSpaceInfo, create_state_space_info
 from lcm.state_action_space import create_state_action_space
 
 
@@ -121,7 +120,7 @@ def test_state_action_space_replace_method():
     assert_array_equal(new_space.states["wealth"], jnp.array([30.0, 40.0]))
 
 
-def test_create_state_space_info():
+def testcreate_state_space_info():
     @dataclass
     class Health:
         good: int = 0
@@ -141,7 +140,7 @@ def test_create_state_space_info():
         active=lambda age: age < 5,
     )
 
-    state_space_info = _create_state_space_info(regime)
+    state_space_info = create_state_space_info(regime)
 
     assert isinstance(state_space_info, StateSpaceInfo)
     assert set(state_space_info.state_names) == {"wealth", "health"}

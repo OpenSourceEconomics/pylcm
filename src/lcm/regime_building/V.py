@@ -35,6 +35,48 @@ class StateSpaceInfo:
     """Immutable mapping of continuous state names to their grids."""
 
 
+def create_state_space_info(regime: Regime) -> StateSpaceInfo:
+    """Create state space info for V-function interpolation.
+
+    Args:
+        regime: Regime instance.
+
+    Returns:
+        State space information for the regime.
+
+    """
+    from lcm.regime_building.variable_info import (  # noqa: PLC0415
+        get_grids,
+        get_variable_info,
+    )
+
+    vi = get_variable_info(regime)
+    grids = get_grids(regime)
+
+    state_names = vi.query("is_state").index.tolist()
+
+    discrete_states = {
+        name: grid_spec
+        for name, grid_spec in grids.items()
+        if (name in state_names and isinstance(grid_spec, DiscreteGrid))
+        or isinstance(grid_spec, _ShockGrid)
+    }
+
+    continuous_states = {
+        name: grid_spec
+        for name, grid_spec in grids.items()
+        if name in state_names
+        and isinstance(grid_spec, ContinuousGrid)
+        and not isinstance(grid_spec, _ShockGrid)
+    }
+
+    return StateSpaceInfo(
+        state_names=tuple(state_names),
+        discrete_states=MappingProxyType(discrete_states),
+        continuous_states=MappingProxyType(continuous_states),
+    )
+
+
 def get_V_interpolator(
     *,
     state_space_info: StateSpaceInfo,
@@ -271,45 +313,3 @@ def _fail_if_interpolation_axes_are_not_last(state_space_info: StateSpaceInfo) -
         if sorted(common) != sorted(state_space_info.state_names[-n_common:]):
             msg = "Continuous variables need to be the last entries in var_names."
             raise ValueError(msg)
-
-
-def create_state_space_info(regime: Regime) -> StateSpaceInfo:
-    """Create state space info for V-function interpolation.
-
-    Args:
-        regime: Regime instance.
-
-    Returns:
-        State space information for the regime.
-
-    """
-    from lcm.regime_building.variable_info import (  # noqa: PLC0415
-        get_grids,
-        get_variable_info,
-    )
-
-    vi = get_variable_info(regime)
-    grids = get_grids(regime)
-
-    state_names = vi.query("is_state").index.tolist()
-
-    discrete_states = {
-        name: grid_spec
-        for name, grid_spec in grids.items()
-        if (name in state_names and isinstance(grid_spec, DiscreteGrid))
-        or isinstance(grid_spec, _ShockGrid)
-    }
-
-    continuous_states = {
-        name: grid_spec
-        for name, grid_spec in grids.items()
-        if name in state_names
-        and isinstance(grid_spec, ContinuousGrid)
-        and not isinstance(grid_spec, _ShockGrid)
-    }
-
-    return StateSpaceInfo(
-        state_names=tuple(state_names),
-        discrete_states=MappingProxyType(discrete_states),
-        continuous_states=MappingProxyType(continuous_states),
-    )

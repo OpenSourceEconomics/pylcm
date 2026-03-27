@@ -34,7 +34,7 @@ from lcm.regime_building.max_Q_over_a import (
 from lcm.regime_building.ndimage import map_coordinates
 from lcm.regime_building.next_state import build_next_state_simulation_functions
 from lcm.regime_building.Q_and_F import build_Q_and_F_functions
-from lcm.regime_building.V import StateSpaceInfo
+from lcm.regime_building.V import StateSpaceInfo, create_state_space_info
 from lcm.regime_building.validation import collect_state_transitions
 from lcm.regime_building.variable_info import get_grids, get_variable_info
 from lcm.shocks import _ShockGrid
@@ -99,7 +99,7 @@ def process_regimes(
     all_grids = MappingProxyType({n: get_grids(r) for n, r in regimes.items()})
 
     regime_to_state_space_info = MappingProxyType(
-        {n: _create_state_space_info(r) for n, r in regimes.items()}
+        {n: create_state_space_info(r) for n, r in regimes.items()}
     )
     state_action_spaces = MappingProxyType(
         {
@@ -1037,21 +1037,6 @@ def _get_simple_transition_discrete_grid(
         return None
     source_grid = regime.states[state_name]
     return source_grid if isinstance(source_grid, DiscreteGrid) else None
-
-
-def _create_state_space_info(regime: Regime) -> StateSpaceInfo:
-    """Create state space info for V-function interpolation.
-
-    Args:
-        regime: Regime instance.
-
-    Returns:
-        State space information for the regime.
-
-    """
-    from lcm.regime_building.V import create_state_space_info  # noqa: PLC0415
-
-    return create_state_space_info(regime)
 
 
 def build_regime_transition_probs_functions(

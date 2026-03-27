@@ -64,24 +64,6 @@ def categorical[T](*, ordered: bool) -> Callable[[type[T]], type[T]]:
     return decorator
 
 
-def _validate_discrete_grid(category_class: type) -> None:
-    """Validate the field names and values of the category_class passed to DiscreteGrid.
-
-    Args:
-        category_class: The category class representing the grid categories. Must
-            be a dataclass with fields that have unique int values.
-
-    Raises:
-        GridInitializationError: If the `category_class` is not a dataclass with int
-            fields.
-
-    """
-    error_messages = validate_category_class(category_class)
-    if error_messages:
-        msg = format_messages(error_messages)
-        raise GridInitializationError(msg)
-
-
 def validate_category_class(category_class: type) -> list[str]:
     """Validate a category class has proper structure for discrete grids.
 
@@ -140,3 +122,21 @@ def validate_category_class(category_class: type) -> list[str]:
         )
 
     return error_messages
+
+
+def _validate_discrete_grid(category_class: type) -> None:
+    """Validate the field names and values of the category_class passed to DiscreteGrid.
+
+    Args:
+        category_class: The category class representing the grid categories. Must
+            be a dataclass with fields that have unique int values.
+
+    Raises:
+        GridInitializationError: If the `category_class` is not a dataclass with int
+            fields.
+
+    """
+    error_messages = validate_category_class(category_class)
+    if error_messages:
+        msg = format_messages(error_messages)
+        raise GridInitializationError(msg)

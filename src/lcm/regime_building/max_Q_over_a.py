@@ -23,6 +23,43 @@ from lcm.typing import (
 from lcm.utils.dispatchers import productmap, simulation_spacemap
 
 
+def build_max_Q_over_a_functions(
+    *,
+    state_action_space: StateActionSpace,
+    Q_and_F_functions: MappingProxyType[int, QAndFFunction],
+    enable_jit: bool,
+) -> MappingProxyType[int, MaxQOverAFunction]:
+    max_Q_over_a_functions = {}
+    for period, Q_and_F in Q_and_F_functions.items():
+        max_Q_over_a_functions[period] = _build_max_Q_over_a_function(
+            state_action_space=state_action_space,
+            Q_and_F=Q_and_F,
+            enable_jit=enable_jit,
+        )
+    return MappingProxyType(max_Q_over_a_functions)
+
+
+def build_argmax_and_max_Q_over_a_functions(
+    *,
+    state_action_space: StateActionSpace,
+    Q_and_F_functions: MappingProxyType[int, QAndFFunction],
+    enable_jit: bool,
+) -> MappingProxyType[int, ArgmaxQOverAFunction]:
+    argmax_and_max_Q_over_a_functions = {}
+    for period, Q_and_F in Q_and_F_functions.items():
+        func = _build_argmax_and_max_Q_over_a_function(
+            state_action_space=state_action_space,
+            Q_and_F=Q_and_F,
+            enable_jit=enable_jit,
+        )
+        argmax_and_max_Q_over_a_functions[period] = simulation_spacemap(
+            func=func,
+            action_names=(),
+            state_names=tuple(state_action_space.states),
+        )
+    return MappingProxyType(argmax_and_max_Q_over_a_functions)
+
+
 def get_max_Q_over_a(
     *,
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
@@ -178,22 +215,6 @@ def _get_extra_param_names(
     )
 
 
-def build_max_Q_over_a_functions(
-    *,
-    state_action_space: StateActionSpace,
-    Q_and_F_functions: MappingProxyType[int, QAndFFunction],
-    enable_jit: bool,
-) -> MappingProxyType[int, MaxQOverAFunction]:
-    max_Q_over_a_functions = {}
-    for period, Q_and_F in Q_and_F_functions.items():
-        max_Q_over_a_functions[period] = _build_max_Q_over_a_function(
-            state_action_space=state_action_space,
-            Q_and_F=Q_and_F,
-            enable_jit=enable_jit,
-        )
-    return MappingProxyType(max_Q_over_a_functions)
-
-
 def _build_max_Q_over_a_function(
     *,
     state_action_space: StateActionSpace,
@@ -210,27 +231,6 @@ def _build_max_Q_over_a_function(
         max_Q_over_a = jax.jit(max_Q_over_a)
 
     return max_Q_over_a
-
-
-def build_argmax_and_max_Q_over_a_functions(
-    *,
-    state_action_space: StateActionSpace,
-    Q_and_F_functions: MappingProxyType[int, QAndFFunction],
-    enable_jit: bool,
-) -> MappingProxyType[int, ArgmaxQOverAFunction]:
-    argmax_and_max_Q_over_a_functions = {}
-    for period, Q_and_F in Q_and_F_functions.items():
-        func = _build_argmax_and_max_Q_over_a_function(
-            state_action_space=state_action_space,
-            Q_and_F=Q_and_F,
-            enable_jit=enable_jit,
-        )
-        argmax_and_max_Q_over_a_functions[period] = simulation_spacemap(
-            func=func,
-            action_names=(),
-            state_names=tuple(state_action_space.states),
-        )
-    return MappingProxyType(argmax_and_max_Q_over_a_functions)
 
 
 def _build_argmax_and_max_Q_over_a_function(
