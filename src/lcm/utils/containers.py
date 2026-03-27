@@ -62,6 +62,7 @@ def ensure_containers_are_mutable[K, V](value: Mapping[K, V]) -> dict[K, V]:
 
 
 def find_duplicates(*containers: Iterable[T]) -> set[T]:
+    """Return elements that appear more than once across all containers."""
     combined = chain.from_iterable(containers)
     counts = Counter(combined)
     return {v for v, count in counts.items() if count > 1}

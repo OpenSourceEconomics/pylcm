@@ -17,6 +17,8 @@ src/lcm/
 ├── interfaces.py      Internal data structures: InternalRegime, StateActionSpace,
 │                      SolveFunctions, SimulateFunctions
 ├── typing.py          Type aliases and protocol definitions
+├── model_processing.py  Model initialization: validation, template, fixed params
+├── state_action_space.py  Creates StateActionSpace from grids and variable info
 ├── pandas_utils.py    params_from_pandas, initial_conditions_from_dataframe
 ├── persistence.py     Save/load solve and simulate snapshots
 ├── grids/             Grid definitions (see below)
@@ -62,12 +64,13 @@ contain state transition logic.
 
 ```
 grids/
+├── base.py            Grid ABC (base class for all grids)
 ├── categorical.py     @categorical decorator and validate_category_class
-├── continuous.py      Grid ABC, ContinuousGrid, LinSpacedGrid, LogSpacedGrid,
+├── continuous.py      ContinuousGrid, LinSpacedGrid, LogSpacedGrid,
 │                      IrregSpacedGrid, UniformContinuousGrid
 ├── discrete.py        DiscreteGrid (categorical variables)
 ├── piecewise.py       Piece, PiecewiseLinSpacedGrid, PiecewiseLogSpacedGrid
-└── helpers.py         Coordinate computation: get_linspace_coordinate, etc.
+└── coordinates.py     Coordinate computation: get_linspace_coordinate, etc.
 ```
 
 See [Grids](../user_guide/grids.md) for usage and
@@ -90,6 +93,7 @@ regime_building/
 ├── max_Q_over_a.py    Wraps Q-and-F with action optimization (max / argmax)
 ├── V.py               Value function interpolation (StateSpaceInfo,
 │                      get_V_interpolator)
+├── validation.py      Regime input validation and state transition collection
 ├── variable_info.py   Classifies variables and extracts grids from a regime
 ├── argmax.py          Masked argmax_and_max for action optimization
 └── ndimage.py         Linear interpolation via map_coordinates
@@ -145,7 +149,7 @@ simulation/
 │                      actions and state transitions for each subject
 ├── result.py          SimulationResult with deferred .to_dataframe() conversion
 ├── transitions.py     State and regime advancement between periods
-├── validation.py      Validates initial conditions before simulation
+├── initial_conditions.py  Build and validate initial conditions
 └── random.py          JAX random key generation for stochastic transitions
 ```
 
@@ -178,7 +182,6 @@ utils/
 ├── namespace.py           Regime namespace flattening/unflattening
 ├── functools.py           Function signature manipulation (all_as_kwargs, etc.)
 ├── dispatchers.py         JAX vectorization: productmap, vmap_1d, simulation_spacemap
-├── state_action_space.py  Creates StateActionSpace from grids and variable info
 ├── error_handling.py      Validation of value functions and regime transitions
 └── logging.py             Progress logging: period timing, value function stats
 ```

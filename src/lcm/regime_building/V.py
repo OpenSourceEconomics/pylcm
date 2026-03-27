@@ -85,28 +85,21 @@ def get_V_interpolator(
 ) -> Callable[..., FloatND]:
     """Create a function representation of a value function array.
 
-    The returned function
-    ---------------------
+    Generate a function that looks up discrete values and interpolates values for
+    continuous variables on the value function array. The arguments of the resulting
+    function can be split in two categories:
 
-    This function generates a function that looks up discrete values and interpolates
-    values for continuous variables on the value function array. The arguments of the
-    resulting function can be split in two categories:
+    1. The original arguments of the function that was used to pre-calculate the
+       value function on the state space grid.
+    2. Auxiliary arguments, such as information about the grids, which are needed
+       for the interpolation.
 
-       1. The original arguments of the function that was used to pre-calculate the
-          value function on the state space grid.
+    After partialling in all helper arguments, the resulting function behaves like
+    an analytical function, i.e. it can be evaluated on points that do not lie on
+    the grid points of the state variables. In particular, it can also be jitted,
+    differentiated, and vmapped with JAX.
 
-       2. Auxiliary arguments, such as information about the grids, which are needed for
-          example, for the interpolation.
-
-    After partialling in all helper arguments, the resulting function behaves like an
-    analytical function, i.e. it can be evaluated on points that do not lie on the grid
-    points of the state variables. In particular, it can also be jitted, differentiated
-    and vmapped with jax.
-
-    How does it work?
-    -----------------
-
-    The resulting function roughly does the following steps:
+    Internally, the resulting function roughly does the following steps:
 
     - It looks up values at discrete variable positions (integer codes index directly
       into the array).
@@ -186,8 +179,8 @@ def _get_lookup_function(
     """Create a function that emulates indexing into an array via named axes.
 
     Args:
-        array_name (str): The name of the array into which the function indexes.
-        axis_names (list): List of strings with names for each axis in the array.
+        array_name: The name of the array into which the function indexes.
+        axis_names: List of strings with names for each axis in the array.
 
     Returns:
         A callable with the keyword-only arguments `[*axis_names]` that looks up values

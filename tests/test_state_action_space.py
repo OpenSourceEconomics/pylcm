@@ -120,7 +120,7 @@ def test_state_action_space_replace_method():
     assert_array_equal(new_space.states["wealth"], jnp.array([30.0, 40.0]))
 
 
-def testcreate_state_space_info():
+def test_create_state_space_info():
     @dataclass
     class Health:
         good: int = 0

@@ -355,7 +355,7 @@ def test_discrete_state_grid_without_explicit_transition_raises():
         )
 
 
-def testcollect_state_transitions_missing_state_raises():
+def test_collect_state_transitions_missing_state_raises():
     """collect_state_transitions raises RegimeInitializationError for missing state."""
 
     states = MappingProxyType({"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)})

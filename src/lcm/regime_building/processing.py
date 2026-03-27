@@ -858,7 +858,7 @@ def _validate_categoricals(
         raise ModelInitializationError(format_messages(error_messages))
 
 
-def _compute_merged_discrete_categories(
+def compute_merged_discrete_categories(
     regimes: Mapping[str, Regime],
 ) -> tuple[dict[str, tuple[str, ...]], dict[str, bool]]:
     """Compute merged categories and ordered flags for all discrete variables.
