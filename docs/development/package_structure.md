@@ -91,7 +91,7 @@ regime_building/
 ├── Q_and_F.py         Composes utility + continuation value + feasibility
 ├── next_state.py      Assembles state transition functions via dags
 ├── max_Q_over_a.py    Wraps Q-and-F with action optimization (max / argmax)
-├── V.py               Value function interpolation (StateSpaceInfo,
+├── V.py               Value function interpolation (VInterpolationInfo,
 │                      get_V_interpolator)
 ├── validation.py      Regime input validation and state transition collection
 ├── variable_info.py   Classifies variables and extracts grids from a regime

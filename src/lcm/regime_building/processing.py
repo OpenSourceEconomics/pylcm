@@ -34,7 +34,7 @@ from lcm.regime_building.max_Q_over_a import (
 from lcm.regime_building.ndimage import map_coordinates
 from lcm.regime_building.next_state import get_next_state_function_for_simulation
 from lcm.regime_building.Q_and_F import get_Q_and_F, get_Q_and_F_terminal
-from lcm.regime_building.V import StateSpaceInfo, create_state_space_info
+from lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
 from lcm.regime_building.validation import collect_state_transitions
 from lcm.regime_building.variable_info import get_grids, get_variable_info
 from lcm.shocks import _ShockGrid
@@ -102,8 +102,8 @@ def process_regimes(
     )
     all_grids = MappingProxyType({n: get_grids(r) for n, r in regimes.items()})
 
-    regime_to_state_space_info = MappingProxyType(
-        {n: create_state_space_info(r) for n, r in regimes.items()}
+    regime_to_v_interpolation_info = MappingProxyType(
+        {n: create_v_interpolation_info(r) for n, r in regimes.items()}
     )
     state_action_spaces = MappingProxyType(
         {
@@ -130,7 +130,7 @@ def process_regimes(
             regime_names_to_ids=regime_names_to_ids,
             variable_info=variable_info[name],
             regimes_to_active_periods=regimes_to_active_periods,
-            regime_to_state_space_info=regime_to_state_space_info,
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             state_action_space=state_action_spaces[name],
             ages=ages,
             enable_jit=enable_jit,
@@ -145,7 +145,7 @@ def process_regimes(
             regime_names_to_ids=regime_names_to_ids,
             variable_info=variable_info[name],
             regimes_to_active_periods=regimes_to_active_periods,
-            regime_to_state_space_info=regime_to_state_space_info,
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             state_action_space=state_action_spaces[name],
             ages=ages,
             enable_jit=enable_jit,
@@ -179,7 +179,7 @@ def _build_solve_functions(
     regime_names_to_ids: RegimeNamesToIds,
     variable_info: pd.DataFrame,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
-    regime_to_state_space_info: MappingProxyType[RegimeName, StateSpaceInfo],
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     state_action_space: StateActionSpace,
     ages: AgeGrid,
     enable_jit: bool,
@@ -195,7 +195,7 @@ def _build_solve_functions(
         regime_names_to_ids: Mapping from regime names to integer indices.
         variable_info: Variable info of the regime.
         regimes_to_active_periods: Mapping of regime names to active period tuples.
-        regime_to_state_space_info: Mapping of regime names to state space info.
+        regime_to_v_interpolation_info: Mapping of regime names to state space info.
         state_action_space: The state-action space for this regime.
         ages: The AgeGrid for the model.
         enable_jit: Whether to jit the internal functions.
@@ -235,7 +235,7 @@ def _build_solve_functions(
         transitions=core.transitions,
         stochastic_transition_names=core.stochastic_transition_names,
         compute_regime_transition_probs=compute_regime_transition_probs,
-        regime_to_state_space_info=regime_to_state_space_info,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         ages=ages,
         regime_params_template=regime_params_template,
     )
@@ -266,7 +266,7 @@ def _build_simulate_functions(
     regime_names_to_ids: RegimeNamesToIds,
     variable_info: pd.DataFrame,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
-    regime_to_state_space_info: MappingProxyType[RegimeName, StateSpaceInfo],
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     state_action_space: StateActionSpace,
     ages: AgeGrid,
     enable_jit: bool,
@@ -292,7 +292,7 @@ def _build_simulate_functions(
         regime_names_to_ids: Mapping from regime names to integer indices.
         variable_info: Variable info of the regime.
         regimes_to_active_periods: Mapping of regime names to active period tuples.
-        regime_to_state_space_info: Mapping of regime names to state space info.
+        regime_to_v_interpolation_info: Mapping of regime names to state space info.
         state_action_space: The state-action space for this regime.
         ages: The AgeGrid for the model.
         enable_jit: Whether to jit the internal functions.
@@ -343,7 +343,7 @@ def _build_simulate_functions(
         transitions=solve_transitions,
         stochastic_transition_names=solve_stochastic_transition_names,
         compute_regime_transition_probs=solve_compute_regime_transition_probs,
-        regime_to_state_space_info=regime_to_state_space_info,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         ages=ages,
         regime_params_template=regime_params_template,
     )
@@ -1217,7 +1217,7 @@ def _build_Q_and_F_per_period(
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[str],
     compute_regime_transition_probs: RegimeTransitionFunction | None,
-    regime_to_state_space_info: MappingProxyType[RegimeName, StateSpaceInfo],
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     ages: AgeGrid,
     regime_params_template: RegimeParamsTemplate,
 ) -> MappingProxyType[int, QAndFFunction]:
@@ -1246,7 +1246,7 @@ def _build_Q_and_F_per_period(
                 stochastic_transition_names=stochastic_transition_names,
                 regimes_to_active_periods=regimes_to_active_periods,
                 compute_regime_transition_probs=compute_regime_transition_probs,
-                regime_to_state_space_info=regime_to_state_space_info,
+                regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             )
 
     return MappingProxyType(Q_and_F_functions)

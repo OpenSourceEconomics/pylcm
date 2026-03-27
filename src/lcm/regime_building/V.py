@@ -17,7 +17,7 @@ from lcm.utils.functools import all_as_kwargs
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
-class StateSpaceInfo:
+class VInterpolationInfo:
     """Information to work with the output of a function evaluated on a state space.
 
     An example is the value function array, which is the output of the value function
@@ -35,7 +35,7 @@ class StateSpaceInfo:
     """Immutable mapping of continuous state names to their grids."""
 
 
-def create_state_space_info(regime: Regime) -> StateSpaceInfo:
+def create_v_interpolation_info(regime: Regime) -> VInterpolationInfo:
     """Create state space info for V-function interpolation.
 
     Args:
@@ -70,7 +70,7 @@ def create_state_space_info(regime: Regime) -> StateSpaceInfo:
         and not isinstance(grid_spec, _ShockGrid)
     }
 
-    return StateSpaceInfo(
+    return VInterpolationInfo(
         state_names=tuple(state_names),
         discrete_states=MappingProxyType(discrete_states),
         continuous_states=MappingProxyType(continuous_states),
@@ -79,7 +79,7 @@ def create_state_space_info(regime: Regime) -> StateSpaceInfo:
 
 def get_V_interpolator(
     *,
-    state_space_info: StateSpaceInfo,
+    v_interpolation_info: VInterpolationInfo,
     state_prefix: str,
     V_arr_name: str,
 ) -> Callable[..., FloatND]:
@@ -114,7 +114,7 @@ def get_V_interpolator(
     functions are called is determined by a DAG.
 
     Args:
-        state_space_info: Class containing all information needed to interpret the
+        v_interpolation_info: Class containing all information needed to interpret the
             pre-calculated values of a function.
         state_prefix: Prefix that will be added to all argument names of the resulting
             function, except for the helper arguments.
@@ -127,8 +127,8 @@ def get_V_interpolator(
             state space as an analytical function.
 
     """
-    _fail_if_interpolation_axes_are_not_last(state_space_info)
-    _need_interpolation = bool(state_space_info.continuous_states)
+    _fail_if_interpolation_axes_are_not_last(v_interpolation_info)
+    _need_interpolation = bool(v_interpolation_info.continuous_states)
 
     funcs: dict[
         str,
@@ -137,8 +137,8 @@ def get_V_interpolator(
 
     _discrete_axes = [
         state_prefix + var
-        for var in state_space_info.state_names
-        if var in state_space_info.discrete_states
+        for var in v_interpolation_info.state_names
+        if var in v_interpolation_info.discrete_states
     ]
 
     _out_name = "__interpolation_data__" if _need_interpolation else "__fval__"
@@ -148,7 +148,7 @@ def get_V_interpolator(
     )
 
     if _need_interpolation:
-        for var, grid_spec in state_space_info.continuous_states.items():
+        for var, grid_spec in v_interpolation_info.continuous_states.items():
             funcs[f"__{var}_coord__"] = _get_coordinate_finder(
                 in_name=state_prefix + var,
                 grid=grid_spec,
@@ -156,8 +156,8 @@ def get_V_interpolator(
 
         _continuous_axes = [
             f"__{var}_coord__"
-            for var in state_space_info.state_names
-            if var in state_space_info.continuous_states
+            for var in v_interpolation_info.state_names
+            if var in v_interpolation_info.continuous_states
         ]
         funcs["__fval__"] = _get_interpolator(
             name_of_values_on_grid="__interpolation_data__",
@@ -288,21 +288,25 @@ def _get_interpolator(
     return interpolate
 
 
-def _fail_if_interpolation_axes_are_not_last(state_space_info: StateSpaceInfo) -> None:
+def _fail_if_interpolation_axes_are_not_last(
+    v_interpolation_info: VInterpolationInfo,
+) -> None:
     """Fail if the continuous variables are not the last elements in var_names.
 
     Args:
-        state_space_info: Class containing all information needed to interpret the
+        v_interpolation_info: Class containing all information needed to interpret the
             precalculated values of a function.
 
     Raises:
         ValueError: If the continuous variables are not the last elements in var_names.
 
     """
-    common = set(state_space_info.continuous_states) & set(state_space_info.state_names)
+    common = set(v_interpolation_info.continuous_states) & set(
+        v_interpolation_info.state_names
+    )
 
     if common:
         n_common = len(common)
-        if sorted(common) != sorted(state_space_info.state_names[-n_common:]):
+        if sorted(common) != sorted(v_interpolation_info.state_names[-n_common:]):
             msg = "Continuous variables need to be the last entries in var_names."
             raise ValueError(msg)

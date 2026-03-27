@@ -40,19 +40,19 @@ Detailed old → new path mapping for tracing git history across the restructuri
 
 ## File merges (regime_components.py eliminated)
 
-| Function                                  | Old location                                    | New location                                                          |
-| ----------------------------------------- | ----------------------------------------------- | --------------------------------------------------------------------- |
-| `build_Q_and_F_functions`                 | `src/lcm/input_processing/regime_components.py` | `src/lcm/regime_building/Q_and_F.py`                                  |
-| `build_max_Q_over_a_functions`            | same                                            | `src/lcm/regime_building/max_Q_over_a.py`                             |
-| `_build_max_Q_over_a_function`            | same                                            | `src/lcm/regime_building/max_Q_over_a.py`                             |
-| `build_argmax_and_max_Q_over_a_functions` | same                                            | `src/lcm/regime_building/max_Q_over_a.py`                             |
-| `_build_argmax_and_max_Q_over_a_function` | same                                            | `src/lcm/regime_building/max_Q_over_a.py`                             |
-| `_get_vmap_params`                        | same                                            | `src/lcm/regime_building/max_Q_over_a.py`                             |
-| `build_next_state_simulation_functions`   | same                                            | `src/lcm/regime_building/next_state.py`                               |
-| `build_regime_transition_probs_functions` | same                                            | `src/lcm/regime_building/processing.py`                               |
-| `_wrap_regime_transition_probs`           | same                                            | `src/lcm/regime_building/processing.py`                               |
-| `_wrap_deterministic_regime_transition`   | same                                            | `src/lcm/regime_building/processing.py`                               |
-| `_create_state_space_info`                | `src/lcm/input_processing/regime_processing.py` | `src/lcm/regime_building/V.py` (renamed to `create_state_space_info`) |
+| Function                                  | Old location                                    | New location                                                              |
+| ----------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------- |
+| `build_Q_and_F_functions`                 | `src/lcm/input_processing/regime_components.py` | `src/lcm/regime_building/Q_and_F.py`                                      |
+| `build_max_Q_over_a_functions`            | same                                            | `src/lcm/regime_building/max_Q_over_a.py`                                 |
+| `_build_max_Q_over_a_function`            | same                                            | `src/lcm/regime_building/max_Q_over_a.py`                                 |
+| `build_argmax_and_max_Q_over_a_functions` | same                                            | `src/lcm/regime_building/max_Q_over_a.py`                                 |
+| `_build_argmax_and_max_Q_over_a_function` | same                                            | `src/lcm/regime_building/max_Q_over_a.py`                                 |
+| `_get_vmap_params`                        | same                                            | `src/lcm/regime_building/max_Q_over_a.py`                                 |
+| `build_next_state_simulation_functions`   | same                                            | `src/lcm/regime_building/next_state.py`                                   |
+| `build_regime_transition_probs_functions` | same                                            | `src/lcm/regime_building/processing.py`                                   |
+| `_wrap_regime_transition_probs`           | same                                            | `src/lcm/regime_building/processing.py`                                   |
+| `_wrap_deterministic_regime_transition`   | same                                            | `src/lcm/regime_building/processing.py`                                   |
+| `create_v_interpolation_info`             | `src/lcm/input_processing/regime_processing.py` | `src/lcm/regime_building/V.py` (renamed to `create_v_interpolation_info`) |
 
 ## Deleted files
 

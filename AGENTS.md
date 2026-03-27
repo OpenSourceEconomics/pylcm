@@ -46,7 +46,7 @@ automation. Python 3.14+ is required.
 
 **Value Function Representation (`src/lcm/regime_building/V.py`)**
 
-- `StateSpaceInfo`: Metadata for working with function outputs on state spaces
+- `VInterpolationInfo`: Metadata for working with function outputs on state spaces
 
 **Solution (`src/lcm/solution/`)**
 

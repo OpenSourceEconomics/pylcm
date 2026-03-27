@@ -10,7 +10,7 @@ from lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
     get_next_stochastic_weights_function,
 )
-from lcm.regime_building.V import StateSpaceInfo, get_V_interpolator
+from lcm.regime_building.V import VInterpolationInfo, get_V_interpolator
 from lcm.typing import (
     BoolND,
     Float1D,
@@ -37,7 +37,7 @@ def get_Q_and_F(
     stochastic_transition_names: frozenset[str],
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     compute_regime_transition_probs: RegimeTransitionFunction,
-    regime_to_state_space_info: MappingProxyType[RegimeName, StateSpaceInfo],
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
@@ -52,7 +52,8 @@ def get_Q_and_F(
         regimes_to_active_periods: Mapping regime names to their active periods.
         compute_regime_transition_probs: Regime transition probability function
             for solve.
-        regime_to_state_space_info: Mapping of regime names to state space information.
+        regime_to_v_interpolation_info: Mapping of regime names to V-interpolation
+            info.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
@@ -97,7 +98,7 @@ def get_Q_and_F(
         )
         V_arr_name = "next_V_arr"
         next_V_interpolator = get_V_interpolator(
-            state_space_info=regime_to_state_space_info[target_regime_name],
+            v_interpolation_info=regime_to_v_interpolation_info[target_regime_name],
             state_prefix="next_",
             V_arr_name=V_arr_name,
         )
