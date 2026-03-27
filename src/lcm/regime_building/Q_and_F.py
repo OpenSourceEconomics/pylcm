@@ -6,8 +6,6 @@ import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
 from jax import Array
 
-from lcm._utils.dispatchers import productmap
-from lcm._utils.functools import get_union_of_args
 from lcm.ages import AgeGrid
 from lcm.params.processing import get_flat_param_names
 from lcm.regime import Regime
@@ -28,6 +26,8 @@ from lcm.typing import (
     RegimeTransitionFunction,
     TransitionFunctionsMapping,
 )
+from lcm.utils.dispatchers import productmap
+from lcm.utils.functools import get_union_of_args
 
 
 def get_Q_and_F(

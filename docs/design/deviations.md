@@ -64,7 +64,7 @@ the same `typing` circular import chain. The lazy import stays.
 ## 7. `lcm_examples` import updated
 
 `src/lcm_examples/mahler_yum_2024/_model.py` imported from
-`lcm.dispatchers` — updated to `lcm._utils.dispatchers`. This file was not
+`lcm.dispatchers` — updated to `lcm.utils.dispatchers`. This file was not
 mentioned in the plan but is part of the repo.
 
 ## No deviations from the target structure

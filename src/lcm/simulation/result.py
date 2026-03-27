@@ -15,8 +15,6 @@ from dags import concatenate_functions
 from dags.tree import tree_path_from_qname
 from jax import Array
 
-from lcm._utils.dispatchers import vmap_1d
-from lcm._utils.namespace import flatten_regime_namespace
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.grids import DiscreteGrid
@@ -31,6 +29,8 @@ from lcm.typing import (
     RegimeName,
     UserFunction,
 )
+from lcm.utils.dispatchers import vmap_1d
+from lcm.utils.namespace import flatten_regime_namespace
 
 CLOUDPICKLE_IMPORT_ERROR_MSG = (
     "Pickling SimulationResult objects requires the optional dependency 'cloudpickle'. "

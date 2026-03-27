@@ -6,7 +6,6 @@ import jax.numpy as jnp
 import pytest
 
 from lcm import LinSpacedGrid
-from lcm._utils.dispatchers import productmap
 from lcm.grids import ContinuousGrid, DiscreteGrid
 from lcm.regime_building.V import (
     StateSpaceInfo,
@@ -16,6 +15,7 @@ from lcm.regime_building.V import (
     _get_lookup_function,
     get_V_interpolator,
 )
+from lcm.utils.dispatchers import productmap
 
 
 @pytest.fixture

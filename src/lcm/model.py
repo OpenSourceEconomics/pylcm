@@ -11,13 +11,6 @@ from dags import get_ancestors
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path
 from jax import Array
 
-from lcm._utils.containers import (
-    ensure_containers_are_immutable,
-    ensure_containers_are_mutable,
-    get_field_names_and_values,
-)
-from lcm._utils.error_handling import validate_regime_transitions_all_periods
-from lcm._utils.logging import LogLevel, get_logger
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, format_messages
 from lcm.grids import DiscreteGrid
@@ -48,6 +41,13 @@ from lcm.typing import (
     UserFacingParamsTemplate,
     UserParams,
 )
+from lcm.utils.containers import (
+    ensure_containers_are_immutable,
+    ensure_containers_are_mutable,
+    get_field_names_and_values,
+)
+from lcm.utils.error_handling import validate_regime_transitions_all_periods
+from lcm.utils.logging import LogLevel, get_logger
 
 
 class Model:

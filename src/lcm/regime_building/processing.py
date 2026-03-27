@@ -13,10 +13,6 @@ from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import Array
 from jax import numpy as jnp
 
-from lcm._utils.containers import ensure_containers_are_immutable
-from lcm._utils.dispatchers import vmap_1d
-from lcm._utils.namespace import flatten_regime_namespace, unflatten_regime_namespace
-from lcm._utils.state_action_space import create_state_action_space
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, format_messages
 from lcm.grids import DiscreteGrid, Grid
@@ -54,6 +50,10 @@ from lcm.typing import (
     UserFunction,
     VmappedRegimeTransitionFunction,
 )
+from lcm.utils.containers import ensure_containers_are_immutable
+from lcm.utils.dispatchers import vmap_1d
+from lcm.utils.namespace import flatten_regime_namespace, unflatten_regime_namespace
+from lcm.utils.state_action_space import create_state_action_space
 
 
 def process_regimes(

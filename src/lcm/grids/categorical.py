@@ -4,8 +4,8 @@ from dataclasses import dataclass, is_dataclass
 
 import pandas as pd
 
-from lcm._utils.containers import find_duplicates, get_field_names_and_values
 from lcm.exceptions import GridInitializationError, format_messages
+from lcm.utils.containers import find_duplicates, get_field_names_and_values
 
 
 def categorical[T](*, ordered: bool) -> Callable[[type[T]], type[T]]:

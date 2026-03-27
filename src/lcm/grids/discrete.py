@@ -1,9 +1,9 @@
 import jax.numpy as jnp
 
-from lcm._utils.containers import get_field_names_and_values
 from lcm.grids.categorical import _validate_discrete_grid
 from lcm.grids.continuous import Grid
 from lcm.typing import Int1D
+from lcm.utils.containers import get_field_names_and_values
 
 
 class _DiscreteGridBase(Grid):

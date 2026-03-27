@@ -6,8 +6,6 @@ from dags.tree import tree_path_from_qname
 from jax import Array, vmap
 from jax import numpy as jnp
 
-from lcm._utils.namespace import flatten_regime_namespace
-from lcm._utils.state_action_space import create_state_action_space
 from lcm.grids import DiscreteGrid
 from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.simulation.random import generate_simulation_keys
@@ -18,6 +16,8 @@ from lcm.typing import (
     RegimeName,
     RegimeNamesToIds,
 )
+from lcm.utils.namespace import flatten_regime_namespace
+from lcm.utils.state_action_space import create_state_action_space
 
 # Sentinel for categorical states not in initial conditions.  Using int32 min
 # instead of -1 so that JAX indexing produces obviously wrong values rather than

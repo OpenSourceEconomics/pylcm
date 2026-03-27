@@ -10,8 +10,6 @@ from dags import concatenate_functions, with_signature
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import Array
 
-from lcm._utils.dispatchers import vmap_1d
-from lcm._utils.namespace import flatten_regime_namespace
 from lcm.grids import Grid
 from lcm.shocks import _ShockGrid
 from lcm.shocks.ar1 import _ShockGridAR1
@@ -27,6 +25,8 @@ from lcm.typing import (
     StochasticNextFunction,
     TransitionFunctionsMapping,
 )
+from lcm.utils.dispatchers import vmap_1d
+from lcm.utils.namespace import flatten_regime_namespace
 
 
 def get_next_state_function_for_solution(

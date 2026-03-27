@@ -18,7 +18,7 @@ class MappingLeaf:
     __slots__ = ("data",)
 
     def __init__(self, data: Mapping[str, Any]) -> None:
-        from lcm._utils.containers import (  # noqa: PLC0415
+        from lcm.utils.containers import (  # noqa: PLC0415
             ensure_containers_are_immutable,
         )
 

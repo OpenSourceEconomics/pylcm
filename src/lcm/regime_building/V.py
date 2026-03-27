@@ -7,13 +7,13 @@ from dags import concatenate_functions, with_signature
 from dags.tree import qname_from_tree_path
 from jax import Array
 
-from lcm._utils.functools import all_as_kwargs
 from lcm.grids import ContinuousGrid, DiscreteGrid, IrregSpacedGrid
 from lcm.grids.helpers import get_irreg_coordinate
 from lcm.regime import Regime
 from lcm.regime_building.ndimage import map_coordinates
 from lcm.shocks import _ShockGrid
 from lcm.typing import FloatND, ScalarFloat
+from lcm.utils.functools import all_as_kwargs
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)

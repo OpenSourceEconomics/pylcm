@@ -4,12 +4,12 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm._utils.dispatchers import (
+from lcm.utils.dispatchers import (
     productmap,
     simulation_spacemap,
     vmap_1d,
 )
-from lcm._utils.functools import allow_args
+from lcm.utils.functools import allow_args
 
 
 def f(a, /, *, b, c):

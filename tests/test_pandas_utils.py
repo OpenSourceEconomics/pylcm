@@ -14,7 +14,6 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm._utils.error_handling import validate_transition_probs
 from lcm.pandas_utils import (
     _build_discrete_grid_lookup,
     array_from_series,
@@ -22,6 +21,7 @@ from lcm.pandas_utils import (
     initial_conditions_from_dataframe,
 )
 from lcm.params.processing import broadcast_to_template
+from lcm.utils.error_handling import validate_transition_probs
 from tests.test_models.basic_discrete import (
     Health,
 )

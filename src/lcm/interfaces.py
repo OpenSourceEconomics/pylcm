@@ -5,7 +5,6 @@ from typing import cast
 import pandas as pd
 from jax import Array
 
-from lcm._utils.containers import first_non_none
 from lcm.grids import Grid, IrregSpacedGrid
 from lcm.shocks import _ShockGrid
 from lcm.typing import (
@@ -24,6 +23,7 @@ from lcm.typing import (
     TransitionFunctionsMapping,
     VmappedRegimeTransitionFunction,
 )
+from lcm.utils.containers import first_non_none
 
 
 @dataclasses.dataclass(frozen=True)

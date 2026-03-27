@@ -4,16 +4,16 @@ from types import MappingProxyType
 
 import jax.numpy as jnp
 
-from lcm._utils.error_handling import validate_V
-from lcm._utils.logging import (
+from lcm.ages import AgeGrid
+from lcm.interfaces import InternalRegime
+from lcm.typing import FloatND, InternalParams, RegimeName
+from lcm.utils.error_handling import validate_V
+from lcm.utils.logging import (
     format_duration,
     log_nan_in_V,
     log_period_timing,
     log_V_stats,
 )
-from lcm.ages import AgeGrid
-from lcm.interfaces import InternalRegime
-from lcm.typing import FloatND, InternalParams, RegimeName
 
 
 def solve(

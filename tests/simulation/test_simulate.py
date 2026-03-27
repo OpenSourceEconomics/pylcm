@@ -8,7 +8,6 @@ from numpy.testing import assert_array_almost_equal, assert_array_equal
 from pandas.testing import assert_frame_equal
 
 from lcm import Model
-from lcm._utils.logging import get_logger
 from lcm.ages import AgeGrid
 from lcm.regime_building import process_regimes
 from lcm.simulation.result import SimulationResult, get_simulation_output_dtypes
@@ -16,6 +15,7 @@ from lcm.simulation.simulate import (
     _lookup_values_from_indices,
     simulate,
 )
+from lcm.utils.logging import get_logger
 from tests.test_models.deterministic.regression import (
     START_AGE,
     RegimeId,

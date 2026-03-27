@@ -18,7 +18,7 @@ class SequenceLeaf:
     __slots__ = ("data",)
 
     def __init__(self, data: Sequence[Any]) -> None:
-        from lcm._utils.containers import _make_immutable  # noqa: PLC0415
+        from lcm.utils.containers import _make_immutable  # noqa: PLC0415
 
         self.data = tuple(_make_immutable(v) for v in data)
 

@@ -7,7 +7,6 @@ import pandas as pd
 from jax import Array
 from jax import numpy as jnp
 
-from lcm._utils.functools import get_union_of_args
 from lcm.ages import AgeGrid
 from lcm.exceptions import (
     InvalidInitialConditionsError,
@@ -22,6 +21,7 @@ from lcm.typing import (
     RegimeName,
     RegimeNamesToIds,
 )
+from lcm.utils.functools import get_union_of_args
 
 
 def validate_initial_conditions(

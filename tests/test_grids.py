@@ -6,7 +6,6 @@ import portion
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm._utils.containers import get_field_names_and_values
 from lcm.exceptions import GridInitializationError
 from lcm.grids import (
     DiscreteGrid,
@@ -21,6 +20,7 @@ from lcm.grids import (
     categorical,
     validate_category_class,
 )
+from lcm.utils.containers import get_field_names_and_values
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 
 

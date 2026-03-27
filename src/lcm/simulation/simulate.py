@@ -8,13 +8,6 @@ import jax.numpy as jnp
 import pandas as pd
 from jax import Array, vmap
 
-from lcm._utils.error_handling import validate_V
-from lcm._utils.logging import (
-    format_duration,
-    log_nan_in_V,
-    log_period_timing,
-    log_regime_transitions,
-)
 from lcm.ages import AgeGrid
 from lcm.interfaces import (
     InternalRegime,
@@ -36,6 +29,13 @@ from lcm.typing import (
     IntND,
     RegimeName,
     RegimeNamesToIds,
+)
+from lcm.utils.error_handling import validate_V
+from lcm.utils.logging import (
+    format_duration,
+    log_nan_in_V,
+    log_period_timing,
+    log_regime_transitions,
 )
 
 

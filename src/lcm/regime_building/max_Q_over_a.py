@@ -7,7 +7,6 @@ import jax.numpy as jnp
 from dags import with_signature
 from jax import Array
 
-from lcm._utils.dispatchers import productmap, simulation_spacemap
 from lcm.interfaces import StateActionSpace
 from lcm.params.processing import get_flat_param_names
 from lcm.regime_building.argmax import argmax_and_max
@@ -21,6 +20,7 @@ from lcm.typing import (
     RegimeName,
     RegimeParamsTemplate,
 )
+from lcm.utils.dispatchers import productmap, simulation_spacemap
 
 
 def get_max_Q_over_a(
