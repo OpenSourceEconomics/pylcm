@@ -72,6 +72,8 @@ project:
         - file: development/package_structure.md
         - file: development/conventions.md
         - file: development/benchmarking.md
+        - file: design/migration-mapping.md
+        - file: design/deviations.md
   error_rules:
     - rule: link-resolves
       severity: ignore
