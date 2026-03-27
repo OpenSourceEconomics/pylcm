@@ -69,6 +69,7 @@ project:
       title: Development
       children:
         - file: development/setup.md
+        - file: development/package_structure.md
         - file: development/conventions.md
         - file: development/benchmarking.md
   error_rules:
