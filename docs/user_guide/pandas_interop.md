@@ -143,6 +143,23 @@ derived_categoricals = {
 }
 ```
 
+### Integer return types required
+
+Functions used as derived categoricals must return **integer** values, not booleans. JAX
+cannot use boolean values as array indices inside JIT-compiled code
+(`NonConcreteBooleanIndexError`). If your derived categorical compares states:
+
+```python
+# Wrong — returns bool, fails inside JIT
+def is_good_health(health: DiscreteState) -> BoolND:
+    return health == Health.good
+
+
+# Correct — returns int32
+def is_good_health(health: DiscreteState) -> IntND:
+    return jnp.int32(health == Health.good)
+```
+
 ## Validating Transition Probabilities
 
 Check that a transition probability array has the correct shape, values in $[0, 1]$, and

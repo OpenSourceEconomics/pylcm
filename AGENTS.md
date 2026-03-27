@@ -220,6 +220,13 @@ Model(
   \- Simulate forward given solution. `period_to_regime_to_V_arr` is optional; when
   `None`, the model is solved automatically before simulating.
 
+### Derived Categoricals
+
+When `solve()` / `simulate()` parameters are indexed by a DAG function output (not a
+model state/action), pass `derived_categoricals={"name": DiscreteGrid(...)}`. Functions
+used as derived categoricals must return **integer** types, not booleans — JAX cannot
+use booleans as array indices inside JIT. Use `jnp.int32(...)` to cast.
+
 ### SimulationResult
 
 `simulate()` returns a `SimulationResult` object:

@@ -729,6 +729,20 @@ def _map_level(*, mapping: _LevelMapping, level_values: pd.Index) -> np.ndarray:
         ValueError: If any label is not valid for the mapping.
 
     """
+    # Categorical levels must use string labels matching grid category names.
+    # Reject integer labels early with a clear message instead of a cryptic KeyError.
+    if mapping.valid_labels and any(not isinstance(v, str) for v in level_values):
+        non_str_types = sorted(
+            {type(v).__name__ for v in level_values if not isinstance(v, str)}
+        )
+        msg = (
+            f"Series index level '{mapping.name}' uses non-string labels "
+            f"(types: {non_str_types}) but the DiscreteGrid expects string "
+            f"category names. Use string labels matching: "
+            f"{sorted(mapping.valid_labels)}."
+        )
+        raise ValueError(msg)
+
     try:
         return np.array([mapping.label_to_index(v) for v in level_values])
     except ValueError:
