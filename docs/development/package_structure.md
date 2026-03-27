@@ -32,6 +32,10 @@ The top-level modules are either user-facing (`model`, `regime`, `ages`, `pandas
 `persistence`) or core type definitions that every sub-package imports (`interfaces`,
 `typing`, `exceptions`).
 
+See [Defining Models](../user_guide/defining_models.md) and
+[Solving and Simulating](../user_guide/solving_and_simulating.md) for the user-facing
+API built on these modules.
+
 ## How a model runs
 
 ```
@@ -51,6 +55,11 @@ model.simulate()  →  simulation/simulate.py  Forward simulation over periods
 
 ## `grids/`
 
+Defines the outcome spaces for state and action variables. Each grid type specifies what
+values a variable can take — discrete categories, linearly spaced points, log-spaced
+points, or piecewise combinations. Grid objects are pure definitions; they do not
+contain state transition logic.
+
 ```
 grids/
 ├── categorical.py     @categorical decorator and validate_category_class
@@ -61,10 +70,16 @@ grids/
 └── helpers.py         Coordinate computation: get_linspace_coordinate, etc.
 ```
 
+See [Grids](../user_guide/grids.md) for usage and
+[Interpolation](../explanations/interpolation.ipynb) for how continuous grid coordinates
+work internally.
+
 ## `regime_building/`
 
 Compiles each user `Regime` into an `InternalRegime` with pre-assembled JAX closures for
-solving and simulating. Called once during `Model.__init__()`.
+solving and simulating. Called once during `Model.__init__()`. This is where
+user-defined functions (utility, transitions, constraints) get composed into the Bellman
+equation components via `dags`.
 
 ```
 regime_building/
@@ -80,9 +95,17 @@ regime_building/
 └── ndimage.py         Linear interpolation via map_coordinates
 ```
 
+See [Function Representation](../explanations/function_representation.ipynb) for how
+`V.py` turns pre-computed arrays into callable functions, and
+[Dispatchers](../explanations/dispatchers.ipynb) for the vectorization patterns used
+throughout.
+
 ## `params/`
 
-Parameter tree primitives and the parameter processing pipeline.
+Handles the parameter lifecycle: discovering what parameters a model needs (from
+function signatures), creating templates, broadcasting user-supplied values to the
+internal structure, and converting `pd.Series` inputs to JAX arrays. `MappingLeaf` and
+`SequenceLeaf` are JAX pytree leaves for structured parameter values.
 
 ```
 params/
@@ -93,7 +116,14 @@ params/
 └── processing.py        Template creation, 3-level broadcasting, runtime conversion
 ```
 
+See [Parameters](../user_guide/parameters.md) and
+[Working with DataFrames and Series](../user_guide/pandas_interop.md).
+
 ## `solution/`
+
+Solves the model by backward induction. In each period, the solver evaluates the
+Q-function (utility + discounted continuation value) over the full state-action grid and
+takes the max over actions to obtain the value function.
 
 ```
 solution/
@@ -101,7 +131,13 @@ solution/
                        calling pre-compiled max_Q_over_a closures
 ```
 
+See [Solving and Simulating](../user_guide/solving_and_simulating.md).
+
 ## `simulation/`
+
+Simulates agents forward through time using the solved policy functions. In each period,
+the simulator looks up optimal actions, computes next-period states via transition
+functions, and handles regime switching.
 
 ```
 simulation/
@@ -113,7 +149,14 @@ simulation/
 └── random.py          JAX random key generation for stochastic transitions
 ```
 
+See [Solving and Simulating](../user_guide/solving_and_simulating.md) and
+[Stochastic Transitions](../explanations/stochastic_transitions.ipynb).
+
 ## `shocks/`
+
+Shock grids discretize continuous stochastic processes onto finite grids with associated
+transition probabilities. IID shocks use quadrature points and weights; AR(1) shocks use
+Markov chain approximations (Tauchen, Rouwenhorst).
 
 ```
 shocks/
@@ -121,6 +164,9 @@ shocks/
 ├── iid.py             Uniform, Normal, LogNormal, NormalMixture
 └── ar1.py             Tauchen, Rouwenhorst, TauchenNormalMixture
 ```
+
+See [Shocks](../user_guide/shocks.md) and
+[Approximating Continuous Shocks](../explanations/approximating_continuous_shocks.ipynb).
 
 ## `utils/`
 
