@@ -16,10 +16,12 @@ from dags.tree import tree_path_from_qname
 from jax import Array
 
 from lcm.ages import AgeGrid
-from lcm.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
+from lcm.grids import DiscreteGrid
 from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
 from lcm.persistence import atomic_dump
+from lcm.regime import Regime
+from lcm.regime_building.processing import compute_merged_discrete_categories
 from lcm.typing import (
     FlatRegimeParams,
     FloatND,
@@ -27,7 +29,8 @@ from lcm.typing import (
     RegimeName,
     UserFunction,
 )
-from lcm.utils import flatten_regime_namespace
+from lcm.utils.dispatchers import vmap_1d
+from lcm.utils.namespace import flatten_regime_namespace
 
 CLOUDPICKLE_IMPORT_ERROR_MSG = (
     "Pickling SimulationResult objects requires the optional dependency 'cloudpickle'. "
@@ -217,6 +220,41 @@ class SimulationResult:
         )
 
 
+def get_simulation_output_dtypes(
+    regimes: Mapping[str, Regime],
+    regime_names_to_ids: Mapping[str, int],
+) -> MappingProxyType[str, pd.CategoricalDtype]:
+    """Compute pandas CategoricalDtype for all discrete output columns.
+
+    Merge ordered categories across regimes via topological sort. This must be
+    called after model validation (which guarantees merges succeed).
+
+    Args:
+        regimes: Mapping of regime names to Regime instances.
+        regime_names_to_ids: Mapping of regime names to integer IDs.
+
+    Returns:
+        Immutable mapping of variable name to `pd.CategoricalDtype`. Includes
+        all discrete state/action variables plus the `"regime"` column.
+
+    """
+    merged_categories, ordered_flags = compute_merged_discrete_categories(regimes)
+
+    dtypes: dict[str, pd.CategoricalDtype] = {}
+    for var_name, categories in merged_categories.items():
+        dtypes[var_name] = pd.CategoricalDtype(
+            categories=list(categories),
+            ordered=ordered_flags[var_name],
+        )
+
+    dtypes["regime"] = pd.CategoricalDtype(
+        categories=list(regime_names_to_ids.keys()),
+        ordered=False,
+    )
+
+    return MappingProxyType(dtypes)
+
+
 @dataclass(frozen=True)
 class SimulationMetadata:
     """Pre-computed metadata about the simulation."""
@@ -247,6 +285,9 @@ class SimulationMetadata:
 
     discrete_ordered: MappingProxyType[str, bool]
     """Immutable mapping of discrete variable names to their ordered flag."""
+
+    regime_discrete_categories: MappingProxyType[tuple[str, str], tuple[str, ...]]
+    """Immutable mapping of (regime_name, var_name) to per-regime categories."""
 
 
 def _compute_metadata(
@@ -284,6 +325,13 @@ def _compute_metadata(
         discrete_categories[var_name] = tuple(dtype.categories)
         discrete_ordered[var_name] = bool(dtype.ordered)
 
+    # Per-regime discrete categories for correct code→label mapping
+    regime_discrete_categories: dict[tuple[str, str], tuple[str, ...]] = {}
+    for regime_name, regime in internal_regimes.items():
+        for var_name, grid in regime.grids.items():
+            if isinstance(grid, DiscreteGrid):
+                regime_discrete_categories[(regime_name, var_name)] = grid.categories
+
     n_periods = ages.n_periods
     n_subjects = _get_n_subjects(raw_results)
 
@@ -297,6 +345,7 @@ def _compute_metadata(
         regime_to_actions=MappingProxyType(regime_to_actions),
         discrete_categories=MappingProxyType(discrete_categories),
         discrete_ordered=MappingProxyType(discrete_ordered),
+        regime_discrete_categories=MappingProxyType(regime_discrete_categories),
     )
 
 
@@ -360,9 +409,10 @@ def _collect_all_available_targets(
 def _get_available_targets_for_regime(regime: InternalRegime) -> set[str]:
     """Get available target names for a single regime."""
     excluded = {"H"} | _get_stochastic_weight_function_names(regime)
+    sim = regime.simulate_functions
     return {
-        name for name in regime.functions if name not in excluded
-    } | regime.constraints.keys()
+        name for name in sim.functions if name not in excluded
+    } | sim.constraints.keys()
 
 
 def _get_stochastic_weight_function_names(regime: InternalRegime) -> set[str]:
@@ -371,8 +421,8 @@ def _get_stochastic_weight_function_names(regime: InternalRegime) -> set[str]:
     These are functions named `weight_{transition_name}` that return probability arrays
     for stochastic state transitions. They should not be exposed as available targets.
     """
-    stochastic_transition_names = regime.internal_functions.stochastic_transition_names
-    flat_transitions = flatten_regime_namespace(regime.transitions)
+    stochastic_transition_names = regime.simulate_functions.stochastic_transition_names
+    flat_transitions = flatten_regime_namespace(regime.simulate_functions.transitions)
     return {
         f"weight_{name}"
         for name in flat_transitions
@@ -584,15 +634,71 @@ def _convert_to_categorical(
     df["regime"] = pd.Categorical(df["regime"], categories=metadata.regime_names)
 
     # Convert discrete state and action columns
-    for var_name, categories in metadata.discrete_categories.items():
-        if var_name in df.columns:
+    for var_name, merged_categories in metadata.discrete_categories.items():
+        if var_name not in df.columns:
+            continue
+
+        # Check if any regime has different categories than merged
+        needs_remap = any(
+            metadata.regime_discrete_categories.get((rn, var_name)) != merged_categories
+            for rn in metadata.regime_names
+            if (rn, var_name) in metadata.regime_discrete_categories
+        )
+
+        if needs_remap:
+            df[var_name] = _remap_codes_per_regime(
+                df=df,
+                var_name=var_name,
+                merged_categories=merged_categories,
+                ordered=metadata.discrete_ordered[var_name],
+                metadata=metadata,
+            )
+        else:
             df[var_name] = _codes_to_categorical(
                 codes=df[var_name],
-                categories=categories,
+                categories=merged_categories,
                 ordered=metadata.discrete_ordered[var_name],
             )
 
     return df
+
+
+def _remap_codes_per_regime(
+    *,
+    df: pd.DataFrame,
+    var_name: str,
+    merged_categories: tuple[str, ...],
+    ordered: bool,
+    metadata: SimulationMetadata,
+) -> pd.Categorical:
+    """Map per-regime integer codes to labels, then build a merged Categorical.
+
+    When regimes define different categories for the same variable, the raw integer
+    codes in the DataFrame correspond to each regime's own category ordering. This
+    function converts per-regime codes to string labels, then wraps them in a
+    Categorical with the merged category set.
+
+    """
+    labels = pd.array(  # ty: ignore[no-matching-overload]
+        [pd.NA] * len(df), dtype="string"
+    )
+
+    for regime_name in metadata.regime_names:
+        regime_cats = metadata.regime_discrete_categories.get((regime_name, var_name))
+        if regime_cats is None:
+            continue
+
+        mask = df["regime"] == regime_name
+        if not mask.any():
+            continue
+
+        codes_in_regime = df.loc[mask, var_name]
+        valid = codes_in_regime.notna()
+        int_codes = codes_in_regime[valid].astype(int)
+        mapped = int_codes.map(dict(enumerate(regime_cats))).to_numpy()
+        labels[mask & valid] = mapped
+
+    return pd.Categorical(labels, categories=list(merged_categories), ordered=ordered)
 
 
 def _codes_to_categorical(
@@ -661,14 +767,13 @@ def _compute_targets(
 
 def _build_functions_pool(internal_regime: InternalRegime) -> dict[str, UserFunction]:
     """Build pool of available functions for target computation."""
+    sim = internal_regime.simulate_functions
     pool: dict[str, UserFunction] = {
-        **{k: v for k, v in internal_regime.functions.items() if k != "H"},
-        **internal_regime.constraints,
+        **{k: v for k, v in sim.functions.items() if k != "H"},
+        **sim.constraints,
     }
-    if internal_regime.regime_transition_probs is not None:
-        pool["regime_transition_probs"] = (
-            internal_regime.regime_transition_probs.simulate
-        )
+    if sim.compute_regime_transition_probs is not None:
+        pool["regime_transition_probs"] = sim.compute_regime_transition_probs
     return pool
 
 

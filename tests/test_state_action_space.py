@@ -5,13 +5,11 @@ import jax.numpy as jnp
 import pandas as pd
 from numpy.testing import assert_array_equal
 
-from lcm.grids import DiscreteGrid, LinSpacedGrid
-from lcm.interfaces import StateActionSpace, StateSpaceInfo
+from lcm.grids import DiscreteGrid, IrregSpacedGrid, LinSpacedGrid, categorical
+from lcm.interfaces import StateActionSpace
 from lcm.regime import Regime
-from lcm.state_action_space import (
-    create_state_action_space,
-    create_state_space_info,
-)
+from lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
+from lcm.state_action_space import create_state_action_space
 
 
 def _create_variable_info(
@@ -28,12 +26,15 @@ def _create_variable_info(
     info["is_action"] = ~info["is_state"]
     info["is_discrete"] = info.index.isin(discrete_states + discrete_actions)
     info["is_continuous"] = ~info["is_discrete"]
-    info["enters_concurrent_valuation"] = True
-    info["enters_transition"] = True
     return info
 
 
 def test_create_state_action_space_solution_discrete_action_continuous_state():
+    @categorical(ordered=False)
+    class WorkChoice:
+        no_work: int
+        work: int
+
     variable_info = _create_variable_info(
         continuous_states=["wealth"],
         discrete_actions=["work"],
@@ -42,8 +43,8 @@ def test_create_state_action_space_solution_discrete_action_continuous_state():
     )
     grids = MappingProxyType(
         {
-            "wealth": jnp.array([0.0, 50.0, 100.0]),
-            "work": jnp.array([0, 1]),
+            "wealth": IrregSpacedGrid(points=[0.0, 50.0, 100.0]),
+            "work": DiscreteGrid(WorkChoice),
         }
     )
 
@@ -53,8 +54,8 @@ def test_create_state_action_space_solution_discrete_action_continuous_state():
     )
 
     assert isinstance(space, StateActionSpace)
-    assert_array_equal(space.states["wealth"], grids["wealth"])
-    assert_array_equal(space.discrete_actions["work"], grids["work"])
+    assert_array_equal(space.states["wealth"], grids["wealth"].to_jax())
+    assert_array_equal(space.discrete_actions["work"], grids["work"].to_jax())
     assert space.continuous_actions == {}
     assert space.state_and_discrete_action_names == ("work", "wealth")
 
@@ -68,8 +69,8 @@ def test_create_state_action_space_solution_continuous_action():
     )
     grids = MappingProxyType(
         {
-            "wealth": jnp.array([0.0, 50.0, 100.0]),
-            "consumption": jnp.array([0.0, 25.0, 50.0]),
+            "wealth": IrregSpacedGrid(points=[0.0, 50.0, 100.0]),
+            "consumption": IrregSpacedGrid(points=[0.0, 25.0, 50.0]),
         }
     )
 
@@ -79,13 +80,20 @@ def test_create_state_action_space_solution_continuous_action():
     )
 
     assert isinstance(space, StateActionSpace)
-    assert_array_equal(space.states["wealth"], grids["wealth"])
+    assert_array_equal(space.states["wealth"], grids["wealth"].to_jax())
     assert space.discrete_actions == {}
-    assert_array_equal(space.continuous_actions["consumption"], grids["consumption"])
+    assert_array_equal(
+        space.continuous_actions["consumption"], grids["consumption"].to_jax()
+    )
     assert space.state_and_discrete_action_names == ("wealth",)
 
 
 def test_state_action_space_replace_method():
+    @categorical(ordered=False)
+    class WorkChoice:
+        no_work: int
+        work: int
+
     variable_info = _create_variable_info(
         continuous_states=["wealth"],
         discrete_actions=["work"],
@@ -94,8 +102,8 @@ def test_state_action_space_replace_method():
     )
     grids = MappingProxyType(
         {
-            "wealth": jnp.array([0.0, 50.0, 100.0]),
-            "work": jnp.array([0, 1]),
+            "wealth": IrregSpacedGrid(points=[0.0, 50.0, 100.0]),
+            "work": DiscreteGrid(WorkChoice),
         }
     )
 
@@ -112,7 +120,7 @@ def test_state_action_space_replace_method():
     assert_array_equal(new_space.states["wealth"], jnp.array([30.0, 40.0]))
 
 
-def test_create_state_space_info():
+def test_create_v_interpolation_info():
     @dataclass
     class Health:
         good: int = 0
@@ -132,9 +140,9 @@ def test_create_state_space_info():
         active=lambda age: age < 5,
     )
 
-    state_space_info = create_state_space_info(regime)
+    v_interpolation_info = create_v_interpolation_info(regime)
 
-    assert isinstance(state_space_info, StateSpaceInfo)
-    assert set(state_space_info.state_names) == {"wealth", "health"}
-    assert "health" in state_space_info.discrete_states
-    assert "wealth" in state_space_info.continuous_states
+    assert isinstance(v_interpolation_info, VInterpolationInfo)
+    assert set(v_interpolation_info.state_names) == {"wealth", "health"}
+    assert "health" in v_interpolation_info.discrete_states
+    assert "wealth" in v_interpolation_info.continuous_states

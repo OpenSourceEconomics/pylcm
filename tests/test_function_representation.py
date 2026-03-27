@@ -4,22 +4,18 @@ from types import MappingProxyType
 
 import jax.numpy as jnp
 import pytest
-from dags.exceptions import InvalidFunctionArgumentsError
 
 from lcm import LinSpacedGrid
-from lcm.dispatchers import productmap
-from lcm.function_representation import (
+from lcm.grids import ContinuousGrid, DiscreteGrid
+from lcm.regime_building.V import (
+    VInterpolationInfo,
     _fail_if_interpolation_axes_are_not_last,
     _get_coordinate_finder,
     _get_interpolator,
-    _get_label_translator,
     _get_lookup_function,
     get_V_interpolator,
 )
-from lcm.grids import ContinuousGrid, DiscreteGrid
-from lcm.interfaces import (
-    StateSpaceInfo,
-)
+from lcm.utils.dispatchers import productmap
 
 
 @pytest.fixture
@@ -37,7 +33,7 @@ def dummy_continuous_grid():
 def test_function_evaluator_with_one_continuous_variable():
     wealth_grid = LinSpacedGrid(start=-3, stop=3, n_points=7)
 
-    state_space_info = StateSpaceInfo(
+    v_interpolation_info = VInterpolationInfo(
         state_names=("wealth",),
         discrete_states=MappingProxyType({}),
         continuous_states=MappingProxyType(
@@ -51,7 +47,7 @@ def test_function_evaluator_with_one_continuous_variable():
 
     # create the evaluator
     evaluator = get_V_interpolator(
-        state_space_info=state_space_info,
+        v_interpolation_info=v_interpolation_info,
         state_prefix="next_",
         V_arr_name="next_V_arr",
     )
@@ -68,7 +64,7 @@ def test_function_evaluator_with_one_continuous_variable():
 def test_function_evaluator_with_one_discrete_variable(binary_discrete_grid):
     next_V_arr = jnp.array([1, 2])
 
-    state_space_info = StateSpaceInfo(
+    v_interpolation_info = VInterpolationInfo(
         state_names=("working",),
         discrete_states=MappingProxyType({"working": binary_discrete_grid}),
         continuous_states=MappingProxyType({}),
@@ -76,7 +72,7 @@ def test_function_evaluator_with_one_discrete_variable(binary_discrete_grid):
 
     # create the evaluator
     evaluator = get_V_interpolator(
-        state_space_info=state_space_info,
+        v_interpolation_info=v_interpolation_info,
         state_prefix="next_",
         V_arr_name="next_V_arr",
     )
@@ -101,7 +97,7 @@ def test_function_evaluator(binary_discrete_grid):
     The utility function is wealth + human_capital + c. c takes a different
     value for each discrete state action combination.
 
-    The setup of state_space_info here is quite long. Usually these inputs will be
+    The setup of v_interpolation_info here is quite long. Usually these inputs will be
     generated from a model specification.
 
     """
@@ -128,7 +124,7 @@ def test_function_evaluator(binary_discrete_grid):
     # create info on axis of value function array
     var_names = ("retired", "insured", "wealth", "human_capital")
 
-    state_space_info = StateSpaceInfo(
+    v_interpolation_info = VInterpolationInfo(
         state_names=var_names,
         discrete_states=MappingProxyType(discrete_vars),
         continuous_states=MappingProxyType(continuous_vars),
@@ -136,7 +132,7 @@ def test_function_evaluator(binary_discrete_grid):
 
     # create the evaluator
     evaluator = get_V_interpolator(
-        state_space_info=state_space_info,
+        v_interpolation_info=v_interpolation_info,
         state_prefix="next_",
         V_arr_name="next_V_arr",
     )
@@ -150,31 +146,6 @@ def test_function_evaluator(binary_discrete_grid):
     )
 
     assert jnp.allclose(out, 801.5)
-
-
-def test_get_label_translator_with_args():
-    func = _get_label_translator(
-        in_name="schooling",
-    )
-    assert func(1) == 1
-
-
-def test_get_label_translator_with_kwargs():
-    func = _get_label_translator(
-        in_name="schooling",
-    )
-    assert func(schooling=1) == 1
-
-
-def test_get_label_translator_wrong_kwarg():
-    func = _get_label_translator(
-        in_name="schooling",
-    )
-    with pytest.raises(
-        InvalidFunctionArgumentsError,
-        match="translate_label got unexpected keyword argument health",
-    ):
-        func(health=1)
 
 
 def test_get_lookup_function():
@@ -217,16 +188,11 @@ def test_get_interpolator():
     assert calculated == 3
 
 
-# ======================================================================================
-# Illustrative
-# ======================================================================================
-
-
 @pytest.mark.illustrative
 def test_get_function_evaluator_illustrative():
     a_grid = LinSpacedGrid(start=0, stop=1, n_points=3)
 
-    state_space_info = StateSpaceInfo(
+    v_interpolation_info = VInterpolationInfo(
         state_names=("a",),
         discrete_states=MappingProxyType({}),
         continuous_states=MappingProxyType(
@@ -240,7 +206,7 @@ def test_get_function_evaluator_illustrative():
 
     # create the evaluator
     evaluator = get_V_interpolator(
-        state_space_info=state_space_info,
+        v_interpolation_info=v_interpolation_info,
         V_arr_name="values_name",
         state_prefix="prefix_",
     )
@@ -298,9 +264,8 @@ def test_get_interpolator_illustrative():
 @pytest.mark.illustrative
 def test_fail_if_interpolation_axes_are_not_last_illustrative(dummy_continuous_grid):
     # Empty intersection of var_names and continuous_vars
-    # ==================================================================================
 
-    state_space_info = StateSpaceInfo(
+    v_interpolation_info = VInterpolationInfo(
         state_names=("a", "b"),
         continuous_states=MappingProxyType(
             {
@@ -310,12 +275,11 @@ def test_fail_if_interpolation_axes_are_not_last_illustrative(dummy_continuous_g
         discrete_states=MappingProxyType({}),
     )
 
-    _fail_if_interpolation_axes_are_not_last(state_space_info)  # does not fail
+    _fail_if_interpolation_axes_are_not_last(v_interpolation_info)  # does not fail
 
     # Non-empty intersection but correct order
-    # ==================================================================================
 
-    state_space_info = StateSpaceInfo(
+    v_interpolation_info = VInterpolationInfo(
         state_names=("a", "b", "c"),
         continuous_states=MappingProxyType(
             {
@@ -327,12 +291,11 @@ def test_fail_if_interpolation_axes_are_not_last_illustrative(dummy_continuous_g
         discrete_states=MappingProxyType({}),
     )
 
-    _fail_if_interpolation_axes_are_not_last(state_space_info)  # does not fail
+    _fail_if_interpolation_axes_are_not_last(v_interpolation_info)  # does not fail
 
     # Non-empty intersection and in-correct order
-    # ==================================================================================
 
-    state_space_info = StateSpaceInfo(
+    v_interpolation_info = VInterpolationInfo(
         state_names=("b", "c", "a"),  # "b", "c" are not last anymore
         continuous_states=MappingProxyType(
             {
@@ -345,13 +308,13 @@ def test_fail_if_interpolation_axes_are_not_last_illustrative(dummy_continuous_g
     )
 
     with pytest.raises(ValueError, match="Continuous variables need to be the last"):
-        _fail_if_interpolation_axes_are_not_last(state_space_info)
+        _fail_if_interpolation_axes_are_not_last(v_interpolation_info)
 
 
 def test_function_evaluator_performs_linear_extrapolation():
     wealth_grid = LinSpacedGrid(start=0, stop=3, n_points=7)
 
-    state_space_info = StateSpaceInfo(
+    v_interpolation_info = VInterpolationInfo(
         state_names=("wealth",),
         discrete_states=MappingProxyType({}),
         continuous_states=MappingProxyType(
@@ -365,7 +328,7 @@ def test_function_evaluator_performs_linear_extrapolation():
 
     # create the evaluator
     evaluator = get_V_interpolator(
-        state_space_info=state_space_info,
+        v_interpolation_info=v_interpolation_info,
         state_prefix="next_",
         V_arr_name="next_V_arr",
     )

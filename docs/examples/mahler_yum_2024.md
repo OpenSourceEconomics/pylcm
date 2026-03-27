@@ -6,16 +6,14 @@ title: Mahler & Yum (2024)
 
 Full replication of the lifecycle model from @mahler2024.
 
-Two regimes (alive/dead), 8 states including health, education, productivity type,
-and health type. Three actions: labor supply, saving, and health effort. Features
-stochastic health and regime transitions, AR(1) productivity shocks, and
-discount-factor heterogeneity. Ships with calibrated data files for survival
-probabilities and initial distributions.
+Two regimes (alive/dead), 8 states including health, education, productivity type, and
+health type. Three actions: labor supply, saving, and health effort. Features stochastic
+health and regime transitions, AR(1) productivity shocks, and discount-factor
+heterogeneity. Ships with calibrated data files for survival probabilities and initial
+distributions.
 
-::::{important}
-This model is computationally intensive and requires GPU acceleration. Run it in a CUDA
-environment (e.g., `pixi run -e cuda13 python your_script.py`).
-::::
+::::\{important} This model is computationally intensive and requires GPU acceleration.
+Run it in a CUDA environment (e.g., `pixi run -e cuda13 python your_script.py`). ::::
 
 [View source on GitHub](https://github.com/OpenSourceEconomics/pylcm/blob/main/src/lcm_examples/mahler_yum_2024/_model.py)
 
@@ -42,10 +40,9 @@ beta_std = START_PARAMS["beta"]["std"]
 
 # Select initial states with high discount factor type
 selected_ids_high = jnp.flatnonzero(discount_factor_types)
-initial_states_high =   {
-                        state: values[selected_ids_high] for state, values
-                        in initial_states.items()
-                        }
+initial_states_high = {
+    state: values[selected_ids_high] for state, values in initial_states.items()
+}
 
 # Solve and simulate for high discount factor type
 result = MAHLER_YUM_MODEL.simulate(

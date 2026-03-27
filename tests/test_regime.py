@@ -11,7 +11,8 @@ from lcm import DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.grids import IrregSpacedGrid
-from lcm.regime import MarkovTransition, _collect_state_transitions, _IdentityTransition
+from lcm.regime import MarkovTransition, _IdentityTransition
+from lcm.regime_building.validation import collect_state_transitions
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -90,11 +91,6 @@ def test_state_name_does_not_contain_separator():
         )
 
 
-# ======================================================================================
-# Terminal Regime Tests
-# ======================================================================================
-
-
 def test_terminal_regime_creation():
     """Terminal regime (transition=None) can be created with states and utility."""
     regime = Regime(
@@ -144,11 +140,6 @@ def test_terminal_regime_can_be_created_without_states():
     assert regime.states == {}
 
 
-# ======================================================================================
-# Active Attribute Tests
-# ======================================================================================
-
-
 def test_regime_with_active_callable():
     """Regime can specify active periods with a callable."""
     regime = Regime(
@@ -193,11 +184,6 @@ def test_markov_transition_rejects_non_callable():
         match="MarkovTransition requires a callable",
     ):
         MarkovTransition(func=42)  # ty: ignore[invalid-argument-type]
-
-
-# ======================================================================================
-# _IdentityTransition Tests
-# ======================================================================================
 
 
 def test_identity_transition_call():
@@ -278,11 +264,6 @@ def test_get_all_functions_includes_identity_for_fixed_continuous_state():
     assert isinstance(identity_func, _IdentityTransition)
     assert identity_func.__annotations__["wealth"] is ContinuousState
     assert identity_func.__annotations__["return"] is ContinuousState
-
-
-# ======================================================================================
-# State Transition Validation Tests
-# ======================================================================================
 
 
 def test_state_grid_without_explicit_transition_raises():
@@ -375,18 +356,13 @@ def test_discrete_state_grid_without_explicit_transition_raises():
 
 
 def test_collect_state_transitions_missing_state_raises():
-    """_collect_state_transitions raises RegimeInitializationError for missing state."""
+    """collect_state_transitions raises RegimeInitializationError for missing state."""
 
     states = MappingProxyType({"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)})
     with pytest.raises(
         RegimeInitializationError, match="has no entry in state_transitions"
     ):
-        _collect_state_transitions(states, state_transitions={})
-
-
-# ======================================================================================
-# Regression guard for GitHub issue #152
-# ======================================================================================
+        collect_state_transitions(states, state_transitions={})
 
 
 def test_regime_with_fixed_states_only():

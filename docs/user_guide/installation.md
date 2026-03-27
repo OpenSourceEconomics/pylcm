@@ -35,8 +35,8 @@ uv add pylcm --git https://github.com/OpenSourceEconomics/pylcm.git --rev main
 
 ## GPU Acceleration (optional, but then this is the whole point of it)
 
-pylcm uses [JAX](https://jax.readthedocs.io/) for numerical computation. By default,
-JAX runs on CPU. For GPU acceleration, install the appropriate JAX variant.
+pylcm uses [JAX](https://jax.readthedocs.io/) for numerical computation. By default, JAX
+runs on CPU. For GPU acceleration, install the appropriate JAX variant.
 
 ### Linux (CUDA)
 
@@ -92,7 +92,8 @@ smaller models.
 
 ## Troubleshooting
 
-- **Python version too old**: pylcm requires Python 3.14+. Check with `python --version`.
+- **Python version too old**: pylcm requires Python 3.14+. Check with
+  `python --version`.
 - **JAX GPU not detected**: Ensure the CUDA toolkit (Linux) or jax-metal (macOS) is
   properly installed. See the
   [JAX installation guide](https://jax.readthedocs.io/en/latest/installation.html).

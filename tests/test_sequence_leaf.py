@@ -5,15 +5,11 @@ import jax
 import jax.numpy as jnp
 
 from lcm.params.sequence_leaf import SequenceLeaf
-from lcm.utils import (
+from lcm.utils.containers import (
     ensure_containers_are_immutable,
     ensure_containers_are_mutable,
-    flatten_regime_namespace,
 )
-
-# ======================================================================================
-# Construction
-# ======================================================================================
+from lcm.utils.namespace import flatten_regime_namespace
 
 
 def test_construction_from_list():
@@ -38,11 +34,6 @@ def test_construction_freezes_nested_lists():
     assert isinstance(leaf.data[0], tuple)
 
 
-# ======================================================================================
-# __repr__ and __eq__
-# ======================================================================================
-
-
 def test_repr():
     leaf = SequenceLeaf([1, 2])
     assert repr(leaf) == "SequenceLeaf([1, 2])"
@@ -65,11 +56,6 @@ def test_eq_not_sequence_leaf():
     assert leaf != [1, 2]
 
 
-# ======================================================================================
-# __hash__
-# ======================================================================================
-
-
 def test_hashable():
     leaf = SequenceLeaf([1, 2, 3])
     assert hash(leaf) == hash((1, 2, 3))
@@ -87,11 +73,6 @@ def test_usable_as_dict_key():
     assert d[SequenceLeaf([1, 2])] == "value"
 
 
-# ======================================================================================
-# JAX pytree
-# ======================================================================================
-
-
 def test_jax_tree_leaves():
     leaf = SequenceLeaf([jnp.array(1.0), jnp.array(2.0)])
     leaves = jax.tree.leaves(leaf)
@@ -106,11 +87,6 @@ def test_jax_tree_map_roundtrip():
     assert isinstance(doubled, SequenceLeaf)
     assert float(doubled.data[0]) == 2.0
     assert float(doubled.data[1]) == 4.0
-
-
-# ======================================================================================
-# ensure_containers_are_immutable (no-op for leaf data)
-# ======================================================================================
 
 
 def test_immutable_sequence_leaf_already_frozen():
@@ -142,21 +118,11 @@ def test_immutable_sequence_leaf_nested_inside_larger_dict():
     assert isinstance(inner.data, tuple)
 
 
-# ======================================================================================
-# ensure_containers_are_mutable (unwraps leaf to plain list)
-# ======================================================================================
-
-
 def test_mutable_unwraps_sequence_leaf_to_list():
     leaf = SequenceLeaf([1, 2])
     result = ensure_containers_are_mutable({"leaf": leaf})
     assert isinstance(result["leaf"], list)
     assert result["leaf"] == [1, 2]
-
-
-# ======================================================================================
-# Round-trips
-# ======================================================================================
 
 
 def test_roundtrip_immutable_to_mutable():
@@ -170,19 +136,9 @@ def test_roundtrip_immutable_to_mutable():
     assert inner[1] == {"a": 2}
 
 
-# ======================================================================================
-# Not a Sequence
-# ======================================================================================
-
-
 def test_not_a_sequence():
     leaf = SequenceLeaf([1, 2])
     assert not isinstance(leaf, Sequence)
-
-
-# ======================================================================================
-# flatten_regime_namespace treats SequenceLeaf as a leaf
-# ======================================================================================
 
 
 def test_flatten_regime_namespace_treats_sequence_leaf_as_leaf():

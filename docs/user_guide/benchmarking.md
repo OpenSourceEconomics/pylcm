@@ -5,11 +5,11 @@ title: Benchmarking
 # Benchmarking Your Models
 
 JAX JIT-compiles functions on first call, so the first invocation of `solve()` or
-`simulate()` is much slower than subsequent calls. When tuning grid sizes, adding regimes,
-or upgrading pylcm, you want to know whether steady-state performance changed — not just
-whether the first call got slower. [ASV (Airspeed Velocity)](https://asv.readthedocs.io/)
-is a benchmarking framework that tracks metrics across commits, making regressions visible
-immediately.
+`simulate()` is much slower than subsequent calls. When tuning grid sizes, adding
+regimes, or upgrading pylcm, you want to know whether steady-state performance changed —
+not just whether the first call got slower.
+[ASV (Airspeed Velocity)](https://asv.readthedocs.io/) is a benchmarking framework that
+tracks metrics across commits, making regressions visible immediately.
 
 This page shows how to set up ASV in your own project to benchmark your own models.
 
@@ -57,8 +57,8 @@ touch benchmarks/__init__.py
 
 ## Writing a Benchmark
 
-ASV discovers benchmark classes in `bench_*.py` files inside the `benchmarks/` directory.
-Here is a full annotated example:
+ASV discovers benchmark classes in `bench_*.py` files inside the `benchmarks/`
+directory. Here is a full annotated example:
 
 ```python
 # benchmarks/bench_my_model.py
@@ -85,7 +85,9 @@ class TimeSolveSimulate:
 
         # --- Build model and params --------------------------------------
         self.model = retirement.get_model()
-        self.model_params = retirement.get_params()  # not self.params — ASV reserves that
+        self.model_params = (
+            retirement.get_params()
+        )  # not self.params — ASV reserves that
         self.initial_conditions = {
             "age": jnp.full(500, 25.0),
             "wealth": jnp.full(500, 5.0),
@@ -140,11 +142,11 @@ class TimeSolveSimulate:
 
 ASV uses the method prefix to decide what to measure:
 
-| Prefix | What ASV measures |
-|---|---|
-| `time_*` | Wall-clock time (repeated, reports statistics) |
-| `peakmem_*` | Peak memory usage during execution |
-| `track_*` | An arbitrary scalar you return (e.g. warmup time) |
+| Prefix      | What ASV measures                                 |
+| ----------- | ------------------------------------------------- |
+| `time_*`    | Wall-clock time (repeated, reports statistics)    |
+| `peakmem_*` | Peak memory usage during execution                |
+| `track_*`   | An arbitrary scalar you return (e.g. warmup time) |
 
 ### Parameterised benchmarks
 
@@ -156,8 +158,9 @@ class TimeSolveGrid:
     param_names = ["n_wealth_points"]
     timeout = 600
 
-    def setup(self, n_wealth_points):
-        ...  # build model with n_wealth_points grid points
+    def setup(
+        self, n_wealth_points
+    ): ...  # build model with n_wealth_points grid points
 
     def time_solve(self, n_wealth_points):
         self.model.solve(params=self.model_params, log_level="off")
@@ -206,8 +209,8 @@ For comparable results across runs:
 
 - Always benchmark on the **same machine** with the same GPU.
 - Use a **clean worktree** so ASV can tag results with the exact commit hash.
-- Call `jax.clear_caches()` in `teardown()` to prevent trace caching from leaking between
-  benchmarks.
+- Call `jax.clear_caches()` in `teardown()` to prevent trace caching from leaking
+  between benchmarks.
 
 ## See Also
 

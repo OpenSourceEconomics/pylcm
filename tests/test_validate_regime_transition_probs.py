@@ -12,15 +12,14 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.error_handling import _format_sum_violation, validate_regime_transition_probs
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import DiscreteAction, FloatND
+from lcm.utils.error_handling import (
+    _format_sum_violation,
+    validate_regime_transition_probs,
+)
 from lcm_examples.mortality import RegimeId as MortalityRegimeId
 from lcm_examples.mortality import get_model, get_params
-
-# ======================================================================================
-# Tests for validate_regime_transition_probs
-# ======================================================================================
 
 
 def test_valid_probs_all_active():
@@ -164,30 +163,20 @@ def test_raises_for_inf_values():
         )
 
 
-# ======================================================================================
-# Tests for _format_sum_violation with 0-d array inputs
-# ======================================================================================
-
-
 def test_format_sum_violation_with_scalar_input():
     """A 0-d array (scalar) input does not raise IndexError."""
-    result = _format_sum_violation(jnp.array(0.5))
+    result = _format_sum_violation(sum_all=jnp.array(0.5))
     assert "1 of 1 probability vectors do not sum to 1.0" in result
 
 
 def test_format_sum_violation_with_scalar_input_and_state_action_values():
     """0-d inputs for both sum_all and state_action_values work correctly."""
     result = _format_sum_violation(
-        jnp.array(0.5),
+        sum_all=jnp.array(0.5),
         state_action_values=MappingProxyType({"wealth": jnp.array(10.0)}),
     )
     assert "1 of 1 probability vectors do not sum to 1.0" in result
     assert "wealth" in result
-
-
-# ======================================================================================
-# Integration tests via public Model methods
-# ======================================================================================
 
 
 @categorical(ordered=False)

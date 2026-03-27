@@ -7,11 +7,18 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm.ages import AgeGrid
 from lcm.interfaces import StateActionSpace
-from lcm.logging import get_logger
-from lcm.max_Q_over_a import get_max_Q_over_a
-from lcm.ndimage import map_coordinates
+from lcm.regime_building.max_Q_over_a import get_max_Q_over_a
+from lcm.regime_building.ndimage import map_coordinates
 from lcm.solution.solve_brute import solve
 from lcm.typing import MaxQOverAFunction
+from lcm.utils.logging import get_logger
+
+
+@dataclasses.dataclass(frozen=True)
+class SolveFunctionsMock:
+    """Mock SolveFunctions with only max_Q_over_a."""
+
+    max_Q_over_a: dict[int, MaxQOverAFunction]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -21,12 +28,12 @@ class InternalRegimeMock:
     The solve() function only accesses:
     - _base_state_action_space: StateActionSpace object
     - state_action_space(): method returning the state-action space
-    - max_Q_over_a_functions: dict mapping period to max_Q_over_a function
+    - solve_functions.max_Q_over_a: dict mapping period to max_Q_over_a function
     - active_periods: list of periods the regime is active
     """
 
     _base_state_action_space: StateActionSpace
-    max_Q_over_a_functions: dict[int, MaxQOverAFunction]
+    solve_functions: SolveFunctionsMock
     active_periods: list[int]
 
     def state_action_space(self, regime_params):  # noqa: ARG002
@@ -120,7 +127,9 @@ def test_solve_brute():
 
     internal_regime = InternalRegimeMock(
         _base_state_action_space=state_action_space,
-        max_Q_over_a_functions={0: max_Q_over_a, 1: max_Q_over_a},
+        solve_functions=SolveFunctionsMock(
+            max_Q_over_a={0: max_Q_over_a, 1: max_Q_over_a},
+        ),
         active_periods=[0, 1],
     )
 
@@ -176,7 +185,9 @@ def test_solve_brute_single_period_Qc_arr():
 
     internal_regime = InternalRegimeMock(
         _base_state_action_space=state_action_space,
-        max_Q_over_a_functions={0: max_Q_over_a, 1: max_Q_over_a},
+        solve_functions=SolveFunctionsMock(
+            max_Q_over_a={0: max_Q_over_a, 1: max_Q_over_a},
+        ),
         active_periods=[0, 1],
     )
 

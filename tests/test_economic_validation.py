@@ -43,11 +43,6 @@ def _mean_wealth_in_final_alive_period(df):
     return rows["wealth"].mean()
 
 
-# ======================================================================================
-# Section A: Deterministic behavior (sigma ~ 0)
-# ======================================================================================
-
-
 @pytest.mark.parametrize("shock_type", ["normal_gh", "rouwenhorst", "tauchen"])
 def test_deterministic_when_sigma_zero(shock_type):
     rho = 0.5 if shock_type in ("rouwenhorst", "tauchen") else 0.0
@@ -62,11 +57,6 @@ def test_deterministic_when_sigma_zero(shock_type):
         )
 
 
-# ======================================================================================
-# Section B: Precautionary savings, IID
-# ======================================================================================
-
-
 def test_higher_sigma_increases_mean_wealth_normal():
     df_low = _simulate("normal_gh", sigma=0.1)
     df_high = _simulate("normal_gh", sigma=0.5)
@@ -74,11 +64,6 @@ def test_higher_sigma_increases_mean_wealth_normal():
     assert _mean_wealth_in_final_alive_period(
         df_high
     ) > _mean_wealth_in_final_alive_period(df_low)
-
-
-# ======================================================================================
-# Section C: Precautionary savings, AR(1)
-# ======================================================================================
 
 
 def test_higher_sigma_increases_mean_wealth_rouwenhorst():
@@ -107,11 +92,6 @@ def test_precautionary_savings_with_nonzero_mu():
     assert _mean_wealth_in_final_alive_period(
         df_high
     ) > _mean_wealth_in_final_alive_period(df_low)
-
-
-# ======================================================================================
-# Section D: Stochastic vs deterministic baseline
-# ======================================================================================
 
 
 @pytest.mark.parametrize("shock_type", ["normal_gh", "rouwenhorst", "tauchen"])

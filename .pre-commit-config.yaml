@@ -5,7 +5,7 @@ repos:
       - id: check-hooks-apply
       - id: check-useless-excludes
   - repo: https://github.com/tox-dev/pyproject-fmt
-    rev: v2.19.0
+    rev: v2.20.0
     hooks:
       - id: pyproject-fmt
   - repo: https://github.com/lyz-code/yamlfix
@@ -39,7 +39,7 @@ repos:
       - id: name-tests-test
         args:
           - --pytest-test-first
-        exclude: tests/regime_mock.py|^tests/test_models/
+        exclude: tests/regime_mock.py|^tests/test_models/|^tests/data/
       - id: no-commit-to-branch
         args:
           - --branch
@@ -49,8 +49,12 @@ repos:
     rev: v1.38.0
     hooks:
       - id: yamllint
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.37.1
+    hooks:
+      - id: check-github-workflows
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.6
+    rev: v0.15.8
     hooks:
       - id: ruff-check
         args:
@@ -83,5 +87,15 @@ repos:
           - --wrap
           - '88'
         files: (AGENTS\.md|CLAUDE\.md|README\.md|modules/.*\.md|profiles/.*\.md)
+      - id: mdformat
+        additional_dependencies:
+          - mdformat-myst
+          - mdformat-ruff
+        args:
+          - --wrap
+          - '88'
+        files: (docs/.)
+        # mdformat-myst mangles sphinx-design grid-item-card directives
+        exclude: docs/index\.md
 ci:
   autoupdate_schedule: monthly

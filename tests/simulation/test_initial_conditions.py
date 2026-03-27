@@ -8,9 +8,11 @@ import pytest
 from lcm import DiscreteGrid, IrregSpacedGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidInitialConditionsError
-from lcm.input_processing.params_processing import process_params
-from lcm.simulation.utils import convert_initial_states_to_nested
-from lcm.simulation.validation import validate_initial_conditions
+from lcm.params.processing import process_params
+from lcm.simulation.initial_conditions import (
+    build_initial_states,
+    validate_initial_conditions,
+)
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -87,19 +89,20 @@ def internal_params(model: Model) -> InternalParams:
     )
 
 
-def test_convert_flat_to_nested_single_regime(model: Model) -> None:
+def test_build_initial_states_single_regime(model: Model) -> None:
     """Single regime gets its states from flat dict."""
     flat = {
         "wealth": jnp.array([10.0, 50.0]),
         "health": jnp.array([0, 1]),
     }
-    nested = convert_initial_states_to_nested(
+    result = build_initial_states(
         initial_states=flat, internal_regimes=model.internal_regimes
     )
 
-    assert set(nested) == {"active", "terminal"}
-    assert "wealth" in nested["active"]
-    assert "health" in nested["active"]
+    assert "active__wealth" in result
+    assert "active__health" in result
+    # Terminal regime has no states, so no terminal__ keys should exist
+    assert not any(k.startswith("terminal__") for k in result)
 
 
 def test_validate_initial_conditions_valid_input(

@@ -28,7 +28,9 @@ period_to_regime_to_V_arr = model.solve(params=params)
 period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
 
 # Full diagnostics + disk snapshots
-period_to_regime_to_V_arr = model.solve(params=params, log_level="debug", log_path="./debug/")
+period_to_regime_to_V_arr = model.solve(
+    params=params, log_level="debug", log_path="./debug/"
+)
 ```
 
 See [Debugging](debugging.md) for details on log levels and debug snapshots.
@@ -43,14 +45,14 @@ result = model.simulate(
 )
 ```
 
-Forward simulation using solved value functions. Each agent starts from the given initial
-conditions and makes optimal decisions at each period. Returns a `SimulationResult`
-object.
+Forward simulation using solved value functions. Each agent starts from the given
+initial conditions and makes optimal decisions at each period. Returns a
+`SimulationResult` object.
 
 ## Simulate without pre-solving
 
-When `period_to_regime_to_V_arr=None`, `simulate()` solves the model automatically before simulating.
-Use this when you don't need the raw value function arrays:
+When `period_to_regime_to_V_arr=None`, `simulate()` solves the model automatically
+before simulating. Use this when you don't need the raw value function arrays:
 
 ```python
 result = model.simulate(
@@ -65,26 +67,30 @@ result = model.simulate(
 ### From a DataFrame
 
 The standard way to supply initial conditions is as a pandas DataFrame with one row per
-agent. Use `initial_conditions_from_dataframe` to convert it to the format expected by
-`simulate()`:
+agent. Pass it directly to `simulate()`:
 
 ```python
 import pandas as pd
-from lcm import initial_conditions_from_dataframe
 
-df = pd.DataFrame({
-    "regime": ["working_life", "working_life", "retirement", "working_life"],
-    "age": [25.0, 25.0, 25.0, 25.0],
-    "wealth": [1.0, 5.0, 10.0, 20.0],
-    "health": ["good", "bad", "bad", "good"],  # string labels, auto-converted
-})
+df = pd.DataFrame(
+    {
+        "regime": ["working_life", "working_life", "retirement", "working_life"],
+        "age": [25.0, 25.0, 25.0, 25.0],
+        "wealth": [1.0, 5.0, 10.0, 20.0],
+        "health": ["good", "bad", "bad", "good"],  # string labels, auto-converted
+    }
+)
 
-initial_conditions = initial_conditions_from_dataframe(df, model=model)
+result = model.simulate(
+    params=params,
+    initial_conditions=df,
+    period_to_regime_to_V_arr=None,
+)
 ```
 
 Discrete states (those backed by a `DiscreteGrid`) are mapped from string labels to
-integer codes automatically. See [Working with DataFrames and Series](pandas_interop.md) for
-details.
+integer codes automatically. See [Working with DataFrames and Series](pandas_interop.md)
+for details.
 
 ### As JAX arrays
 
@@ -96,10 +102,14 @@ initial_conditions = {
     "age": jnp.array([25.0, 25.0, 25.0, 25.0]),
     "wealth": jnp.array([1.0, 5.0, 10.0, 20.0]),
     "health": jnp.array([0, 1, 1, 0]),  # integer codes for discrete states
-    "regime": jnp.array([
-        RegimeId.working_life, RegimeId.working_life,
-        RegimeId.retirement, RegimeId.working_life,
-    ]),
+    "regime": jnp.array(
+        [
+            RegimeId.working_life,
+            RegimeId.working_life,
+            RegimeId.retirement,
+            RegimeId.working_life,
+        ]
+    ),
 }
 ```
 
@@ -119,10 +129,10 @@ initial_conditions = {
 
 ### Heterogeneous initial ages
 
-`"age"` must always be provided in `initial_conditions`. Each value must be a valid point on
-the model's `AgeGrid`, and each subject's initial regime must be active at their starting
-age. The most common case is that all subjects start at the initial age — just pass a
-constant array.
+`"age"` must always be provided in `initial_conditions`. Each value must be a valid
+point on the model's `AgeGrid`, and each subject's initial regime must be active at
+their starting age. The most common case is that all subjects start at the initial age —
+just pass a constant array.
 
 Subjects can start at different ages:
 
@@ -130,10 +140,12 @@ Subjects can start at different ages:
 initial_conditions = {
     "age": jnp.array([40.0, 60.0]),
     "wealth": jnp.array([50.0, 50.0]),
-    "regime": jnp.array([
-        model.regime_names_to_ids["working_life"],
-        model.regime_names_to_ids["working_life"],
-    ]),
+    "regime": jnp.array(
+        [
+            model.regime_names_to_ids["working_life"],
+            model.regime_names_to_ids["working_life"],
+        ]
+    ),
 }
 ```
 
@@ -180,11 +192,11 @@ Returns discrete variables as raw integer codes instead of categorical labels.
 ### Metadata
 
 ```python
-result.regime_names   # ['retirement', 'working_life']
-result.state_names    # ['health', 'wealth']
-result.action_names   # ['consumption', 'work']
-result.n_periods      # 50
-result.n_subjects     # 1000
+result.regime_names  # ['retirement', 'working_life']
+result.state_names  # ['health', 'wealth']
+result.action_names  # ['consumption', 'work']
+result.n_periods  # 50
+result.n_subjects  # 1000
 ```
 
 ### Serialization
@@ -197,15 +209,16 @@ result.to_pickle("my_results.pkl")
 
 # Load
 from lcm.simulation.result import SimulationResult
+
 loaded = SimulationResult.from_pickle("my_results.pkl")
 ```
 
 ### Raw data (advanced)
 
 ```python
-result.raw_results      # regime -> period -> PeriodRegimeSimulationData
+result.raw_results  # regime -> period -> PeriodRegimeSimulationData
 result.internal_params  # processed parameter object
-result.period_to_regime_to_V_arr       # value function arrays from solve()
+result.period_to_regime_to_V_arr  # value function arrays from solve()
 ```
 
 ## Typical Workflow
@@ -213,7 +226,7 @@ result.period_to_regime_to_V_arr       # value function arrays from solve()
 ```python
 import numpy as np
 import pandas as pd
-from lcm import Model, initial_conditions_from_dataframe
+from lcm import Model
 
 # 1. Define model (see previous pages)
 model = Model(regimes={...}, ages=..., regime_id_class=...)
@@ -225,24 +238,45 @@ params = {
     ...
 }
 
-# 3. Prepare initial conditions
+# 3. Prepare initial conditions as a DataFrame
 initial_df = pd.DataFrame({
     "regime": "working_life",
     "age": model.ages.values[0],
     "wealth": np.linspace(1, 50, 100),
 })
-initial_conditions = initial_conditions_from_dataframe(initial_df, model=model)
 
 # 4. Simulate (solves automatically when period_to_regime_to_V_arr=None)
 result = model.simulate(
     params=params,
-    initial_conditions=initial_conditions,
+    initial_conditions=initial_df,
     period_to_regime_to_V_arr=None,
 )
 
 # 5. Analyze
 df = result.to_dataframe(additional_targets="all")
 df.groupby("period")["wealth"].mean()
+```
+
+## Float32 GPU Reproducibility
+
+```{note}
+At float32 precision, GPU simulation results are **not reproducible across process
+invocations**. XLA compiles different fused kernels each time a process starts, changing
+float32 accumulation order and producing ~1e-3 value function differences for large
+models. This is a property of XLA's GPU compiler, not a pylcm bug.
+
+**Key facts:**
+
+- Float64 results are reproducible across processes.
+- Float32 results are deterministic *within* a single process (repeated calls give
+  identical output).
+- `--xla_gpu_deterministic_ops=true` does **not** help — it only guarantees determinism
+  within a single compiled program, not across separate compilations.
+- Smaller models may be reproducible at float32 because XLA chooses the same kernel
+  fusion strategy; larger models are not.
+
+If you need bitwise-reproducible results for testing or validation, use float64 precision
+(`jax.config.update("jax_enable_x64", True)`).
 ```
 
 ## See Also

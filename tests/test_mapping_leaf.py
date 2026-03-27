@@ -6,15 +6,11 @@ import jax.numpy as jnp
 import pytest
 
 from lcm.params import MappingLeaf, SequenceLeaf, as_leaf
-from lcm.utils import (
+from lcm.utils.containers import (
     ensure_containers_are_immutable,
     ensure_containers_are_mutable,
-    flatten_regime_namespace,
 )
-
-# ======================================================================================
-# Construction
-# ======================================================================================
+from lcm.utils.namespace import flatten_regime_namespace
 
 
 def test_construction_from_dict():
@@ -39,11 +35,6 @@ def test_construction_freezes_nested_lists():
     assert isinstance(leaf.data["items"], tuple)
 
 
-# ======================================================================================
-# __repr__ and __eq__
-# ======================================================================================
-
-
 def test_repr():
     leaf = MappingLeaf({"x": 1})
     assert repr(leaf) == "MappingLeaf({'x': 1})"
@@ -66,11 +57,6 @@ def test_eq_not_mapping_leaf():
     assert leaf != {"x": 1}
 
 
-# ======================================================================================
-# JAX pytree
-# ======================================================================================
-
-
 def test_jax_tree_leaves():
     leaf = MappingLeaf({"b": jnp.array(2.0), "a": jnp.array(1.0)})
     leaves = jax.tree.leaves(leaf)
@@ -86,11 +72,6 @@ def test_jax_tree_map_roundtrip():
     assert isinstance(doubled, MappingLeaf)
     assert float(doubled.data["x"]) == 2.0
     assert float(doubled.data["y"]) == 4.0
-
-
-# ======================================================================================
-# ensure_containers_are_immutable (no-op for leaf data)
-# ======================================================================================
 
 
 def test_immutable_mapping_leaf_already_frozen():
@@ -123,11 +104,6 @@ def test_immutable_mapping_leaf_nested_inside_larger_dict():
     assert isinstance(inner.data, MappingProxyType)
 
 
-# ======================================================================================
-# ensure_containers_are_mutable (unwraps leaf to plain dict)
-# ======================================================================================
-
-
 def test_mutable_unwraps_mapping_leaf_to_dict():
     leaf = MappingLeaf({"a": 1})
     result = ensure_containers_are_mutable({"leaf": leaf})
@@ -151,11 +127,6 @@ def test_mutable_mapping_leaf_nested_inside_mapping_proxy():
     assert result["regime"]["param"] == {"x": 1}
 
 
-# ======================================================================================
-# Round-trips
-# ======================================================================================
-
-
 def test_roundtrip_immutable_to_mutable():
     original = {"leaf": MappingLeaf({"a": 1, "b": {"c": 2}})}
     immutable = ensure_containers_are_immutable(original)
@@ -167,19 +138,9 @@ def test_roundtrip_immutable_to_mutable():
     assert inner["b"]["c"] == 2
 
 
-# ======================================================================================
-# Not a Mapping
-# ======================================================================================
-
-
 def test_not_a_mapping():
     leaf = MappingLeaf({"a": 1})
     assert not isinstance(leaf, Mapping)
-
-
-# ======================================================================================
-# flatten_regime_namespace treats MappingLeaf as a leaf
-# ======================================================================================
 
 
 def test_flatten_regime_namespace_treats_mapping_leaf_as_leaf():
@@ -188,11 +149,6 @@ def test_flatten_regime_namespace_treats_mapping_leaf_as_leaf():
     result = flatten_regime_namespace(data)
     assert result["regime__param"] is leaf
     assert result["regime__scalar"] == 3.0
-
-
-# ======================================================================================
-# as_leaf
-# ======================================================================================
 
 
 def test_as_leaf_mapping():

@@ -96,6 +96,7 @@ extend-ignore = [
   "TC003",   # Move standard library import into a type-checking block
   "TRY003",  # Long messages outside exception class
   "UP047",   # Generic function should use type parameters
+  "F722",    # https://docs.kidger.site/jaxtyping/faq/#flake8-or-ruff-are-throwing-an-error
 ]
 per-file-ignores."benchmarks/*" = [
   "ANN",     # Annotations
@@ -125,7 +126,6 @@ per-file-ignores."docs/**/*" = [
   "D104",   # Missing docstring in public package
   "PD011",  # Use `.to_numpy()` — false positive on JAX .values
   "S101",   # Use of assert
-  "PD011",  # Use `.to_numpy()` instead of `.values`
   "RUF001", # Ambiguous Unicode characters (Greek letters in plot titles)
   "T201",   # print found
   "T203",   # pprint found
@@ -137,11 +137,11 @@ per-file-ignores."explanations/*" = [
   "T201",   # print found
   "T203",   # pprint found
 ]
-per-file-ignores."src/lcm/functools.py" = [
+per-file-ignores."src/lcm/utils/functools.py" = [
   "ANN401", # Dynamically typed expressions (Any)
 ]
-per-file-ignores."src/lcm/*Q_*.py" = [
-  "N999", # Module name mixing uppercase and lowercase
+per-file-ignores."src/lcm/**/*[A-Z]*.py" = [
+  "N999", # Module name mixing uppercase and lowercase (Q_and_F.py, V.py, max_Q_over_a.py)
 ]
 per-file-ignores."tests/*" = [
   "ANN",     # Annotations
@@ -165,7 +165,7 @@ per-file-ignores."tests/test_Q_and_F.py" = [
 ]
 pydocstyle.convention = "google"
 [tool.ruff.lint.flake8-bugbear]
-extend-immutable-calls = [ "lcm.utils.Unset", "Unset" ]
+extend-immutable-calls = [ "lcm.utils.containers.Unset", "Unset" ]
 
 [tool.pyproject-fmt]
 column_width = 88
@@ -208,6 +208,7 @@ ini_options.addopts = [
 ini_options.filterwarnings = []
 ini_options.markers = [
   "illustrative: Tests are designed for illustrative purposes",
+  "gpu: Tests that require a GPU (skipped on CPU-only machines)",
 ]
 ini_options.norecursedirs = [ "docs" ]
 
@@ -288,7 +289,7 @@ pylcm = { path = ".", editable = true }
 asv-compare = "asv compare"
 asv-preview = "asv preview"
 asv-pr-comment = "python benchmarks/pr_comment.py"
-asv-publish = "asv publish && python benchmarks/publish.py"
+asv-publish = "python benchmarks/publish.py"
 asv-quick = { cmd = "asv run --quick --set-commit-hash=$(git rev-parse HEAD)", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false", XLA_PYTHON_CLIENT_MEM_FRACTION = "0.3" } }
 asv-run = { cmd = 'git status --porcelain --ignore-submodules | grep -q . && echo "Refusing to benchmark: worktree is dirty. Commit first." && exit 1; asv run --set-commit-hash=$(git rev-parse HEAD)', env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false", XLA_PYTHON_CLIENT_MEM_FRACTION = "0.3" } }
 asv-run-and-pr-comment = { depends-on = [ "asv-run", "asv-pr-comment" ] }

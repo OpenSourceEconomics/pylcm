@@ -15,11 +15,6 @@ from lcm._config import TEST_DATA
 from lcm.typing import FloatND
 from tests.test_models.deterministic.base import get_model, get_params
 
-# ======================================================================================
-# Model specifications
-# ======================================================================================
-
-
 TEST_CASES = {
     "iskhakov_2017_five_periods": {
         "model": get_model(n_periods=6),
@@ -46,11 +41,6 @@ TEST_CASES = {
 
 def mean_square_error(x, y, axis=None):
     return np.mean((x - y) ** 2, axis=axis)
-
-
-# ======================================================================================
-# Test
-# ======================================================================================
 
 
 @pytest.mark.parametrize(("model_name", "model_and_params"), TEST_CASES.items())

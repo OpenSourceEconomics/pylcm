@@ -8,9 +8,9 @@ import numpy as np
 from jax import Array
 from jax.scipy.stats.norm import cdf
 
-from lcm import grid_helpers
 from lcm.exceptions import GridInitializationError
 from lcm.grids import ContinuousGrid
+from lcm.grids import coordinates as grid_coordinates
 from lcm.typing import Float1D, FloatND, ScalarFloat
 
 
@@ -114,7 +114,7 @@ class _ShockGrid(ContinuousGrid):
             raise GridInitializationError(
                 "Cannot compute coordinate for a ShockGrid without all shock params."
             )
-        return grid_helpers.get_irreg_coordinate(value=value, points=self.to_jax())
+        return grid_coordinates.get_irreg_coordinate(value=value, points=self.to_jax())
 
 
 def _validate_gauss_hermite_grid(

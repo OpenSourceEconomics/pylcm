@@ -1,0 +1,45 @@
+---
+name: benchmark-pr
+concurrency:
+  group: gpu-benchmarks-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+on:
+  pull_request:
+    branches:
+      - '*'
+  workflow_dispatch: null
+jobs:
+  run-benchmarks:
+    name: Run benchmarks on GPU and make PR comment
+    timeout-minutes: 14400  # 10 days (max is 35790 for self-hosted)
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on:
+      - self-hosted
+      - gpu-benchmark
+    steps:
+      - name: Wait for GPU to be free
+        run: |
+          echo "Waiting for GPU to be free..."
+          while nvidia-smi --query-compute-apps=process_name --format=csv,noheader \
+                | grep -qi python; do
+            echo "$(date): GPU in use by Python process, retrying in 60s..."
+            sleep 60
+          done
+          echo "GPU is free."
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Ensure main ref exists
+        run: git fetch origin main:main || true
+      - name: Install environment
+        run: pixi install -e tests-cuda12
+      - name: Setup ASV machine
+        run: pixi run -e tests-cuda12 asv machine --yes
+      - name: Run benchmarks and post PR comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: pixi run -e tests-cuda12 asv-run-and-pr-comment

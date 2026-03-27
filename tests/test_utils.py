@@ -1,14 +1,10 @@
 from types import MappingProxyType
 
-from lcm.utils import (
+from lcm.utils.containers import (
     ensure_containers_are_immutable,
     ensure_containers_are_mutable,
     find_duplicates,
 )
-
-# ======================================================================================
-# Tests for ensure_containers_are_immutable
-# ======================================================================================
 
 
 def test_ensure_containers_are_immutable_simple_dict():
@@ -77,11 +73,6 @@ def test_ensure_containers_are_immutable_mixed():
     assert isinstance(result["list"], tuple)
     assert isinstance(result["set"], frozenset)
     assert result["scalar"] == 5
-
-
-# ======================================================================================
-# Tests for ensure_containers_are_mutable
-# ======================================================================================
 
 
 def test_ensure_containers_are_mutable_simple_mapping_proxy():
@@ -154,11 +145,6 @@ def test_ensure_containers_are_mutable_mixed():
     assert result["scalar"] == 5
 
 
-# ======================================================================================
-# Tests for round-trip conversion
-# ======================================================================================
-
-
 def test_immutable_then_mutable_roundtrip():
     """Test that immutable -> mutable produces equivalent structure."""
     original = {"dict": {"nested": 1}, "list": [1, 2], "set": {3, 4}, "scalar": 5}
@@ -188,11 +174,6 @@ def test_mutable_then_immutable_roundtrip():
     assert immutable["tuple"] == (1, 2)
     assert immutable["frozenset"] == frozenset({3, 4})
     assert immutable["scalar"] == 5
-
-
-# ======================================================================================
-# Tests for find_duplicates
-# ======================================================================================
 
 
 def test_find_duplicates_singe_container_no_duplicates():

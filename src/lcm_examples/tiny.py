@@ -27,10 +27,6 @@ from lcm.typing import (
     ScalarInt,
 )
 
-# ---------------------------------------------------------------------------
-# Categorical variables
-# ---------------------------------------------------------------------------
-
 
 @categorical(ordered=True)
 class LaborSupply:
@@ -42,11 +38,6 @@ class LaborSupply:
 class RegimeId:
     working_life: int
     retirement: int
-
-
-# ---------------------------------------------------------------------------
-# Model functions
-# ---------------------------------------------------------------------------
 
 
 def utility(
@@ -98,22 +89,15 @@ def borrowing_constraint(end_of_period_wealth: FloatND) -> BoolND:
     return end_of_period_wealth >= 0
 
 
-def next_regime(age: float, last_working_age: float) -> ScalarInt:
+def next_regime(age: int, last_working_age: float) -> ScalarInt:
     return jnp.where(
         age >= last_working_age, RegimeId.retirement, RegimeId.working_life
     )
 
 
-# ---------------------------------------------------------------------------
-# Default grids
-# ---------------------------------------------------------------------------
-
 WEALTH_GRID = LinSpacedGrid(start=0, stop=50, n_points=25)
 CONSUMPTION_GRID = LogSpacedGrid(start=4, stop=50, n_points=100)
 
-# ---------------------------------------------------------------------------
-# Default regime objects
-# ---------------------------------------------------------------------------
 
 _DEFAULT_AGE_GRID = AgeGrid(start=25, stop=65, step="20Y")
 _RETIREMENT_AGE = _DEFAULT_AGE_GRID.exact_values[-1]
@@ -142,11 +126,6 @@ retirement = Regime(
     states={"wealth": WEALTH_GRID},
     functions={"utility": utility_retirement},
 )
-
-
-# ---------------------------------------------------------------------------
-# Factories
-# ---------------------------------------------------------------------------
 
 
 def get_model(

@@ -3,14 +3,14 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm.grid_helpers import (
+from lcm.grids.coordinates import (
     get_irreg_coordinate,
     get_linspace_coordinate,
     get_logspace_coordinate,
     linspace,
     logspace,
 )
-from lcm.ndimage import map_coordinates
+from lcm.regime_building.ndimage import map_coordinates
 from tests.conftest import DECIMAL_PRECISION
 
 
@@ -154,11 +154,6 @@ def test_map_coordinates_linear_outside_grid():
     interpolated_value = map_coordinates(values, [coordinates])
 
     aaae(interpolated_value, [-2, 0, 6], decimal=DECIMAL_PRECISION)
-
-
-# ======================================================================================
-# Array-valued coordinate functions
-# ======================================================================================
 
 
 def test_get_linspace_coordinate_with_array():

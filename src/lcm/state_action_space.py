@@ -3,17 +3,14 @@ from types import MappingProxyType
 import pandas as pd
 from jax import Array
 
-from lcm.grids import ContinuousGrid, DiscreteGrid
-from lcm.input_processing.util import get_gridspecs, get_variable_info
-from lcm.interfaces import StateActionSpace, StateSpaceInfo
-from lcm.regime import Regime
-from lcm.shocks import _ShockGrid
+from lcm.grids import Grid
+from lcm.interfaces import StateActionSpace
 
 
 def create_state_action_space(
     *,
     variable_info: pd.DataFrame,
-    grids: MappingProxyType[str, Array],
+    grids: MappingProxyType[str, Grid],
     states: dict[str, Array] | None = None,
 ) -> StateActionSpace:
     """Create a state-action-space.
@@ -23,7 +20,7 @@ def create_state_action_space(
 
     Args:
         variable_info: The variable info table as returned by get_variable_info.
-        grids: A dictionary of grids as returned by get_grids.
+        grids: Immutable mapping of variable names to Grid spec objects.
         states: A dictionary of states. If None, the grids as specified in the regime
             are used.
 
@@ -34,7 +31,9 @@ def create_state_action_space(
 
     """
     if states is None:
-        _states = {sn: grids[sn] for sn in variable_info.query("is_state").index}
+        _states = {
+            sn: grids[sn].to_jax() for sn in variable_info.query("is_state").index
+        }
     else:
         _validate_all_states_present(
             provided_states=states,
@@ -43,11 +42,11 @@ def create_state_action_space(
         _states = states
 
     discrete_actions = {
-        name: grids[name]
+        name: grids[name].to_jax()
         for name in variable_info.query("is_action & is_discrete").index
     }
     continuous_actions = {
-        name: grids[name]
+        name: grids[name].to_jax()
         for name in variable_info.query("is_action & is_continuous").index
     }
     state_and_discrete_action_names = tuple(
@@ -59,50 +58,6 @@ def create_state_action_space(
         discrete_actions=MappingProxyType(discrete_actions),
         continuous_actions=MappingProxyType(continuous_actions),
         state_and_discrete_action_names=state_and_discrete_action_names,
-    )
-
-
-def create_state_space_info(regime: Regime) -> StateSpaceInfo:
-    """Collect information on the state space for the regime solution.
-
-    A state-space information is a compressed representation of all feasible states.
-
-    Args:
-        regime: Regime instance.
-
-    Returns:
-        The state-space information.
-
-    """
-    vi = get_variable_info(regime)
-    gridspecs = get_gridspecs(regime)
-
-    if regime.terminal:
-        vi = vi.query("enters_concurrent_valuation")
-
-    state_names = vi.query("is_state").index.tolist()
-
-    discrete_states = {
-        name: grid_spec
-        for name, grid_spec in gridspecs.items()
-        if (name in state_names and isinstance(grid_spec, DiscreteGrid))
-        or isinstance(grid_spec, _ShockGrid)
-    }
-
-    continuous_states = {
-        name: grid_spec
-        for name, grid_spec in gridspecs.items()
-        if name in state_names
-        and isinstance(grid_spec, ContinuousGrid)
-        and not isinstance(grid_spec, _ShockGrid)
-    }
-    batch_sizes = {name: grid_spec.batch_size for name, grid_spec in gridspecs.items()}
-
-    return StateSpaceInfo(
-        state_names=tuple(state_names),
-        discrete_states=MappingProxyType(discrete_states),
-        continuous_states=MappingProxyType(continuous_states),
-        batch_sizes=MappingProxyType(batch_sizes),
     )
 
 

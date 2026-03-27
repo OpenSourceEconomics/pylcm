@@ -5,10 +5,15 @@ from types import MappingProxyType
 import jax.numpy as jnp
 
 from lcm.ages import AgeGrid
-from lcm.error_handling import validate_V
 from lcm.interfaces import InternalRegime
-from lcm.logging import format_duration, log_nan_in_V, log_period_timing, log_V_stats
 from lcm.typing import FloatND, InternalParams, RegimeName
+from lcm.utils.error_handling import validate_V
+from lcm.utils.logging import (
+    format_duration,
+    log_nan_in_V,
+    log_period_timing,
+    log_V_stats,
+)
 
 
 def solve(
@@ -54,7 +59,7 @@ def solve(
             state_action_space = internal_regime.state_action_space(
                 regime_params=internal_params[name],
             )
-            max_Q_over_a = internal_regime.max_Q_over_a_functions[period]
+            max_Q_over_a = internal_regime.solve_functions.max_Q_over_a[period]
 
             # evaluate Q-function on states and actions, and maximize over actions
             V_arr = max_Q_over_a(

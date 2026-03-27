@@ -2,6 +2,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, Protocol
 
+import pandas as pd
 from jax import Array
 from jaxtyping import Bool, Float, Int, Scalar
 
@@ -23,37 +24,23 @@ type Bool1D = Bool[Array, "_"]  # noqa: F821
 
 # Many JAX functions are designed to work with scalar numerical values. This also
 # includes zero dimensional jax arrays.
-type ScalarInt = int | Int[Scalar, ""]  # noqa: F722
-type ScalarFloat = float | Float[Scalar, ""]  # noqa: F722
+type ScalarInt = int | Int[Scalar, ""]
+type ScalarFloat = float | Float[Scalar, ""]
 
 type Period = int | Int1D
-type Age = float
+type Age = int | float
 type RegimeName = str
 type RegimeNamesToIds = MappingProxyType[RegimeName, int]
 
-type GridsDict = MappingProxyType[RegimeName, MappingProxyType[str, Array]]
+type FunctionsMapping = MappingProxyType[str, InternalUserFunction]
 
-type TransitionFunctionsMapping = MappingProxyType[
-    RegimeName, MappingProxyType[str, InternalUserFunction]
-]
+type TransitionFunctionsMapping = MappingProxyType[RegimeName, FunctionsMapping]
 
 
+type _ParamsLeaf = bool | float | Array | pd.Series | MappingLeaf | SequenceLeaf
 type UserParams = Mapping[
     str,
-    bool
-    | float
-    | Array
-    | MappingLeaf
-    | SequenceLeaf
-    | Mapping[
-        str,
-        bool
-        | float
-        | Array
-        | MappingLeaf
-        | SequenceLeaf
-        | Mapping[str, bool | float | Array | MappingLeaf | SequenceLeaf],
-    ],
+    _ParamsLeaf | Mapping[str, _ParamsLeaf | Mapping[str, _ParamsLeaf]],
 ]
 
 # Internal regime parameters: A flat mapping with function-qualified names.

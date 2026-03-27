@@ -4,12 +4,12 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm.dispatchers import (
+from lcm.utils.dispatchers import (
     productmap,
     simulation_spacemap,
     vmap_1d,
 )
-from lcm.functools import allow_args
+from lcm.utils.functools import allow_args
 
 
 def f(a, /, *, b, c):
@@ -34,11 +34,6 @@ def g(a, /, b, *, c, d):
     a is positional-only, b is positional-or-keyword, c and d are keyword-only
     """
     return f(a, b=b, c=c) + jnp.log(d)
-
-
-# ======================================================================================
-# productmap
-# ======================================================================================
 
 
 @pytest.fixture
@@ -181,11 +176,6 @@ def test_productmap_with_some_argument_mapped_twice():
         productmap(func=f, variables=("a", "a", "c"))
 
 
-# ======================================================================================
-# spacemap
-# ======================================================================================
-
-
 @pytest.fixture
 def setup_spacemap():
     value_grid = {
@@ -261,11 +251,6 @@ def test_spacemap_arguments_overlap(error_msg, product_vars, combination_vars):
         simulation_spacemap(
             func=g, action_names=product_vars, state_names=combination_vars
         )
-
-
-# ======================================================================================
-# vmap_1d
-# ======================================================================================
 
 
 def test_vmap_1d():

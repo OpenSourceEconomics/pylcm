@@ -13,7 +13,7 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
-from lcm.input_processing.regime_processing import _merge_ordered_categories
+from lcm.regime_building.processing import _merge_ordered_categories
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,
@@ -125,11 +125,6 @@ def test_discrete_state_different_categories_across_regimes():
             ages=AgeGrid(start=0, stop=4, step="Y"),
             regime_id_class=RegimeId,
         )
-
-
-# ======================================================================================
-# Cross-regime state transition gap
-# ======================================================================================
 
 
 def test_deterministic_target_only_state() -> None:
@@ -295,11 +290,6 @@ def test_stochastic_target_only_state() -> None:
     assert dead_rows["heir_present"].isin(valid_codes).all()
 
 
-# ======================================================================================
-# Per-target dict transitions (passing test)
-# ======================================================================================
-
-
 def map_working_health_to_retired(health: DiscreteState) -> DiscreteState:
     """Map 3 working-life health categories to 2 retirement categories.
 
@@ -447,11 +437,6 @@ def test_discrete_state_same_count_different_names():
             ages=AgeGrid(start=0, stop=3, step="Y"),
             regime_id_class=_RegimeId,
         )
-
-
-# ======================================================================================
-# Ordered flag validation tests
-# ======================================================================================
 
 
 def test_mixed_ordered_flags_raises():

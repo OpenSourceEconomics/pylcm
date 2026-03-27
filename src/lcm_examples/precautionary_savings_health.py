@@ -20,10 +20,6 @@ from lcm.typing import (
     ScalarInt,
 )
 
-# ======================================================================================
-# Categorical variables and regime ID
-# ======================================================================================
-
 
 @categorical(ordered=True)
 class LaborSupply:
@@ -35,11 +31,6 @@ class LaborSupply:
 class RegimeId:
     working_life: int
     retirement: int
-
-
-# ======================================================================================
-# Model functions
-# ======================================================================================
 
 
 def utility(
@@ -65,7 +56,7 @@ def labor_income(wage: float | FloatND, labor_supply: DiscreteAction) -> FloatND
     return wage * labor_supply
 
 
-def wage(age: float) -> float | FloatND:
+def wage(age: int) -> float | FloatND:
     return 1 + 0.1 * age
 
 
@@ -98,10 +89,6 @@ def borrowing_constraint(
 ) -> BoolND:
     return consumption <= wealth + labor_income
 
-
-# ======================================================================================
-# Default regime objects
-# ======================================================================================
 
 _DEFAULT_RETIREMENT_AGE = 24
 
@@ -147,11 +134,6 @@ retirement = Regime(
     },
     functions={"utility": utility_retirement},
 )
-
-
-# ======================================================================================
-# Factories
-# ======================================================================================
 
 
 def get_model(retirement_age: int = 24) -> Model:
