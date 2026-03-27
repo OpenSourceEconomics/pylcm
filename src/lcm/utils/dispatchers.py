@@ -1,12 +1,15 @@
 import inspect
 from collections.abc import Callable
+from functools import partial
 from types import MappingProxyType
 from typing import Literal, TypeVar, cast
 
+import jax
 from jax import Array, vmap
 
-from lcm.utils.containers import find_duplicates
-from lcm.utils.functools import allow_args, allow_only_kwargs
+from lcm.functools import allow_args, allow_only_kwargs
+from lcm.typing import Float1D, FloatND
+from lcm.utils import find_duplicates
 
 FunctionWithArrayReturn = TypeVar(
     "FunctionWithArrayReturn",
@@ -147,7 +150,10 @@ def vmap_1d(
 
 
 def productmap(
-    *, func: FunctionWithArrayReturn, variables: tuple[str, ...]
+    *,
+    func: FunctionWithArrayReturn,
+    variables: tuple[str, ...],
+    batch_sizes: dict[str, int] | None = None,
 ) -> FunctionWithArrayReturn:
     """Apply vmap such that func is evaluated on the Cartesian product of variables.
 
@@ -179,12 +185,17 @@ def productmap(
 
     func_callable_with_args = allow_args(func)
 
-    vmapped = _base_productmap(func_callable_with_args, variables)
+    if batch_sizes is None:
+        batch_sizes = dict.fromkeys(variables, 0)
+
+    vmapped = _base_productmap_batched(
+        func_callable_with_args, variables, batch_sizes=batch_sizes
+    )
 
     # Callables do not necessarily have a __signature__ attribute.
     vmapped.__signature__ = inspect.signature(func_callable_with_args)  # ty: ignore[unresolved-attribute]
 
-    return cast("FunctionWithArrayReturn", allow_only_kwargs(vmapped, enforce=False))
+    return cast("FunctionWithArrayReturn", vmapped)
 
 
 def _base_productmap(
@@ -219,5 +230,51 @@ def _base_productmap(
     vmapped = func
     for spec in vmap_specs:
         vmapped = vmap(vmapped, in_axes=spec)
-
     return vmapped
+
+
+def _base_productmap_batched(
+    func: FunctionWithArrayReturn,
+    product_axes: tuple[str, ...],
+    batch_sizes: dict[str, int],
+) -> FunctionWithArrayReturn:
+    """Map func over the Cartesian product of product_axes.
+
+    Like vmap, this function does not preserve the function signature and does not allow
+    the function to be called with keyword arguments.
+
+    Args:
+        func: The function to be dispatched. Cannot have keyword-only arguments.
+        product_axes: Tuple with names of arguments over which we apply vmap.
+
+    Returns:
+        A callable with the same arguments as func. See `product_map` for details.
+
+    """
+
+    def batched_vmap(**kwargs: FloatND) -> FloatND:
+
+        non_array_kwargs = {
+            key: val for key, val in kwargs.items() if key not in product_axes
+        }
+        func_with_partialled_args = partial(func, **non_array_kwargs)
+
+        # Recursively map over one more product axe
+        def map_one_more(
+            loop: FunctionWithArrayReturn, axis: Float1D
+        ) -> FunctionWithArrayReturn:
+            def new_mapped_func(**already_mapped_kwargs: Float1D) -> FloatND:
+                return jax.lax.map(
+                    lambda axis_i: loop(**{axis: axis_i}, **already_mapped_kwargs),
+                    kwargs[axis],
+                    batch_size=batch_sizes[axis],
+                )
+
+            return new_mapped_func
+
+        # Loop over all product axes
+        for axis in reversed(product_axes):
+            func_with_partialled_args = map_one_more(func_with_partialled_args, axis)
+        return func_with_partialled_args()
+
+    return batched_vmap
