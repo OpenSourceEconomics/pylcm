@@ -1,6 +1,5 @@
 """Generate function that compute the next states for solution and simulation."""
 
-import inspect
 from collections.abc import Callable
 from types import MappingProxyType
 
@@ -21,47 +20,10 @@ from lcm.typing import (
     FunctionsMapping,
     NextStateSimulationFunction,
     RegimeName,
-    RegimeParamsTemplate,
     StochasticNextFunction,
     TransitionFunctionsMapping,
 )
-from lcm.utils.dispatchers import vmap_1d
 from lcm.utils.namespace import flatten_regime_namespace
-
-
-def build_next_state_simulation_functions(
-    *,
-    functions: FunctionsMapping,
-    transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[str],
-    all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
-    variable_info: pd.DataFrame,
-    regime_params_template: RegimeParamsTemplate,
-    enable_jit: bool,
-) -> NextStateSimulationFunction:
-    next_state = get_next_state_function_for_simulation(
-        functions=functions,
-        transitions=transitions,
-        stochastic_transition_names=stochastic_transition_names,
-        all_grids=all_grids,
-        variable_info=variable_info,
-    )
-    sig_args = tuple(inspect.signature(next_state).parameters)
-
-    from lcm.regime_building.max_Q_over_a import _get_vmap_params  # noqa: PLC0415
-
-    next_state_vmapped = vmap_1d(
-        func=next_state,
-        variables=_get_vmap_params(
-            all_args=sig_args, regime_params_template=regime_params_template
-        ),
-    )
-
-    next_state_vmapped = with_signature(
-        next_state_vmapped, kwargs=sig_args, enforce=False
-    )
-
-    return jax.jit(next_state_vmapped) if enable_jit else next_state_vmapped
 
 
 def get_next_state_function_for_solution(

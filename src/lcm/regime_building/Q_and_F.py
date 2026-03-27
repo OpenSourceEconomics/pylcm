@@ -6,9 +6,6 @@ import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
 from jax import Array
 
-from lcm.ages import AgeGrid
-from lcm.params.processing import get_flat_param_names
-from lcm.regime import Regime
 from lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
     get_next_stochastic_weights_function,
@@ -22,56 +19,11 @@ from lcm.typing import (
     InternalUserFunction,
     QAndFFunction,
     RegimeName,
-    RegimeParamsTemplate,
     RegimeTransitionFunction,
     TransitionFunctionsMapping,
 )
 from lcm.utils.dispatchers import productmap
 from lcm.utils.functools import get_union_of_args
-
-
-def build_Q_and_F_functions(
-    *,
-    regime: Regime,
-    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
-    functions: FunctionsMapping,
-    constraints: FunctionsMapping,
-    transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[str],
-    compute_regime_transition_probs: RegimeTransitionFunction | None,
-    regime_to_state_space_info: MappingProxyType[RegimeName, StateSpaceInfo],
-    ages: AgeGrid,
-    regime_params_template: RegimeParamsTemplate,
-) -> MappingProxyType[int, QAndFFunction]:
-    flat_param_names = frozenset(get_flat_param_names(regime_params_template))
-
-    Q_and_F_functions = {}
-    for period, age in enumerate(ages.values):
-        if regime.terminal:
-            Q_and_F = get_Q_and_F_terminal(
-                flat_param_names=flat_param_names,
-                age=age,
-                period=period,
-                functions=functions,
-                constraints=constraints,
-            )
-        else:
-            assert compute_regime_transition_probs is not None  # noqa: S101
-            Q_and_F = get_Q_and_F(
-                flat_param_names=flat_param_names,
-                age=age,
-                period=period,
-                functions=functions,
-                constraints=constraints,
-                transitions=transitions,
-                stochastic_transition_names=stochastic_transition_names,
-                regimes_to_active_periods=regimes_to_active_periods,
-                compute_regime_transition_probs=compute_regime_transition_probs,
-                regime_to_state_space_info=regime_to_state_space_info,
-            )
-        Q_and_F_functions[period] = Q_and_F
-
-    return MappingProxyType(Q_and_F_functions)
 
 
 def get_Q_and_F(
