@@ -19,7 +19,8 @@ as `{regime_name: {function_name: {param_name: type_name}}}`. Use it as a starti
 to see what values you need to provide.
 
 Only *free* parameters appear in the template — arguments that are states, actions, or
-outputs of other functions in the DAG are resolved automatically and do not show up here.
+outputs of other functions in the DAG are resolved automatically and do not show up
+here.
 
 ## Parameter Structure
 
@@ -83,13 +84,13 @@ You can mix levels freely — just avoid ambiguity:
 
 ```python
 params = {
-    "discount_factor": 0.95,            # model level
-    "interest_rate": 0.03,              # model level
+    "discount_factor": 0.95,  # model level
+    "interest_rate": 0.03,  # model level
     "working_life": {
         "utility": {
             "disutility_of_work": 1.0,  # function level
         },
-        "earnings": {"wage": 20.0},     # function level
+        "earnings": {"wage": 20.0},  # function level
     },
 }
 ```
@@ -99,10 +100,11 @@ params = {
 A parameter cannot appear at multiple levels within the same subtree. pylcm raises an
 `InvalidNameError` if a parameter value could be resolved from more than one level:
 
-- `"risk_aversion"` at model level **and** `"working_life" -> "risk_aversion"` at regime level
-  = **error** (ambiguous)
+- `"risk_aversion"` at model level **and** `"working_life" -> "risk_aversion"` at regime
+  level = **error** (ambiguous)
 - `"risk_aversion"` at regime level **and**
-  `"working_life" -> "utility" -> "risk_aversion"` at function level = **error** (ambiguous)
+  `"working_life" -> "utility" -> "risk_aversion"` at function level = **error**
+  (ambiguous)
 - `"risk_aversion"` in `"working_life"` at regime level **and** `"risk_aversion"` in
   `"retirement"` at regime level = **OK** (different subtrees)
 
@@ -142,7 +144,8 @@ You don't need to supply them at `solve()` / `simulate()` time.
 
 **Recommended workflow for estimation:** In estimation contexts, `fixed_params` should
 contain everything except the parameters you are estimating. This avoids passing a large
-params dict on every likelihood evaluation and makes the estimated parameter set explicit.
+params dict on every likelihood evaluation and makes the estimated parameter set
+explicit.
 
 ```python
 # During estimation, only risk_aversion and disutility_of_work are free
@@ -160,7 +163,9 @@ model = Model(
 
 # The solve/simulate calls only need the estimated parameters
 params = {"risk_aversion": 1.5, "disutility_of_work": 1.0}
-result = model.simulate(params=params, initial_conditions=..., period_to_regime_to_V_arr=None)
+result = model.simulate(
+    params=params, initial_conditions=..., period_to_regime_to_V_arr=None
+)
 ```
 
 ## What Counts as a Parameter?

@@ -23,7 +23,7 @@ from lcm.typing import (
     StochasticNextFunction,
     TransitionFunctionsMapping,
 )
-from lcm.utils import flatten_regime_namespace
+from lcm.utils.namespace import flatten_regime_namespace
 
 
 def get_next_state_function_for_solution(

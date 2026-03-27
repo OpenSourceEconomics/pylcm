@@ -42,8 +42,11 @@ automation. Python 3.14+ is required.
 
 - `InternalRegime`: Internal representation after processing user regime
 - `StateActionSpace`: Manages state-action combinations for solution/simulation
-- `StateSpaceInfo`: Metadata for working with function outputs on state spaces
 - `PeriodRegimeSimulationData`: Raw simulation results for one period in one regime
+
+**Value Function Representation (`src/lcm/regime_building/V.py`)**
+
+- `VInterpolationInfo`: Metadata for working with function outputs on state spaces
 
 **Solution (`src/lcm/solution/`)**
 
@@ -109,7 +112,7 @@ to transition functions for target-dependent transitions.
 - `tests/test_models/`: Shared test models (deterministic, stochastic variants)
 - `tests/solution/`: Tests for solution algorithms
 - `tests/simulation/`: Tests for simulation functionality
-- `tests/input_processing/`: Tests for model processing pipeline
+- `tests/regime_building/`: Tests for regime compilation pipeline
 - `tests/data/`: Analytical solutions and regression test data
 
 ## Model and Regime Interface

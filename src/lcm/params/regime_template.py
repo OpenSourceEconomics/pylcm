@@ -6,7 +6,8 @@ from dags.tree import tree_path_from_qname
 from lcm.exceptions import InvalidNameError
 from lcm.grids import IrregSpacedGrid
 from lcm.interfaces import SolveSimulateFunctionPair
-from lcm.regime import Regime, _collect_state_transitions
+from lcm.regime import Regime
+from lcm.regime_building.validation import collect_state_transitions
 from lcm.shocks import _ShockGrid
 from lcm.typing import RegimeParamsTemplate, UserFunction
 
@@ -96,7 +97,7 @@ def _collect_all_functions_for_template(
     result: dict[str, UserFunction | SolveSimulateFunctionPair] = dict(regime.functions)
     result |= dict(regime.constraints)
     if callable(regime.transition):
-        result |= _collect_state_transitions(regime.states, regime.state_transitions)
+        result |= collect_state_transitions(regime.states, regime.state_transitions)
         result["next_regime"] = regime.transition
     return result
 

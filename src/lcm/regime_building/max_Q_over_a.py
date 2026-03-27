@@ -6,8 +6,7 @@ import jax.numpy as jnp
 from dags import with_signature
 from jax import Array
 
-from lcm.argmax import argmax_and_max
-from lcm.dispatchers import productmap
+from lcm.regime_building.argmax import argmax_and_max
 from lcm.typing import (
     ArgmaxQOverAFunction,
     BoolND,
@@ -16,6 +15,7 @@ from lcm.typing import (
     MaxQOverAFunction,
     RegimeName,
 )
+from lcm.utils.dispatchers import productmap
 
 
 def get_max_Q_over_a(

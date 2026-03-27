@@ -13,7 +13,7 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import ModelInitializationError
-from lcm.input_processing.regime_processing import _merge_ordered_categories
+from lcm.regime_building.processing import _merge_ordered_categories
 from lcm.typing import (
     ContinuousAction,
     ContinuousState,

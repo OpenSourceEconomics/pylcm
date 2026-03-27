@@ -137,11 +137,11 @@ per-file-ignores."explanations/*" = [
   "T201",   # print found
   "T203",   # pprint found
 ]
-per-file-ignores."src/lcm/functools.py" = [
+per-file-ignores."src/lcm/utils/functools.py" = [
   "ANN401", # Dynamically typed expressions (Any)
 ]
-per-file-ignores."src/lcm/*Q_*.py" = [
-  "N999", # Module name mixing uppercase and lowercase
+per-file-ignores."src/lcm/**/*[A-Z]*.py" = [
+  "N999", # Module name mixing uppercase and lowercase (Q_and_F.py, V.py, max_Q_over_a.py)
 ]
 per-file-ignores."tests/*" = [
   "ANN",     # Annotations
@@ -165,7 +165,7 @@ per-file-ignores."tests/test_Q_and_F.py" = [
 ]
 pydocstyle.convention = "google"
 [tool.ruff.lint.flake8-bugbear]
-extend-immutable-calls = [ "lcm.utils.Unset", "Unset" ]
+extend-immutable-calls = [ "lcm.utils.containers.Unset", "Unset" ]
 
 [tool.pyproject-fmt]
 column_width = 88

@@ -4,9 +4,9 @@ title: Benchmarking
 
 # Benchmarking
 
-pylcm uses [ASV (Airspeed Velocity)](https://asv.readthedocs.io/) to track
-performance across commits. Benchmarks run locally on GPU hardware and results are
-published to a [dashboard](https://open-econ.org/pylcm-benchmarks/).
+pylcm uses [ASV (Airspeed Velocity)](https://asv.readthedocs.io/) to track performance
+across commits. Benchmarks run locally on GPU hardware and results are published to a
+[dashboard](https://open-econ.org/pylcm-benchmarks/).
 
 ## Machine Setup
 
@@ -61,16 +61,16 @@ pixi run asv-publish
 ```
 
 The `asv-run` and `asv-quick` tasks set `XLA_PYTHON_CLIENT_PREALLOCATE=false` and
-`XLA_PYTHON_CLIENT_MEM_FRACTION=0.3` automatically to prevent JAX from grabbing all
-GPU memory.
+`XLA_PYTHON_CLIENT_MEM_FRACTION=0.3` automatically to prevent JAX from grabbing all GPU
+memory.
 
 ## Benchmark Scenarios
 
-| File | What it benchmarks |
-|---|---|
+| File                             | What it benchmarks                                                                                    |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `bench_precautionary_savings.py` | Solve (varying grid sizes), simulate (varying subjects), solve+simulate, lin vs irreg grid comparison |
-| `bench_mortality.py` | Mortality model — solve + simulate |
-| `bench_mahler_yum.py` | Mahler & Yum (2024) replication (GPU only) |
+| `bench_mortality.py`             | Mortality model — solve + simulate                                                                    |
+| `bench_mahler_yum.py`            | Mahler & Yum (2024) replication (GPU only)                                                            |
 
 Each benchmark tracks three metrics:
 

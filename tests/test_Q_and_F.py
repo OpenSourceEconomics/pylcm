@@ -6,13 +6,13 @@ import pytest
 from numpy.testing import assert_array_equal
 
 from lcm import AgeGrid
-from lcm.input_processing import process_regimes
-from lcm.input_processing.params_processing import (
+from lcm.params.processing import (
     create_params_template,
     get_flat_param_names,
     process_params,
 )
-from lcm.Q_and_F import (
+from lcm.regime_building import process_regimes
+from lcm.regime_building.Q_and_F import (
     _get_feasibility,
     _get_joint_weights_function,
     _get_U_and_F,

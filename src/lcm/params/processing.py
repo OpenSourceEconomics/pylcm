@@ -15,10 +15,8 @@ from lcm.typing import (
     RegimeParamsTemplate,
     UserParams,
 )
-from lcm.utils import (
-    ensure_containers_are_immutable,
-    flatten_regime_namespace,
-)
+from lcm.utils.containers import ensure_containers_are_immutable
+from lcm.utils.namespace import flatten_regime_namespace
 
 _NUM_PARTS_FUNCTION_PARAM = 3
 

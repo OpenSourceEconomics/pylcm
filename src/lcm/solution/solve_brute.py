@@ -5,10 +5,15 @@ from types import MappingProxyType
 import jax.numpy as jnp
 
 from lcm.ages import AgeGrid
-from lcm.error_handling import validate_V
 from lcm.interfaces import InternalRegime
-from lcm.logging import format_duration, log_nan_in_V, log_period_timing, log_V_stats
 from lcm.typing import FloatND, InternalParams, RegimeName
+from lcm.utils.error_handling import validate_V
+from lcm.utils.logging import (
+    format_duration,
+    log_nan_in_V,
+    log_period_timing,
+    log_V_stats,
+)
 
 
 def solve(

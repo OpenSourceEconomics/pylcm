@@ -15,12 +15,12 @@ from lcm.grids import (
     Piece,
     PiecewiseLinSpacedGrid,
     PiecewiseLogSpacedGrid,
-    _validate_continuous_grid,
-    _validate_discrete_grid,
     categorical,
     validate_category_class,
 )
-from lcm.utils import get_field_names_and_values
+from lcm.grids.categorical import _validate_discrete_grid
+from lcm.grids.continuous import _validate_continuous_grid
+from lcm.utils.containers import get_field_names_and_values
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
 
 

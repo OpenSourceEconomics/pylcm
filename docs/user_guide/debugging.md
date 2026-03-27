@@ -29,12 +29,12 @@ Re-enable JIT once the issue is resolved.
 
 The `log_level` parameter controls both console output and disk persistence:
 
-| Level | Output | Persistence |
-|-------|--------|-------------|
-| `"off"` | Nothing (good for HPC batch jobs) | No |
-| `"warning"` | NaN/Inf warnings in value functions | No |
-| `"progress"` (default) | Progress and timing per period, total elapsed time | No |
-| `"debug"` | All above + V_arr statistics per regime, regime transition counts | Yes, requires `log_path` |
+| Level                  | Output                                                            | Persistence              |
+| ---------------------- | ----------------------------------------------------------------- | ------------------------ |
+| `"off"`                | Nothing (good for HPC batch jobs)                                 | No                       |
+| `"warning"`            | NaN/Inf warnings in value functions                               | No                       |
+| `"progress"` (default) | Progress and timing per period, total elapsed time                | No                       |
+| `"debug"`              | All above + V_arr statistics per regime, regime transition counts | Yes, requires `log_path` |
 
 ```python
 # Silent — no console output at all
@@ -47,7 +47,9 @@ period_to_regime_to_V_arr = model.solve(params=params, log_level="warning")
 period_to_regime_to_V_arr = model.solve(params=params)  # log_level="progress"
 
 # Debug — full diagnostics + snapshot persistence
-period_to_regime_to_V_arr = model.solve(params=params, log_level="debug", log_path="./debug/")
+period_to_regime_to_V_arr = model.solve(
+    params=params, log_level="debug", log_path="./debug/"
+)
 ```
 
 Using `log_level="debug"` without providing `log_path` raises a `ValueError`.
@@ -62,18 +64,18 @@ a different machine.
 
 Each snapshot is a directory (e.g. `solve_snapshot_001/`) containing:
 
-| File | Contents |
-|------|----------|
-| `arrays.h5` | Value function arrays in HDF5 (datasets at `/V_arr/{period}/{regime}`) |
-| `model.pkl` | The Model instance (cloudpickle) |
-| `params.pkl` | User parameters (cloudpickle) |
-| `initial_states.pkl` | Initial state arrays (simulate only) |
-| `initial_regimes.pkl` | Initial regime assignments (simulate only) |
-| `result.pkl` | SimulationResult (simulate only) |
-| `metadata.json` | Snapshot type, platform string, field manifest |
-| `pixi.lock` | Lock file from the project root |
-| `pyproject.toml` | Project file from the project root |
-| `REPRODUCE.md` | Step-by-step reconstruction recipe |
+| File                  | Contents                                                               |
+| --------------------- | ---------------------------------------------------------------------- |
+| `arrays.h5`           | Value function arrays in HDF5 (datasets at `/V_arr/{period}/{regime}`) |
+| `model.pkl`           | The Model instance (cloudpickle)                                       |
+| `params.pkl`          | User parameters (cloudpickle)                                          |
+| `initial_states.pkl`  | Initial state arrays (simulate only)                                   |
+| `initial_regimes.pkl` | Initial regime assignments (simulate only)                             |
+| `result.pkl`          | SimulationResult (simulate only)                                       |
+| `metadata.json`       | Snapshot type, platform string, field manifest                         |
+| `pixi.lock`           | Lock file from the project root                                        |
+| `pyproject.toml`      | Project file from the project root                                     |
+| `REPRODUCE.md`        | Step-by-step reconstruction recipe                                     |
 
 ### Creating snapshots
 
@@ -112,8 +114,8 @@ from lcm import load_snapshot
 
 # Load the full snapshot
 snapshot = load_snapshot("./debug/solve_snapshot_001")
-snapshot.model       # the Model instance
-snapshot.params      # the user parameters
+snapshot.model  # the Model instance
+snapshot.params  # the user parameters
 snapshot.period_to_regime_to_V_arr  # value function arrays (loaded from HDF5)
 
 # Re-run the solve to reproduce the result
@@ -124,15 +126,17 @@ For large snapshots, skip fields you don't need:
 
 ```python
 # Load without the (potentially large) value function arrays
-snapshot = load_snapshot("./debug/solve_snapshot_001", exclude=["period_to_regime_to_V_arr"])
+snapshot = load_snapshot(
+    "./debug/solve_snapshot_001", exclude=["period_to_regime_to_V_arr"]
+)
 snapshot.period_to_regime_to_V_arr  # None
-snapshot.model       # still available
+snapshot.model  # still available
 ```
 
 ### Platform mismatch
 
-Each snapshot records the platform it was created on (e.g. `x86_64-Linux`).
-When loading on a different platform, a warning is emitted:
+Each snapshot records the platform it was created on (e.g. `x86_64-Linux`). When loading
+on a different platform, a warning is emitted:
 
 ```text
 WARNING  Snapshot created on x86_64-Linux but loading on arm64-Darwin
@@ -211,13 +215,14 @@ model = Model(
 period_to_regime_to_V_arr = model.solve(params=bad_params)
 ```
 
-The traceback now points to the exact line in your user-defined functions where the
-NaN originates.
+The traceback now points to the exact line in your user-defined functions where the NaN
+originates.
 
 ## Inspecting value function arrays
 
-The solution `period_to_regime_to_V_arr` is a nested mapping: `period -> regime_name -> array`. You can
-iterate over it to check shapes, look for NaN/inf, or plot slices:
+The solution `period_to_regime_to_V_arr` is a nested mapping:
+`period -> regime_name -> array`. You can iterate over it to check shapes, look for
+NaN/inf, or plot slices:
 
 ```python
 import jax.numpy as jnp
@@ -232,8 +237,10 @@ for period, regimes in period_to_regime_to_V_arr.items():
         n_nan = int(jnp.sum(jnp.isnan(V_arr)))
         n_inf = int(jnp.sum(jnp.isinf(V_arr)))
         if n_nan > 0 or n_inf > 0:
-            print(f"Period {period}, regime '{regime_name}': "
-                  f"shape={V_arr.shape}, NaN={n_nan}, Inf={n_inf}")
+            print(
+                f"Period {period}, regime '{regime_name}': "
+                f"shape={V_arr.shape}, NaN={n_nan}, Inf={n_inf}"
+            )
 
 # Plot a 1D slice (e.g. value over wealth grid for first period)
 period = 0
@@ -251,8 +258,8 @@ fig.show()
 pylcm raises specific exceptions to help you diagnose problems:
 
 - **`InvalidValueFunctionError`**: The value function array contains NaN at a given age
-  and regime. The message reports the regime name and how many values are NaN (e.g.
-  "3 of 100 values are NaN"). Common causes: utility function returning NaN for some
+  and regime. The message reports the regime name and how many values are NaN (e.g. "3
+  of 100 values are NaN"). Common causes: utility function returning NaN for some
   state-action combinations, or impossible regime transitions.
 
 - **`InvalidRegimeTransitionProbabilitiesError`**: Regime transition probabilities are

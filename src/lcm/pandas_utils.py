@@ -12,9 +12,6 @@ from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import Array
 
 from lcm.ages import AgeGrid
-from lcm.error_handling import (
-    _get_func_indexing_params,
-)
 from lcm.grids import DiscreteGrid, IrregSpacedGrid
 from lcm.model import Model
 from lcm.params import MappingLeaf
@@ -22,6 +19,9 @@ from lcm.params.sequence_leaf import SequenceLeaf
 from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
 from lcm.typing import InternalParams
+from lcm.utils.error_handling import (
+    _get_func_indexing_params,
+)
 
 
 def has_series(params: Mapping) -> bool:

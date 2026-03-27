@@ -25,7 +25,6 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.dispatchers import _base_productmap
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -38,6 +37,7 @@ from lcm.typing import (
     Period,
     RegimeName,
 )
+from lcm.utils.dispatchers import _base_productmap
 
 _DATA_DIR = Path(__file__).parent / "data"
 

@@ -2,7 +2,11 @@ import jax.numpy as jnp
 from jax import jit
 from numpy.testing import assert_array_equal
 
-from lcm.argmax import _flatten_last_n_axes, _move_axes_to_back, argmax_and_max
+from lcm.regime_building.argmax import (
+    _flatten_last_n_axes,
+    _move_axes_to_back,
+    argmax_and_max,
+)
 
 # Test jitted functions
 jitted_argmax = jit(argmax_and_max, static_argnums=[1, 2])

@@ -14,14 +14,14 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.error_handling import validate_transition_probs
-from lcm.input_processing.params_processing import broadcast_to_template
 from lcm.pandas_utils import (
     _build_discrete_grid_lookup,
     array_from_series,
     convert_series_in_params,
     initial_conditions_from_dataframe,
 )
+from lcm.params.processing import broadcast_to_template
+from lcm.utils.error_handling import validate_transition_probs
 from tests.test_models.basic_discrete import (
     Health,
 )

@@ -6,8 +6,7 @@ title: Setup & Workflow
 
 ## Setup
 
-pylcm uses [pixi](https://pixi.sh/) for dependency management. Python 3.14+ is
-required.
+pylcm uses [pixi](https://pixi.sh/) for dependency management. Python 3.14+ is required.
 
 ```bash
 # Clone the repository

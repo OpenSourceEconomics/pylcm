@@ -12,9 +12,12 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.error_handling import _format_sum_violation, validate_regime_transition_probs
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
 from lcm.typing import DiscreteAction, FloatND
+from lcm.utils.error_handling import (
+    _format_sum_violation,
+    validate_regime_transition_probs,
+)
 from lcm_examples.mortality import RegimeId as MortalityRegimeId
 from lcm_examples.mortality import get_model, get_params
 

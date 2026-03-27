@@ -7,11 +7,11 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm.ages import AgeGrid
 from lcm.interfaces import StateActionSpace
-from lcm.logging import get_logger
-from lcm.max_Q_over_a import get_max_Q_over_a
-from lcm.ndimage import map_coordinates
+from lcm.regime_building.max_Q_over_a import get_max_Q_over_a
+from lcm.regime_building.ndimage import map_coordinates
 from lcm.solution.solve_brute import solve
 from lcm.typing import MaxQOverAFunction
+from lcm.utils.logging import get_logger
 
 
 @dataclasses.dataclass(frozen=True)

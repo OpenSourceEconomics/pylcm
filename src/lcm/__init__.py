@@ -8,7 +8,6 @@ with contextlib.suppress(ImportError):
 
 from lcm import shocks
 from lcm.ages import AgeGrid
-from lcm.error_handling import validate_transition_probs
 from lcm.grids import (
     DiscreteGrid,
     IrregSpacedGrid,
@@ -30,6 +29,7 @@ from lcm.persistence import (
 )
 from lcm.regime import MarkovTransition, Regime
 from lcm.simulation.result import SimulationResult
+from lcm.utils.error_handling import validate_transition_probs
 
 # Register MappingProxyType as a JAX pytree so it can be used in JIT-traced functions.
 # This allows regime transition probabilities to use immutable mappings.

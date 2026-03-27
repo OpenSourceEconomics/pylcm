@@ -1,6 +1,6 @@
 import jax.numpy as jnp
 
-from lcm.random import generate_simulation_keys
+from lcm.simulation.random import generate_simulation_keys
 
 
 def test_generate_simulation_keys():

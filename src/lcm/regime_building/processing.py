@@ -1,34 +1,22 @@
 import functools
+import inspect
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal, cast
 
+import jax
 import pandas as pd
-from dags.signature import rename_arguments, with_signature
+from dags import concatenate_functions, get_annotations, with_signature
+from dags.signature import rename_arguments
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import Array
 from jax import numpy as jnp
 
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, format_messages
-from lcm.function_representation import StateSpaceInfo
-from lcm.grid_helpers import get_irreg_coordinate
-from lcm.grids import ContinuousGrid, DiscreteGrid, Grid
-from lcm.input_processing.create_regime_params_template import (
-    create_regime_params_template,
-)
-from lcm.input_processing.regime_components import (
-    build_argmax_and_max_Q_over_a_functions,
-    build_max_Q_over_a_functions,
-    build_next_state_simulation_functions,
-    build_Q_and_F_functions,
-    build_regime_transition_probs_functions,
-)
-from lcm.input_processing.util import (
-    get_grids,
-    get_variable_info,
-)
+from lcm.grids import DiscreteGrid, Grid
+from lcm.grids.coordinates import get_irreg_coordinate
 from lcm.interfaces import (
     InternalRegime,
     SimulateFunctions,
@@ -36,27 +24,41 @@ from lcm.interfaces import (
     SolveSimulateFunctionPair,
     StateActionSpace,
 )
-from lcm.ndimage import map_coordinates
-from lcm.regime import MarkovTransition, Regime, _collect_state_transitions
+from lcm.params.processing import get_flat_param_names
+from lcm.params.regime_template import create_regime_params_template
+from lcm.regime import MarkovTransition, Regime
+from lcm.regime_building.max_Q_over_a import (
+    get_argmax_and_max_Q_over_a,
+    get_max_Q_over_a,
+)
+from lcm.regime_building.ndimage import map_coordinates
+from lcm.regime_building.next_state import get_next_state_function_for_simulation
+from lcm.regime_building.Q_and_F import get_Q_and_F, get_Q_and_F_terminal
+from lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
+from lcm.regime_building.validation import collect_state_transitions
+from lcm.regime_building.variable_info import get_grids, get_variable_info
 from lcm.shocks import _ShockGrid
 from lcm.state_action_space import create_state_action_space
 from lcm.typing import (
+    ArgmaxQOverAFunction,
     Float1D,
     FunctionsMapping,
     Int1D,
     InternalUserFunction,
+    MaxQOverAFunction,
+    NextStateSimulationFunction,
+    QAndFFunction,
     RegimeName,
     RegimeNamesToIds,
     RegimeParamsTemplate,
     RegimeTransitionFunction,
     TransitionFunctionsMapping,
     UserFunction,
+    VmappedRegimeTransitionFunction,
 )
-from lcm.utils import (
-    ensure_containers_are_immutable,
-    flatten_regime_namespace,
-    unflatten_regime_namespace,
-)
+from lcm.utils.containers import ensure_containers_are_immutable
+from lcm.utils.dispatchers import simulation_spacemap, vmap_1d
+from lcm.utils.namespace import flatten_regime_namespace, unflatten_regime_namespace
 
 
 def process_regimes(
@@ -100,8 +102,8 @@ def process_regimes(
     )
     all_grids = MappingProxyType({n: get_grids(r) for n, r in regimes.items()})
 
-    regime_to_state_space_info = MappingProxyType(
-        {n: _create_state_space_info(r) for n, r in regimes.items()}
+    regime_to_v_interpolation_info = MappingProxyType(
+        {n: create_v_interpolation_info(r) for n, r in regimes.items()}
     )
     state_action_spaces = MappingProxyType(
         {
@@ -128,7 +130,7 @@ def process_regimes(
             regime_names_to_ids=regime_names_to_ids,
             variable_info=variable_info[name],
             regimes_to_active_periods=regimes_to_active_periods,
-            regime_to_state_space_info=regime_to_state_space_info,
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             state_action_space=state_action_spaces[name],
             ages=ages,
             enable_jit=enable_jit,
@@ -143,7 +145,7 @@ def process_regimes(
             regime_names_to_ids=regime_names_to_ids,
             variable_info=variable_info[name],
             regimes_to_active_periods=regimes_to_active_periods,
-            regime_to_state_space_info=regime_to_state_space_info,
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             state_action_space=state_action_spaces[name],
             ages=ages,
             enable_jit=enable_jit,
@@ -177,7 +179,7 @@ def _build_solve_functions(
     regime_names_to_ids: RegimeNamesToIds,
     variable_info: pd.DataFrame,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
-    regime_to_state_space_info: MappingProxyType[RegimeName, StateSpaceInfo],
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     state_action_space: StateActionSpace,
     ages: AgeGrid,
     enable_jit: bool,
@@ -193,7 +195,7 @@ def _build_solve_functions(
         regime_names_to_ids: Mapping from regime names to integer indices.
         variable_info: Variable info of the regime.
         regimes_to_active_periods: Mapping of regime names to active period tuples.
-        regime_to_state_space_info: Mapping of regime names to state space info.
+        regime_to_v_interpolation_info: Mapping of regime names to state space info.
         state_action_space: The state-action space for this regime.
         ages: The AgeGrid for the model.
         enable_jit: Whether to jit the internal functions.
@@ -225,7 +227,7 @@ def _build_solve_functions(
             phase="solve",
         )
 
-    Q_and_F = build_Q_and_F_functions(
+    Q_and_F_functions = _build_Q_and_F_per_period(
         regime=regime,
         regimes_to_active_periods=regimes_to_active_periods,
         functions=core.functions,
@@ -233,14 +235,14 @@ def _build_solve_functions(
         transitions=core.transitions,
         stochastic_transition_names=core.stochastic_transition_names,
         compute_regime_transition_probs=compute_regime_transition_probs,
-        regime_to_state_space_info=regime_to_state_space_info,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         ages=ages,
         regime_params_template=regime_params_template,
     )
 
-    max_Q_over_a = build_max_Q_over_a_functions(
+    max_Q_over_a = _build_max_Q_over_a_per_period(
         state_action_space=state_action_space,
-        Q_and_F_functions=Q_and_F,
+        Q_and_F_functions=Q_and_F_functions,
         enable_jit=enable_jit,
     )
 
@@ -264,7 +266,7 @@ def _build_simulate_functions(
     regime_names_to_ids: RegimeNamesToIds,
     variable_info: pd.DataFrame,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
-    regime_to_state_space_info: MappingProxyType[RegimeName, StateSpaceInfo],
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     state_action_space: StateActionSpace,
     ages: AgeGrid,
     enable_jit: bool,
@@ -290,7 +292,7 @@ def _build_simulate_functions(
         regime_names_to_ids: Mapping from regime names to integer indices.
         variable_info: Variable info of the regime.
         regimes_to_active_periods: Mapping of regime names to active period tuples.
-        regime_to_state_space_info: Mapping of regime names to state space info.
+        regime_to_v_interpolation_info: Mapping of regime names to state space info.
         state_action_space: The state-action space for this regime.
         ages: The AgeGrid for the model.
         enable_jit: Whether to jit the internal functions.
@@ -333,7 +335,7 @@ def _build_simulate_functions(
 
     # Q_and_F uses the solve (non-vmapped) regime transition probs since it
     # evaluates on the Cartesian grid, not per-subject.
-    Q_and_F = build_Q_and_F_functions(
+    Q_and_F_functions = _build_Q_and_F_per_period(
         regime=regime,
         regimes_to_active_periods=regimes_to_active_periods,
         functions=functions,
@@ -341,20 +343,20 @@ def _build_simulate_functions(
         transitions=solve_transitions,
         stochastic_transition_names=solve_stochastic_transition_names,
         compute_regime_transition_probs=solve_compute_regime_transition_probs,
-        regime_to_state_space_info=regime_to_state_space_info,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         ages=ages,
         regime_params_template=regime_params_template,
     )
 
-    argmax_and_max_Q_over_a = build_argmax_and_max_Q_over_a_functions(
+    argmax_and_max_Q_over_a = _build_argmax_and_max_Q_over_a_per_period(
         state_action_space=state_action_space,
-        Q_and_F_functions=Q_and_F,
+        Q_and_F_functions=Q_and_F_functions,
         enable_jit=enable_jit,
     )
 
     # State transitions are phase-independent (only utility/H have phase variants),
     # so core.functions from either phase produces the same transitions.
-    next_state = build_next_state_simulation_functions(
+    next_state = _build_next_state_vmapped(
         functions=core.functions,
         transitions=solve_transitions,
         stochastic_transition_names=solve_stochastic_transition_names,
@@ -583,7 +585,7 @@ def _extract_transitions_from_regime(
     if regime.terminal:
         return {}
 
-    state_transitions = _collect_state_transitions(
+    state_transitions = collect_state_transitions(
         regime.states, regime.state_transitions
     )
     simple_transitions, per_target_transitions = _classify_transitions(
@@ -617,7 +619,7 @@ def _classify_transitions(
     """Split collected transitions into simple and per-target groups.
 
     Qualified names like "next_health__working" (produced by
-    `_collect_state_transitions` for per-target dicts) are decomposed via
+    `collect_state_transitions` for per-target dicts) are decomposed via
     `tree_path_from_qname`.
 
     Returns:
@@ -856,7 +858,7 @@ def _validate_categoricals(
         raise ModelInitializationError(format_messages(error_messages))
 
 
-def _compute_merged_discrete_categories(
+def compute_merged_discrete_categories(
     regimes: Mapping[str, Regime],
 ) -> tuple[dict[str, tuple[str, ...]], dict[str, bool]]:
     """Compute merged categories and ordered flags for all discrete variables.
@@ -1041,38 +1043,283 @@ def _get_simple_transition_discrete_grid(
     return source_grid if isinstance(source_grid, DiscreteGrid) else None
 
 
-def _create_state_space_info(regime: Regime) -> StateSpaceInfo:
-    """Create state space info for V-function interpolation.
+def build_regime_transition_probs_functions(
+    *,
+    functions: FunctionsMapping,
+    compute_regime_transition_probs: InternalUserFunction,
+    grids: MappingProxyType[str, Grid],
+    regime_names_to_ids: RegimeNamesToIds,
+    regime_params_template: RegimeParamsTemplate,
+    is_stochastic: bool,
+    enable_jit: bool,
+    phase: Literal["solve", "simulate"],
+) -> RegimeTransitionFunction | VmappedRegimeTransitionFunction:
+    """Build a regime transition probability function for the given phase.
 
     Args:
-        regime: Regime instance.
-
-    Returns:
-        State space information for the regime.
+        functions: Immutable mapping of function names to internal user functions.
+        compute_regime_transition_probs: The user's next_regime function.
+        grids: Immutable mapping of grid names to grid objects.
+        regime_names_to_ids: Mapping from regime names to integer indices.
+        regime_params_template: The regime's parameter template.
+        is_stochastic: Whether the regime transition is stochastic.
+        enable_jit: Whether to JIT-compile the functions.
+        phase: Which phase to build for.
 
     """
-    vi = get_variable_info(regime)
-    grids = get_grids(regime)
+    # Wrap deterministic next_regime to return one-hot probability array
+    if is_stochastic:
+        probs_func = compute_regime_transition_probs
+    else:
+        probs_func = _wrap_deterministic_regime_transition(
+            func=compute_regime_transition_probs,
+            regime_names_to_ids=regime_names_to_ids,
+        )
 
-    state_names = vi.query("is_state").index.tolist()
-
-    discrete_states = {
-        name: grid_spec
-        for name, grid_spec in grids.items()
-        if (name in state_names and isinstance(grid_spec, DiscreteGrid))
-        or isinstance(grid_spec, _ShockGrid)
-    }
-
-    continuous_states = {
-        name: grid_spec
-        for name, grid_spec in grids.items()
-        if name in state_names
-        and isinstance(grid_spec, ContinuousGrid)
-        and not isinstance(grid_spec, _ShockGrid)
-    }
-
-    return StateSpaceInfo(
-        state_names=tuple(state_names),
-        discrete_states=MappingProxyType(discrete_states),
-        continuous_states=MappingProxyType(continuous_states),
+    # Wrap to convert array output to dict format
+    wrapped_regime_transition_probs = _wrap_regime_transition_probs(
+        func=probs_func, regime_names_to_ids=regime_names_to_ids
     )
+
+    functions_pool = dict(functions) | {
+        "regime_transition_probs": wrapped_regime_transition_probs
+    }
+
+    next_regime = concatenate_functions(
+        functions=functions_pool,
+        targets="regime_transition_probs",
+        return_type="dict",
+        enforce_signature=False,
+        set_annotations=True,
+    )
+    if phase == "solve":
+        return jax.jit(next_regime) if enable_jit else next_regime
+
+    sig_args = list(inspect.signature(next_regime).parameters)
+
+    # We do this because a transition function without any parameters will throw
+    # an error with vmap
+    next_regime_accepting_all = with_signature(
+        next_regime,
+        args=sig_args + [state for state in grids if state not in sig_args],
+    )
+
+    next_regime_vmapped = vmap_1d(
+        func=next_regime_accepting_all,
+        variables=_get_vmap_params(
+            all_args=tuple(inspect.signature(next_regime_accepting_all).parameters),
+            regime_params_template=regime_params_template,
+        ),
+    )
+
+    return jax.jit(next_regime_vmapped) if enable_jit else next_regime_vmapped
+
+
+def _wrap_regime_transition_probs(
+    *,
+    func: InternalUserFunction,
+    regime_names_to_ids: RegimeNamesToIds,
+) -> InternalUserFunction:
+    """Wrap next_regime function to convert array output to dict format.
+
+    The next_regime function returns a JAX array of probabilities indexed by
+    the regime's id. This wrapper converts the array to dict format for internal
+    processing.
+
+    Args:
+        func: The user's next_regime function (with qname parameters).
+        regime_names_to_ids: Mapping from regime names to integer indices.
+
+    Returns:
+        A wrapped function that returns MappingProxyType[str, float|Array].
+
+    """
+    # Get regime names in index order from regime_names_to_ids
+    regime_names_by_id: list[tuple[int, str]] = sorted(
+        [(idx, name) for name, idx in regime_names_to_ids.items()],
+        key=lambda x: x[0],
+    )
+    regime_names = [name for _, name in regime_names_by_id]
+
+    annotations = get_annotations(func)
+    return_annotation = annotations.pop("return", "dict[str, Any]")
+
+    @with_signature(
+        args=annotations,
+        return_annotation=return_annotation,
+    )
+    @functools.wraps(func)
+    def wrapped(
+        *args: Array | int,
+        **kwargs: Array | int,
+    ) -> MappingProxyType[str, Any]:
+        result = func(*args, **kwargs)
+        # Convert array to dict using ordering by regime id
+        return MappingProxyType(
+            {name: result[idx] for idx, name in enumerate(regime_names)}
+        )
+
+    return wrapped
+
+
+def _wrap_deterministic_regime_transition(
+    *,
+    func: InternalUserFunction,
+    regime_names_to_ids: RegimeNamesToIds,
+) -> InternalUserFunction:
+    """Wrap deterministic next_regime to return one-hot probability array.
+
+    Converts a deterministic regime transition function that returns an integer
+    regime ID to a function that returns a one-hot probability array, matching
+    the interface of stochastic regime transitions.
+
+    Args:
+        func: The user's deterministic next_regime function (returns int).
+        regime_names_to_ids: Mapping from regime names to integer indices.
+
+    Returns:
+        A wrapped function that returns a one-hot probability array.
+
+    """
+    n_regimes = len(regime_names_to_ids)
+
+    # Preserve original annotations but update return type
+    annotations = {k: v for k, v in get_annotations(func).items() if k != "return"}
+
+    @with_signature(args=annotations, return_annotation="Array")
+    @functools.wraps(func)
+    def wrapped(
+        *args: Array | int,
+        **kwargs: Array | int,
+    ) -> Array:
+        regime_idx = func(*args, **kwargs)
+        return jax.nn.one_hot(regime_idx, n_regimes)
+
+    return wrapped
+
+
+def _get_vmap_params(
+    *,
+    all_args: tuple[str, ...],
+    regime_params_template: RegimeParamsTemplate,
+) -> tuple[str, ...]:
+    """Get parameter names that should be vmapped (states and actions)."""
+    non_vmap = {"period", "age"} | get_flat_param_names(regime_params_template)
+    return tuple(arg for arg in all_args if arg not in non_vmap)
+
+
+def _build_Q_and_F_per_period(
+    *,
+    regime: Regime,
+    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    functions: FunctionsMapping,
+    constraints: FunctionsMapping,
+    transitions: TransitionFunctionsMapping,
+    stochastic_transition_names: frozenset[str],
+    compute_regime_transition_probs: RegimeTransitionFunction | None,
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    ages: AgeGrid,
+    regime_params_template: RegimeParamsTemplate,
+) -> MappingProxyType[int, QAndFFunction]:
+    """Build Q-and-F closures for each period."""
+    flat_param_names = frozenset(get_flat_param_names(regime_params_template))
+
+    Q_and_F_functions = {}
+    for period, age in enumerate(ages.values):
+        if regime.terminal:
+            Q_and_F_functions[period] = get_Q_and_F_terminal(
+                flat_param_names=flat_param_names,
+                age=age,
+                period=period,
+                functions=functions,
+                constraints=constraints,
+            )
+        else:
+            assert compute_regime_transition_probs is not None  # noqa: S101
+            Q_and_F_functions[period] = get_Q_and_F(
+                flat_param_names=flat_param_names,
+                age=age,
+                period=period,
+                functions=functions,
+                constraints=constraints,
+                transitions=transitions,
+                stochastic_transition_names=stochastic_transition_names,
+                regimes_to_active_periods=regimes_to_active_periods,
+                compute_regime_transition_probs=compute_regime_transition_probs,
+                regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+            )
+
+    return MappingProxyType(Q_and_F_functions)
+
+
+def _build_max_Q_over_a_per_period(
+    *,
+    state_action_space: StateActionSpace,
+    Q_and_F_functions: MappingProxyType[int, QAndFFunction],
+    enable_jit: bool,
+) -> MappingProxyType[int, MaxQOverAFunction]:
+    """Build max-Q-over-a closures for each period."""
+    result = {}
+    for period, Q_and_F in Q_and_F_functions.items():
+        func = get_max_Q_over_a(
+            Q_and_F=Q_and_F,
+            action_names=state_action_space.action_names,
+            state_names=state_action_space.state_names,
+        )
+        result[period] = jax.jit(func) if enable_jit else func
+    return MappingProxyType(result)
+
+
+def _build_argmax_and_max_Q_over_a_per_period(
+    *,
+    state_action_space: StateActionSpace,
+    Q_and_F_functions: MappingProxyType[int, QAndFFunction],
+    enable_jit: bool,
+) -> MappingProxyType[int, ArgmaxQOverAFunction]:
+    """Build argmax-and-max-Q-over-a closures for each period."""
+    result = {}
+    for period, Q_and_F in Q_and_F_functions.items():
+        func = get_argmax_and_max_Q_over_a(
+            Q_and_F=Q_and_F,
+            action_names=state_action_space.action_names,
+            state_names=state_action_space.state_names,
+        )
+        if enable_jit:
+            func = jax.jit(func)
+        result[period] = simulation_spacemap(
+            func=func,
+            action_names=(),
+            state_names=tuple(state_action_space.states),
+        )
+    return MappingProxyType(result)
+
+
+def _build_next_state_vmapped(
+    *,
+    functions: FunctionsMapping,
+    transitions: TransitionFunctionsMapping,
+    stochastic_transition_names: frozenset[str],
+    all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
+    variable_info: pd.DataFrame,
+    regime_params_template: RegimeParamsTemplate,
+    enable_jit: bool,
+) -> NextStateSimulationFunction:
+    """Build a vmapped next-state function for simulation."""
+    next_state = get_next_state_function_for_simulation(
+        functions=functions,
+        transitions=transitions,
+        stochastic_transition_names=stochastic_transition_names,
+        all_grids=all_grids,
+        variable_info=variable_info,
+    )
+    sig_args = tuple(inspect.signature(next_state).parameters)
+
+    non_vmap = {"period", "age"} | get_flat_param_names(regime_params_template)
+    vmap_variables = tuple(arg for arg in sig_args if arg not in non_vmap)
+
+    next_state_vmapped = vmap_1d(func=next_state, variables=vmap_variables)
+    next_state_vmapped = with_signature(
+        next_state_vmapped, kwargs=sig_args, enforce=False
+    )
+
+    return jax.jit(next_state_vmapped) if enable_jit else next_state_vmapped

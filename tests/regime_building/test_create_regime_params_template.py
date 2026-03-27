@@ -2,11 +2,11 @@ import pytest
 
 from lcm.exceptions import InvalidNameError
 from lcm.grids import DiscreteGrid
-from lcm.input_processing.create_regime_params_template import (
+from lcm.interfaces import SolveSimulateFunctionPair
+from lcm.params.regime_template import (
     create_regime_params_template,
 )
-from lcm.interfaces import SolveSimulateFunctionPair
-from lcm.utils import ensure_containers_are_immutable
+from lcm.utils.containers import ensure_containers_are_immutable
 from tests.regime_mock import RegimeMock
 
 

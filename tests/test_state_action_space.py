@@ -5,11 +5,10 @@ import jax.numpy as jnp
 import pandas as pd
 from numpy.testing import assert_array_equal
 
-from lcm.function_representation import StateSpaceInfo
 from lcm.grids import DiscreteGrid, IrregSpacedGrid, LinSpacedGrid, categorical
-from lcm.input_processing.regime_processing import _create_state_space_info
 from lcm.interfaces import StateActionSpace
 from lcm.regime import Regime
+from lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
 from lcm.state_action_space import create_state_action_space
 
 
@@ -121,7 +120,7 @@ def test_state_action_space_replace_method():
     assert_array_equal(new_space.states["wealth"], jnp.array([30.0, 40.0]))
 
 
-def test_create_state_space_info():
+def test_create_v_interpolation_info():
     @dataclass
     class Health:
         good: int = 0
@@ -141,9 +140,9 @@ def test_create_state_space_info():
         active=lambda age: age < 5,
     )
 
-    state_space_info = _create_state_space_info(regime)
+    v_interpolation_info = create_v_interpolation_info(regime)
 
-    assert isinstance(state_space_info, StateSpaceInfo)
-    assert set(state_space_info.state_names) == {"wealth", "health"}
-    assert "health" in state_space_info.discrete_states
-    assert "wealth" in state_space_info.continuous_states
+    assert isinstance(v_interpolation_info, VInterpolationInfo)
+    assert set(v_interpolation_info.state_names) == {"wealth", "health"}
+    assert "health" in v_interpolation_info.discrete_states
+    assert "wealth" in v_interpolation_info.continuous_states

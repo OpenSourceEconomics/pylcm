@@ -7,8 +7,8 @@ from pybaum import tree_equal
 
 from lcm.ages import AgeGrid
 from lcm.grids import DiscreteGrid
-from lcm.input_processing import process_regimes
-from lcm.next_state import (
+from lcm.regime_building import process_regimes
+from lcm.regime_building.next_state import (
     _create_discrete_stochastic_next_func,
     get_next_state_function_for_simulation,
     get_next_state_function_for_solution,

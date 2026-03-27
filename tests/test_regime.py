@@ -11,7 +11,8 @@ from lcm import DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.ages import AgeGrid
 from lcm.exceptions import ModelInitializationError, RegimeInitializationError
 from lcm.grids import IrregSpacedGrid
-from lcm.regime import MarkovTransition, _collect_state_transitions, _IdentityTransition
+from lcm.regime import MarkovTransition, _IdentityTransition
+from lcm.regime_building.validation import collect_state_transitions
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -355,13 +356,13 @@ def test_discrete_state_grid_without_explicit_transition_raises():
 
 
 def test_collect_state_transitions_missing_state_raises():
-    """_collect_state_transitions raises RegimeInitializationError for missing state."""
+    """collect_state_transitions raises RegimeInitializationError for missing state."""
 
     states = MappingProxyType({"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)})
     with pytest.raises(
         RegimeInitializationError, match="has no entry in state_transitions"
     ):
-        _collect_state_transitions(states, state_transitions={})
+        collect_state_transitions(states, state_transitions={})
 
 
 def test_regime_with_fixed_states_only():

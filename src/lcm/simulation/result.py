@@ -16,13 +16,12 @@ from dags.tree import tree_path_from_qname
 from jax import Array
 
 from lcm.ages import AgeGrid
-from lcm.dispatchers import vmap_1d
 from lcm.exceptions import InvalidAdditionalTargetsError
 from lcm.grids import DiscreteGrid
-from lcm.input_processing.regime_processing import _compute_merged_discrete_categories
 from lcm.interfaces import InternalRegime, PeriodRegimeSimulationData
 from lcm.persistence import atomic_dump
 from lcm.regime import Regime
+from lcm.regime_building.processing import compute_merged_discrete_categories
 from lcm.typing import (
     FlatRegimeParams,
     FloatND,
@@ -30,7 +29,8 @@ from lcm.typing import (
     RegimeName,
     UserFunction,
 )
-from lcm.utils import flatten_regime_namespace
+from lcm.utils.dispatchers import vmap_1d
+from lcm.utils.namespace import flatten_regime_namespace
 
 CLOUDPICKLE_IMPORT_ERROR_MSG = (
     "Pickling SimulationResult objects requires the optional dependency 'cloudpickle'. "
@@ -238,7 +238,7 @@ def get_simulation_output_dtypes(
         all discrete state/action variables plus the `"regime"` column.
 
     """
-    merged_categories, ordered_flags = _compute_merged_discrete_categories(regimes)
+    merged_categories, ordered_flags = compute_merged_discrete_categories(regimes)
 
     dtypes: dict[str, pd.CategoricalDtype] = {}
     for var_name, categories in merged_categories.items():

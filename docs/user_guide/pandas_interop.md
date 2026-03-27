@@ -5,9 +5,9 @@ title: Working with DataFrames and Series
 # Working with DataFrames and Series
 
 `solve()` and `simulate()` accept pandas objects directly. Initial conditions can be a
-DataFrame, and parameters can contain `pd.Series` values with labeled indices. Simulation
-results come back as a DataFrame via `.to_dataframe()`. The typical workflow is DataFrame
-in, DataFrame out.
+DataFrame, and parameters can contain `pd.Series` values with labeled indices.
+Simulation results come back as a DataFrame via `.to_dataframe()`. The typical workflow
+is DataFrame in, DataFrame out.
 
 ## Initial Conditions as a DataFrame
 
@@ -15,12 +15,14 @@ Pass a pandas DataFrame directly to `simulate()` as `initial_conditions`. One ro
 agent, one column per state variable, plus a `"regime"` column:
 
 ```python
-df = pd.DataFrame({
-    "regime": ["working", "working", "retired"],
-    "wealth": [10.0, 50.0, 30.0],
-    "health": ["good", "bad", "good"],
-    "age": [25.0, 25.0, 25.0],
-})
+df = pd.DataFrame(
+    {
+        "regime": ["working", "working", "retired"],
+        "wealth": [10.0, 50.0, 30.0],
+        "health": ["good", "bad", "good"],
+        "age": [25.0, 25.0, 25.0],
+    }
+)
 
 result = model.simulate(
     params=params,
@@ -85,8 +87,8 @@ automatically.
 ### What happens during conversion
 
 Your model functions work with plain JAX arrays and integer indexing — nothing about
-pandas enters the model at runtime. The Series is purely an input convenience. Before any
-model code runs, the conversion inspects the function signature to determine which
+pandas enters the model at runtime. The Series is purely an input convenience. Before
+any model code runs, the conversion inspects the function signature to determine which
 dimensions the array is indexed over, maps each label to an integer position using the
 model's grids (e.g., `"good"` → `0`, `"bad"` → `1`), and scatters the Series values into
 a JAX array of the correct shape. The function receives a normal `jnp.ndarray` and never
@@ -94,24 +96,24 @@ sees pandas.
 
 ## Why Labeled Indices Matter
 
-Every discrete variable axis must use string labels from the model's categorical classes,
-not raw integer codes. This is a deliberate design choice.
+Every discrete variable axis must use string labels from the model's categorical
+classes, not raw integer codes. This is a deliberate design choice.
 
 The conversion step validates every label against the model's grids before building the
 array. If a label is misspelled, a category is missing, or axes are swapped, you get a
 clear error *before* the array enters JAX. Without this validation, a wrong index would
 silently produce a misshapen array. JAX would then vmap that array over millions of
-simulated agents — producing garbage results with no error message and no way to trace the
-problem back to the input.
+simulated agents — producing garbage results with no error message and no way to trace
+the problem back to the input.
 
 Labeled indices turn silent data corruption into loud, early errors with actionable
 messages.
 
 ## `derived_categoricals`
 
-When a function indexes its array parameter by a variable that is *not* a state or action
-in the model — typically a DAG function output — the model has no grid to validate labels
-against. You will see an error like:
+When a function indexes its array parameter by a variable that is *not* a state or
+action in the model — typically a DAG function output — the model has no grid to
+validate labels against. You will see an error like:
 
 ```
 Unrecognised indexing parameter 'employment_type'. Expected 'age' or a
@@ -129,10 +131,11 @@ model.solve(
 )
 ```
 
-If the variable has different categories in different regimes, pass a per-regime mapping:
+If the variable has different categories in different regimes, pass a per-regime
+mapping:
 
 ```python
-derived_categoricals={
+derived_categoricals = {
     "employment_type": {
         "working": DiscreteGrid(FullEmploymentType),
         "retired": DiscreteGrid(RetiredEmploymentType),
@@ -168,13 +171,15 @@ Call this after building the array to catch mistakes early.
 ## Under the Hood
 
 Internally, `solve()` and `simulate()` call `convert_series_in_params` (in
-`lcm.pandas_utils`) to walk the already-broadcast params and convert each `pd.Series` via
-`array_from_series`. For initial conditions, `initial_conditions_from_dataframe` handles
-the DataFrame-to-dict conversion. Both are internal helpers — you don't need to call them
-directly.
+`lcm.pandas_utils`) to walk the already-broadcast params and convert each `pd.Series`
+via `array_from_series`. For initial conditions, `initial_conditions_from_dataframe`
+handles the DataFrame-to-dict conversion. Both are internal helpers — you don't need to
+call them directly.
 
 ## See Also
 
-- [Solving and Simulating](solving_and_simulating.md) — full `solve()` / `simulate()` API
-- [Parameters](parameters.md) — where transition probability arrays go in the params dict
+- [Solving and Simulating](solving_and_simulating.md) — full `solve()` / `simulate()`
+  API
+- [Parameters](parameters.md) — where transition probability arrays go in the params
+  dict
 - [Regimes](regimes.ipynb) — defining `MarkovTransition` state transitions

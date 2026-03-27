@@ -23,7 +23,7 @@ from lcm.typing import (
     TransitionFunctionsMapping,
     VmappedRegimeTransitionFunction,
 )
-from lcm.utils import first_non_none
+from lcm.utils.containers import first_non_none
 
 
 @dataclasses.dataclass(frozen=True)
