@@ -95,5 +95,7 @@ repos:
           - --wrap
           - '88'
         files: (docs/.)
+        # mdformat-myst mangles sphinx-design grid-item-card directives
+        exclude: docs/index\.md
 ci:
   autoupdate_schedule: monthly

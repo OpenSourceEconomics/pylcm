@@ -10,23 +10,27 @@ choice models.
 pylcm provides a high-level interface for defining, solving, and simulating life cycle
 models using JAX for fast numerical computation with GPU support.
 
-::::\{grid} 1 2 2 2
+::::{grid} 1 2 2 2
 
-:::\{grid-item-card} User Guide :link: user_guide/index
-
+:::{grid-item-card} User Guide
+:link: user_guide/index
 Installation, a tiny example, and in-depth guides on defining models, grids, shocks, and
-parameters. :::
+parameters.
+:::
 
-:::\{grid-item-card} Explanations :link: explanations/index
+:::{grid-item-card} Explanations
+:link: explanations/index
+Technical deep dives into how pylcm works under the hood.
+:::
 
-Technical deep dives into how pylcm works under the hood. :::
+:::{grid-item-card} Examples
+:link: examples/index
+Complete worked examples of life cycle models.
+:::
 
-:::\{grid-item-card} Examples :link: examples/index
-
-Complete worked examples of life cycle models. :::
-
-:::\{grid-item-card} Development :link: development/index
-
-Contributing guidelines and internal documentation for developers. :::
+:::{grid-item-card} Development
+:link: development/index
+Contributing guidelines and internal documentation for developers.
+:::
 
 ::::
