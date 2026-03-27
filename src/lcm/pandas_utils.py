@@ -16,7 +16,8 @@ from lcm.grids import DiscreteGrid, IrregSpacedGrid
 from lcm.params import MappingLeaf
 
 if TYPE_CHECKING:
-    from lcm.model import Model
+    from lcm.model import Model  # avoid circular import: pandas_utils ↔ model
+
 from lcm.params.sequence_leaf import SequenceLeaf
 from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
