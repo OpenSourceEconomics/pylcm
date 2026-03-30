@@ -161,9 +161,9 @@ def productmap(
     variables: tuple[str, ...],
     batch_sizes: dict[str, int] | None = None,
 ) -> FunctionWithArrayReturn:
-    """Apply mp such that func is evaluated on the Cartesian product of variables.
+    """Apply map such that func is evaluated on the Cartesian product of variables.
 
-    This is achieved by an iterative application of mp.
+    This is achieved by an iterative application of map.
 
     In contrast to _base_productmap_batched, productmap preserves the function signature
     and allows the function to be called with keyword arguments.
@@ -242,21 +242,21 @@ def _base_productmap_batched(
 
         # Recursively map over one more product axe
         def map_one_more(
-            loop: FunctionWithArrayReturn, axis: str
+            loop_func: FunctionWithArrayReturn, axis: str
         ) -> FunctionWithArrayReturn:
             def func_mapped_over_one_more_axis(
                 *already_mapped_args: Float1D, **already_mapped_kwargs: Float1D
             ) -> FloatND:
                 if parameters[axis].kind == inspect.Parameter.POSITIONAL_ONLY:
                     return jax.lax.map(
-                        lambda axis_i: loop(
+                        lambda axis_i: loop_func(
                             axis_i, *already_mapped_args, **already_mapped_kwargs
                         ),
                         jax.numpy.atleast_1d(kwargs[axis]),
                         batch_size=batch_sizes[axis],
                     )
                 return jax.lax.map(
-                    lambda axis_i: loop(
+                    lambda axis_i: loop_func(
                         *already_mapped_args, **{axis: axis_i}, **already_mapped_kwargs
                     ),
                     jax.numpy.atleast_1d(kwargs[axis]),
