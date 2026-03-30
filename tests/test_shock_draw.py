@@ -48,7 +48,7 @@ def test_draw_shock_uniform(params_at_init):
     """Uniform.draw_shock uses start/stop params."""
     kwargs = {"start": 2.0, "stop": 4.0}
     if params_at_init:
-        grid = lcm.shocks.iid.Uniform(n_points=5, **kwargs)
+        grid = lcm.shocks.iid.Uniform(n_points=5, batch_size=0, **kwargs)
         params = grid.params
     else:
         grid = lcm.shocks.iid.Uniform(n_points=5)
@@ -64,10 +64,12 @@ def test_draw_shock_normal(params_at_init):
     """Normal.draw_shock uses mu/sigma params."""
     kwargs = {"mu": 5.0, "sigma": 0.1}
     if params_at_init:
-        grid = lcm.shocks.iid.Normal(n_points=5, gauss_hermite=True, **kwargs)
+        grid = lcm.shocks.iid.Normal(
+            n_points=5, batch_size=0, gauss_hermite=True, **kwargs
+        )
         params = grid.params
     else:
-        grid = lcm.shocks.iid.Normal(n_points=5, gauss_hermite=True)
+        grid = lcm.shocks.iid.Normal(n_points=5, batch_size=0, gauss_hermite=True)
         params = MappingProxyType(kwargs)
     draws = _draw_many(grid, params)
     aaae(draws.mean(), 5.0, decimal=1)
@@ -79,7 +81,9 @@ def test_draw_shock_lognormal(params_at_init):
     """LogNormal.draw_shock produces positive samples with correct log-moments."""
     kwargs = {"mu": 1.0, "sigma": 0.1}
     if params_at_init:
-        grid = lcm.shocks.iid.LogNormal(n_points=5, gauss_hermite=True, **kwargs)
+        grid = lcm.shocks.iid.LogNormal(
+            n_points=5, batch_size=0, gauss_hermite=True, **kwargs
+        )
         params = grid.params
     else:
         grid = lcm.shocks.iid.LogNormal(n_points=5, gauss_hermite=True)
@@ -95,7 +99,9 @@ def test_draw_shock_tauchen(params_at_init):
     """Tauchen.draw_shock uses mu/sigma/rho params."""
     kwargs = {"rho": 0.5, "sigma": 0.1, "mu": 2.0}
     if params_at_init:
-        grid = lcm.shocks.ar1.Tauchen(n_points=5, gauss_hermite=True, **kwargs)
+        grid = lcm.shocks.ar1.Tauchen(
+            n_points=5, batch_size=0, gauss_hermite=True, **kwargs
+        )
         params = grid.params
     else:
         grid = lcm.shocks.ar1.Tauchen(n_points=5, gauss_hermite=True)
@@ -110,7 +116,7 @@ def test_draw_shock_rouwenhorst(params_at_init):
     """Rouwenhorst.draw_shock uses mu/sigma/rho params."""
     kwargs = {"rho": 0.5, "sigma": 0.1, "mu": 2.0}
     if params_at_init:
-        grid = lcm.shocks.ar1.Rouwenhorst(n_points=5, **kwargs)
+        grid = lcm.shocks.ar1.Rouwenhorst(n_points=5, batch_size=0, **kwargs)
         params = grid.params
     else:
         grid = lcm.shocks.ar1.Rouwenhorst(n_points=5)
@@ -125,7 +131,7 @@ def test_draw_shock_normal_mixture(params_at_init):
     """NormalMixture.draw_shock produces draws with correct mixture moments."""
     kwargs = _NORMAL_MIXTURE_KWARGS
     if params_at_init:
-        grid = lcm.shocks.iid.NormalMixture(n_points=5, **kwargs)
+        grid = lcm.shocks.iid.NormalMixture(n_points=5, batch_size=0, **kwargs)
         params = grid.params
     else:
         grid = lcm.shocks.iid.NormalMixture(n_points=5)
@@ -147,7 +153,7 @@ def test_draw_shock_tauchen_normal_mixture(params_at_init):
     """TauchenNormalMixture.draw_shock produces yields correct conditional moments."""
     kwargs = _TAUCHEN_NORMAL_MIXTURE_KWARGS
     if params_at_init:
-        grid = lcm.shocks.ar1.TauchenNormalMixture(n_points=5, **kwargs)
+        grid = lcm.shocks.ar1.TauchenNormalMixture(n_points=5, batch_size=0, **kwargs)
         params = grid.params
     else:
         grid = lcm.shocks.ar1.TauchenNormalMixture(n_points=5)

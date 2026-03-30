@@ -21,6 +21,7 @@ from lcm.utils.dispatchers import productmap
 def get_max_Q_over_a(
     *,
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    batch_sizes: dict[str, int],
     action_names: tuple[str, ...],
     state_names: tuple[str, ...],
 ) -> MaxQOverAFunction:
@@ -80,7 +81,7 @@ def get_max_Q_over_a(
         )
         return Q_arr.max(where=F_arr, initial=-jnp.inf)
 
-    return productmap(func=max_Q_over_a, variables=state_names)
+    return productmap(func=max_Q_over_a, variables=state_names, batch_sizes=batch_sizes)
 
 
 def get_argmax_and_max_Q_over_a(

@@ -84,7 +84,9 @@ def test_runtime_shock_params_property():
 
 def test_fully_specified_shock():
     """Tauchen with all params should have no runtime-supplied params."""
-    grid = lcm.shocks.ar1.Tauchen(n_points=5, gauss_hermite=False, **_TAUCHEN_PARAMS)
+    grid = lcm.shocks.ar1.Tauchen(
+        n_points=5, gauss_hermite=False, batch_size=0, **_TAUCHEN_PARAMS
+    )
     assert grid.params_to_pass_at_runtime == ()
     assert grid.is_fully_specified
 

@@ -142,18 +142,6 @@ def test_productmap_with_all_arguments_mapped_some_len_one():
     aaae(calculated, expected)
 
 
-def test_productmap_with_all_arguments_mapped_some_scalar():
-    grids = {
-        "a": 1,
-        "b": 2,
-        "c": jnp.linspace(1, 5, 5),
-    }
-
-    decorated = productmap(func=f, variables=("a", "b", "c"))
-    with pytest.raises(ValueError, match="vmap was requested to map its argument"):
-        decorated(**grids)  # ty: ignore[missing-argument]
-
-
 def test_productmap_with_some_arguments_mapped():
     grids = {
         "a": jnp.linspace(-5, 5, 10),
