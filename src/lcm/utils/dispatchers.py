@@ -68,7 +68,13 @@ def simulation_spacemap(
 
     mappable_func = allow_args(func)
 
-    vmapped = _base_productmap(mappable_func, action_names)
+    vmapped = allow_args(
+        productmap(
+            func=mappable_func,
+            variables=action_names,
+            batch_sizes=dict.fromkeys(action_names, 0),
+        )
+    )
     vmapped = vmap_1d(func=vmapped, variables=state_names, callable_with="only_args")
 
     # Callables do not necessarily have a __signature__ attribute.
@@ -155,17 +161,18 @@ def productmap(
     variables: tuple[str, ...],
     batch_sizes: dict[str, int] | None = None,
 ) -> FunctionWithArrayReturn:
-    """Apply vmap such that func is evaluated on the Cartesian product of variables.
+    """Apply mp such that func is evaluated on the Cartesian product of variables.
 
-    This is achieved by an iterative application of vmap.
+    This is achieved by an iterative application of mp.
 
-    In contrast to _base_productmap, productmap preserves the function signature and
-    allows the function to be called with keyword arguments.
+    In contrast to _base_productmap_batched, productmap preserves the function signature
+    and allows the function to be called with keyword arguments.
 
     Args:
         func: The function to be dispatched.
         variables: Tuple with names of arguments that over which the Cartesian product
             should be formed.
+        batch_sizes: Dict with the batch sizes for each variable.
 
     Returns:
         A callable with the same arguments as func (but with an additional leading
@@ -185,6 +192,7 @@ def productmap(
 
     func_callable_with_args = allow_args(func)
 
+    # If no batch size provided just vmap over all vars
     if batch_sizes is None:
         batch_sizes = dict.fromkeys(variables, 0)
 
@@ -205,54 +213,19 @@ def productmap(
     return cast("FunctionWithArrayReturn", allow_only_kwargs(vmapped, enforce=False))
 
 
-def _base_productmap(
-    func: FunctionWithArrayReturn, product_axes: tuple[str, ...]
-) -> FunctionWithArrayReturn:
-    """Map func over the Cartesian product of product_axes.
-
-    Like vmap, this function does not preserve the function signature and does not allow
-    the function to be called with keyword arguments.
-
-    Args:
-        func: The function to be dispatched. Cannot have keyword-only arguments.
-        product_axes: Tuple with names of arguments over which we apply vmap.
-
-    Returns:
-        A callable with the same arguments as func. See `product_map` for details.
-
-    """
-    signature = inspect.signature(func)
-    parameters = list(signature.parameters)
-    positions = [parameters.index(ax) for ax in product_axes if ax in parameters]
-
-    vmap_specs = []
-    # We iterate in reverse order such that the output dimensions are in the same order
-    # as the input dimensions.
-    for pos in reversed(positions):
-        spec: list[int | None] = cast("list[int | None]", [None] * len(parameters))
-        spec[pos] = 0
-        vmap_specs.append(spec)
-
-    vmapped = func
-    for spec in vmap_specs:
-        vmapped = vmap(vmapped, in_axes=spec)
-    return vmapped
-
-
 def _base_productmap_batched(
     func: FunctionWithArrayReturn,
     product_axes: tuple[str, ...],
     batch_sizes: dict[str, int],
 ) -> FunctionWithArrayReturn:
-    """Map func over the Cartesian product of product_axes.
+    """Map func over the Cartesian product of product_axes and execute in batches.
 
-    Like vmap, this function does not preserve the function signature and does not allow
-    the function to be called with keyword arguments.
+    Like vmap, this function does not preserve the function signature.
 
     Args:
         func: The function to be dispatched. Cannot have keyword-only arguments.
         product_axes: Tuple with names of arguments over which we apply vmap.
-
+        batch_sizes: Dict with the batch sizes for each product_axis.
     Returns:
         A callable with the same arguments as func. See `product_map` for details.
 

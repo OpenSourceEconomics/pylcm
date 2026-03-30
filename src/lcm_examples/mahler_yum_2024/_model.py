@@ -37,7 +37,7 @@ from lcm.typing import (
     Period,
     RegimeName,
 )
-from lcm.utils.dispatchers import _base_productmap
+from lcm.utils.dispatchers import productmap
 
 _DATA_DIR = Path(__file__).parent / "data"
 
@@ -502,8 +502,8 @@ def create_income_grid(income_process: dict[str, dict[str, float]]) -> FloatND:
             * jnp.exp(((sdztemp**2.0) ** 2.0) / 2.0)
         )
 
-    mapped = _base_productmap(calc_base, ("_period", "health", "education"))
-    return mapped(j, health, education)
+    mapped = productmap(func=calc_base, variables=("period", "health", "education"))
+    return mapped(period=j, health=health, education=education)
 
 
 eff_grid: Float1D = jnp.linspace(0, 1, 40)
@@ -536,13 +536,18 @@ def health_trans(
     return jnp.exp(y) / (1.0 + jnp.exp(y))
 
 
-mapped_health_trans = _base_productmap(
-    health_trans, ("period", "health", "eff", "eff_1", "edu", "ht")
+mapped_health_trans = productmap(
+    func=health_trans, variables=("period", "health", "eff", "eff_1", "edu", "ht")
 )
 
 tr2yp_grid = tr2yp_grid.at[:, :, :, :, :, :, 1].set(
     mapped_health_trans(
-        j, jnp.arange(2), jnp.arange(40), jnp.arange(40), jnp.arange(2), jnp.arange(2)
+        period=j,
+        health=jnp.arange(2),
+        eff=jnp.arange(40),
+        eff_1=jnp.arange(40),
+        edu=jnp.arange(2),
+        ht=jnp.arange(2),
     )
 )
 tr2yp_grid = tr2yp_grid.at[:, :, :, :, :, :, 0].set(
