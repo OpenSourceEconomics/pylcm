@@ -21,9 +21,9 @@ from lcm.utils.dispatchers import productmap
 def get_max_Q_over_a(
     *,
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
+    batch_sizes: dict[str, int],
     action_names: tuple[str, ...],
     state_names: tuple[str, ...],
-    batch_sizes: dict[str, int],
 ) -> MaxQOverAFunction:
     r"""Get the function returning the maximum of Q over all actions.
 
