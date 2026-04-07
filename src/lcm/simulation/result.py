@@ -679,9 +679,7 @@ def _remap_codes_per_regime(
     Categorical with the merged category set.
 
     """
-    labels = pd.array(  # ty: ignore[no-matching-overload]
-        [pd.NA] * len(df), dtype="string"
-    )
+    labels = pd.array([pd.NA] * len(df), dtype="string")
 
     for regime_name in metadata.regime_names:
         regime_cats = metadata.regime_discrete_categories.get((regime_name, var_name))
@@ -696,7 +694,7 @@ def _remap_codes_per_regime(
         valid = codes_in_regime.notna()
         int_codes = codes_in_regime[valid].astype(int)
         mapped = int_codes.map(dict(enumerate(regime_cats))).to_numpy()
-        labels[mask & valid] = mapped
+        labels[mask & valid] = mapped  # ty: ignore[invalid-assignment]
 
     return pd.Categorical(labels, categories=list(merged_categories), ordered=ordered)
 

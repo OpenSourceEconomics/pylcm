@@ -597,7 +597,7 @@ def _grid_level_mapping(*, name: str, grid: DiscreteGrid) -> _LevelMapping:
     return _LevelMapping(
         name=name,
         size=len(grid.categories),
-        label_to_index=label_to_code.__getitem__,
+        label_to_index=lambda label: label_to_code[label],
         valid_labels=grid.categories,
     )
 
