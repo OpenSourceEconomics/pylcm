@@ -7,6 +7,7 @@ class Grid(ABC):
     """LCM Grid base class."""
 
     @property
+    @abstractmethod
     def batch_size(self) -> int:
         """Size of the batches looped over during the solution.
 
@@ -14,7 +15,6 @@ class Grid(ABC):
         `DiscreteGrid` overrides this via its own property.
 
         """
-        return 0
 
     @abstractmethod
     def to_jax(self) -> Int1D | Float1D:
