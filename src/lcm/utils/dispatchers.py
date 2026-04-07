@@ -194,7 +194,9 @@ def productmap(
     func_callable_with_args = allow_args(func)
 
     mapped = _base_productmap_batched(
-        func_callable_with_args, variables, batch_sizes=batch_sizes
+        func=func_callable_with_args,
+        product_axes=variables,
+        batch_sizes=batch_sizes,
     )
 
     # Create new signature where every parameter is kw-only as
@@ -211,6 +213,7 @@ def productmap(
 
 
 def _base_productmap_batched(
+    *,
     func: FunctionWithArrayReturn,
     product_axes: tuple[str, ...],
     batch_sizes: dict[str, int],
