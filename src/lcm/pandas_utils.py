@@ -566,8 +566,8 @@ class _LevelMapping:
     size: int
     """Number of positions along this axis."""
 
-    label_to_index: Callable[[object], int]
-    """Map a single label value to its integer index."""
+    get_code_from_label: Callable[[str], int]
+    """Return the integer code for a label."""
 
     valid_labels: tuple[str, ...] = ()
     """Valid label names, for error messages. Empty for age levels."""
@@ -578,7 +578,7 @@ def _age_level_mapping(ages: AgeGrid) -> _LevelMapping:
     return _LevelMapping(
         name="age",
         size=ages.n_periods,
-        label_to_index=ages.age_to_period,  # ty: ignore[invalid-argument-type]
+        get_code_from_label=ages.age_to_period,  # ty: ignore[invalid-argument-type]
     )
 
 
@@ -597,7 +597,7 @@ def _grid_level_mapping(*, name: str, grid: DiscreteGrid) -> _LevelMapping:
     return _LevelMapping(
         name=name,
         size=len(grid.categories),
-        label_to_index=lambda label: label_to_code[label],
+        get_code_from_label=label_to_code.__getitem__,
         valid_labels=grid.categories,
     )
 
@@ -663,7 +663,7 @@ def _build_outcome_mapping(
         return _LevelMapping(
             name="next_regime",
             size=len(regime_ids),
-            label_to_index=regime_ids.__getitem__,  # ty: ignore[invalid-argument-type]
+            get_code_from_label=regime_ids.__getitem__,
             valid_labels=tuple(regime_ids),
         )
 
@@ -744,7 +744,7 @@ def _map_level(*, mapping: _LevelMapping, level_values: pd.Index) -> np.ndarray:
         raise ValueError(msg)
 
     try:
-        return np.array([mapping.label_to_index(v) for v in level_values])
+        return np.array([mapping.get_code_from_label(v) for v in level_values])
     except ValueError:
         # Age levels: age_to_period raises ValueError with a good message
         raise

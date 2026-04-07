@@ -271,6 +271,6 @@ def _base_productmap_batched(
         # Loop over all product axes
         for axis in reversed(product_axes):
             func_with_partialled_args = map_one_more(func_with_partialled_args, axis)
-        return func_with_partialled_args()  # ty: ignore[invalid-return-type]
+        return cast("FloatND", func_with_partialled_args())
 
     return cast("FunctionWithArrayReturn", batched_vmap)
