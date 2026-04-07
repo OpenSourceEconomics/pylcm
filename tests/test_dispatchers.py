@@ -158,6 +158,25 @@ def test_productmap_with_some_arguments_mapped():
     aaae(calculated, expected)
 
 
+@pytest.mark.parametrize("batch_size", [0, 1, 2])
+def test_productmap_batch_size_produces_same_result(batch_size):
+    grids = {
+        "a": jnp.linspace(-5, 5, 4),
+        "b": jnp.linspace(1, 5, 3),
+    }
+
+    def h(*, a, b):
+        return a**2 + b
+
+    reference = productmap(func=h, variables=("a", "b"))(**grids)
+    batched = productmap(
+        func=h,
+        variables=("a", "b"),
+        batch_sizes={"a": batch_size, "b": batch_size},
+    )(**grids)
+    aaae(batched, reference)
+
+
 def test_productmap_with_some_argument_mapped_twice():
     error_msg = "Same argument provided more than once."
     with pytest.raises(ValueError, match=error_msg):

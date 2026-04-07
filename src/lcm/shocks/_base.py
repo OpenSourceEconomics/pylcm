@@ -45,7 +45,9 @@ class _ShockGrid(ContinuousGrid):
     @property
     def _param_field_names(self) -> tuple[str, ...]:
         """Names of distribution-specific parameters."""
-        return tuple(f.name for f in fields(self) if f.name != "n_points")
+        return tuple(
+            f.name for f in fields(self) if f.name not in {"n_points", "batch_size"}
+        )
 
     @property
     def params(self) -> MappingProxyType[str, float]:

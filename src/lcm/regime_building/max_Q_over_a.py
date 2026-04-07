@@ -48,6 +48,8 @@ def get_max_Q_over_a(
         Q_and_F: A function that takes a state-action combination and returns the action
             value of that combination and whether the state-action combination is
             feasible.
+        batch_sizes: Mapping of state variable names to batch sizes for the outer
+            productmap over states. A batch size of 0 means no batching.
         action_names: Tuple of action variable names.
         state_names: Tuple of state names.
 
@@ -61,6 +63,8 @@ def get_max_Q_over_a(
         Q_and_F=Q_and_F, action_names=action_names, state_names=state_names
     )
 
+    # Actions are the inner optimization axis — batching applies only to the
+    # outer state loop, so no batch_sizes here.
     Q_and_F = productmap(
         func=Q_and_F,
         variables=action_names,

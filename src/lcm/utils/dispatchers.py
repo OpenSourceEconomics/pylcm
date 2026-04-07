@@ -26,7 +26,7 @@ def simulation_spacemap(
     action_names: tuple[str, ...],
     state_names: tuple[str, ...],
 ) -> FunctionWithArrayReturn:
-    """Apply vmap such that func can be evaluated on actions and simulation states.
+    """Apply map such that func can be evaluated on actions and simulation states.
 
     This function maps the function `func` over the simulation state-action-space. That
     is, it maps `func` over the Cartesian product of the action variables, and over the
@@ -68,19 +68,19 @@ def simulation_spacemap(
 
     mappable_func = allow_args(func)
 
-    vmapped = allow_args(
+    mapped = allow_args(
         productmap(
             func=mappable_func,
             variables=action_names,
             batch_sizes=dict.fromkeys(action_names, 0),
         )
     )
-    vmapped = vmap_1d(func=vmapped, variables=state_names, callable_with="only_args")
+    mapped = vmap_1d(func=mapped, variables=state_names, callable_with="only_args")
 
     # Callables do not necessarily have a __signature__ attribute.
-    vmapped.__signature__ = inspect.signature(mappable_func)  # ty: ignore[unresolved-attribute]
+    mapped.__signature__ = inspect.signature(mappable_func)  # ty: ignore[unresolved-attribute]
 
-    return cast("FunctionWithArrayReturn", allow_only_kwargs(vmapped))
+    return cast("FunctionWithArrayReturn", allow_only_kwargs(mapped))
 
 
 def vmap_1d(
@@ -192,11 +192,11 @@ def productmap(
 
     func_callable_with_args = allow_args(func)
 
-    # If no batch size provided just vmap over all vars
+    # If no batch sizes provided, use full-size batches (no splitting)
     if batch_sizes is None:
         batch_sizes = dict.fromkeys(variables, 0)
 
-    vmapped = _base_productmap_batched(
+    mapped = _base_productmap_batched(
         func_callable_with_args, variables, batch_sizes=batch_sizes
     )
 
@@ -208,9 +208,9 @@ def productmap(
         for p in signature.parameters.values()
     ]
     new_signature = signature.replace(parameters=new_parameters)
-    vmapped.__signature__ = new_signature  # ty: ignore[unresolved-attribute]
+    mapped.__signature__ = new_signature  # ty: ignore[unresolved-attribute]
 
-    return cast("FunctionWithArrayReturn", allow_only_kwargs(vmapped, enforce=False))
+    return cast("FunctionWithArrayReturn", allow_only_kwargs(mapped, enforce=False))
 
 
 def _base_productmap_batched(
@@ -220,14 +220,16 @@ def _base_productmap_batched(
 ) -> FunctionWithArrayReturn:
     """Map func over the Cartesian product of product_axes and execute in batches.
 
-    Like vmap, this function does not preserve the function signature.
+    Like `jax.lax.map`, this function does not preserve the function signature.
 
     Args:
         func: The function to be dispatched. Cannot have keyword-only arguments.
-        product_axes: Tuple with names of arguments over which we apply vmap.
+        product_axes: Tuple with names of arguments over which we apply
+            `jax.lax.map`.
         batch_sizes: Dict with the batch sizes for each product_axis.
+
     Returns:
-        A callable with the same arguments as func. See `product_map` for details.
+        A callable with the same arguments as func. See `productmap` for details.
 
     """
     parameters = inspect.signature(func).parameters
@@ -240,7 +242,7 @@ def _base_productmap_batched(
             "FunctionWithArrayReturn", partial(func, **non_array_kwargs)
         )
 
-        # Recursively map over one more product axe
+        # Recursively map over one more product axis
         def map_one_more(
             loop_func: FunctionWithArrayReturn, axis: str
         ) -> FunctionWithArrayReturn:
