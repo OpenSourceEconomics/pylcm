@@ -245,7 +245,7 @@ def _build_solve_functions(
     max_Q_over_a = _build_max_Q_over_a_per_period(
         state_action_space=state_action_space,
         Q_and_F_functions=Q_and_F_functions,
-        all_grids=all_grids[regime_name],
+        grids=all_grids[regime_name],
         enable_jit=enable_jit,
     )
 
@@ -1259,7 +1259,7 @@ def _build_max_Q_over_a_per_period(
     *,
     state_action_space: StateActionSpace,
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
-    all_grids: MappingProxyType[str, Grid],
+    grids: MappingProxyType[str, Grid],
     enable_jit: bool,
 ) -> MappingProxyType[int, MaxQOverAFunction]:
     """Build max-Q-over-a closures for each period."""
@@ -1269,7 +1269,7 @@ def _build_max_Q_over_a_per_period(
             Q_and_F=Q_and_F,
             batch_sizes={
                 name: grid.batch_size
-                for name, grid in all_grids.items()
+                for name, grid in grids.items()
                 if name in state_action_space.state_names
             },
             action_names=state_action_space.action_names,

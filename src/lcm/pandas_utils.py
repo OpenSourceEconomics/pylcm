@@ -357,7 +357,7 @@ def array_from_series(
     display_params = ["age" if p == "period" else p for p in indexing_params]
 
     level_mappings = _build_level_mappings_for_param(
-        indexing_params=display_params, all_grids=grids, ages=model.ages
+        indexing_params=display_params, grids=grids, ages=model.ages
     )
 
     # Append outcome axis for transition probability arrays (next_* functions
@@ -368,7 +368,7 @@ def array_from_series(
         ]
         if next_levels:
             outcome_mapping = _build_outcome_mapping(
-                func_name=func_name, all_grids=grids, model=model
+                func_name=func_name, grids=grids, model=model
             )
             level_mappings = (*level_mappings, outcome_mapping)
 
@@ -605,7 +605,7 @@ def _grid_level_mapping(*, name: str, grid: DiscreteGrid) -> _LevelMapping:
 def _build_level_mappings_for_param(
     *,
     indexing_params: list[str],
-    all_grids: dict[str, DiscreteGrid],
+    grids: dict[str, DiscreteGrid],
     ages: AgeGrid,
 ) -> tuple[_LevelMapping, ...]:
     """Build level mappings for `array_from_series` from indexing params.
@@ -613,7 +613,7 @@ def _build_level_mappings_for_param(
     Args:
         indexing_params: Parameter names in output axis order, with
             `"period"` already replaced by `"age"`.
-        all_grids: Categorical grid lookup.
+        grids: Categorical grid lookup.
         ages: The model's `AgeGrid`.
 
     Returns:
@@ -624,12 +624,12 @@ def _build_level_mappings_for_param(
     for param in indexing_params:
         if param == "age":
             mappings.append(_age_level_mapping(ages))
-        elif param in all_grids:
-            mappings.append(_grid_level_mapping(name=param, grid=all_grids[param]))
+        elif param in grids:
+            mappings.append(_grid_level_mapping(name=param, grid=grids[param]))
         else:
             msg = (
                 f"Unrecognised indexing parameter '{param}'. Expected 'age' "
-                f"or a discrete grid name ({sorted(all_grids)}). If "
+                f"or a discrete grid name ({sorted(grids)}). If "
                 f"'{param}' is a DAG function output, pass "
                 f'derived_categoricals={{"{param}": DiscreteGrid(...)}} '
                 f"to solve() / simulate()."
@@ -641,7 +641,7 @@ def _build_level_mappings_for_param(
 def _build_outcome_mapping(
     *,
     func_name: str,
-    all_grids: dict[str, DiscreteGrid],
+    grids: dict[str, DiscreteGrid],
     model: Model,
 ) -> _LevelMapping:
     """Build a `_LevelMapping` for the outcome axis of a `next_*` function.
@@ -651,7 +651,7 @@ def _build_outcome_mapping(
 
     Args:
         func_name: Function name starting with `"next_"`.
-        all_grids: Categorical grid lookup.
+        grids: Categorical grid lookup.
         model: The LCM Model instance.
 
     Returns:
@@ -669,7 +669,7 @@ def _build_outcome_mapping(
 
     path = tree_path_from_qname(func_name)
     state_name = path[0].removeprefix("next_")
-    return _grid_level_mapping(name=f"next_{state_name}", grid=all_grids[state_name])
+    return _grid_level_mapping(name=f"next_{state_name}", grid=grids[state_name])
 
 
 def _scatter_series(
