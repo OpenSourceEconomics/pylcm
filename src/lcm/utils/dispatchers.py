@@ -27,7 +27,7 @@ def simulation_spacemap(
     action_names: tuple[str, ...],
     state_names: tuple[str, ...],
 ) -> FunctionWithArrayReturn:
-    """Apply map such that func can be evaluated on actions and simulation states.
+    """Apply jax.lax.map so func can be evaluated on actions and simulated states.
 
     This function maps the function `func` over the simulation state-action-space. That
     is, it maps `func` over the Cartesian product of the action variables, and over the
@@ -162,7 +162,7 @@ def productmap(
     variables: tuple[str, ...],
     batch_sizes: dict[str, int],
 ) -> FunctionWithArrayReturn:
-    """Apply jax.lax.map to evaluate func on the Cartesian product of variables.
+    """Apply jax.lax.map so func can be evaluated on the Cartesian product of variables.
 
     This is achieved by an iterative application of jax.lax.map.
 
