@@ -109,11 +109,13 @@ def get_Q_and_F(
             - set(target_transitions)
             - {V_arr_name}
         )
+        stochastic_variables = tuple(
+            key for key in target_transitions if key in stochastic_transition_names
+        )
         next_V[target_regime_name] = productmap(
             func=next_V_interpolator,
-            variables=tuple(
-                key for key in target_transitions if key in stochastic_transition_names
-            ),
+            variables=stochastic_variables,
+            batch_sizes=dict.fromkeys(stochastic_variables, 0),
         )
 
     # ----------------------------------------------------------------------------------
@@ -342,7 +344,10 @@ def _get_joint_weights_function(
         weights = jnp.array(list(kwargs.values()))
         return jnp.prod(weights)
 
-    return productmap(func=_outer, variables=tuple(arg_names))
+    variables = tuple(arg_names)
+    return productmap(
+        func=_outer, variables=variables, batch_sizes=dict.fromkeys(variables, 0)
+    )
 
 
 def _get_U_and_F(

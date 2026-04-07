@@ -64,10 +64,11 @@ def get_max_Q_over_a(
     )
 
     # Actions are the inner optimization axis — batching applies only to the
-    # outer state loop, so no batch_sizes here.
+    # outer state loop.
     Q_and_F = productmap(
         func=Q_and_F,
         variables=action_names,
+        batch_sizes=dict.fromkeys(action_names, 0),
     )
 
     @with_signature(
@@ -135,6 +136,7 @@ def get_argmax_and_max_Q_over_a(
     Q_and_F = productmap(
         func=Q_and_F,
         variables=action_names,
+        batch_sizes=dict.fromkeys(action_names, 0),
     )
 
     @with_signature(

@@ -159,7 +159,7 @@ def productmap(
     *,
     func: FunctionWithArrayReturn,
     variables: tuple[str, ...],
-    batch_sizes: dict[str, int] | None = None,
+    batch_sizes: dict[str, int],
 ) -> FunctionWithArrayReturn:
     """Apply map such that func is evaluated on the Cartesian product of variables.
 
@@ -172,7 +172,8 @@ def productmap(
         func: The function to be dispatched.
         variables: Tuple with names of arguments that over which the Cartesian product
             should be formed.
-        batch_sizes: Dict with the batch sizes for each variable.
+        batch_sizes: Dict mapping each variable name to its batch size. A batch size
+            of 0 means no batching.
 
     Returns:
         A callable with the same arguments as func (but with an additional leading
@@ -191,10 +192,6 @@ def productmap(
         )
 
     func_callable_with_args = allow_args(func)
-
-    # If no batch sizes provided, use full-size batches (no splitting)
-    if batch_sizes is None:
-        batch_sizes = dict.fromkeys(variables, 0)
 
     mapped = _base_productmap_batched(
         func_callable_with_args, variables, batch_sizes=batch_sizes

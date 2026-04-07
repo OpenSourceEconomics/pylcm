@@ -502,7 +502,12 @@ def create_income_grid(income_process: dict[str, dict[str, float]]) -> FloatND:
             * jnp.exp(((sdztemp**2.0) ** 2.0) / 2.0)
         )
 
-    mapped = productmap(func=calc_base, variables=("period", "health", "education"))
+    variables = ("period", "health", "education")
+    mapped = productmap(
+        func=calc_base,
+        variables=variables,
+        batch_sizes=dict.fromkeys(variables, 0),
+    )
     return mapped(period=j, health=health, education=education)
 
 
@@ -536,8 +541,11 @@ def health_trans(
     return jnp.exp(y) / (1.0 + jnp.exp(y))
 
 
+_health_trans_variables = ("period", "health", "eff", "eff_1", "edu", "ht")
 mapped_health_trans = productmap(
-    func=health_trans, variables=("period", "health", "eff", "eff_1", "edu", "ht")
+    func=health_trans,
+    variables=_health_trans_variables,
+    batch_sizes=dict.fromkeys(_health_trans_variables, 0),
 )
 
 tr2yp_grid = tr2yp_grid.at[:, :, :, :, :, :, 1].set(
