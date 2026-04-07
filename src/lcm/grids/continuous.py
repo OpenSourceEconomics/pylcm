@@ -16,6 +16,7 @@ from lcm.typing import (
 )
 
 
+@dataclass(frozen=True, kw_only=True)
 class ContinuousGrid(Grid):
     """Base class for grids representing continuous values with coordinate lookup.
 
@@ -23,6 +24,9 @@ class ContinuousGrid(Grid):
     used in interpolation.
 
     """
+
+    batch_size: int = 0
+    """Size of the batches that are looped over during the solution."""
 
     @overload
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...

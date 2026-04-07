@@ -70,7 +70,7 @@ class Tauchen(_ShockGridAR1):
 
     @property
     def _param_field_names(self) -> tuple[str, ...]:
-        exclude = {"n_points", "gauss_hermite"}
+        exclude = {"n_points", "batch_size", "gauss_hermite"}
         if self.gauss_hermite:
             exclude.add("n_std")
         return tuple(f.name for f in fields(self) if f.name not in exclude)

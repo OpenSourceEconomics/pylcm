@@ -102,6 +102,8 @@ def process_regimes(
     )
     all_grids = MappingProxyType({n: get_grids(r) for n, r in regimes.items()})
 
+    _fail_if_action_has_batch_size(regimes)
+
     regime_to_v_interpolation_info = MappingProxyType(
         {n: create_v_interpolation_info(r) for n, r in regimes.items()}
     )
@@ -243,6 +245,7 @@ def _build_solve_functions(
     max_Q_over_a = _build_max_Q_over_a_per_period(
         state_action_space=state_action_space,
         Q_and_F_functions=Q_and_F_functions,
+        grids=all_grids[regime_name],
         enable_jit=enable_jit,
     )
 
@@ -1256,6 +1259,7 @@ def _build_max_Q_over_a_per_period(
     *,
     state_action_space: StateActionSpace,
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
+    grids: MappingProxyType[str, Grid],
     enable_jit: bool,
 ) -> MappingProxyType[int, MaxQOverAFunction]:
     """Build max-Q-over-a closures for each period."""
@@ -1263,6 +1267,11 @@ def _build_max_Q_over_a_per_period(
     for period, Q_and_F in Q_and_F_functions.items():
         func = get_max_Q_over_a(
             Q_and_F=Q_and_F,
+            batch_sizes={
+                name: grid.batch_size
+                for name, grid in grids.items()
+                if name in state_action_space.state_names
+            },
             action_names=state_action_space.action_names,
             state_names=state_action_space.state_names,
         )
@@ -1323,3 +1332,22 @@ def _build_next_state_vmapped(
     )
 
     return jax.jit(next_state_vmapped) if enable_jit else next_state_vmapped
+
+
+def _fail_if_action_has_batch_size(regimes: Mapping[str, Regime]) -> None:
+    """Raise if any action grid has a non-zero batch_size.
+
+    Batching applies only to the outer state loop during solving, not to the
+    inner action optimization. A non-zero batch_size on an action grid would be
+    silently ignored, so we reject it early.
+
+    """
+    for regime_name, regime in regimes.items():
+        for action_name, grid in regime.actions.items():
+            if grid.batch_size != 0:
+                msg = (
+                    f"batch_size > 0 is not supported on action grids. Only state "
+                    f"grids can be batched. Found batch_size={grid.batch_size} on "
+                    f"action '{action_name}' in regime '{regime_name}'."
+                )
+                raise ValueError(msg)

@@ -1409,7 +1409,7 @@ def test_build_outcome_mapping_qualified_func_name() -> None:
 
     grids = _build_discrete_grid_lookup(model.regimes)
     result = _build_outcome_mapping(
-        func_name="next_health__working", all_grids=grids, model=model
+        func_name="next_health__working", grids=grids, model=model
     )
     assert result.size == 2
     assert result.name == "next_health"

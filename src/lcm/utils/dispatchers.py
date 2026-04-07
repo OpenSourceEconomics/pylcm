@@ -1,10 +1,14 @@
 import inspect
 from collections.abc import Callable
+from functools import partial
 from types import MappingProxyType
 from typing import Literal, TypeVar, cast
 
+import jax
+import jax.numpy as jnp
 from jax import Array, vmap
 
+from lcm.typing import Float1D, FloatND
 from lcm.utils.containers import find_duplicates
 from lcm.utils.functools import allow_args, allow_only_kwargs
 
@@ -23,7 +27,7 @@ def simulation_spacemap(
     action_names: tuple[str, ...],
     state_names: tuple[str, ...],
 ) -> FunctionWithArrayReturn:
-    """Apply vmap such that func can be evaluated on actions and simulation states.
+    """Apply jax.lax.map so func can be evaluated on actions and simulated states.
 
     This function maps the function `func` over the simulation state-action-space. That
     is, it maps `func` over the Cartesian product of the action variables, and over the
@@ -65,13 +69,19 @@ def simulation_spacemap(
 
     mappable_func = allow_args(func)
 
-    vmapped = _base_productmap(mappable_func, action_names)
-    vmapped = vmap_1d(func=vmapped, variables=state_names, callable_with="only_args")
+    mapped = allow_args(
+        productmap(
+            func=mappable_func,
+            variables=action_names,
+            batch_sizes=dict.fromkeys(action_names, 0),
+        )
+    )
+    mapped = vmap_1d(func=mapped, variables=state_names, callable_with="only_args")
 
     # Callables do not necessarily have a __signature__ attribute.
-    vmapped.__signature__ = inspect.signature(mappable_func)  # ty: ignore[unresolved-attribute]
+    mapped.__signature__ = inspect.signature(mappable_func)  # ty: ignore[unresolved-attribute]
 
-    return cast("FunctionWithArrayReturn", allow_only_kwargs(vmapped))
+    return cast("FunctionWithArrayReturn", allow_only_kwargs(mapped))
 
 
 def vmap_1d(
@@ -147,19 +157,24 @@ def vmap_1d(
 
 
 def productmap(
-    *, func: FunctionWithArrayReturn, variables: tuple[str, ...]
+    *,
+    func: FunctionWithArrayReturn,
+    variables: tuple[str, ...],
+    batch_sizes: dict[str, int],
 ) -> FunctionWithArrayReturn:
-    """Apply vmap such that func is evaluated on the Cartesian product of variables.
+    """Apply jax.lax.map so func can be evaluated on the Cartesian product of variables.
 
-    This is achieved by an iterative application of vmap.
+    This is achieved by an iterative application of jax.lax.map.
 
-    In contrast to _base_productmap, productmap preserves the function signature and
-    allows the function to be called with keyword arguments.
+    In contrast to _base_productmap_batched, productmap preserves the function signature
+    and allows the function to be called with keyword arguments.
 
     Args:
         func: The function to be dispatched.
         variables: Tuple with names of arguments that over which the Cartesian product
             should be formed.
+        batch_sizes: Dict mapping each variable name to its batch size. A batch size
+            of 0 means no batching.
 
     Returns:
         A callable with the same arguments as func (but with an additional leading
@@ -179,45 +194,83 @@ def productmap(
 
     func_callable_with_args = allow_args(func)
 
-    vmapped = _base_productmap(func_callable_with_args, variables)
+    mapped = _base_productmap_batched(
+        func=func_callable_with_args,
+        product_axes=variables,
+        batch_sizes=batch_sizes,
+    )
 
-    # Callables do not necessarily have a __signature__ attribute.
-    vmapped.__signature__ = inspect.signature(func_callable_with_args)  # ty: ignore[unresolved-attribute]
+    # Create new signature where every parameter is kw-only as
+    # batched_vmap takes only kwargs
+    signature = inspect.signature(func_callable_with_args)
+    new_parameters = [
+        p.replace(kind=inspect.Parameter.KEYWORD_ONLY)
+        for p in signature.parameters.values()
+    ]
+    new_signature = signature.replace(parameters=new_parameters)
+    mapped.__signature__ = new_signature  # ty: ignore[unresolved-attribute]
 
-    return cast("FunctionWithArrayReturn", allow_only_kwargs(vmapped, enforce=False))
+    return cast("FunctionWithArrayReturn", allow_only_kwargs(mapped, enforce=False))
 
 
-def _base_productmap(
-    func: FunctionWithArrayReturn, product_axes: tuple[str, ...]
+def _base_productmap_batched(
+    *,
+    func: FunctionWithArrayReturn,
+    product_axes: tuple[str, ...],
+    batch_sizes: dict[str, int],
 ) -> FunctionWithArrayReturn:
-    """Map func over the Cartesian product of product_axes.
+    """Map func over the Cartesian product of product_axes and execute in batches.
 
-    Like vmap, this function does not preserve the function signature and does not allow
-    the function to be called with keyword arguments.
+    Like `jax.lax.map`, this function does not preserve the function signature.
 
     Args:
         func: The function to be dispatched. Cannot have keyword-only arguments.
-        product_axes: Tuple with names of arguments over which we apply vmap.
+        product_axes: Tuple with names of arguments over which we apply
+            `jax.lax.map`.
+        batch_sizes: Dict with the batch sizes for each product_axis.
 
     Returns:
-        A callable with the same arguments as func. See `product_map` for details.
+        A callable with the same arguments as func. See `productmap` for details.
 
     """
-    signature = inspect.signature(func)
-    parameters = list(signature.parameters)
+    parameters = inspect.signature(func).parameters
 
-    positions = [parameters.index(ax) for ax in product_axes if ax in parameters]
+    def batched_vmap(**kwargs: FloatND) -> FloatND:
+        non_array_kwargs = {
+            key: val for key, val in kwargs.items() if key not in product_axes
+        }
+        func_with_partialled_args = cast(
+            "FunctionWithArrayReturn", partial(func, **non_array_kwargs)
+        )
 
-    vmap_specs = []
-    # We iterate in reverse order such that the output dimensions are in the same order
-    # as the input dimensions.
-    for pos in reversed(positions):
-        spec: list[int | None] = cast("list[int | None]", [None] * len(parameters))
-        spec[pos] = 0
-        vmap_specs.append(spec)
+        # Recursively map over one more product axis
+        def map_one_more(
+            loop_func: FunctionWithArrayReturn, axis: str
+        ) -> FunctionWithArrayReturn:
+            def func_mapped_over_one_more_axis(
+                *already_mapped_args: Float1D, **already_mapped_kwargs: Float1D
+            ) -> FloatND:
+                if parameters[axis].kind == inspect.Parameter.POSITIONAL_ONLY:
+                    return jax.lax.map(
+                        lambda axis_i: loop_func(
+                            axis_i, *already_mapped_args, **already_mapped_kwargs
+                        ),
+                        jnp.atleast_1d(kwargs[axis]),
+                        batch_size=batch_sizes[axis],
+                    )
+                return jax.lax.map(
+                    lambda axis_i: loop_func(
+                        *already_mapped_args, **{axis: axis_i}, **already_mapped_kwargs
+                    ),
+                    jnp.atleast_1d(kwargs[axis]),
+                    batch_size=batch_sizes[axis],
+                )
 
-    vmapped = func
-    for spec in vmap_specs:
-        vmapped = vmap(vmapped, in_axes=spec)
+            return cast("FunctionWithArrayReturn", func_mapped_over_one_more_axis)
 
-    return vmapped
+        # Loop over all product axes
+        for axis in reversed(product_axes):
+            func_with_partialled_args = map_one_more(func_with_partialled_args, axis)
+        return cast("FloatND", func_with_partialled_args())
+
+    return cast("FunctionWithArrayReturn", batched_vmap)

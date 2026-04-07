@@ -385,7 +385,7 @@ def _check_leaf(value: object, path: str) -> None:
         type_name = type(value).__module__ + "." + type(value).__name__
         msg = (
             f"Parameter '{path}' is a {type_name} (shape {value.shape}). "
-            f"Use jax.numpy.array() or pass a pd.Series with a named index."
+            f"Use jnp.array() or pass a pd.Series with a named index."
         )
         raise InvalidParamsError(msg)
     type_name = type(value).__module__ + "." + type(value).__name__

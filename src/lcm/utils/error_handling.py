@@ -532,8 +532,8 @@ def validate_transition_probs(
             target_regime_name=target_regime_name,
         )
         func = markov.func
-        all_grids = _build_all_grids(regime)
-        n_outcomes = len(all_grids[state_name].categories)
+        grids = _build_grids(regime)
+        n_outcomes = len(grids[state_name].categories)
     else:
         if not isinstance(regime.transition, MarkovTransition):
             msg = (
@@ -542,7 +542,7 @@ def validate_transition_probs(
             )
             raise TypeError(msg)
         func = regime.transition.func
-        all_grids = _build_all_grids(regime)
+        grids = _build_grids(regime)
         n_outcomes = len(model.regime_names_to_ids)
 
     indexing_params = _get_func_indexing_params(
@@ -566,7 +566,7 @@ def validate_transition_probs(
     expected_shape = _build_expected_shape(
         indexing_params=indexing_params,
         n_outcomes=n_outcomes,
-        all_grids=all_grids,
+        grids=grids,
         model=model,
     )
 
@@ -627,7 +627,7 @@ def _extract_markov_transition(
     raise TypeError(msg)
 
 
-def _build_all_grids(regime: Regime) -> dict[str, DiscreteGrid]:
+def _build_grids(regime: Regime) -> dict[str, DiscreteGrid]:
     """Collect all DiscreteGrid instances from regime states and actions."""
     return {
         name: grid
@@ -640,7 +640,7 @@ def _build_expected_shape(
     *,
     indexing_params: list[str],
     n_outcomes: int,
-    all_grids: dict[str, DiscreteGrid],
+    grids: dict[str, DiscreteGrid],
     model: Model,
 ) -> tuple[int, ...]:
     """Compute expected shape for a transition probability array."""
@@ -648,8 +648,8 @@ def _build_expected_shape(
     for param_name in indexing_params:
         if param_name == "period":
             shape.append(model.n_periods)
-        elif param_name in all_grids:
-            shape.append(len(all_grids[param_name].categories))
+        elif param_name in grids:
+            shape.append(len(grids[param_name].categories))
         else:
             msg = (
                 f"Cannot determine expected size for parameter '{param_name}'. "

@@ -119,6 +119,7 @@ def test_solve_brute():
         Q_and_F=_Q_and_F,
         action_names=("consumption", "labor_supply"),
         state_names=("lazy", "wealth"),
+        batch_sizes={"lazy": 0, "wealth": 0},
     )
 
     # ==================================================================================
@@ -176,6 +177,7 @@ def test_solve_brute_single_period_Qc_arr():
         Q_and_F=_Q_and_F,
         action_names=("d",),
         state_names=("a", "b", "c"),
+        batch_sizes={"a": 0, "b": 0, "c": 0},
     )
 
     expected = np.array([[[6.0, 7, 8], [7, 8, 9]], [[7, 8, 9], [8, 9, 10]]])

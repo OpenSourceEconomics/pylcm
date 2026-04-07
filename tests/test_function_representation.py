@@ -104,7 +104,11 @@ def test_function_evaluator(binary_discrete_grid):
     # create a value function array
     discrete_part = jnp.arange(4).repeat(6 * 7).reshape((2, 2, 6, 7)) * 100
 
-    cont_func = productmap(func=lambda x, y: x + y, variables=("x", "y"))
+    cont_func = productmap(
+        func=lambda x, y: x + y,
+        variables=("x", "y"),
+        batch_sizes=dict.fromkeys(("x", "y"), 0),
+    )
     cont_part = cont_func(x=jnp.linspace(100, 1100, 6), y=jnp.linspace(-3, 3, 7))
 
     next_V_arr = discrete_part + cont_part
@@ -176,7 +180,11 @@ def test_get_interpolator():
     def _utility(wealth, working):
         return 2 * wealth - working
 
-    prod_utility = productmap(func=_utility, variables=("wealth", "working"))
+    prod_utility = productmap(
+        func=_utility,
+        variables=("wealth", "working"),
+        batch_sizes=dict.fromkeys(("wealth", "working"), 0),
+    )
 
     values = prod_utility(
         wealth=jnp.arange(4, dtype=float),
@@ -251,7 +259,9 @@ def test_get_interpolator_illustrative():
     def f(a, b):
         return a - b
 
-    prod_f = productmap(func=f, variables=("a", "b"))
+    prod_f = productmap(
+        func=f, variables=("a", "b"), batch_sizes=dict.fromkeys(("a", "b"), 0)
+    )
 
     values = prod_f(a=jnp.arange(2, dtype=float), b=jnp.arange(3, dtype=float))
 
