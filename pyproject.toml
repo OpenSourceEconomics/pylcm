@@ -72,6 +72,92 @@ build.targets.wheel.sources = [ "src" ]
 metadata.allow-direct-references = true
 version.source = "vcs"
 
+[tool.pixi.dependencies]
+asv = "*"
+python = "~=3.14.0"
+cloudpickle = ">=3.1.2,<4"
+h5py = ">=3.12"
+jupyterlab = "*"
+memory_profiler = "*"
+numpy = ">=2.4"
+plotly = ">=6.5"
+prek = "*"
+pyarrow = "*"
+pybaum = "*"
+scipy = ">=1.16"
+snakeviz = "*"
+[tool.pixi.environments]
+cuda12 = { features = [ "cuda12" ], solve-group = "cuda12" }
+cuda13 = { features = [ "cuda13" ], solve-group = "cuda13" }
+docs = { features = [ "docs" ], solve-group = "default" }
+metal = { features = [ "metal" ], solve-group = "metal" }
+tests-cpu = { features = [ "tests" ], solve-group = "default" }
+tests-cuda12 = { features = [ "tests", "cuda12" ], solve-group = "cuda12" }
+tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
+tests-metal = { features = [ "tests", "metal" ], solve-group = "metal" }
+type-checking = { features = [ "type-checking", "tests" ], solve-group = "default" }
+[tool.pixi.feature.cuda12]
+platforms = [ "linux-64" ]
+system-requirements = { cuda = "12" }
+[tool.pixi.feature.cuda12.target.linux-64.dependencies]
+cuda-nvcc = "~=12.0"
+[tool.pixi.feature.cuda12.target.linux-64.pypi-dependencies]
+jax = { version = ">=0.9", extras = [ "cuda12" ] }
+[tool.pixi.feature.cuda13]
+platforms = [ "linux-64" ]
+system-requirements = { cuda = "13" }
+[tool.pixi.feature.cuda13.target.linux-64.dependencies]
+cuda-nvcc = "~=13.0"
+[tool.pixi.feature.cuda13.target.linux-64.pypi-dependencies]
+jax = { version = ">=0.9", extras = [ "cuda13" ] }
+[tool.pixi.feature.docs.dependencies]
+jupyter-book = ">=2.0"
+mystmd = "*"
+[tool.pixi.feature.docs.pypi-dependencies]
+quantecon = "*"
+[tool.pixi.feature.docs.tasks]
+build-docs = { cmd = "jupyter book build --html --execute", cwd = "docs", env = { JAX_PLATFORMS = "cpu" } }
+explanation-notebooks = "jupyter execute docs/explanations/*.ipynb"
+view-docs = { cmd = "jupyter book start --execute", cwd = "docs", env = { JAX_PLATFORMS = "cpu" } }
+[tool.pixi.feature.metal]
+platforms = [ "osx-arm64" ]
+[tool.pixi.feature.metal.target.osx-arm64.pypi-dependencies]
+jax = ">=0.9"
+jax-metal = ">=0.1.1"
+[tool.pixi.feature.tests.dependencies]
+pytest = "*"
+pytest-cov = "*"
+pytest-xdist = "*"
+[tool.pixi.feature.tests.pypi-dependencies]
+quantecon = "*"
+[tool.pixi.feature.tests.tasks]
+tests = "pytest tests"
+tests-32bit = "pytest tests --precision=32"
+tests-with-cov = "pytest tests --cov-report=xml --cov=./"
+[tool.pixi.feature.type-checking.dependencies]
+matplotlib = "*"
+pandas-stubs = "*"
+scipy-stubs = "*"
+ty = "*"
+[tool.pixi.feature.type-checking.tasks]
+ty = "ty check"
+[tool.pixi.pypi-dependencies]
+jax = ">=0.9"
+pdbp = "*"
+pylcm = { path = ".", editable = true }
+[tool.pixi.tasks]
+asv-compare = "asv compare"
+asv-preview = "asv preview"
+asv-pr-comment = "python benchmarks/pr_comment.py"
+asv-publish = "python benchmarks/publish.py"
+asv-quick = { cmd = "asv run --quick --set-commit-hash=$(git rev-parse HEAD)", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false", XLA_PYTHON_CLIENT_MEM_FRACTION = "0.3" } }
+asv-run = { cmd = 'git status --porcelain --ignore-submodules | grep -q . && echo "Refusing to benchmark: worktree is dirty. Commit first." && exit 1; asv run --set-commit-hash=$(git rev-parse HEAD)', env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false", XLA_PYTHON_CLIENT_MEM_FRACTION = "0.3" } }
+asv-run-and-pr-comment = { depends-on = [ "asv-run", "asv-pr-comment" ] }
+asv-run-and-publish-main = { depends-on = [ "asv-run", "asv-publish" ] }
+[tool.pixi.workspace]
+channels = [ "conda-forge" ]
+platforms = [ "linux-64", "osx-arm64", "win-64" ]
+
 [tool.ruff]
 target-version = "py314"
 exclude = [ "src/lcm/sandbox" ]
@@ -211,92 +297,6 @@ ini_options.markers = [
   "gpu: Tests that require a GPU (skipped on CPU-only machines)",
 ]
 ini_options.norecursedirs = [ "docs" ]
-
-[tool.pixi.dependencies]
-asv = "*"
-python = "~=3.14.0"
-cloudpickle = ">=3.1.2,<4"
-h5py = ">=3.12"
-jupyterlab = "*"
-memory_profiler = "*"
-numpy = ">=2.4"
-plotly = ">=6.5"
-prek = "*"
-pyarrow = "*"
-pybaum = "*"
-scipy = ">=1.16"
-snakeviz = "*"
-[tool.pixi.environments]
-cuda12 = { features = [ "cuda12" ], solve-group = "cuda12" }
-cuda13 = { features = [ "cuda13" ], solve-group = "cuda13" }
-docs = { features = [ "docs" ], solve-group = "default" }
-metal = { features = [ "metal" ], solve-group = "metal" }
-tests-cpu = { features = [ "tests" ], solve-group = "default" }
-tests-cuda12 = { features = [ "tests", "cuda12" ], solve-group = "cuda12" }
-tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
-tests-metal = { features = [ "tests", "metal" ], solve-group = "metal" }
-type-checking = { features = [ "type-checking", "tests" ], solve-group = "default" }
-[tool.pixi.feature.cuda12]
-platforms = [ "linux-64" ]
-system-requirements = { cuda = "12" }
-[tool.pixi.feature.cuda12.target.linux-64.dependencies]
-cuda-nvcc = "~=12.0"
-[tool.pixi.feature.cuda12.target.linux-64.pypi-dependencies]
-jax = { version = ">=0.9", extras = [ "cuda12" ] }
-[tool.pixi.feature.cuda13]
-platforms = [ "linux-64" ]
-system-requirements = { cuda = "13" }
-[tool.pixi.feature.cuda13.target.linux-64.dependencies]
-cuda-nvcc = "~=13.0"
-[tool.pixi.feature.cuda13.target.linux-64.pypi-dependencies]
-jax = { version = ">=0.9", extras = [ "cuda13" ] }
-[tool.pixi.feature.docs.dependencies]
-jupyter-book = ">=2.0"
-mystmd = "*"
-[tool.pixi.feature.docs.pypi-dependencies]
-quantecon = "*"
-[tool.pixi.feature.docs.tasks]
-build-docs = { cmd = "jupyter book build --html --execute", cwd = "docs", env = { JAX_PLATFORMS = "cpu" } }
-explanation-notebooks = "jupyter execute docs/explanations/*.ipynb"
-view-docs = { cmd = "jupyter book start --execute", cwd = "docs", env = { JAX_PLATFORMS = "cpu" } }
-[tool.pixi.feature.metal]
-platforms = [ "osx-arm64" ]
-[tool.pixi.feature.metal.target.osx-arm64.pypi-dependencies]
-jax = ">=0.9"
-jax-metal = ">=0.1.1"
-[tool.pixi.feature.tests.dependencies]
-pytest = "*"
-pytest-cov = "*"
-pytest-xdist = "*"
-[tool.pixi.feature.tests.pypi-dependencies]
-quantecon = "*"
-[tool.pixi.feature.tests.tasks]
-tests = "pytest tests"
-tests-32bit = "pytest tests --precision=32"
-tests-with-cov = "pytest tests --cov-report=xml --cov=./"
-[tool.pixi.feature.type-checking.dependencies]
-matplotlib = "*"
-pandas-stubs = "*"
-scipy-stubs = "*"
-ty = "*"
-[tool.pixi.feature.type-checking.tasks]
-ty = "ty check"
-[tool.pixi.pypi-dependencies]
-jax = ">=0.9"
-pdbp = "*"
-pylcm = { path = ".", editable = true }
-[tool.pixi.tasks]
-asv-compare = "asv compare"
-asv-preview = "asv preview"
-asv-pr-comment = "python benchmarks/pr_comment.py"
-asv-publish = "python benchmarks/publish.py"
-asv-quick = { cmd = "asv run --quick --set-commit-hash=$(git rev-parse HEAD)", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false", XLA_PYTHON_CLIENT_MEM_FRACTION = "0.3" } }
-asv-run = { cmd = 'git status --porcelain --ignore-submodules | grep -q . && echo "Refusing to benchmark: worktree is dirty. Commit first." && exit 1; asv run --set-commit-hash=$(git rev-parse HEAD)', env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false", XLA_PYTHON_CLIENT_MEM_FRACTION = "0.3" } }
-asv-run-and-pr-comment = { depends-on = [ "asv-run", "asv-pr-comment" ] }
-asv-run-and-publish-main = { depends-on = [ "asv-run", "asv-publish" ] }
-[tool.pixi.workspace]
-channels = [ "conda-forge" ]
-platforms = [ "linux-64", "osx-arm64", "win-64" ]
 
 [tool.yamlfix]
 line_length = 88
