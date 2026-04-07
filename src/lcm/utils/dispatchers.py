@@ -5,6 +5,7 @@ from types import MappingProxyType
 from typing import Literal, TypeVar, cast
 
 import jax
+import jax.numpy as jnp
 from jax import Array, vmap
 
 from lcm.typing import Float1D, FloatND
@@ -161,9 +162,9 @@ def productmap(
     variables: tuple[str, ...],
     batch_sizes: dict[str, int],
 ) -> FunctionWithArrayReturn:
-    """Apply map such that func is evaluated on the Cartesian product of variables.
+    """Apply jax.lax.map to evaluate func on the Cartesian product of variables.
 
-    This is achieved by an iterative application of map.
+    This is achieved by an iterative application of jax.lax.map.
 
     In contrast to _base_productmap_batched, productmap preserves the function signature
     and allows the function to be called with keyword arguments.
@@ -254,14 +255,14 @@ def _base_productmap_batched(
                         lambda axis_i: loop_func(
                             axis_i, *already_mapped_args, **already_mapped_kwargs
                         ),
-                        jax.numpy.atleast_1d(kwargs[axis]),
+                        jnp.atleast_1d(kwargs[axis]),
                         batch_size=batch_sizes[axis],
                     )
                 return jax.lax.map(
                     lambda axis_i: loop_func(
                         *already_mapped_args, **{axis: axis_i}, **already_mapped_kwargs
                     ),
-                    jax.numpy.atleast_1d(kwargs[axis]),
+                    jnp.atleast_1d(kwargs[axis]),
                     batch_size=batch_sizes[axis],
                 )
 
