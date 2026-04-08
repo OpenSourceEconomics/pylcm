@@ -28,13 +28,23 @@ _RESULTS_DIR = Path(".asv/results")
 
 _CLASS_DISPLAY = {
     "MahlerYum": "Mahler-Yum",
+    "MahlerYumGpuPeakMem": "Mahler-Yum",
     "Mortality": "Mortality",
+    "MortalityGpuPeakMem": "Mortality",
     "PrecautionarySavingsSolve": "Precautionary Savings - Solve",
-    "PrecautionarySavingsSimulate": ("Precautionary Savings - Simulate"),
+    "PrecautionarySavingsSolveGpuPeakMem": "Precautionary Savings - Solve",
+    "PrecautionarySavingsSimulate": "Precautionary Savings - Simulate",
+    "PrecautionarySavingsSimulateGpuPeakMem": "Precautionary Savings - Simulate",
     "PrecautionarySavingsSimulateWithSolve": (
         "Precautionary Savings - Solve & Simulate"
     ),
+    "PrecautionarySavingsSimulateWithSolveGpuPeakMem": (
+        "Precautionary Savings - Solve & Simulate"
+    ),
     "PrecautionarySavingsSimulateWithSolveIrreg": (
+        "Precautionary Savings - Solve & Simulate (irreg)"
+    ),
+    "PrecautionarySavingsSimulateWithSolveIrregGpuPeakMem": (
         "Precautionary Savings - Solve & Simulate (irreg)"
     ),
 }
@@ -58,7 +68,9 @@ _METHOD_SORT = {
     )
 }
 
-_CLASS_SORT = {name: i for i, name in enumerate(_CLASS_DISPLAY)}
+_DISPLAY_SORT = {
+    display: i for i, display in enumerate(dict.fromkeys(_CLASS_DISPLAY.values()))
+}
 
 _ALERT_RATIO = 1.10
 
@@ -295,7 +307,7 @@ def _build_grouped_table(rows: list[_BenchmarkRow]) -> str:
     """Build a grouped markdown table from parsed benchmark rows."""
     groups: dict[tuple[str, str], list[_BenchmarkRow]] = {}
     for row in rows:
-        key = (row.class_name, row.params)
+        key = (_CLASS_DISPLAY.get(row.class_name, row.class_name), row.params)
         groups.setdefault(key, []).append(row)
 
     for group_rows in groups.values():
@@ -306,7 +318,7 @@ def _build_grouped_table(rows: list[_BenchmarkRow]) -> str:
     sorted_keys = sorted(
         groups,
         key=lambda k: (
-            _CLASS_SORT.get(k[0], len(_CLASS_SORT)),
+            _DISPLAY_SORT.get(k[0], len(_DISPLAY_SORT)),
             k[1],
         ),
     )
@@ -316,13 +328,11 @@ def _build_grouped_table(rows: list[_BenchmarkRow]) -> str:
         "|---|---|---|---|---|---|",
     ]
 
-    for class_name, params in sorted_keys:
-        display_name = _CLASS_DISPLAY.get(class_name, class_name)
-        if params:
-            display_name = f"{display_name} ({params})"
+    for display_name, params in sorted_keys:
+        label = f"{display_name} ({params})" if params else display_name
 
-        for i, row in enumerate(groups[(class_name, params)]):
-            bench_col = display_name if i == 0 else ""
+        for i, row in enumerate(groups[(display_name, params)]):
+            bench_col = label if i == 0 else ""
             stat_col = _METHOD_DISPLAY.get(row.method_name, row.method_name)
             alert = "\u274c" if row.ratio > _ALERT_RATIO else ""
             lines.append(
@@ -343,7 +353,8 @@ def _format_raw_results(result_file: Path, head_sha: str) -> str:
 
     groups: dict[tuple[str, str], list[tuple[str, str]]] = {}
     for class_name, method_name, params, value in entries:
-        groups.setdefault((class_name, params), []).append((method_name, value))
+        display = _CLASS_DISPLAY.get(class_name, class_name)
+        groups.setdefault((display, params), []).append((method_name, value))
 
     for group in groups.values():
         group.sort(key=lambda x: _METHOD_SORT.get(x[0], len(_METHOD_SORT)))
@@ -351,7 +362,7 @@ def _format_raw_results(result_file: Path, head_sha: str) -> str:
     sorted_keys = sorted(
         groups,
         key=lambda k: (
-            _CLASS_SORT.get(k[0], len(_CLASS_SORT)),
+            _DISPLAY_SORT.get(k[0], len(_DISPLAY_SORT)),
             k[1],
         ),
     )
@@ -361,13 +372,11 @@ def _format_raw_results(result_file: Path, head_sha: str) -> str:
         "|---|---|---|",
     ]
 
-    for class_name, params in sorted_keys:
-        display_name = _CLASS_DISPLAY.get(class_name, class_name)
-        if params:
-            display_name = f"{display_name} ({params})"
+    for display_name, params in sorted_keys:
+        label = f"{display_name} ({params})" if params else display_name
 
-        for i, (method_name, value) in enumerate(groups[(class_name, params)]):
-            bench_col = display_name if i == 0 else ""
+        for i, (method_name, value) in enumerate(groups[(display_name, params)]):
+            bench_col = label if i == 0 else ""
             stat_col = _METHOD_DISPLAY.get(method_name, method_name)
             lines.append(f"| {bench_col} | {stat_col} | {value} |")
 
