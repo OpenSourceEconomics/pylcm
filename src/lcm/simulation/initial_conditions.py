@@ -7,6 +7,7 @@ Consolidates initial condition construction (`build_initial_states`) and validat
 
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
+from typing import Never
 
 import jax
 import numpy as np
@@ -523,7 +524,40 @@ def _batched_feasibility_check(
     return jnp.concatenate(results)
 
 
-def _check_regime_feasibility(
+def _raise_feasibility_type_error(
+    exc: TypeError,
+    *,
+    regime_name: str,
+    internal_regime: InternalRegime,
+    subject_states: dict[str, Array],
+) -> Never:
+    """Re-raise a TypeError from feasibility checking with diagnostic context."""
+    discrete_names = {
+        name
+        for name, grid in internal_regime.grids.items()
+        if isinstance(grid, DiscreteGrid)
+    }
+
+    bad_dtypes: list[str] = []
+    for name, arr in subject_states.items():
+        if name in discrete_names and not jnp.issubdtype(arr.dtype, jnp.integer):
+            bad_dtypes.append(f"  {name!r}: dtype={arr.dtype} (expected integer)")
+
+    hint = ""
+    if bad_dtypes:
+        hint = (
+            "\n\nDiscrete states with wrong dtype:\n"
+            + "\n".join(bad_dtypes)
+            + "\n\nDiscrete states are used as array indices and must have integer "
+            "dtype. Check that initial conditions encode categorical states as int "
+            "codes, not floats."
+        )
+
+    msg = f"TypeError in feasibility check for regime {regime_name!r}: {exc}{hint}"
+    raise TypeError(msg) from exc
+
+
+def _check_regime_feasibility(  # noqa: C901
     *,
     internal_regime: InternalRegime,
     regime_name: str,
@@ -587,13 +621,21 @@ def _check_regime_feasibility(
     }
 
     if subject_states:
-        any_feasible = _batched_feasibility_check(
-            feasibility_func=feasibility_func,
-            subject_states=subject_states,
-            action_kwargs=action_kwargs,
-            filtered_params=filtered_params,
-            flat_actions=flat_actions,
-        )
+        try:
+            any_feasible = _batched_feasibility_check(
+                feasibility_func=feasibility_func,
+                subject_states=subject_states,
+                action_kwargs=action_kwargs,
+                filtered_params=filtered_params,
+                flat_actions=flat_actions,
+            )
+        except TypeError as exc:
+            _raise_feasibility_type_error(
+                exc,
+                regime_name=regime_name,
+                internal_regime=internal_regime,
+                subject_states=subject_states,
+            )
         infeasible_mask = np.asarray(~any_feasible)
         infeasible_indices = np.asarray(idx_arr)[infeasible_mask].tolist()
     else:
