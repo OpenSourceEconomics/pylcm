@@ -381,6 +381,175 @@ def test_per_target_dict_transitions():
     )
 
 
+@pytest.mark.xfail(
+    raises=KeyError,
+    reason="Incomplete per-target transitions: KeyError on next_health",
+)
+def test_stochastic_cross_grid_health_transition():
+    """Stochastic MarkovTransition with different health grids across regimes.
+
+    Same structure as test_per_target_dict_transitions but health transitions
+    are stochastic (return probability vectors). This triggers a bug where
+    next_V_extra_param_names includes 'next_health' because the subtraction
+    uses un-prefixed state names that don't match the prefixed interpolator args.
+    """
+
+    @categorical(ordered=False)
+    class _RegimeId:
+        pre65: int
+        post65_a: int
+        post65_b: int
+        dead: int
+
+    def next_health_same(health: DiscreteState) -> FloatND:
+        """Stochastic same-grid transition (3→3)."""
+        return jnp.where(
+            health == HealthWorkingLife.good,
+            jnp.array([0.05, 0.15, 0.8]),
+            jnp.where(
+                health == HealthWorkingLife.bad,
+                jnp.array([0.1, 0.7, 0.2]),
+                jnp.array([0.8, 0.15, 0.05]),
+            ),
+        )
+
+    def cross_health(health: DiscreteState) -> FloatND:
+        """Stochastic cross-grid transition (3→2)."""
+        return jnp.where(
+            health == HealthWorkingLife.good,
+            jnp.array([0.1, 0.9]),
+            jnp.array([0.7, 0.3]),
+        )
+
+    def next_wealth(
+        wealth: ContinuousState, consumption: ContinuousAction
+    ) -> ContinuousState:
+        return wealth - consumption
+
+    def next_regime_pre65(age: float) -> ScalarInt:
+        """pre65 transitions to post65_a only (not post65_b)."""
+        return jnp.where(
+            age >= 2,
+            _RegimeId.dead,
+            jnp.where(
+                age >= 1,
+                _RegimeId.post65_a,
+                _RegimeId.pre65,
+            ),
+        )
+
+    def next_regime_post65(age: float) -> ScalarInt:
+        return jnp.where(age >= 3, _RegimeId.dead, _RegimeId.post65_a)
+
+    # pre65 provides health transitions for pre65 and post65_a only.
+    # post65_b is reachable from post65_a (not from pre65), so pre65's
+    # per-target dict does NOT include post65_b. But pylcm must still
+    # handle post65_b's V interpolator correctly during backwards induction.
+    pre65 = Regime(
+        states={
+            "health": DiscreteGrid(HealthWorkingLife),
+            "wealth": LinSpacedGrid(start=1, stop=50, n_points=10),
+        },
+        state_transitions={
+            "health": {
+                "pre65": MarkovTransition(next_health_same),
+                "post65_a": MarkovTransition(cross_health),
+                "dead": MarkovTransition(next_health_same),
+            },
+            "wealth": next_wealth,
+        },
+        actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=20)},
+        constraints={
+            "borrowing": lambda consumption, wealth: consumption <= wealth,
+        },
+        functions={
+            "utility": lambda consumption, health: jnp.log(consumption) + 0.1 * health,
+        },
+        transition=next_regime_pre65,
+        active=lambda age: age < 3,
+    )
+
+    def next_regime_post65_a(age: float) -> ScalarInt:
+        """post65_a can transition to post65_b or stay."""
+        return jnp.where(
+            age >= 3,
+            _RegimeId.dead,
+            jnp.where(
+                age >= 2,
+                _RegimeId.post65_b,
+                _RegimeId.post65_a,
+            ),
+        )
+
+    def next_health_2state(health: DiscreteState) -> FloatND:
+        """Stochastic same-grid transition (2→2)."""
+        return jnp.where(
+            health == HealthRetirement.good,
+            jnp.array([0.2, 0.8]),
+            jnp.array([0.6, 0.4]),
+        )
+
+    post65_a = Regime(
+        states={
+            "health": DiscreteGrid(HealthRetirement),
+            "wealth": LinSpacedGrid(start=1, stop=50, n_points=10),
+        },
+        state_transitions={
+            "health": {
+                "post65_a": MarkovTransition(next_health_2state),
+                "post65_b": MarkovTransition(next_health_2state),
+                "dead": MarkovTransition(next_health_2state),
+            },
+            "wealth": next_wealth,
+        },
+        actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=20)},
+        constraints={
+            "borrowing": lambda consumption, wealth: consumption <= wealth,
+        },
+        functions={
+            "utility": lambda consumption, health: jnp.log(consumption) + 0.05 * health,
+        },
+        transition=next_regime_post65_a,
+        active=lambda age: age < 4,
+    )
+
+    post65_b = Regime(
+        states={
+            "health": DiscreteGrid(HealthRetirement),
+            "wealth": LinSpacedGrid(start=1, stop=50, n_points=10),
+        },
+        state_transitions={
+            "health": None,
+            "wealth": next_wealth,
+        },
+        actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=20)},
+        constraints={
+            "borrowing": lambda consumption, wealth: consumption <= wealth,
+        },
+        functions={
+            "utility": lambda consumption, health: jnp.log(consumption) + 0.05 * health,
+        },
+        transition=lambda age: jnp.where(age >= 3, _RegimeId.dead, _RegimeId.post65_b),
+        active=lambda age: age < 4,
+    )
+
+    dead = Regime(transition=None, functions={"utility": lambda: 0.0})
+
+    model = Model(
+        regimes={
+            "pre65": pre65,
+            "post65_a": post65_a,
+            "post65_b": post65_b,
+            "dead": dead,
+        },
+        ages=AgeGrid(start=0, stop=4, step="Y"),
+        regime_id_class=_RegimeId,
+    )
+
+    params = {"discount_factor": 0.95}
+    model.solve(params=params)
+
+
 def test_discrete_state_same_count_different_names():
     """Same number of categories but different names should still raise."""
 

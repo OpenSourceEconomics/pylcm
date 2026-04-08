@@ -197,11 +197,10 @@ def get_Q_and_F(
             # As we productmap'd the value function over the stochastic variables, the
             # resulting next value function gets a new dimension for each stochastic
             # variable.
-            extra_kw = {}
-            for k in next_V_extra_param_names[target_regime_name]:
-                if k not in states_actions_params:
-                    breakpoint()  # DEBUG: next_V needs key not in states_actions_params
-                extra_kw[k] = states_actions_params[k]
+            extra_kw = {
+                k: states_actions_params[k]
+                for k in next_V_extra_param_names[target_regime_name]
+            }
             next_V_at_stochastic_states_arr = next_V[target_regime_name](
                 **next_states,
                 next_V_arr=next_regime_to_V_arr[target_regime_name],
