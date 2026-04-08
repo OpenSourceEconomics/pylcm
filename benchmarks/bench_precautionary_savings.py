@@ -3,6 +3,8 @@
 import gc
 import time
 
+from benchmarks import _gpu_mem
+
 _N_SUBJECTS = 1_000
 
 
@@ -35,13 +37,6 @@ def _make_initial_conditions(n_subjects):
     }
 
 
-def _get_gpu_peak_bytes():
-    import jax
-
-    stats = jax.local_devices()[0].memory_stats()
-    return stats["peak_bytes_in_use"]
-
-
 def _clear_gpu_memory():
     import jax
 
@@ -52,14 +47,20 @@ def _clear_gpu_memory():
 class PrecautionarySavingsSolve:
     timeout = 600
 
-    def setup(self):
+    def _build(self):
         self.model, self.model_params = _make_model(
             wealth_n_points=500,
             consumption_n_points=500,
         )
+
+    def setup(self):
+        self._build()
         start = time.perf_counter()
         self.model.solve(params=self.model_params, log_level="off")
         self._compile_time = time.perf_counter() - start
+
+    def setup_for_gpu_measurement(self):
+        self._build()
 
     def time_execution(self):
         self.model.solve(params=self.model_params, log_level="off")
@@ -70,26 +71,29 @@ class PrecautionarySavingsSolve:
     def teardown(self):
         _clear_gpu_memory()
 
-    def track_gpu_peak_mem(self):
-        return _get_gpu_peak_bytes()
-
-    track_gpu_peak_mem.unit = "bytes"
-
     def track_compilation_time(self):
         return self._compile_time
 
     track_compilation_time.unit = "seconds"
+
+
+class PrecautionarySavingsSolveGpuPeakMem(_gpu_mem.GpuPeakMem):
+    bench_module = "benchmarks.bench_precautionary_savings"
+    bench_class = "PrecautionarySavingsSolve"
 
 
 class PrecautionarySavingsSimulate:
     timeout = 600
 
-    def setup(self):
+    def _build(self):
         self.model, self.model_params = _make_model()
         self.period_to_regime_to_V_arr = self.model.solve(
             params=self.model_params, log_level="off"
         )
         self.initial_conditions = _make_initial_conditions(1_000_000)
+
+    def setup(self):
+        self._build()
         start = time.perf_counter()
         self.model.simulate(
             params=self.model_params,
@@ -99,6 +103,9 @@ class PrecautionarySavingsSimulate:
             check_initial_conditions=False,
         )
         self._compile_time = time.perf_counter() - start
+
+    def setup_for_gpu_measurement(self):
+        self._build()
 
     def time_execution(self):
         self.model.simulate(
@@ -121,26 +128,29 @@ class PrecautionarySavingsSimulate:
     def teardown(self):
         _clear_gpu_memory()
 
-    def track_gpu_peak_mem(self):
-        return _get_gpu_peak_bytes()
-
-    track_gpu_peak_mem.unit = "bytes"
-
     def track_compilation_time(self):
         return self._compile_time
 
     track_compilation_time.unit = "seconds"
+
+
+class PrecautionarySavingsSimulateGpuPeakMem(_gpu_mem.GpuPeakMem):
+    bench_module = "benchmarks.bench_precautionary_savings"
+    bench_class = "PrecautionarySavingsSimulate"
 
 
 class PrecautionarySavingsSimulateWithSolve:
     timeout = 600
 
-    def setup(self):
+    def _build(self):
         self.model, self.model_params = _make_model(
             wealth_n_points=200,
             consumption_n_points=200,
         )
         self.initial_conditions = _make_initial_conditions(500_000)
+
+    def setup(self):
+        self._build()
         start = time.perf_counter()
         self.model.simulate(
             params=self.model_params,
@@ -150,6 +160,9 @@ class PrecautionarySavingsSimulateWithSolve:
             check_initial_conditions=False,
         )
         self._compile_time = time.perf_counter() - start
+
+    def setup_for_gpu_measurement(self):
+        self._build()
 
     def time_execution(self):
         self.model.simulate(
@@ -172,27 +185,30 @@ class PrecautionarySavingsSimulateWithSolve:
     def teardown(self):
         _clear_gpu_memory()
 
-    def track_gpu_peak_mem(self):
-        return _get_gpu_peak_bytes()
-
-    track_gpu_peak_mem.unit = "bytes"
-
     def track_compilation_time(self):
         return self._compile_time
 
     track_compilation_time.unit = "seconds"
 
 
+class PrecautionarySavingsSimulateWithSolveGpuPeakMem(_gpu_mem.GpuPeakMem):
+    bench_module = "benchmarks.bench_precautionary_savings"
+    bench_class = "PrecautionarySavingsSimulateWithSolve"
+
+
 class PrecautionarySavingsSimulateWithSolveIrreg:
     timeout = 600
 
-    def setup(self):
+    def _build(self):
         self.model, self.model_params = _make_model(
             wealth_grid_type="irreg",
             wealth_n_points=200,
             consumption_n_points=200,
         )
         self.initial_conditions = _make_initial_conditions(500_000)
+
+    def setup(self):
+        self._build()
         start = time.perf_counter()
         self.model.simulate(
             params=self.model_params,
@@ -202,6 +218,9 @@ class PrecautionarySavingsSimulateWithSolveIrreg:
             check_initial_conditions=False,
         )
         self._compile_time = time.perf_counter() - start
+
+    def setup_for_gpu_measurement(self):
+        self._build()
 
     def time_execution(self):
         self.model.simulate(
@@ -224,12 +243,12 @@ class PrecautionarySavingsSimulateWithSolveIrreg:
     def teardown(self):
         _clear_gpu_memory()
 
-    def track_gpu_peak_mem(self):
-        return _get_gpu_peak_bytes()
-
-    track_gpu_peak_mem.unit = "bytes"
-
     def track_compilation_time(self):
         return self._compile_time
 
     track_compilation_time.unit = "seconds"
+
+
+class PrecautionarySavingsSimulateWithSolveIrregGpuPeakMem(_gpu_mem.GpuPeakMem):
+    bench_module = "benchmarks.bench_precautionary_savings"
+    bench_class = "PrecautionarySavingsSimulateWithSolveIrreg"
