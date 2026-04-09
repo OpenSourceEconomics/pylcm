@@ -1,5 +1,12 @@
 import contextlib
+import os
 from types import MappingProxyType
+
+# Use on-demand GPU memory allocation instead of JAX's default of pre-allocating
+# 75% of GPU memory. This plays nicely with other GPU processes, makes nvidia-smi
+# reflect actual usage, and enables meaningful GPU memory benchmarks. Users can
+# override by setting XLA_PYTHON_CLIENT_PREALLOCATE=true before importing lcm.
+os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
 import jax
 
