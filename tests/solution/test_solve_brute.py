@@ -19,6 +19,7 @@ class SolveFunctionsMock:
     """Mock SolveFunctions with only max_Q_over_a."""
 
     max_Q_over_a: dict[int, MaxQOverAFunction]
+    diagnostic_Q_and_F: dict = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass(frozen=True)

@@ -3,10 +3,11 @@ import inspect
 import textwrap
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
-from typing import TYPE_CHECKING, overload
+from typing import TYPE_CHECKING, Any, overload
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pandas as pd
 from jax import Array
 
@@ -35,34 +36,178 @@ if TYPE_CHECKING:
 
 
 def validate_V(
-    *, V_arr: Array, age: ScalarInt | ScalarFloat, regime_name: str | None = None
+    *,
+    V_arr: Array,
+    age: ScalarInt | ScalarFloat,
+    regime_name: str | None = None,
+    partial_solution: object = None,
+    diagnostic_funcs: Mapping[str, Callable] | None = None,
+    diagnostic_kwargs: Mapping[str, Any] | None = None,
+    state_names: tuple[str, ...] = (),
 ) -> None:
     """Validate the value function array for NaN values.
 
-    This function checks the value function array for any NaN values. If any such values
-    are found, we raise an `InvalidValueFunctionError`.
+    When diagnostic functions are provided, run them to enrich the error with
+    per-intermediate NaN fractions (GPU first, CPU fallback on OOM).
 
     Args:
         V_arr: The value function array to validate.
         age: The age for which the value function is being validated.
         regime_name: Name of the regime (for error messages).
+        partial_solution: Value function arrays for periods that completed
+            before the error. Attached to the exception for debug snapshots.
+        diagnostic_funcs: Mapping of diagnostic names to callables.
+        diagnostic_kwargs: Keyword arguments to pass to each diagnostic func.
+        state_names: State dimension names for marginal summaries.
 
     Raises:
         InvalidValueFunctionError: If the value function array contains NaN values.
 
     """
-    if jnp.any(jnp.isnan(V_arr)):
-        n_nan = int(jnp.sum(jnp.isnan(V_arr)))
-        total = int(V_arr.size)
-        regime_part = f" in regime '{regime_name}'" if regime_name else ""
-        raise InvalidValueFunctionError(
-            f"The value function array at age {age}{regime_part} contains NaN values "
-            f"({n_nan} of {total} values are NaN). This may be due to various "
-            "reasons:\n"
-            "- The user-defined functions returned invalid values.\n"
-            "- It is impossible to reach an active regime, resulting in NaN regime\n"
-            "  transition probabilities."
+    if not jnp.any(jnp.isnan(V_arr)):
+        return
+
+    n_nan = int(jnp.sum(jnp.isnan(V_arr)))
+    total = int(V_arr.size)
+    regime_part = f" in regime '{regime_name}'" if regime_name else ""
+    all_nan = n_nan == total
+    fraction_hint = "all" if all_nan else f"{n_nan} of {total}"
+    exc = InvalidValueFunctionError(
+        f"Value function at age {age}{regime_part}: {fraction_hint} values "
+        f"are NaN.\n\n"
+        "NaN propagates through Q = U + beta * E[V]. Common causes:\n"
+        "- A missing feasibility constraint (e.g. negative leisure passed "
+        "to a fractional exponent).\n"
+        "- A regime parameter is NaN.\n"
+        "- The utility function returned NaN (e.g. log of a non-positive "
+        "argument).\n"
+        "- The regime transition function returned NaN probabilities "
+        "(e.g. from a NaN survival probability or a NaN fixed param).\n\n"
+        "To diagnose, re-solve with debug logging:\n\n"
+        '  model.solve(params=params, log_level="debug", '
+        'log_path="./debug/")\n\n'
+        "The snapshot saved on failure contains diagnostics that pinpoint "
+        "where NaN enters (U, E[V], or regime transitions). See the "
+        "debugging guide:\n"
+        "https://pylcm.readthedocs.io/en/latest/user_guide/debugging/"
+    )
+    exc.partial_solution = partial_solution
+
+    if diagnostic_funcs is not None and diagnostic_kwargs is not None:
+        diag_results = _run_diagnostics(
+            diagnostic_funcs=diagnostic_funcs,
+            diagnostic_kwargs=dict(diagnostic_kwargs),
         )
+        exc.diagnostics = _summarize_diagnostics(
+            diag_results,
+            state_names,
+            regime_name=regime_name or "",
+            age=float(age),
+        )
+        exc.add_note(_format_diagnostic_summary(exc.diagnostics))
+
+    raise exc
+
+
+def _run_diagnostics(
+    *,
+    diagnostic_funcs: Mapping[str, Callable],
+    diagnostic_kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    """Run diagnostic functions with GPU-first, CPU-fallback strategy."""
+    diag_results: dict[str, Any] = {}
+    try:
+        for name, func in diagnostic_funcs.items():
+            diag_results[name] = np.asarray(func(**diagnostic_kwargs))
+    except jax.errors.JaxRuntimeError:
+        cpu = jax.devices("cpu")[0]
+        diagnostic_kwargs = jax.device_put(diagnostic_kwargs, cpu)
+        diag_results = {}
+        for name, func in diagnostic_funcs.items():
+            diag_results[name] = np.asarray(func(**diagnostic_kwargs))
+    return diag_results
+
+
+def _summarize_diagnostics(
+    diag: dict[str, Any],
+    state_names: tuple[str, ...],
+    *,
+    regime_name: str,
+    age: float,
+) -> dict[str, Any]:
+    """Reduce diagnostic arrays to marginal NaN fractions by state dimension."""
+    summary: dict[str, Any] = {"regime_name": regime_name, "age": age}
+
+    main_keys = (
+        "U_nan_fraction",
+        "E_nan_fraction",
+        "Q_nan_fraction",
+        "F_feasible_fraction",
+    )
+    for key in main_keys:
+        arr = np.asarray(diag[key])
+        summary[key] = {
+            "overall": float(np.mean(arr)),
+            "by_dim": {
+                name: np.mean(
+                    arr, axis=tuple(j for j in range(arr.ndim) if j != i)
+                ).tolist()
+                for i, name in enumerate(state_names)
+                if i < arr.ndim
+            },
+        }
+
+    summary["regime_probs"] = {}
+    summary["per_target_E_nan"] = {}
+    for key, val in diag.items():
+        if key.startswith("regime_prob__"):
+            target = key.removeprefix("regime_prob__")
+            summary["regime_probs"][target] = float(np.mean(np.asarray(val)))
+        elif key.startswith("target_E_nan__"):
+            target = key.removeprefix("target_E_nan__")
+            summary["per_target_E_nan"][target] = float(np.mean(np.asarray(val)))
+
+    return summary
+
+
+def _format_diagnostic_summary(summary: dict[str, Any]) -> str:
+    """Format diagnostic summary for exception note."""
+    lines = [
+        f"\nDiagnostics for regime '{summary['regime_name']}' at age {summary['age']}:",
+    ]
+
+    u_frac = summary.get("U_nan_fraction", {}).get("overall", 0)
+    e_frac = summary.get("E_nan_fraction", {}).get("overall", 0)
+    f_feas = summary.get("F_feasible_fraction", {}).get("overall", 0)
+    lines.append(
+        f"  U: {u_frac:.4f} NaN  |  E[V]: {e_frac:.4f} NaN  |  F: {f_feas:.4f} feasible"
+    )
+
+    probs = summary.get("regime_probs", {})
+    if probs:
+        prob_parts = [f"{t}: {p:.4f}" for t, p in probs.items()]
+        lines.append(f"  Regime probs: {' | '.join(prob_parts)}")
+
+    per_target = summary.get("per_target_E_nan", {})
+    nan_targets = {t: f for t, f in per_target.items() if f > 0}
+    if nan_targets:
+        parts = [f"{t}: {f:.4f}" for t, f in nan_targets.items()]
+        lines.append(f"  Per-target E[V] NaN: {' | '.join(parts)}")
+
+    for label, key in (("U", "U_nan_fraction"), ("E[V]", "E_nan_fraction")):
+        info = summary.get(key, {})
+        frac = info.get("overall", 0)
+        by_dim = info.get("by_dim", {})
+        if frac > 0 and by_dim:
+            lines.append(f"  {label} NaN fraction by state:")
+            for dim_name, values in by_dim.items():
+                max_shown = 8
+                formatted = ", ".join(f"{v:.2f}" for v in values[:max_shown])
+                suffix = ", ..." if len(values) > max_shown else ""
+                lines.append(f"    {dim_name:24s} [{formatted}{suffix}]")
+            break
+
+    return "\n".join(lines)
 
 
 def validate_regime_transition_probs(

@@ -1,4 +1,5 @@
 import dataclasses
+from collections.abc import Callable
 from types import MappingProxyType
 from typing import cast
 
@@ -158,6 +159,12 @@ class SolveFunctions:
 
     max_Q_over_a: MappingProxyType[int, MaxQOverAFunction]
     """Immutable mapping of period to max-Q-over-actions functions."""
+
+    diagnostic_Q_and_F: MappingProxyType[int, MappingProxyType[str, Callable]]
+    """Reduced diagnostics: each function returns one scalar (NaN fraction)."""
+
+    raw_diagnostic_Q_and_F: MappingProxyType[int, MappingProxyType[str, Callable]]
+    """Raw diagnostics: each function returns the full intermediate array."""
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)

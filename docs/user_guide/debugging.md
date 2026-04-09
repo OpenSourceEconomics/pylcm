@@ -164,6 +164,121 @@ period_to_regime_to_V_arr = model.solve(
 
 After each write, the oldest directories beyond the limit are deleted automatically.
 
+## Recipe: Diagnosing NaN in the value function
+
+When `solve()` raises `InvalidValueFunctionError`, a snapshot is saved automatically (if
+`log_level="debug"` and `log_path` are set). The snapshot contains the model,
+parameters, and all value function arrays for periods that completed before the error.
+
+### 1. Run with debug logging
+
+```python
+period_to_regime_to_V_arr = model.solve(
+    params=params, log_level="debug", log_path="./debug/"
+)
+```
+
+Even though the solve fails, the snapshot is saved to `./debug/solve_snapshot_001/`.
+
+### 2. Load diagnostics
+
+The snapshot includes a `diagnostics.pkl` with all intermediates from the computation
+that produced NaN. This tells you exactly where NaN enters Q = U + beta * E\[V\]:
+
+```python
+import cloudpickle as cp
+import jax.numpy as jnp
+
+with open("./debug/solve_snapshot_001/diagnostics.pkl", "rb") as fh:
+    diag = cp.load(fh)
+
+print(f"Regime: {diag['regime_name']}, age: {diag['age']}")
+
+# Is utility NaN? → problem in user functions
+print(f"U_arr NaN: {int(jnp.sum(jnp.isnan(diag['U_arr'])))}")
+
+# Is the continuation value NaN? → problem in transitions or next V
+print(f"E_next_V NaN: {int(jnp.sum(jnp.isnan(diag['E_next_V'])))}")
+
+# Are regime transition probs finite?
+for target, prob in diag["regime_transition_probs"].items():
+    if jnp.any(jnp.isnan(prob)):
+        print(f"  {target}: NaN transition probability!")
+
+# Which target regime's contribution is NaN?
+for target, arr in diag["per_target_E_next_V"].items():
+    if jnp.any(jnp.isnan(arr)):
+        print(f"  {target}: NaN continuation value")
+
+# Is anything feasible?
+print(f"Feasible points: {int(jnp.sum(diag['F_arr']))}")
+```
+
+### 3. Replay without JIT (if needed)
+
+If the diagnostics show that `U_arr` is NaN (problem in user functions), replay without
+JIT for a readable traceback:
+
+```python
+from lcm import load_snapshot
+from your_project.model import create_model  # your model factory
+
+snapshot = load_snapshot("./debug/solve_snapshot_001")
+model_nojit = create_model(enable_jit=False)
+model_nojit.solve(params=snapshot.params)
+```
+
+The traceback now points to the exact line in your functions where NaN originates. If
+you don't have a model factory, re-create the `Model(...)` call with `enable_jit=False`
+using the same regimes and ages.
+
+### 4. Inspect raw intermediates in a notebook
+
+For fine-grained analysis, use the **raw diagnostic functions** on the internal regime.
+Each function returns the full intermediate array (not a scalar summary), so you can
+inspect individual state-action points.
+
+```python
+import jax.numpy as jnp
+from lcm import load_snapshot
+from lcm.params.processing import process_params
+
+snapshot = load_snapshot("./debug/solve_snapshot_001")
+model = snapshot.model
+
+# Pick the failing regime and period
+regime_name = "working"
+period = 5  # adjust to the failing period
+
+internal_regime = model.internal_regimes[regime_name]
+internal_params = process_params(
+    params=snapshot.params,
+    params_template=model.get_params_template(),
+)
+
+# Build the call kwargs (same inputs as the solve step)
+state_action_space = internal_regime.state_action_space(
+    regime_params=internal_params[regime_name],
+)
+call_kwargs = {
+    **state_action_space.states,
+    **state_action_space.actions,
+    "next_regime_to_V_arr": snapshot.period_to_regime_to_V_arr[period + 1],
+    **internal_params[regime_name],
+}
+
+# Call each raw diagnostic function
+raw_diagnostics = internal_regime.solve_functions.raw_diagnostic_Q_and_F[period]
+for name, func in raw_diagnostics.items():
+    arr = func(**call_kwargs)
+    print(f"{name}: shape={arr.shape}, NaN={int(jnp.sum(jnp.isnan(arr)))}")
+```
+
+The raw diagnostic functions return arrays shaped like the state(-action) grid.
+Available keys typically include `U_arr`, `E_next_V`, `Q_arr`, `F_arr`, plus per-target
+arrays like `regime_prob__{target}` and `target_E_next_V__{target}`. Use these to locate
+exactly which state-action combinations produce NaN.
+
 ## Recipe: Debugging NaN in parameter estimation with optimagic
 
 A common scenario: you are estimating model parameters with optimagic, and at some

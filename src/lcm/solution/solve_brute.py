@@ -77,7 +77,22 @@ def solve(
             )
             log_V_stats(logger=logger, regime_name=name, V_arr=V_arr)
 
-            validate_V(V_arr=V_arr, age=ages.values[period], regime_name=name)
+            validate_V(
+                V_arr=V_arr,
+                age=float(ages.values[period]),
+                regime_name=name,
+                partial_solution=MappingProxyType(solution),
+                diagnostic_funcs=internal_regime.solve_functions.diagnostic_Q_and_F.get(
+                    period
+                ),
+                diagnostic_kwargs={
+                    **state_action_space.states,
+                    **state_action_space.actions,
+                    "next_regime_to_V_arr": next_regime_to_V_arr,
+                    **internal_params[name],
+                },
+                state_names=state_action_space.state_names,
+            )
             period_solution[name] = V_arr
 
         next_regime_to_V_arr = MappingProxyType(period_solution)
