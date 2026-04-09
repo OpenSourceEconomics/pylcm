@@ -154,6 +154,7 @@ def save_solve_snapshot(
     period_to_regime_to_V_arr: PeriodToRegimeToVArr,
     log_path: Path,
     log_keep_n_latest: int,
+    diagnostics: object = None,
 ) -> Path:
     """Save a solve snapshot directory to disk.
 
@@ -163,6 +164,7 @@ def save_solve_snapshot(
         period_to_regime_to_V_arr: Value function arrays from solve.
         log_path: Parent directory for snapshot directories.
         log_keep_n_latest: Maximum number of snapshots to retain.
+        diagnostics: Optional failure diagnostics dict from Q_and_F.
 
     Returns:
         Path to the created snapshot directory.
@@ -176,6 +178,8 @@ def save_solve_snapshot(
     _save_pkl(snap_dir / "model.pkl", model)
     _save_pkl(snap_dir / "params.pkl", params)
     _save_h5(snap_dir / "arrays.h5", period_to_regime_to_V_arr)
+    if diagnostics is not None:
+        _save_pkl(snap_dir / "diagnostics.pkl", diagnostics)
     _write_metadata(snap_dir, snapshot_type="solve", fields=["model", "params"])
     _write_environment_files(snap_dir)
 

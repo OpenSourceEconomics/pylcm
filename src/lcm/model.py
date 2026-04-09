@@ -224,6 +224,7 @@ class Model:
                     period_to_regime_to_V_arr=exc.partial_solution,  # ty: ignore[invalid-argument-type]
                     log_path=Path(log_path),
                     log_keep_n_latest=log_keep_n_latest,
+                    diagnostics=exc.diagnostics,
                 )
             raise
         if log_level == "debug" and log_path is not None:
@@ -331,9 +332,10 @@ class Model:
                     save_solve_snapshot(
                         model=self,
                         params=params,
-                        period_to_regime_to_V_arr=exc.partial_solution,
+                        period_to_regime_to_V_arr=exc.partial_solution,  # ty: ignore[invalid-argument-type]
                         log_path=Path(log_path),
                         log_keep_n_latest=log_keep_n_latest,
+                        diagnostics=exc.diagnostics,
                     )
                 raise
         result = simulate(

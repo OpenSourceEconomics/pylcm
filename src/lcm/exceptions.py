@@ -13,6 +13,7 @@ class InvalidValueFunctionError(PyLCMError):
     """
 
     partial_solution: object = None
+    diagnostics: object = None
 
 
 class InvalidRegimeTransitionProbabilitiesError(PyLCMError):

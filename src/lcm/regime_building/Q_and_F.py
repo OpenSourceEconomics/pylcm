@@ -27,7 +27,7 @@ from lcm.utils.dispatchers import productmap
 from lcm.utils.functools import get_union_of_args
 
 
-def get_Q_and_F(
+def get_Q_and_F(  # noqa: C901, PLR0915
     *,
     flat_param_names: frozenset[str],
     age: float,
@@ -39,8 +39,8 @@ def get_Q_and_F(
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
-) -> QAndFFunction:
-    """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
+) -> tuple[QAndFFunction, Callable[..., dict[str, Any]]]:
+    """Get Q_and_F and a diagnostic variant returning all intermediates.
 
     Args:
         flat_param_names: Frozenset of flat parameter names for the regime.
@@ -264,7 +264,71 @@ def get_Q_and_F(
         # In that case, Q_arr and F_arr are scalars, but we require arrays as output.
         return jnp.asarray(Q_arr), jnp.asarray(F_arr)
 
-    return Q_and_F
+    @with_signature(args=arg_names_of_Q_and_F, return_annotation="dict[str, Any]")
+    def diagnostic_Q_and_F(
+        next_regime_to_V_arr: FloatND,
+        **states_actions_params: Array,
+    ) -> dict[str, Any]:
+        """Return all intermediates of the Q_and_F computation for diagnostics."""
+        regime_transition_probs: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
+            compute_regime_transition_probs(
+                **states_actions_params,
+                period=period,
+                age=age,
+            )
+        )
+        U_arr, F_arr = U_and_F(
+            **states_actions_params,
+            period=period,
+            age=age,
+        )
+        active_regime_probs = MappingProxyType(
+            {r: regime_transition_probs[r] for r in all_active_next_period}
+        )
+
+        per_target_E_next_V: dict[str, FloatND] = {}
+        E_next_V = jnp.zeros_like(U_arr)
+        for target_regime_name in complete_targets:
+            next_states = state_transitions[target_regime_name](
+                **states_actions_params,
+                period=period,
+                age=age,
+            )
+            marginal = next_stochastic_states_weights[target_regime_name](
+                **states_actions_params,
+                period=period,
+                age=age,
+            )
+            joint = joint_weights_from_marginals[target_regime_name](**marginal)
+
+            extra_kw = {
+                k: states_actions_params[k]
+                for k in next_V_extra_param_names[target_regime_name]
+            }
+            next_V_stoch = next_V[target_regime_name](
+                **next_states,
+                next_V_arr=next_regime_to_V_arr[target_regime_name],
+                **extra_kw,
+            )
+            contribution = jnp.average(next_V_stoch, weights=joint)
+            per_target_E_next_V[target_regime_name] = contribution
+            E_next_V = E_next_V + active_regime_probs[target_regime_name] * contribution
+
+        H_kwargs = {
+            k: v for k, v in states_actions_params.items() if k in _H_accepted_params
+        }
+        Q_arr = _H_func(utility=U_arr, E_next_V=E_next_V, **H_kwargs)
+
+        return {
+            "U_arr": jnp.asarray(U_arr),
+            "F_arr": jnp.asarray(F_arr),
+            "E_next_V": jnp.asarray(E_next_V),
+            "Q_arr": jnp.asarray(Q_arr),
+            "regime_transition_probs": dict(active_regime_probs),
+            "per_target_E_next_V": per_target_E_next_V,
+        }
+
+    return Q_and_F, diagnostic_Q_and_F
 
 
 def get_Q_and_F_terminal(

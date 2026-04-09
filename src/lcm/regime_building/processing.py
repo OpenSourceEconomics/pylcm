@@ -1,6 +1,6 @@
 import functools
 import inspect
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal, cast
@@ -57,7 +57,7 @@ from lcm.typing import (
     VmappedRegimeTransitionFunction,
 )
 from lcm.utils.containers import ensure_containers_are_immutable
-from lcm.utils.dispatchers import simulation_spacemap, vmap_1d
+from lcm.utils.dispatchers import productmap, simulation_spacemap, vmap_1d
 from lcm.utils.namespace import flatten_regime_namespace, unflatten_regime_namespace
 
 
@@ -229,7 +229,7 @@ def _build_solve_functions(
             phase="solve",
         )
 
-    Q_and_F_functions = _build_Q_and_F_per_period(
+    Q_and_F_functions, diagnostic_Q_and_F = _build_Q_and_F_per_period(
         regime=regime,
         regimes_to_active_periods=regimes_to_active_periods,
         functions=core.functions,
@@ -249,6 +249,12 @@ def _build_solve_functions(
         enable_jit=enable_jit,
     )
 
+    mapped_diagnostic = _build_diagnostic_per_period(
+        state_action_space=state_action_space,
+        diagnostic_functions=diagnostic_Q_and_F,
+        grids=all_grids[regime_name],
+    )
+
     return SolveFunctions(
         functions=core.functions,
         constraints=core.constraints,
@@ -256,6 +262,7 @@ def _build_solve_functions(
         stochastic_transition_names=core.stochastic_transition_names,
         compute_regime_transition_probs=compute_regime_transition_probs,
         max_Q_over_a=max_Q_over_a,
+        diagnostic_Q_and_F=mapped_diagnostic,
     )
 
 
@@ -338,7 +345,7 @@ def _build_simulate_functions(
 
     # Q_and_F uses the solve (non-vmapped) regime transition probs since it
     # evaluates on the Cartesian grid, not per-subject.
-    Q_and_F_functions = _build_Q_and_F_per_period(
+    Q_and_F_functions, _diagnostic = _build_Q_and_F_per_period(
         regime=regime,
         regimes_to_active_periods=regimes_to_active_periods,
         functions=functions,
@@ -1223,11 +1230,12 @@ def _build_Q_and_F_per_period(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     ages: AgeGrid,
     regime_params_template: RegimeParamsTemplate,
-) -> MappingProxyType[int, QAndFFunction]:
-    """Build Q-and-F closures for each period."""
+) -> tuple[MappingProxyType[int, QAndFFunction], MappingProxyType[int, Callable]]:
+    """Build Q-and-F closures and diagnostic variants for each period."""
     flat_param_names = frozenset(get_flat_param_names(regime_params_template))
 
-    Q_and_F_functions = {}
+    Q_and_F_functions: dict[int, QAndFFunction] = {}
+    diagnostic_functions: dict[int, Callable] = {}
     for period, age in enumerate(ages.values):
         if regime.terminal:
             Q_and_F_functions[period] = get_Q_and_F_terminal(
@@ -1239,7 +1247,7 @@ def _build_Q_and_F_per_period(
             )
         else:
             assert compute_regime_transition_probs is not None  # noqa: S101
-            Q_and_F_functions[period] = get_Q_and_F(
+            Q_and_F_functions[period], diagnostic_functions[period] = get_Q_and_F(
                 flat_param_names=flat_param_names,
                 age=age,
                 period=period,
@@ -1252,7 +1260,7 @@ def _build_Q_and_F_per_period(
                 regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             )
 
-    return MappingProxyType(Q_and_F_functions)
+    return MappingProxyType(Q_and_F_functions), MappingProxyType(diagnostic_functions)
 
 
 def _build_max_Q_over_a_per_period(
@@ -1276,6 +1284,33 @@ def _build_max_Q_over_a_per_period(
             state_names=state_action_space.state_names,
         )
         result[period] = jax.jit(func) if enable_jit else func
+    return MappingProxyType(result)
+
+
+def _build_diagnostic_per_period(
+    *,
+    state_action_space: StateActionSpace,
+    diagnostic_functions: MappingProxyType[int, Callable],
+    grids: MappingProxyType[str, Grid],
+) -> MappingProxyType[int, Callable]:
+    """Productmap diagnostic Q_and_F over actions and states for each period."""
+    result: dict[int, Callable] = {}
+    action_names = state_action_space.action_names
+    state_names = state_action_space.state_names
+    state_batch_sizes = {
+        name: grid.batch_size for name, grid in grids.items() if name in state_names
+    }
+    for period, diag_func in diagnostic_functions.items():
+        mapped_over_actions = productmap(
+            func=diag_func,
+            variables=action_names,
+            batch_sizes=dict.fromkeys(action_names, 0),
+        )
+        result[period] = productmap(
+            func=mapped_over_actions,
+            variables=state_names,
+            batch_sizes=state_batch_sizes,
+        )
     return MappingProxyType(result)
 
 

@@ -180,15 +180,50 @@ period_to_regime_to_V_arr = model.solve(
 
 Even though the solve fails, the snapshot is saved to `./debug/solve_snapshot_001/`.
 
-### 2. Load the snapshot and replay without JIT
+### 2. Load diagnostics
+
+The snapshot includes a `diagnostics.pkl` with all intermediates from the computation
+that produced NaN. This tells you exactly where NaN enters Q = U + beta * E\[V\]:
+
+```python
+import cloudpickle as cp
+import jax.numpy as jnp
+
+with open("./debug/solve_snapshot_001/diagnostics.pkl", "rb") as fh:
+    diag = cp.load(fh)
+
+print(f"Regime: {diag['regime_name']}, age: {diag['age']}")
+
+# Is utility NaN? → problem in user functions
+print(f"U_arr NaN: {int(jnp.sum(jnp.isnan(diag['U_arr'])))}")
+
+# Is the continuation value NaN? → problem in transitions or next V
+print(f"E_next_V NaN: {int(jnp.sum(jnp.isnan(diag['E_next_V'])))}")
+
+# Are regime transition probs finite?
+for target, prob in diag["regime_transition_probs"].items():
+    if jnp.any(jnp.isnan(prob)):
+        print(f"  {target}: NaN transition probability!")
+
+# Which target regime's contribution is NaN?
+for target, arr in diag["per_target_E_next_V"].items():
+    if jnp.any(jnp.isnan(arr)):
+        print(f"  {target}: NaN continuation value")
+
+# Is anything feasible?
+print(f"Feasible points: {int(jnp.sum(diag['F_arr']))}")
+```
+
+### 3. Replay without JIT (if needed)
+
+If the diagnostics show that `U_arr` is NaN (problem in user functions), replay without
+JIT for a readable traceback:
 
 ```python
 from lcm import load_snapshot
 from your_project.model import create_model  # your model factory
 
 snapshot = load_snapshot("./debug/solve_snapshot_001")
-
-# Re-create the model without JIT for readable tracebacks
 model_nojit = create_model(enable_jit=False)
 model_nojit.solve(params=snapshot.params)
 ```
@@ -196,20 +231,6 @@ model_nojit.solve(params=snapshot.params)
 The traceback now points to the exact line in your functions where NaN originates. If
 you don't have a model factory, re-create the `Model(...)` call with `enable_jit=False`
 using the same regimes and ages.
-
-### 3. Inspect the partial solution
-
-The snapshot's `arrays.h5` contains value function arrays for all periods that completed
-before the error. Use this to check whether the NaN is introduced at the failing period
-or was already present in adjacent regimes:
-
-```python
-for period, regimes in snapshot.period_to_regime_to_V_arr.items():
-    for regime_name, V_arr in regimes.items():
-        n_nan = int(jnp.sum(jnp.isnan(V_arr)))
-        if n_nan > 0:
-            print(f"Period {period}, regime '{regime_name}': {n_nan} NaN values")
-```
 
 ## Recipe: Debugging NaN in parameter estimation with optimagic
 
