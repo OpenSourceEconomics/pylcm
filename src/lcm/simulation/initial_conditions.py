@@ -524,39 +524,6 @@ def _batched_feasibility_check(
     return jnp.concatenate(results)
 
 
-def _raise_feasibility_type_error(
-    exc: TypeError,
-    *,
-    regime_name: str,
-    internal_regime: InternalRegime,
-    subject_states: dict[str, Array],
-) -> Never:
-    """Re-raise a TypeError from feasibility checking with diagnostic context."""
-    discrete_names = {
-        name
-        for name, grid in internal_regime.grids.items()
-        if isinstance(grid, DiscreteGrid)
-    }
-
-    bad_dtypes: list[str] = []
-    for name, arr in subject_states.items():
-        if name in discrete_names and not jnp.issubdtype(arr.dtype, jnp.integer):
-            bad_dtypes.append(f"  {name!r}: dtype={arr.dtype} (expected integer)")
-
-    hint = ""
-    if bad_dtypes:
-        hint = (
-            "\n\nDiscrete states with wrong dtype:\n"
-            + "\n".join(bad_dtypes)
-            + "\n\nDiscrete states are used as array indices and must have integer "
-            "dtype. Check that initial conditions encode categorical states as int "
-            "codes, not floats."
-        )
-
-    msg = f"TypeError in feasibility check for regime {regime_name!r}: {exc}{hint}"
-    raise TypeError(msg) from exc
-
-
 def _check_regime_feasibility(  # noqa: C901
     *,
     internal_regime: InternalRegime,
@@ -660,6 +627,39 @@ def _check_regime_feasibility(  # noqa: C901
         initial_states=initial_states,
         state_names=state_names,
     )
+
+
+def _raise_feasibility_type_error(
+    exc: TypeError,
+    *,
+    regime_name: str,
+    internal_regime: InternalRegime,
+    subject_states: dict[str, Array],
+) -> Never:
+    """Re-raise a TypeError from feasibility checking with diagnostic context."""
+    discrete_names = {
+        name
+        for name, grid in internal_regime.grids.items()
+        if isinstance(grid, DiscreteGrid)
+    }
+
+    bad_dtypes: list[str] = []
+    for name, arr in subject_states.items():
+        if name in discrete_names and not jnp.issubdtype(arr.dtype, jnp.integer):
+            bad_dtypes.append(f"  {name!r}: dtype={arr.dtype} (expected integer)")
+
+    hint = ""
+    if bad_dtypes:
+        hint = (
+            "\n\nDiscrete states with wrong dtype:\n"
+            + "\n".join(bad_dtypes)
+            + "\n\nDiscrete states are used as array indices and must have integer "
+            "dtype. Check that initial conditions encode categorical states as int "
+            "codes, not floats."
+        )
+
+    msg = f"TypeError in feasibility check for regime {regime_name!r}: {exc}{hint}"
+    raise TypeError(msg) from exc
 
 
 def _format_infeasibility_message(

@@ -1,5 +1,6 @@
 """Reproducer: discrete state with different categories across regimes."""
 
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -381,155 +382,220 @@ def test_per_target_dict_transitions():
     )
 
 
-@pytest.mark.xfail(
-    raises=KeyError,
-    reason="Incomplete per-target transitions: KeyError on next_health",
-)
-def test_stochastic_cross_grid_health_transition():
-    """Stochastic MarkovTransition with different health grids across regimes.
+def _next_health_3to3(health: DiscreteState) -> FloatND:
+    """Stochastic same-grid transition (3→3)."""
+    return jnp.where(
+        health == HealthWorkingLife.good,
+        jnp.array([0.05, 0.15, 0.8]),
+        jnp.where(
+            health == HealthWorkingLife.bad,
+            jnp.array([0.1, 0.7, 0.2]),
+            jnp.array([0.8, 0.15, 0.05]),
+        ),
+    )
 
-    Same structure as test_per_target_dict_transitions but health transitions
-    are stochastic (return probability vectors). This triggers a bug where
-    next_V_extra_param_names includes 'next_health' because the subtraction
-    uses un-prefixed state names that don't match the prefixed interpolator args.
+
+def _next_health_3to2(health: DiscreteState) -> FloatND:
+    """Stochastic cross-grid transition (3→2)."""
+    return jnp.where(
+        health == HealthWorkingLife.good,
+        jnp.array([0.1, 0.9]),
+        jnp.array([0.7, 0.3]),
+    )
+
+
+def _next_health_2to2(health: DiscreteState) -> FloatND:
+    """Stochastic same-grid transition (2→2)."""
+    return jnp.where(
+        health == HealthRetirement.good,
+        jnp.array([0.2, 0.8]),
+        jnp.array([0.6, 0.4]),
+    )
+
+
+def _next_wealth(
+    wealth: ContinuousState, consumption: ContinuousAction
+) -> ContinuousState:
+    return wealth - consumption
+
+
+_BORROWING_CONSTRAINT = {"borrowing": lambda consumption, wealth: consumption <= wealth}
+_WEALTH_GRID = LinSpacedGrid(start=1, stop=50, n_points=10)
+_CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=50, n_points=20)
+
+
+def test_complete_per_target_stochastic_cross_grid():
+    """Per-target dict covers all targets, with cross-grid stochastic transition.
+
+    Regime A (3-state) → B (2-state) via stochastic cross-grid. All active
+    targets are listed in the per-target dict. Solve should succeed.
     """
 
     @categorical(ordered=False)
     class _RegimeId:
-        pre65: int
-        post65_a: int
-        post65_b: int
+        regime_a: int
+        regime_b: int
         dead: int
 
-    def next_health_same(health: DiscreteState) -> FloatND:
-        """Stochastic same-grid transition (3→3)."""
-        return jnp.where(
-            health == HealthWorkingLife.good,
-            jnp.array([0.05, 0.15, 0.8]),
-            jnp.where(
-                health == HealthWorkingLife.bad,
-                jnp.array([0.1, 0.7, 0.2]),
-                jnp.array([0.8, 0.15, 0.05]),
-            ),
-        )
-
-    def cross_health(health: DiscreteState) -> FloatND:
-        """Stochastic cross-grid transition (3→2)."""
-        return jnp.where(
-            health == HealthWorkingLife.good,
-            jnp.array([0.1, 0.9]),
-            jnp.array([0.7, 0.3]),
-        )
-
-    def next_wealth(
-        wealth: ContinuousState, consumption: ContinuousAction
-    ) -> ContinuousState:
-        return wealth - consumption
-
-    def next_regime_pre65(age: float) -> ScalarInt:
-        """pre65 transitions to post65_a only (not post65_b)."""
+    def next_regime_a(age: float) -> ScalarInt:
         return jnp.where(
             age >= 2,
             _RegimeId.dead,
             jnp.where(
                 age >= 1,
-                _RegimeId.post65_a,
-                _RegimeId.pre65,
+                _RegimeId.regime_b,
+                _RegimeId.regime_a,
             ),
         )
 
-    def next_regime_post65(age: float) -> ScalarInt:
-        return jnp.where(age >= 3, _RegimeId.dead, _RegimeId.post65_a)
-
-    # pre65 provides health transitions for pre65 and post65_a only.
-    # post65_b is reachable from post65_a (not from pre65), so pre65's
-    # per-target dict does NOT include post65_b. But pylcm must still
-    # handle post65_b's V interpolator correctly during backwards induction.
-    pre65 = Regime(
+    regime_a = Regime(
         states={
             "health": DiscreteGrid(HealthWorkingLife),
-            "wealth": LinSpacedGrid(start=1, stop=50, n_points=10),
+            "wealth": _WEALTH_GRID,
         },
         state_transitions={
             "health": {
-                "pre65": MarkovTransition(next_health_same),
-                "post65_a": MarkovTransition(cross_health),
-                "dead": MarkovTransition(next_health_same),
+                "regime_a": MarkovTransition(_next_health_3to3),
+                "regime_b": MarkovTransition(_next_health_3to2),
+                "dead": MarkovTransition(_next_health_3to3),
             },
-            "wealth": next_wealth,
+            "wealth": _next_wealth,
         },
-        actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=20)},
-        constraints={
-            "borrowing": lambda consumption, wealth: consumption <= wealth,
-        },
+        actions={"consumption": _CONSUMPTION_GRID},
+        constraints=_BORROWING_CONSTRAINT,
         functions={
             "utility": lambda consumption, health: jnp.log(consumption) + 0.1 * health,
         },
-        transition=next_regime_pre65,
+        transition=next_regime_a,
         active=lambda age: age < 3,
     )
 
-    def next_regime_post65_a(age: float) -> ScalarInt:
-        """post65_a can transition to post65_b or stay."""
+    regime_b = Regime(
+        states={
+            "health": DiscreteGrid(HealthRetirement),
+            "wealth": _WEALTH_GRID,
+        },
+        state_transitions={"health": None, "wealth": _next_wealth},
+        actions={"consumption": _CONSUMPTION_GRID},
+        constraints=_BORROWING_CONSTRAINT,
+        functions={
+            "utility": lambda consumption, health: jnp.log(consumption) + 0.05 * health,
+        },
+        transition=lambda age: jnp.where(age >= 3, _RegimeId.dead, _RegimeId.regime_b),
+        active=lambda age: age < 4,
+    )
+
+    dead = Regime(transition=None, functions={"utility": lambda: 0.0})
+
+    model = Model(
+        regimes={"regime_a": regime_a, "regime_b": regime_b, "dead": dead},
+        ages=AgeGrid(start=0, stop=4, step="Y"),
+        regime_id_class=_RegimeId,
+    )
+    model.solve(params={"discount_factor": 0.95})
+
+
+def test_incomplete_per_target_unreachable_target():
+    """Per-target dict omits a target the source cannot reach (prob=0).
+
+    Regime A lists transitions to A and B only. C is reachable from B but not
+    from A (A's regime transition function never produces C's id). During
+    backward induction, C is active but A's contribution to E[V] for C is
+    zero. Solve must handle this gracefully.
+    """
+
+    @categorical(ordered=False)
+    class _RegimeId:
+        regime_a: int
+        regime_b: int
+        regime_c: int
+        dead: int
+
+    def next_regime_a(age: float) -> ScalarInt:
+        """A → B at age 1, A otherwise. Never produces C."""
+        return jnp.where(
+            age >= 2,
+            _RegimeId.dead,
+            jnp.where(
+                age >= 1,
+                _RegimeId.regime_b,
+                _RegimeId.regime_a,
+            ),
+        )
+
+    def next_regime_b(age: float) -> ScalarInt:
+        """B → C at age 2."""
         return jnp.where(
             age >= 3,
             _RegimeId.dead,
             jnp.where(
                 age >= 2,
-                _RegimeId.post65_b,
-                _RegimeId.post65_a,
+                _RegimeId.regime_c,
+                _RegimeId.regime_b,
             ),
         )
 
-    def next_health_2state(health: DiscreteState) -> FloatND:
-        """Stochastic same-grid transition (2→2)."""
-        return jnp.where(
-            health == HealthRetirement.good,
-            jnp.array([0.2, 0.8]),
-            jnp.array([0.6, 0.4]),
-        )
-
-    post65_a = Regime(
+    # A only lists A, B, dead — NOT C.
+    regime_a = Regime(
         states={
-            "health": DiscreteGrid(HealthRetirement),
-            "wealth": LinSpacedGrid(start=1, stop=50, n_points=10),
+            "health": DiscreteGrid(HealthWorkingLife),
+            "wealth": _WEALTH_GRID,
         },
         state_transitions={
             "health": {
-                "post65_a": MarkovTransition(next_health_2state),
-                "post65_b": MarkovTransition(next_health_2state),
-                "dead": MarkovTransition(next_health_2state),
+                "regime_a": MarkovTransition(_next_health_3to3),
+                "regime_b": MarkovTransition(_next_health_3to2),
+                "dead": MarkovTransition(_next_health_3to3),
             },
-            "wealth": next_wealth,
+            "wealth": _next_wealth,
         },
-        actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=20)},
-        constraints={
-            "borrowing": lambda consumption, wealth: consumption <= wealth,
+        actions={"consumption": _CONSUMPTION_GRID},
+        constraints=_BORROWING_CONSTRAINT,
+        functions={
+            "utility": lambda consumption, health: jnp.log(consumption) + 0.1 * health,
         },
+        transition=next_regime_a,
+        active=lambda age: age < 3,
+    )
+
+    regime_b = Regime(
+        states={
+            "health": DiscreteGrid(HealthRetirement),
+            "wealth": _WEALTH_GRID,
+        },
+        state_transitions={
+            "health": {
+                "regime_b": MarkovTransition(_next_health_2to2),
+                "regime_c": MarkovTransition(_next_health_2to2),
+                "dead": MarkovTransition(_next_health_2to2),
+            },
+            "wealth": _next_wealth,
+        },
+        actions={"consumption": _CONSUMPTION_GRID},
+        constraints=_BORROWING_CONSTRAINT,
         functions={
             "utility": lambda consumption, health: jnp.log(consumption) + 0.05 * health,
         },
-        transition=next_regime_post65_a,
+        transition=next_regime_b,
         active=lambda age: age < 4,
     )
 
-    post65_b = Regime(
+    regime_c = Regime(
         states={
             "health": DiscreteGrid(HealthRetirement),
-            "wealth": LinSpacedGrid(start=1, stop=50, n_points=10),
+            "wealth": _WEALTH_GRID,
         },
-        state_transitions={
-            "health": None,
-            "wealth": next_wealth,
-        },
-        actions={"consumption": LinSpacedGrid(start=1, stop=50, n_points=20)},
-        constraints={
-            "borrowing": lambda consumption, wealth: consumption <= wealth,
-        },
+        state_transitions={"health": None, "wealth": _next_wealth},
+        actions={"consumption": _CONSUMPTION_GRID},
+        constraints=_BORROWING_CONSTRAINT,
         functions={
             "utility": lambda consumption, health: jnp.log(consumption) + 0.05 * health,
         },
-        transition=lambda age: jnp.where(age >= 3, _RegimeId.dead, _RegimeId.post65_b),
+        transition=lambda age: jnp.where(
+            age >= 3,
+            _RegimeId.dead,
+            _RegimeId.regime_c,
+        ),
         active=lambda age: age < 4,
     )
 
@@ -537,17 +603,96 @@ def test_stochastic_cross_grid_health_transition():
 
     model = Model(
         regimes={
-            "pre65": pre65,
-            "post65_a": post65_a,
-            "post65_b": post65_b,
+            "regime_a": regime_a,
+            "regime_b": regime_b,
+            "regime_c": regime_c,
             "dead": dead,
         },
         ages=AgeGrid(start=0, stop=4, step="Y"),
         regime_id_class=_RegimeId,
     )
+    model.solve(params={"discount_factor": 0.95})
 
-    params = {"discount_factor": 0.95}
-    model.solve(params=params)
+
+def test_incomplete_per_target_reachable_target():
+    """Per-target dict omits a target the source CAN reach (prob>0).
+
+    Regime A's transition function produces B's id, but A's per-target dict
+    does not list B. This is a user error — the missing transition means
+    B's continuation value cannot be computed. The solve must not silently
+    produce wrong results; it should raise an error.
+    """
+
+    @categorical(ordered=False)
+    class _RegimeId:
+        regime_a: int
+        regime_b: int
+        dead: int
+
+    def next_regime_a(age: float) -> ScalarInt:
+        """A → B at age 1. B IS reachable."""
+        return jnp.where(
+            age >= 2,
+            _RegimeId.dead,
+            jnp.where(
+                age >= 1,
+                _RegimeId.regime_b,
+                _RegimeId.regime_a,
+            ),
+        )
+
+    # A only lists A and dead — NOT B (but A can reach B).
+    regime_a = Regime(
+        states={
+            "health": DiscreteGrid(HealthWorkingLife),
+            "wealth": _WEALTH_GRID,
+        },
+        state_transitions={
+            "health": {
+                "regime_a": MarkovTransition(_next_health_3to3),
+                "dead": MarkovTransition(_next_health_3to3),
+            },
+            "wealth": _next_wealth,
+        },
+        actions={"consumption": _CONSUMPTION_GRID},
+        constraints=_BORROWING_CONSTRAINT,
+        functions={
+            "utility": lambda consumption, health: jnp.log(consumption) + 0.1 * health,
+        },
+        transition=next_regime_a,
+        active=lambda age: age < 3,
+    )
+
+    regime_b = Regime(
+        states={
+            "health": DiscreteGrid(HealthRetirement),
+            "wealth": _WEALTH_GRID,
+        },
+        state_transitions={"health": None, "wealth": _next_wealth},
+        actions={"consumption": _CONSUMPTION_GRID},
+        constraints=_BORROWING_CONSTRAINT,
+        functions={
+            "utility": lambda consumption, health: jnp.log(consumption) + 0.05 * health,
+        },
+        transition=lambda age: jnp.where(age >= 3, _RegimeId.dead, _RegimeId.regime_b),
+        active=lambda age: age < 4,
+    )
+
+    dead = Regime(transition=None, functions={"utility": lambda: 0.0})
+
+    model = Model(
+        regimes={"regime_a": regime_a, "regime_b": regime_b, "dead": dead},
+        ages=AgeGrid(start=0, stop=4, step="Y"),
+        regime_id_class=_RegimeId,
+    )
+
+    # A can reach B but doesn't provide a stochastic state transition for B.
+    # The runtime guard must raise rather than silently produce wrong values.
+    # jax.debug.callback wraps the ValueError in JaxRuntimeError.
+    with pytest.raises(
+        jax.errors.JaxRuntimeError, match=r"transition probability.*is.*> 0"
+    ):
+        model.solve(params={"discount_factor": 0.95})
 
 
 def test_discrete_state_same_count_different_names():
