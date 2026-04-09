@@ -5,6 +5,7 @@ from types import MappingProxyType
 import jax.numpy as jnp
 
 from lcm.ages import AgeGrid
+from lcm.exceptions import InvalidValueFunctionError
 from lcm.interfaces import InternalRegime
 from lcm.typing import FloatND, InternalParams, RegimeName
 from lcm.utils.error_handling import validate_V
@@ -77,7 +78,11 @@ def solve(
             )
             log_V_stats(logger=logger, regime_name=name, V_arr=V_arr)
 
-            validate_V(V_arr=V_arr, age=ages.values[period], regime_name=name)
+            try:
+                validate_V(V_arr=V_arr, age=ages.values[period], regime_name=name)
+            except InvalidValueFunctionError as exc:
+                exc.partial_solution = MappingProxyType(solution)
+                raise
             period_solution[name] = V_arr
 
         next_regime_to_V_arr = MappingProxyType(period_solution)

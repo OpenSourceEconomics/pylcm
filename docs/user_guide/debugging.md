@@ -164,6 +164,53 @@ period_to_regime_to_V_arr = model.solve(
 
 After each write, the oldest directories beyond the limit are deleted automatically.
 
+## Recipe: Diagnosing NaN in the value function
+
+When `solve()` raises `InvalidValueFunctionError`, a snapshot is saved automatically (if
+`log_level="debug"` and `log_path` are set). The snapshot contains the model,
+parameters, and all value function arrays for periods that completed before the error.
+
+### 1. Run with debug logging
+
+```python
+period_to_regime_to_V_arr = model.solve(
+    params=params, log_level="debug", log_path="./debug/"
+)
+```
+
+Even though the solve fails, the snapshot is saved to `./debug/solve_snapshot_001/`.
+
+### 2. Load the snapshot and replay without JIT
+
+```python
+from lcm import load_snapshot
+from your_project.model import create_model  # your model factory
+
+snapshot = load_snapshot("./debug/solve_snapshot_001")
+
+# Re-create the model without JIT for readable tracebacks
+model_nojit = create_model(enable_jit=False)
+model_nojit.solve(params=snapshot.params)
+```
+
+The traceback now points to the exact line in your functions where NaN originates. If
+you don't have a model factory, re-create the `Model(...)` call with `enable_jit=False`
+using the same regimes and ages.
+
+### 3. Inspect the partial solution
+
+The snapshot's `arrays.h5` contains value function arrays for all periods that completed
+before the error. Use this to check whether the NaN is introduced at the failing period
+or was already present in adjacent regimes:
+
+```python
+for period, regimes in snapshot.period_to_regime_to_V_arr.items():
+    for regime_name, V_arr in regimes.items():
+        n_nan = int(jnp.sum(jnp.isnan(V_arr)))
+        if n_nan > 0:
+            print(f"Period {period}, regime '{regime_name}': {n_nan} NaN values")
+```
+
 ## Recipe: Debugging NaN in parameter estimation with optimagic
 
 A common scenario: you are estimating model parameters with optimagic, and at some

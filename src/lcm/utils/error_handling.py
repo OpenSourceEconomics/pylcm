@@ -66,10 +66,13 @@ def validate_V(
             "argument).\n"
             "- The regime transition function returned NaN probabilities "
             "(e.g. from a NaN survival probability or a NaN fixed param).\n\n"
-            "To debug, see https://pylcm.readthedocs.io/en/latest/debugging/\n"
-            '- Use Model(..., enable_jit=False) for readable tracebacks.\n'
-            '- Use model.solve(log_level="debug", log_path=...) to save '
-            "snapshots."
+            "To find the source of NaN, re-solve without JIT for a readable "
+            "traceback:\n\n"
+            "  model = Model(..., enable_jit=False)\n"
+            "  model.solve(params=params)\n\n"
+            'Or save a snapshot with model.solve(log_level="debug", '
+            'log_path="./debug") and replay from the saved model and params.\n'
+            "See https://pylcm.readthedocs.io/en/latest/debugging/"
         )
 
 
