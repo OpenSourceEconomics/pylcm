@@ -3,6 +3,7 @@ import time
 from types import MappingProxyType
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -88,12 +89,18 @@ def solve(
                     period
                 )
                 if diag_funcs is not None:
-                    call_kwargs = {
-                        **state_action_space.states,
-                        **state_action_space.actions,
-                        "next_regime_to_V_arr": next_regime_to_V_arr,
-                        **internal_params[name],
-                    }
+                    # Move inputs to CPU — the GPU may be out of memory
+                    # for compiling new diagnostic kernels after the solve.
+                    cpu = jax.devices("cpu")[0]
+                    call_kwargs = jax.device_put(
+                        {
+                            **state_action_space.states,
+                            **state_action_space.actions,
+                            "next_regime_to_V_arr": next_regime_to_V_arr,
+                            **internal_params[name],
+                        },
+                        cpu,
+                    )
                     diag_results: dict[str, Any] = {}
                     for diag_name, diag_func in diag_funcs.items():
                         diag_results[diag_name] = np.asarray(diag_func(**call_kwargs))
