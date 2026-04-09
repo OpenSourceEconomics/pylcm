@@ -3,13 +3,7 @@
 import gc
 import time
 
-
-def _get_gpu_peak_bytes():
-    import jax
-
-    stats = jax.local_devices()[0].memory_stats()
-    return stats["peak_bytes_in_use"]
-
+from benchmarks import _gpu_mem
 
 _N_SUBJECTS = 100
 
@@ -17,7 +11,7 @@ _N_SUBJECTS = 100
 class MahlerYum:
     timeout = 1200
 
-    def setup(self):
+    def _build(self):
         import jax.numpy as jnp
 
         from lcm_examples.mahler_yum_2024 import (
@@ -50,6 +44,9 @@ class MahlerYum:
                 dtype=jnp.int32,
             ),
         }
+
+    def setup(self):
+        self._build()
         start = time.perf_counter()
         self.model.simulate(
             params=self.model_params,
@@ -59,6 +56,9 @@ class MahlerYum:
             check_initial_conditions=False,
         )
         self._compile_time = time.perf_counter() - start
+
+    def setup_for_gpu_measurement(self):
+        self._build()
 
     def time_execution(self):
         self.model.simulate(
@@ -84,12 +84,12 @@ class MahlerYum:
         jax.clear_caches()
         gc.collect()
 
-    def track_gpu_peak_mem(self):
-        return _get_gpu_peak_bytes()
-
-    track_gpu_peak_mem.unit = "bytes"
-
     def track_compilation_time(self):
         return self._compile_time
 
     track_compilation_time.unit = "seconds"
+
+
+class MahlerYumGpuPeakMem(_gpu_mem.GpuPeakMem):
+    bench_module = "benchmarks.bench_mahler_yum"
+    bench_class = "MahlerYum"
