@@ -319,13 +319,22 @@ def get_Q_and_F(  # noqa: C901, PLR0915
         }
         Q_arr = _H_func(utility=U_arr, E_next_V=E_next_V, **H_kwargs)
 
+        # Reduce to NaN fractions (scalars) to avoid OOM when productmapped
+        # over the full state grid. After state productmap, each scalar
+        # becomes a state-grid-sized array (~1 MB).
         return {
-            "U_arr": jnp.asarray(U_arr),
-            "F_arr": jnp.asarray(F_arr),
-            "E_next_V": jnp.asarray(E_next_V),
-            "Q_arr": jnp.asarray(Q_arr),
-            "regime_transition_probs": dict(active_regime_probs),
-            "per_target_E_next_V": per_target_E_next_V,
+            "U_nan_fraction": jnp.mean(jnp.isnan(U_arr)),
+            "E_nan_fraction": jnp.mean(jnp.isnan(E_next_V)),
+            "Q_nan_fraction": jnp.mean(jnp.isnan(Q_arr)),
+            "F_feasible_fraction": jnp.mean(F_arr),
+            **{
+                f"regime_prob__{target}": jnp.mean(prob)
+                for target, prob in active_regime_probs.items()
+            },
+            **{
+                f"target_E_nan__{target}": jnp.mean(jnp.isnan(arr))
+                for target, arr in per_target_E_next_V.items()
+            },
         }
 
     return Q_and_F, diagnostic_Q_and_F
