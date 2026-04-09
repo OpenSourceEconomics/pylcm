@@ -259,22 +259,40 @@ def get_Q_and_F(  # noqa: C901, PLR0915
 
     def _make_raw(index: int) -> Callable:
         @with_signature(args=arg_names_of_Q_and_F, return_annotation="FloatND")
-        def _raw(nrtv: FloatND, **sap: Array) -> FloatND:
-            return _compute_intermediates(nrtv, **sap)[index]
+        def _raw(
+            next_regime_to_V_arr: FloatND, **states_actions_params: Array
+        ) -> FloatND:
+            return _compute_intermediates(
+                next_regime_to_V_arr, **states_actions_params
+            )[index]
 
         return _raw
 
     def _make_reduced_nan(index: int) -> Callable:
         @with_signature(args=arg_names_of_Q_and_F, return_annotation="FloatND")
-        def _reduced(nrtv: FloatND, **sap: Array) -> FloatND:
-            return jnp.mean(jnp.isnan(_compute_intermediates(nrtv, **sap)[index]))
+        def _reduced(
+            next_regime_to_V_arr: FloatND, **states_actions_params: Array
+        ) -> FloatND:
+            return jnp.mean(
+                jnp.isnan(
+                    _compute_intermediates(
+                        next_regime_to_V_arr, **states_actions_params
+                    )[index]
+                )
+            )
 
         return _reduced
 
     def _make_reduced_mean(index: int) -> Callable:
         @with_signature(args=arg_names_of_Q_and_F, return_annotation="FloatND")
-        def _reduced(nrtv: FloatND, **sap: Array) -> FloatND:
-            return jnp.mean(_compute_intermediates(nrtv, **sap)[index])
+        def _reduced(
+            next_regime_to_V_arr: FloatND, **states_actions_params: Array
+        ) -> FloatND:
+            return jnp.mean(
+                _compute_intermediates(next_regime_to_V_arr, **states_actions_params)[
+                    index
+                ]
+            )
 
         return _reduced
 
@@ -291,23 +309,39 @@ def get_Q_and_F(  # noqa: C901, PLR0915
 
         def _make_raw_dict_entry(dict_idx: int, key: str) -> Callable:
             @with_signature(args=arg_names_of_Q_and_F, return_annotation="FloatND")
-            def _raw(nrtv: FloatND, **sap: Array) -> FloatND:
-                return _compute_intermediates(nrtv, **sap)[dict_idx][key]
+            def _raw(
+                next_regime_to_V_arr: FloatND, **states_actions_params: Array
+            ) -> FloatND:
+                return _compute_intermediates(
+                    next_regime_to_V_arr, **states_actions_params
+                )[dict_idx][key]
 
             return _raw
 
         def _make_reduced_dict_mean(dict_idx: int, key: str) -> Callable:
             @with_signature(args=arg_names_of_Q_and_F, return_annotation="FloatND")
-            def _reduced(nrtv: FloatND, **sap: Array) -> FloatND:
-                return jnp.mean(_compute_intermediates(nrtv, **sap)[dict_idx][key])
+            def _reduced(
+                next_regime_to_V_arr: FloatND, **states_actions_params: Array
+            ) -> FloatND:
+                return jnp.mean(
+                    _compute_intermediates(
+                        next_regime_to_V_arr, **states_actions_params
+                    )[dict_idx][key]
+                )
 
             return _reduced
 
         def _make_reduced_dict_nan(dict_idx: int, key: str) -> Callable:
             @with_signature(args=arg_names_of_Q_and_F, return_annotation="FloatND")
-            def _reduced(nrtv: FloatND, **sap: Array) -> FloatND:
+            def _reduced(
+                next_regime_to_V_arr: FloatND, **states_actions_params: Array
+            ) -> FloatND:
                 return jnp.mean(
-                    jnp.isnan(_compute_intermediates(nrtv, **sap)[dict_idx][key])
+                    jnp.isnan(
+                        _compute_intermediates(
+                            next_regime_to_V_arr, **states_actions_params
+                        )[dict_idx][key]
+                    )
                 )
 
             return _reduced
