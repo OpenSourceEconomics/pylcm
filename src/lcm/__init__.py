@@ -14,7 +14,7 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 # override by setting JAX_COMPILATION_CACHE_DIR before importing lcm.
 os.environ.setdefault(
     "JAX_COMPILATION_CACHE_DIR",
-    str(Path.home() / ".cache" / "jax"),
+    str(Path(".jax-cache").resolve()),
 )
 
 import jax
