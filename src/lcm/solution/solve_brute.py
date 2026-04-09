@@ -100,8 +100,8 @@ def solve(
                             **internal_params[name],
                         )
                     dim_names = (
-                        *state_action_space.action_names,
                         *state_action_space.state_names,
+                        *state_action_space.action_names,
                     )
                     exc.diagnostics = _summarize_diagnostics(
                         diag,

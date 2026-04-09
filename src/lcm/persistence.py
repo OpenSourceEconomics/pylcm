@@ -43,6 +43,9 @@ class SolveSnapshot:
     period_to_regime_to_V_arr: PeriodToRegimeToVArr | None
     """Immutable mapping of periods to regime value function arrays."""
 
+    diagnostics: object
+    """NaN diagnostic summary from the failing period, or None."""
+
     platform: str
     """Platform string, e.g. `"x86_64-Linux"`."""
 
@@ -132,6 +135,7 @@ def load_snapshot(
             model=loaded.get("model"),
             params=loaded.get("params"),
             period_to_regime_to_V_arr=loaded.get("period_to_regime_to_V_arr"),
+            diagnostics=loaded.get("diagnostics"),
             platform=saved_platform,
         )
     if snapshot_type == "simulate":
@@ -180,7 +184,10 @@ def save_solve_snapshot(
     _save_h5(snap_dir / "arrays.h5", period_to_regime_to_V_arr)
     if diagnostics is not None:
         _save_pkl(snap_dir / "diagnostics.pkl", diagnostics)
-    _write_metadata(snap_dir, snapshot_type="solve", fields=["model", "params"])
+    fields = ["model", "params"]
+    if diagnostics is not None:
+        fields.append("diagnostics")
+    _write_metadata(snap_dir, snapshot_type="solve", fields=fields)
     _write_environment_files(snap_dir)
 
     _enforce_retention(

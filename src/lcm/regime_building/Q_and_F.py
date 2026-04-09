@@ -159,6 +159,23 @@ def get_Q_and_F(  # noqa: C901, PLR0915
         exclude=frozenset({"period", "age"}),
     )
 
+    # Guard callback for incomplete targets — defined at closure scope so JAX
+    # sees the same function object across calls (avoids JIT re-compilation).
+    if incomplete_targets:
+
+        def _check_zero_probs(probs: dict[str, Array]) -> None:
+            for target in incomplete_targets:
+                prob = float(probs[target])
+                if prob > 0:
+                    msg = (
+                        f"Regime transition probability to '{target}' "
+                        f"is {prob} > 0, but no stochastic state "
+                        f"transition was provided for this target. "
+                        f"Add the missing entries to the per-target "
+                        f"dict in state_transitions."
+                    )
+                    raise ValueError(msg)
+
     @with_signature(
         args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
     )
@@ -194,24 +211,7 @@ def get_Q_and_F(  # noqa: C901, PLR0915
             {r: regime_transition_probs[r] for r in all_active_next_period}
         )
 
-        # Guard: incomplete targets (missing stochastic transitions) must
-        # have zero transition probability. If not, the user's per-target
-        # dict is missing entries for a reachable target.
         if incomplete_targets:
-
-            def _check_zero_probs(probs: dict[str, Array]) -> None:
-                for target in incomplete_targets:
-                    prob = float(probs[target])
-                    if prob > 0:
-                        msg = (
-                            f"Regime transition probability to '{target}' "
-                            f"is {prob} > 0, but no stochastic state "
-                            f"transition was provided for this target. "
-                            f"Add the missing entries to the per-target "
-                            f"dict in state_transitions."
-                        )
-                        raise ValueError(msg)
-
             jax.debug.callback(_check_zero_probs, dict(active_regime_probs))
 
         E_next_V = jnp.zeros_like(U_arr)
