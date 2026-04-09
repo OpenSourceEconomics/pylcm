@@ -43,6 +43,9 @@ class SolveSnapshot:
     period_to_regime_to_V_arr: PeriodToRegimeToVArr | None
     """Immutable mapping of periods to regime value function arrays."""
 
+    diagnostics: object
+    """NaN diagnostic summary from the failing period, or None."""
+
     platform: str
     """Platform string, e.g. `"x86_64-Linux"`."""
 
@@ -132,6 +135,7 @@ def load_snapshot(
             model=loaded.get("model"),
             params=loaded.get("params"),
             period_to_regime_to_V_arr=loaded.get("period_to_regime_to_V_arr"),
+            diagnostics=loaded.get("diagnostics"),
             platform=saved_platform,
         )
     if snapshot_type == "simulate":
@@ -154,6 +158,7 @@ def save_solve_snapshot(
     period_to_regime_to_V_arr: PeriodToRegimeToVArr,
     log_path: Path,
     log_keep_n_latest: int,
+    diagnostics: object = None,
 ) -> Path:
     """Save a solve snapshot directory to disk.
 
@@ -163,6 +168,7 @@ def save_solve_snapshot(
         period_to_regime_to_V_arr: Value function arrays from solve.
         log_path: Parent directory for snapshot directories.
         log_keep_n_latest: Maximum number of snapshots to retain.
+        diagnostics: Optional failure diagnostics dict from Q_and_F.
 
     Returns:
         Path to the created snapshot directory.
@@ -176,7 +182,12 @@ def save_solve_snapshot(
     _save_pkl(snap_dir / "model.pkl", model)
     _save_pkl(snap_dir / "params.pkl", params)
     _save_h5(snap_dir / "arrays.h5", period_to_regime_to_V_arr)
-    _write_metadata(snap_dir, snapshot_type="solve", fields=["model", "params"])
+    if diagnostics is not None:
+        _save_pkl(snap_dir / "diagnostics.pkl", diagnostics)
+    fields = ["model", "params"]
+    if diagnostics is not None:
+        fields.append("diagnostics")
+    _write_metadata(snap_dir, snapshot_type="solve", fields=fields)
     _write_environment_files(snap_dir)
 
     _enforce_retention(

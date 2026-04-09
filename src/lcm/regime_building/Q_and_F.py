@@ -1,7 +1,8 @@
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from types import MappingProxyType
 from typing import Any, cast
 
+import jax
 import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
 from jax import Array
@@ -26,7 +27,7 @@ from lcm.utils.dispatchers import productmap
 from lcm.utils.functools import get_union_of_args
 
 
-def get_Q_and_F(
+def get_Q_and_F(  # noqa: C901, PLR0915
     *,
     flat_param_names: frozenset[str],
     age: float,
@@ -38,8 +39,8 @@ def get_Q_and_F(
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
-) -> QAndFFunction:
-    """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
+) -> tuple[QAndFFunction, dict[str, Callable], dict[str, Callable]]:
+    """Get Q_and_F, reduced diagnostic functions, and raw diagnostic functions.
 
     Args:
         flat_param_names: Frozenset of flat parameter names for the regime.
@@ -67,14 +68,31 @@ def get_Q_and_F(
     next_V = {}
 
     target_regime_names = tuple(transitions)
-    active_regimes_next_period = tuple(
-        target_regime_name
-        for target_regime_name in target_regime_names
-        if period + 1 in regimes_to_active_periods[target_regime_name]
+    all_active_next_period = tuple(
+        name
+        for name in target_regime_names
+        if period + 1 in regimes_to_active_periods[name]
     )
+
+    # Partition active targets into complete (have all stochastic transitions)
+    # and incomplete (missing stochastic transitions — unreachable from this
+    # regime, so their continuation value contribution is zero).
+    complete_targets: list[str] = []
+    incomplete_targets: list[str] = []
+    for name in all_active_next_period:
+        target_stochastic_needs = {
+            f"next_{s}"
+            for s in regime_to_v_interpolation_info[name].state_names
+            if f"next_{s}" in stochastic_transition_names
+        }
+        if target_stochastic_needs.issubset(transitions[name]):
+            complete_targets.append(name)
+        else:
+            incomplete_targets.append(name)
+
     next_V_extra_param_names: dict[str, frozenset[str]] = {}
 
-    for target_regime_name in active_regimes_next_period:
+    for target_regime_name in complete_targets:
         # Transitions from the current regime to the target regime
         target_transitions = transitions[target_regime_name]
 
@@ -141,23 +159,28 @@ def get_Q_and_F(
         exclude=frozenset({"period", "age"}),
     )
 
-    @with_signature(
-        args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
-    )
-    def Q_and_F(
+    # Guard callback for incomplete targets — defined at closure scope so JAX
+    # sees the same function object across calls (avoids JIT re-compilation).
+    if incomplete_targets:
+
+        def _check_zero_probs(probs: dict[str, Array]) -> None:
+            for target in incomplete_targets:
+                prob = float(probs[target])
+                if prob > 0:
+                    msg = (
+                        f"Regime transition probability to '{target}' "
+                        f"is {prob} > 0, but no stochastic state "
+                        f"transition was provided for this target. "
+                        f"Add the missing entries to the per-target "
+                        f"dict in state_transitions."
+                    )
+                    raise ValueError(msg)
+
+    def _compute_intermediates(
         next_regime_to_V_arr: FloatND,
         **states_actions_params: Array,
-    ) -> tuple[FloatND, BoolND]:
-        """Calculate the state-action value and feasibility for a non-terminal period.
-
-        Args:
-            next_regime_to_V_arr: The next period's value function array.
-            **states_actions_params: States, actions, and flat regime params.
-
-        Returns:
-            A tuple containing the arrays with state-action values and feasibilities.
-
-        """
+    ) -> tuple:
+        """Compute all Q_and_F intermediates. Shared by Q_and_F and diagnostics."""
         regime_transition_probs: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
             compute_regime_transition_probs(
                 **states_actions_params,
@@ -170,63 +193,68 @@ def get_Q_and_F(
             period=period,
             age=age,
         )
-        # Filter to active regimes only — inactive regimes must have 0
-        # probability (validated before solve).
         active_regime_probs = MappingProxyType(
-            {r: regime_transition_probs[r] for r in active_regimes_next_period}
+            {r: regime_transition_probs[r] for r in all_active_next_period}
         )
 
+        if incomplete_targets:
+            jax.debug.callback(_check_zero_probs, dict(active_regime_probs))
+
+        per_target_E_next_V: dict[str, FloatND] = {}
         E_next_V = jnp.zeros_like(U_arr)
-        for target_regime_name in active_regimes_next_period:
+        for target_regime_name in complete_targets:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,
                 period=period,
                 age=age,
             )
-            marginal_next_stochastic_states_weights = next_stochastic_states_weights[
-                target_regime_name
-            ](
+            marginal = next_stochastic_states_weights[target_regime_name](
                 **states_actions_params,
                 period=period,
                 age=age,
             )
-            joint_next_stochastic_states_weights = joint_weights_from_marginals[
-                target_regime_name
-            ](**marginal_next_stochastic_states_weights)
+            joint = joint_weights_from_marginals[target_regime_name](**marginal)
 
-            # As we productmap'd the value function over the stochastic variables, the
-            # resulting next value function gets a new dimension for each stochastic
-            # variable.
             extra_kw = {
                 k: states_actions_params[k]
                 for k in next_V_extra_param_names[target_regime_name]
             }
-            next_V_at_stochastic_states_arr = next_V[target_regime_name](
+            next_V_stoch = next_V[target_regime_name](
                 **next_states,
                 next_V_arr=next_regime_to_V_arr[target_regime_name],
                 **extra_kw,
             )
-
-            # We then take the weighted average of the next value function at the
-            # stochastic states to get the expected next value function.
-            next_V_expected_arr = jnp.average(
-                next_V_at_stochastic_states_arr,
-                weights=joint_next_stochastic_states_weights,
-            )
-            E_next_V = (
-                E_next_V + active_regime_probs[target_regime_name] * next_V_expected_arr
-            )
+            contribution = jnp.average(next_V_stoch, weights=joint)
+            per_target_E_next_V[target_regime_name] = contribution
+            E_next_V = E_next_V + active_regime_probs[target_regime_name] * contribution
 
         H_kwargs = {
             k: v for k, v in states_actions_params.items() if k in _H_accepted_params
         }
         Q_arr = _H_func(utility=U_arr, E_next_V=E_next_V, **H_kwargs)
 
-        # Handle cases when there is only one state.
-        # In that case, Q_arr and F_arr are scalars, but we require arrays as output.
+        return U_arr, F_arr, E_next_V, Q_arr, active_regime_probs, per_target_E_next_V
+
+    @with_signature(
+        args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
+    )
+    def Q_and_F(
+        next_regime_to_V_arr: FloatND,
+        **states_actions_params: Array,
+    ) -> tuple[FloatND, BoolND]:
+        """Calculate state-action value and feasibility."""
+        _U, F_arr, _E, Q_arr, _probs, _pt = _compute_intermediates(
+            next_regime_to_V_arr, **states_actions_params
+        )
         return jnp.asarray(Q_arr), jnp.asarray(F_arr)
 
-    return Q_and_F
+    reduced_diagnostics, raw_diagnostics = _build_diagnostic_functions(
+        compute_intermediates=_compute_intermediates,
+        arg_names=arg_names_of_Q_and_F,
+        complete_targets=complete_targets,
+    )
+
+    return Q_and_F, reduced_diagnostics, raw_diagnostics
 
 
 def get_Q_and_F_terminal(
@@ -288,6 +316,129 @@ def get_Q_and_F_terminal(
         return jnp.asarray(U_arr), jnp.asarray(F_arr)
 
     return Q_and_F
+
+
+def _build_diagnostic_functions(  # noqa: C901
+    *,
+    compute_intermediates: Callable,
+    arg_names: tuple[str, ...],
+    complete_targets: Sequence[str],
+) -> tuple[dict[str, Callable], dict[str, Callable]]:
+    """Build raw and reduced diagnostic functions from Q_and_F intermediates.
+
+    Raw functions return full intermediate arrays (for manual debugging).
+    Reduced functions return `mean(isnan(x))` scalars (for error messages).
+
+    Args:
+        compute_intermediates: The closure that computes U, F, E_next_V, Q, etc.
+        arg_names: Signature of Q_and_F (passed through to `with_signature`).
+        complete_targets: Target regime names with all stochastic transitions.
+
+    Returns:
+        Tuple of (reduced_diagnostics, raw_diagnostics) dicts.
+
+    """
+    raw: dict[str, Callable] = {}
+    reduced: dict[str, Callable] = {}
+
+    _IDX_U, _IDX_F, _IDX_E, _IDX_Q, _IDX_PROBS, _IDX_PER_TARGET = range(6)
+
+    def _make_raw(index: int) -> Callable:
+        @with_signature(args=arg_names, return_annotation="FloatND")
+        def _func(
+            next_regime_to_V_arr: FloatND, **states_actions_params: Array
+        ) -> FloatND:
+            return compute_intermediates(next_regime_to_V_arr, **states_actions_params)[
+                index
+            ]
+
+        return _func
+
+    def _make_reduced_nan(index: int) -> Callable:
+        @with_signature(args=arg_names, return_annotation="FloatND")
+        def _func(
+            next_regime_to_V_arr: FloatND, **states_actions_params: Array
+        ) -> FloatND:
+            return jnp.mean(
+                jnp.isnan(
+                    compute_intermediates(
+                        next_regime_to_V_arr, **states_actions_params
+                    )[index]
+                )
+            )
+
+        return _func
+
+    def _make_reduced_mean(index: int) -> Callable:
+        @with_signature(args=arg_names, return_annotation="FloatND")
+        def _func(
+            next_regime_to_V_arr: FloatND, **states_actions_params: Array
+        ) -> FloatND:
+            return jnp.mean(
+                compute_intermediates(next_regime_to_V_arr, **states_actions_params)[
+                    index
+                ]
+            )
+
+        return _func
+
+    for name, idx, make_reduced in [
+        ("U_nan_fraction", _IDX_U, _make_reduced_nan),
+        ("F_feasible_fraction", _IDX_F, _make_reduced_mean),
+        ("E_nan_fraction", _IDX_E, _make_reduced_nan),
+        ("Q_nan_fraction", _IDX_Q, _make_reduced_nan),
+    ]:
+        raw[name] = _make_raw(idx)
+        reduced[name] = make_reduced(idx)
+
+    def _make_raw_dict_entry(dict_idx: int, key: str) -> Callable:
+        @with_signature(args=arg_names, return_annotation="FloatND")
+        def _func(
+            next_regime_to_V_arr: FloatND, **states_actions_params: Array
+        ) -> FloatND:
+            return compute_intermediates(next_regime_to_V_arr, **states_actions_params)[
+                dict_idx
+            ][key]
+
+        return _func
+
+    def _make_reduced_dict_mean(dict_idx: int, key: str) -> Callable:
+        @with_signature(args=arg_names, return_annotation="FloatND")
+        def _func(
+            next_regime_to_V_arr: FloatND, **states_actions_params: Array
+        ) -> FloatND:
+            return jnp.mean(
+                compute_intermediates(next_regime_to_V_arr, **states_actions_params)[
+                    dict_idx
+                ][key]
+            )
+
+        return _func
+
+    def _make_reduced_dict_nan(dict_idx: int, key: str) -> Callable:
+        @with_signature(args=arg_names, return_annotation="FloatND")
+        def _func(
+            next_regime_to_V_arr: FloatND, **states_actions_params: Array
+        ) -> FloatND:
+            return jnp.mean(
+                jnp.isnan(
+                    compute_intermediates(
+                        next_regime_to_V_arr, **states_actions_params
+                    )[dict_idx][key]
+                )
+            )
+
+        return _func
+
+    for target in complete_targets:
+        raw[f"regime_prob__{target}"] = _make_raw_dict_entry(_IDX_PROBS, target)
+        reduced[f"regime_prob__{target}"] = _make_reduced_dict_mean(_IDX_PROBS, target)
+        raw[f"target_E__{target}"] = _make_raw_dict_entry(_IDX_PER_TARGET, target)
+        reduced[f"target_E_nan__{target}"] = _make_reduced_dict_nan(
+            _IDX_PER_TARGET, target
+        )
+
+    return reduced, raw
 
 
 def _get_arg_names_of_Q_and_F(

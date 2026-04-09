@@ -8,7 +8,7 @@ import pandas as pd
 from jax import Array
 
 from lcm.ages import AgeGrid
-from lcm.exceptions import InvalidParamsError
+from lcm.exceptions import InvalidParamsError, InvalidValueFunctionError
 from lcm.grids import DiscreteGrid
 from lcm.model_processing import (
     build_regimes_and_template,
@@ -209,12 +209,24 @@ class Model:
             internal_params=internal_params,
             ages=self.ages,
         )
-        period_to_regime_to_V_arr = solve(
-            internal_params=internal_params,
-            ages=self.ages,
-            internal_regimes=self.internal_regimes,
-            logger=get_logger(log_level=log_level),
-        )
+        try:
+            period_to_regime_to_V_arr = solve(
+                internal_params=internal_params,
+                ages=self.ages,
+                internal_regimes=self.internal_regimes,
+                logger=get_logger(log_level=log_level),
+            )
+        except InvalidValueFunctionError as exc:
+            if log_level == "debug" and log_path is not None:
+                save_solve_snapshot(
+                    model=self,
+                    params=params,
+                    period_to_regime_to_V_arr=exc.partial_solution,  # ty: ignore[invalid-argument-type]
+                    log_path=Path(log_path),
+                    log_keep_n_latest=log_keep_n_latest,
+                    diagnostics=exc.diagnostics,
+                )
+            raise
         if log_level == "debug" and log_path is not None:
             save_solve_snapshot(
                 model=self,
@@ -308,12 +320,24 @@ class Model:
         )
         log = get_logger(log_level=log_level)
         if period_to_regime_to_V_arr is None:
-            period_to_regime_to_V_arr = solve(
-                internal_params=internal_params,
-                ages=self.ages,
-                internal_regimes=self.internal_regimes,
-                logger=log,
-            )
+            try:
+                period_to_regime_to_V_arr = solve(
+                    internal_params=internal_params,
+                    ages=self.ages,
+                    internal_regimes=self.internal_regimes,
+                    logger=log,
+                )
+            except InvalidValueFunctionError as exc:
+                if log_level == "debug" and log_path is not None:
+                    save_solve_snapshot(
+                        model=self,
+                        params=params,
+                        period_to_regime_to_V_arr=exc.partial_solution,  # ty: ignore[invalid-argument-type]
+                        log_path=Path(log_path),
+                        log_keep_n_latest=log_keep_n_latest,
+                        diagnostics=exc.diagnostics,
+                    )
+                raise
         result = simulate(
             internal_params=internal_params,
             initial_conditions=initial_conditions,

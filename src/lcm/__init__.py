@@ -1,5 +1,6 @@
 import contextlib
 import os
+from pathlib import Path
 from types import MappingProxyType
 
 # Use on-demand GPU memory allocation instead of JAX's default of pre-allocating
@@ -7,6 +8,14 @@ from types import MappingProxyType
 # reflect actual usage, and enables meaningful GPU memory benchmarks. Users can
 # override by setting XLA_PYTHON_CLIENT_PREALLOCATE=true before importing lcm.
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+
+# Enable persistent JIT compilation cache. Large models (many regimes/states) can
+# take minutes to compile; the cache makes subsequent runs near-instant. Users can
+# override by setting JAX_COMPILATION_CACHE_DIR before importing lcm.
+os.environ.setdefault(
+    "JAX_COMPILATION_CACHE_DIR",
+    str(Path.home() / ".cache" / "jax"),
+)
 
 import jax
 
