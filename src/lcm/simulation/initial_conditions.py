@@ -144,7 +144,10 @@ def validate_initial_conditions(
 
     # Validate discrete state values
     _validate_discrete_state_values(
-        initial_states=initial_states, internal_regimes=internal_regimes
+        initial_states=initial_states,
+        internal_regimes=internal_regimes,
+        regime_id_arr=regime_arr,
+        regime_names_to_ids=regime_names_to_ids,
     )
 
     # Validate feasibility
@@ -415,35 +418,53 @@ def _validate_discrete_state_values(
     *,
     initial_states: Mapping[str, Array],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    regime_id_arr: Array,
+    regime_names_to_ids: Mapping[str, int],
 ) -> None:
     """Validate that discrete state values are valid codes.
+
+    Only check subjects in regimes that actually have the state.
 
     Args:
         initial_states: Mapping of state names to arrays.
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
+        regime_id_arr: Array of regime IDs for each subject.
+        regime_names_to_ids: Mapping from regime names to integer IDs.
 
     Raises:
         InvalidInitialConditionsError: If any discrete state contains invalid codes.
 
     """
-    discrete_valid_codes: dict[str, set[int]] = {}
-    for internal_regime in internal_regimes.values():
+    # Build per-state: valid codes + regime IDs that have this state
+    discrete_info: dict[str, tuple[set[int], set[int]]] = {}
+    for regime_name, internal_regime in internal_regimes.items():
+        regime_id = regime_names_to_ids[regime_name]
         for state_name in internal_regime.variable_info.query(
             "is_state and is_discrete"
         ).index:
             grid = internal_regime.grids[state_name]
             if isinstance(grid, DiscreteGrid):
-                existing = discrete_valid_codes.get(state_name, set())
-                discrete_valid_codes[state_name] = existing | set(grid.codes)
+                codes, regime_ids = discrete_info.get(state_name, (set(), set()))
+                discrete_info[state_name] = (
+                    codes | set(grid.codes),
+                    regime_ids | {regime_id},
+                )
 
-    for state_name, valid_codes in discrete_valid_codes.items():
+    for state_name, (valid_codes, regime_ids) in discrete_info.items():
         if state_name not in initial_states:
             continue
         values = initial_states[state_name]
-        invalid_mask = jnp.isin(values, jnp.array(sorted(valid_codes)), invert=True)
+        # Only validate subjects in regimes that have this state
+        in_relevant_regime = jnp.isin(regime_id_arr, jnp.array(sorted(regime_ids)))
+        relevant_values = values[in_relevant_regime]
+        if relevant_values.size == 0:
+            continue
+        invalid_mask = jnp.isin(
+            relevant_values, jnp.array(sorted(valid_codes)), invert=True
+        )
         if jnp.any(invalid_mask):
-            invalid_vals = sorted({int(v) for v in values[invalid_mask]})
+            invalid_vals = sorted({int(v) for v in relevant_values[invalid_mask]})
             raise InvalidInitialConditionsError(
                 f"Invalid values {invalid_vals} for discrete state "
                 f"'{state_name}'. Valid codes are: {sorted(valid_codes)}"
