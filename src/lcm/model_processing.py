@@ -41,11 +41,22 @@ def build_regimes_and_template(
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
+    convert_fixed_params: Callable[[InternalParams], InternalParams] | None = None,
 ) -> tuple[MappingProxyType[RegimeName, InternalRegime], ParamsTemplate]:
     """Build internal regimes and params template in a single pass.
 
     Compose regime processing, template creation, and optional fixed-param partialling
     so that each result is computed exactly once.
+
+    Args:
+        regimes: Mapping of regime names to Regime instances.
+        ages: Age grid for the model.
+        regime_names_to_ids: Mapping of regime names to integer indices.
+        enable_jit: Whether to JIT-compile regime functions.
+        fixed_params: Parameters to fix at model initialization.
+        convert_fixed_params: Optional callback to convert fixed param values
+            (e.g., pd.Series to JAX arrays) after broadcasting to template shape
+            but before partialling into compiled functions.
 
     """
     internal_regimes = process_regimes(
@@ -60,6 +71,8 @@ def build_regimes_and_template(
         fixed_internal = _resolve_fixed_params(
             fixed_params=dict(fixed_params), template=params_template
         )
+        if convert_fixed_params is not None:
+            fixed_internal = convert_fixed_params(fixed_internal)
         if any(v for v in fixed_internal.values()):
             internal_regimes = _partial_fixed_params_into_regimes(
                 internal_regimes=internal_regimes, fixed_internal=fixed_internal
