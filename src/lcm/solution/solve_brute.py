@@ -84,18 +84,21 @@ def solve(
                 validate_V(V_arr=V_arr, age=ages.values[period], regime_name=name)
             except InvalidValueFunctionError as exc:
                 exc.partial_solution = MappingProxyType(solution)
-                diag_func = internal_regime.solve_functions.diagnostic_Q_and_F.get(
+                diag_funcs = internal_regime.solve_functions.diagnostic_Q_and_F.get(
                     period
                 )
-                if diag_func is not None:
-                    diag = diag_func(
+                if diag_funcs is not None:
+                    call_kwargs = {
                         **state_action_space.states,
                         **state_action_space.actions,
-                        next_regime_to_V_arr=next_regime_to_V_arr,
+                        "next_regime_to_V_arr": next_regime_to_V_arr,
                         **internal_params[name],
-                    )
+                    }
+                    diag_results: dict[str, Any] = {}
+                    for diag_name, diag_func in diag_funcs.items():
+                        diag_results[diag_name] = np.asarray(diag_func(**call_kwargs))
                     exc.diagnostics = _summarize_diagnostics(
-                        diag,
+                        diag_results,
                         state_action_space.state_names,
                         regime_name=name,
                         age=ages.values[period],

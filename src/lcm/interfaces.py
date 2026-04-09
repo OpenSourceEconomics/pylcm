@@ -1,7 +1,7 @@
 import dataclasses
 from collections.abc import Callable
 from types import MappingProxyType
-from typing import Any, cast
+from typing import cast
 
 import pandas as pd
 from jax import Array
@@ -160,8 +160,11 @@ class SolveFunctions:
     max_Q_over_a: MappingProxyType[int, MaxQOverAFunction]
     """Immutable mapping of period to max-Q-over-actions functions."""
 
-    diagnostic_Q_and_F: MappingProxyType[int, Callable[..., dict[str, Any]]]
-    """Diagnostic variant of Q_and_F returning all intermediates."""
+    diagnostic_Q_and_F: MappingProxyType[int, MappingProxyType[str, Callable]]
+    """Reduced diagnostics: each function returns one scalar (NaN fraction)."""
+
+    raw_diagnostic_Q_and_F: MappingProxyType[int, MappingProxyType[str, Callable]]
+    """Raw diagnostics: each function returns the full intermediate array."""
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)

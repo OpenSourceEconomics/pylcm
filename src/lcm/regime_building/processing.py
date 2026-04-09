@@ -229,7 +229,7 @@ def _build_solve_functions(
             phase="solve",
         )
 
-    Q_and_F_functions, diagnostic_Q_and_F = _build_Q_and_F_per_period(
+    Q_and_F_functions, reduced_diags, raw_diags = _build_Q_and_F_per_period(
         regime=regime,
         regimes_to_active_periods=regimes_to_active_periods,
         functions=core.functions,
@@ -249,9 +249,9 @@ def _build_solve_functions(
         enable_jit=enable_jit,
     )
 
-    mapped_diagnostic = _build_diagnostic_per_period(
+    mapped_reduced = _build_diagnostic_per_period(
         state_action_space=state_action_space,
-        diagnostic_functions=diagnostic_Q_and_F,
+        diagnostic_functions=reduced_diags,
         grids=all_grids[regime_name],
     )
 
@@ -262,7 +262,10 @@ def _build_solve_functions(
         stochastic_transition_names=core.stochastic_transition_names,
         compute_regime_transition_probs=compute_regime_transition_probs,
         max_Q_over_a=max_Q_over_a,
-        diagnostic_Q_and_F=mapped_diagnostic,
+        diagnostic_Q_and_F=mapped_reduced,
+        raw_diagnostic_Q_and_F=MappingProxyType(
+            {p: MappingProxyType(d) for p, d in raw_diags.items()}
+        ),
     )
 
 
@@ -345,7 +348,7 @@ def _build_simulate_functions(
 
     # Q_and_F uses the solve (non-vmapped) regime transition probs since it
     # evaluates on the Cartesian grid, not per-subject.
-    Q_and_F_functions, _diagnostic = _build_Q_and_F_per_period(
+    Q_and_F_functions, _reduced, _raw = _build_Q_and_F_per_period(
         regime=regime,
         regimes_to_active_periods=regimes_to_active_periods,
         functions=functions,
@@ -1230,12 +1233,17 @@ def _build_Q_and_F_per_period(
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     ages: AgeGrid,
     regime_params_template: RegimeParamsTemplate,
-) -> tuple[MappingProxyType[int, QAndFFunction], MappingProxyType[int, Callable]]:
+) -> tuple[
+    MappingProxyType[int, QAndFFunction],
+    dict[int, dict[str, Callable]],
+    dict[int, dict[str, Callable]],
+]:
     """Build Q-and-F closures and diagnostic variants for each period."""
     flat_param_names = frozenset(get_flat_param_names(regime_params_template))
 
     Q_and_F_functions: dict[int, QAndFFunction] = {}
-    diagnostic_functions: dict[int, Callable] = {}
+    reduced_diagnostics: dict[int, dict[str, Callable]] = {}
+    raw_diagnostics: dict[int, dict[str, Callable]] = {}
     for period, age in enumerate(ages.values):
         if regime.terminal:
             Q_and_F_functions[period] = get_Q_and_F_terminal(
@@ -1247,7 +1255,11 @@ def _build_Q_and_F_per_period(
             )
         else:
             assert compute_regime_transition_probs is not None  # noqa: S101
-            Q_and_F_functions[period], diagnostic_functions[period] = get_Q_and_F(
+            (
+                Q_and_F_functions[period],
+                reduced_diagnostics[period],
+                raw_diagnostics[period],
+            ) = get_Q_and_F(
                 flat_param_names=flat_param_names,
                 age=age,
                 period=period,
@@ -1260,7 +1272,7 @@ def _build_Q_and_F_per_period(
                 regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             )
 
-    return MappingProxyType(Q_and_F_functions), MappingProxyType(diagnostic_functions)
+    return MappingProxyType(Q_and_F_functions), reduced_diagnostics, raw_diagnostics
 
 
 def _build_max_Q_over_a_per_period(
@@ -1290,27 +1302,30 @@ def _build_max_Q_over_a_per_period(
 def _build_diagnostic_per_period(
     *,
     state_action_space: StateActionSpace,
-    diagnostic_functions: MappingProxyType[int, Callable],
+    diagnostic_functions: dict[int, dict[str, Callable]],
     grids: MappingProxyType[str, Grid],
-) -> MappingProxyType[int, Callable]:
-    """Productmap diagnostic Q_and_F over actions and states for each period."""
-    result: dict[int, Callable] = {}
+) -> MappingProxyType[int, MappingProxyType[str, Callable]]:
+    """Productmap each diagnostic function over actions and states."""
+    result: dict[int, MappingProxyType[str, Callable]] = {}
     action_names = state_action_space.action_names
     state_names = state_action_space.state_names
     state_batch_sizes = {
         name: grid.batch_size for name, grid in grids.items() if name in state_names
     }
-    for period, diag_func in diagnostic_functions.items():
-        mapped_over_actions = productmap(
-            func=diag_func,
-            variables=action_names,
-            batch_sizes=dict.fromkeys(action_names, 0),
-        )
-        result[period] = productmap(
-            func=mapped_over_actions,
-            variables=state_names,
-            batch_sizes=state_batch_sizes,
-        )
+    for period, diag_dict in diagnostic_functions.items():
+        mapped: dict[str, Callable] = {}
+        for name, diag_func in diag_dict.items():
+            action_mapped = productmap(
+                func=diag_func,
+                variables=action_names,
+                batch_sizes=dict.fromkeys(action_names, 0),
+            )
+            mapped[name] = productmap(
+                func=action_mapped,
+                variables=state_names,
+                batch_sizes=state_batch_sizes,
+            )
+        result[period] = MappingProxyType(mapped)
     return MappingProxyType(result)
 
 
