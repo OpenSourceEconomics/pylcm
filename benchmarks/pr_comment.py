@@ -78,7 +78,7 @@ _DATA_ROW_RE = re.compile(
     r"^\|\s*[-+~x]?\s*"  # | change_indicator
     r"\|\s*(\S+)\s*"  # | before_value
     r"\|\s*(\S+)\s*"  # | after_value
-    r"\|\s*~?([\d.]+)\s*"  # | ratio (strip ~ prefix)
+    r"\|\s*~?([\w/.]+)\s*"  # | ratio (numeric or n/a)
     r"\|\s*(.+?)\s*\|$"  # | benchmark_name |
 )
 _BENCH_NAME_RE = re.compile(r"(?:\w+\.)*(\w+)\.(\w+)(?:\(([^)]*)\))?$")
@@ -91,7 +91,7 @@ class _BenchmarkRow(NamedTuple):
     params: str
     before_value: str
     after_value: str
-    ratio: float
+    ratio: float | None
 
 
 def post_pr_comment() -> None:
@@ -108,7 +108,9 @@ def post_pr_comment() -> None:
 
     comparison_md = _try_comparison(machine_dir, head_sha_full)
     processed = (
-        _postprocess_comparison(comparison_md) if comparison_md is not None else None
+        _postprocess_comparison(comparison_md, head_result_file)
+        if comparison_md is not None
+        else None
     )
 
     if processed is not None:
@@ -147,10 +149,6 @@ def _try_comparison(
         )
         return None
 
-    head_file = _find_result_file(machine_dir, head_sha_full[:8])
-    if head_file is not None:
-        _backfill_base_results(base_file, head_file)
-
     try:
         result = subprocess.run(
             [
@@ -171,53 +169,6 @@ def _try_comparison(
         return None
 
 
-def _backfill_base_results(
-    base_file: Path,
-    head_file: Path,
-) -> None:
-    """Sync the base result file so ``asv compare`` finds matching benchmarks.
-
-    Copies HEAD entries into the base when the benchmark is missing or its
-    parameter set has changed (e.g. after adding/removing param values).
-    Since both runs use the same ``existing:python`` environment, the
-    values are comparable.
-
-    """
-    base_data: dict[str, Any] = json.loads(base_file.read_text(encoding="utf-8"))
-    head_data: dict[str, Any] = json.loads(head_file.read_text(encoding="utf-8"))
-
-    base_results = base_data.setdefault("results", {})
-    head_results = head_data.get("results", {})
-
-    updates = {
-        key: head_val
-        for key, head_val in head_results.items()
-        if _needs_backfill(base_results.get(key), head_val)
-    }
-
-    if not updates:
-        return
-
-    base_results.update(updates)
-    base_file.write_text(json.dumps(base_data, indent=4), encoding="utf-8")
-
-
-def _needs_backfill(
-    base_val: list[Any] | None,
-    head_val: Any,
-) -> bool:
-    """Return True when a base entry is missing or has different params."""
-    if base_val is None:
-        return True
-    return (
-        isinstance(head_val, list)
-        and len(head_val) > 1
-        and isinstance(base_val, list)
-        and len(base_val) > 1
-        and head_val[1] != base_val[1]
-    )
-
-
 def _format_comparison_comment(
     head_sha: str,
     processed_md: str,
@@ -235,15 +186,15 @@ def _format_comparison_comment(
     )
 
 
-def _postprocess_comparison(raw: str) -> str | None:
+def _postprocess_comparison(raw: str, head_result_file: Path) -> str | None:
     """Parse ASV compare output and reformat as a grouped benchmark table.
 
-    Return ``None`` when no rows with numeric ratios are found (e.g. all
-    benchmarks were renamed between base and HEAD, producing only ``n/a``
-    ratios).
+    Benchmarks present in HEAD but missing from the baseline appear with
+    empty before/ratio columns.  Return ``None`` when no rows are found.
 
     """
     rows, hashes = _parse_comparison_rows(raw)
+    rows.extend(_find_head_only_rows(rows, head_result_file))
 
     if not rows:
         return None
@@ -289,6 +240,11 @@ def _parse_comparison_rows(
         if class_name not in _CLASS_DISPLAY and method_name not in _METHOD_DISPLAY:
             continue
 
+        try:
+            ratio = float(ratio_str)
+        except ValueError:
+            ratio = None
+
         rows.append(
             _BenchmarkRow(
                 class_name=class_name,
@@ -296,11 +252,33 @@ def _parse_comparison_rows(
                 params=params or "",
                 before_value=before_val,
                 after_value=after_val,
-                ratio=float(ratio_str),
+                ratio=ratio,
             )
         )
 
     return rows, hashes
+
+
+def _find_head_only_rows(
+    comparison_rows: list[_BenchmarkRow],
+    head_result_file: Path,
+) -> list[_BenchmarkRow]:
+    """Return rows for benchmarks present in HEAD but missing from the comparison."""
+    seen = {(r.class_name, r.method_name, r.params) for r in comparison_rows}
+    head_entries = _parse_raw_entries(head_result_file)
+    return [
+        _BenchmarkRow(
+            class_name=class_name,
+            method_name=method_name,
+            params=params,
+            before_value="",
+            after_value=value,
+            ratio=None,
+        )
+        for class_name, method_name, params, value in head_entries
+        if (class_name, method_name, params) not in seen
+        and (class_name in _CLASS_DISPLAY or method_name in _METHOD_DISPLAY)
+    ]
 
 
 def _build_grouped_table(rows: list[_BenchmarkRow]) -> str:
@@ -334,11 +312,18 @@ def _build_grouped_table(rows: list[_BenchmarkRow]) -> str:
         for i, row in enumerate(groups[(display_name, params)]):
             bench_col = label if i == 0 else ""
             stat_col = _METHOD_DISPLAY.get(row.method_name, row.method_name)
-            alert = "\u274c" if row.ratio > _ALERT_RATIO else ""
+            if row.ratio is not None:
+                before_col = row.before_value
+                ratio_col = f"{row.ratio:.2f}"
+                alert = "\u274c" if row.ratio > _ALERT_RATIO else ""
+            else:
+                before_col = ""
+                ratio_col = ""
+                alert = ""
             lines.append(
                 f"| {bench_col} | {stat_col} "
-                f"| {row.before_value} | {row.after_value} "
-                f"| {row.ratio:.2f} | {alert} |"
+                f"| {before_col} | {row.after_value} "
+                f"| {ratio_col} | {alert} |"
             )
 
     return "\n".join(lines)
