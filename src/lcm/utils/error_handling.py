@@ -55,13 +55,21 @@ def validate_V(
         n_nan = int(jnp.sum(jnp.isnan(V_arr)))
         total = int(V_arr.size)
         regime_part = f" in regime '{regime_name}'" if regime_name else ""
+        all_nan = n_nan == total
+        fraction_hint = "all" if all_nan else f"{n_nan} of {total}"
         raise InvalidValueFunctionError(
-            f"The value function array at age {age}{regime_part} contains NaN values "
-            f"({n_nan} of {total} values are NaN). This may be due to various "
-            "reasons:\n"
-            "- The user-defined functions returned invalid values.\n"
-            "- It is impossible to reach an active regime, resulting in NaN regime\n"
-            "  transition probabilities."
+            f"Value function at age {age}{regime_part}: {fraction_hint} values "
+            f"are NaN.\n\n"
+            "NaN propagates through Q = U + beta * E[V]. Common causes:\n"
+            "- A regime parameter is NaN.\n"
+            "- The utility function returned NaN (e.g. log of a non-positive "
+            "argument).\n"
+            "- The regime transition function returned NaN probabilities "
+            "(e.g. from a NaN survival probability or a NaN fixed param).\n\n"
+            "To debug, see https://pylcm.readthedocs.io/en/latest/debugging/\n"
+            '- Use Model(..., enable_jit=False) for readable tracebacks.\n'
+            '- Use model.solve(log_level="debug", log_path=...) to save '
+            "snapshots."
         )
 
 
