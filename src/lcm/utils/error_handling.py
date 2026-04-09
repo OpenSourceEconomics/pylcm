@@ -61,18 +61,20 @@ def validate_V(
             f"Value function at age {age}{regime_part}: {fraction_hint} values "
             f"are NaN.\n\n"
             "NaN propagates through Q = U + beta * E[V]. Common causes:\n"
+            "- A missing feasibility constraint (e.g. negative leisure passed "
+            "to a fractional exponent).\n"
             "- A regime parameter is NaN.\n"
             "- The utility function returned NaN (e.g. log of a non-positive "
             "argument).\n"
             "- The regime transition function returned NaN probabilities "
             "(e.g. from a NaN survival probability or a NaN fixed param).\n\n"
-            "To find the source of NaN, re-solve without JIT for a readable "
-            "traceback:\n\n"
-            "  model = Model(..., enable_jit=False)\n"
-            "  model.solve(params=params)\n\n"
-            'Or save a snapshot with model.solve(log_level="debug", '
-            'log_path="./debug") and replay from the saved model and params.\n'
-            "See https://pylcm.readthedocs.io/en/latest/debugging/"
+            "To diagnose, re-solve with debug logging:\n\n"
+            '  model.solve(params=params, log_level="debug", '
+            'log_path="./debug/")\n\n'
+            "The snapshot saved on failure contains diagnostics that pinpoint "
+            "where NaN enters (U, E[V], or regime transitions). See the "
+            "debugging guide:\n"
+            "https://pylcm.readthedocs.io/en/latest/user_guide/debugging/"
         )
 
 

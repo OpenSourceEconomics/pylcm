@@ -232,6 +232,53 @@ The traceback now points to the exact line in your functions where NaN originate
 you don't have a model factory, re-create the `Model(...)` call with `enable_jit=False`
 using the same regimes and ages.
 
+### 4. Inspect raw intermediates in a notebook
+
+For fine-grained analysis, use the **raw diagnostic functions** on the internal regime.
+Each function returns the full intermediate array (not a scalar summary), so you can
+inspect individual state-action points.
+
+```python
+import jax.numpy as jnp
+from lcm import load_snapshot
+from lcm.params.processing import process_params
+
+snapshot = load_snapshot("./debug/solve_snapshot_001")
+model = snapshot.model
+
+# Pick the failing regime and period
+regime_name = "working"
+period = 5  # adjust to the failing period
+
+internal_regime = model.internal_regimes[regime_name]
+internal_params = process_params(
+    params=snapshot.params,
+    params_template=model.get_params_template(),
+)
+
+# Build the call kwargs (same inputs as the solve step)
+state_action_space = internal_regime.state_action_space(
+    regime_params=internal_params[regime_name],
+)
+call_kwargs = {
+    **state_action_space.states,
+    **state_action_space.actions,
+    "next_regime_to_V_arr": snapshot.period_to_regime_to_V_arr[period + 1],
+    **internal_params[regime_name],
+}
+
+# Call each raw diagnostic function
+raw_diags = internal_regime.solve_functions.raw_diagnostic_Q_and_F[period]
+for name, func in raw_diags.items():
+    arr = func(**call_kwargs)
+    print(f"{name}: shape={arr.shape}, NaN={int(jnp.sum(jnp.isnan(arr)))}")
+```
+
+The raw diagnostic functions return arrays shaped like the state(-action) grid.
+Available keys typically include `U_arr`, `E_next_V`, `Q_arr`, `F_arr`, plus per-target
+arrays like `regime_prob__{target}` and `target_E_next_V__{target}`. Use these to locate
+exactly which state-action combinations produce NaN.
+
 ## Recipe: Debugging NaN in parameter estimation with optimagic
 
 A common scenario: you are estimating model parameters with optimagic, and at some
