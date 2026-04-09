@@ -89,21 +89,27 @@ def solve(
                     period
                 )
                 if diag_funcs is not None:
-                    # Move inputs to CPU — the GPU may be out of memory
-                    # for compiling new diagnostic kernels after the solve.
-                    cpu = jax.devices("cpu")[0]
-                    call_kwargs = jax.device_put(
-                        {
-                            **state_action_space.states,
-                            **state_action_space.actions,
-                            "next_regime_to_V_arr": next_regime_to_V_arr,
-                            **internal_params[name],
-                        },
-                        cpu,
-                    )
+                    call_kwargs = {
+                        **state_action_space.states,
+                        **state_action_space.actions,
+                        "next_regime_to_V_arr": next_regime_to_V_arr,
+                        **internal_params[name],
+                    }
                     diag_results: dict[str, Any] = {}
-                    for diag_name, diag_func in diag_funcs.items():
-                        diag_results[diag_name] = np.asarray(diag_func(**call_kwargs))
+                    try:
+                        for diag_name, diag_func in diag_funcs.items():
+                            diag_results[diag_name] = np.asarray(
+                                diag_func(**call_kwargs)
+                            )
+                    except jax.errors.JaxRuntimeError:
+                        # GPU OOM — fall back to CPU
+                        cpu = jax.devices("cpu")[0]
+                        call_kwargs = jax.device_put(call_kwargs, cpu)
+                        diag_results = {}
+                        for diag_name, diag_func in diag_funcs.items():
+                            diag_results[diag_name] = np.asarray(
+                                diag_func(**call_kwargs)
+                            )
                     exc.diagnostics = _summarize_diagnostics(
                         diag_results,
                         state_action_space.state_names,
