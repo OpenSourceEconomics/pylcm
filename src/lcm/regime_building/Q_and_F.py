@@ -1,8 +1,9 @@
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Any, cast
 
 import jax
+import jax.experimental
 import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
 from jax import Array
@@ -75,8 +76,8 @@ def get_Q_and_F(  # noqa: C901, PLR0915
     )
 
     # Partition active targets into complete (have all stochastic transitions)
-    # and incomplete (missing stochastic transitions — unreachable from this
-    # regime, so their continuation value contribution is zero).
+    # and incomplete (missing stochastic transitions, assumed to have zero
+    # transition probability — validated at runtime by _check_zero_probs).
     complete_targets: list[str] = []
     incomplete_targets: list[str] = []
     for name in all_active_next_period:
@@ -163,7 +164,8 @@ def get_Q_and_F(  # noqa: C901, PLR0915
     # sees the same function object across calls (avoids JIT re-compilation).
     if incomplete_targets:
 
-        def _check_zero_probs(probs: dict[str, Array]) -> None:
+        def _check_zero_probs(probs: Mapping[str, Array]) -> None:
+            """Validate that incomplete targets have zero transition probability."""
             for target in incomplete_targets:
                 prob = float(probs[target])
                 if prob > 0:
@@ -212,7 +214,9 @@ def get_Q_and_F(  # noqa: C901, PLR0915
         )
 
         if incomplete_targets:
-            jax.debug.callback(_check_zero_probs, dict(active_regime_probs))
+            jax.experimental.io_callback(
+                _check_zero_probs, None, dict(active_regime_probs)
+            )
 
         E_next_V = jnp.zeros_like(U_arr)
         for target_regime_name in complete_targets:
