@@ -669,6 +669,17 @@ def _build_outcome_mapping(
 
     path = tree_path_from_qname(func_name)
     state_name = path[0].removeprefix("next_")
+
+    # Per-target transitions (e.g. "next_health__post65") must use the TARGET
+    # regime's grid for the outcome axis, not the source regime's grid.
+    if len(path) > 1:
+        target_regime_name = path[1]
+        target_regime = model.regimes.get(target_regime_name)
+        if target_regime is not None and state_name in target_regime.states:
+            target_grid = target_regime.states[state_name]
+            if isinstance(target_grid, DiscreteGrid):
+                return _grid_level_mapping(name=f"next_{state_name}", grid=target_grid)
+
     return _grid_level_mapping(name=f"next_{state_name}", grid=grids[state_name])
 
 
