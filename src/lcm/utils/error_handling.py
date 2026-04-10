@@ -99,16 +99,24 @@ def validate_V(
     exc.partial_solution = partial_solution
 
     if compute_intermediates is not None and state_action_space is not None:
-        _enrich_with_diagnostics(
-            exc=exc,
-            compute_intermediates=compute_intermediates,
-            state_action_space=state_action_space,
-            next_regime_to_V_arr=next_regime_to_V_arr,
-            internal_params=internal_params,
-            regime_name=regime_name or "",
-            age=float(age),
-            period=period,
-        )
+        try:
+            _enrich_with_diagnostics(
+                exc=exc,
+                compute_intermediates=compute_intermediates,
+                state_action_space=state_action_space,
+                next_regime_to_V_arr=next_regime_to_V_arr,
+                internal_params=internal_params,
+                regime_name=regime_name or "",
+                age=float(age),
+                period=period,
+            )
+        except Exception:  # noqa: BLE001
+            import logging  # noqa: PLC0415
+
+            logging.getLogger("lcm").warning(
+                "Diagnostic enrichment failed; raising original NaN error",
+                exc_info=True,
+            )
 
     raise exc
 
@@ -126,11 +134,22 @@ def _enrich_with_diagnostics(
 ) -> None:
     """Run diagnostic intermediates and attach summary to exception.
 
-    JIT-compiles `compute_intermediates` on the fly (GPU first, CPU fallback).
+    Run `compute_intermediates` eagerly (GPU first, CPU fallback on error).
+    Grid arrays are meshed into the full Cartesian product so that the
+    resulting diagnostic arrays have one axis per state/action variable.
     """
+    # Mesh grid arrays so broadcasting produces the full Cartesian product.
+    all_names = (*state_action_space.state_names, *state_action_space.action_names)
+    grids = {**state_action_space.states, **state_action_space.actions}
+    n_vars = len(grids)
+    meshed: dict[str, Any] = {}
+    for i, (name, arr) in enumerate(grids.items()):
+        shape = [1] * n_vars
+        shape[i] = len(arr)
+        meshed[name] = jnp.reshape(arr, shape)
+
     call_kwargs: dict[str, Any] = {
-        **state_action_space.states,
-        **state_action_space.actions,
+        **meshed,
         "next_regime_to_V_arr": next_regime_to_V_arr,
         **(dict(internal_params) if internal_params else {}),
         "age": age,
@@ -139,13 +158,12 @@ def _enrich_with_diagnostics(
 
     try:
         result = compute_intermediates(**call_kwargs)
-    except jax.errors.JaxRuntimeError:
+    except Exception:  # noqa: BLE001
         cpu = jax.devices("cpu")[0]
         call_kwargs = jax.device_put(call_kwargs, cpu)
         result = compute_intermediates(**call_kwargs)
 
     U_arr, F_arr, E_next_V, Q_arr, regime_probs = result
-    state_names = state_action_space.state_names
     exc.diagnostics = _summarize_diagnostics(
         U_arr=np.asarray(U_arr),
         F_arr=np.asarray(F_arr),
@@ -154,7 +172,7 @@ def _enrich_with_diagnostics(
         regime_probs={
             k: float(np.mean(np.asarray(v))) for k, v in regime_probs.items()
         },
-        state_names=state_names,
+        variable_names=all_names,
         regime_name=regime_name,
         age=age,
     )
@@ -168,11 +186,11 @@ def _summarize_diagnostics(
     E_next_V: np.ndarray,
     Q_arr: np.ndarray,
     regime_probs: dict[str, float],
-    state_names: tuple[str, ...],
+    variable_names: tuple[str, ...],
     regime_name: str,
     age: float,
 ) -> dict[str, Any]:
-    """Reduce diagnostic arrays to NaN fractions per state dimension."""
+    """Reduce diagnostic arrays to NaN fractions per variable dimension."""
     summary: dict[str, Any] = {"regime_name": regime_name, "age": age}
 
     for key, arr in [
@@ -187,7 +205,7 @@ def _summarize_diagnostics(
                 name: np.mean(
                     nan_frac, axis=tuple(j for j in range(nan_frac.ndim) if j != i)
                 ).tolist()
-                for i, name in enumerate(state_names)
+                for i, name in enumerate(variable_names)
                 if i < nan_frac.ndim
             },
         }
@@ -199,7 +217,7 @@ def _summarize_diagnostics(
             name: np.mean(
                 feasible, axis=tuple(j for j in range(feasible.ndim) if j != i)
             ).tolist()
-            for i, name in enumerate(state_names)
+            for i, name in enumerate(variable_names)
             if i < feasible.ndim
         },
     }
