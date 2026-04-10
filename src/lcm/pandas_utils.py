@@ -110,11 +110,7 @@ def initial_conditions_from_dataframe(
         }
         discrete_state_names |= discrete_grids.keys()
 
-        regime_state_names = {
-            name
-            for name, grid in regime.states.items()
-            if not isinstance(grid, _ShockGrid)
-        } | {"age"}
+        regime_state_names = set(regime.states.keys()) | {"age"}
 
         for col in state_cols:
             if col not in regime_state_names:
