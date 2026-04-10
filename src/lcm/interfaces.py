@@ -1,4 +1,5 @@
 import dataclasses
+from collections.abc import Callable
 from types import MappingProxyType
 from typing import cast
 
@@ -158,6 +159,13 @@ class SolveFunctions:
 
     max_Q_over_a: MappingProxyType[int, MaxQOverAFunction]
     """Immutable mapping of period to max-Q-over-actions functions."""
+
+    compute_intermediates: MappingProxyType[int, Callable]
+    """Immutable mapping of period to intermediate-computation closures.
+
+    NOT JIT-compiled — only used in the error path when `validate_V`
+    detects NaN. Each closure returns `(U, F, E_next_V, Q, regime_probs)`.
+    """
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)

@@ -1,6 +1,6 @@
 import functools
 import inspect
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal, cast
@@ -33,7 +33,11 @@ from lcm.regime_building.max_Q_over_a import (
 )
 from lcm.regime_building.ndimage import map_coordinates
 from lcm.regime_building.next_state import get_next_state_function_for_simulation
-from lcm.regime_building.Q_and_F import get_Q_and_F, get_Q_and_F_terminal
+from lcm.regime_building.Q_and_F import (
+    get_compute_intermediates,
+    get_Q_and_F,
+    get_Q_and_F_terminal,
+)
 from lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
 from lcm.regime_building.validation import collect_state_transitions
 from lcm.regime_building.variable_info import get_grids, get_variable_info
@@ -249,6 +253,18 @@ def _build_solve_functions(
         enable_jit=enable_jit,
     )
 
+    compute_intermediates = _build_compute_intermediates_per_period(
+        regime=regime,
+        regimes_to_active_periods=regimes_to_active_periods,
+        functions=core.functions,
+        constraints=core.constraints,
+        transitions=core.transitions,
+        stochastic_transition_names=core.stochastic_transition_names,
+        compute_regime_transition_probs=compute_regime_transition_probs,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        ages=ages,
+    )
+
     return SolveFunctions(
         functions=core.functions,
         constraints=core.constraints,
@@ -256,6 +272,7 @@ def _build_solve_functions(
         stochastic_transition_names=core.stochastic_transition_names,
         compute_regime_transition_probs=compute_regime_transition_probs,
         max_Q_over_a=max_Q_over_a,
+        compute_intermediates=compute_intermediates,
     )
 
 
@@ -1253,6 +1270,43 @@ def _build_Q_and_F_per_period(
             )
 
     return MappingProxyType(Q_and_F_functions)
+
+
+def _build_compute_intermediates_per_period(
+    *,
+    regime: Regime,
+    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    functions: FunctionsMapping,
+    constraints: FunctionsMapping,
+    transitions: TransitionFunctionsMapping,
+    stochastic_transition_names: frozenset[str],
+    compute_regime_transition_probs: RegimeTransitionFunction | None,
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    ages: AgeGrid,
+) -> MappingProxyType[int, Callable]:
+    """Build diagnostic intermediate closures for each period.
+
+    These are raw closures (not JIT-compiled) that return all Q_and_F
+    intermediates. Only used in the error path when `validate_V` detects NaN.
+    """
+    intermediates: dict[int, Callable] = {}
+    for period, age in enumerate(ages.values):
+        if regime.terminal:
+            continue
+        assert compute_regime_transition_probs is not None  # noqa: S101
+        intermediates[period] = get_compute_intermediates(
+            age=age,
+            period=period,
+            functions=functions,
+            constraints=constraints,
+            transitions=transitions,
+            stochastic_transition_names=stochastic_transition_names,
+            regimes_to_active_periods=regimes_to_active_periods,
+            compute_regime_transition_probs=compute_regime_transition_probs,
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        )
+
+    return MappingProxyType(intermediates)
 
 
 def _build_max_Q_over_a_per_period(
