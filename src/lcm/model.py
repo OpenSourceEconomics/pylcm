@@ -80,9 +80,6 @@ class Model:
     enable_jit: bool = True
     """Whether to JIT-compile the functions of the internal regime."""
 
-    regime_id_class: type
-    """Dataclass mapping regime names to integer indices."""
-
     fixed_params: UserParams
     """Parameters fixed at model initialization."""
 
@@ -129,13 +126,15 @@ class Model:
             )
         )
         self.regimes = MappingProxyType(dict(regimes))
-        self.regime_id_class = regime_id_class
         self.internal_regimes, self._params_template = build_regimes_and_template(
             regimes=regimes,
             ages=self.ages,
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=self.fixed_params,
+            convert_fixed_params=lambda params: _maybe_convert_series(
+                params, model=self, derived_categoricals=None
+            ),
         )
         self.enable_jit = enable_jit
         self.simulation_output_dtypes = get_simulation_output_dtypes(

@@ -623,6 +623,7 @@ def create_inputs(
                 prod = prod.at[index].set(j - 1)
                 ht = ht.at[index].set(1 - (k - 1))
                 discount = discount.at[index].set(i - 1)
+                discount = discount.at[index + 8].set(i - 1)
                 prod = prod.at[index + 8].set(j - 1)
                 ht = ht.at[index + 8].set(1 - (k - 1))
                 ed = ed.at[index + 8].set(1)

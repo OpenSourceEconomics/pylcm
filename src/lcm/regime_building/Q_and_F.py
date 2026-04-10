@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -146,7 +146,8 @@ def get_Q_and_F(
     # sees the same function object across calls (avoids JIT re-compilation).
     if incomplete_targets:
 
-        def _check_zero_probs(probs: dict[str, Array]) -> None:
+        def _check_zero_probs(probs: Mapping[str, Array]) -> None:
+            """Validate that incomplete targets have zero transition probability."""
             for target in incomplete_targets:
                 prob = float(probs[target])
                 if prob > 0:
