@@ -504,7 +504,8 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
     # status: low=0, high=1 for with_status regime
     assert result["status"][0] == 0
     assert result["status"][1] == 1
-    # without_status regime: value is unused (NaN→int32 gives a sentinel)
+    # without_status regime: NaN pre-fill → explicit int32 sentinel
+    assert result["status"][2] == jnp.iinfo(jnp.int32).min
     assert jnp.allclose(result["wealth"], jnp.array([10.0, 20.0, 30.0]))
 
 
