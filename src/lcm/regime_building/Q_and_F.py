@@ -188,7 +188,10 @@ def get_Q_and_F(
 
         if incomplete_targets:
             jax.experimental.io_callback(
-                _check_zero_probs, None, dict(active_regime_probs)
+                _check_zero_probs,
+                None,
+                dict(active_regime_probs),
+                ordered=True,
             )
 
         E_next_V = jnp.zeros_like(U_arr)
