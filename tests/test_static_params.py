@@ -5,19 +5,11 @@ import pandas as pd
 from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import AgeGrid, LinSpacedGrid, Model, Regime, categorical
-from lcm.typing import ContinuousAction, ContinuousState, FloatND
-from tests.test_models.regime_markov import (
-    Health,
-)
-from tests.test_models.regime_markov import (
-    RegimeId as MarkovRegimeId,
-)
-from tests.test_models.regime_markov import (
-    alive as markov_alive,
-)
-from tests.test_models.regime_markov import (
-    dead as markov_dead,
-)
+from lcm.typing import ContinuousAction, ContinuousState, FloatND, UserParams
+from tests.test_models.regime_markov import Health
+from tests.test_models.regime_markov import RegimeId as MarkovRegimeId
+from tests.test_models.regime_markov import alive as markov_alive
+from tests.test_models.regime_markov import dead as markov_dead
 
 
 @categorical(ordered=False)
@@ -175,19 +167,7 @@ def test_all_params_fixed():
     assert len(period_to_regime_to_V_arr) > 0
 
 
-# ---------------------------------------------------------------------------
-# Series conversion for fixed_params (using regime_markov test model)
-# ---------------------------------------------------------------------------
-
 _AGES = (60.0, 61.0, 62.0)
-
-_PROBS_ARRAY = jnp.array(
-    [
-        [[0.95, 0.05], [0.98, 0.02]],  # age 60 → 61 (alive active)
-        [[0.0, 1.0], [0.0, 1.0]],  # age 61 → 62 (alive inactive, must die)
-        [[0.0, 1.0], [0.0, 1.0]],  # age 62 (terminal)
-    ]
-)
 
 _PROBS_SERIES = pd.Series(
     [0.95, 0.05, 0.98, 0.02, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
@@ -205,7 +185,7 @@ _MARKOV_INITIAL_CONDITIONS = {
 }
 
 
-def _make_markov_model(*, fixed_params=None):
+def _make_markov_model(*, fixed_params: UserParams | None = None) -> Model:
     """Create regime_markov model with optional fixed_params."""
     return Model(
         regimes={"alive": markov_alive, "dead": markov_dead},
