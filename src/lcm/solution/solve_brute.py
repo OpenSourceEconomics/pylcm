@@ -67,6 +67,8 @@ def solve(
                 **state_action_space.actions,
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 **internal_params[name],
+                period=period,
+                age=ages.values[period],
             )
 
             log_nan_in_V(
@@ -88,6 +90,7 @@ def solve(
                 state_action_space=state_action_space,
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 internal_params=internal_params[name],
+                period=period,
             )
             period_solution[name] = V_arr
 

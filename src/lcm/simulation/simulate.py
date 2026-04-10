@@ -268,6 +268,8 @@ def _simulate_regime_in_period(
         **state_action_space.continuous_actions,
         next_regime_to_V_arr=next_regime_to_V_arr,
         **internal_params[regime_name],
+        period=period,
+        age=age,
     )
     validate_V(V_arr=V_arr, age=age, regime_name=regime_name)
 
