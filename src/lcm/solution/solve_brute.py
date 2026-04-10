@@ -11,6 +11,7 @@ from lcm.utils.error_handling import validate_V
 from lcm.utils.logging import (
     format_duration,
     log_nan_in_V,
+    log_period_header,
     log_period_timing,
     log_V_stats,
 )
@@ -55,6 +56,12 @@ def solve(
             if period in regime.active_periods
         }
 
+        log_period_header(
+            logger=logger,
+            age=ages.values[period],
+            n_active_regimes=len(active_regimes),
+        )
+
         for name, internal_regime in active_regimes.items():
             state_action_space = internal_regime.state_action_space(
                 regime_params=internal_params[name],
@@ -98,12 +105,7 @@ def solve(
         solution[period] = next_regime_to_V_arr
 
         elapsed = time.monotonic() - period_start
-        log_period_timing(
-            logger=logger,
-            age=ages.values[period],
-            n_active_regimes=len(active_regimes),
-            elapsed=elapsed,
-        )
+        log_period_timing(logger=logger, elapsed=elapsed)
 
     total_elapsed = time.monotonic() - total_start
     logger.info("Solution complete  (%s)", format_duration(seconds=total_elapsed))
