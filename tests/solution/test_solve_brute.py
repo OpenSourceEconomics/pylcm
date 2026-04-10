@@ -95,21 +95,13 @@ def test_solve_brute():
         discount_factor=0.9,
     ):
         next_wealth = wealth + labor_supply - consumption
-        next_lazy = lazy
 
-        # next_regime_to_V_arr is now a dict of regime names to arrays
-        regime_name = "default"
-        if (
-            regime_name not in next_regime_to_V_arr
-            or next_regime_to_V_arr[regime_name].size == 0
-        ):
-            # last period: next_regime_to_V_arr = {regime_name: jnp.empty(0)}
-            expected_V = 0
-        else:
-            expected_V = map_coordinates(
-                input=next_regime_to_V_arr[regime_name][next_lazy],
-                coordinates=jnp.array([next_wealth]),
-            )
+        # next_regime_to_V_arr always contains all regimes with proper shapes.
+        # Interpolate the next-period V array at the next state.
+        expected_V = map_coordinates(
+            input=next_regime_to_V_arr["default"],
+            coordinates=jnp.array([next_wealth]),
+        )
 
         U_arr = consumption - 0.2 * lazy * labor_supply
         F_arr = next_wealth >= 0
@@ -120,9 +112,9 @@ def test_solve_brute():
 
     max_Q_over_a = get_max_Q_over_a(
         Q_and_F=_Q_and_F,
-        action_names=("consumption", "labor_supply"),
-        state_names=("lazy", "wealth"),
-        batch_sizes={"lazy": 0, "wealth": 0},
+        action_names=("consumption", "labor_supply", "lazy"),
+        state_names=("wealth",),
+        batch_sizes={"wealth": 0},
     )
 
     # ==================================================================================
