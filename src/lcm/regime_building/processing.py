@@ -9,7 +9,7 @@ import jax
 import pandas as pd
 from dags import concatenate_functions, get_annotations, with_signature
 from dags.signature import rename_arguments
-from dags.tree import qname_from_tree_path, tree_path_from_qname
+from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
 from jax import Array
 from jax import numpy as jnp
 
@@ -525,11 +525,19 @@ def _process_regime_core(
         )
 
     # Shock transitions bypass the stub pipeline entirely. Build weight and
-    # next functions for ALL target regimes directly from each target's grid.
+    # next functions for reachable target regimes from each target's grid.
+    # Scope to targets already present in non-shock transitions to avoid
+    # spurious entries for unreachable regimes.
     shock_names = variable_info.query("is_shock").index.tolist()
+    reachable_targets = {
+        tree_path_from_qname(k)[0]
+        for k in flat_nested_transitions
+        if QNAME_DELIMITER in k
+    }
     target_shock_grids: dict[tuple[str, str], _ShockGrid] = {  # ty: ignore[invalid-assignment]
         (regime, shock): grids[shock]
         for regime, grids in all_grids.items()
+        if regime in reachable_targets
         for shock in shock_names
         if isinstance(grids.get(shock), _ShockGrid)
     }
@@ -617,7 +625,18 @@ def _extract_transitions_from_regime(
         {"next_regime": regime.transition},
     )
 
-    for target_regime_name, target_regime_state_names in states_per_regime.items():
+    # When per-target transitions exist, they explicitly name reachable targets.
+    # Only build transitions for those targets to avoid spurious entries for
+    # unreachable regimes (e.g., tied targets from a retiree source).
+    if per_target_transitions:
+        reachable_targets: set[str] = set()
+        for variants in per_target_transitions.values():
+            reachable_targets |= variants.keys()
+    else:
+        reachable_targets = set(states_per_regime.keys())
+
+    for target_regime_name in reachable_targets:
+        target_regime_state_names = states_per_regime[target_regime_name]
         target_dict: dict[str, UserFunction] = {}
         for state_name in target_regime_state_names:
             next_key = f"next_{state_name}"
