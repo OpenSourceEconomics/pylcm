@@ -58,6 +58,9 @@ def build_regimes_and_template(
             (e.g., pd.Series to JAX arrays) after broadcasting to template shape
             but before partialling into compiled functions.
 
+    Returns:
+        Tuple of (internal_regimes, params_template).
+
     """
     internal_regimes = process_regimes(
         regimes=regimes,
