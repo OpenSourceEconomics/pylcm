@@ -10,7 +10,7 @@ on:
       - main
   pull_request:
     branches:
-      - '*'
+      - '**'
 jobs:
   run-tests:
     name: Run tests for ${{ matrix.os }} on ${{ matrix.python-version }}
