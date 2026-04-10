@@ -32,6 +32,7 @@ from tests.test_models.basic_discrete import (
     get_model as get_basic_model,
 )
 from tests.test_models.regime_markov import get_model as get_regime_markov_model
+from tests.test_models.shock_grids import get_model as get_shock_model
 from tests.test_models.stochastic import get_model as get_stochastic_model
 
 
@@ -268,6 +269,40 @@ def test_missing_state_column_raises():
     )
     with pytest.raises(ValueError, match="Missing required"):
         initial_conditions_from_dataframe(df=df, model=model)
+
+
+def test_shock_state_columns_accepted():
+    """Shock grid columns are accepted as continuous float columns."""
+    model = get_shock_model(n_periods=4, distribution_type="uniform")
+    df = pd.DataFrame(
+        {
+            "regime": ["alive", "alive"],
+            "wealth": [2.0, 4.0],
+            "health": ["bad", "good"],
+            "income": [0.3, 0.7],
+            "age": [0.0, 0.0],
+        }
+    )
+    conditions = initial_conditions_from_dataframe(df=df, model=model)
+    assert jnp.allclose(conditions["income"], jnp.array([0.3, 0.7]))
+    assert jnp.allclose(conditions["wealth"], jnp.array([2.0, 4.0]))
+    assert "regime" in conditions
+
+
+def test_shock_state_columns_optional():
+    """DataFrame without shock columns is accepted (shocks are optional)."""
+    model = get_shock_model(n_periods=4, distribution_type="uniform")
+    df = pd.DataFrame(
+        {
+            "regime": ["alive", "alive"],
+            "wealth": [2.0, 4.0],
+            "health": ["bad", "good"],
+            "age": [0.0, 0.0],
+        }
+    )
+    conditions = initial_conditions_from_dataframe(df=df, model=model)
+    assert "income" not in conditions
+    assert jnp.allclose(conditions["wealth"], jnp.array([2.0, 4.0]))
 
 
 def test_round_trip_with_discrete_model():
@@ -1637,3 +1672,99 @@ def test_resolve_categoricals_conflict_raises() -> None:
             regime_name="working_life",
             derived_categoricals=conflicting,
         )
+
+
+def test_convert_series_cross_grid_transition() -> None:
+    """Outcome axis must use the TARGET regime's grid, not the source's.
+
+    When a per-target MarkovTransition crosses grid sizes (e.g. 3-state
+    source → 2-state target), the converted array's last dimension must
+    match the target's grid size (2), not the source's (3).
+    """
+    from lcm import MarkovTransition  # noqa: PLC0415
+    from lcm.typing import DiscreteState, FloatND, Period  # noqa: PLC0415
+
+    @categorical(ordered=True)
+    class _HealthPre:
+        disabled: int
+        bad: int
+        good: int
+
+    @categorical(ordered=True)
+    class _HealthPost:
+        bad: int
+        good: int
+
+    @categorical(ordered=False)
+    class _RId:
+        pre65: int
+        post65: int
+
+    def _health_probs_same(
+        period: Period, health: DiscreteState, health_trans_probs: FloatND
+    ) -> FloatND:
+        return health_trans_probs[period, health]
+
+    def _health_probs_cross(
+        period: Period, health: DiscreteState, health_trans_probs_cross: FloatND
+    ) -> FloatND:
+        return health_trans_probs_cross[period, health]
+
+    pre65 = Regime(
+        states={
+            "health": DiscreteGrid(_HealthPre),
+            "wealth": LinSpacedGrid(start=0, stop=10, n_points=5),
+        },
+        state_transitions={
+            "health": {
+                "pre65": MarkovTransition(_health_probs_same),
+                "post65": MarkovTransition(_health_probs_cross),
+            },
+            "wealth": lambda wealth: wealth,
+        },
+        functions={"utility": lambda health, wealth: wealth + health},
+        transition=lambda age: jnp.where(age >= 1, _RId.post65, _RId.pre65),
+        active=lambda age: age < 1,
+    )
+    post65 = Regime(
+        transition=None,
+        states={
+            "health": DiscreteGrid(_HealthPost),
+            "wealth": LinSpacedGrid(start=0, stop=10, n_points=5),
+        },
+        functions={"utility": lambda health, wealth: wealth + health},
+    )
+    model = Model(
+        regimes={"pre65": pre65, "post65": post65},
+        ages=AgeGrid(start=0, stop=1, step="Y"),
+        regime_id_class=_RId,
+    )
+
+    # Cross-grid transition probs: 3 source states → 2 target states
+    index_cross = pd.MultiIndex.from_tuples(
+        [
+            (0.0, "disabled", "bad"),
+            (0.0, "disabled", "good"),
+            (0.0, "bad", "bad"),
+            (0.0, "bad", "good"),
+            (0.0, "good", "bad"),
+            (0.0, "good", "good"),
+        ],
+        names=["age", "health", "next_health"],
+    )
+    sr_cross = pd.Series([0.65, 0.35, 0.81, 0.19, 0.06, 0.94], index=index_cross)
+
+    params = {
+        "pre65": {
+            "to_post65_next_health": {"health_trans_probs_cross": sr_cross},
+        },
+    }
+    internal = broadcast_to_template(
+        params=params, template=model.get_params_template(), required=False
+    )
+    result = convert_series_in_params(internal_params=internal, model=model)
+
+    arr = result["pre65"]["to_post65_next_health__health_trans_probs_cross"]
+    # Shape: (n_ages=2, n_source_health=3, n_target_health=2)
+    # n_ages=2 because AgeGrid has ages [0, 1]; missing age 1 is NaN-filled.
+    assert arr.shape == (2, 3, 2)
