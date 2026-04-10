@@ -245,7 +245,7 @@ def test_series_fixed_param_parity_with_runtime_param():
 
     df_runtime = result_runtime.to_dataframe()
     df_fixed = result_fixed.to_dataframe()
-    aaae(df_runtime["wealth"].values, df_fixed["wealth"].values)
+    aaae(df_runtime["wealth"].to_numpy(), df_fixed["wealth"].to_numpy())
 
 
 def test_mixed_series_and_scalar_fixed_params():
