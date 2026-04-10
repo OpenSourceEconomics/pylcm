@@ -657,7 +657,16 @@ def _raise_feasibility_type_error(
     internal_regime: InternalRegime,
     subject_states: dict[str, Array],
 ) -> Never:
-    """Re-raise a TypeError from feasibility checking with diagnostic context."""
+    """Re-raise a TypeError from feasibility checking with diagnostic context.
+
+    Args:
+        exc: The original TypeError from the feasibility check.
+        regime_name: Name of the regime being checked.
+        internal_regime: The internal regime containing variable info.
+        subject_states: Mapping of state names to arrays for subjects in
+            this regime.
+
+    """
     discrete_names = {
         name
         for name, grid in internal_regime.grids.items()
@@ -680,7 +689,7 @@ def _raise_feasibility_type_error(
         )
 
     msg = f"TypeError in feasibility check for regime {regime_name!r}: {exc}{hint}"
-    raise TypeError(msg) from exc
+    raise InvalidInitialConditionsError(msg) from exc
 
 
 def _format_infeasibility_message(

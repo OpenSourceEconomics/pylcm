@@ -43,7 +43,7 @@ def has_series(params: Mapping) -> bool:
     return False
 
 
-def initial_conditions_from_dataframe(
+def initial_conditions_from_dataframe(  # noqa: C901
     *,
     df: pd.DataFrame,
     model: Model,
@@ -131,6 +131,15 @@ def initial_conditions_from_dataframe(
                 )
             else:
                 result_arrays[col][idx] = values.to_numpy(dtype=float)
+
+    # Replace remaining NaN in discrete columns with an explicit int sentinel
+    # before casting to int32. This avoids platform-undefined NaN→int behavior
+    # and the associated RuntimeWarning.
+    _INT32_SENTINEL = np.iinfo(np.int32).min
+    for col in discrete_state_names:
+        if col in result_arrays:
+            nan_mask = np.isnan(result_arrays[col])
+            result_arrays[col][nan_mask] = _INT32_SENTINEL
 
     initial_conditions: dict[str, Array] = {
         col: jnp.array(arr, dtype=jnp.int32)
