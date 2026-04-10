@@ -210,7 +210,7 @@ def _compile_all_functions(
     # thread-safe and must happen on the main thread).
     lowered: dict[int, jax.stages.Lowered] = {}
     labels: dict[int, str] = {}
-    for func_id, (func, name, period) in unique.items():
+    for i, (func_id, (func, name, period)) in enumerate(unique.items(), 1):
         state_action_space = internal_regimes[name].state_action_space(
             regime_params=internal_params[name],
         )
@@ -224,12 +224,12 @@ def _compile_all_functions(
         }
         label = f"{name} (age {ages.values[period]})"
         labels[func_id] = label
-        logger.info("  Lowering %s ...", label)
-        t0 = time.monotonic()
+        logger.info("%d/%d  %s", i, n_unique, label)
+        logger.info("  lowering ...")
+        start = time.monotonic()
         lowered[func_id] = func.lower(**lower_args)  # ty: ignore[unresolved-attribute]
-        logger.info(
-            "  Lowered %s in %s", label, format_duration(seconds=time.monotonic() - t0)
-        )
+        elapsed = time.monotonic() - start
+        logger.info("  lowered in %s", format_duration(seconds=elapsed))
 
     # Phase 2: Compile all lowered programs in parallel (XLA releases the GIL).
     compiled: dict[int, jax.stages.Compiled] = {}
@@ -238,25 +238,18 @@ def _compile_all_functions(
         func_id: int,
         low: jax.stages.Lowered,
         label: str,
-        index: int,
     ) -> tuple[int, jax.stages.Compiled]:
-        logger.info("  Compiling %d/%d: %s ...", index, n_unique, label)
+        logger.info("  compiling %s ...", label)
         start = time.monotonic()
         result = low.compile()
         elapsed = time.monotonic() - start
-        logger.info(
-            "  Compiled  %d/%d: %s  %s",
-            index,
-            n_unique,
-            label,
-            format_duration(seconds=elapsed),
-        )
+        logger.info("  compiled  %s  %s", label, format_duration(seconds=elapsed))
         return func_id, result
 
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
         futures = [
-            pool.submit(_compile_and_log, func_id, low, labels[func_id], i)
-            for i, (func_id, low) in enumerate(lowered.items(), 1)
+            pool.submit(_compile_and_log, func_id, low, labels[func_id])
+            for func_id, low in lowered.items()
         ]
         for future in as_completed(futures):
             func_id, comp = future.result()
