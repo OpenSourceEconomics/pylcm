@@ -800,25 +800,19 @@ def _validate_state_columns(
     initial_regimes: list[str],
 ) -> None:
     """Validate that DataFrame columns match model states."""
-    required, optional = _collect_state_names(
-        regimes=regimes, initial_regimes=initial_regimes
-    )
-    all_known = required | optional
+    expected = _collect_state_names(regimes=regimes, initial_regimes=initial_regimes)
 
-    unknown = state_columns - all_known
+    unknown = state_columns - expected
     if unknown:
         msg = (
             f"Unknown columns not matching any model state: {sorted(unknown)}. "
-            f"Expected states: {sorted(all_known)}."
+            f"Expected states: {sorted(expected)}."
         )
         raise ValueError(msg)
 
-    missing = required - state_columns
+    missing = expected - state_columns
     if missing:
-        msg = (
-            f"Missing required state columns: {sorted(missing)}. "
-            f"All non-shock states must be provided."
-        )
+        msg = f"Missing required state columns: {sorted(missing)}."
         raise ValueError(msg)
 
 
@@ -826,25 +820,18 @@ def _collect_state_names(
     *,
     regimes: Mapping[str, Regime],
     initial_regimes: list[str],
-) -> tuple[set[str], set[str]]:
-    """Collect required and optional state names from initial regimes.
+) -> set[str]:
+    """Collect all state names (including shock grids) from initial regimes.
 
     Returns:
-        Tuple of (required, optional). Required includes all non-shock states
-        plus age. Optional includes shock grid states (continuous, drawn fresh
-        each period but accepted in the DataFrame).
+        Set of all state names from the initial regimes, plus `'age'`
+        (always required).
 
     """
-    required: set[str] = {"age"}
-    optional: set[str] = set()
+    names: set[str] = {"age"}
     for regime_name in set(initial_regimes):
-        regime = regimes[regime_name]
-        for name, grid in regime.states.items():
-            if isinstance(grid, _ShockGrid):
-                optional.add(name)
-            else:
-                required.add(name)
-    return required, optional
+        names.update(regimes[regime_name].states.keys())
+    return names
 
 
 def _build_discrete_grid_lookup(
