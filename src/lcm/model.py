@@ -126,15 +126,23 @@ class Model:
             )
         )
         self.regimes = MappingProxyType(dict(regimes))
+
+        def _convert_and_validate_fixed(
+            internal_params: InternalParams,
+        ) -> InternalParams:
+            converted = _maybe_convert_series(
+                internal_params, model=self, derived_categoricals=None
+            )
+            _validate_param_types(converted)
+            return converted
+
         self.internal_regimes, self._params_template = build_regimes_and_template(
             regimes=regimes,
             ages=self.ages,
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=self.fixed_params,
-            convert_fixed_params=lambda params: _maybe_convert_series(
-                params, model=self, derived_categoricals=None
-            ),
+            convert_fixed_params=_convert_and_validate_fixed,
         )
         self.enable_jit = enable_jit
         self.simulation_output_dtypes = get_simulation_output_dtypes(
