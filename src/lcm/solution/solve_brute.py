@@ -225,7 +225,11 @@ def _compile_all_functions(
         label = f"{name} (age {ages.values[period]})"
         labels[func_id] = label
         logger.info("  Lowering %s ...", label)
+        t0 = time.monotonic()
         lowered[func_id] = func.lower(**lower_args)  # ty: ignore[unresolved-attribute]
+        logger.info(
+            "  Lowered %s in %s", label, format_duration(seconds=time.monotonic() - t0)
+        )
 
     # Phase 2: Compile all lowered programs in parallel (XLA releases the GIL).
     compiled: dict[int, jax.stages.Compiled] = {}
