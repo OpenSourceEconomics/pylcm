@@ -1,11 +1,4 @@
-"""Tests for lazy NaN diagnostic enrichment in validate_V.
-
-These tests currently FAIL — they demonstrate bugs in the diagnostic path
-that need to be fixed:
-1. Diagnostic arrays have wrong shapes (not productmapped)
-2. Diagnostic failure swallows the original InvalidValueFunctionError
-3. GPU→CPU fallback catches too narrow an exception type
-"""
+"""Tests for lazy NaN diagnostic enrichment in validate_V."""
 
 from types import MappingProxyType
 
@@ -39,19 +32,8 @@ def _make_nan_V(n_wealth: int = 3) -> jnp.ndarray:
     return jnp.full(n_wealth, jnp.nan)
 
 
-@pytest.mark.xfail(
-    reason="compute_intermediates called with flat 1D arrays, not productmapped",
-    strict=True,
-)
 def test_diagnostic_arrays_have_state_action_grid_shape():
-    """Diagnostic by_dim breakdown must have entries for each state dimension.
-
-    Currently fails because _enrich_with_diagnostics passes flat 1D grid
-    arrays to compute_intermediates instead of a productmapped Cartesian
-    product. The resulting arrays are 1D (from broadcasting), so
-    _summarize_diagnostics maps axis 0 to the first state name but all
-    other state dimensions are missing.
-    """
+    """Diagnostic by_dim breakdown has entries for each state and action."""
     sas = _make_state_action_space(n_wealth=3, n_consumption=2)
 
     def mock_compute_intermediates(**kwargs: jnp.ndarray) -> tuple:
@@ -80,25 +62,16 @@ def test_diagnostic_arrays_have_state_action_grid_shape():
 
     exc = exc_info.value
     assert exc.diagnostics is not None
-    # The by_dim breakdown should have an entry for "wealth"
     diagnostics: dict = exc.diagnostics  # ty: ignore[invalid-assignment]
     u_by_dim = diagnostics["U_nan_fraction"]["by_dim"]
-    assert "wealth" in u_by_dim, (
-        f"Expected 'wealth' in by_dim breakdown, got: {u_by_dim}"
+    assert "wealth" in u_by_dim, f"Expected 'wealth' in by_dim, got: {u_by_dim}"
+    assert "consumption" in u_by_dim, (
+        f"Expected 'consumption' in by_dim, got: {u_by_dim}"
     )
 
 
-@pytest.mark.xfail(
-    reason="_enrich_with_diagnostics not wrapped in try/except",
-    strict=True,
-)
 def test_diagnostic_failure_preserves_original_error():
-    """If diagnostics crash, the original InvalidValueFunctionError must survive.
-
-    Currently fails because _enrich_with_diagnostics is called without
-    try/except in validate_V. When the diagnostic closure raises, its
-    exception replaces the original NaN error.
-    """
+    """If diagnostics crash, the original InvalidValueFunctionError survives."""
     sas = _make_state_action_space()
 
     def broken_compute_intermediates(**kwargs: jnp.ndarray) -> None:  # noqa: ARG001
@@ -120,17 +93,8 @@ def test_diagnostic_failure_preserves_original_error():
         )
 
 
-@pytest.mark.xfail(
-    reason="GPU fallback catches JaxRuntimeError but closure runs eagerly",
-    strict=True,
-)
 def test_gpu_fallback_catches_eager_runtime_errors():
-    """CPU fallback must catch RuntimeError from eager (non-JIT) execution.
-
-    Currently fails because _enrich_with_diagnostics catches only
-    jax.errors.JaxRuntimeError, but the closure is not JIT-compiled.
-    Eager execution raises plain RuntimeError on failure.
-    """
+    """CPU fallback catches RuntimeError from eager (non-JIT) execution."""
     sas = _make_state_action_space()
     call_count = 0
 
@@ -162,6 +126,5 @@ def test_gpu_fallback_catches_eager_runtime_errors():
             internal_params=MappingProxyType({}),
         )
 
-    # The fallback should have retried on CPU
     assert call_count == 2
     assert exc_info.value.diagnostics is not None
