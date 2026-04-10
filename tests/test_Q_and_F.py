@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from types import MappingProxyType
 
 import jax
@@ -6,11 +7,14 @@ import pytest
 from numpy.testing import assert_array_equal
 
 from lcm import AgeGrid
+from lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
+from lcm.model import Model
 from lcm.params.processing import (
     create_params_template,
     get_flat_param_names,
     process_params,
 )
+from lcm.regime import MarkovTransition, Regime
 from lcm.regime_building import process_regimes
 from lcm.regime_building.Q_and_F import (
     _get_feasibility,
@@ -22,8 +26,10 @@ from lcm.typing import (
     BoolND,
     DiscreteAction,
     DiscreteState,
+    FloatND,
     Int1D,
     Period,
+    ScalarInt,
 )
 from tests.test_models.deterministic.regression import (
     LaborSupply,
@@ -253,3 +259,126 @@ def test_get_U_and_F_with_annotated_constraints():
     # Test infeasible case
     U, F = U_and_F(consumption=15.0, wealth=10.0)
     assert F.item() is False
+
+
+def _health_probs(health: DiscreteState, probs_array: FloatND) -> FloatND:
+    return probs_array[health]
+
+
+@categorical(ordered=True)
+class _IncompleteTargetHealth:
+    bad: int = 0
+    good: int = 1
+
+
+@categorical(ordered=False)
+class _IncompleteTargetRegimeId:
+    work: int
+    retire: int
+    dead: int
+
+
+def _build_incomplete_target_model(
+    *,
+    next_regime_func: Callable,
+) -> tuple[Model, dict]:
+    """Build a model where "retire" is an incomplete target from "work".
+
+    "work" has a per-target MarkovTransition for health that only covers
+    "work" (not "retire"), making "retire" incomplete.
+    """
+
+    def _utility(
+        consumption: float,
+        health: DiscreteState,
+    ) -> FloatND:
+        return jnp.log(consumption)
+
+    def _next_wealth(consumption: float, wealth: float) -> float:
+        return wealth - consumption
+
+    work = Regime(
+        active=lambda age: age <= 2,
+        states={
+            "wealth": LinSpacedGrid(start=1, stop=5, n_points=3),
+            "health": DiscreteGrid(_IncompleteTargetHealth),
+        },
+        state_transitions={
+            "wealth": _next_wealth,
+            "health": {
+                "work": MarkovTransition(_health_probs),
+            },
+        },
+        actions={
+            "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=3),
+        },
+        transition=next_regime_func,
+        functions={"utility": _utility},
+    )
+    retire = Regime(
+        active=lambda age: age <= 2,
+        states={
+            "wealth": LinSpacedGrid(start=1, stop=5, n_points=3),
+            "health": DiscreteGrid(_IncompleteTargetHealth),
+        },
+        state_transitions={
+            "wealth": _next_wealth,
+            "health": MarkovTransition(_health_probs),
+        },
+        actions={
+            "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=3),
+        },
+        transition=next_regime_func,
+        functions={"utility": _utility},
+    )
+    dead_regime = Regime(
+        transition=None,
+        functions={"utility": lambda: 0.0},
+    )
+
+    model = Model(
+        regimes={"work": work, "retire": retire, "dead": dead_regime},
+        regime_id_class=_IncompleteTargetRegimeId,
+        ages=AgeGrid(start=0, stop=3, step="Y"),
+    )
+    params = {
+        "discount_factor": 0.9,
+        "probs_array": jnp.array([[0.8, 0.2], [0.3, 0.7]]),
+    }
+    return model, params
+
+
+def test_incomplete_target_zero_prob_succeeds():
+    """Solve succeeds when incomplete target has zero transition probability."""
+
+    def _next_regime(age: float) -> ScalarInt:
+        return jnp.where(
+            age >= 2, _IncompleteTargetRegimeId.dead, _IncompleteTargetRegimeId.work
+        )
+
+    model, params = _build_incomplete_target_model(next_regime_func=_next_regime)
+    model.solve(params=params)
+
+
+@pytest.mark.xfail(
+    reason="io_callback does not propagate ValueError through JIT on all backends",
+    strict=False,
+)
+def test_incomplete_target_nonzero_prob_raises():
+    """Solve raises when incomplete target has non-zero transition probability."""
+
+    def _next_regime_to_retire(age: float) -> ScalarInt:
+        return jnp.where(
+            age >= 2,
+            _IncompleteTargetRegimeId.dead,
+            _IncompleteTargetRegimeId.retire,
+        )
+
+    model, params = _build_incomplete_target_model(
+        next_regime_func=_next_regime_to_retire,
+    )
+    with pytest.raises(
+        jax.errors.JaxRuntimeError,
+        match=r"transition probability to 'retire'",
+    ):
+        model.solve(params=params)

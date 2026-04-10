@@ -1,8 +1,9 @@
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Any, cast
 
 import jax
+import jax.experimental
 import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
 from jax import Array
@@ -145,7 +146,8 @@ def get_Q_and_F(
     # sees the same function object across calls (avoids JIT re-compilation).
     if incomplete_targets:
 
-        def _check_zero_probs(probs: dict[str, Array]) -> None:
+        def _check_zero_probs(probs: Mapping[str, Array]) -> None:
+            """Validate that incomplete targets have zero transition probability."""
             for target in incomplete_targets:
                 prob = float(probs[target])
                 if prob > 0:
@@ -185,7 +187,12 @@ def get_Q_and_F(
         )
 
         if incomplete_targets:
-            jax.debug.callback(_check_zero_probs, dict(active_regime_probs))
+            jax.experimental.io_callback(
+                _check_zero_probs,
+                None,
+                dict(active_regime_probs),
+                ordered=True,
+            )
 
         E_next_V = jnp.zeros_like(U_arr)
         for target_regime_name in complete_targets:
