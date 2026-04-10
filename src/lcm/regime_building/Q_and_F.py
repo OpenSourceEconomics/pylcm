@@ -3,6 +3,7 @@ from types import MappingProxyType
 from typing import Any, cast
 
 import jax
+import jax.experimental
 import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
 from jax import Array
@@ -185,7 +186,9 @@ def get_Q_and_F(
         )
 
         if incomplete_targets:
-            jax.debug.callback(_check_zero_probs, dict(active_regime_probs))
+            jax.experimental.io_callback(
+                _check_zero_probs, None, dict(active_regime_probs)
+            )
 
         E_next_V = jnp.zeros_like(U_arr)
         for target_regime_name in complete_targets:

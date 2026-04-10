@@ -1,7 +1,5 @@
 """Collection of classes that are used by the user to define the model and grids."""
 
-import logging
-import os
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
@@ -220,21 +218,6 @@ class Model:
             internal_params=internal_params,
             ages=self.ages,
         )
-        n_workers = max_compilation_workers or os.cpu_count() or 1
-        n_regime_period_pairs = sum(
-            len(r.active_periods) for r in self.internal_regimes.values()
-        )
-        _MIN_PAIRS_FOR_CACHE_WARMING = 20
-        if (
-            self.enable_jit
-            and n_workers > 1
-            and n_regime_period_pairs >= _MIN_PAIRS_FOR_CACHE_WARMING
-        ):
-            self._warm_compilation_cache(
-                params=params,
-                n_workers=n_workers,
-                logger=get_logger(log_level=log_level),
-            )
         try:
             period_to_regime_to_V_arr = solve(
                 internal_params=internal_params,
@@ -242,6 +225,10 @@ class Model:
                 internal_regimes=self.internal_regimes,
                 logger=get_logger(log_level=log_level),
                 max_compilation_workers=max_compilation_workers,
+                regimes=self.regimes,
+                regime_id_class=self.regime_id_class,
+                fixed_params=self.fixed_params,
+                enable_jit=self.enable_jit,
             )
         except InvalidValueFunctionError as exc:
             if log_path is not None and exc.partial_solution is not None:
@@ -262,45 +249,6 @@ class Model:
                 log_keep_n_latest=log_keep_n_latest,
             )
         return period_to_regime_to_V_arr
-
-    def _warm_compilation_cache(
-        self,
-        *,
-        params: UserParams,
-        n_workers: int,
-        logger: logging.Logger,
-    ) -> None:
-        """Spawn subprocesses to warm the JAX persistent compilation cache.
-
-        Each subprocess rebuilds the Model from cloudpickled constructor
-        arguments and solves it. JAX's persistent cache stores the compiled
-        XLA programs so the main process gets cache hits.
-
-        Args:
-            params: User params for solve.
-            n_workers: Number of subprocesses.
-            logger: Logger for progress.
-
-        """
-        import cloudpickle  # noqa: PLC0415
-
-        from lcm.solution.cache_warming import warm_cache  # noqa: PLC0415
-
-        pickled = cloudpickle.dumps(
-            (
-                dict(self.regimes),
-                self.regime_id_class,
-                self.ages,
-                self.fixed_params,
-                self.enable_jit,
-                params,
-            )
-        )
-        warm_cache(
-            pickled_model_args=pickled,
-            n_workers=n_workers,
-            logger=logger,
-        )
 
     def simulate(
         self,

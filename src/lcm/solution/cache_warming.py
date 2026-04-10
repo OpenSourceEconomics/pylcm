@@ -1,90 +1,66 @@
-"""Multi-process cache warming for parallel JIT compilation.
+"""Parallel lowering and compilation via subprocesses.
 
-Spawns subprocesses that each rebuild the Model from cloudpickled Regimes,
-solve it, and let JAX's persistent compilation cache store the results.
-When the main process later compiles the same functions, it gets cache hits.
-
-This parallelizes both lowering (JAX tracing) and compilation (XLA), which
-are otherwise sequential in the main process. Lowering is GIL-bound and
-cannot be parallelized with threads — only separate processes help.
+JAX tracing (lowering) is GIL-bound and takes minutes per function for large
+models. This module parallelizes lowering across subprocesses: each subprocess
+rebuilds the Model from cloudpickled Regimes, lowers its assigned functions,
+serializes the HLO bytes + metadata, and sends them back. The main process
+reconstructs the compiled executable from HLO bytes in milliseconds (no
+re-tracing).
 """
 
-import logging
-import multiprocessing as mp
-import os
 import pickle
-import time
+from collections.abc import Callable
+from typing import Any
 
-from lcm.utils.logging import format_duration
+import jax
+import jax.tree_util
+import jaxlib.mlir.ir as mlir_ir
+from jax._src import xla_bridge
+from jax._src.interpreters import mlir as jax_mlir
+from jax._src.interpreters import pxla
+
+_NON_PICKLABLE_COMPILE_ARG_KEYS = frozenset(
+    {"backend", "pgle_profiler", "context_mesh"}
+)
 
 
-def warm_cache(
-    *,
-    pickled_model_args: bytes,
-    n_workers: int,
-    logger: logging.Logger,
-) -> None:
-    """Spawn subprocesses to warm the JAX compilation cache.
+def lower_functions_in_subprocess(
+    pickled_model_and_assignments: bytes,
+    enable_x64: bool,
+) -> bytes:
+    """Rebuild Model in subprocess, lower assigned functions, return HLO.
 
-    Each subprocess rebuilds the Model from the pickled constructor arguments
-    and calls `solve()`. JAX's persistent cache automatically stores the
-    compiled XLA programs. When the main process later compiles the same
-    functions, it hits the cache.
+    Each subprocess rebuilds the full Model (to get all internal regimes),
+    then lowers only its assigned (regime_name, period) functions.
 
     Args:
-        pickled_model_args: cloudpickled tuple of (regimes, regime_id_class,
-            ages, fixed_params, enable_jit, params).
-        n_workers: Number of subprocesses to spawn.
-        logger: Logger for progress reporting.
+        pickled_model_and_assignments: cloudpickled tuple of
+            (regimes, regime_id_class, ages, fixed_params, enable_jit,
+             internal_params, next_regime_to_V_arr,
+             assignments: list[tuple[regime_name, period]]).
+        enable_x64: Whether 64-bit mode is enabled in the main process.
+
+    Returns:
+        cloudpickled list of (regime_name, period, hlo_bytes, metadata) tuples.
 
     """
-    cache_dir = os.environ.get("JAX_COMPILATION_CACHE_DIR", "")
-    if not cache_dir:
-        logger.warning(
-            "JAX_COMPILATION_CACHE_DIR not set — skipping multi-process "
-            "cache warming (no persistent cache to share across processes)"
-        )
-        return
+    import jax  # noqa: PLC0415
 
-    logger.info("Cache warming: spawning %d workers", n_workers)
-    start = time.monotonic()
+    jax.config.update("jax_enable_x64", enable_x64)
 
-    ctx = mp.get_context("spawn")
-    processes = []
-    for _ in range(n_workers):
-        p = ctx.Process(
-            target=_cache_warming_worker,
-            args=(pickled_model_args, cache_dir),
-        )
-        processes.append(p)
-        p.start()
-
-    for p in processes:
-        p.join()
-        if p.exitcode != 0:
-            logger.warning(
-                "Cache warming worker (pid %d) exited with code %d",
-                p.pid,
-                p.exitcode,
-            )
-
-    elapsed = time.monotonic() - start
-    logger.info("Cache warming complete  (%s)", format_duration(seconds=elapsed))
-
-
-def _cache_warming_worker(pickled_args: bytes, cache_dir: str) -> None:
-    """Subprocess entry point: rebuild Model and solve to populate cache.
-
-    Must set JAX_COMPILATION_CACHE_DIR before importing JAX so the
-    persistent cache is initialized with the correct directory.
-    """
-    os.environ["JAX_COMPILATION_CACHE_DIR"] = cache_dir
+    (
+        regimes,
+        regime_id_class,
+        ages,
+        fixed_params,
+        enable_jit,
+        internal_params,
+        next_regime_to_V_arr,
+        assignments,
+    ) = pickle.loads(pickled_model_and_assignments)  # noqa: S301
 
     from lcm.model import Model  # noqa: PLC0415
 
-    regimes, regime_id_class, ages, fixed_params, enable_jit, params = pickle.loads(  # noqa: S301
-        pickled_args
-    )
     model = Model(
         regimes=regimes,
         regime_id_class=regime_id_class,
@@ -92,4 +68,84 @@ def _cache_warming_worker(pickled_args: bytes, cache_dir: str) -> None:
         fixed_params=fixed_params,
         enable_jit=enable_jit,
     )
-    model.solve(params=params, max_compilation_workers=1, log_level="off")
+
+    import cloudpickle  # noqa: PLC0415
+
+    results = []
+    for regime_name, period in assignments:
+        func = model.internal_regimes[regime_name].solve_functions.max_Q_over_a[period]
+        state_action_space = model.internal_regimes[regime_name].state_action_space(
+            regime_params=internal_params[regime_name],
+        )
+        lower_args = {
+            **dict(state_action_space.states),
+            **dict(state_action_space.actions),
+            "next_regime_to_V_arr": next_regime_to_V_arr,
+            **dict(internal_params[regime_name]),
+            "period": period,
+            "age": ages.values[period],
+        }
+        lowered = func.lower(**lower_args)  # ty: ignore[unresolved-attribute]
+        computation = lowered._lowering
+
+        hlo_bytes = computation.stablehlo().operation.get_asm(binary=True)
+        metadata: dict[str, Any] = {
+            "name": computation._name,
+            "const_args": computation.const_args,
+            "donated_invars": computation._donated_invars,
+            "platforms": computation._platforms,
+            "compiler_options_kvs": computation._compiler_options_kvs,
+            "compile_args": {
+                k: v
+                for k, v in computation.compile_args.items()
+                if k not in _NON_PICKLABLE_COMPILE_ARG_KEYS
+            },
+            "out_tree": lowered.out_tree,
+        }
+        results.append((regime_name, period, hlo_bytes, metadata))
+
+    return cloudpickle.dumps(results)
+
+
+def reconstruct_and_compile(
+    hlo_bytes: bytes,
+    metadata: dict[str, Any],
+) -> Callable:
+    """Reconstruct a compiled executable from serialized HLO bytes.
+
+    Parse the HLO bytecode (milliseconds, no re-tracing) and compile it.
+
+    Args:
+        hlo_bytes: StableHLO bytecode from the lowered computation.
+        metadata: Metadata dict with compile_args, tree info, etc.
+
+    Returns:
+        Callable wrapping the compiled executable.
+
+    """
+    ctx = jax_mlir.make_ir_context()
+    module = mlir_ir.Module.parse(hlo_bytes, context=ctx)
+
+    backend = xla_bridge.get_backend()
+    compile_args = metadata["compile_args"]
+    compile_args["backend"] = backend
+
+    mesh_computation = pxla.MeshComputation(
+        metadata["name"],
+        module,
+        metadata["const_args"],
+        metadata["donated_invars"],
+        metadata["platforms"],
+        metadata["compiler_options_kvs"],
+        tuple(backend.devices()),
+        **compile_args,
+    )
+    mesh_executable = mesh_computation.compile()
+    out_tree = metadata["out_tree"]
+
+    def call_compiled(**kwargs: Any) -> Any:
+        flat_args = jax.tree_util.tree_leaves(({}, kwargs))
+        flat_out = mesh_executable.call(*flat_args)
+        return jax.tree_util.tree_unflatten(out_tree, flat_out)
+
+    return call_compiled

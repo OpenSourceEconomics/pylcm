@@ -1,16 +1,22 @@
 import logging
+import multiprocessing as mp
 import os
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from types import MappingProxyType
 
+import cloudpickle
 import jax
 import jax.numpy as jnp
 
 from lcm.ages import AgeGrid
 from lcm.interfaces import InternalRegime
-from lcm.typing import FloatND, InternalParams, RegimeName
+from lcm.solution.cache_warming import (
+    lower_functions_in_subprocess,
+    reconstruct_and_compile,
+)
+from lcm.typing import FloatND, InternalParams, RegimeName, UserParams
 from lcm.utils.error_handling import validate_V
 from lcm.utils.logging import (
     format_duration,
@@ -28,6 +34,10 @@ def solve(
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     logger: logging.Logger,
     max_compilation_workers: int | None = None,
+    regimes: MappingProxyType | None = None,
+    regime_id_class: type | None = None,
+    fixed_params: UserParams | None = None,
+    enable_jit: bool = True,
 ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
     """Solve a model using grid search.
 
@@ -37,8 +47,12 @@ def solve(
         internal_regimes: The internal regimes, that contain all necessary functions
             to solve the model.
         logger: Logger that logs to stdout.
-        max_compilation_workers: Maximum number of threads for parallel XLA compilation.
+        max_compilation_workers: Maximum number of parallel lowering processes.
             Defaults to `os.cpu_count()`.
+        regimes: User regimes (for subprocess Model reconstruction).
+        regime_id_class: Regime ID dataclass (for subprocess Model reconstruction).
+        fixed_params: Fixed params (for subprocess Model reconstruction).
+        enable_jit: Whether JIT is enabled.
 
     Returns:
         Immutable mapping of periods to regime value function arrays.
@@ -63,6 +77,10 @@ def solve(
         next_regime_to_V_arr=next_regime_to_V_arr,
         max_compilation_workers=max_compilation_workers,
         logger=logger,
+        regimes=regimes,
+        regime_id_class=regime_id_class,
+        fixed_params=fixed_params,
+        enable_jit=enable_jit,
     )
 
     solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
@@ -153,16 +171,21 @@ def _compile_all_functions(
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
     max_compilation_workers: int | None,
     logger: logging.Logger,
+    regimes: MappingProxyType | None,
+    regime_id_class: type | None,
+    fixed_params: UserParams | None,
+    enable_jit: bool,
 ) -> dict[tuple[RegimeName, int], Callable]:
     """AOT-compile all unique max_Q_over_a functions in parallel.
 
     With shared-JIT, many periods share the same `jax.jit`-wrapped function
-    object. This function deduplicates by object identity, traces each unique
-    function once (sequential), then compiles the XLA programs in parallel
-    via a thread pool (XLA releases the GIL during compilation).
+    object. This function deduplicates by object identity, then lowers each
+    unique function in a subprocess (parallelizing the expensive tracing
+    step). The serialized HLO is sent back to the main process, which
+    reconstructs and compiles the executable in milliseconds.
 
-    When JIT is disabled (`enable_jit=False`), returns the raw functions
-    without compilation.
+    When JIT is disabled (`enable_jit=False`) or model ingredients are not
+    provided, falls back to sequential in-process lowering.
 
     Args:
         internal_regimes: The internal regimes containing solve functions.
@@ -170,9 +193,13 @@ def _compile_all_functions(
         ages: Age grid for the model.
         next_regime_to_V_arr: Template with consistent keys and V array shapes
             for constructing lowering arguments.
-        max_compilation_workers: Maximum threads for parallel compilation.
+        max_compilation_workers: Maximum number of parallel lowering processes.
             Defaults to `os.cpu_count()`.
         logger: Logger for compilation progress.
+        regimes: User regimes for subprocess Model reconstruction.
+        regime_id_class: Regime ID dataclass for subprocess Model reconstruction.
+        fixed_params: Fixed params for subprocess Model reconstruction.
+        enable_jit: Whether JIT is enabled.
 
     Returns:
         Mapping of (regime_name, period) to callable (compiled or raw) functions.
@@ -189,15 +216,16 @@ def _compile_all_functions(
     if not hasattr(sample_func, "lower"):
         return all_functions
 
-    # Deduplicate by object identity.
-    unique: dict[int, tuple[Callable, RegimeName, int]] = {}
+    # Deduplicate by object identity — get one representative (regime, period)
+    # per unique function.
+    unique_repr: dict[int, tuple[RegimeName, int]] = {}
     for (name, period), func in all_functions.items():
         func_id = id(func)
-        if func_id not in unique:
-            unique[func_id] = (func, name, period)
+        if func_id not in unique_repr:
+            unique_repr[func_id] = (name, period)
 
     n_workers = max_compilation_workers or os.cpu_count() or 1
-    n_unique = len(unique)
+    n_unique = len(unique_repr)
 
     logger.info(
         "AOT compilation: %d unique functions (%d regime-period pairs, %d workers)",
@@ -206,11 +234,51 @@ def _compile_all_functions(
         n_workers,
     )
 
-    # Phase 1: Lower all unique functions (sequential — tracing is not
-    # thread-safe and must happen on the main thread).
-    lowered: dict[int, jax.stages.Lowered] = {}
-    labels: dict[int, str] = {}
-    for i, (func_id, (func, name, period)) in enumerate(unique.items(), 1):
+    can_parallel = regimes is not None and regime_id_class is not None
+    if can_parallel and n_workers > 1:
+        assert regimes is not None  # noqa: S101
+        assert regime_id_class is not None  # noqa: S101
+        compiled = _compile_parallel(
+            unique_repr=unique_repr,
+            internal_params=internal_params,
+            ages=ages,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            n_workers=n_workers,
+            logger=logger,
+            regimes=regimes,
+            regime_id_class=regime_id_class,
+            fixed_params=fixed_params or MappingProxyType({}),
+            enable_jit=enable_jit,
+        )
+    else:
+        compiled = _compile_sequential(
+            unique_repr=unique_repr,
+            internal_regimes=internal_regimes,
+            internal_params=internal_params,
+            ages=ages,
+            next_regime_to_V_arr=next_regime_to_V_arr,
+            logger=logger,
+        )
+
+    # Map back to (regime, period) keys.
+    return {key: compiled[id(func)] for key, func in all_functions.items()}
+
+
+def _compile_sequential(
+    *,
+    unique_repr: dict[int, tuple[RegimeName, int]],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    internal_params: InternalParams,
+    ages: AgeGrid,
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    logger: logging.Logger,
+) -> dict[int, Callable]:
+    """Lower and compile functions sequentially in the main process."""
+    compiled: dict[int, Callable] = {}
+    n_unique = len(unique_repr)
+
+    for i, (func_id, (name, period)) in enumerate(unique_repr.items(), 1):
+        func = internal_regimes[name].solve_functions.max_Q_over_a[period]
         state_action_space = internal_regimes[name].state_action_space(
             regime_params=internal_params[name],
         )
@@ -223,40 +291,119 @@ def _compile_all_functions(
             "age": ages.values[period],
         }
         label = f"{name} (age {ages.values[period]})"
-        labels[func_id] = label
         logger.info("%d/%d  %s", i, n_unique, label)
         logger.info("  lowering ...")
         start = time.monotonic()
-        lowered[func_id] = func.lower(**lower_args)  # ty: ignore[unresolved-attribute]
-        elapsed = time.monotonic() - start
-        logger.info("  lowered in %s", format_duration(seconds=elapsed))
-
-    # Phase 2: Compile all lowered programs in parallel (XLA releases the GIL).
-    compiled: dict[int, jax.stages.Compiled] = {}
-
-    def _compile_and_log(
-        func_id: int,
-        low: jax.stages.Lowered,
-        label: str,
-    ) -> tuple[int, jax.stages.Compiled]:
-        logger.info("  compiling %s ...", label)
+        lowered = func.lower(**lower_args)  # ty: ignore[unresolved-attribute]
+        logger.info(
+            "  lowered in %s", format_duration(seconds=time.monotonic() - start)
+        )
         start = time.monotonic()
-        result = low.compile()
-        elapsed = time.monotonic() - start
-        logger.info("  compiled  %s  %s", label, format_duration(seconds=elapsed))
-        return func_id, result
+        comp = lowered.compile()
+        logger.info(
+            "  compiled in %s", format_duration(seconds=time.monotonic() - start)
+        )
+        compiled[func_id] = comp
 
-    with ThreadPoolExecutor(max_workers=n_workers) as pool:
-        futures = [
-            pool.submit(_compile_and_log, func_id, low, labels[func_id])
-            for func_id, low in lowered.items()
-        ]
+    return compiled
+
+
+def _compile_parallel(
+    *,
+    unique_repr: dict[int, tuple[RegimeName, int]],
+    internal_params: InternalParams,
+    ages: AgeGrid,
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    n_workers: int,
+    logger: logging.Logger,
+    regimes: MappingProxyType,
+    regime_id_class: type,
+    fixed_params: UserParams,
+    enable_jit: bool,
+) -> dict[int, Callable]:
+    """Lower functions in parallel subprocesses, compile in main process.
+
+    Each subprocess rebuilds the Model from cloudpickled Regimes, lowers its
+    assigned functions, serializes the HLO bytes, and returns them. The main
+    process reconstructs compiled executables from HLO in milliseconds.
+    """
+    import pickle  # noqa: PLC0415
+
+    # Assign unique functions round-robin to workers.
+    assignments_per_worker: dict[int, list[tuple[RegimeName, int]]] = {
+        i: [] for i in range(n_workers)
+    }
+    func_id_to_assignment: dict[int, tuple[RegimeName, int]] = {}
+    for i, (func_id, (name, period)) in enumerate(unique_repr.items()):
+        worker_idx = i % n_workers
+        assignments_per_worker[worker_idx].append((name, period))
+        func_id_to_assignment[func_id] = (name, period)
+
+    # Cloudpickle the shared model ingredients once.
+    shared_data = (
+        dict(regimes),
+        regime_id_class,
+        ages,
+        fixed_params,
+        enable_jit,
+        internal_params,
+        next_regime_to_V_arr,
+    )
+    enable_x64: bool = jax.config.jax_enable_x64  # ty: ignore[unresolved-attribute]
+
+    logger.info(
+        "Lowering %d functions in %d parallel workers ...", len(unique_repr), n_workers
+    )
+    lower_start = time.monotonic()
+
+    ctx = mp.get_context("spawn")
+    n_done = 0
+
+    with ProcessPoolExecutor(max_workers=n_workers, mp_context=ctx) as pool:
+        futures = {}
+        for worker_idx, assignments in assignments_per_worker.items():
+            if not assignments:
+                continue
+            pickled = cloudpickle.dumps((*shared_data, assignments))
+            futures[pool.submit(lower_functions_in_subprocess, pickled, enable_x64)] = (
+                worker_idx
+            )
+
+        all_results: list[tuple[str, int, bytes, dict]] = []
         for future in as_completed(futures):
-            func_id, comp = future.result()
-            compiled[func_id] = comp
+            worker_results = pickle.loads(future.result())  # noqa: S301
+            all_results.extend(worker_results)
+            n_done += len(worker_results)
+            elapsed = time.monotonic() - lower_start
+            logger.info(
+                "  lowered %d/%d  (%s elapsed)",
+                n_done,
+                len(unique_repr),
+                format_duration(seconds=elapsed),
+            )
 
-    # Map back to (regime, period) keys.
-    return {key: compiled[id(func)] for key, func in all_functions.items()}
+    lower_elapsed = time.monotonic() - lower_start
+    logger.info("Lowering complete  (%s)", format_duration(seconds=lower_elapsed))
+
+    # Phase 2: Reconstruct + compile in main process (fast, ~50ms each).
+    compile_start = time.monotonic()
+
+    # Build lookup from (regime_name, period) -> func_id
+    assignment_to_func_id = {v: k for k, v in func_id_to_assignment.items()}
+
+    compiled: dict[int, Callable] = {}
+    for regime_name, period, hlo_bytes, metadata in all_results:
+        func_id = assignment_to_func_id[(regime_name, period)]
+        compiled[func_id] = reconstruct_and_compile(hlo_bytes, metadata)
+
+    compile_elapsed = time.monotonic() - compile_start
+    logger.info(
+        "Compiled %d functions  (%s)",
+        len(compiled),
+        format_duration(seconds=compile_elapsed),
+    )
+
+    return compiled
 
 
 def _get_regime_V_shapes(
