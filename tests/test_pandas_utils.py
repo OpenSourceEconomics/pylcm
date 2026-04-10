@@ -289,8 +289,8 @@ def test_shock_state_columns_accepted():
     assert "regime" in conditions
 
 
-def test_shock_state_columns_optional():
-    """DataFrame without shock columns is accepted (shocks are optional)."""
+def test_shock_state_columns_required():
+    """DataFrame without shock columns raises (shocks are required)."""
     model = get_shock_model(n_periods=4, distribution_type="uniform")
     df = pd.DataFrame(
         {
@@ -300,9 +300,8 @@ def test_shock_state_columns_optional():
             "age": [0.0, 0.0],
         }
     )
-    conditions = initial_conditions_from_dataframe(df=df, model=model)
-    assert "income" not in conditions
-    assert jnp.allclose(conditions["wealth"], jnp.array([2.0, 4.0]))
+    with pytest.raises(ValueError, match=r"Missing required state columns.*income"):
+        initial_conditions_from_dataframe(df=df, model=model)
 
 
 def test_round_trip_with_discrete_model():
@@ -1767,4 +1766,4 @@ def test_convert_series_cross_grid_transition() -> None:
     arr = result["pre65"]["to_post65_next_health__health_trans_probs_cross"]
     # Shape: (n_ages=2, n_source_health=3, n_target_health=2)
     # n_ages=2 because AgeGrid has ages [0, 1]; missing age 1 is NaN-filled.
-    assert arr.shape == (2, 3, 2)
+    assert arr.shape == (2, 3, 2)  # ty: ignore[unresolved-attribute]
