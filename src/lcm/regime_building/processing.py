@@ -1396,20 +1396,27 @@ def _build_max_Q_over_a_per_period(
     grids: MappingProxyType[str, Grid],
     enable_jit: bool,
 ) -> MappingProxyType[int, MaxQOverAFunction]:
-    """Build max-Q-over-a closures for each period."""
-    result = {}
+    """Build max-Q-over-a closures for each period.
+
+    Periods sharing the same Q_and_F object reuse a single compiled function.
+    """
+    built: dict[int, MaxQOverAFunction] = {}
+    result: dict[int, MaxQOverAFunction] = {}
     for period, Q_and_F in Q_and_F_functions.items():
-        func = get_max_Q_over_a(
-            Q_and_F=Q_and_F,
-            batch_sizes={
-                name: grid.batch_size
-                for name, grid in grids.items()
-                if name in state_action_space.state_names
-            },
-            action_names=state_action_space.action_names,
-            state_names=state_action_space.state_names,
-        )
-        result[period] = jax.jit(func) if enable_jit else func
+        q_id = id(Q_and_F)
+        if q_id not in built:
+            func = get_max_Q_over_a(
+                Q_and_F=Q_and_F,
+                batch_sizes={
+                    name: grid.batch_size
+                    for name, grid in grids.items()
+                    if name in state_action_space.state_names
+                },
+                action_names=state_action_space.action_names,
+                state_names=state_action_space.state_names,
+            )
+            built[q_id] = jax.jit(func) if enable_jit else func
+        result[period] = built[q_id]
     return MappingProxyType(result)
 
 
@@ -1419,21 +1426,28 @@ def _build_argmax_and_max_Q_over_a_per_period(
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
     enable_jit: bool,
 ) -> MappingProxyType[int, ArgmaxQOverAFunction]:
-    """Build argmax-and-max-Q-over-a closures for each period."""
-    result = {}
+    """Build argmax-and-max-Q-over-a closures for each period.
+
+    Periods sharing the same Q_and_F object reuse a single compiled function.
+    """
+    built: dict[int, ArgmaxQOverAFunction] = {}
+    result: dict[int, ArgmaxQOverAFunction] = {}
     for period, Q_and_F in Q_and_F_functions.items():
-        func = get_argmax_and_max_Q_over_a(
-            Q_and_F=Q_and_F,
-            action_names=state_action_space.action_names,
-            state_names=state_action_space.state_names,
-        )
-        if enable_jit:
-            func = jax.jit(func)
-        result[period] = simulation_spacemap(
-            func=func,
-            action_names=(),
-            state_names=tuple(state_action_space.states),
-        )
+        q_id = id(Q_and_F)
+        if q_id not in built:
+            func = get_argmax_and_max_Q_over_a(
+                Q_and_F=Q_and_F,
+                action_names=state_action_space.action_names,
+                state_names=state_action_space.state_names,
+            )
+            if enable_jit:
+                func = jax.jit(func)
+            built[q_id] = simulation_spacemap(
+                func=func,
+                action_names=(),
+                state_names=tuple(state_action_space.states),
+            )
+        result[period] = built[q_id]
     return MappingProxyType(result)
 
 
