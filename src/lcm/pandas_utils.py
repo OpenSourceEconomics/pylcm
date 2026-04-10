@@ -656,6 +656,8 @@ def _build_outcome_mapping(
     """Build a `_LevelMapping` for the outcome axis of a `next_*` function.
 
     For state transitions (e.g. `"next_partner"`), look up the state grid.
+    For per-target transitions (e.g. `"next_health__post65"`), use the target
+    regime's grid for the outcome axis.
     For regime transitions (`"next_regime"`), use `model.regime_names_to_ids`.
 
     Args:
