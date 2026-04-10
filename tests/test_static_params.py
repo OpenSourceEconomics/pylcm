@@ -231,6 +231,7 @@ def test_series_fixed_param_parity_with_runtime_param():
         initial_conditions=_MARKOV_INITIAL_CONDITIONS,
         period_to_regime_to_V_arr=None,
         log_level="off",
+        seed=0,
     )
 
     model_fixed = _make_markov_model(
@@ -241,6 +242,7 @@ def test_series_fixed_param_parity_with_runtime_param():
         initial_conditions=_MARKOV_INITIAL_CONDITIONS,
         period_to_regime_to_V_arr=None,
         log_level="off",
+        seed=0,
     )
 
     df_runtime = result_runtime.to_dataframe()
