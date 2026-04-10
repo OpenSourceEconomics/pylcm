@@ -93,9 +93,9 @@ def initial_conditions_from_dataframe(
     n_subjects = len(df)
     state_cols = [col for col in df.columns if col != "regime"]
 
-    # Pre-allocate result arrays
+    # Pre-allocate result arrays (NaN default surfaces bugs for missing states)
     result_arrays: dict[str, np.ndarray] = {
-        col: np.empty(n_subjects, dtype=float) for col in state_cols
+        col: np.full(n_subjects, np.nan) for col in state_cols
     }
     discrete_state_names: set[str] = set()
 
@@ -110,7 +110,16 @@ def initial_conditions_from_dataframe(
         }
         discrete_state_names |= discrete_grids.keys()
 
+        regime_state_names = {
+            name
+            for name, grid in regime.states.items()
+            if not isinstance(grid, _ShockGrid)
+        } | {"age"}
+
         for col in state_cols:
+            if col not in regime_state_names:
+                continue
+
             values = group[col]
             if hasattr(values, "cat"):
                 values = values.astype(str)
