@@ -132,6 +132,9 @@ class Model:
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=self.fixed_params,
+            convert_fixed_params=lambda params: _maybe_convert_series(
+                params, model=self, derived_categoricals=None
+            ),
         )
         self.enable_jit = enable_jit
         self.simulation_output_dtypes = get_simulation_output_dtypes(

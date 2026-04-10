@@ -6,11 +6,14 @@ import pytest
 from numpy.testing import assert_array_equal
 
 from lcm import AgeGrid
+from lcm.grids import DiscreteGrid, LinSpacedGrid, categorical
+from lcm.model import Model
 from lcm.params.processing import (
     create_params_template,
     get_flat_param_names,
     process_params,
 )
+from lcm.regime import MarkovTransition, Regime
 from lcm.regime_building import process_regimes
 from lcm.regime_building.Q_and_F import (
     _get_feasibility,
@@ -22,8 +25,10 @@ from lcm.typing import (
     BoolND,
     DiscreteAction,
     DiscreteState,
+    FloatND,
     Int1D,
     Period,
+    ScalarInt,
 )
 from tests.test_models.deterministic.regression import (
     LaborSupply,
@@ -253,3 +258,137 @@ def test_get_U_and_F_with_annotated_constraints():
     # Test infeasible case
     U, F = U_and_F(consumption=15.0, wealth=10.0)
     assert F.item() is False
+
+
+def _health_probs(health: DiscreteState, probs_array: FloatND) -> FloatND:
+    return probs_array[health]
+
+
+def test_incomplete_target_skipped_and_zero_prob_validated():
+    """Test that targets missing stochastic transitions are skipped.
+
+    Build a model where "work" has a per-target MarkovTransition for health
+    that only covers "work" (not "retire"). The transition from work to retire
+    is therefore incomplete. The Q_and_F function should:
+    - Skip the incomplete target when computing continuation values
+    - Validate at runtime that the incomplete target has zero probability
+    """
+
+    @categorical(ordered=True)
+    class Health:
+        bad: int = 0
+        good: int = 1
+
+    @categorical(ordered=False)
+    class RegimeId:
+        work: int
+        retire: int
+        dead: int
+
+    def _utility(
+        consumption: float,
+        health: DiscreteState,
+    ) -> FloatND:
+        return jnp.log(consumption)
+
+    def _next_wealth(consumption: float, wealth: float) -> float:
+        return wealth - consumption
+
+    # Regime transition: always transition to dead at the end, but stay in
+    # "work" during active ages (retire gets zero probability).
+    def _next_regime(age: float) -> ScalarInt:
+        return jnp.where(age >= 2, RegimeId.dead, RegimeId.work)
+
+    work = Regime(
+        active=lambda age: age <= 2,
+        states={
+            "wealth": LinSpacedGrid(start=1, stop=5, n_points=3),
+            "health": DiscreteGrid(Health),
+        },
+        state_transitions={
+            "wealth": _next_wealth,
+            # Per-target dict only covers "work", not "retire".
+            # This makes "retire" an incomplete target.
+            "health": {
+                "work": MarkovTransition(_health_probs),
+            },
+        },
+        actions={
+            "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=3),
+        },
+        transition=_next_regime,
+        functions={"utility": _utility},
+    )
+    retire = Regime(
+        active=lambda age: age <= 2,
+        states={
+            "wealth": LinSpacedGrid(start=1, stop=5, n_points=3),
+            "health": DiscreteGrid(Health),
+        },
+        state_transitions={
+            "wealth": _next_wealth,
+            "health": MarkovTransition(_health_probs),
+        },
+        actions={
+            "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=3),
+        },
+        transition=_next_regime,
+        functions={"utility": _utility},
+    )
+    dead_regime = Regime(
+        transition=None,
+        functions={"utility": lambda: 0.0},
+    )
+
+    # Model creation should succeed — the incomplete target is allowed as long
+    # as its transition probability is zero at runtime.
+    model = Model(
+        regimes={"work": work, "retire": retire, "dead": dead_regime},
+        regime_id_class=RegimeId,
+        ages=AgeGrid(start=0, stop=3, step="Y"),
+    )
+
+    params = {
+        "discount_factor": 0.9,
+        "probs_array": jnp.array([[0.8, 0.2], [0.3, 0.7]]),
+    }
+
+    # Solve should succeed: retire has zero probability from work, so the
+    # incomplete target is safely skipped.
+    model.solve(params=params)
+
+    # Now test that non-zero probability to an incomplete target raises.
+    # Change the regime transition to give positive probability to retire.
+    def _next_regime_to_retire(age: float) -> ScalarInt:
+        return jnp.where(age >= 2, RegimeId.dead, RegimeId.retire)
+
+    work_bad = Regime(
+        active=lambda age: age <= 2,
+        states={
+            "wealth": LinSpacedGrid(start=1, stop=5, n_points=3),
+            "health": DiscreteGrid(Health),
+        },
+        state_transitions={
+            "wealth": _next_wealth,
+            "health": {
+                "work": MarkovTransition(_health_probs),
+            },
+        },
+        actions={
+            "consumption": LinSpacedGrid(start=0.1, stop=2, n_points=3),
+        },
+        transition=_next_regime_to_retire,
+        functions={"utility": _utility},
+    )
+
+    model_bad = Model(
+        regimes={"work": work_bad, "retire": retire, "dead": dead_regime},
+        regime_id_class=RegimeId,
+        ages=AgeGrid(start=0, stop=3, step="Y"),
+    )
+
+    with pytest.raises(
+        jax.errors.JaxRuntimeError,
+        match="transition probability to 'retire'",
+    ):
+        model_bad.solve(params=params)
