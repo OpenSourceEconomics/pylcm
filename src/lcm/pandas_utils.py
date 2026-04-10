@@ -669,6 +669,17 @@ def _build_outcome_mapping(
 
     path = tree_path_from_qname(func_name)
     state_name = path[0].removeprefix("next_")
+
+    # Per-target transitions (e.g. "next_health__post65") must use the TARGET
+    # regime's grid for the outcome axis, not the source regime's grid.
+    if len(path) > 1:
+        target_regime_name = path[1]
+        target_regime = model.regimes.get(target_regime_name)
+        if target_regime is not None and state_name in target_regime.states:
+            target_grid = target_regime.states[state_name]
+            if isinstance(target_grid, DiscreteGrid):
+                return _grid_level_mapping(name=f"next_{state_name}", grid=target_grid)
+
     return _grid_level_mapping(name=f"next_{state_name}", grid=grids[state_name])
 
 
@@ -800,42 +811,38 @@ def _validate_state_columns(
     initial_regimes: list[str],
 ) -> None:
     """Validate that DataFrame columns match model states."""
-    all_states = _collect_all_state_names(
-        regimes=regimes, initial_regimes=initial_regimes
-    )
+    expected = _collect_state_names(regimes=regimes, initial_regimes=initial_regimes)
 
-    unknown = state_columns - all_states
+    unknown = state_columns - expected
     if unknown:
         msg = (
             f"Unknown columns not matching any model state: {sorted(unknown)}. "
-            f"Expected states: {sorted(all_states)}."
+            f"Expected states: {sorted(expected)}."
         )
         raise ValueError(msg)
 
-    missing = all_states - state_columns
+    missing = expected - state_columns
     if missing:
-        msg = (
-            f"Missing required state columns: {sorted(missing)}. "
-            f"All non-shock states must be provided."
-        )
+        msg = f"Missing required state columns: {sorted(missing)}."
         raise ValueError(msg)
 
 
-def _collect_all_state_names(
+def _collect_state_names(
     *,
     regimes: Mapping[str, Regime],
     initial_regimes: list[str],
 ) -> set[str]:
-    """Collect all non-shock state names from regimes present in initial_regimes."""
-    state_names: set[str] = set()
+    """Collect all state names (including shock grids) from initial regimes.
+
+    Returns:
+        Set of all state names from the initial regimes, plus `'age'`
+        (always required).
+
+    """
+    names: set[str] = {"age"}
     for regime_name in set(initial_regimes):
-        regime = regimes[regime_name]
-        for name, grid in regime.states.items():
-            if not isinstance(grid, _ShockGrid):
-                state_names.add(name)
-    # Always include age
-    state_names.add("age")
-    return state_names
+        names.update(regimes[regime_name].states.keys())
+    return names
 
 
 def _build_discrete_grid_lookup(
