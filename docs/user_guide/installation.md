@@ -110,7 +110,9 @@ importing pylcm:
 ```python
 import os
 
-os.environ["JAX_COMPILATION_CACHE_DIR"] = "/scratch/$USER/.cache/jax"
+os.environ["JAX_COMPILATION_CACHE_DIR"] = os.path.expandvars(
+    "/scratch/$USER/.cache/jax"
+)
 
 import lcm
 ```
