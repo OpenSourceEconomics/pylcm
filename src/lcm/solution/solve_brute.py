@@ -69,13 +69,16 @@ def solve(
             max_Q_over_a = internal_regime.solve_functions.max_Q_over_a[period]
 
             # evaluate Q-function on states and actions, and maximize over actions
+            # Pass period/age as JAX arrays (not Python scalars) so the shared
+            # jax.jit function is traced once with abstract shapes, not recompiled
+            # for every distinct (period, age) pair.
             V_arr = max_Q_over_a(
                 **state_action_space.states,
                 **state_action_space.actions,
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 **internal_params[name],
-                period=period,
-                age=ages.values[period],
+                period=jnp.int32(period),
+                age=jnp.asarray(ages.values[period]),
             )
 
             log_nan_in_V(
