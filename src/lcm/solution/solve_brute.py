@@ -103,7 +103,7 @@ def solve(
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 **internal_params[name],
                 period=jnp.int32(period),
-                age=jnp.asarray(ages.values[period]),
+                age=ages.values[period],
             )
 
             log_nan_in_V(
@@ -222,7 +222,7 @@ def _compile_all_functions(
             **dict(state_action_space.actions),
             "next_regime_to_V_arr": next_regime_to_V_arr,
             **dict(internal_params[name]),
-            "period": period,
+            "period": jnp.int32(period),
             "age": ages.values[period],
         }
         label = f"{name} (age {ages.values[period]})"
