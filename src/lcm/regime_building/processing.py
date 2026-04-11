@@ -1324,7 +1324,8 @@ def _partition_targets(
     """Partition active target regimes into complete and incomplete.
 
     Complete targets have all required stochastic transitions. Incomplete
-    targets are missing some (unreachable, must have zero probability).
+    targets are missing some (assumed to have zero transition probability,
+    validated at runtime by `_check_zero_probs`).
 
     Returns:
         Tuple of (complete_targets, incomplete_targets).

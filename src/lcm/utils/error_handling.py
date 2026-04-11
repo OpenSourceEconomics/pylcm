@@ -64,6 +64,7 @@ def validate_V(
         state_action_space: StateActionSpace for the current regime/period.
         next_regime_to_V_arr: Next-period value function arrays.
         internal_params: Flat regime parameters.
+        period: The current period index (forwarded to diagnostic closure).
 
     Raises:
         InvalidValueFunctionError: If the value function array contains NaN values.
