@@ -8,9 +8,9 @@ import pandas as pd
 from jax import Array
 
 from lcm.ages import AgeGrid
-from lcm.exceptions import InvalidParamsError
 from lcm.grids import DiscreteGrid
 from lcm.model_processing import (
+    _validate_param_types,
     build_regimes_and_template,
     validate_model_inputs,
 )
@@ -19,7 +19,6 @@ from lcm.pandas_utils import (
     has_series,
     initial_conditions_from_dataframe,
 )
-from lcm.params import MappingLeaf, SequenceLeaf
 from lcm.params.processing import (
     process_params,
 )
@@ -95,6 +94,8 @@ class Model:
         regime_id_class: type,
         enable_jit: bool = True,
         fixed_params: UserParams = MappingProxyType({}),
+        derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
+        | None = None,
     ) -> None:
         """Initialize the Model.
 
@@ -105,6 +106,10 @@ class Model:
             regime_id_class: Dataclass mapping regime names to integer indices.
             enable_jit: Whether to jit the functions of the internal regime.
             fixed_params: Parameters that can be fixed at model initialization.
+            derived_categoricals: Extra categorical mappings for derived
+                variables not in the model's state/action grids. Needed when
+                `fixed_params` contains `pd.Series` indexed by DAG function
+                outputs.
 
         """
         self.description = description
@@ -132,6 +137,7 @@ class Model:
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=self.fixed_params,
+            derived_categoricals=derived_categoricals,
         )
         self.enable_jit = enable_jit
         self.simulation_output_dtypes = get_simulation_output_dtypes(
@@ -201,7 +207,11 @@ class Model:
             params=params, params_template=self._params_template
         )
         internal_params = _maybe_convert_series(
-            internal_params, model=self, derived_categoricals=derived_categoricals
+            internal_params,
+            regimes=self.regimes,
+            ages=self.ages,
+            regime_names_to_ids=self.regime_names_to_ids,
+            derived_categoricals=derived_categoricals,
         )
         _validate_param_types(internal_params)
         validate_regime_transitions_all_periods(
@@ -285,12 +295,20 @@ class Model:
 
         """
         _validate_log_args(log_level=log_level, log_path=log_path)
-        initial_conditions = _maybe_convert_dataframe(initial_conditions, model=self)
+        initial_conditions = _maybe_convert_dataframe(
+            initial_conditions,
+            regimes=self.regimes,
+            regime_names_to_ids=self.regime_names_to_ids,
+        )
         internal_params = process_params(
             params=params, params_template=self._params_template
         )
         internal_params = _maybe_convert_series(
-            internal_params, model=self, derived_categoricals=derived_categoricals
+            internal_params,
+            regimes=self.regimes,
+            ages=self.ages,
+            regime_names_to_ids=self.regime_names_to_ids,
+            derived_categoricals=derived_categoricals,
         )
         _validate_param_types(internal_params)
         if check_initial_conditions:
@@ -341,7 +359,9 @@ class Model:
 def _maybe_convert_series(
     internal_params: InternalParams,
     *,
-    model: Model,
+    regimes: Mapping[str, Regime],
+    ages: AgeGrid,
+    regime_names_to_ids: RegimeNamesToIds,
     derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
     | None,
 ) -> InternalParams:
@@ -349,58 +369,27 @@ def _maybe_convert_series(
     if derived_categoricals is not None or has_series(internal_params):
         return convert_series_in_params(
             internal_params=internal_params,
-            model=model,
+            regimes=regimes,
+            ages=ages,
+            regime_names_to_ids=regime_names_to_ids,
             derived_categoricals=derived_categoricals,
         )
     return internal_params
 
 
-def _validate_param_types(internal_params: InternalParams) -> None:
-    """Raise if any param leaf is not a Python scalar or JAX array.
-
-    After processing, every leaf value (including inside MappingLeaf /
-    SequenceLeaf containers) must be a Python scalar (float, int, bool) or a
-    JAX array. Notably, numpy arrays and pandas Series are not accepted.
-    """
-    for regime_name, regime_params in internal_params.items():
-        for key, value in regime_params.items():
-            _check_leaf(value, f"{regime_name}__{key}")
-
-
-def _check_leaf(value: object, path: str) -> None:
-    """Check a single leaf value, recursing into MappingLeaf/SequenceLeaf."""
-    if isinstance(value, MappingLeaf):
-        for k, v in value.data.items():
-            _check_leaf(v, f"{path}.{k}")
-        return
-    if isinstance(value, SequenceLeaf):
-        for i, v in enumerate(value.data):
-            _check_leaf(v, f"{path}[{i}]")
-        return
-    if isinstance(value, (float, int, bool)):
-        return
-    if hasattr(value, "dtype") and hasattr(value, "shape"):
-        if isinstance(value, Array):
-            return
-        type_name = type(value).__module__ + "." + type(value).__name__
-        msg = (
-            f"Parameter '{path}' is a {type_name} (shape {value.shape}). "
-            f"Use jnp.array() or pass a pd.Series with a named index."
-        )
-        raise InvalidParamsError(msg)
-    type_name = type(value).__module__ + "." + type(value).__name__
-    msg = f"Parameter '{path}' has unexpected type {type_name}."
-    raise InvalidParamsError(msg)
-
-
 def _maybe_convert_dataframe(
     initial_conditions: Mapping[str, Array],
     *,
-    model: Model,
+    regimes: Mapping[str, Regime],
+    regime_names_to_ids: RegimeNamesToIds,
 ) -> Mapping[str, Array]:
     """Convert a DataFrame to initial_conditions dict if needed."""
     if isinstance(initial_conditions, pd.DataFrame):
-        return initial_conditions_from_dataframe(df=initial_conditions, model=model)
+        return initial_conditions_from_dataframe(
+            df=initial_conditions,
+            regimes=regimes,
+            regime_names_to_ids=regime_names_to_ids,
+        )
     return initial_conditions
 
 
