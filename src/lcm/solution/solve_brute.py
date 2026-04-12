@@ -1,7 +1,8 @@
+import functools
 import logging
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Hashable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from types import MappingProxyType
 
@@ -196,10 +197,10 @@ def _compile_all_functions(
     if not enable_jit:
         return all_functions
 
-    # Deduplicate by object identity.
-    unique: dict[int, tuple[Callable, RegimeName, int]] = {}
+    # Deduplicate by identity (or by underlying function for partials).
+    unique: dict[Hashable, tuple[Callable, RegimeName, int]] = {}
     for (name, period), func in all_functions.items():
-        func_id = id(func)
+        func_id = _func_dedup_key(func)
         if func_id not in unique:
             unique[func_id] = (func, name, period)
 
@@ -215,8 +216,8 @@ def _compile_all_functions(
 
     # Phase 1: Lower all unique functions (sequential — tracing is not
     # thread-safe and must happen on the main thread).
-    lowered: dict[int, jax.stages.Lowered] = {}
-    labels: dict[int, str] = {}
+    lowered: dict[Hashable, jax.stages.Lowered] = {}
+    labels: dict[Hashable, str] = {}
     for i, (func_id, (func, name, period)) in enumerate(unique.items(), 1):
         state_action_space = internal_regimes[name].state_action_space(
             regime_params=internal_params[name],
@@ -239,13 +240,13 @@ def _compile_all_functions(
         logger.info("  lowered in %s", format_duration(seconds=elapsed))
 
     # Phase 2: Compile all lowered programs in parallel (XLA releases the GIL).
-    compiled: dict[int, jax.stages.Compiled] = {}
+    compiled: dict[Hashable, jax.stages.Compiled] = {}
 
     def _compile_and_log(
-        func_id: int,
+        func_id: Hashable,
         low: jax.stages.Lowered,
         label: str,
-    ) -> tuple[int, jax.stages.Compiled]:
+    ) -> tuple[Hashable, jax.stages.Compiled]:
         logger.info("  compiling %s ...", label)
         start = time.monotonic()
         result = low.compile()
@@ -263,7 +264,19 @@ def _compile_all_functions(
             compiled[func_id] = comp
 
     # Map back to (regime, period) keys.
-    return {key: compiled[id(func)] for key, func in all_functions.items()}
+    return {key: compiled[_func_dedup_key(func)] for key, func in all_functions.items()}
+
+
+def _func_dedup_key(func: Callable) -> Hashable:
+    """Return a hashable deduplication key for a callable.
+
+    For `functools.partial` objects wrapping shared JIT functions, deduplicate
+    by the underlying function's identity and the keyword argument names.
+    For plain callables, use object identity.
+    """
+    if isinstance(func, functools.partial):
+        return (id(func.func), tuple(sorted(func.keywords)))
+    return id(func)
 
 
 def _get_regime_V_shapes(
