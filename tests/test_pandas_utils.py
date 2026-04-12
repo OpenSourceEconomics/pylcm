@@ -32,6 +32,7 @@ from tests.test_models.basic_discrete import (
     get_model as get_basic_model,
 )
 from tests.test_models.regime_markov import get_model as get_regime_markov_model
+from tests.test_models.shock_grids import get_model as get_shock_model
 from tests.test_models.stochastic import get_model as get_stochastic_model
 
 
@@ -267,6 +268,39 @@ def test_missing_state_column_raises():
         }
     )
     with pytest.raises(ValueError, match="Missing required"):
+        initial_conditions_from_dataframe(df=df, model=model)
+
+
+def test_shock_state_columns_accepted():
+    """Shock grid columns are accepted as continuous float columns."""
+    model = get_shock_model(n_periods=4, distribution_type="uniform")
+    df = pd.DataFrame(
+        {
+            "regime": ["alive", "alive"],
+            "wealth": [2.0, 4.0],
+            "health": ["bad", "good"],
+            "income": [0.3, 0.7],
+            "age": [0.0, 0.0],
+        }
+    )
+    conditions = initial_conditions_from_dataframe(df=df, model=model)
+    assert jnp.allclose(conditions["income"], jnp.array([0.3, 0.7]))
+    assert jnp.allclose(conditions["wealth"], jnp.array([2.0, 4.0]))
+    assert "regime" in conditions
+
+
+def test_shock_state_columns_required():
+    """DataFrame without shock columns raises (shocks are required)."""
+    model = get_shock_model(n_periods=4, distribution_type="uniform")
+    df = pd.DataFrame(
+        {
+            "regime": ["alive", "alive"],
+            "wealth": [2.0, 4.0],
+            "health": ["bad", "good"],
+            "age": [0.0, 0.0],
+        }
+    )
+    with pytest.raises(ValueError, match=r"Missing required state columns.*income"):
         initial_conditions_from_dataframe(df=df, model=model)
 
 
