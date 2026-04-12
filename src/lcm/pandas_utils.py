@@ -391,6 +391,7 @@ def array_from_series(
             outcome_mapping = _build_outcome_mapping(
                 func_name=func_name,
                 grids=grids,
+                regimes=regimes,
                 regime_names_to_ids=regime_names_to_ids,
             )
             level_mappings = (*level_mappings, outcome_mapping)
@@ -665,21 +666,24 @@ def _build_outcome_mapping(
     *,
     func_name: str,
     grids: dict[str, DiscreteGrid],
+    regimes: Mapping[str, Regime],
     regime_names_to_ids: RegimeNamesToIds,
 ) -> _LevelMapping:
     """Build a `_LevelMapping` for the outcome axis of a `next_*` function.
 
-    For state transitions (e.g. `"next_partner"`), look up the state grid.
+        For state transitions (e.g. `"next_partner"`), look up the state grid.
+    For per-target transitions (e.g. `"next_health__post65"`), use the target
+    regime's grid for the outcome axis.
     For regime transitions (`"next_regime"`), use `regime_names_to_ids`.
 
-    Args:
-        func_name: Function name starting with `"next_"`.
-        grids: Categorical grid lookup.
-        regime_names_to_ids: Immutable mapping from regime names to integer
-            indices.
+        Args:
+            func_name: Function name starting with `"next_"`.
+            grids: Categorical grid lookup.
+            regime_names_to_ids: Immutable mapping from regime names to integer
+                indices.
 
-    Returns:
-        `_LevelMapping` for the outcome (last) axis.
+        Returns:
+            `_LevelMapping` for the outcome (last) axis.
 
     """
     if func_name == "next_regime":
@@ -693,6 +697,17 @@ def _build_outcome_mapping(
 
     path = tree_path_from_qname(func_name)
     state_name = path[0].removeprefix("next_")
+
+    # Per-target transitions (e.g. "next_health__post65") must use the TARGET
+    # regime's grid for the outcome axis, not the source regime's grid.
+    if len(path) > 1:
+        target_regime_name = path[1]
+        target_regime = regimes.get(target_regime_name)
+        if target_regime is not None and state_name in target_regime.states:
+            target_grid = target_regime.states[state_name]
+            if isinstance(target_grid, DiscreteGrid):
+                return _grid_level_mapping(name=f"next_{state_name}", grid=target_grid)
+
     return _grid_level_mapping(name=f"next_{state_name}", grid=grids[state_name])
 
 
