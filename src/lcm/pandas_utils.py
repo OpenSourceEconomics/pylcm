@@ -3,7 +3,7 @@
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import jax.numpy as jnp
 import numpy as np
@@ -14,14 +14,10 @@ from jax import Array
 from lcm.ages import AgeGrid
 from lcm.grids import DiscreteGrid, IrregSpacedGrid
 from lcm.params import MappingLeaf
-
-if TYPE_CHECKING:
-    from lcm.model import Model  # avoid circular import: pandas_utils ↔ model
-
 from lcm.params.sequence_leaf import SequenceLeaf
 from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
-from lcm.typing import InternalParams
+from lcm.typing import InternalParams, RegimeNamesToIds
 from lcm.utils.error_handling import (
     _get_func_indexing_params,
 )
@@ -46,18 +42,20 @@ def has_series(params: Mapping) -> bool:
 def initial_conditions_from_dataframe(
     *,
     df: pd.DataFrame,
-    model: Model,
+    regimes: Mapping[str, Regime],
+    regime_names_to_ids: RegimeNamesToIds,
 ) -> dict[str, Array]:
     """Convert a DataFrame of initial conditions to LCM initial conditions format.
 
     Args:
         df: DataFrame with columns for states and a "regime" column.
-        model: The LCM Model instance.
+        regime_names_to_ids: Immutable mapping from regime names to integer
+            indices.
 
     Returns:
         Dict mapping state names (plus `"regime"`) to JAX arrays. The
         `"regime"` entry contains integer codes derived from the `"regime"`
-        column via `model.regime_names_to_ids`.
+        column via `regime_names_to_ids`.
 
     Raises:
         ValueError: If the DataFrame is empty, the "regime" column is missing,
@@ -74,7 +72,7 @@ def initial_conditions_from_dataframe(
         raise ValueError(msg)
 
     # Validate regime names
-    valid_regimes = set(model.regime_names_to_ids.keys())
+    valid_regimes = set(regime_names_to_ids.keys())
     invalid = set(df["regime"]) - valid_regimes
     if invalid:
         msg = (
@@ -86,7 +84,7 @@ def initial_conditions_from_dataframe(
     state_columns = {col for col in df.columns if col != "regime"}
     _validate_state_columns(
         state_columns=state_columns,
-        regimes=model.regimes,
+        regimes=regimes,
         initial_regimes=df["regime"].tolist(),
     )
 
@@ -101,7 +99,7 @@ def initial_conditions_from_dataframe(
 
     # Process per regime group (vectorised .map() within each group)
     for regime_name, group in df.groupby("regime"):
-        regime = model.regimes[str(regime_name)]
+        regime = regimes[str(regime_name)]
         idx = group.index
         discrete_grids = {
             name: grid
@@ -134,7 +132,7 @@ def initial_conditions_from_dataframe(
         for col, arr in result_arrays.items()
     }
     initial_conditions["regime"] = jnp.array(
-        df["regime"].map(dict(model.regime_names_to_ids)).to_numpy()
+        df["regime"].map(dict(regime_names_to_ids)).to_numpy()
     )
 
     return initial_conditions
@@ -167,7 +165,9 @@ def _map_discrete_labels(
 def convert_series_in_params(
     *,
     internal_params: Mapping[str, Mapping[str, object]],
-    model: Model,
+    regimes: Mapping[str, Regime],
+    ages: AgeGrid,
+    regime_names_to_ids: RegimeNamesToIds,
     derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
     | None = None,
 ) -> InternalParams:
@@ -182,7 +182,10 @@ def convert_series_in_params(
     Args:
         internal_params: Already-broadcast params in template shape
             (`{regime: {func__param: value}}`).
-        model: The LCM Model instance.
+        regimes: Mapping of regime names to user Regime instances.
+        ages: Age grid for the model.
+        regime_names_to_ids: Immutable mapping from regime names to integer
+            indices.
         derived_categoricals: Extra categorical mappings (level name to
             grid) for derived variables not in the model's state/action
             grids.
@@ -194,7 +197,7 @@ def convert_series_in_params(
     """
     result: dict[str, dict[str, object]] = {}
     for regime_name, regime_params in internal_params.items():
-        regime = model.regimes[regime_name]
+        regime = regimes[regime_name]
         all_funcs = regime.get_all_functions()
         converted_regime: dict[str, object] = {}
         for func_param, value in regime_params.items():
@@ -209,7 +212,9 @@ def convert_series_in_params(
                     func=None,
                     param_name=param_name,
                     func_name=template_func_name,
-                    model=model,
+                    regimes=regimes,
+                    ages=ages,
+                    regime_names_to_ids=regime_names_to_ids,
                     regime_name=regime_name,
                     derived_categoricals=derived_categoricals,
                 )
@@ -228,7 +233,9 @@ def convert_series_in_params(
                 func=func,
                 param_name=param_name,
                 func_name=resolved_func_name,
-                model=model,
+                regimes=regimes,
+                ages=ages,
+                regime_names_to_ids=regime_names_to_ids,
                 regime_name=regime_name,
                 derived_categoricals=derived_categoricals,
             )
@@ -245,7 +252,9 @@ def _convert_param_value(
     func: Callable | None,
     param_name: str,
     func_name: str,
-    model: Model,
+    regimes: Mapping[str, Regime],
+    ages: AgeGrid,
+    regime_names_to_ids: RegimeNamesToIds,
     regime_name: str | None,
     derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
     | None = None,
@@ -258,7 +267,10 @@ def _convert_param_value(
             grid params — triggers scalar passthrough).
         param_name: Parameter name in the function.
         func_name: Function name (for `next_*` outcome axis detection).
-        model: The LCM Model instance.
+        regimes: Mapping of regime names to user Regime instances.
+        ages: Age grid for the model.
+        regime_names_to_ids: Immutable mapping from regime names to integer
+            indices.
         regime_name: Regime name for action grid lookup.
         derived_categoricals: Extra categorical mappings (level name to
             grid).
@@ -275,7 +287,9 @@ def _convert_param_value(
             func=func,
             param_name=param_name,
             func_name=func_name,
-            model=model,
+            regimes=regimes,
+            ages=ages,
+            regime_names_to_ids=regime_names_to_ids,
             regime_name=regime_name,
             derived_categoricals=derived_categoricals,
         )
@@ -286,7 +300,9 @@ def _convert_param_value(
             func=func,
             param_name=param_name,
             func_name=func_name,
-            model=model,
+            regimes=regimes,
+            ages=ages,
+            regime_names_to_ids=regime_names_to_ids,
             regime_name=regime_name,
             derived_categoricals=derived_categoricals,
         )
@@ -303,7 +319,9 @@ def array_from_series(
     func: Callable | None,
     param_name: str,
     func_name: str,
-    model: Model,
+    regimes: Mapping[str, Regime],
+    ages: AgeGrid,
+    regime_names_to_ids: RegimeNamesToIds,
     regime_name: str | None = None,
     derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
     | None = None,
@@ -325,7 +343,10 @@ def array_from_series(
             runtime grid/shock params (triggers scalar passthrough).
         param_name: The array parameter name in `func`.
         func_name: Function name (for `next_*` outcome axis detection).
-        model: The LCM Model instance.
+        regimes: Mapping of regime names to user Regime instances.
+        ages: Age grid for the model.
+        regime_names_to_ids: Immutable mapping from regime names to integer
+            indices.
         regime_name: Regime for action grid lookup.
         derived_categoricals: Extra categorical mappings (level name to
             grid) for derived variables not in the model's state/action
@@ -348,7 +369,7 @@ def array_from_series(
         return jnp.array(sr.to_numpy(), dtype=float)
 
     grids = _resolve_categoricals(
-        model=model,
+        regimes=regimes,
         regime_name=regime_name,
         derived_categoricals=derived_categoricals,
     )
@@ -357,7 +378,7 @@ def array_from_series(
     display_params = ["age" if p == "period" else p for p in indexing_params]
 
     level_mappings = _build_level_mappings_for_param(
-        indexing_params=display_params, grids=grids, ages=model.ages
+        indexing_params=display_params, grids=grids, ages=ages
     )
 
     # Append outcome axis for transition probability arrays (next_* functions
@@ -368,20 +389,22 @@ def array_from_series(
         ]
         if next_levels:
             outcome_mapping = _build_outcome_mapping(
-                func_name=func_name, grids=grids, model=model
+                func_name=func_name,
+                grids=grids,
+                regime_names_to_ids=regime_names_to_ids,
             )
             level_mappings = (*level_mappings, outcome_mapping)
 
     if "age" in display_params:
         _fail_if_period_level(sr)
-        sr = _filter_to_grid_ages(series=sr, ages=model.ages)
+        sr = _filter_to_grid_ages(series=sr, ages=ages)
 
     return _scatter_series(series=sr, level_mappings=level_mappings)
 
 
 def _resolve_categoricals(
     *,
-    model: Model,
+    regimes: Mapping[str, Regime],
     regime_name: str | None,
     derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
     | None,
@@ -395,7 +418,7 @@ def _resolve_categoricals(
       the grid for `regime_name` is selected.
 
     Args:
-        model: The LCM Model instance.
+        regimes: Mapping of regime names to user Regime instances.
         regime_name: Regime for action grid discovery and regime-level
             categorical resolution.
         derived_categoricals: Explicit categorical mappings. Values are
@@ -414,13 +437,13 @@ def _resolve_categoricals(
     if regime_name is not None:
         # Use only this regime's grids (avoids cross-regime inconsistencies
         # like health having different categories pre-65 vs post-65).
-        regime = model.regimes[regime_name]
+        regime = regimes[regime_name]
         grids.update(
             {n: g for n, g in regime.states.items() if isinstance(g, DiscreteGrid)}
         )
         grids.update(_build_discrete_action_lookup(regime))
     else:
-        grids.update(_build_discrete_grid_lookup(model.regimes))
+        grids.update(_build_discrete_grid_lookup(regimes))
     if derived_categoricals is not None:
         for name, entry in derived_categoricals.items():
             grid = _resolve_categorical_entry(
@@ -642,24 +665,25 @@ def _build_outcome_mapping(
     *,
     func_name: str,
     grids: dict[str, DiscreteGrid],
-    model: Model,
+    regime_names_to_ids: RegimeNamesToIds,
 ) -> _LevelMapping:
     """Build a `_LevelMapping` for the outcome axis of a `next_*` function.
 
     For state transitions (e.g. `"next_partner"`), look up the state grid.
-    For regime transitions (`"next_regime"`), use `model.regime_names_to_ids`.
+    For regime transitions (`"next_regime"`), use `regime_names_to_ids`.
 
     Args:
         func_name: Function name starting with `"next_"`.
         grids: Categorical grid lookup.
-        model: The LCM Model instance.
+        regime_names_to_ids: Immutable mapping from regime names to integer
+            indices.
 
     Returns:
         `_LevelMapping` for the outcome (last) axis.
 
     """
     if func_name == "next_regime":
-        regime_ids = dict(model.regime_names_to_ids)
+        regime_ids = dict(regime_names_to_ids)
         return _LevelMapping(
             name="next_regime",
             size=len(regime_ids),
