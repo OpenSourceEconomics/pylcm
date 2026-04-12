@@ -3,7 +3,19 @@ class PyLCMError(Exception):
 
 
 class InvalidValueFunctionError(PyLCMError):
-    """Raised when the value function array is invalid."""
+    """Raised when the value function array is invalid.
+
+    Attributes:
+        partial_solution: Value function arrays for periods that completed
+            before the error. Attached by `validate_V` so callers can save
+            debug snapshots.
+        diagnostics: Per-intermediate NaN fraction summary, attached by
+            `validate_V` when diagnostic functions are available.
+
+    """
+
+    partial_solution: object = None
+    diagnostics: object = None
 
 
 class InvalidRegimeTransitionProbabilitiesError(PyLCMError):

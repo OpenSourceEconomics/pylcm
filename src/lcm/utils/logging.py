@@ -153,6 +153,6 @@ def log_regime_transitions(
         for to_id, to_name in sorted(ids_to_names.items()):
             count = int(jnp.sum(mask & (new_regime_ids == to_id)))
             if count > 0:
-                parts.append(f"{from_name}\u2192{to_name}={count}")
+                parts.append(f"  - {from_name} \u2192 {to_name} = {count}")
     if parts:
-        logger.debug("  transitions: %s", " ".join(parts))
+        logger.debug("  transitions:\n%s", "\n".join(parts))

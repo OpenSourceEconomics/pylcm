@@ -253,14 +253,58 @@ fig.update_layout(title=f"Value function, period {period}, regime '{regime_name}
 fig.show()
 ```
 
+## Failure snapshots
+
+When `log_path` is set and `solve()` raises `InvalidValueFunctionError`, a snapshot is
+saved automatically --- even without `log_level="debug"`. This lets you inspect the
+partial solution (value functions for periods that completed before the error) on
+another machine.
+
+```python
+# log_path is enough to get a failure snapshot
+result = model.simulate(
+    params=params,
+    initial_conditions=initial_conditions,
+    period_to_regime_to_V_arr=None,
+    log_path="./debug/",
+)
+```
+
+## NaN diagnostics
+
+When the solver detects NaN in the value function, it reports which intermediate is the
+source. The error message includes a diagnostic summary like:
+
+```text
+Diagnostics for regime 'working' at age 55:
+  U: 0.0000 NaN  |  E[V]: 0.3200 NaN  |  F: 0.9500 feasible
+  Regime probs: working: 0.8500 | retired: 0.1500
+  E[V] NaN fraction by state:
+    wealth                   [0.00, 0.00, 0.12, 0.45, 0.80, ...]
+    health                   [0.00, 0.64]
+```
+
+This tells you:
+
+- **U: 0.0000 NaN** --- utility is clean, the problem is not in the utility function.
+- **E\[V\]: 0.3200 NaN** --- 32% of E[V] values are NaN. The NaN comes from the
+  continuation value, not from utility.
+- **F: 0.9500 feasible** --- 95% of state-action combinations are feasible.
+- **By-state breakdown** --- NaN concentrates at high wealth levels and in the second
+  health state. This points to the regime transition function or next-period value
+  interpolation for those states.
+
+The diagnostic functions are compiled lazily --- only when NaN is detected. There is no
+compilation overhead in the normal (no-NaN) solve path.
+
 ## Understanding error messages
 
 pylcm raises specific exceptions to help you diagnose problems:
 
 - **`InvalidValueFunctionError`**: The value function array contains NaN at a given age
-  and regime. The message reports the regime name and how many values are NaN (e.g. "3
-  of 100 values are NaN"). Common causes: utility function returning NaN for some
-  state-action combinations, or impossible regime transitions.
+  and regime. The message lists common causes and a diagnostic summary showing NaN
+  fractions per intermediate (U, E[V], Q) and per state dimension. A debug snapshot is
+  saved automatically when `log_path` is set.
 
 - **`InvalidRegimeTransitionProbabilitiesError`**: Regime transition probabilities are
   non-finite, outside [0, 1], don't sum to 1, or assign positive probability to an
