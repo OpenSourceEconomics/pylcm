@@ -1260,35 +1260,98 @@ def _build_Q_and_F_per_period(
     ages: AgeGrid,
     regime_params_template: RegimeParamsTemplate,
 ) -> MappingProxyType[int, QAndFFunction]:
-    """Build Q-and-F closures for each period."""
+    """Build Q-and-F closures for each period.
+
+    Periods sharing the same target-regime configuration reuse a single
+    closure, reducing the number of distinct JIT compilations.
+    """
     flat_param_names = frozenset(get_flat_param_names(regime_params_template))
 
-    Q_and_F_functions = {}
-    for period, age in enumerate(ages.values):
-        if regime.terminal:
-            Q_and_F_functions[period] = get_Q_and_F_terminal(
-                flat_param_names=flat_param_names,
-                age=age,
-                period=period,
-                functions=functions,
-                constraints=constraints,
-            )
-        else:
-            assert compute_regime_transition_probs is not None  # noqa: S101
-            Q_and_F_functions[period] = get_Q_and_F(
-                flat_param_names=flat_param_names,
-                age=age,
-                period=period,
-                functions=functions,
-                constraints=constraints,
-                transitions=transitions,
-                stochastic_transition_names=stochastic_transition_names,
-                regimes_to_active_periods=regimes_to_active_periods,
-                compute_regime_transition_probs=compute_regime_transition_probs,
-                regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-            )
+    if regime.terminal:
+        func = get_Q_and_F_terminal(
+            flat_param_names=flat_param_names,
+            functions=functions,
+            constraints=constraints,
+        )
+        return MappingProxyType(dict.fromkeys(range(ages.n_periods), func))
 
-    return MappingProxyType(Q_and_F_functions)
+    assert compute_regime_transition_probs is not None  # noqa: S101
+
+    # Group periods by target configuration
+    configs: dict[tuple[tuple[str, ...], tuple[str, ...]], list[int]] = {}
+    for period in range(ages.n_periods):
+        key = _partition_targets(
+            period=period,
+            transitions=transitions,
+            regimes_to_active_periods=regimes_to_active_periods,
+            stochastic_transition_names=stochastic_transition_names,
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        )
+        configs.setdefault(key, []).append(period)
+
+    # Build one Q_and_F per distinct configuration
+    built: dict[tuple[tuple[str, ...], tuple[str, ...]], QAndFFunction] = {}
+    for complete_targets, incomplete_targets in configs:
+        built[(complete_targets, incomplete_targets)] = get_Q_and_F(
+            flat_param_names=flat_param_names,
+            functions=functions,
+            constraints=constraints,
+            complete_targets=complete_targets,
+            incomplete_targets=incomplete_targets,
+            transitions=transitions,
+            stochastic_transition_names=stochastic_transition_names,
+            compute_regime_transition_probs=compute_regime_transition_probs,
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        )
+
+    # Map each period to its group's function
+    result: dict[int, QAndFFunction] = {}
+    for key, periods in configs.items():
+        for period in periods:
+            result[period] = built[key]
+
+    return MappingProxyType(result)
+
+
+def _partition_targets(
+    *,
+    period: int,
+    transitions: TransitionFunctionsMapping,
+    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    stochastic_transition_names: frozenset[str],
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Partition active target regimes into complete and incomplete.
+
+    Complete targets have all required stochastic transitions. Incomplete
+    targets are missing some (assumed to have zero transition probability,
+    validated at runtime by `_check_zero_probs`).
+
+    Returns:
+        Tuple of (complete_targets, incomplete_targets).
+
+    """
+    target_regime_names = tuple(transitions)
+    all_active = tuple(
+        name
+        for name in target_regime_names
+        if period + 1 in regimes_to_active_periods[name]
+    )
+
+    complete: list[str] = []
+    incomplete: list[str] = []
+    for name in all_active:
+        target_stochastic_needs = {
+            f"next_{s}"
+            for s in regime_to_v_interpolation_info[name].state_names
+            if f"next_{s}" in stochastic_transition_names
+        }
+        if target_stochastic_needs.issubset(transitions[name]):
+            complete.append(name)
+        else:
+            incomplete.append(name)
+
+    return tuple(complete), tuple(incomplete)
 
 
 def _build_compute_intermediates_per_period(
@@ -1307,25 +1370,43 @@ def _build_compute_intermediates_per_period(
 
     These are raw closures (not JIT-compiled) that return all Q_and_F
     intermediates. Only used in the error path when `validate_V` detects NaN.
+    Periods sharing the same target configuration reuse a single closure.
     """
-    intermediates: dict[int, Callable] = {}
-    for period, age in enumerate(ages.values):
-        if regime.terminal:
-            continue
-        assert compute_regime_transition_probs is not None  # noqa: S101
-        intermediates[period] = get_compute_intermediates(
-            age=age,
+    if regime.terminal:
+        return MappingProxyType({})
+
+    assert compute_regime_transition_probs is not None  # noqa: S101
+
+    configs: dict[tuple[tuple[str, ...], tuple[str, ...]], list[int]] = {}
+    for period in range(ages.n_periods):
+        key = _partition_targets(
             period=period,
+            transitions=transitions,
+            regimes_to_active_periods=regimes_to_active_periods,
+            stochastic_transition_names=stochastic_transition_names,
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        )
+        configs.setdefault(key, []).append(period)
+
+    built: dict[tuple[tuple[str, ...], tuple[str, ...]], Callable] = {}
+    for complete_targets, incomplete_targets in configs:
+        built[(complete_targets, incomplete_targets)] = get_compute_intermediates(
             functions=functions,
             constraints=constraints,
+            complete_targets=complete_targets,
+            incomplete_targets=incomplete_targets,
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
-            regimes_to_active_periods=regimes_to_active_periods,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         )
 
-    return MappingProxyType(intermediates)
+    result: dict[int, Callable] = {}
+    for key, periods in configs.items():
+        for period in periods:
+            result[period] = built[key]
+
+    return MappingProxyType(result)
 
 
 def _build_max_Q_over_a_per_period(
@@ -1335,20 +1416,27 @@ def _build_max_Q_over_a_per_period(
     grids: MappingProxyType[str, Grid],
     enable_jit: bool,
 ) -> MappingProxyType[int, MaxQOverAFunction]:
-    """Build max-Q-over-a closures for each period."""
-    result = {}
+    """Build max-Q-over-a closures for each period.
+
+    Periods sharing the same Q_and_F object reuse a single compiled function.
+    """
+    built: dict[int, MaxQOverAFunction] = {}
+    result: dict[int, MaxQOverAFunction] = {}
     for period, Q_and_F in Q_and_F_functions.items():
-        func = get_max_Q_over_a(
-            Q_and_F=Q_and_F,
-            batch_sizes={
-                name: grid.batch_size
-                for name, grid in grids.items()
-                if name in state_action_space.state_names
-            },
-            action_names=state_action_space.action_names,
-            state_names=state_action_space.state_names,
-        )
-        result[period] = jax.jit(func) if enable_jit else func
+        q_id = id(Q_and_F)
+        if q_id not in built:
+            func = get_max_Q_over_a(
+                Q_and_F=Q_and_F,
+                batch_sizes={
+                    name: grid.batch_size
+                    for name, grid in grids.items()
+                    if name in state_action_space.state_names
+                },
+                action_names=state_action_space.action_names,
+                state_names=state_action_space.state_names,
+            )
+            built[q_id] = jax.jit(func) if enable_jit else func
+        result[period] = built[q_id]
     return MappingProxyType(result)
 
 
@@ -1358,21 +1446,28 @@ def _build_argmax_and_max_Q_over_a_per_period(
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
     enable_jit: bool,
 ) -> MappingProxyType[int, ArgmaxQOverAFunction]:
-    """Build argmax-and-max-Q-over-a closures for each period."""
-    result = {}
+    """Build argmax-and-max-Q-over-a closures for each period.
+
+    Periods sharing the same Q_and_F object reuse a single compiled function.
+    """
+    built: dict[int, ArgmaxQOverAFunction] = {}
+    result: dict[int, ArgmaxQOverAFunction] = {}
     for period, Q_and_F in Q_and_F_functions.items():
-        func = get_argmax_and_max_Q_over_a(
-            Q_and_F=Q_and_F,
-            action_names=state_action_space.action_names,
-            state_names=state_action_space.state_names,
-        )
-        if enable_jit:
-            func = jax.jit(func)
-        result[period] = simulation_spacemap(
-            func=func,
-            action_names=(),
-            state_names=tuple(state_action_space.states),
-        )
+        q_id = id(Q_and_F)
+        if q_id not in built:
+            func = get_argmax_and_max_Q_over_a(
+                Q_and_F=Q_and_F,
+                action_names=state_action_space.action_names,
+                state_names=state_action_space.state_names,
+            )
+            if enable_jit:
+                func = jax.jit(func)
+            built[q_id] = simulation_spacemap(
+                func=func,
+                action_names=(),
+                state_names=tuple(state_action_space.states),
+            )
+        result[period] = built[q_id]
     return MappingProxyType(result)
 
 

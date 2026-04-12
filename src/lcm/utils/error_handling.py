@@ -45,6 +45,7 @@ def validate_V(
     state_action_space: StateActionSpace | None = None,
     next_regime_to_V_arr: MappingProxyType | None = None,
     internal_params: Mapping | None = None,
+    period: int | None = None,
 ) -> None:
     """Validate the value function array for NaN values.
 
@@ -63,6 +64,7 @@ def validate_V(
         state_action_space: StateActionSpace for the current regime/period.
         next_regime_to_V_arr: Next-period value function arrays.
         internal_params: Flat regime parameters.
+        period: The current period index (forwarded to diagnostic closure).
 
     Raises:
         InvalidValueFunctionError: If the value function array contains NaN values.
@@ -107,6 +109,7 @@ def validate_V(
                 internal_params=internal_params,
                 regime_name=regime_name or "",
                 age=float(age),
+                period=period,
             )
         except Exception:  # noqa: BLE001
             import logging  # noqa: PLC0415
@@ -128,6 +131,7 @@ def _enrich_with_diagnostics(
     internal_params: Mapping | None,
     regime_name: str,
     age: float,
+    period: int | None,
 ) -> None:
     """Run diagnostic intermediates and attach summary to exception.
 
@@ -149,6 +153,8 @@ def _enrich_with_diagnostics(
         **meshed,
         "next_regime_to_V_arr": next_regime_to_V_arr,
         **(dict(internal_params) if internal_params else {}),
+        "age": age,
+        "period": period,
     }
 
     try:

@@ -28,30 +28,33 @@ from lcm.utils.dispatchers import productmap
 from lcm.utils.functools import get_union_of_args
 
 
-def get_Q_and_F(  # noqa: C901, PLR0915
+def get_Q_and_F(
     *,
     flat_param_names: frozenset[str],
-    age: float,
-    period: int,
     functions: FunctionsMapping,
     constraints: FunctionsMapping,
+    complete_targets: tuple[str, ...],
+    incomplete_targets: tuple[str, ...],
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[str],
-    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
+    `age` and `period` are runtime arguments (via `**states_actions_params`),
+    not closure constants. This allows periods with the same target
+    configuration to share a single JIT-compiled function.
+
     Args:
         flat_param_names: Frozenset of flat parameter names for the regime.
-        age: The age corresponding to the current period.
-        period: The current period.
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to internal user functions.
+        complete_targets: Target regimes with all required stochastic transitions.
+        incomplete_targets: Target regimes missing stochastic transitions (must
+            have zero transition probability at runtime).
         transitions: Immutable mapping of transition names to transition functions.
         stochastic_transition_names: Frozenset of stochastic transition function names.
-        regimes_to_active_periods: Mapping regime names to their active periods.
         compute_regime_transition_probs: Regime transition probability function
             for solve.
         regime_to_v_interpolation_info: Mapping of regime names to V-interpolation
@@ -68,28 +71,7 @@ def get_Q_and_F(  # noqa: C901, PLR0915
     joint_weights_from_marginals = {}
     next_V = {}
 
-    target_regime_names = tuple(transitions)
-    all_active_next_period = tuple(
-        name
-        for name in target_regime_names
-        if period + 1 in regimes_to_active_periods[name]
-    )
-
-    # Partition active targets into complete (have all stochastic transitions)
-    # and incomplete (missing stochastic transitions, assumed to have zero
-    # transition probability — validated at runtime by _check_zero_probs).
-    complete_targets: list[str] = []
-    incomplete_targets: list[str] = []
-    for name in all_active_next_period:
-        target_stochastic_needs = {
-            f"next_{s}"
-            for s in regime_to_v_interpolation_info[name].state_names
-            if f"next_{s}" in stochastic_transition_names
-        }
-        if target_stochastic_needs.issubset(transitions[name]):
-            complete_targets.append(name)
-        else:
-            incomplete_targets.append(name)
+    all_active_next_period = (*complete_targets, *incomplete_targets)
 
     next_V_extra_param_names: dict[str, frozenset[str]] = {}
 
@@ -156,8 +138,8 @@ def get_Q_and_F(  # noqa: C901, PLR0915
             *list(state_transitions.values()),
             *list(next_stochastic_states_weights.values()),
         ],
-        include=frozenset({"next_regime_to_V_arr"} | flat_param_names),
-        exclude=frozenset({"period", "age"}),
+        include=frozenset({"next_regime_to_V_arr", "period", "age"} | flat_param_names),
+        exclude=frozenset(),
     )
 
     # Guard callback for incomplete targets — defined at closure scope so JAX
@@ -189,26 +171,17 @@ def get_Q_and_F(  # noqa: C901, PLR0915
 
         Args:
             next_regime_to_V_arr: The next period's value function array.
-            **states_actions_params: States, actions, and flat regime params.
+            **states_actions_params: States, actions, age, period, and flat
+                regime params.
 
         Returns:
             A tuple containing the arrays with state-action values and feasibilities.
 
         """
         regime_transition_probs: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
-            compute_regime_transition_probs(
-                **states_actions_params,
-                period=period,
-                age=age,
-            )
+            compute_regime_transition_probs(**states_actions_params)
         )
-        U_arr, F_arr = U_and_F(
-            **states_actions_params,
-            period=period,
-            age=age,
-        )
-        # Filter to active regimes only — inactive regimes must have 0
-        # probability (validated before solve).
+        U_arr, F_arr = U_and_F(**states_actions_params)
         active_regime_probs = MappingProxyType(
             {r: regime_transition_probs[r] for r in all_active_next_period}
         )
@@ -225,16 +198,10 @@ def get_Q_and_F(  # noqa: C901, PLR0915
         for target_regime_name in complete_targets:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,
-                period=period,
-                age=age,
             )
             marginal_next_stochastic_states_weights = next_stochastic_states_weights[
                 target_regime_name
-            ](
-                **states_actions_params,
-                period=period,
-                age=age,
-            )
+            ](**states_actions_params)
             joint_next_stochastic_states_weights = joint_weights_from_marginals[
                 target_regime_name
             ](**marginal_next_stochastic_states_weights)
@@ -276,13 +243,12 @@ def get_Q_and_F(  # noqa: C901, PLR0915
 
 def get_compute_intermediates(
     *,
-    age: float,
-    period: int,
     functions: FunctionsMapping,
     constraints: FunctionsMapping,
+    complete_targets: tuple[str, ...],
+    incomplete_targets: tuple[str, ...],
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[str],
-    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> Callable:
@@ -293,8 +259,7 @@ def get_compute_intermediates(
     `validate_V` detects NaN.
 
     Returns:
-        Closure with the same signature as Q_and_F, returning
-        `(U_arr, F_arr, E_next_V, Q_arr, active_regime_probs)`.
+        Closure returning `(U_arr, F_arr, E_next_V, Q_arr, active_regime_probs)`.
 
     """
     U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
@@ -303,22 +268,7 @@ def get_compute_intermediates(
     joint_weights_from_marginals = {}
     next_V = {}
 
-    target_regime_names = tuple(transitions)
-    all_active_next_period = tuple(
-        name
-        for name in target_regime_names
-        if period + 1 in regimes_to_active_periods[name]
-    )
-
-    complete_targets: list[str] = []
-    for name in all_active_next_period:
-        target_stochastic_needs = {
-            f"next_{s}"
-            for s in regime_to_v_interpolation_info[name].state_names
-            if f"next_{s}" in stochastic_transition_names
-        }
-        if target_stochastic_needs.issubset(transitions[name]):
-            complete_targets.append(name)
+    all_active_next_period = (*complete_targets, *incomplete_targets)
 
     next_V_extra_param_names: dict[str, frozenset[str]] = {}
 
@@ -372,17 +322,9 @@ def get_compute_intermediates(
     ) -> tuple:
         """Compute all Q_and_F intermediates."""
         regime_transition_probs: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
-            compute_regime_transition_probs(
-                **states_actions_params,
-                period=period,
-                age=age,
-            )
+            compute_regime_transition_probs(**states_actions_params)
         )
-        U_arr, F_arr = U_and_F(
-            **states_actions_params,
-            period=period,
-            age=age,
-        )
+        U_arr, F_arr = U_and_F(**states_actions_params)
         active_regime_probs = MappingProxyType(
             {r: regime_transition_probs[r] for r in all_active_next_period}
         )
@@ -391,13 +333,9 @@ def get_compute_intermediates(
         for target_regime_name in complete_targets:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,
-                period=period,
-                age=age,
             )
             marginal = next_stochastic_states_weights[target_regime_name](
                 **states_actions_params,
-                period=period,
-                age=age,
             )
             joint = joint_weights_from_marginals[target_regime_name](**marginal)
             extra_kw = {
@@ -425,23 +363,21 @@ def get_compute_intermediates(
 def get_Q_and_F_terminal(
     *,
     flat_param_names: frozenset[str],
-    age: float,
-    period: int,
     functions: FunctionsMapping,
     constraints: FunctionsMapping,
 ) -> QAndFFunction:
-    """Get the state-action (Q) and feasibility (F) function for the terminal period.
+    """Get the state-action (Q) and feasibility (F) function for a terminal period.
+
+    `age` and `period` are runtime arguments (via `**states_actions_params`).
 
     Args:
         flat_param_names: Frozenset of flat parameter names for the regime.
-        age: The age corresponding to the current period.
-        period: The current period.
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to internal user functions.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
-        for the terminal period.
+        for a terminal period.
 
     """
     U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
@@ -451,8 +387,8 @@ def get_Q_and_F_terminal(
         # While the terminal period does not depend on the value function array, we
         # include it in the signature, such that we can treat all periods uniformly
         # during the solution and simulation.
-        include=frozenset({"next_regime_to_V_arr"} | flat_param_names),
-        exclude=frozenset({"period", "age"}),
+        include=frozenset({"next_regime_to_V_arr", "period", "age"} | flat_param_names),
+        exclude=frozenset(),
     )
 
     @with_signature(
@@ -462,22 +398,8 @@ def get_Q_and_F_terminal(
         next_regime_to_V_arr: FloatND,  # noqa: ARG001
         **states_actions_params: Array,
     ) -> tuple[FloatND, BoolND]:
-        """Calculate the state-action values and feasibilities for the terminal period.
-
-        Args:
-            next_regime_to_V_arr: The next period's value function array (unused here).
-            **states_actions_params: States, actions, and flat regime params.
-
-        Returns:
-            A tuple containing the arrays with state-action values and feasibilities.
-
-        """
-        U_arr, F_arr = U_and_F(
-            **states_actions_params,
-            period=period,
-            age=age,
-        )
-
+        """Calculate the state-action values and feasibilities for a terminal period."""
+        U_arr, F_arr = U_and_F(**states_actions_params)
         return jnp.asarray(U_arr), jnp.asarray(F_arr)
 
     return Q_and_F

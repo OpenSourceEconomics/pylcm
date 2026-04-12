@@ -68,8 +68,6 @@ def test_get_Q_and_F_function():
     solve = internal_regimes["working_life"].solve_functions
     Q_and_F = get_Q_and_F_terminal(
         flat_param_names=flat_param_names,
-        age=ages.period_to_age(3),
-        period=3,
         functions=solve.functions,
         constraints=solve.constraints,
     )
@@ -83,9 +81,9 @@ def test_get_Q_and_F_function():
         labor_supply=labor_supply,
         wealth=wealth,
         **internal_params["working_life"],
-        next_regime_to_V_arr=jnp.empty(
-            0
-        ),  # Terminal period doesn't use continuation value
+        next_regime_to_V_arr=jnp.empty(0),
+        period=3,
+        age=ages.period_to_age(3),
     )
 
     assert_array_equal(

@@ -90,6 +90,8 @@ def test_solve_brute():
         wealth,
         labor_supply,
         next_regime_to_V_arr,
+        period,  # noqa: ARG001
+        age,  # noqa: ARG001
         discount_factor=0.9,
     ):
         next_wealth = wealth + labor_supply - consumption
@@ -168,7 +170,7 @@ def test_solve_brute_single_period_Qc_arr():
         state_and_discrete_action_names=("a", "b", "c"),
     )
 
-    def _Q_and_F(a, c, b, d, next_regime_to_V_arr):  # noqa: ARG001
+    def _Q_and_F(a, c, b, d, next_regime_to_V_arr, period, age):  # noqa: ARG001
         # next_regime_to_V_arr is now a dict but not used in this test
         util = d
         feasib = d <= a + b + c

@@ -11,6 +11,7 @@ from lcm.utils.error_handling import validate_V
 from lcm.utils.logging import (
     format_duration,
     log_nan_in_V,
+    log_period_header,
     log_period_timing,
     log_V_stats,
 )
@@ -55,6 +56,12 @@ def solve(
             if period in regime.active_periods
         }
 
+        log_period_header(
+            logger=logger,
+            age=ages.values[period],
+            n_active_regimes=len(active_regimes),
+        )
+
         for name, internal_regime in active_regimes.items():
             state_action_space = internal_regime.state_action_space(
                 regime_params=internal_params[name],
@@ -62,11 +69,16 @@ def solve(
             max_Q_over_a = internal_regime.solve_functions.max_Q_over_a[period]
 
             # evaluate Q-function on states and actions, and maximize over actions
+            # Pass period/age as JAX arrays (not Python scalars) so the shared
+            # jax.jit function is traced once with abstract shapes, not recompiled
+            # for every distinct (period, age) pair.
             V_arr = max_Q_over_a(
                 **state_action_space.states,
                 **state_action_space.actions,
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 **internal_params[name],
+                period=jnp.int32(period),
+                age=jnp.asarray(ages.values[period]),
             )
 
             log_nan_in_V(
@@ -88,6 +100,7 @@ def solve(
                 state_action_space=state_action_space,
                 next_regime_to_V_arr=next_regime_to_V_arr,
                 internal_params=internal_params[name],
+                period=period,
             )
             period_solution[name] = V_arr
 
@@ -95,12 +108,7 @@ def solve(
         solution[period] = next_regime_to_V_arr
 
         elapsed = time.monotonic() - period_start
-        log_period_timing(
-            logger=logger,
-            age=ages.values[period],
-            n_active_regimes=len(active_regimes),
-            elapsed=elapsed,
-        )
+        log_period_timing(logger=logger, elapsed=elapsed)
 
     total_elapsed = time.monotonic() - total_start
     logger.info("Solution complete  (%s)", format_duration(seconds=total_elapsed))
