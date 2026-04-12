@@ -267,7 +267,7 @@ def _simulate_regime_in_period(
         next_regime_to_V_arr=next_regime_to_V_arr,
         **internal_params[regime_name],
         period=jnp.int32(period),
-        age=jnp.asarray(age),
+        age=age,
     )
     validate_V(V_arr=V_arr, age=age, regime_name=regime_name)
 

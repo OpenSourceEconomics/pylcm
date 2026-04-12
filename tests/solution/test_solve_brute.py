@@ -60,10 +60,6 @@ def test_solve_brute():
     state_action_space = StateActionSpace(
         discrete_actions=MappingProxyType(
             {
-                # pick [0, 1] such that no label translation is needed
-                # lazy is like a type, it influences utility but is not affected
-                # by actions
-                "lazy": jnp.array([0, 1]),
                 "labor_supply": jnp.array([0, 1]),
             }
         ),
@@ -75,6 +71,9 @@ def test_solve_brute():
         states=MappingProxyType(
             {
                 # pick [0, 1, 2] such that no coordinate mapping is needed
+                # lazy is like a type, it influences utility but is not affected
+                # by actions
+                "lazy": jnp.array([0, 1]),
                 "wealth": jnp.array([0.0, 1.0, 2.0]),
             }
         ),
@@ -96,20 +95,12 @@ def test_solve_brute():
     ):
         next_wealth = wealth + labor_supply - consumption
         next_lazy = lazy
-
-        # next_regime_to_V_arr is now a dict of regime names to arrays
-        regime_name = "default"
-        if (
-            regime_name not in next_regime_to_V_arr
-            or next_regime_to_V_arr[regime_name].size == 0
-        ):
-            # last period: next_regime_to_V_arr = {regime_name: jnp.empty(0)}
-            expected_V = 0
-        else:
-            expected_V = map_coordinates(
-                input=next_regime_to_V_arr[regime_name][next_lazy],
-                coordinates=jnp.array([next_wealth]),
-            )
+        # next_regime_to_V_arr always contains all regimes with proper shapes.
+        # Interpolate the next-period V array at the next state.
+        expected_V = map_coordinates(
+            input=next_regime_to_V_arr["default"],
+            coordinates=jnp.array([next_wealth, next_lazy]),
+        )
 
         U_arr = consumption - 0.2 * lazy * labor_supply
         F_arr = next_wealth >= 0
@@ -142,6 +133,7 @@ def test_solve_brute():
         ages=AgeGrid(start=0, stop=2, step="Y"),
         internal_regimes={"default": internal_regime},  # ty: ignore[invalid-argument-type]
         logger=get_logger(log_level="off"),
+        enable_jit=False,
     )
 
     # Solution is now MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
@@ -201,6 +193,7 @@ def test_solve_brute_single_period_Qc_arr():
         ages=AgeGrid(start=0, stop=2, step="Y"),
         internal_regimes={"default": internal_regime},  # ty: ignore[invalid-argument-type]
         logger=get_logger(log_level="off"),
+        enable_jit=False,
     )
 
     # Solution is now dict[int, dict[RegimeName, FloatND]], need to extract the V_arr
