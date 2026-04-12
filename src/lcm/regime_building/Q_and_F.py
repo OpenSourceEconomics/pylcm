@@ -1,7 +1,9 @@
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Any, cast
 
+import jax
+import jax.experimental
 import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
 from jax import Array
@@ -26,7 +28,7 @@ from lcm.utils.dispatchers import productmap
 from lcm.utils.functools import get_union_of_args
 
 
-def get_Q_and_F(
+def get_Q_and_F(  # noqa: C901, PLR0915
     *,
     flat_param_names: frozenset[str],
     age: float,
@@ -67,14 +69,31 @@ def get_Q_and_F(
     next_V = {}
 
     target_regime_names = tuple(transitions)
-    active_regimes_next_period = tuple(
-        target_regime_name
-        for target_regime_name in target_regime_names
-        if period + 1 in regimes_to_active_periods[target_regime_name]
+    all_active_next_period = tuple(
+        name
+        for name in target_regime_names
+        if period + 1 in regimes_to_active_periods[name]
     )
+
+    # Partition active targets into complete (have all stochastic transitions)
+    # and incomplete (missing stochastic transitions, assumed to have zero
+    # transition probability — validated at runtime by _check_zero_probs).
+    complete_targets: list[str] = []
+    incomplete_targets: list[str] = []
+    for name in all_active_next_period:
+        target_stochastic_needs = {
+            f"next_{s}"
+            for s in regime_to_v_interpolation_info[name].state_names
+            if f"next_{s}" in stochastic_transition_names
+        }
+        if target_stochastic_needs.issubset(transitions[name]):
+            complete_targets.append(name)
+        else:
+            incomplete_targets.append(name)
+
     next_V_extra_param_names: dict[str, frozenset[str]] = {}
 
-    for target_regime_name in active_regimes_next_period:
+    for target_regime_name in complete_targets:
         # Transitions from the current regime to the target regime
         target_transitions = transitions[target_regime_name]
 
@@ -141,6 +160,24 @@ def get_Q_and_F(
         exclude=frozenset({"period", "age"}),
     )
 
+    # Guard callback for incomplete targets — defined at closure scope so JAX
+    # sees the same function object across calls (avoids JIT re-compilation).
+    if incomplete_targets:
+
+        def _check_zero_probs(probs: Mapping[str, Array]) -> None:
+            """Validate that incomplete targets have zero transition probability."""
+            for target in incomplete_targets:
+                prob = float(probs[target])
+                if prob > 0:
+                    msg = (
+                        f"Regime transition probability to '{target}' "
+                        f"is {prob} > 0, but no stochastic state "
+                        f"transition was provided for this target. "
+                        f"Add the missing entries to the per-target "
+                        f"dict in state_transitions."
+                    )
+                    raise ValueError(msg)
+
     @with_signature(
         args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
     )
@@ -173,11 +210,19 @@ def get_Q_and_F(
         # Filter to active regimes only — inactive regimes must have 0
         # probability (validated before solve).
         active_regime_probs = MappingProxyType(
-            {r: regime_transition_probs[r] for r in active_regimes_next_period}
+            {r: regime_transition_probs[r] for r in all_active_next_period}
         )
 
+        if incomplete_targets:
+            jax.experimental.io_callback(
+                _check_zero_probs,
+                None,
+                dict(active_regime_probs),
+                ordered=True,
+            )
+
         E_next_V = jnp.zeros_like(U_arr)
-        for target_regime_name in active_regimes_next_period:
+        for target_regime_name in complete_targets:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,
                 period=period,
