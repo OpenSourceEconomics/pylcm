@@ -27,6 +27,7 @@ def solve(
     ages: AgeGrid,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     logger: logging.Logger,
+    enable_jit: bool,
     max_compilation_workers: int | None = None,
 ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
     """Solve a model using grid search.
@@ -37,6 +38,7 @@ def solve(
         internal_regimes: The internal regimes, that contain all necessary functions
             to solve the model.
         logger: Logger that logs to stdout.
+        enable_jit: Whether to JIT-compile the functions of the internal regimes.
         max_compilation_workers: Maximum number of threads for parallel XLA compilation.
             Defaults to `os.cpu_count()`.
 
@@ -61,6 +63,7 @@ def solve(
         internal_params=internal_params,
         ages=ages,
         next_regime_to_V_arr=next_regime_to_V_arr,
+        enable_jit=enable_jit,
         max_compilation_workers=max_compilation_workers,
         logger=logger,
     )
@@ -154,6 +157,7 @@ def _compile_all_functions(
     internal_params: InternalParams,
     ages: AgeGrid,
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND],
+    enable_jit: bool,
     max_compilation_workers: int | None,
     logger: logging.Logger,
 ) -> dict[tuple[RegimeName, int], Callable]:
@@ -173,6 +177,7 @@ def _compile_all_functions(
         ages: Age grid for the model.
         next_regime_to_V_arr: Template with consistent keys and V array shapes
             for constructing lowering arguments.
+        enable_jit: Whether to JIT-compile the functions of the internal regimes.
         max_compilation_workers: Maximum threads for parallel compilation.
             Defaults to `os.cpu_count()`.
         logger: Logger for compilation progress.
@@ -188,8 +193,7 @@ def _compile_all_functions(
             all_functions[(name, period)] = regime.solve_functions.max_Q_over_a[period]
 
     # If JIT is disabled, return raw functions directly.
-    sample_func = next(iter(all_functions.values()))
-    if not hasattr(sample_func, "lower"):
+    if not enable_jit:
         return all_functions
 
     # Deduplicate by object identity.
@@ -230,7 +234,7 @@ def _compile_all_functions(
         logger.info("%d/%d  %s", i, n_unique, label)
         logger.info("  lowering ...")
         start = time.monotonic()
-        lowered[func_id] = func.lower(**lower_args)  # ty: ignore[unresolved-attribute]
+        lowered[func_id] = jax.jit(func).lower(**lower_args)
         elapsed = time.monotonic() - start
         logger.info("  lowered in %s", format_duration(seconds=elapsed))
 
