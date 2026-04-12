@@ -497,6 +497,78 @@ def test_initial_conditions_heterogeneous_health_grids() -> None:
     )
 
 
+def test_initial_conditions_heterogeneous_state_sets() -> None:
+    """Handle regimes where a state only exists in some regimes."""
+
+    @categorical(ordered=False)
+    class _Rid:
+        with_status: int
+        without_status: int
+        dead: int
+
+    @categorical(ordered=False)
+    class _Status:
+        low: int
+        high: int
+
+    def _next_regime() -> int:
+        return _Rid.dead
+
+    def _utility_with_status(wealth: float, status: int) -> float:
+        return wealth + status
+
+    def _utility_without_status(wealth: float) -> float:
+        return wealth
+
+    with_status = Regime(
+        transition=_next_regime,
+        states={
+            "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
+            "status": DiscreteGrid(_Status),
+        },
+        state_transitions={"wealth": None, "status": None},
+        functions={"utility": _utility_with_status},
+    )
+    without_status = Regime(
+        transition=_next_regime,
+        states={"wealth": LinSpacedGrid(start=0, stop=100, n_points=5)},
+        state_transitions={"wealth": None},
+        functions={"utility": _utility_without_status},
+    )
+    dead = Regime(transition=None, functions={"utility": lambda: 0.0})
+
+    model = Model(
+        regimes={
+            "with_status": with_status,
+            "without_status": without_status,
+            "dead": dead,
+        },
+        ages=AgeGrid(start=50, stop=52, step="Y"),
+        regime_id_class=_Rid,
+    )
+
+    df = pd.DataFrame(
+        {
+            "regime": ["with_status", "with_status", "without_status"],
+            "wealth": [10.0, 20.0, 30.0],
+            "status": ["low", "high", pd.NA],
+            "age": [50.0, 51.0, 50.0],
+        }
+    )
+    result = initial_conditions_from_dataframe(
+        df=df,
+        regimes=model.regimes,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
+
+    # status: low=0, high=1 for with_status regime
+    assert result["status"][0] == 0
+    assert result["status"][1] == 1
+    # without_status regime: NaN pre-fill → explicit int32 sentinel
+    assert result["status"][2] == jnp.iinfo(jnp.int32).min
+    assert jnp.allclose(result["wealth"], jnp.array([10.0, 20.0, 30.0]))
+
+
 def test_convert_series_heterogeneous_grids() -> None:
     """convert_series_in_params handles per-regime grid lookup."""
     model = _get_heterogeneous_health_model()
