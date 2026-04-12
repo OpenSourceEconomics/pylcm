@@ -78,7 +78,7 @@ class Model:
     """Immutable mapping of regime names to internal regime instances."""
 
     enable_jit: bool = True
-    """Whether to JIT-compile the functions of the internal regime."""
+    """Whether to JIT-compile the functions of the internal regimes."""
 
     fixed_params: UserParams
     """Parameters fixed at model initialization."""
@@ -232,6 +232,7 @@ class Model:
                 internal_regimes=self.internal_regimes,
                 logger=get_logger(log_level=log_level),
                 max_compilation_workers=max_compilation_workers,
+                enable_jit=self.enable_jit,
             )
         except InvalidValueFunctionError as exc:
             if log_path is not None and exc.partial_solution is not None:
@@ -342,6 +343,7 @@ class Model:
                     ages=self.ages,
                     internal_regimes=self.internal_regimes,
                     logger=log,
+                    enable_jit=self.enable_jit,
                 )
             except InvalidValueFunctionError as exc:
                 if log_path is not None and exc.partial_solution is not None:
