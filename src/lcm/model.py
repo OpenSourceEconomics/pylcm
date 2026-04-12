@@ -95,6 +95,8 @@ class Model:
         regime_id_class: type,
         enable_jit: bool = True,
         fixed_params: UserParams = MappingProxyType({}),
+        derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
+        | None = None,
     ) -> None:
         """Initialize the Model.
 
@@ -105,6 +107,10 @@ class Model:
             regime_id_class: Dataclass mapping regime names to integer indices.
             enable_jit: Whether to jit the functions of the internal regime.
             fixed_params: Parameters that can be fixed at model initialization.
+            derived_categoricals: Extra categorical mappings for derived
+                variables not in the model's state/action grids. Needed when
+                `fixed_params` contains `pd.Series` indexed by DAG function
+                outputs.
 
         """
         self.description = description
@@ -132,6 +138,7 @@ class Model:
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=self.fixed_params,
+            derived_categoricals=derived_categoricals,
         )
         self.enable_jit = enable_jit
         self.simulation_output_dtypes = get_simulation_output_dtypes(
