@@ -12,13 +12,17 @@ from types import MappingProxyType
 
 from dags import get_ancestors
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path
+from jax import Array
 
 from lcm.ages import AgeGrid
-from lcm.exceptions import ModelInitializationError, format_messages
+from lcm.exceptions import InvalidParamsError, ModelInitializationError, format_messages
+from lcm.pandas_utils import convert_series_in_params, has_series
+from lcm.params import MappingLeaf
 from lcm.params.processing import (
     broadcast_to_template,
     create_params_template,
 )
+from lcm.params.sequence_leaf import SequenceLeaf
 from lcm.regime import Regime
 from lcm.regime_building.processing import (
     InternalRegime,
@@ -41,7 +45,6 @@ def build_regimes_and_template(
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
-    convert_fixed_params: Callable[[InternalParams], InternalParams] | None = None,
 ) -> tuple[MappingProxyType[RegimeName, InternalRegime], ParamsTemplate]:
     """Build internal regimes and params template in a single pass.
 
@@ -54,9 +57,6 @@ def build_regimes_and_template(
         regime_names_to_ids: Mapping of regime names to integer indices.
         enable_jit: Whether to JIT-compile regime functions.
         fixed_params: Parameters to fix at model initialization.
-        convert_fixed_params: Optional callback to convert fixed param values
-            (e.g., pd.Series to JAX arrays) after broadcasting to template shape
-            but before partialling into compiled functions.
 
     Returns:
         Tuple of (internal_regimes, params_template).
@@ -74,8 +74,14 @@ def build_regimes_and_template(
         fixed_internal = _resolve_fixed_params(
             fixed_params=dict(fixed_params), template=params_template
         )
-        if convert_fixed_params is not None:
-            fixed_internal = convert_fixed_params(fixed_internal)
+        if has_series(fixed_internal):
+            fixed_internal = convert_series_in_params(
+                internal_params=fixed_internal,
+                regimes=regimes,
+                ages=ages,
+                regime_names_to_ids=regime_names_to_ids,
+            )
+        _validate_param_types(fixed_internal)
         if any(v for v in fixed_internal.values()):
             internal_regimes = _partial_fixed_params_into_regimes(
                 internal_regimes=internal_regimes, fixed_internal=fixed_internal
@@ -345,3 +351,41 @@ def _filter_kwargs_for_func(
     if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
         return kwargs
     return {k: v for k, v in kwargs.items() if k in params}
+
+
+def _validate_param_types(internal_params: InternalParams) -> None:
+    """Raise if any param leaf is not a Python scalar or JAX array.
+
+    After processing, every leaf value (including inside MappingLeaf /
+    SequenceLeaf containers) must be a Python scalar (float, int, bool) or a
+    JAX array. Notably, numpy arrays and pandas Series are not accepted.
+    """
+    for regime_name, regime_params in internal_params.items():
+        for key, value in regime_params.items():
+            _check_leaf(value, f"{regime_name}__{key}")
+
+
+def _check_leaf(value: object, path: str) -> None:
+    """Check a single leaf value, recursing into MappingLeaf/SequenceLeaf."""
+    if isinstance(value, MappingLeaf):
+        for k, v in value.data.items():
+            _check_leaf(v, f"{path}.{k}")
+        return
+    if isinstance(value, SequenceLeaf):
+        for i, v in enumerate(value.data):
+            _check_leaf(v, f"{path}[{i}]")
+        return
+    if isinstance(value, (float, int, bool)):
+        return
+    if hasattr(value, "dtype") and hasattr(value, "shape"):
+        if isinstance(value, Array):
+            return
+        type_name = type(value).__module__ + "." + type(value).__name__
+        msg = (
+            f"Parameter '{path}' is a {type_name} (shape {value.shape}). "
+            f"Use jnp.array() or pass a pd.Series with a named index."
+        )
+        raise InvalidParamsError(msg)
+    type_name = type(value).__module__ + "." + type(value).__name__
+    msg = f"Parameter '{path}' has unexpected type {type_name}."
+    raise InvalidParamsError(msg)
