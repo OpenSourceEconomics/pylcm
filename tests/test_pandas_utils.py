@@ -135,7 +135,11 @@ def test_continuous_states_and_age():
             "age": [25.0, 35.0],
         }
     )
-    conditions = initial_conditions_from_dataframe(df=df, model=model)
+    conditions = initial_conditions_from_dataframe(
+        df=df,
+        regimes=model.regimes,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
     assert jnp.array_equal(
         conditions["regime"],
         jnp.array([BasicRegimeId.working_life, BasicRegimeId.working_life]),
@@ -154,7 +158,11 @@ def test_categorical_string_labels():
             "age": [25.0, 25.0],
         }
     )
-    conditions = initial_conditions_from_dataframe(df=df, model=model)
+    conditions = initial_conditions_from_dataframe(
+        df=df,
+        regimes=model.regimes,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
     assert jnp.array_equal(
         conditions["regime"],
         jnp.array([BasicRegimeId.working_life, BasicRegimeId.retirement]),
@@ -173,7 +181,11 @@ def test_categorical_pd_categorical_column():
             "age": [25.0, 25.0],
         }
     )
-    conditions = initial_conditions_from_dataframe(df=df, model=model)
+    conditions = initial_conditions_from_dataframe(
+        df=df,
+        regimes=model.regimes,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
     assert jnp.array_equal(conditions["health"], jnp.array([Health.good, Health.bad]))
 
 
@@ -187,7 +199,11 @@ def test_multi_regime():
             "age": [25.0, 25.0, 25.0],
         }
     )
-    conditions = initial_conditions_from_dataframe(df=df, model=model)
+    conditions = initial_conditions_from_dataframe(
+        df=df,
+        regimes=model.regimes,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
     assert jnp.array_equal(
         conditions["regime"],
         jnp.array(
@@ -205,7 +221,11 @@ def test_missing_regime_column_raises():
     model = get_basic_model()
     df = pd.DataFrame({"wealth": [10.0]})
     with pytest.raises(ValueError, match="'regime' column"):
-        initial_conditions_from_dataframe(df=df, model=model)
+        initial_conditions_from_dataframe(
+            df=df,
+            regimes=model.regimes,
+            regime_names_to_ids=model.regime_names_to_ids,
+        )
 
 
 def test_invalid_regime_name_raises():
@@ -217,7 +237,11 @@ def test_invalid_regime_name_raises():
         }
     )
     with pytest.raises(ValueError, match="Invalid regime names"):
-        initial_conditions_from_dataframe(df=df, model=model)
+        initial_conditions_from_dataframe(
+            df=df,
+            regimes=model.regimes,
+            regime_names_to_ids=model.regime_names_to_ids,
+        )
 
 
 def test_invalid_category_label_raises():
@@ -231,7 +255,11 @@ def test_invalid_category_label_raises():
         }
     )
     with pytest.raises(ValueError, match="Invalid labels"):
-        initial_conditions_from_dataframe(df=df, model=model)
+        initial_conditions_from_dataframe(
+            df=df,
+            regimes=model.regimes,
+            regime_names_to_ids=model.regime_names_to_ids,
+        )
 
 
 def test_empty_dataframe_raises():
@@ -240,7 +268,11 @@ def test_empty_dataframe_raises():
         {"regime": pd.Series([], dtype=str), "wealth": pd.Series([], dtype=float)}
     )
     with pytest.raises(ValueError, match="empty"):
-        initial_conditions_from_dataframe(df=df, model=model)
+        initial_conditions_from_dataframe(
+            df=df,
+            regimes=model.regimes,
+            regime_names_to_ids=model.regime_names_to_ids,
+        )
 
 
 def test_unknown_column_raises():
@@ -255,7 +287,11 @@ def test_unknown_column_raises():
         }
     )
     with pytest.raises(ValueError, match="Unknown columns"):
-        initial_conditions_from_dataframe(df=df, model=model)
+        initial_conditions_from_dataframe(
+            df=df,
+            regimes=model.regimes,
+            regime_names_to_ids=model.regime_names_to_ids,
+        )
 
 
 def test_missing_state_column_raises():
@@ -268,7 +304,11 @@ def test_missing_state_column_raises():
         }
     )
     with pytest.raises(ValueError, match="Missing required"):
-        initial_conditions_from_dataframe(df=df, model=model)
+        initial_conditions_from_dataframe(
+            df=df,
+            regimes=model.regimes,
+            regime_names_to_ids=model.regime_names_to_ids,
+        )
 
 
 def test_shock_state_columns_accepted():
@@ -283,7 +323,11 @@ def test_shock_state_columns_accepted():
             "age": [0.0, 0.0],
         }
     )
-    conditions = initial_conditions_from_dataframe(df=df, model=model)
+    conditions = initial_conditions_from_dataframe(
+        df=df,
+        regimes=model.regimes,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
     assert jnp.allclose(conditions["income"], jnp.array([0.3, 0.7]))
     assert jnp.allclose(conditions["wealth"], jnp.array([2.0, 4.0]))
     assert "regime" in conditions
@@ -301,7 +345,11 @@ def test_shock_state_columns_required():
         }
     )
     with pytest.raises(ValueError, match=r"Missing required state columns.*income"):
-        initial_conditions_from_dataframe(df=df, model=model)
+        initial_conditions_from_dataframe(
+            df=df,
+            regimes=model.regimes,
+            regime_names_to_ids=model.regime_names_to_ids,
+        )
 
 
 def test_round_trip_with_discrete_model():
@@ -337,7 +385,11 @@ def test_round_trip_with_discrete_model():
             "age": [50.0, 50.0],
         }
     )
-    df_conditions = initial_conditions_from_dataframe(df=df, model=model)
+    df_conditions = initial_conditions_from_dataframe(
+        df=df,
+        regimes=model.regimes,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
     result_df = model.simulate(
         params=params,
         initial_conditions=df_conditions,
@@ -423,7 +475,11 @@ def test_initial_conditions_heterogeneous_health_grids() -> None:
             "age": [50.0, 50.0, 70.0, 70.0],
         }
     )
-    result = initial_conditions_from_dataframe(df=df, model=model)
+    result = initial_conditions_from_dataframe(
+        df=df,
+        regimes=model.regimes,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
 
     # pre65: disabled=0, good=2; post65: bad=0, good=1
     assert jnp.array_equal(result["health"], jnp.array([0, 2, 0, 1]))
@@ -450,7 +506,12 @@ def test_convert_series_heterogeneous_grids() -> None:
     internal = broadcast_to_template(
         params={"bonus": sr}, template=model._params_template, required=False
     )
-    convert_series_in_params(internal_params=internal, model=model)
+    convert_series_in_params(
+        internal_params=internal,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
 
 
 def test_convert_series_next_function_no_outcome_axis() -> None:
@@ -491,7 +552,12 @@ def test_convert_series_next_function_no_outcome_axis() -> None:
     internal = broadcast_to_template(
         params={"rate": sr}, template=m._params_template, required=False
     )
-    result = convert_series_in_params(internal_params=internal, model=m)
+    result = convert_series_in_params(
+        internal_params=internal,
+        regimes=m.regimes,
+        ages=m.ages,
+        regime_names_to_ids=m.regime_names_to_ids,
+    )
     assert result is not None
 
 
@@ -506,7 +572,11 @@ def test_heterogeneous_health_solve_simulate() -> None:
             "age": [50.0, 50.0, 70.0, 70.0],
         }
     )
-    ic = initial_conditions_from_dataframe(df=df, model=model)
+    ic = initial_conditions_from_dataframe(
+        df=df,
+        regimes=model.regimes,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
     result = model.simulate(
         params={"bonus": 0.0, "discount_factor": 0.95},
         initial_conditions=ic,
@@ -539,7 +609,11 @@ def test_heterogeneous_health_simulate_use_labels_false() -> None:
             "age": [50.0, 70.0],
         }
     )
-    ic = initial_conditions_from_dataframe(df=df, model=model)
+    ic = initial_conditions_from_dataframe(
+        df=df,
+        regimes=model.regimes,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
     result = model.simulate(
         params={"bonus": 0.0, "discount_factor": 0.95},
         initial_conditions=ic,
@@ -598,7 +672,9 @@ def test_array_from_series_transition_basic_round_trip():
         func=func,
         param_name="probs_array",
         func_name="next_partner",
-        model=model,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
         regime_name="working_life",
     )
     np.testing.assert_allclose(result, arr, atol=1e-7)
@@ -615,7 +691,9 @@ def test_array_from_series_transition_categorical_labels():
         func=func,
         param_name="probs_array",
         func_name="next_partner",
-        model=model,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
         regime_name="working_life",
     )
     # age=40, work, single->partnered
@@ -637,7 +715,9 @@ def test_array_from_series_transition_reordered_levels():
         func=func,
         param_name="probs_array",
         func_name="next_partner",
-        model=model,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
         regime_name="working_life",
     )
     np.testing.assert_allclose(result, arr, atol=1e-7)
@@ -659,7 +739,9 @@ def test_array_from_series_transition_wrong_level_names_raises():
             func=func,
             param_name="probs_array",
             func_name="next_partner",
-            model=model,
+            regimes=model.regimes,
+            ages=model.ages,
+            regime_names_to_ids=model.regime_names_to_ids,
             regime_name="working_life",
         )
 
@@ -679,7 +761,9 @@ def test_array_from_series_transition_invalid_label_raises():
             func=func,
             param_name="probs_array",
             func_name="next_partner",
-            model=model,
+            regimes=model.regimes,
+            ages=model.ages,
+            regime_names_to_ids=model.regime_names_to_ids,
             regime_name="working_life",
         )
 
@@ -699,7 +783,9 @@ def test_array_from_series_transition_period_level_raises():
             func=func,
             param_name="probs_array",
             func_name="next_partner",
-            model=model,
+            regimes=model.regimes,
+            ages=model.ages,
+            regime_names_to_ids=model.regime_names_to_ids,
             regime_name="working_life",
         )
 
@@ -719,7 +805,9 @@ def test_array_from_series_transition_duplicate_level_names_raises():
             func=func,
             param_name="probs_array",
             func_name="next_partner",
-            model=model,
+            regimes=model.regimes,
+            ages=model.ages,
+            regime_names_to_ids=model.regime_names_to_ids,
             regime_name="working_life",
         )
 
@@ -739,7 +827,9 @@ def test_array_from_series_transition_invalid_age_dropped():
         func=func,
         param_name="probs_array",
         func_name="next_partner",
-        model=model,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
         regime_name="working_life",
     )
     # All ages are invalid, so all positions should be NaN
@@ -764,7 +854,9 @@ def test_array_from_series_transition_sparse_input_fills_nan():
         func=func,
         param_name="probs_array",
         func_name="next_partner",
-        model=model,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
         regime_name="working_life",
     )
     # age=40 (period 0), work (0), single (0) → provided
@@ -858,7 +950,9 @@ def test_array_from_series_regime_transition_basic_round_trip():
         func=func,
         param_name="probs_array",
         func_name="next_regime",
-        model=model,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
         regime_name="alive",
     )
     np.testing.assert_allclose(result, arr, atol=1e-7)
@@ -876,7 +970,9 @@ def test_array_from_series_regime_transition_reordered_levels():
         func=func,
         param_name="probs_array",
         func_name="next_regime",
-        model=model,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
         regime_name="alive",
     )
     np.testing.assert_allclose(result, arr, atol=1e-7)
@@ -895,7 +991,9 @@ def test_array_from_series_regime_transition_wrong_level_names_raises():
             func=func,
             param_name="probs_array",
             func_name="next_regime",
-            model=model,
+            regimes=model.regimes,
+            ages=model.ages,
+            regime_names_to_ids=model.regime_names_to_ids,
             regime_name="alive",
         )
 
@@ -914,7 +1012,9 @@ def test_array_from_series_regime_transition_invalid_label_raises():
             func=func,
             param_name="probs_array",
             func_name="next_regime",
-            model=model,
+            regimes=model.regimes,
+            ages=model.ages,
+            regime_names_to_ids=model.regime_names_to_ids,
             regime_name="alive",
         )
 
@@ -976,7 +1076,9 @@ def test_array_from_series_fully_qualified() -> None:
         func=func,
         param_name="probs_array",
         func_name="next_partner",
-        model=model,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
         regime_name="working_life",
     )
     assert result.shape == (3, 2, 2, 2)
@@ -996,7 +1098,9 @@ def test_array_from_series_scalar_param() -> None:
         func=func,
         param_name="wage",
         func_name="labor_income",
-        model=model,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
         regime_name="working_life",
     )
     np.testing.assert_allclose(result, jnp.array([10.0]))
@@ -1030,7 +1134,9 @@ def test_array_from_series_extra_ages_dropped() -> None:
         func=func,
         param_name="probs_array",
         func_name="next_partner",
-        model=model,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
         regime_name="working_life",
     )
     assert result.shape == (3, 2, 2, 2)
@@ -1061,7 +1167,9 @@ def test_array_from_series_missing_ages_filled_with_nan() -> None:
         func=func,
         param_name="probs_array",
         func_name="next_partner",
-        model=model,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
         regime_name="working_life",
     )
     assert result.shape == (3, 2, 2, 2)
@@ -1084,7 +1192,9 @@ def test_array_from_series_reordered_levels() -> None:
         func=func,
         param_name="probs_array",
         func_name="next_partner",
-        model=model,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
         regime_name="working_life",
     )
     assert result.shape == (3, 2, 2, 2)
@@ -1106,7 +1216,9 @@ def test_array_from_series_invalid_label_raises() -> None:
             func=func,
             param_name="probs_array",
             func_name="next_partner",
-            model=model,
+            regimes=model.regimes,
+            ages=model.ages,
+            regime_names_to_ids=model.regime_names_to_ids,
             regime_name="working_life",
         )
 
@@ -1126,7 +1238,9 @@ def test_array_from_series_wrong_level_names_raises() -> None:
             func=func,
             param_name="probs_array",
             func_name="next_partner",
-            model=model,
+            regimes=model.regimes,
+            ages=model.ages,
+            regime_names_to_ids=model.regime_names_to_ids,
             regime_name="working_life",
         )
 
@@ -1147,7 +1261,9 @@ def test_array_from_series_integer_labels_rejected() -> None:
             func=func,
             param_name="probs_array",
             func_name="next_partner",
-            model=model,
+            regimes=model.regimes,
+            ages=model.ages,
+            regime_names_to_ids=model.regime_names_to_ids,
             regime_name="working_life",
         )
 
@@ -1163,7 +1279,9 @@ def test_array_from_series_scalar_param_explicit_lookup() -> None:
         func=func,
         param_name="wage",
         func_name="labor_income",
-        model=model,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
         regime_name="working_life",
     )
     np.testing.assert_allclose(result, jnp.array([10.0]))
@@ -1181,7 +1299,12 @@ def test_convert_series_function_level_series() -> None:
     internal = broadcast_to_template(
         params=params, template=model._params_template, required=False
     )
-    result = convert_series_in_params(internal_params=internal, model=model)
+    result = convert_series_in_params(
+        internal_params=internal,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
     arr = result["working_life"]["next_partner__probs_array"]
     assert arr.shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
     assert float(arr[0, 0, 0, 0]) == pytest.approx(1.0)  # ty: ignore[not-subscriptable]
@@ -1194,7 +1317,12 @@ def test_convert_series_model_level_scalar_passthrough() -> None:
     internal = broadcast_to_template(
         params=params, template=model._params_template, required=False
     )
-    result = convert_series_in_params(internal_params=internal, model=model)
+    result = convert_series_in_params(
+        internal_params=internal,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
     # Model-level param is broadcast to all regimes/functions that need it
     assert result["working_life"]["H__discount_factor"] == 0.95
     assert result["retirement"]["H__discount_factor"] == 0.95
@@ -1212,7 +1340,12 @@ def test_convert_series_regime_level_series() -> None:
     internal = broadcast_to_template(
         params=params, template=model._params_template, required=False
     )
-    result = convert_series_in_params(internal_params=internal, model=model)
+    result = convert_series_in_params(
+        internal_params=internal,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
     arr = result["working_life"]["next_partner__probs_array"]
     assert arr.shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
 
@@ -1233,7 +1366,12 @@ def test_convert_series_mixed_dict() -> None:
     internal = broadcast_to_template(
         params=params, template=model._params_template, required=False
     )
-    result = convert_series_in_params(internal_params=internal, model=model)
+    result = convert_series_in_params(
+        internal_params=internal,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
     assert result["working_life"]["H__discount_factor"] == 0.95
     assert result["working_life"]["utility__disutility_of_work"] == 0.5
     assert result["working_life"]["next_partner__probs_array"].shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
@@ -1258,7 +1396,12 @@ def test_convert_series_mapping_leaf() -> None:
     internal = broadcast_to_template(
         params=params, template=model._params_template, required=False
     )
-    result = convert_series_in_params(internal_params=internal, model=model)
+    result = convert_series_in_params(
+        internal_params=internal,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
     converted_leaf = result["working_life"]["next_partner__probs_array"]
     assert isinstance(converted_leaf, MappingLeaf)
     arr = converted_leaf.data["sub_key"]
@@ -1281,7 +1424,12 @@ def test_convert_series_nested_mapping_leaf() -> None:
     internal = broadcast_to_template(
         params=params, template=model._params_template, required=False
     )
-    result = convert_series_in_params(internal_params=internal, model=model)
+    result = convert_series_in_params(
+        internal_params=internal,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
     converted = result["working_life"]["next_partner__probs_array"]
     assert isinstance(converted, MappingLeaf)
     inner_converted = converted.data["inner_leaf"]
@@ -1347,12 +1495,19 @@ def test_convert_series_with_derived_categoricals() -> None:
         params=params, template=model._params_template, required=False
     )
     with pytest.raises(ValueError, match="Unrecognised indexing parameter"):
-        convert_series_in_params(internal_params=internal, model=model)
+        convert_series_in_params(
+            internal_params=internal,
+            regimes=model.regimes,
+            ages=model.ages,
+            regime_names_to_ids=model.regime_names_to_ids,
+        )
 
     # With derived_categoricals providing the labor_supply grid, it succeeds
     result = convert_series_in_params(
         internal_params=internal,
-        model=model,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
         derived_categoricals={"labor_supply": labor_grid},
     )
     arr = result["retirement"]["next_partner__probs_array"]
@@ -1429,7 +1584,12 @@ def test_convert_series_per_target_transition() -> None:
     internal = broadcast_to_template(
         params=params, template=model._params_template, required=False
     )
-    result = convert_series_in_params(internal_params=internal, model=model)
+    result = convert_series_in_params(
+        internal_params=internal,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
     arr = result["working"]["to_working_next_health__probs_array"]
     assert arr.shape == (3, 2, 2)  # ty: ignore[unresolved-attribute]
 
@@ -1443,7 +1603,10 @@ def test_build_outcome_mapping_qualified_func_name() -> None:
 
     grids = _build_discrete_grid_lookup(model.regimes)
     result = _build_outcome_mapping(
-        func_name="next_health__working", grids=grids, model=model
+        func_name="next_health__working",
+        grids=grids,
+        regimes=model.regimes,
+        regime_names_to_ids=model.regime_names_to_ids,
     )
     assert result.size == 2
     assert result.name == "next_health"
@@ -1520,7 +1683,9 @@ def test_convert_series_structured_derived_categoricals() -> None:
     )
     result_both = convert_series_in_params(
         internal_params=internal,
-        model=model,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
         derived_categoricals={
             "derived": {
                 "regime_a": DiscreteGrid(_ChoiceA),
@@ -1564,7 +1729,12 @@ def test_convert_series_runtime_grid_param() -> None:
     internal = broadcast_to_template(
         params=params, template=model._params_template, required=False
     )
-    result = convert_series_in_params(internal_params=internal, model=model)
+    result = convert_series_in_params(
+        internal_params=internal,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
     np.testing.assert_allclose(result["alive"]["wealth__points"], sr.to_numpy())
 
 
@@ -1579,7 +1749,12 @@ def test_convert_series_sequence_leaf_traversal() -> None:
     internal = broadcast_to_template(
         params=params, template=model._params_template, required=False
     )
-    result = convert_series_in_params(internal_params=internal, model=model)
+    result = convert_series_in_params(
+        internal_params=internal,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
     converted = result["working_life"]["labor_income__wage"]
     assert isinstance(converted, SequenceLeaf)
     assert not isinstance(converted.data[0], pd.Series)
@@ -1600,7 +1775,7 @@ def test_resolve_categoricals_conflict_raises() -> None:
     conflicting = {"partner": DiscreteGrid(WrongPartner)}
     with pytest.raises(ValueError, match="conflicts with model grid"):
         _resolve_categoricals(
-            model=model,
+            regimes=model.regimes,
             regime_name="working_life",
             derived_categoricals=conflicting,
         )
@@ -1694,7 +1869,12 @@ def test_convert_series_cross_grid_transition() -> None:
     internal = broadcast_to_template(
         params=params, template=model.get_params_template(), required=False
     )
-    result = convert_series_in_params(internal_params=internal, model=model)
+    result = convert_series_in_params(
+        internal_params=internal,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
 
     arr = result["pre65"]["to_post65_next_health__health_trans_probs_cross"]
     # Shape: (n_ages=2, n_source_health=3, n_target_health=2)
