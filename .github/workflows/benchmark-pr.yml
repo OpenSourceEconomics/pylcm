@@ -6,7 +6,7 @@ concurrency:
 on:
   pull_request:
     branches:
-      - '*'
+      - '**'
   workflow_dispatch: null
 jobs:
   run-benchmarks:
