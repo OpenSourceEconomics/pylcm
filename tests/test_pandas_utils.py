@@ -555,7 +555,11 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
             "age": [50.0, 51.0, 50.0],
         }
     )
-    result = initial_conditions_from_dataframe(df=df, model=model)
+    result = initial_conditions_from_dataframe(
+        df=df,
+        regimes=model.regimes,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
 
     # status: low=0, high=1 for with_status regime
     assert result["status"][0] == 0
