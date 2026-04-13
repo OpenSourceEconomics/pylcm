@@ -1,5 +1,7 @@
 """Tests for lcm.pandas_utils and categorical.to_categorical_dtype."""
 
+import dataclasses
+
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -1574,13 +1576,20 @@ def test_convert_series_with_derived_categoricals() -> None:
             regime_names_to_ids=model.regime_names_to_ids,
         )
 
-    # With derived_categoricals providing the labor_supply grid, it succeeds
+    # With derived_categoricals on the regime, it succeeds
+    updated_regimes = {
+        name: (
+            dataclasses.replace(r, derived_categoricals={"labor_supply": labor_grid})
+            if name == "retirement"
+            else r
+        )
+        for name, r in model.regimes.items()
+    }
     result = convert_series_in_params(
         internal_params=internal,
-        regimes=model.regimes,
+        regimes=updated_regimes,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
-        derived_categoricals={"labor_supply": labor_grid},
     )
     arr = result["retirement"]["next_partner__probs_array"]
     assert arr.shape == (3, 2, 2, 2)  # ty: ignore[unresolved-attribute]
@@ -1729,11 +1738,13 @@ def test_convert_series_structured_derived_categoricals() -> None:
         states={"wealth": LinSpacedGrid(start=0, stop=10, n_points=5)},
         state_transitions={"wealth": _next_wealth_sc},
         functions={"utility": func_a, "derived": _derived_a},
+        derived_categoricals={"derived": DiscreteGrid(_ChoiceA)},
     )
     regime_b = Regime(
         transition=None,
         states={"wealth": LinSpacedGrid(start=0, stop=10, n_points=5)},
         functions={"utility": func_b, "derived": _derived_b},
+        derived_categoricals={"derived": DiscreteGrid(_ChoiceB)},
     )
     model = Model(
         regimes={"regime_a": regime_a, "regime_b": regime_b},
@@ -1742,7 +1753,7 @@ def test_convert_series_structured_derived_categoricals() -> None:
     )
 
     # "derived" has 2 outcomes in regime_a (_ChoiceA: x,y) and 3 in
-    # regime_b (_ChoiceB: x,y,z). Need per-regime categoricals.
+    # regime_b (_ChoiceB: x,y,z). Each regime declares its own grid.
     sr_a = pd.Series([1.0, 2.0], index=pd.Index(["x", "y"], name="derived"))
     sr_b = pd.Series([1.0, 2.0, 3.0], index=pd.Index(["x", "y", "z"], name="derived"))
 
@@ -1758,12 +1769,6 @@ def test_convert_series_structured_derived_categoricals() -> None:
         regimes=model.regimes,
         ages=model.ages,
         regime_names_to_ids=model.regime_names_to_ids,
-        derived_categoricals={
-            "derived": {
-                "regime_a": DiscreteGrid(_ChoiceA),
-                "regime_b": DiscreteGrid(_ChoiceB),
-            },
-        },
     )
     assert result_both["regime_a"]["utility__rates"].shape == (2,)  # ty: ignore[unresolved-attribute]
     assert result_both["regime_b"]["utility__rates"].shape == (3,)  # ty: ignore[unresolved-attribute]
@@ -1844,12 +1849,14 @@ def test_resolve_categoricals_conflict_raises() -> None:
         x: int
         y: int
 
-    conflicting = {"partner": DiscreteGrid(WrongPartner)}
+    conflicting_regime = dataclasses.replace(
+        model.regimes["working_life"],
+        derived_categoricals={"partner": DiscreteGrid(WrongPartner)},
+    )
     with pytest.raises(ValueError, match="conflicts with model grid"):
         _resolve_categoricals(
-            regimes=model.regimes,
+            regimes={"working_life": conflicting_regime},
             regime_name="working_life",
-            derived_categoricals=conflicting,
         )
 
 
