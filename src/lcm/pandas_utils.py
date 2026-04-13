@@ -166,8 +166,8 @@ def _map_discrete_labels(
 def convert_series_in_params(
     *,
     internal_params: Mapping[str, Mapping[str, object]],
-    regimes: Mapping[str, Regime],
     ages: AgeGrid,
+    regimes: Mapping[str, Regime],
     regime_names_to_ids: RegimeNamesToIds,
 ) -> InternalParams:
     """Convert pd.Series leaves in already-broadcast internal params to JAX arrays.
@@ -184,8 +184,8 @@ def convert_series_in_params(
     Args:
         internal_params: Already-broadcast params in template shape
             (`{regime: {func__param: value}}`).
-        regimes: Mapping of regime names to user Regime instances.
         ages: Age grid for the model.
+        regimes: Mapping of regime names to user Regime instances.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
 
@@ -211,8 +211,8 @@ def convert_series_in_params(
                     func=None,
                     param_name=param_name,
                     func_name=template_func_name,
-                    regimes=regimes,
                     ages=ages,
+                    regimes=regimes,
                     regime_names_to_ids=regime_names_to_ids,
                     regime_name=regime_name,
                 )
@@ -231,8 +231,8 @@ def convert_series_in_params(
                 func=func,
                 param_name=param_name,
                 func_name=resolved_func_name,
-                regimes=regimes,
                 ages=ages,
+                regimes=regimes,
                 regime_names_to_ids=regime_names_to_ids,
                 regime_name=regime_name,
             )
@@ -249,8 +249,8 @@ def _convert_param_value(
     func: Callable | None,
     param_name: str,
     func_name: str,
-    regimes: Mapping[str, Regime],
     ages: AgeGrid,
+    regimes: Mapping[str, Regime],
     regime_names_to_ids: RegimeNamesToIds,
     regime_name: str | None,
 ) -> object:
@@ -262,8 +262,8 @@ def _convert_param_value(
             grid params — triggers scalar passthrough).
         param_name: Parameter name in the function.
         func_name: Function name (for `next_*` outcome axis detection).
-        regimes: Mapping of regime names to user Regime instances.
         ages: Age grid for the model.
+        regimes: Mapping of regime names to user Regime instances.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
         regime_name: Regime name for action grid lookup.
@@ -280,8 +280,8 @@ def _convert_param_value(
             func=func,
             param_name=param_name,
             func_name=func_name,
-            regimes=regimes,
             ages=ages,
+            regimes=regimes,
             regime_names_to_ids=regime_names_to_ids,
             regime_name=regime_name,
         )
@@ -292,8 +292,8 @@ def _convert_param_value(
             func=func,
             param_name=param_name,
             func_name=func_name,
-            regimes=regimes,
             ages=ages,
+            regimes=regimes,
             regime_names_to_ids=regime_names_to_ids,
             regime_name=regime_name,
         )
@@ -310,8 +310,8 @@ def array_from_series(
     func: Callable | None,
     param_name: str,
     func_name: str,
-    regimes: Mapping[str, Regime],
     ages: AgeGrid,
+    regimes: Mapping[str, Regime],
     regime_names_to_ids: RegimeNamesToIds,
     regime_name: str | None = None,
 ) -> Array:
@@ -335,8 +335,8 @@ def array_from_series(
             runtime grid/shock params (triggers scalar passthrough).
         param_name: The array parameter name in `func`.
         func_name: Function name (for `next_*` outcome axis detection).
-        regimes: Mapping of regime names to user Regime instances.
         ages: Age grid for the model.
+        regimes: Mapping of regime names to user Regime instances.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
         regime_name: Regime for action grid lookup.

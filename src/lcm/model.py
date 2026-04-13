@@ -133,8 +133,8 @@ class Model:
         )
         self.regimes = _merge_derived_categoricals(regimes, derived_categoricals)
         self.internal_regimes, self._params_template = build_regimes_and_template(
-            regimes=self.regimes,
             ages=self.ages,
+            regimes=self.regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=self.fixed_params,
@@ -332,8 +332,8 @@ class Model:
         if has_series(internal_params):
             internal_params = convert_series_in_params(
                 internal_params=internal_params,
-                regimes=self.regimes,
                 ages=self.ages,
+                regimes=self.regimes,
                 regime_names_to_ids=self.regime_names_to_ids,
             )
         _validate_param_types(internal_params)

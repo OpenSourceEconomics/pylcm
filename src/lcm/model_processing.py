@@ -40,8 +40,8 @@ from lcm.utils.containers import get_field_names_and_values
 
 def build_regimes_and_template(
     *,
-    regimes: Mapping[str, Regime],
     ages: AgeGrid,
+    regimes: Mapping[str, Regime],
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
@@ -52,8 +52,8 @@ def build_regimes_and_template(
     so that each result is computed exactly once.
 
     Args:
-        regimes: Mapping of regime names to Regime instances.
         ages: Age grid for the model.
+        regimes: Mapping of regime names to Regime instances.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
         enable_jit: Whether to JIT-compile regime functions.
@@ -65,8 +65,8 @@ def build_regimes_and_template(
     """
     if not fixed_params:
         internal_regimes = process_regimes(
-            regimes=regimes,
             ages=ages,
+            regimes=regimes,
             regime_names_to_ids=regime_names_to_ids,
             enable_jit=enable_jit,
         )
@@ -74,8 +74,8 @@ def build_regimes_and_template(
     else:
         internal_regimes, params_template = (
             _build_regimes_and_template_with_fixed_params(
-                regimes=regimes,
                 ages=ages,
+                regimes=regimes,
                 regime_names_to_ids=regime_names_to_ids,
                 enable_jit=enable_jit,
                 fixed_params=fixed_params,
@@ -87,8 +87,8 @@ def build_regimes_and_template(
 
 def _build_regimes_and_template_with_fixed_params(
     *,
-    regimes: Mapping[str, Regime],
     ages: AgeGrid,
+    regimes: Mapping[str, Regime],
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
@@ -96,8 +96,8 @@ def _build_regimes_and_template_with_fixed_params(
     """Build internal regimes and template, then partial in fixed params.
 
     Args:
-        regimes: Mapping of regime names to Regime instances.
         ages: Age grid for the model.
+        regimes: Mapping of regime names to Regime instances.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
         enable_jit: Whether to JIT-compile regime functions.
@@ -109,8 +109,8 @@ def _build_regimes_and_template_with_fixed_params(
 
     """
     internal_regimes = process_regimes(
-        regimes=regimes,
         ages=ages,
+        regimes=regimes,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=enable_jit,
     )
@@ -122,8 +122,8 @@ def _build_regimes_and_template_with_fixed_params(
     if has_series(fixed_internal):
         fixed_internal = convert_series_in_params(
             internal_params=fixed_internal,
-            regimes=regimes,
             ages=ages,
+            regimes=regimes,
             regime_names_to_ids=regime_names_to_ids,
         )
     _validate_param_types(fixed_internal)
