@@ -183,8 +183,6 @@ def convert_series_in_params(
     regimes: Mapping[str, Regime],
     ages: AgeGrid,
     regime_names_to_ids: RegimeNamesToIds,
-    derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
-    | None = None,
 ) -> InternalParams:
     """Convert pd.Series leaves in already-broadcast internal params to JAX arrays.
 
@@ -194,6 +192,9 @@ def convert_series_in_params(
     traversed and any Series inside are converted. Other values (scalars,
     existing arrays) pass through unchanged.
 
+    Each regime's `derived_categoricals` field is used to resolve index
+    levels that correspond to DAG function outputs (not states/actions).
+
     Args:
         internal_params: Already-broadcast params in template shape
             (`{regime: {func__param: value}}`).
@@ -201,9 +202,6 @@ def convert_series_in_params(
         ages: Age grid for the model.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
-        derived_categoricals: Extra categorical mappings (level name to
-            grid) for derived variables not in the model's state/action
-            grids.
 
     Returns:
         Immutable mapping with the same structure, Series replaced by JAX
@@ -231,7 +229,6 @@ def convert_series_in_params(
                     ages=ages,
                     regime_names_to_ids=regime_names_to_ids,
                     regime_name=regime_name,
-                    derived_categoricals=derived_categoricals,
                 )
                 continue
 
@@ -252,7 +249,6 @@ def convert_series_in_params(
                 ages=ages,
                 regime_names_to_ids=regime_names_to_ids,
                 regime_name=regime_name,
-                derived_categoricals=derived_categoricals,
             )
         result[regime_name] = converted_regime
     return cast(
@@ -271,8 +267,6 @@ def _convert_param_value(
     ages: AgeGrid,
     regime_names_to_ids: RegimeNamesToIds,
     regime_name: str | None,
-    derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
-    | None = None,
 ) -> object:
     """Convert a single param value, dispatching on type.
 
@@ -287,8 +281,6 @@ def _convert_param_value(
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
         regime_name: Regime name for action grid lookup.
-        derived_categoricals: Extra categorical mappings (level name to
-            grid).
 
     Returns:
         Converted value: JAX array for Series, MappingLeaf with converted
@@ -306,7 +298,6 @@ def _convert_param_value(
             ages=ages,
             regime_names_to_ids=regime_names_to_ids,
             regime_name=regime_name,
-            derived_categoricals=derived_categoricals,
         )
 
     if isinstance(value, pd.Series):
@@ -319,7 +310,6 @@ def _convert_param_value(
             ages=ages,
             regime_names_to_ids=regime_names_to_ids,
             regime_name=regime_name,
-            derived_categoricals=derived_categoricals,
         )
     if isinstance(value, MappingLeaf):
         return MappingLeaf({k: _recurse(v) for k, v in value.data.items()})
@@ -338,8 +328,6 @@ def array_from_series(
     ages: AgeGrid,
     regime_names_to_ids: RegimeNamesToIds,
     regime_name: str | None = None,
-    derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
-    | None = None,
 ) -> Array:
     """Convert a pandas Series to a JAX array.
 
@@ -352,6 +340,9 @@ def array_from_series(
     Missing grid points are filled with NaN. Extra ages outside the model's
     `AgeGrid` are silently dropped.
 
+    Derived categoricals are read from `regimes[regime_name].derived_categoricals`
+    when `regime_name` is not None.
+
     Args:
         sr: Labeled pandas Series.
         func: The function that uses this array parameter. `None` for
@@ -363,9 +354,6 @@ def array_from_series(
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
         regime_name: Regime for action grid lookup.
-        derived_categoricals: Extra categorical mappings (level name to
-            grid) for derived variables not in the model's state/action
-            grids.
 
     Returns:
         JAX array with axes corresponding to the indexing parameters in
@@ -386,7 +374,6 @@ def array_from_series(
     grids = _resolve_categoricals(
         regimes=regimes,
         regime_name=regime_name,
-        derived_categoricals=derived_categoricals,
     )
 
     # Replace internal "period" with user-facing "age"
@@ -422,99 +409,43 @@ def _resolve_categoricals(
     *,
     regimes: Mapping[str, Regime],
     regime_name: str | None,
-    derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
-    | None,
 ) -> dict[str, DiscreteGrid]:
-    """Build combined categorical lookup from model grids and explicit overrides.
+    """Build combined categorical lookup from model grids and regime overrides.
 
-    Derived categoricals can be provided at two levels:
-
-    - Model-level: `{"var": grid}` — applies to all regimes.
-    - Regime-level: `{"var": {"regime_a": grid_a, "regime_b": grid_b}}` —
-      the grid for `regime_name` is selected.
+    Collect discrete state and action grids, then merge in the regime's
+    `derived_categoricals` (grids for DAG function outputs).
 
     Args:
         regimes: Mapping of regime names to user Regime instances.
-        regime_name: Regime for action grid discovery and regime-level
-            categorical resolution.
-        derived_categoricals: Explicit categorical mappings. Values are
-            either a `DiscreteGrid` (model-level) or a `Mapping` from
-            regime names to `DiscreteGrid` (regime-level).
+        regime_name: Regime for grid discovery. When `None`, grids from
+            all regimes are merged.
 
     Returns:
         Dict mapping variable names to `DiscreteGrid` instances.
 
     Raises:
-        ValueError: If a key in `derived_categoricals` already exists in
-            the model grids with different categories.
+        ValueError: If a derived categorical conflicts with a model grid.
 
     """
     grids: dict[str, DiscreteGrid] = {}
     if regime_name is not None:
-        # Use only this regime's grids (avoids cross-regime inconsistencies
-        # like health having different categories pre-65 vs post-65).
         regime = regimes[regime_name]
         grids.update(
             {n: g for n, g in regime.states.items() if isinstance(g, DiscreteGrid)}
         )
         grids.update(_build_discrete_action_lookup(regime))
+        for name, grid in regime.derived_categoricals.items():
+            if name in grids and grids[name].categories != grid.categories:
+                msg = (
+                    f"Derived categorical '{name}' conflicts with "
+                    f"model grid: {grid.categories} vs "
+                    f"{grids[name].categories}."
+                )
+                raise ValueError(msg)
+            grids[name] = grid
     else:
         grids.update(_build_discrete_grid_lookup(regimes))
-    if derived_categoricals is not None:
-        for name, entry in derived_categoricals.items():
-            grid = _resolve_categorical_entry(
-                name=name, entry=entry, regime_name=regime_name
-            )
-            if grid is None:
-                continue
-            if name in grids:
-                if grids[name].categories != grid.categories:
-                    msg = (
-                        f"Explicit categorical '{name}' conflicts with "
-                        f"model grid: {grid.categories} vs "
-                        f"{grids[name].categories}."
-                    )
-                    raise ValueError(msg)
-            else:
-                grids[name] = grid
     return grids
-
-
-def _resolve_categorical_entry(
-    *,
-    name: str,
-    entry: DiscreteGrid | Mapping[str, DiscreteGrid],
-    regime_name: str | None,
-) -> DiscreteGrid | None:
-    """Resolve a single derived_categoricals entry to a grid.
-
-    Args:
-        name: Variable name.
-        entry: Either a `DiscreteGrid` (model-level) or a `Mapping` from
-            regime names to `DiscreteGrid` (regime-level).
-        regime_name: Current regime name for regime-level resolution.
-
-    Returns:
-        The resolved `DiscreteGrid`, or `None` if the regime-level entry
-        doesn't have a grid for the current regime.
-
-    """
-    if isinstance(entry, DiscreteGrid):
-        return entry
-    if isinstance(entry, Mapping):
-        if regime_name is None:
-            msg = (
-                f"Regime-level categorical '{name}' requires a resolved "
-                f"regime_name, but regime_name is None. Use a fully "
-                f"qualified 3-part param_path."
-            )
-            raise ValueError(msg)
-        return entry.get(regime_name)
-    msg = (
-        f"Categorical '{name}' must be a DiscreteGrid or a Mapping "
-        f"from regime names to DiscreteGrid. Got {type(entry).__name__}."
-    )
-    raise TypeError(msg)
 
 
 def _resolve_per_target_template_key(
@@ -669,9 +600,9 @@ def _build_level_mappings_for_param(
             msg = (
                 f"Unrecognised indexing parameter '{param}'. Expected 'age' "
                 f"or a discrete grid name ({sorted(grids)}). If "
-                f"'{param}' is a DAG function output, pass "
+                f"'{param}' is a DAG function output, add "
                 f'derived_categoricals={{"{param}": DiscreteGrid(...)}} '
-                f"to solve() / simulate()."
+                f"to the Regime or Model constructor."
             )
             raise ValueError(msg)
     return tuple(mappings)

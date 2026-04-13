@@ -6,7 +6,7 @@ from types import MappingProxyType
 from typing import Any, Literal, TypeAliasType, cast, overload
 
 from lcm.exceptions import RegimeInitializationError
-from lcm.grids import Grid
+from lcm.grids import DiscreteGrid, Grid
 from lcm.interfaces import SolveSimulateFunctionPair
 from lcm.typing import (
     ActiveFunction,
@@ -156,6 +156,11 @@ class Regime:
     )
     """Mapping of constraint names to constraint functions."""
 
+    derived_categoricals: Mapping[str, DiscreteGrid] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    """Categorical grids for DAG function outputs not in states/actions."""
+
     description: str = ""
     """Description of the regime."""
 
@@ -191,6 +196,7 @@ class Regime:
         make_immutable("state_transitions")
         make_immutable("actions")
         make_immutable("constraints")
+        make_immutable("derived_categoricals")
 
     def get_all_functions(
         self,
