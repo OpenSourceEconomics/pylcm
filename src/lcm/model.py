@@ -1,5 +1,6 @@
 """Collection of classes that are used by the user to define the model and grids."""
 
+import dataclasses
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
@@ -8,6 +9,7 @@ import pandas as pd
 from jax import Array
 
 from lcm.ages import AgeGrid
+from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
 from lcm.grids import DiscreteGrid
 from lcm.model_processing import (
     _validate_param_types,
@@ -77,7 +79,7 @@ class Model:
     """Immutable mapping of regime names to internal regime instances."""
 
     enable_jit: bool = True
-    """Whether to JIT-compile the functions of the internal regime."""
+    """Whether to JIT-compile the functions of the internal regimes."""
 
     fixed_params: UserParams
     """Parameters fixed at model initialization."""
@@ -94,8 +96,7 @@ class Model:
         regime_id_class: type,
         enable_jit: bool = True,
         fixed_params: UserParams = MappingProxyType({}),
-        derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
-        | None = None,
+        derived_categoricals: Mapping[str, DiscreteGrid] = MappingProxyType({}),
     ) -> None:
         """Initialize the Model.
 
@@ -106,10 +107,10 @@ class Model:
             regime_id_class: Dataclass mapping regime names to integer indices.
             enable_jit: Whether to jit the functions of the internal regime.
             fixed_params: Parameters that can be fixed at model initialization.
-            derived_categoricals: Extra categorical mappings for derived
-                variables not in the model's state/action grids. Needed when
-                `fixed_params` contains `pd.Series` indexed by DAG function
-                outputs.
+            derived_categoricals: Categorical grids for DAG function outputs
+                not in states/actions. Broadcast to all regimes (merged with
+                each regime's own `derived_categoricals`). Raises if a regime
+                already has a conflicting entry.
 
         """
         self.description = description
@@ -130,14 +131,13 @@ class Model:
                 )
             )
         )
-        self.regimes = MappingProxyType(dict(regimes))
+        self.regimes = _merge_derived_categoricals(regimes, derived_categoricals)
         self.internal_regimes, self._params_template = build_regimes_and_template(
-            regimes=regimes,
+            regimes=self.regimes,
             ages=self.ages,
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=self.fixed_params,
-            derived_categoricals=derived_categoricals,
         )
         self.enable_jit = enable_jit
         self.simulation_output_dtypes = get_simulation_output_dtypes(
@@ -168,8 +168,7 @@ class Model:
         self,
         *,
         params: UserParams,
-        derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
-        | None = None,
+        max_compilation_workers: int | None = None,
         log_level: LogLevel = "progress",
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
@@ -187,10 +186,10 @@ class Model:
                   specification
                 Values may be `pd.Series` with labeled indices; they are
                 auto-converted to JAX arrays.
-            derived_categoricals: Extra categorical mappings (level name to
-                `DiscreteGrid`) for derived variables not in the model's
-                state/action grids. Pass per-regime mappings as
-                `{"var": {"regime_a": grid_a, ...}}`.
+            max_compilation_workers: Maximum number of threads for parallel XLA
+                compilation. Defaults to `os.cpu_count()`. Lower this on machines
+                with limited RAM, as each concurrent compilation holds an XLA HLO
+                graph in memory.
             log_level: Logging verbosity. `"off"` suppresses output, `"warning"` shows
                 NaN/Inf warnings, `"progress"` adds timing, `"debug"` adds stats and
                 requires `log_path`.
@@ -211,7 +210,6 @@ class Model:
             regimes=self.regimes,
             ages=self.ages,
             regime_names_to_ids=self.regime_names_to_ids,
-            derived_categoricals=derived_categoricals,
         )
         _validate_param_types(internal_params)
         validate_regime_transitions_all_periods(
@@ -219,12 +217,25 @@ class Model:
             internal_params=internal_params,
             ages=self.ages,
         )
-        period_to_regime_to_V_arr = solve(
-            internal_params=internal_params,
-            ages=self.ages,
-            internal_regimes=self.internal_regimes,
-            logger=get_logger(log_level=log_level),
-        )
+        try:
+            period_to_regime_to_V_arr = solve(
+                internal_params=internal_params,
+                ages=self.ages,
+                internal_regimes=self.internal_regimes,
+                logger=get_logger(log_level=log_level),
+                max_compilation_workers=max_compilation_workers,
+                enable_jit=self.enable_jit,
+            )
+        except InvalidValueFunctionError as exc:
+            if log_path is not None and exc.partial_solution is not None:
+                save_solve_snapshot(
+                    model=self,
+                    params=params,
+                    period_to_regime_to_V_arr=exc.partial_solution,  # ty: ignore[invalid-argument-type]
+                    log_path=Path(log_path),
+                    log_keep_n_latest=log_keep_n_latest,
+                )
+            raise
         if log_level == "debug" and log_path is not None:
             save_solve_snapshot(
                 model=self,
@@ -239,8 +250,6 @@ class Model:
         self,
         *,
         params: UserParams,
-        derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
-        | None = None,
         initial_conditions: Mapping[str, Array],
         period_to_regime_to_V_arr: MappingProxyType[
             int, MappingProxyType[RegimeName, FloatND]
@@ -269,10 +278,6 @@ class Model:
                   specification
                 Values may be `pd.Series` with labeled indices; they are
                 auto-converted to JAX arrays.
-            derived_categoricals: Extra categorical mappings (level name to
-                `DiscreteGrid`) for derived variables not in the model's
-                state/action grids. Pass per-regime mappings as
-                `{"var": {"regime_a": grid_a, ...}}`.
             initial_conditions: Mapping of state names (plus `"regime"`) to arrays.
                 All arrays must have the same length (number of subjects). The
                 `"regime"` entry must contain integer regime codes (from
@@ -308,7 +313,6 @@ class Model:
             regimes=self.regimes,
             ages=self.ages,
             regime_names_to_ids=self.regime_names_to_ids,
-            derived_categoricals=derived_categoricals,
         )
         _validate_param_types(internal_params)
         if check_initial_conditions:
@@ -326,12 +330,24 @@ class Model:
         )
         log = get_logger(log_level=log_level)
         if period_to_regime_to_V_arr is None:
-            period_to_regime_to_V_arr = solve(
-                internal_params=internal_params,
-                ages=self.ages,
-                internal_regimes=self.internal_regimes,
-                logger=log,
-            )
+            try:
+                period_to_regime_to_V_arr = solve(
+                    internal_params=internal_params,
+                    ages=self.ages,
+                    internal_regimes=self.internal_regimes,
+                    logger=log,
+                    enable_jit=self.enable_jit,
+                )
+            except InvalidValueFunctionError as exc:
+                if log_path is not None and exc.partial_solution is not None:
+                    save_solve_snapshot(
+                        model=self,
+                        params=params,
+                        period_to_regime_to_V_arr=exc.partial_solution,  # ty: ignore[invalid-argument-type]
+                        log_path=Path(log_path),
+                        log_keep_n_latest=log_keep_n_latest,
+                    )
+                raise
         result = simulate(
             internal_params=internal_params,
             initial_conditions=initial_conditions,
@@ -356,23 +372,59 @@ class Model:
         return result
 
 
+def _merge_derived_categoricals(
+    regimes: Mapping[str, Regime],
+    derived_categoricals: Mapping[str, DiscreteGrid],
+) -> MappingProxyType[str, Regime]:
+    """Merge model-level derived_categoricals into each regime.
+
+    Args:
+        regimes: Mapping of regime names to Regime instances.
+        derived_categoricals: Model-level categorical grids to broadcast.
+
+    Returns:
+        Immutable mapping of regime names to (possibly updated) Regime instances.
+
+    Raises:
+        ModelInitializationError: If a regime already has a conflicting entry
+            (same key, different categories).
+
+    """
+    if not derived_categoricals:
+        return MappingProxyType(dict(regimes))
+    result = {}
+    for name, regime in regimes.items():
+        merged = dict(regime.derived_categoricals)
+        for var, grid in derived_categoricals.items():
+            existing = merged.get(var)
+            if existing is not None and existing.categories != grid.categories:
+                msg = (
+                    f"Model-level derived_categoricals['{var}'] conflicts "
+                    f"with regime '{name}': {grid.categories} vs "
+                    f"{existing.categories}."
+                )
+                raise ModelInitializationError(msg)
+            merged[var] = grid
+        result[name] = dataclasses.replace(
+            regime, derived_categoricals=MappingProxyType(merged)
+        )
+    return MappingProxyType(result)
+
+
 def _maybe_convert_series(
     internal_params: InternalParams,
     *,
     regimes: Mapping[str, Regime],
     ages: AgeGrid,
     regime_names_to_ids: RegimeNamesToIds,
-    derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
-    | None,
 ) -> InternalParams:
     """Convert pd.Series leaves in params to JAX arrays if any are present."""
-    if derived_categoricals is not None or has_series(internal_params):
+    if has_series(internal_params):
         return convert_series_in_params(
             internal_params=internal_params,
             regimes=regimes,
             ages=ages,
             regime_names_to_ids=regime_names_to_ids,
-            derived_categoricals=derived_categoricals,
         )
     return internal_params
 
