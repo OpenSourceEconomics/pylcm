@@ -156,15 +156,10 @@ class Regime:
     )
     """Mapping of constraint names to constraint functions."""
 
-    derived_categoricals: Mapping[str, type | DiscreteGrid] = field(
+    derived_categoricals: Mapping[str, DiscreteGrid] = field(
         default_factory=lambda: MappingProxyType({})
     )
-    """Categorical grids for DAG function outputs not in states/actions.
-
-    Values can be categorical classes (created with `@categorical`) or
-    `DiscreteGrid` instances. Raw classes are wrapped in `DiscreteGrid`
-    automatically.
-    """
+    """Categorical grids for DAG function outputs not in states/actions."""
 
     description: str = ""
     """Description of the regime."""
@@ -201,16 +196,7 @@ class Regime:
         make_immutable("state_transitions")
         make_immutable("actions")
         make_immutable("constraints")
-        object.__setattr__(
-            self,
-            "derived_categoricals",
-            MappingProxyType(
-                {
-                    k: v if isinstance(v, DiscreteGrid) else DiscreteGrid(v)
-                    for k, v in self.derived_categoricals.items()
-                }
-            ),
-        )
+        make_immutable("derived_categoricals")
 
     def get_all_functions(
         self,
