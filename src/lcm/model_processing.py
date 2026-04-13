@@ -108,16 +108,16 @@ def _build_regimes_and_template_with_fixed_params(
         partialled in.
 
     """
-    internal_regimes = process_regimes(
+    raw_internal_regimes = process_regimes(
         ages=ages,
         regimes=regimes,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=enable_jit,
     )
-    params_template = create_params_template(internal_regimes)
+    raw_params_template = create_params_template(raw_internal_regimes)
 
     fixed_internal = _resolve_fixed_params(
-        fixed_params=dict(fixed_params), template=params_template
+        fixed_params=dict(fixed_params), template=raw_params_template
     )
     if has_series(fixed_internal):
         fixed_internal = convert_series_in_params(
@@ -128,16 +128,13 @@ def _build_regimes_and_template_with_fixed_params(
         )
     _validate_param_types(fixed_internal)
 
-    if not any(v for v in fixed_internal.values()):
-        return internal_regimes, params_template
-
     return (
         _partial_fixed_params_into_regimes(
-            internal_regimes=internal_regimes,
+            internal_regimes=raw_internal_regimes,
             fixed_internal=fixed_internal,
         ),
         _remove_fixed_from_template(
-            template=params_template,
+            template=raw_params_template,
             fixed_internal=fixed_internal,
         ),
     )
