@@ -40,8 +40,8 @@ from lcm.utils.containers import get_field_names_and_values
 
 def build_regimes_and_template(
     *,
-    regimes: Mapping[str, Regime],
     ages: AgeGrid,
+    regimes: Mapping[str, Regime],
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
@@ -52,8 +52,8 @@ def build_regimes_and_template(
     so that each result is computed exactly once.
 
     Args:
-        regimes: Mapping of regime names to Regime instances.
         ages: Age grid for the model.
+        regimes: Mapping of regime names to Regime instances.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
         enable_jit: Whether to JIT-compile regime functions.
@@ -63,35 +63,81 @@ def build_regimes_and_template(
         Tuple of (internal_regimes, params_template).
 
     """
-    internal_regimes = process_regimes(
-        regimes=regimes,
+    if not fixed_params:
+        internal_regimes = process_regimes(
+            ages=ages,
+            regimes=regimes,
+            regime_names_to_ids=regime_names_to_ids,
+            enable_jit=enable_jit,
+        )
+        params_template = create_params_template(internal_regimes)
+    else:
+        internal_regimes, params_template = (
+            _build_regimes_and_template_with_fixed_params(
+                ages=ages,
+                regimes=regimes,
+                regime_names_to_ids=regime_names_to_ids,
+                enable_jit=enable_jit,
+                fixed_params=fixed_params,
+            )
+        )
+
+    return internal_regimes, params_template
+
+
+def _build_regimes_and_template_with_fixed_params(
+    *,
+    ages: AgeGrid,
+    regimes: Mapping[str, Regime],
+    regime_names_to_ids: RegimeNamesToIds,
+    enable_jit: bool,
+    fixed_params: UserParams,
+) -> tuple[MappingProxyType[RegimeName, InternalRegime], ParamsTemplate]:
+    """Build internal regimes and template, then partial in fixed params.
+
+    Args:
+        ages: Age grid for the model.
+        regimes: Mapping of regime names to Regime instances.
+        regime_names_to_ids: Immutable mapping from regime names to integer
+            indices.
+        enable_jit: Whether to JIT-compile regime functions.
+        fixed_params: Parameters to fix at model initialization.
+
+    Returns:
+        Tuple of internal_regimes and params_template with fixed params
+        partialled in.
+
+    """
+    raw_internal_regimes = process_regimes(
         ages=ages,
+        regimes=regimes,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=enable_jit,
     )
-    params_template = create_params_template(internal_regimes)
+    raw_params_template = create_params_template(raw_internal_regimes)
 
-    if fixed_params:
-        fixed_internal = _resolve_fixed_params(
-            fixed_params=dict(fixed_params), template=params_template
+    fixed_internal = _resolve_fixed_params(
+        fixed_params=dict(fixed_params), template=raw_params_template
+    )
+    if has_series(fixed_internal):
+        fixed_internal = convert_series_in_params(
+            internal_params=fixed_internal,
+            ages=ages,
+            regimes=regimes,
+            regime_names_to_ids=regime_names_to_ids,
         )
-        if has_series(fixed_internal):
-            fixed_internal = convert_series_in_params(
-                internal_params=fixed_internal,
-                regimes=regimes,
-                ages=ages,
-                regime_names_to_ids=regime_names_to_ids,
-            )
-        _validate_param_types(fixed_internal)
-        if any(v for v in fixed_internal.values()):
-            internal_regimes = _partial_fixed_params_into_regimes(
-                internal_regimes=internal_regimes, fixed_internal=fixed_internal
-            )
-            params_template = _remove_fixed_from_template(
-                template=params_template, fixed_internal=fixed_internal
-            )
+    _validate_param_types(fixed_internal)
 
-    return internal_regimes, params_template
+    return (
+        _partial_fixed_params_into_regimes(
+            internal_regimes=raw_internal_regimes,
+            fixed_internal=fixed_internal,
+        ),
+        _remove_fixed_params_from_template(
+            template=raw_params_template,
+            fixed_internal=fixed_internal,
+        ),
+    )
 
 
 def validate_model_inputs(
@@ -228,7 +274,7 @@ def _resolve_fixed_params(
     )
 
 
-def _remove_fixed_from_template(
+def _remove_fixed_params_from_template(
     *,
     template: ParamsTemplate,
     fixed_internal: InternalParams,
