@@ -23,6 +23,7 @@ with contextlib.suppress(ImportError):
     import pdbp  # noqa: F401
 
 from lcm import shocks
+from lcm._version import __version__
 from lcm.ages import AgeGrid
 from lcm.grids import (
     DiscreteGrid,
@@ -71,6 +72,7 @@ __all__ = [
     "SimulationResult",
     "SolveSimulateFunctionPair",
     "SolveSnapshot",
+    "__version__",
     "categorical",
     "load_snapshot",
     "load_solution",
