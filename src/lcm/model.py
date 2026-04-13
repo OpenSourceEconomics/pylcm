@@ -36,6 +36,7 @@ from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
 from lcm.typing import (
     FloatND,
+    InternalParams,
     ParamsTemplate,
     RegimeName,
     RegimeNamesToIds,
@@ -196,17 +197,7 @@ class Model:
 
         """
         _validate_log_args(log_level=log_level, log_path=log_path)
-        internal_params = process_params(
-            params=params, params_template=self._params_template
-        )
-        if has_series(internal_params):
-            internal_params = convert_series_in_params(
-                internal_params=internal_params,
-                regimes=self.regimes,
-                ages=self.ages,
-                regime_names_to_ids=self.regime_names_to_ids,
-            )
-        _validate_param_types(internal_params)
+        internal_params = self._process_params(params)
         validate_regime_transitions_all_periods(
             internal_regimes=self.internal_regimes,
             internal_params=internal_params,
@@ -288,17 +279,7 @@ class Model:
                 regimes=self.regimes,
                 regime_names_to_ids=self.regime_names_to_ids,
             )
-        internal_params = process_params(
-            params=params, params_template=self._params_template
-        )
-        if has_series(internal_params):
-            internal_params = convert_series_in_params(
-                internal_params=internal_params,
-                regimes=self.regimes,
-                ages=self.ages,
-                regime_names_to_ids=self.regime_names_to_ids,
-            )
-        _validate_param_types(internal_params)
+        internal_params = self._process_params(params)
         if check_initial_conditions:
             validate_initial_conditions(
                 initial_conditions=initial_conditions,
@@ -342,6 +323,21 @@ class Model:
                 log_keep_n_latest=log_keep_n_latest,
             )
         return result
+
+    def _process_params(self, params: UserParams) -> InternalParams:
+        """Broadcast, convert Series, and validate user params."""
+        internal_params = process_params(
+            params=params, params_template=self._params_template
+        )
+        if has_series(internal_params):
+            internal_params = convert_series_in_params(
+                internal_params=internal_params,
+                regimes=self.regimes,
+                ages=self.ages,
+                regime_names_to_ids=self.regime_names_to_ids,
+            )
+        _validate_param_types(internal_params)
+        return internal_params
 
 
 def _merge_derived_categoricals(

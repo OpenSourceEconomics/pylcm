@@ -72,26 +72,67 @@ def build_regimes_and_template(
     params_template = create_params_template(internal_regimes)
 
     if fixed_params:
-        fixed_internal = _resolve_fixed_params(
-            fixed_params=dict(fixed_params), template=params_template
+        internal_regimes, params_template = _apply_fixed_params(
+            internal_regimes=internal_regimes,
+            params_template=params_template,
+            fixed_params=fixed_params,
+            regimes=regimes,
+            ages=ages,
+            regime_names_to_ids=regime_names_to_ids,
         )
-        if has_series(fixed_internal):
-            fixed_internal = convert_series_in_params(
-                internal_params=fixed_internal,
-                regimes=regimes,
-                ages=ages,
-                regime_names_to_ids=regime_names_to_ids,
-            )
-        _validate_param_types(fixed_internal)
-        if any(v for v in fixed_internal.values()):
-            internal_regimes = _partial_fixed_params_into_regimes(
-                internal_regimes=internal_regimes, fixed_internal=fixed_internal
-            )
-            params_template = _remove_fixed_from_template(
-                template=params_template, fixed_internal=fixed_internal
-            )
 
     return internal_regimes, params_template
+
+
+def _apply_fixed_params(
+    *,
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    params_template: ParamsTemplate,
+    fixed_params: UserParams,
+    regimes: Mapping[str, Regime],
+    ages: AgeGrid,
+    regime_names_to_ids: RegimeNamesToIds,
+) -> tuple[MappingProxyType[RegimeName, InternalRegime], ParamsTemplate]:
+    """Resolve, convert, validate, and partial fixed params.
+
+    Args:
+        internal_regimes: Immutable mapping of regime names to internal regimes.
+        params_template: Template for the model parameters.
+        fixed_params: Parameters to fix at model initialization.
+        regimes: Mapping of regime names to Regime instances.
+        ages: Age grid for the model.
+        regime_names_to_ids: Immutable mapping from regime names to integer
+            indices.
+
+    Returns:
+        Tuple of (possibly updated) internal_regimes and params_template.
+
+    """
+    fixed_internal = _resolve_fixed_params(
+        fixed_params=dict(fixed_params), template=params_template
+    )
+    if has_series(fixed_internal):
+        fixed_internal = convert_series_in_params(
+            internal_params=fixed_internal,
+            regimes=regimes,
+            ages=ages,
+            regime_names_to_ids=regime_names_to_ids,
+        )
+    _validate_param_types(fixed_internal)
+
+    if not any(v for v in fixed_internal.values()):
+        return internal_regimes, params_template
+
+    return (
+        _partial_fixed_params_into_regimes(
+            internal_regimes=internal_regimes,
+            fixed_internal=fixed_internal,
+        ),
+        _remove_fixed_from_template(
+            template=params_template,
+            fixed_internal=fixed_internal,
+        ),
+    )
 
 
 def validate_model_inputs(
