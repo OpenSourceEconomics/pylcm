@@ -4,8 +4,8 @@ import jax.numpy as jnp
 import pandas as pd
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm import AgeGrid, LinSpacedGrid, Model, Regime, categorical
-from lcm.typing import ContinuousAction, ContinuousState, FloatND, UserParams
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt, UserParams
 from tests.test_models.regime_markov import Health
 from tests.test_models.regime_markov import RegimeId as MarkovRegimeId
 from tests.test_models.regime_markov import alive as markov_alive
@@ -261,6 +261,65 @@ def test_mixed_series_and_scalar_fixed_params():
     result = model.simulate(
         params={},
         initial_conditions=_MARKOV_INITIAL_CONDITIONS,
+        period_to_regime_to_V_arr=None,
+        log_level="off",
+    )
+    df = result.to_dataframe()
+    assert len(df) > 0
+
+
+@categorical(ordered=False)
+class _WealthGroup:
+    low: int
+    high: int
+
+
+def _wealth_group(wealth: ContinuousState) -> ScalarInt:
+    return jnp.int32(wealth > 5.0)
+
+
+def _utility_with_group(
+    consumption: ContinuousAction,
+    wealth_group: ScalarInt,
+    group_bonus: FloatND,
+) -> FloatND:
+    return jnp.log(consumption + 1) + group_bonus[wealth_group]
+
+
+def test_series_fixed_param_with_derived_categoricals():
+    """Fixed pd.Series indexed by derived categorical needs derived_categoricals."""
+    group_bonus = pd.Series(
+        [0.0, 1.0],
+        index=pd.Index(["low", "high"], name="wealth_group"),
+    )
+    alive = Regime(
+        functions={"utility": _utility_with_group, "wealth_group": _wealth_group},
+        states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
+        state_transitions={"wealth": lambda wealth: wealth},
+        actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
+        constraints={"borrowing_constraint": _borrowing_constraint},
+        transition=_next_regime,
+        active=lambda age: age < 2,
+    )
+    dead = Regime(
+        transition=None,
+        functions={"utility": lambda: 0.0},
+        active=lambda age: age >= 2,
+    )
+    model = Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=RegimeId,
+        fixed_params={"group_bonus": group_bonus},
+        derived_categoricals={"wealth_group": DiscreteGrid(_WealthGroup)},
+    )
+    result = model.simulate(
+        params={"discount_factor": 0.95},
+        initial_conditions={
+            "wealth": jnp.array([3.0, 8.0]),
+            "age": jnp.array([0.0, 0.0]),
+            "regime": jnp.array([RegimeId.alive] * 2),
+        },
         period_to_regime_to_V_arr=None,
         log_level="off",
     )
