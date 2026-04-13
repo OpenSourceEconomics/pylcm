@@ -9,7 +9,7 @@ import pandas as pd
 from jax import Array
 
 from lcm.ages import AgeGrid
-from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
+from lcm.exceptions import ModelInitializationError
 from lcm.grids import DiscreteGrid
 from lcm.model_processing import (
     _validate_param_types,
@@ -95,7 +95,7 @@ class Model:
         regime_id_class: type,
         enable_jit: bool = True,
         fixed_params: UserParams = MappingProxyType({}),
-        derived_categoricals: Mapping[str, type | DiscreteGrid] = MappingProxyType({}),
+        derived_categoricals: Mapping[str, DiscreteGrid] = MappingProxyType({}),
     ) -> None:
         """Initialize the Model.
 
@@ -107,10 +107,9 @@ class Model:
             enable_jit: Whether to jit the functions of the internal regime.
             fixed_params: Parameters that can be fixed at model initialization.
             derived_categoricals: Categorical grids for DAG function outputs
-                not in states/actions. Values can be categorical classes or
-                `DiscreteGrid` instances. Broadcast to all regimes (merged
-                with each regime's own `derived_categoricals`). Raises if a
-                regime already has a conflicting entry.
+                not in states/actions. Broadcast to all regimes (merged with
+                each regime's own `derived_categoricals`). Raises if a regime
+                already has a conflicting entry.
 
         """
         self.description = description
@@ -213,23 +212,12 @@ class Model:
             internal_params=internal_params,
             ages=self.ages,
         )
-        try:
-            period_to_regime_to_V_arr = solve(
-                internal_params=internal_params,
-                ages=self.ages,
-                internal_regimes=self.internal_regimes,
-                logger=get_logger(log_level=log_level),
-            )
-        except InvalidValueFunctionError as exc:
-            if log_path is not None and exc.partial_solution is not None:
-                save_solve_snapshot(
-                    model=self,
-                    params=params,
-                    period_to_regime_to_V_arr=exc.partial_solution,  # ty: ignore[invalid-argument-type]
-                    log_path=Path(log_path),
-                    log_keep_n_latest=log_keep_n_latest,
-                )
-            raise
+        period_to_regime_to_V_arr = solve(
+            internal_params=internal_params,
+            ages=self.ages,
+            internal_regimes=self.internal_regimes,
+            logger=get_logger(log_level=log_level),
+        )
         if log_level == "debug" and log_path is not None:
             save_solve_snapshot(
                 model=self,
@@ -326,23 +314,12 @@ class Model:
         )
         log = get_logger(log_level=log_level)
         if period_to_regime_to_V_arr is None:
-            try:
-                period_to_regime_to_V_arr = solve(
-                    internal_params=internal_params,
-                    ages=self.ages,
-                    internal_regimes=self.internal_regimes,
-                    logger=log,
-                )
-            except InvalidValueFunctionError as exc:
-                if log_path is not None and exc.partial_solution is not None:
-                    save_solve_snapshot(
-                        model=self,
-                        params=params,
-                        period_to_regime_to_V_arr=exc.partial_solution,  # ty: ignore[invalid-argument-type]
-                        log_path=Path(log_path),
-                        log_keep_n_latest=log_keep_n_latest,
-                    )
-                raise
+            period_to_regime_to_V_arr = solve(
+                internal_params=internal_params,
+                ages=self.ages,
+                internal_regimes=self.internal_regimes,
+                logger=log,
+            )
         result = simulate(
             internal_params=internal_params,
             initial_conditions=initial_conditions,
@@ -369,14 +346,13 @@ class Model:
 
 def _merge_derived_categoricals(
     regimes: Mapping[str, Regime],
-    derived_categoricals: Mapping[str, type | DiscreteGrid],
+    derived_categoricals: Mapping[str, DiscreteGrid],
 ) -> MappingProxyType[str, Regime]:
     """Merge model-level derived_categoricals into each regime.
 
     Args:
         regimes: Mapping of regime names to Regime instances.
         derived_categoricals: Model-level categorical grids to broadcast.
-            Values can be categorical classes or `DiscreteGrid` instances.
 
     Returns:
         Immutable mapping of regime names to (possibly updated) Regime instances.
@@ -388,15 +364,10 @@ def _merge_derived_categoricals(
     """
     if not derived_categoricals:
         return MappingProxyType(dict(regimes))
-    normalized = {
-        k: v if isinstance(v, DiscreteGrid) else DiscreteGrid(v)
-        for k, v in derived_categoricals.items()
-    }
     result = {}
     for name, regime in regimes.items():
-        # After Regime.__post_init__, values are always DiscreteGrid.
-        merged: dict[str, DiscreteGrid] = dict(regime.derived_categoricals)  # ty: ignore[invalid-assignment]
-        for var, grid in normalized.items():
+        merged = dict(regime.derived_categoricals)
+        for var, grid in derived_categoricals.items():
             existing = merged.get(var)
             if existing is not None and existing.categories != grid.categories:
                 msg = (

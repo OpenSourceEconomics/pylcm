@@ -419,9 +419,7 @@ def _resolve_categoricals(
             {n: g for n, g in regime.states.items() if isinstance(g, DiscreteGrid)}
         )
         grids.update(_build_discrete_action_lookup(regime))
-        # After __post_init__, values are always DiscreteGrid.
-        dc: Mapping[str, DiscreteGrid] = regime.derived_categoricals  # ty: ignore[invalid-assignment]
-        for name, grid in dc.items():
+        for name, grid in regime.derived_categoricals.items():
             if name in grids and grids[name].categories != grid.categories:
                 msg = (
                     f"Derived categorical '{name}' conflicts with "
@@ -588,7 +586,7 @@ def _build_level_mappings_for_param(
                 f"Unrecognised indexing parameter '{param}'. Expected 'age' "
                 f"or a discrete grid name ({sorted(grids)}). If "
                 f"'{param}' is a DAG function output, add "
-                f'derived_categoricals={{"{param}": {param.title()}Class}} '
+                f'derived_categoricals={{"{param}": DiscreteGrid(...)}} '
                 f"to the Regime or Model constructor."
             )
             raise ValueError(msg)
@@ -617,12 +615,11 @@ def _build_outcome_mapping(
 
     """
     if func_name == "next_regime":
-        regime_ids = dict(regime_names_to_ids)
         return _LevelMapping(
             name="next_regime",
-            size=len(regime_ids),
-            get_code_from_label=regime_ids.__getitem__,
-            valid_labels=tuple(regime_ids),
+            size=len(regime_names_to_ids),
+            get_code_from_label=regime_names_to_ids.__getitem__,
+            valid_labels=tuple(regime_names_to_ids),
         )
 
     path = tree_path_from_qname(func_name)
