@@ -223,7 +223,7 @@ Model(
 ### Derived Categoricals
 
 When parameters are indexed by a DAG function output (not a model state/action), declare
-`derived_categoricals={"name": DiscreteGrid(...)}` on the `Regime` that uses it. For
+`derived_categoricals={"name": CategoryClass}` on the `Regime` that uses it. For
 convenience, model-level `derived_categoricals` on `Model(...)` are broadcast to all
 regimes. Functions used as derived categoricals must return **integer** types, not
 booleans — JAX cannot use booleans as array indices inside JIT. Use `jnp.int32(...)` to
