@@ -49,6 +49,7 @@ def initial_conditions_from_dataframe(
 
     Args:
         df: DataFrame with columns for states and a "regime" column.
+        regimes: Mapping of regime names to user Regime instances.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
 

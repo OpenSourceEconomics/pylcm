@@ -57,7 +57,8 @@ def build_regimes_and_template(
     Args:
         regimes: Mapping of regime names to Regime instances.
         ages: Age grid for the model.
-        regime_names_to_ids: Mapping of regime names to integer indices.
+        regime_names_to_ids: Immutable mapping from regime names to integer
+            indices.
         enable_jit: Whether to JIT-compile regime functions.
         fixed_params: Parameters to fix at model initialization.
         derived_categoricals: Extra categorical mappings for derived
