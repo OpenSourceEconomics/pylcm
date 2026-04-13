@@ -133,7 +133,7 @@ def _build_regimes_and_template_with_fixed_params(
             internal_regimes=raw_internal_regimes,
             fixed_internal=fixed_internal,
         ),
-        _remove_fixed_from_template(
+        _remove_fixed_params_from_template(
             template=raw_params_template,
             fixed_internal=fixed_internal,
         ),
@@ -274,7 +274,7 @@ def _resolve_fixed_params(
     )
 
 
-def _remove_fixed_from_template(
+def _remove_fixed_params_from_template(
     *,
     template: ParamsTemplate,
     fixed_internal: InternalParams,
