@@ -415,10 +415,10 @@ def _resolve_categoricals(
     grids: dict[str, DiscreteGrid] = {}
     if regime_name is not None:
         regime = regimes[regime_name]
-        grids.update(
-            {n: g for n, g in regime.states.items() if isinstance(g, DiscreteGrid)}
-        )
-        grids.update(_build_discrete_action_lookup(regime))
+        for grids_mapping in (regime.states, regime.actions):
+            grids.update(
+                {n: g for n, g in grids_mapping.items() if isinstance(g, DiscreteGrid)}
+            )
         for name, grid in regime.derived_categoricals.items():
             if name in grids and grids[name].categories != grid.categories:
                 msg = (
@@ -792,48 +792,32 @@ def _collect_state_names(
 def _build_discrete_grid_lookup(
     regimes: Mapping[str, Regime],
 ) -> dict[str, DiscreteGrid]:
-    """Collect all DiscreteGrid instances across regimes, verifying consistency.
+    """Collect all DiscreteGrid instances from states and actions across regimes.
 
     Args:
         regimes: Mapping of regime names to Regime instances.
 
     Returns:
-        dict mapping state name to DiscreteGrid.
+        Dict mapping variable name to DiscreteGrid.
 
     Raises:
-        ValueError: If two regimes define the same state with different categories.
+        ValueError: If two regimes define the same variable with different categories.
 
     """
     lookup: dict[str, DiscreteGrid] = {}
     for regime_name, regime in regimes.items():
-        for state_name, grid in regime.states.items():
-            if isinstance(grid, DiscreteGrid):
-                if state_name in lookup:
-                    if lookup[state_name].categories != grid.categories:
-                        msg = (
-                            f"Inconsistent DiscreteGrid for state '{state_name}': "
-                            f"regime '{regime_name}' has categories "
-                            f"{grid.categories}, but a previous regime has "
-                            f"{lookup[state_name].categories}."
-                        )
-                        raise ValueError(msg)
-                else:
-                    lookup[state_name] = grid
+        for grids_mapping in (regime.states, regime.actions):
+            for var_name, grid in grids_mapping.items():
+                if isinstance(grid, DiscreteGrid):
+                    if var_name in lookup:
+                        if lookup[var_name].categories != grid.categories:
+                            msg = (
+                                f"Inconsistent DiscreteGrid for '{var_name}': "
+                                f"regime '{regime_name}' has categories "
+                                f"{grid.categories}, but a previous regime has "
+                                f"{lookup[var_name].categories}."
+                            )
+                            raise ValueError(msg)
+                    else:
+                        lookup[var_name] = grid
     return lookup
-
-
-def _build_discrete_action_lookup(regime: Regime) -> dict[str, DiscreteGrid]:
-    """Collect DiscreteGrid instances from a regime's actions.
-
-    Args:
-        regime: The Regime instance.
-
-    Returns:
-        dict mapping action name to DiscreteGrid.
-
-    """
-    return {
-        name: grid
-        for name, grid in regime.actions.items()
-        if isinstance(grid, DiscreteGrid)
-    }
