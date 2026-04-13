@@ -300,6 +300,7 @@ def test_series_fixed_param_with_derived_categoricals():
         constraints={"borrowing_constraint": _borrowing_constraint},
         transition=_next_regime,
         active=lambda age: age < 2,
+        derived_categoricals={"wealth_group": DiscreteGrid(_WealthGroup)},
     )
     dead = Regime(
         transition=None,
@@ -311,7 +312,6 @@ def test_series_fixed_param_with_derived_categoricals():
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
         fixed_params={"group_bonus": group_bonus},
-        derived_categoricals={"wealth_group": DiscreteGrid(_WealthGroup)},
     )
     result = model.simulate(
         params={"discount_factor": 0.95},
@@ -325,3 +325,134 @@ def test_series_fixed_param_with_derived_categoricals():
     )
     df = result.to_dataframe()
     assert len(df) > 0
+
+
+def test_model_broadcast_merges_into_regimes():
+    """Model-level derived_categoricals broadcast to all regimes."""
+    wg_grid = DiscreteGrid(_WealthGroup)
+    alive = Regime(
+        functions={"utility": _utility_with_group, "wealth_group": _wealth_group},
+        states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
+        state_transitions={"wealth": lambda wealth: wealth},
+        actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
+        constraints={"borrowing_constraint": _borrowing_constraint},
+        transition=_next_regime,
+        active=lambda age: age < 2,
+    )
+    dead = Regime(
+        transition=None,
+        functions={"utility": lambda: 0.0},
+        active=lambda age: age >= 2,
+    )
+    model = Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=RegimeId,
+        derived_categoricals={"wealth_group": wg_grid},
+    )
+    assert model.regimes["alive"].derived_categoricals["wealth_group"] is wg_grid
+    assert model.regimes["dead"].derived_categoricals["wealth_group"] is wg_grid
+
+
+def test_model_broadcast_matching_regime_entry():
+    """Model-level entry matching a regime entry does not conflict."""
+    wg_grid = DiscreteGrid(_WealthGroup)
+    alive = Regime(
+        functions={"utility": _utility_with_group, "wealth_group": _wealth_group},
+        states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
+        state_transitions={"wealth": lambda wealth: wealth},
+        actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
+        constraints={"borrowing_constraint": _borrowing_constraint},
+        transition=_next_regime,
+        active=lambda age: age < 2,
+        derived_categoricals={"wealth_group": wg_grid},
+    )
+    dead = Regime(
+        transition=None,
+        functions={"utility": lambda: 0.0},
+        active=lambda age: age >= 2,
+    )
+    model = Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=RegimeId,
+        derived_categoricals={"wealth_group": wg_grid},
+    )
+    assert model.regimes["alive"].derived_categoricals["wealth_group"] is wg_grid
+
+
+def test_model_broadcast_conflict_raises():
+    """Model-level entry conflicting with regime entry raises."""
+    import pytest  # noqa: PLC0415
+
+    @categorical(ordered=False)
+    class _OtherGroup:
+        a: int
+        b: int
+        c: int
+
+    alive = Regime(
+        functions={"utility": _utility_with_group, "wealth_group": _wealth_group},
+        states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
+        state_transitions={"wealth": lambda wealth: wealth},
+        actions={"consumption": LinSpacedGrid(start=0.1, stop=5, n_points=5)},
+        constraints={"borrowing_constraint": _borrowing_constraint},
+        transition=_next_regime,
+        active=lambda age: age < 2,
+        derived_categoricals={"wealth_group": DiscreteGrid(_OtherGroup)},
+    )
+    dead = Regime(
+        transition=None,
+        functions={"utility": lambda: 0.0},
+        active=lambda age: age >= 2,
+    )
+    with pytest.raises(Exception, match="conflicts"):
+        Model(
+            regimes={"alive": alive, "dead": dead},
+            ages=AgeGrid(start=0, stop=2, step="Y"),
+            regime_id_class=RegimeId,
+            derived_categoricals={"wealth_group": DiscreteGrid(_WealthGroup)},
+        )
+
+
+def test_different_regime_derived_categoricals_with_model_broadcast():
+    """Different per-regime grids coexist with a model-level broadcast."""
+
+    @categorical(ordered=False)
+    class _GroupA:
+        x: int
+        y: int
+
+    @categorical(ordered=False)
+    class _GroupB:
+        p: int
+        q: int
+
+    @categorical(ordered=False)
+    class _Shared:
+        lo: int
+        hi: int
+
+    alive = Regime(
+        functions={"utility": lambda: 0.0},
+        transition=_next_regime,
+        active=lambda age: age < 2,
+        derived_categoricals={"group_a": DiscreteGrid(_GroupA)},
+    )
+    dead = Regime(
+        transition=None,
+        functions={"utility": lambda: 0.0},
+        active=lambda age: age >= 2,
+        derived_categoricals={"group_b": DiscreteGrid(_GroupB)},
+    )
+    model = Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=RegimeId,
+        derived_categoricals={"shared": DiscreteGrid(_Shared)},
+    )
+    assert "group_a" in model.regimes["alive"].derived_categoricals
+    assert "shared" in model.regimes["alive"].derived_categoricals
+    assert "group_a" not in model.regimes["dead"].derived_categoricals
+    assert "group_b" in model.regimes["dead"].derived_categoricals
+    assert "shared" in model.regimes["dead"].derived_categoricals
