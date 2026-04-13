@@ -16,7 +16,6 @@ from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidParamsError, ModelInitializationError, format_messages
-from lcm.grids import DiscreteGrid
 from lcm.pandas_utils import convert_series_in_params, has_series
 from lcm.params import MappingLeaf
 from lcm.params.processing import (
@@ -46,8 +45,6 @@ def build_regimes_and_template(
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
-    derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
-    | None = None,
 ) -> tuple[MappingProxyType[RegimeName, InternalRegime], ParamsTemplate]:
     """Build internal regimes and params template in a single pass.
 
@@ -61,10 +58,6 @@ def build_regimes_and_template(
             indices.
         enable_jit: Whether to JIT-compile regime functions.
         fixed_params: Parameters to fix at model initialization.
-        derived_categoricals: Extra categorical mappings for derived
-            variables not in the model's state/action grids. Needed when
-            `fixed_params` contains `pd.Series` indexed by DAG function
-            outputs.
 
     Returns:
         Tuple of (internal_regimes, params_template).
@@ -88,7 +81,6 @@ def build_regimes_and_template(
                 regimes=regimes,
                 ages=ages,
                 regime_names_to_ids=regime_names_to_ids,
-                derived_categoricals=derived_categoricals,
             )
         _validate_param_types(fixed_internal)
         if any(v for v in fixed_internal.values()):
