@@ -105,7 +105,8 @@ class Model:
             ages: Age grid for the model.
             description: Description of the model.
             regime_id_class: Dataclass mapping regime names to integer indices.
-            enable_jit: Whether to jit the functions of the internal regime.
+            enable_jit: Whether to JIT-compile the functions of the internal
+                regimes.
             fixed_params: Parameters that can be fixed at model initialization.
             derived_categoricals: Categorical grids for DAG function outputs
                 not in states/actions. Broadcast to all regimes (merged with

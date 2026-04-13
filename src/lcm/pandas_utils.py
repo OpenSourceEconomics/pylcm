@@ -339,7 +339,7 @@ def array_from_series(
         regimes: Mapping of regime names to user Regime instances.
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
-        regime_name: Regime for action grid lookup.
+        regime_name: Regime for grid and derived categorical lookup.
 
     Returns:
         JAX array with axes corresponding to the indexing parameters in
@@ -430,6 +430,16 @@ def _resolve_categoricals(
             grids[name] = grid
     else:
         grids.update(_build_discrete_grid_lookup(regimes))
+        for regime in regimes.values():
+            for name, grid in regime.derived_categoricals.items():
+                if name in grids and grids[name].categories != grid.categories:
+                    msg = (
+                        f"Derived categorical '{name}' conflicts with "
+                        f"model grid: {grid.categories} vs "
+                        f"{grids[name].categories}."
+                    )
+                    raise ValueError(msg)
+                grids[name] = grid
     return grids
 
 

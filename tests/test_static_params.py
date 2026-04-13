@@ -2,6 +2,7 @@
 
 import jax.numpy as jnp
 import pandas as pd
+import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
@@ -386,7 +387,6 @@ def test_model_broadcast_matching_regime_entry():
 
 def test_model_broadcast_conflict_raises():
     """Model-level entry conflicting with regime entry raises."""
-    import pytest  # noqa: PLC0415
 
     @categorical(ordered=False)
     class _OtherGroup:
