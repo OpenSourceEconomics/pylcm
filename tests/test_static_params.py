@@ -344,7 +344,7 @@ def test_series_fixed_param_with_derived_categoricals():
         constraints={"borrowing_constraint": _borrowing_constraint},
         transition=_next_regime,
         active=lambda age: age < 2,
-        derived_categoricals={"wealth_group": DiscreteGrid(_WealthGroup)},
+        derived_categoricals={"wealth_group": _WealthGroup},
     )
     dead = Regime(
         transition=None,
@@ -372,8 +372,7 @@ def test_series_fixed_param_with_derived_categoricals():
 
 
 def test_model_broadcast_merges_into_regimes():
-    """Model-level derived_categoricals broadcast to all regimes."""
-    wg_grid = DiscreteGrid(_WealthGroup)
+    """Model-level derived_categoricals broadcast to all regimes (raw class)."""
     alive = Regime(
         functions={"utility": _utility_with_group, "wealth_group": _wealth_group},
         states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
@@ -392,10 +391,14 @@ def test_model_broadcast_merges_into_regimes():
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
-        derived_categoricals={"wealth_group": wg_grid},
+        derived_categoricals={"wealth_group": _WealthGroup},
     )
-    assert model.regimes["alive"].derived_categoricals["wealth_group"] is wg_grid
-    assert model.regimes["dead"].derived_categoricals["wealth_group"] is wg_grid
+    assert isinstance(
+        model.regimes["alive"].derived_categoricals["wealth_group"], DiscreteGrid
+    )
+    assert isinstance(
+        model.regimes["dead"].derived_categoricals["wealth_group"], DiscreteGrid
+    )
 
 
 def test_model_broadcast_matching_regime_entry():

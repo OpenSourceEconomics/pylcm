@@ -36,7 +36,6 @@ from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
 from lcm.typing import (
     FloatND,
-    InternalParams,
     ParamsTemplate,
     RegimeName,
     RegimeNamesToIds,
@@ -96,7 +95,7 @@ class Model:
         regime_id_class: type,
         enable_jit: bool = True,
         fixed_params: UserParams = MappingProxyType({}),
-        derived_categoricals: Mapping[str, DiscreteGrid] = MappingProxyType({}),
+        derived_categoricals: Mapping[str, type | DiscreteGrid] = MappingProxyType({}),
     ) -> None:
         """Initialize the Model.
 
@@ -108,9 +107,10 @@ class Model:
             enable_jit: Whether to jit the functions of the internal regime.
             fixed_params: Parameters that can be fixed at model initialization.
             derived_categoricals: Categorical grids for DAG function outputs
-                not in states/actions. Broadcast to all regimes (merged with
-                each regime's own `derived_categoricals`). Raises if a regime
-                already has a conflicting entry.
+                not in states/actions. Values can be categorical classes or
+                `DiscreteGrid` instances. Broadcast to all regimes (merged
+                with each regime's own `derived_categoricals`). Raises if a
+                regime already has a conflicting entry.
 
         """
         self.description = description
@@ -168,7 +168,6 @@ class Model:
         self,
         *,
         params: UserParams,
-        max_compilation_workers: int | None = None,
         log_level: LogLevel = "progress",
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
@@ -186,10 +185,6 @@ class Model:
                   specification
                 Values may be `pd.Series` with labeled indices; they are
                 auto-converted to JAX arrays.
-            max_compilation_workers: Maximum number of threads for parallel XLA
-                compilation. Defaults to `os.cpu_count()`. Lower this on machines
-                with limited RAM, as each concurrent compilation holds an XLA HLO
-                graph in memory.
             log_level: Logging verbosity. `"off"` suppresses output, `"warning"` shows
                 NaN/Inf warnings, `"progress"` adds timing, `"debug"` adds stats and
                 requires `log_path`.
@@ -205,12 +200,13 @@ class Model:
         internal_params = process_params(
             params=params, params_template=self._params_template
         )
-        internal_params = _maybe_convert_series(
-            internal_params,
-            regimes=self.regimes,
-            ages=self.ages,
-            regime_names_to_ids=self.regime_names_to_ids,
-        )
+        if has_series(internal_params):
+            internal_params = convert_series_in_params(
+                internal_params=internal_params,
+                regimes=self.regimes,
+                ages=self.ages,
+                regime_names_to_ids=self.regime_names_to_ids,
+            )
         _validate_param_types(internal_params)
         validate_regime_transitions_all_periods(
             internal_regimes=self.internal_regimes,
@@ -223,8 +219,6 @@ class Model:
                 ages=self.ages,
                 internal_regimes=self.internal_regimes,
                 logger=get_logger(log_level=log_level),
-                max_compilation_workers=max_compilation_workers,
-                enable_jit=self.enable_jit,
             )
         except InvalidValueFunctionError as exc:
             if log_path is not None and exc.partial_solution is not None:
@@ -300,20 +294,22 @@ class Model:
 
         """
         _validate_log_args(log_level=log_level, log_path=log_path)
-        initial_conditions = _maybe_convert_dataframe(
-            initial_conditions,
-            regimes=self.regimes,
-            regime_names_to_ids=self.regime_names_to_ids,
-        )
+        if isinstance(initial_conditions, pd.DataFrame):
+            initial_conditions = initial_conditions_from_dataframe(
+                df=initial_conditions,
+                regimes=self.regimes,
+                regime_names_to_ids=self.regime_names_to_ids,
+            )
         internal_params = process_params(
             params=params, params_template=self._params_template
         )
-        internal_params = _maybe_convert_series(
-            internal_params,
-            regimes=self.regimes,
-            ages=self.ages,
-            regime_names_to_ids=self.regime_names_to_ids,
-        )
+        if has_series(internal_params):
+            internal_params = convert_series_in_params(
+                internal_params=internal_params,
+                regimes=self.regimes,
+                ages=self.ages,
+                regime_names_to_ids=self.regime_names_to_ids,
+            )
         _validate_param_types(internal_params)
         if check_initial_conditions:
             validate_initial_conditions(
@@ -336,7 +332,6 @@ class Model:
                     ages=self.ages,
                     internal_regimes=self.internal_regimes,
                     logger=log,
-                    enable_jit=self.enable_jit,
                 )
             except InvalidValueFunctionError as exc:
                 if log_path is not None and exc.partial_solution is not None:
@@ -374,13 +369,14 @@ class Model:
 
 def _merge_derived_categoricals(
     regimes: Mapping[str, Regime],
-    derived_categoricals: Mapping[str, DiscreteGrid],
+    derived_categoricals: Mapping[str, type | DiscreteGrid],
 ) -> MappingProxyType[str, Regime]:
     """Merge model-level derived_categoricals into each regime.
 
     Args:
         regimes: Mapping of regime names to Regime instances.
         derived_categoricals: Model-level categorical grids to broadcast.
+            Values can be categorical classes or `DiscreteGrid` instances.
 
     Returns:
         Immutable mapping of regime names to (possibly updated) Regime instances.
@@ -392,10 +388,15 @@ def _merge_derived_categoricals(
     """
     if not derived_categoricals:
         return MappingProxyType(dict(regimes))
+    normalized = {
+        k: v if isinstance(v, DiscreteGrid) else DiscreteGrid(v)
+        for k, v in derived_categoricals.items()
+    }
     result = {}
     for name, regime in regimes.items():
-        merged = dict(regime.derived_categoricals)
-        for var, grid in derived_categoricals.items():
+        # After Regime.__post_init__, values are always DiscreteGrid.
+        merged: dict[str, DiscreteGrid] = dict(regime.derived_categoricals)  # ty: ignore[invalid-assignment]
+        for var, grid in normalized.items():
             existing = merged.get(var)
             if existing is not None and existing.categories != grid.categories:
                 msg = (
@@ -409,40 +410,6 @@ def _merge_derived_categoricals(
             regime, derived_categoricals=MappingProxyType(merged)
         )
     return MappingProxyType(result)
-
-
-def _maybe_convert_series(
-    internal_params: InternalParams,
-    *,
-    regimes: Mapping[str, Regime],
-    ages: AgeGrid,
-    regime_names_to_ids: RegimeNamesToIds,
-) -> InternalParams:
-    """Convert pd.Series leaves in params to JAX arrays if any are present."""
-    if has_series(internal_params):
-        return convert_series_in_params(
-            internal_params=internal_params,
-            regimes=regimes,
-            ages=ages,
-            regime_names_to_ids=regime_names_to_ids,
-        )
-    return internal_params
-
-
-def _maybe_convert_dataframe(
-    initial_conditions: Mapping[str, Array],
-    *,
-    regimes: Mapping[str, Regime],
-    regime_names_to_ids: RegimeNamesToIds,
-) -> Mapping[str, Array]:
-    """Convert a DataFrame to initial_conditions dict if needed."""
-    if isinstance(initial_conditions, pd.DataFrame):
-        return initial_conditions_from_dataframe(
-            df=initial_conditions,
-            regimes=regimes,
-            regime_names_to_ids=regime_names_to_ids,
-        )
-    return initial_conditions
 
 
 def _validate_log_args(*, log_level: LogLevel, log_path: str | Path | None) -> None:
