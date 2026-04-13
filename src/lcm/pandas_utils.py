@@ -74,10 +74,10 @@ def initial_conditions_from_dataframe(
 
     # Validate regime names
     valid_regimes = set(regime_names_to_ids.keys())
-    invalid = set(df["regime"]) - valid_regimes
-    if invalid:
+    invalid_regimes = set(df["regime"]) - valid_regimes
+    if invalid_regimes:
         msg = (
-            f"Invalid regime names in 'regime' column: {sorted(invalid)}. "
+            f"Invalid regime names in 'regime' column: {sorted(invalid_regimes)}. "
             f"Valid regimes: {sorted(valid_regimes)}."
         )
         raise ValueError(msg)

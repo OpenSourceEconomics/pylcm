@@ -63,6 +63,51 @@ def build_regimes_and_template(
         Tuple of (internal_regimes, params_template).
 
     """
+    if not fixed_params:
+        internal_regimes = process_regimes(
+            regimes=regimes,
+            ages=ages,
+            regime_names_to_ids=regime_names_to_ids,
+            enable_jit=enable_jit,
+        )
+        params_template = create_params_template(internal_regimes)
+    else:
+        internal_regimes, params_template = (
+            _build_regimes_and_template_with_fixed_params(
+                regimes=regimes,
+                ages=ages,
+                regime_names_to_ids=regime_names_to_ids,
+                enable_jit=enable_jit,
+                fixed_params=fixed_params,
+            )
+        )
+
+    return internal_regimes, params_template
+
+
+def _build_regimes_and_template_with_fixed_params(
+    *,
+    regimes: Mapping[str, Regime],
+    ages: AgeGrid,
+    regime_names_to_ids: RegimeNamesToIds,
+    enable_jit: bool,
+    fixed_params: UserParams,
+) -> tuple[MappingProxyType[RegimeName, InternalRegime], ParamsTemplate]:
+    """Build internal regimes and template, then partial in fixed params.
+
+    Args:
+        regimes: Mapping of regime names to Regime instances.
+        ages: Age grid for the model.
+        regime_names_to_ids: Immutable mapping from regime names to integer
+            indices.
+        enable_jit: Whether to JIT-compile regime functions.
+        fixed_params: Parameters to fix at model initialization.
+
+    Returns:
+        Tuple of internal_regimes and params_template with fixed params
+        partialled in.
+
+    """
     internal_regimes = process_regimes(
         regimes=regimes,
         ages=ages,
@@ -71,43 +116,6 @@ def build_regimes_and_template(
     )
     params_template = create_params_template(internal_regimes)
 
-    if fixed_params:
-        internal_regimes, params_template = _apply_fixed_params(
-            internal_regimes=internal_regimes,
-            params_template=params_template,
-            fixed_params=fixed_params,
-            regimes=regimes,
-            ages=ages,
-            regime_names_to_ids=regime_names_to_ids,
-        )
-
-    return internal_regimes, params_template
-
-
-def _apply_fixed_params(
-    *,
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-    params_template: ParamsTemplate,
-    fixed_params: UserParams,
-    regimes: Mapping[str, Regime],
-    ages: AgeGrid,
-    regime_names_to_ids: RegimeNamesToIds,
-) -> tuple[MappingProxyType[RegimeName, InternalRegime], ParamsTemplate]:
-    """Resolve, convert, validate, and partial fixed params.
-
-    Args:
-        internal_regimes: Immutable mapping of regime names to internal regimes.
-        params_template: Template for the model parameters.
-        fixed_params: Parameters to fix at model initialization.
-        regimes: Mapping of regime names to Regime instances.
-        ages: Age grid for the model.
-        regime_names_to_ids: Immutable mapping from regime names to integer
-            indices.
-
-    Returns:
-        Tuple of (possibly updated) internal_regimes and params_template.
-
-    """
     fixed_internal = _resolve_fixed_params(
         fixed_params=dict(fixed_params), template=params_template
     )
