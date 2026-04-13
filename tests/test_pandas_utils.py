@@ -1887,3 +1887,27 @@ def test_convert_series_cross_grid_transition() -> None:
     # Shape: (n_ages=2, n_source_health=3, n_target_health=2)
     # n_ages=2 because AgeGrid has ages [0, 1]; missing age 1 is NaN-filled.
     assert arr.shape == (2, 3, 2)  # ty: ignore[unresolved-attribute]
+
+
+def test_resolve_categoricals_includes_derived_when_no_regime_name() -> None:
+    """derived_categoricals are included even when regime_name is None."""
+    from lcm.pandas_utils import _resolve_categoricals  # noqa: PLC0415
+
+    model = get_stochastic_model(3)
+
+    @categorical(ordered=False)
+    class ExtraVar:
+        a: int
+        b: int
+
+    updated_regimes = {
+        name: dataclasses.replace(
+            r, derived_categoricals={"extra": DiscreteGrid(ExtraVar)}
+        )
+        for name, r in model.regimes.items()
+    }
+    grids = _resolve_categoricals(
+        regimes=updated_regimes,
+        regime_name=None,
+    )
+    assert "extra" in grids
