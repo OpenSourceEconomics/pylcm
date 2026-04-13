@@ -2,6 +2,7 @@
 
 import jax.numpy as jnp
 import pandas as pd
+import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
@@ -300,7 +301,7 @@ def test_series_fixed_param_with_derived_categoricals():
         constraints={"borrowing_constraint": _borrowing_constraint},
         transition=_next_regime,
         active=lambda age: age < 2,
-        derived_categoricals={"wealth_group": _WealthGroup},
+        derived_categoricals={"wealth_group": DiscreteGrid(_WealthGroup)},
     )
     dead = Regime(
         transition=None,
@@ -347,7 +348,7 @@ def test_model_broadcast_merges_into_regimes():
         regimes={"alive": alive, "dead": dead},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_id_class=RegimeId,
-        derived_categoricals={"wealth_group": _WealthGroup},
+        derived_categoricals={"wealth_group": DiscreteGrid(_WealthGroup)},
     )
     assert isinstance(
         model.regimes["alive"].derived_categoricals["wealth_group"], DiscreteGrid
@@ -386,7 +387,6 @@ def test_model_broadcast_matching_regime_entry():
 
 def test_model_broadcast_conflict_raises():
     """Model-level entry conflicting with regime entry raises."""
-    import pytest  # noqa: PLC0415
 
     @categorical(ordered=False)
     class _OtherGroup:
