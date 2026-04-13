@@ -168,6 +168,7 @@ class Model:
         self,
         *,
         params: UserParams,
+        max_compilation_workers: int | None = None,
         log_level: LogLevel = "progress",
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
@@ -219,6 +220,8 @@ class Model:
                 ages=self.ages,
                 internal_regimes=self.internal_regimes,
                 logger=get_logger(log_level=log_level),
+                enable_jit=self.enable_jit,
+                max_compilation_workers=max_compilation_workers,
             )
         except InvalidValueFunctionError as exc:
             if log_path is not None and exc.partial_solution is not None:
@@ -332,6 +335,7 @@ class Model:
                     ages=self.ages,
                     internal_regimes=self.internal_regimes,
                     logger=log,
+                    enable_jit=self.enable_jit,
                 )
             except InvalidValueFunctionError as exc:
                 if log_path is not None and exc.partial_solution is not None:
