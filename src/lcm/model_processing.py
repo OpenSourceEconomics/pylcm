@@ -12,13 +12,17 @@ from types import MappingProxyType
 
 from dags import get_ancestors
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path
+from jax import Array
 
 from lcm.ages import AgeGrid
-from lcm.exceptions import ModelInitializationError, format_messages
+from lcm.exceptions import InvalidParamsError, ModelInitializationError, format_messages
+from lcm.pandas_utils import convert_series_in_params, has_series
+from lcm.params import MappingLeaf
 from lcm.params.processing import (
     broadcast_to_template,
     create_params_template,
 )
+from lcm.params.sequence_leaf import SequenceLeaf
 from lcm.regime import Regime
 from lcm.regime_building.processing import (
     InternalRegime,
@@ -36,8 +40,8 @@ from lcm.utils.containers import get_field_names_and_values
 
 def build_regimes_and_template(
     *,
-    regimes: Mapping[str, Regime],
     ages: AgeGrid,
+    regimes: Mapping[str, Regime],
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
@@ -47,28 +51,93 @@ def build_regimes_and_template(
     Compose regime processing, template creation, and optional fixed-param partialling
     so that each result is computed exactly once.
 
+    Args:
+        ages: Age grid for the model.
+        regimes: Mapping of regime names to Regime instances.
+        regime_names_to_ids: Immutable mapping from regime names to integer
+            indices.
+        enable_jit: Whether to JIT-compile regime functions.
+        fixed_params: Parameters to fix at model initialization.
+
+    Returns:
+        Tuple of (internal_regimes, params_template).
+
     """
-    internal_regimes = process_regimes(
-        regimes=regimes,
+    if not fixed_params:
+        internal_regimes = process_regimes(
+            ages=ages,
+            regimes=regimes,
+            regime_names_to_ids=regime_names_to_ids,
+            enable_jit=enable_jit,
+        )
+        params_template = create_params_template(internal_regimes)
+    else:
+        internal_regimes, params_template = (
+            _build_regimes_and_template_with_fixed_params(
+                ages=ages,
+                regimes=regimes,
+                regime_names_to_ids=regime_names_to_ids,
+                enable_jit=enable_jit,
+                fixed_params=fixed_params,
+            )
+        )
+
+    return internal_regimes, params_template
+
+
+def _build_regimes_and_template_with_fixed_params(
+    *,
+    ages: AgeGrid,
+    regimes: Mapping[str, Regime],
+    regime_names_to_ids: RegimeNamesToIds,
+    enable_jit: bool,
+    fixed_params: UserParams,
+) -> tuple[MappingProxyType[RegimeName, InternalRegime], ParamsTemplate]:
+    """Build internal regimes and template, then partial in fixed params.
+
+    Args:
+        ages: Age grid for the model.
+        regimes: Mapping of regime names to Regime instances.
+        regime_names_to_ids: Immutable mapping from regime names to integer
+            indices.
+        enable_jit: Whether to JIT-compile regime functions.
+        fixed_params: Parameters to fix at model initialization.
+
+    Returns:
+        Tuple of internal_regimes and params_template with fixed params
+        partialled in.
+
+    """
+    raw_internal_regimes = process_regimes(
         ages=ages,
+        regimes=regimes,
         regime_names_to_ids=regime_names_to_ids,
         enable_jit=enable_jit,
     )
-    params_template = create_params_template(internal_regimes)
+    raw_params_template = create_params_template(raw_internal_regimes)
 
-    if fixed_params:
-        fixed_internal = _resolve_fixed_params(
-            fixed_params=dict(fixed_params), template=params_template
+    fixed_internal = _resolve_fixed_params(
+        fixed_params=dict(fixed_params), template=raw_params_template
+    )
+    if has_series(fixed_internal):
+        fixed_internal = convert_series_in_params(
+            internal_params=fixed_internal,
+            ages=ages,
+            regimes=regimes,
+            regime_names_to_ids=regime_names_to_ids,
         )
-        if any(v for v in fixed_internal.values()):
-            internal_regimes = _partial_fixed_params_into_regimes(
-                internal_regimes=internal_regimes, fixed_internal=fixed_internal
-            )
-            params_template = _remove_fixed_from_template(
-                template=params_template, fixed_internal=fixed_internal
-            )
+    _validate_param_types(fixed_internal)
 
-    return internal_regimes, params_template
+    return (
+        _partial_fixed_params_into_regimes(
+            internal_regimes=raw_internal_regimes,
+            fixed_internal=fixed_internal,
+        ),
+        _remove_fixed_params_from_template(
+            template=raw_params_template,
+            fixed_internal=fixed_internal,
+        ),
+    )
 
 
 def validate_model_inputs(
@@ -205,7 +274,7 @@ def _resolve_fixed_params(
     )
 
 
-def _remove_fixed_from_template(
+def _remove_fixed_params_from_template(
     *,
     template: ParamsTemplate,
     fixed_internal: InternalParams,
@@ -329,3 +398,41 @@ def _filter_kwargs_for_func(
     if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
         return kwargs
     return {k: v for k, v in kwargs.items() if k in params}
+
+
+def _validate_param_types(internal_params: InternalParams) -> None:
+    """Raise if any param leaf is not a Python scalar or JAX array.
+
+    After processing, every leaf value (including inside MappingLeaf /
+    SequenceLeaf containers) must be a Python scalar (float, int, bool) or a
+    JAX array. Notably, numpy arrays and pandas Series are not accepted.
+    """
+    for regime_name, regime_params in internal_params.items():
+        for key, value in regime_params.items():
+            _check_leaf(value, f"{regime_name}__{key}")
+
+
+def _check_leaf(value: object, path: str) -> None:
+    """Check a single leaf value, recursing into MappingLeaf/SequenceLeaf."""
+    if isinstance(value, MappingLeaf):
+        for k, v in value.data.items():
+            _check_leaf(v, f"{path}.{k}")
+        return
+    if isinstance(value, SequenceLeaf):
+        for i, v in enumerate(value.data):
+            _check_leaf(v, f"{path}[{i}]")
+        return
+    if isinstance(value, (float, int, bool)):
+        return
+    if hasattr(value, "dtype") and hasattr(value, "shape"):
+        if isinstance(value, Array):
+            return
+        type_name = type(value).__module__ + "." + type(value).__name__
+        msg = (
+            f"Parameter '{path}' is a {type_name} (shape {value.shape}). "
+            f"Use jnp.array() or pass a pd.Series with a named index."
+        )
+        raise InvalidParamsError(msg)
+    type_name = type(value).__module__ + "." + type(value).__name__
+    msg = f"Parameter '{path}' has unexpected type {type_name}."
+    raise InvalidParamsError(msg)

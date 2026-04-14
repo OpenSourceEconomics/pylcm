@@ -118,29 +118,41 @@ validate labels against. You will see an error like:
 ```
 Unrecognised indexing parameter 'employment_type'. Expected 'age' or a
 discrete grid name (['health', 'partner']). If 'employment_type' is a DAG
-function output, pass derived_categoricals={"employment_type": DiscreteGrid(...)}
-to solve() / simulate().
+function output, add derived_categoricals={"employment_type": DiscreteGrid(EmploymentType)}
+to the Regime or Model constructor.
 ```
 
-Fix this by passing the missing grid explicitly:
+Fix this by declaring the grid on the `Regime` that uses it:
 
 ```python
-model.solve(
-    params=params,
+working = Regime(
+    # ... other fields ...
     derived_categoricals={"employment_type": DiscreteGrid(EmploymentType)},
 )
 ```
 
-If the variable has different categories in different regimes, pass a per-regime
-mapping:
+If the variable has different categories in different regimes, each regime declares its
+own grid:
 
 ```python
-derived_categoricals = {
-    "employment_type": {
-        "working": DiscreteGrid(FullEmploymentType),
-        "retired": DiscreteGrid(RetiredEmploymentType),
-    },
-}
+working = Regime(
+    # ... other fields ...
+    derived_categoricals={"employment_type": DiscreteGrid(FullEmploymentType)},
+)
+retired = Regime(
+    # ... other fields ...
+    derived_categoricals={"employment_type": DiscreteGrid(RetiredEmploymentType)},
+)
+```
+
+For convenience, model-level `derived_categoricals` are broadcast to all regimes:
+
+```python
+Model(
+    regimes={"working": working, "retired": retired},
+    derived_categoricals={"employment_type": DiscreteGrid(EmploymentType)},
+    # ... other fields ...
+)
 ```
 
 ### Integer return types required

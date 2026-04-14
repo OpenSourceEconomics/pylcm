@@ -1,5 +1,6 @@
 """Collection of classes that are used by the user to define the model and grids."""
 
+import dataclasses
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
@@ -8,9 +9,10 @@ import pandas as pd
 from jax import Array
 
 from lcm.ages import AgeGrid
-from lcm.exceptions import InvalidParamsError
+from lcm.exceptions import ModelInitializationError
 from lcm.grids import DiscreteGrid
 from lcm.model_processing import (
+    _validate_param_types,
     build_regimes_and_template,
     validate_model_inputs,
 )
@@ -19,7 +21,6 @@ from lcm.pandas_utils import (
     has_series,
     initial_conditions_from_dataframe,
 )
-from lcm.params import MappingLeaf, SequenceLeaf
 from lcm.params.processing import (
     process_params,
 )
@@ -78,7 +79,7 @@ class Model:
     """Immutable mapping of regime names to internal regime instances."""
 
     enable_jit: bool = True
-    """Whether to JIT-compile the functions of the internal regime."""
+    """Whether to JIT-compile the functions of the internal regimes."""
 
     fixed_params: UserParams
     """Parameters fixed at model initialization."""
@@ -95,6 +96,7 @@ class Model:
         regime_id_class: type,
         enable_jit: bool = True,
         fixed_params: UserParams = MappingProxyType({}),
+        derived_categoricals: Mapping[str, DiscreteGrid] = MappingProxyType({}),
     ) -> None:
         """Initialize the Model.
 
@@ -103,8 +105,13 @@ class Model:
             ages: Age grid for the model.
             description: Description of the model.
             regime_id_class: Dataclass mapping regime names to integer indices.
-            enable_jit: Whether to jit the functions of the internal regime.
+            enable_jit: Whether to JIT-compile the functions of the internal
+                regimes.
             fixed_params: Parameters that can be fixed at model initialization.
+            derived_categoricals: Categorical grids for DAG function outputs
+                not in states/actions. Broadcast to all regimes (merged with
+                each regime's own `derived_categoricals`). Raises if a regime
+                already has a conflicting entry.
 
         """
         self.description = description
@@ -125,10 +132,10 @@ class Model:
                 )
             )
         )
-        self.regimes = MappingProxyType(dict(regimes))
+        self.regimes = _merge_derived_categoricals(regimes, derived_categoricals)
         self.internal_regimes, self._params_template = build_regimes_and_template(
-            regimes=regimes,
             ages=self.ages,
+            regimes=self.regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             enable_jit=enable_jit,
             fixed_params=self.fixed_params,
@@ -162,8 +169,6 @@ class Model:
         self,
         *,
         params: UserParams,
-        derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
-        | None = None,
         log_level: LogLevel = "progress",
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
@@ -181,10 +186,6 @@ class Model:
                   specification
                 Values may be `pd.Series` with labeled indices; they are
                 auto-converted to JAX arrays.
-            derived_categoricals: Extra categorical mappings (level name to
-                `DiscreteGrid`) for derived variables not in the model's
-                state/action grids. Pass per-regime mappings as
-                `{"var": {"regime_a": grid_a, ...}}`.
             log_level: Logging verbosity. `"off"` suppresses output, `"warning"` shows
                 NaN/Inf warnings, `"progress"` adds timing, `"debug"` adds stats and
                 requires `log_path`.
@@ -197,13 +198,7 @@ class Model:
 
         """
         _validate_log_args(log_level=log_level, log_path=log_path)
-        internal_params = process_params(
-            params=params, params_template=self._params_template
-        )
-        internal_params = _maybe_convert_series(
-            internal_params, model=self, derived_categoricals=derived_categoricals
-        )
-        _validate_param_types(internal_params)
+        internal_params = self._process_params(params)
         validate_regime_transitions_all_periods(
             internal_regimes=self.internal_regimes,
             internal_params=internal_params,
@@ -229,8 +224,6 @@ class Model:
         self,
         *,
         params: UserParams,
-        derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
-        | None = None,
         initial_conditions: Mapping[str, Array],
         period_to_regime_to_V_arr: MappingProxyType[
             int, MappingProxyType[RegimeName, FloatND]
@@ -259,10 +252,6 @@ class Model:
                   specification
                 Values may be `pd.Series` with labeled indices; they are
                 auto-converted to JAX arrays.
-            derived_categoricals: Extra categorical mappings (level name to
-                `DiscreteGrid`) for derived variables not in the model's
-                state/action grids. Pass per-regime mappings as
-                `{"var": {"regime_a": grid_a, ...}}`.
             initial_conditions: Mapping of state names (plus `"regime"`) to arrays.
                 All arrays must have the same length (number of subjects). The
                 `"regime"` entry must contain integer regime codes (from
@@ -285,14 +274,13 @@ class Model:
 
         """
         _validate_log_args(log_level=log_level, log_path=log_path)
-        initial_conditions = _maybe_convert_dataframe(initial_conditions, model=self)
-        internal_params = process_params(
-            params=params, params_template=self._params_template
-        )
-        internal_params = _maybe_convert_series(
-            internal_params, model=self, derived_categoricals=derived_categoricals
-        )
-        _validate_param_types(internal_params)
+        if isinstance(initial_conditions, pd.DataFrame):
+            initial_conditions = initial_conditions_from_dataframe(
+                df=initial_conditions,
+                regimes=self.regimes,
+                regime_names_to_ids=self.regime_names_to_ids,
+            )
+        internal_params = self._process_params(params)
         if check_initial_conditions:
             validate_initial_conditions(
                 initial_conditions=initial_conditions,
@@ -337,71 +325,59 @@ class Model:
             )
         return result
 
-
-def _maybe_convert_series(
-    internal_params: InternalParams,
-    *,
-    model: Model,
-    derived_categoricals: Mapping[str, DiscreteGrid | Mapping[str, DiscreteGrid]]
-    | None,
-) -> InternalParams:
-    """Convert pd.Series leaves in params to JAX arrays if any are present."""
-    if derived_categoricals is not None or has_series(internal_params):
-        return convert_series_in_params(
-            internal_params=internal_params,
-            model=model,
-            derived_categoricals=derived_categoricals,
+    def _process_params(self, params: UserParams) -> InternalParams:
+        """Broadcast, convert Series, and validate user params."""
+        internal_params = process_params(
+            params=params, params_template=self._params_template
         )
-    return internal_params
+        if has_series(internal_params):
+            internal_params = convert_series_in_params(
+                internal_params=internal_params,
+                ages=self.ages,
+                regimes=self.regimes,
+                regime_names_to_ids=self.regime_names_to_ids,
+            )
+        _validate_param_types(internal_params)
+        return internal_params
 
 
-def _validate_param_types(internal_params: InternalParams) -> None:
-    """Raise if any param leaf is not a Python scalar or JAX array.
+def _merge_derived_categoricals(
+    regimes: Mapping[str, Regime],
+    derived_categoricals: Mapping[str, DiscreteGrid],
+) -> MappingProxyType[str, Regime]:
+    """Merge model-level derived_categoricals into each regime.
 
-    After processing, every leaf value (including inside MappingLeaf /
-    SequenceLeaf containers) must be a Python scalar (float, int, bool) or a
-    JAX array. Notably, numpy arrays and pandas Series are not accepted.
+    Args:
+        regimes: Mapping of regime names to Regime instances.
+        derived_categoricals: Model-level categorical grids to broadcast.
+
+    Returns:
+        Immutable mapping of regime names to (possibly updated) Regime instances.
+
+    Raises:
+        ModelInitializationError: If a regime already has a conflicting entry
+            (same key, different categories).
+
     """
-    for regime_name, regime_params in internal_params.items():
-        for key, value in regime_params.items():
-            _check_leaf(value, f"{regime_name}__{key}")
-
-
-def _check_leaf(value: object, path: str) -> None:
-    """Check a single leaf value, recursing into MappingLeaf/SequenceLeaf."""
-    if isinstance(value, MappingLeaf):
-        for k, v in value.data.items():
-            _check_leaf(v, f"{path}.{k}")
-        return
-    if isinstance(value, SequenceLeaf):
-        for i, v in enumerate(value.data):
-            _check_leaf(v, f"{path}[{i}]")
-        return
-    if isinstance(value, (float, int, bool)):
-        return
-    if hasattr(value, "dtype") and hasattr(value, "shape"):
-        if isinstance(value, Array):
-            return
-        type_name = type(value).__module__ + "." + type(value).__name__
-        msg = (
-            f"Parameter '{path}' is a {type_name} (shape {value.shape}). "
-            f"Use jnp.array() or pass a pd.Series with a named index."
+    if not derived_categoricals:
+        return MappingProxyType(dict(regimes))
+    result = {}
+    for name, regime in regimes.items():
+        merged = dict(regime.derived_categoricals)
+        for var, grid in derived_categoricals.items():
+            existing = merged.get(var)
+            if existing is not None and existing.categories != grid.categories:
+                msg = (
+                    f"Model-level derived_categoricals['{var}'] conflicts "
+                    f"with regime '{name}': {grid.categories} vs "
+                    f"{existing.categories}."
+                )
+                raise ModelInitializationError(msg)
+            merged[var] = grid
+        result[name] = dataclasses.replace(
+            regime, derived_categoricals=MappingProxyType(merged)
         )
-        raise InvalidParamsError(msg)
-    type_name = type(value).__module__ + "." + type(value).__name__
-    msg = f"Parameter '{path}' has unexpected type {type_name}."
-    raise InvalidParamsError(msg)
-
-
-def _maybe_convert_dataframe(
-    initial_conditions: Mapping[str, Array],
-    *,
-    model: Model,
-) -> Mapping[str, Array]:
-    """Convert a DataFrame to initial_conditions dict if needed."""
-    if isinstance(initial_conditions, pd.DataFrame):
-        return initial_conditions_from_dataframe(df=initial_conditions, model=model)
-    return initial_conditions
+    return MappingProxyType(result)
 
 
 def _validate_log_args(*, log_level: LogLevel, log_path: str | Path | None) -> None:

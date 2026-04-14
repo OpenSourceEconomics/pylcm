@@ -222,10 +222,12 @@ Model(
 
 ### Derived Categoricals
 
-When `solve()` / `simulate()` parameters are indexed by a DAG function output (not a
-model state/action), pass `derived_categoricals={"name": DiscreteGrid(...)}`. Functions
-used as derived categoricals must return **integer** types, not booleans — JAX cannot
-use booleans as array indices inside JIT. Use `jnp.int32(...)` to cast.
+When parameters are indexed by a DAG function output (not a model state/action), declare
+`derived_categoricals={"name": DiscreteGrid(CategoryClass)}` on the `Regime` that uses
+it. For convenience, model-level `derived_categoricals` on `Model(...)` are broadcast to
+all regimes. Functions used as derived categoricals must return **integer** types, not
+booleans — JAX cannot use booleans as array indices inside JIT. Use `jnp.int32(...)` to
+cast.
 
 ### SimulationResult
 
