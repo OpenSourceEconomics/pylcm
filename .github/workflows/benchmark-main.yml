@@ -29,10 +29,10 @@ jobs:
           fetch-depth: 0
       - name: Install environment
         run: pixi install -e tests-cuda12
-      - name: Reinstall project (regenerate _version.py)
+      - name: Regenerate _version.py
         run: >-
-          pixi run -e tests-cuda12 python -m pip install
-          --no-build-isolation --no-deps -e .
+          echo "__version__ = '$(git describe --tags --always)'"
+          > src/lcm/_version.py
       - name: Setup ASV machine
         run: pixi run -e tests-cuda12 asv machine --yes
       - name: Run benchmarks and publish
