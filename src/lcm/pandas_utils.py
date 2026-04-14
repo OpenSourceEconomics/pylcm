@@ -625,8 +625,8 @@ def _build_outcome_mapping(
         regime_names_to_ids: Immutable mapping from regime names to integer
             indices.
 
-        Returns:
-            `_LevelMapping` for the outcome (last) axis.
+    Returns:
+        `_LevelMapping` for the outcome (last) axis.
 
     """
     if func_name == "next_regime":
