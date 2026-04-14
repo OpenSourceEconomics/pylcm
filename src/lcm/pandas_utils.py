@@ -627,16 +627,17 @@ def _build_outcome_mapping(
 ) -> _LevelMapping:
     """Build a `_LevelMapping` for the outcome axis of a `next_*` function.
 
-        For state transitions (e.g. `"next_partner"`), look up the state grid.
+    For state transitions (e.g. `"next_partner"`), look up the state grid.
     For per-target transitions (e.g. `"next_health__post65"`), use the target
     regime's grid for the outcome axis.
     For regime transitions (`"next_regime"`), use `regime_names_to_ids`.
 
-        Args:
-            func_name: Function name starting with `"next_"`.
-            grids: Categorical grid lookup.
-            regime_names_to_ids: Immutable mapping from regime names to integer
-                indices.
+    Args:
+        func_name: Function name starting with `"next_"`.
+        grids: Categorical grid lookup.
+        regimes: Mapping of regime names to user Regime instances.
+        regime_names_to_ids: Immutable mapping from regime names to integer
+            indices.
 
         Returns:
             `_LevelMapping` for the outcome (last) axis.
