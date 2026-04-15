@@ -1347,19 +1347,21 @@ def _partition_targets(
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Partition active target regimes into complete and incomplete.
 
-    Complete targets have all required stochastic transitions. Incomplete
-    targets are missing some (assumed to have zero transition probability,
-    validated at runtime by `_check_zero_probs`).
+    Complete targets have all required stochastic transitions in
+    `transitions`. Incomplete targets are either missing some stochastic
+    transitions or entirely absent from `transitions` (e.g. when a
+    per-target dict omits a reachable target). Incomplete targets must have
+    zero transition probability at runtime; this is enforced by NaN-poisoning
+    in `get_Q_and_F`.
 
     Returns:
         Tuple of (complete_targets, incomplete_targets).
 
     """
-    target_regime_names = tuple(transitions)
     all_active = tuple(
         name
-        for name in target_regime_names
-        if period + 1 in regimes_to_active_periods[name]
+        for name in regime_to_v_interpolation_info
+        if period + 1 in regimes_to_active_periods.get(name, ())
     )
 
     complete: list[str] = []
@@ -1370,9 +1372,9 @@ def _partition_targets(
             for s in regime_to_v_interpolation_info[name].state_names
             if f"next_{s}" in stochastic_transition_names
         }
-        if target_stochastic_needs.issubset(transitions[name]):
+        if name in transitions and target_stochastic_needs.issubset(transitions[name]):
             complete.append(name)
-        else:
+        elif target_stochastic_needs:
             incomplete.append(name)
 
     return tuple(complete), tuple(incomplete)

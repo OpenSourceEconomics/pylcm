@@ -181,6 +181,17 @@ def _enrich_with_diagnostics(
     )
     exc.add_note(_format_diagnostic_summary(exc.diagnostics))
 
+    incomplete = getattr(compute_intermediates, "incomplete_targets", ())
+    for target in incomplete:
+        mean_prob = float(np.mean(np.asarray(regime_probs.get(target, 0))))
+        if mean_prob > 0:
+            exc.add_note(
+                f"Target '{target}' has mean transition probability "
+                f"{mean_prob:.4f} but is missing stochastic state "
+                f"transitions. Add entries for '{target}' in the "
+                f"per-target state_transitions dict."
+            )
+
 
 def _summarize_diagnostics(
     *,
