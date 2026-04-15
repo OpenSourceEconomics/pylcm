@@ -1,9 +1,11 @@
 import functools
 import logging
 import os
+import threading
 import time
 from collections.abc import Callable, Hashable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from types import MappingProxyType
 
 import jax
@@ -41,7 +43,7 @@ def solve(
         logger: Logger that logs to stdout.
         enable_jit: Whether to JIT-compile the functions of the internal regimes.
         max_compilation_workers: Maximum number of threads for parallel XLA compilation.
-            Defaults to `os.cpu_count()`.
+            Defaults to the number of physical CPU cores.
 
     Returns:
         Immutable mapping of periods to regime value function arrays.
@@ -204,7 +206,7 @@ def _compile_all_functions(
         if func_id not in unique:
             unique[func_id] = (func, name, period)
 
-    n_workers = max_compilation_workers or os.cpu_count() or 1
+    n_workers = max_compilation_workers or _get_physical_core_count()
     n_unique = len(unique)
 
     logger.info(
@@ -240,6 +242,42 @@ def _compile_all_functions(
         logger.info("  lowered in %s", format_duration(seconds=elapsed))
 
     # Phase 2: Compile all lowered programs in parallel (XLA releases the GIL).
+    compiled = _compile_lowered_programs(
+        lowered=lowered,
+        labels=labels,
+        n_workers=n_workers,
+        logger=logger,
+    )
+
+    # Map back to (regime, period) keys.
+    return {key: compiled[_func_dedup_key(func)] for key, func in all_functions.items()}
+
+
+def _compile_lowered_programs(
+    *,
+    lowered: dict[Hashable, jax.stages.Lowered],
+    labels: dict[Hashable, str],
+    n_workers: int,
+    logger: logging.Logger,
+) -> dict[Hashable, jax.stages.Compiled]:
+    """Compile lowered programs in parallel with memory-aware throttling.
+
+    Use HLO text size as a proxy for compilation memory. A condition variable
+    enforces a memory budget: large compilations limit concurrency while small
+    ones run in parallel.
+
+    """
+    hlo_sizes: dict[Hashable, int] = {
+        fid: len(low.as_text()) for fid, low in lowered.items()
+    }
+    budget = _get_compilation_memory_budget()
+    largest_cost = max(hlo_sizes.values()) * _HLO_TO_MEMORY_SCALE
+    logger.info(
+        "Compilation memory budget: %s  (largest estimated: %s)",
+        format_bytes(budget),
+        format_bytes(largest_cost),
+    )
+
     compiled: dict[Hashable, jax.stages.Compiled] = {}
 
     def _compile_and_log(
@@ -254,17 +292,49 @@ def _compile_all_functions(
         logger.info("  compiled  %s  %s", label, format_duration(seconds=elapsed))
         return func_id, result
 
+    # Submit largest-first so big compilations start immediately and
+    # small ones fill the gaps as memory frees up.
+    ordered = sorted(lowered, key=lambda k: hlo_sizes[k], reverse=True)
+
+    active_cost = 0
+    budget_freed = threading.Condition(threading.Lock())
+
+    def _compile_with_budget(
+        func_id: Hashable,
+        low: jax.stages.Lowered,
+        label: str,
+        cost: int,
+    ) -> tuple[Hashable, jax.stages.Compiled]:
+        try:
+            return _compile_and_log(func_id, low, label)
+        finally:
+            nonlocal active_cost
+            with budget_freed:
+                active_cost -= cost
+                budget_freed.notify_all()
+
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
-        futures = [
-            pool.submit(_compile_and_log, func_id, low, labels[func_id])
-            for func_id, low in lowered.items()
-        ]
+        futures: list = []
+        for func_id in ordered:
+            cost = hlo_sizes[func_id] * _HLO_TO_MEMORY_SCALE
+            with budget_freed:
+                while active_cost + cost > budget and active_cost > 0:
+                    budget_freed.wait()
+                active_cost += cost
+            futures.append(
+                pool.submit(
+                    _compile_with_budget,
+                    func_id,
+                    lowered[func_id],
+                    labels[func_id],
+                    cost,
+                )
+            )
         for future in as_completed(futures):
             func_id, comp = future.result()
             compiled[func_id] = comp
 
-    # Map back to (regime, period) keys.
-    return {key: compiled[_func_dedup_key(func)] for key, func in all_functions.items()}
+    return compiled
 
 
 def _func_dedup_key(func: Callable) -> Hashable:
@@ -304,3 +374,55 @@ def _get_regime_V_shapes(
         )
         shapes[name] = tuple(len(v) for v in state_action_space.states.values())
     return shapes
+
+
+# Estimated bytes of RAM per byte of HLO text during XLA compilation.
+_HLO_TO_MEMORY_SCALE = 100
+
+
+def _get_compilation_memory_budget() -> int:
+    """Return memory budget for parallel XLA compilation in bytes.
+
+    Use 70% of total physical RAM. Fall back to 8 GB on non-POSIX platforms.
+
+    """
+    try:
+        pages = os.sysconf("SC_PHYS_PAGES")
+        page_size = os.sysconf("SC_PAGE_SIZE")
+        return int(pages * page_size * 0.7)
+    except ValueError, OSError:
+        return 8 * 1024**3
+
+
+def _get_physical_core_count() -> int:
+    """Return the number of physical CPU cores.
+
+    Count unique (package, core) pairs via sysfs topology on Linux.
+    Fall back to `os.cpu_count()` on other platforms.
+
+    """
+    cpu_dir = Path("/sys/devices/system/cpu")
+    try:
+        physical: set[tuple[str, str]] = set()
+        for entry in cpu_dir.iterdir():
+            if entry.name.startswith("cpu") and entry.name[3:].isdigit():
+                pkg = (entry / "topology" / "physical_package_id").read_text().strip()
+                core = (entry / "topology" / "core_id").read_text().strip()
+                physical.add((pkg, core))
+        if physical:
+            return len(physical)
+    except OSError:
+        pass
+    return os.cpu_count() or 1
+
+
+_BYTES_PER_KB = 1024
+
+
+def format_bytes(n: float) -> str:
+    """Format byte count as human-readable string."""
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(n) < _BYTES_PER_KB:
+            return f"{n:.1f} {unit}"
+        n /= _BYTES_PER_KB
+    return f"{n:.1f} PB"
