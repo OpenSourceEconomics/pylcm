@@ -248,6 +248,7 @@ class Model:
         log_level: LogLevel = "progress",
         log_path: str | Path | None = None,
         log_keep_n_latest: int = 3,
+        max_compilation_workers: int | None = None,
     ) -> SimulationResult:
         """Simulate the model forward, optionally solving first.
 
@@ -281,6 +282,10 @@ class Model:
             log_path: Directory for persisting debug snapshots. Required when
                 `log_level="debug"`.
             log_keep_n_latest: Maximum number of debug snapshots to keep on disk.
+            max_compilation_workers: Maximum number of threads for parallel XLA
+                compilation. Only used when `period_to_regime_to_V_arr` is `None`
+                (i.e. when solve runs automatically). Defaults to the number of
+                physical CPU cores.
 
         Returns:
             SimulationResult object. Call .to_dataframe() to get a pandas DataFrame,
@@ -317,6 +322,7 @@ class Model:
                     internal_regimes=self.internal_regimes,
                     logger=log,
                     enable_jit=self.enable_jit,
+                    max_compilation_workers=max_compilation_workers,
                 )
             except InvalidValueFunctionError as exc:
                 if log_path is not None and exc.partial_solution is not None:
