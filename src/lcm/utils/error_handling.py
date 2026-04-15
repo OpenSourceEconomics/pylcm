@@ -61,7 +61,9 @@ def validate_V(
             "reasons:\n"
             "- The user-defined functions returned invalid values.\n"
             "- It is impossible to reach an active regime, resulting in NaN regime\n"
-            "  transition probabilities."
+            "  transition probabilities.\n"
+            "- A per-target state_transitions dict omits a reachable target\n"
+            "  (non-zero transition probability to an incomplete target)."
         )
 
 

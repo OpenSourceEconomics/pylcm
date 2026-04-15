@@ -1,9 +1,9 @@
+import logging
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Any, cast
 
 import jax
-import jax.experimental
 import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
 from jax import Array
@@ -68,16 +68,18 @@ def get_Q_and_F(  # noqa: C901, PLR0915
     joint_weights_from_marginals = {}
     next_V = {}
 
-    target_regime_names = tuple(transitions)
+    # Enumerate all active targets, not just those in transitions — targets
+    # entirely absent from per-target dicts must also be detected.
     all_active_next_period = tuple(
         name
-        for name in target_regime_names
-        if period + 1 in regimes_to_active_periods[name]
+        for name in regime_to_v_interpolation_info
+        if period + 1 in regimes_to_active_periods.get(name, ())
     )
 
-    # Partition active targets into complete (have all stochastic transitions)
-    # and incomplete (missing stochastic transitions, assumed to have zero
-    # transition probability — validated at runtime by _check_zero_probs).
+    # Partition active targets into complete (have all stochastic transitions
+    # in transitions) and incomplete (missing some or entirely absent from
+    # transitions). Incomplete targets must have zero transition probability
+    # at runtime; enforced by NaN-poisoning below.
     complete_targets: list[str] = []
     incomplete_targets: list[str] = []
     for name in all_active_next_period:
@@ -86,9 +88,9 @@ def get_Q_and_F(  # noqa: C901, PLR0915
             for s in regime_to_v_interpolation_info[name].state_names
             if f"next_{s}" in stochastic_transition_names
         }
-        if target_stochastic_needs.issubset(transitions[name]):
+        if name in transitions and target_stochastic_needs.issubset(transitions[name]):
             complete_targets.append(name)
-        else:
+        elif target_stochastic_needs:
             incomplete_targets.append(name)
 
     next_V_extra_param_names: dict[str, frozenset[str]] = {}
@@ -162,10 +164,13 @@ def get_Q_and_F(  # noqa: C901, PLR0915
 
     # Guard callback for incomplete targets — defined at closure scope so JAX
     # sees the same function object across calls (avoids JIT re-compilation).
+    # Only active when the logger is at DEBUG level; otherwise a no-op.
     if incomplete_targets:
 
         def _check_zero_probs(probs: Mapping[str, Array]) -> None:
             """Validate that incomplete targets have zero transition probability."""
+            if not logging.getLogger("lcm").isEnabledFor(logging.DEBUG):
+                return
             for target in incomplete_targets:
                 prob = float(probs[target])
                 if prob > 0:
@@ -213,14 +218,6 @@ def get_Q_and_F(  # noqa: C901, PLR0915
             {r: regime_transition_probs[r] for r in all_active_next_period}
         )
 
-        if incomplete_targets:
-            jax.experimental.io_callback(
-                _check_zero_probs,
-                None,
-                dict(active_regime_probs),
-                ordered=True,
-            )
-
         E_next_V = jnp.zeros_like(U_arr)
         for target_regime_name in complete_targets:
             next_states = state_transitions[target_regime_name](
@@ -260,6 +257,17 @@ def get_Q_and_F(  # noqa: C901, PLR0915
             )
             E_next_V = (
                 E_next_V + active_regime_probs[target_regime_name] * next_V_expected_arr
+            )
+
+        if incomplete_targets:
+            # In debug mode, raise immediately with a specific message.
+            jax.debug.callback(_check_zero_probs, dict(active_regime_probs))
+            # NaN-poison E_next_V as a reliable fallback for all modes.
+            _incomplete_prob = sum(active_regime_probs[t] for t in incomplete_targets)
+            E_next_V = jnp.where(
+                _incomplete_prob == 0.0,
+                E_next_V,
+                jnp.full_like(E_next_V, jnp.nan),
             )
 
         H_kwargs = {

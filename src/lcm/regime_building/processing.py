@@ -608,15 +608,11 @@ def _extract_transitions_from_regime(
         {"next_regime": regime.transition},
     )
 
-    # When per-target transitions exist, they explicitly name reachable targets.
-    # Only build transitions for those targets to avoid spurious entries for
-    # unreachable regimes (e.g., tied targets from a retiree source).
-    if per_target_transitions:
-        reachable_targets: set[str] = set()
-        for variants in per_target_transitions.values():
-            reachable_targets |= variants.keys()
-    else:
-        reachable_targets = set(states_per_regime.keys())
+    reachable_targets = _get_reachable_targets(
+        per_target_transitions=per_target_transitions,
+        simple_transitions=simple_transitions,
+        states_per_regime=states_per_regime,
+    )
 
     for target_regime_name in reachable_targets:
         target_regime_state_names = states_per_regime[target_regime_name]
@@ -633,6 +629,34 @@ def _extract_transitions_from_regime(
             nested[target_regime_name] = target_dict
 
     return nested
+
+
+def _get_reachable_targets(
+    *,
+    per_target_transitions: dict[str, dict[str, UserFunction]],
+    simple_transitions: dict[str, UserFunction],
+    states_per_regime: Mapping[str, set[str]],
+) -> set[str]:
+    """Determine which target regimes need transition entries.
+
+    When per-target transitions exist, start from the explicitly named targets
+    and add any target whose state needs are fully covered by simple
+    (non-per-target) transitions. Without per-target transitions, all regimes
+    are reachable.
+
+    """
+    if not per_target_transitions:
+        return set(states_per_regime.keys())
+
+    targets: set[str] = set()
+    for variants in per_target_transitions.values():
+        targets |= variants.keys()
+    for target_name, target_states in states_per_regime.items():
+        if target_name not in targets:
+            needed = {f"next_{s}" for s in target_states}
+            if needed and needed.issubset(simple_transitions):
+                targets.add(target_name)
+    return targets
 
 
 def _classify_transitions(
