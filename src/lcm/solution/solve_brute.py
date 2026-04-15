@@ -286,10 +286,22 @@ def _compile_lowered_programs(
         label: str,
     ) -> tuple[Hashable, jax.stages.Compiled]:
         logger.info("  compiling %s ...", label)
+        rss_before = _get_rss()
         start = time.monotonic()
         result = low.compile()
         elapsed = time.monotonic() - start
-        logger.info("  compiled  %s  %s", label, format_duration(seconds=elapsed))
+        rss_after = _get_rss()
+        rss_delta = rss_after - rss_before
+        hlo_size = hlo_sizes[func_id]
+        actual_scale = rss_delta / hlo_size if hlo_size > 0 else 0
+        logger.info(
+            "  compiled  %s  %s  (RSS delta: %s, HLO: %s, scale: %.0f)",
+            label,
+            format_duration(seconds=elapsed),
+            format_bytes(rss_delta),
+            format_bytes(hlo_size),
+            actual_scale,
+        )
         return func_id, result
 
     # Submit largest-first so big compilations start immediately and
@@ -426,3 +438,18 @@ def format_bytes(n: float) -> str:
             return f"{n:.1f} {unit}"
         n /= _BYTES_PER_KB
     return f"{n:.1f} PB"
+
+
+def _get_rss() -> int:
+    """Return current process RSS in bytes via /proc/self/status.
+
+    Fall back to 0 on non-Linux platforms.
+
+    """
+    try:
+        for line in Path("/proc/self/status").read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1]) * _BYTES_PER_KB
+    except OSError:
+        pass
+    return 0
