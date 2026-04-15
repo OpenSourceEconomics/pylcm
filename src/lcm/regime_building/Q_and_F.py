@@ -1,9 +1,9 @@
+import logging
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Any, cast
 
 import jax
-import jax.experimental
 import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
 from jax import Array
@@ -144,10 +144,13 @@ def get_Q_and_F(
 
     # Guard callback for incomplete targets — defined at closure scope so JAX
     # sees the same function object across calls (avoids JIT re-compilation).
+    # Only active when the logger is at DEBUG level; otherwise a no-op.
     if incomplete_targets:
 
         def _check_zero_probs(probs: Mapping[str, Array]) -> None:
             """Validate that incomplete targets have zero transition probability."""
+            if not logging.getLogger("lcm").isEnabledFor(logging.DEBUG):
+                return
             for target in incomplete_targets:
                 prob = float(probs[target])
                 if prob > 0:
@@ -186,14 +189,6 @@ def get_Q_and_F(
             {r: regime_transition_probs[r] for r in all_active_next_period}
         )
 
-        if incomplete_targets:
-            jax.experimental.io_callback(
-                _check_zero_probs,
-                None,
-                dict(active_regime_probs),
-                ordered=True,
-            )
-
         E_next_V = jnp.zeros_like(U_arr)
         for target_regime_name in complete_targets:
             next_states = state_transitions[target_regime_name](
@@ -227,6 +222,17 @@ def get_Q_and_F(
             )
             E_next_V = (
                 E_next_V + active_regime_probs[target_regime_name] * next_V_expected_arr
+            )
+
+        if incomplete_targets:
+            # In debug mode, raise immediately with a specific message.
+            jax.debug.callback(_check_zero_probs, dict(active_regime_probs))
+            # NaN-poison E_next_V as a reliable fallback for all modes.
+            _incomplete_prob = sum(active_regime_probs[t] for t in incomplete_targets)
+            E_next_V = jnp.where(
+                _incomplete_prob == 0.0,
+                E_next_V,
+                jnp.full_like(E_next_V, jnp.nan),
             )
 
         H_kwargs = {
@@ -357,6 +363,7 @@ def get_compute_intermediates(
 
         return U_arr, F_arr, E_next_V, Q_arr, active_regime_probs
 
+    compute_intermediates.incomplete_targets = incomplete_targets  # ty: ignore[attr-defined]
     return compute_intermediates
 
 

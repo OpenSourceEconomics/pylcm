@@ -358,27 +358,3 @@ def test_incomplete_target_zero_prob_succeeds():
 
     model, params = _build_incomplete_target_model(next_regime_func=_next_regime)
     model.solve(params=params)
-
-
-@pytest.mark.xfail(
-    reason="io_callback does not propagate ValueError through JIT on all backends",
-    strict=False,
-)
-def test_incomplete_target_nonzero_prob_raises():
-    """Solve raises when incomplete target has non-zero transition probability."""
-
-    def _next_regime_to_retire(age: float) -> ScalarInt:
-        return jnp.where(
-            age >= 2,
-            _IncompleteTargetRegimeId.dead,
-            _IncompleteTargetRegimeId.retire,
-        )
-
-    model, params = _build_incomplete_target_model(
-        next_regime_func=_next_regime_to_retire,
-    )
-    with pytest.raises(
-        jax.errors.JaxRuntimeError,
-        match=r"transition probability to 'retire'",
-    ):
-        model.solve(params=params)

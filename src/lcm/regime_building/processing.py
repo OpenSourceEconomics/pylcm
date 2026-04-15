@@ -625,15 +625,11 @@ def _extract_transitions_from_regime(
         {"next_regime": regime.transition},
     )
 
-    # When per-target transitions exist, they explicitly name reachable targets.
-    # Only build transitions for those targets to avoid spurious entries for
-    # unreachable regimes (e.g., tied targets from a retiree source).
-    if per_target_transitions:
-        reachable_targets: set[str] = set()
-        for variants in per_target_transitions.values():
-            reachable_targets |= variants.keys()
-    else:
-        reachable_targets = set(states_per_regime.keys())
+    reachable_targets = _get_reachable_targets(
+        per_target_transitions=per_target_transitions,
+        simple_transitions=simple_transitions,
+        states_per_regime=states_per_regime,
+    )
 
     for target_regime_name in reachable_targets:
         target_regime_state_names = states_per_regime[target_regime_name]
@@ -650,6 +646,34 @@ def _extract_transitions_from_regime(
             nested[target_regime_name] = target_dict
 
     return nested
+
+
+def _get_reachable_targets(
+    *,
+    per_target_transitions: dict[str, dict[str, UserFunction]],
+    simple_transitions: dict[str, UserFunction],
+    states_per_regime: Mapping[str, set[str]],
+) -> set[str]:
+    """Determine which target regimes need transition entries.
+
+    When per-target transitions exist, start from the explicitly named targets
+    and add any target whose state needs are fully covered by simple
+    (non-per-target) transitions. Without per-target transitions, all regimes
+    are reachable.
+
+    """
+    if not per_target_transitions:
+        return set(states_per_regime.keys())
+
+    targets: set[str] = set()
+    for variants in per_target_transitions.values():
+        targets |= variants.keys()
+    for target_name, target_states in states_per_regime.items():
+        if target_name not in targets:
+            needed = {f"next_{s}" for s in target_states}
+            if needed and needed.issubset(simple_transitions):
+                targets.add(target_name)
+    return targets
 
 
 def _classify_transitions(
@@ -1323,19 +1347,21 @@ def _partition_targets(
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Partition active target regimes into complete and incomplete.
 
-    Complete targets have all required stochastic transitions. Incomplete
-    targets are missing some (assumed to have zero transition probability,
-    validated at runtime by `_check_zero_probs`).
+    Complete targets have all required stochastic transitions in
+    `transitions`. Incomplete targets are either missing some stochastic
+    transitions or entirely absent from `transitions` (e.g. when a
+    per-target dict omits a reachable target). Incomplete targets must have
+    zero transition probability at runtime; this is enforced by NaN-poisoning
+    in `get_Q_and_F`.
 
     Returns:
         Tuple of (complete_targets, incomplete_targets).
 
     """
-    target_regime_names = tuple(transitions)
     all_active = tuple(
         name
-        for name in target_regime_names
-        if period + 1 in regimes_to_active_periods[name]
+        for name in regime_to_v_interpolation_info
+        if period + 1 in regimes_to_active_periods.get(name, ())
     )
 
     complete: list[str] = []
@@ -1346,9 +1372,9 @@ def _partition_targets(
             for s in regime_to_v_interpolation_info[name].state_names
             if f"next_{s}" in stochastic_transition_names
         }
-        if target_stochastic_needs.issubset(transitions[name]):
+        if name in transitions and target_stochastic_needs.issubset(transitions[name]):
             complete.append(name)
-        else:
+        elif target_stochastic_needs:
             incomplete.append(name)
 
     return tuple(complete), tuple(incomplete)
