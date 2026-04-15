@@ -1614,6 +1614,7 @@ def test_build_outcome_mapping_qualified_func_name() -> None:
     result = _build_outcome_mapping(
         func_name="next_health__working",
         grids=grids,
+        regimes=model.regimes,
         regime_names_to_ids=model.regime_names_to_ids,
     )
     assert result.size == 2
@@ -1785,6 +1786,107 @@ def test_resolve_categoricals_conflict_raises() -> None:
             regimes={"working_life": conflicting_regime},
             regime_name="working_life",
         )
+
+
+def test_convert_series_cross_grid_transition() -> None:
+    """Outcome axis must use the TARGET regime's grid, not the source's.
+
+    When a per-target MarkovTransition crosses grid sizes (e.g. 3-state
+    source → 2-state target), the converted array's last dimension must
+    match the target's grid size (2), not the source's (3).
+    """
+    from lcm import MarkovTransition  # noqa: PLC0415
+    from lcm.typing import DiscreteState, FloatND, Period  # noqa: PLC0415
+
+    @categorical(ordered=True)
+    class _HealthPre:
+        disabled: int
+        bad: int
+        good: int
+
+    @categorical(ordered=True)
+    class _HealthPost:
+        bad: int
+        good: int
+
+    @categorical(ordered=False)
+    class _RId:
+        pre65: int
+        post65: int
+
+    def _health_probs_same(
+        period: Period, health: DiscreteState, health_trans_probs: FloatND
+    ) -> FloatND:
+        return health_trans_probs[period, health]
+
+    def _health_probs_cross(
+        period: Period, health: DiscreteState, health_trans_probs_cross: FloatND
+    ) -> FloatND:
+        return health_trans_probs_cross[period, health]
+
+    pre65 = Regime(
+        states={
+            "health": DiscreteGrid(_HealthPre),
+            "wealth": LinSpacedGrid(start=0, stop=10, n_points=5),
+        },
+        state_transitions={
+            "health": {
+                "pre65": MarkovTransition(_health_probs_same),
+                "post65": MarkovTransition(_health_probs_cross),
+            },
+            "wealth": lambda wealth: wealth,
+        },
+        functions={"utility": lambda health, wealth: wealth + health},
+        transition=lambda age: jnp.where(age >= 1, _RId.post65, _RId.pre65),
+        active=lambda age: age < 1,
+    )
+    post65 = Regime(
+        transition=None,
+        states={
+            "health": DiscreteGrid(_HealthPost),
+            "wealth": LinSpacedGrid(start=0, stop=10, n_points=5),
+        },
+        functions={"utility": lambda health, wealth: wealth + health},
+    )
+    model = Model(
+        regimes={"pre65": pre65, "post65": post65},
+        ages=AgeGrid(start=0, stop=1, step="Y"),
+        regime_id_class=_RId,
+    )
+
+    # Cross-grid transition probs: 3 source states → 2 target states
+    index_cross = pd.MultiIndex.from_tuples(
+        [
+            (0.0, "disabled", "bad"),
+            (0.0, "disabled", "good"),
+            (0.0, "bad", "bad"),
+            (0.0, "bad", "good"),
+            (0.0, "good", "bad"),
+            (0.0, "good", "good"),
+        ],
+        names=["age", "health", "next_health"],
+    )
+    sr_cross = pd.Series([0.65, 0.35, 0.81, 0.19, 0.06, 0.94], index=index_cross)
+
+    params = {
+        "pre65": {
+            "to_post65_next_health": {"health_trans_probs_cross": sr_cross},
+        },
+    }
+    internal = broadcast_to_template(
+        params=params, template=model.get_params_template(), required=False
+    )
+    result = convert_series_in_params(
+        internal_params=internal,
+        regimes=model.regimes,
+        ages=model.ages,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
+
+    arr = result["pre65"]["to_post65_next_health__health_trans_probs_cross"]
+    # Shape: (n_ages=2, n_source_health=3, n_target_health=2)
+    # n_ages=2 because AgeGrid has ages [0, 1]; missing age 1 is NaN-filled.
+    assert arr.shape == (2, 3, 2)  # ty: ignore[unresolved-attribute]
 
 
 def test_resolve_categoricals_includes_derived_when_no_regime_name() -> None:
