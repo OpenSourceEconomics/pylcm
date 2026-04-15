@@ -363,7 +363,7 @@ def get_compute_intermediates(
 
         return U_arr, F_arr, E_next_V, Q_arr, active_regime_probs
 
-    compute_intermediates.incomplete_targets = incomplete_targets  # ty: ignore[unresolved-attribute]
+    compute_intermediates.incomplete_targets = incomplete_targets  # ty: ignore[attr-defined]
     return compute_intermediates
 
 
