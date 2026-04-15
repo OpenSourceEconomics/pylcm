@@ -17,14 +17,6 @@ os.environ.setdefault(
     str(Path.home() / ".cache" / "jax"),
 )
 
-# Limit XLA's internal compilation threads to 1. PyLCM's AOT compilation
-# already parallelises across functions via a thread pool; XLA's internal
-# threads multiply memory pressure without proportional speedup.
-_xla_flags = os.environ.get("XLA_FLAGS", "")
-if "--xla_gpu_force_compilation_parallelism" not in _xla_flags:
-    _flag = "--xla_gpu_force_compilation_parallelism=1"
-    os.environ["XLA_FLAGS"] = f"{_xla_flags} {_flag}".strip()
-
 import jax
 
 with contextlib.suppress(ImportError):

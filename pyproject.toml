@@ -223,9 +223,6 @@ per-file-ignores."explanations/*" = [
   "T201",   # print found
   "T203",   # pprint found
 ]
-per-file-ignores."src/lcm/__init__.py" = [
-  "E402", # Module level import not at top of file (env vars must be set before importing jax)
-]
 per-file-ignores."src/lcm/utils/functools.py" = [
   "ANN401", # Dynamically typed expressions (Any)
 ]
