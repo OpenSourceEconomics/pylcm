@@ -88,9 +88,7 @@ def validate_V(
         "- The utility function returned NaN (e.g. log of a non-positive "
         "argument).\n"
         "- The regime transition function returned NaN probabilities "
-        "(e.g. from a NaN survival probability or a NaN fixed param).\n"
-        "- A per-target state_transitions dict omits a reachable target "
-        "(non-zero transition probability to an incomplete target).\n\n"
+        "(e.g. from a NaN survival probability or a NaN fixed param).\n\n"
         "To diagnose, re-solve with debug logging:\n\n"
         '  model.solve(params=params, log_level="debug", '
         'log_path="./debug/")\n\n'
@@ -180,17 +178,6 @@ def _enrich_with_diagnostics(
         age=age,
     )
     exc.add_note(_format_diagnostic_summary(exc.diagnostics))
-
-    incomplete = getattr(compute_intermediates, "incomplete_targets", ())
-    for target in incomplete:
-        mean_prob = float(np.mean(np.asarray(regime_probs.get(target, 0))))
-        if mean_prob > 0:
-            exc.add_note(
-                f"Target '{target}' has mean transition probability "
-                f"{mean_prob:.4f} but is missing stochastic state "
-                f"transitions. Add entries for '{target}' in the "
-                f"per-target state_transitions dict."
-            )
 
 
 def _summarize_diagnostics(
