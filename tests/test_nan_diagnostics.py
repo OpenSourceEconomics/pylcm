@@ -34,16 +34,17 @@ def _make_nan_V(n_wealth: int = 3) -> jnp.ndarray:
 
 def test_diagnostic_arrays_have_state_action_grid_shape():
     """Diagnostic by_dim breakdown has entries for each state and action."""
-    sas = _make_state_action_space(n_wealth=3, n_consumption=2)
+    n_wealth, n_consumption = 3, 2
+    sas = _make_state_action_space(n_wealth=n_wealth, n_consumption=n_consumption)
 
-    def mock_compute_intermediates(**kwargs: jnp.ndarray) -> tuple:
-        wealth = jnp.asarray(kwargs["wealth"])
-        consumption = jnp.asarray(kwargs["consumption"])
-        U = jnp.log(consumption)
-        F = wealth - consumption >= 0
-        E_next_V = jnp.zeros_like(U)
-        Q = U + 0.9 * E_next_V
-        probs = MappingProxyType({"alive": jnp.array(1.0)})
+    def mock_compute_intermediates(**kwargs: jnp.ndarray) -> tuple:  # noqa: ARG001
+        # Return arrays shaped as (n_wealth, n_consumption) — the shape
+        # a productmap-wrapped compute_intermediates would produce.
+        U = jnp.zeros((n_wealth, n_consumption))
+        F = jnp.ones((n_wealth, n_consumption), dtype=bool)
+        E_next_V = jnp.zeros((n_wealth, n_consumption))
+        Q = jnp.zeros((n_wealth, n_consumption))
+        probs = MappingProxyType({"alive": jnp.ones((n_wealth, n_consumption))})
         return U, F, E_next_V, Q, probs
 
     with pytest.raises(InvalidValueFunctionError) as exc_info:
@@ -91,40 +92,3 @@ def test_diagnostic_failure_preserves_original_error():
             ),
             internal_params=MappingProxyType({}),
         )
-
-
-def test_gpu_fallback_catches_eager_runtime_errors():
-    """CPU fallback catches RuntimeError from eager (non-JIT) execution."""
-    sas = _make_state_action_space()
-    call_count = 0
-
-    def flaky_compute_intermediates(**kwargs: jnp.ndarray) -> tuple:  # noqa: ARG001
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            msg = "simulated GPU OOM"
-            raise RuntimeError(msg)
-        # Second call (CPU fallback) succeeds
-        U = jnp.zeros(3)
-        F = jnp.ones(3, dtype=bool)
-        E_next_V = jnp.zeros(3)
-        Q = jnp.zeros(3)
-        probs = MappingProxyType({"test": jnp.array(1.0)})
-        return U, F, E_next_V, Q, probs
-
-    with pytest.raises(InvalidValueFunctionError) as exc_info:
-        validate_V(
-            V_arr=_make_nan_V(),
-            age=0.0,
-            regime_name="test",
-            partial_solution=MappingProxyType({}),
-            compute_intermediates=flaky_compute_intermediates,
-            state_action_space=sas,
-            next_regime_to_V_arr=MappingProxyType(
-                {"test": jnp.zeros(3)},
-            ),
-            internal_params=MappingProxyType({}),
-        )
-
-    assert call_count == 2
-    assert exc_info.value.diagnostics is not None

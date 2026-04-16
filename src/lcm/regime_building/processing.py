@@ -262,7 +262,10 @@ def _build_solve_functions(
         stochastic_transition_names=core.stochastic_transition_names,
         compute_regime_transition_probs=compute_regime_transition_probs,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        state_action_space=state_action_space,
+        grids=all_grids[regime_name],
         ages=ages,
+        enable_jit=enable_jit,
     )
 
     return SolveFunctions(
@@ -1302,26 +1305,25 @@ def _build_Q_and_F_per_period(
     assert compute_regime_transition_probs is not None  # noqa: S101
 
     # Group periods by target configuration
-    configs: dict[tuple[tuple[str, ...], tuple[str, ...]], list[int]] = {}
+    configs: dict[tuple[str, ...], list[int]] = {}
     for period in range(ages.n_periods):
-        key = _partition_targets(
+        complete, _ = _partition_targets(
             period=period,
             transitions=transitions,
             regimes_to_active_periods=regimes_to_active_periods,
             stochastic_transition_names=stochastic_transition_names,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         )
-        configs.setdefault(key, []).append(period)
+        configs.setdefault(complete, []).append(period)
 
     # Build one Q_and_F per distinct configuration
-    built: dict[tuple[tuple[str, ...], tuple[str, ...]], QAndFFunction] = {}
-    for complete_targets, incomplete_targets in configs:
-        built[(complete_targets, incomplete_targets)] = get_Q_and_F(
+    built: dict[tuple[str, ...], QAndFFunction] = {}
+    for complete_targets in configs:
+        built[complete_targets] = get_Q_and_F(
             flat_param_names=flat_param_names,
             functions=functions,
             constraints=constraints,
             complete_targets=complete_targets,
-            incomplete_targets=incomplete_targets,
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
             compute_regime_transition_probs=compute_regime_transition_probs,
@@ -1390,33 +1392,43 @@ def _build_compute_intermediates_per_period(
     stochastic_transition_names: frozenset[str],
     compute_regime_transition_probs: RegimeTransitionFunction | None,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    state_action_space: StateActionSpace,
+    grids: MappingProxyType[str, Grid],
     ages: AgeGrid,
+    enable_jit: bool,
 ) -> MappingProxyType[int, Callable]:
     """Build diagnostic intermediate closures for each period.
 
-    These are raw closures (not JIT-compiled) that return all Q_and_F
-    intermediates. Only used in the error path when `validate_V` detects NaN.
-    Periods sharing the same target configuration reuse a single closure.
+    Each closure returns all Q_and_F intermediates over the full state-action
+    space. Used in the error path when `validate_V` detects NaN. Periods
+    sharing the same target configuration reuse a single scalar closure,
+    productmap-wrapped and JIT-compiled — same structure as `max_Q_over_a`.
     """
     if regime.terminal:
         return MappingProxyType({})
 
     assert compute_regime_transition_probs is not None  # noqa: S101
 
-    configs: dict[tuple[tuple[str, ...], tuple[str, ...]], list[int]] = {}
+    state_batch_sizes = {
+        name: grid.batch_size
+        for name, grid in grids.items()
+        if name in state_action_space.state_names
+    }
+
+    configs: dict[tuple[str, ...], list[int]] = {}
     for period in range(ages.n_periods):
-        key = _partition_targets(
+        complete, _ = _partition_targets(
             period=period,
             transitions=transitions,
             regimes_to_active_periods=regimes_to_active_periods,
             stochastic_transition_names=stochastic_transition_names,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         )
-        configs.setdefault(key, []).append(period)
+        configs.setdefault(complete, []).append(period)
 
-    built: dict[tuple[tuple[str, ...], tuple[str, ...]], Callable] = {}
-    for complete_targets, incomplete_targets in configs:
-        built[(complete_targets, incomplete_targets)] = get_compute_intermediates(
+    built: dict[tuple[str, ...], Callable] = {}
+    for complete_targets in configs:
+        scalar = get_compute_intermediates(
             functions=functions,
             constraints=constraints,
             complete_targets=complete_targets,
@@ -1425,6 +1437,13 @@ def _build_compute_intermediates_per_period(
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         )
+        mapped = _productmap_over_state_action_space(
+            func=scalar,
+            action_names=state_action_space.action_names,
+            state_names=state_action_space.state_names,
+            state_batch_sizes=state_batch_sizes,
+        )
+        built[complete_targets] = jax.jit(mapped) if enable_jit else mapped
 
     result: dict[int, Callable] = {}
     for key, periods in configs.items():
@@ -1432,6 +1451,32 @@ def _build_compute_intermediates_per_period(
             result[period] = built[key]
 
     return MappingProxyType(result)
+
+
+def _productmap_over_state_action_space(
+    *,
+    func: Callable,
+    action_names: tuple[str, ...],
+    state_names: tuple[str, ...],
+    state_batch_sizes: dict[str, int],
+) -> Callable:
+    """Wrap a scalar state-action function with productmap over actions then states.
+
+    Matches the pattern used by `get_max_Q_over_a`: actions form the inner
+    Cartesian product (unbatched), states form the outer loop (with batching).
+    """
+    from lcm.utils.dispatchers import productmap  # noqa: PLC0415
+
+    inner = productmap(
+        func=func,
+        variables=action_names,
+        batch_sizes=dict.fromkeys(action_names, 0),
+    )
+    return productmap(
+        func=inner,
+        variables=state_names,
+        batch_sizes=state_batch_sizes,
+    )
 
 
 def _build_max_Q_over_a_per_period(
