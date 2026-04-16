@@ -1,9 +1,7 @@
-import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from types import MappingProxyType
 from typing import Any, cast
 
-import jax
 import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
 from jax import Array
@@ -28,7 +26,7 @@ from lcm.utils.dispatchers import productmap
 from lcm.utils.functools import get_union_of_args
 
 
-def get_Q_and_F(  # noqa: C901, PLR0915
+def get_Q_and_F(
     *,
     flat_param_names: frozenset[str],
     age: float,
@@ -162,27 +160,6 @@ def get_Q_and_F(  # noqa: C901, PLR0915
         exclude=frozenset({"period", "age"}),
     )
 
-    # Guard callback for incomplete targets — defined at closure scope so JAX
-    # sees the same function object across calls (avoids JIT re-compilation).
-    # Only active when the logger is at DEBUG level; otherwise a no-op.
-    if incomplete_targets:
-
-        def _check_zero_probs(probs: Mapping[str, Array]) -> None:
-            """Validate that incomplete targets have zero transition probability."""
-            if not logging.getLogger("lcm").isEnabledFor(logging.DEBUG):
-                return
-            for target in incomplete_targets:
-                prob = float(probs[target])
-                if prob > 0:
-                    msg = (
-                        f"Regime transition probability to '{target}' "
-                        f"is {prob} > 0, but no stochastic state "
-                        f"transition was provided for this target. "
-                        f"Add the missing entries to the per-target "
-                        f"dict in state_transitions."
-                    )
-                    raise ValueError(msg)
-
     @with_signature(
         args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
     )
@@ -212,10 +189,12 @@ def get_Q_and_F(  # noqa: C901, PLR0915
             period=period,
             age=age,
         )
-        # Filter to active regimes only — inactive regimes must have 0
-        # probability (validated before solve).
+        # Use only complete targets for the traced function — incomplete
+        # target validation happens outside JIT to keep the HLO (and thus
+        # the persistent compilation cache key) independent of the
+        # partition.
         active_regime_probs = MappingProxyType(
-            {r: regime_transition_probs[r] for r in all_active_next_period}
+            {r: regime_transition_probs[r] for r in complete_targets}
         )
 
         E_next_V = jnp.zeros_like(U_arr)
@@ -259,17 +238,6 @@ def get_Q_and_F(  # noqa: C901, PLR0915
                 E_next_V + active_regime_probs[target_regime_name] * next_V_expected_arr
             )
 
-        if incomplete_targets:
-            # In debug mode, raise immediately with a specific message.
-            jax.debug.callback(_check_zero_probs, dict(active_regime_probs))
-            # NaN-poison E_next_V as a reliable fallback for all modes.
-            _incomplete_prob = sum(active_regime_probs[t] for t in incomplete_targets)
-            E_next_V = jnp.where(
-                _incomplete_prob == 0.0,
-                E_next_V,
-                jnp.full_like(E_next_V, jnp.nan),
-            )
-
         H_kwargs = {
             k: v for k, v in states_actions_params.items() if k in _H_accepted_params
         }
@@ -279,6 +247,7 @@ def get_Q_and_F(  # noqa: C901, PLR0915
         # In that case, Q_arr and F_arr are scalars, but we require arrays as output.
         return jnp.asarray(Q_arr), jnp.asarray(F_arr)
 
+    Q_and_F.incomplete_targets = tuple(incomplete_targets)  # ty: ignore[unresolved-attribute]
     return Q_and_F
 
 
