@@ -1302,26 +1302,25 @@ def _build_Q_and_F_per_period(
     assert compute_regime_transition_probs is not None  # noqa: S101
 
     # Group periods by target configuration
-    configs: dict[tuple[tuple[str, ...], tuple[str, ...]], list[int]] = {}
+    configs: dict[tuple[str, ...], list[int]] = {}
     for period in range(ages.n_periods):
-        key = _partition_targets(
+        complete, _ = _partition_targets(
             period=period,
             transitions=transitions,
             regimes_to_active_periods=regimes_to_active_periods,
             stochastic_transition_names=stochastic_transition_names,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         )
-        configs.setdefault(key, []).append(period)
+        configs.setdefault(complete, []).append(period)
 
     # Build one Q_and_F per distinct configuration
-    built: dict[tuple[tuple[str, ...], tuple[str, ...]], QAndFFunction] = {}
-    for complete_targets, incomplete_targets in configs:
-        built[(complete_targets, incomplete_targets)] = get_Q_and_F(
+    built: dict[tuple[str, ...], QAndFFunction] = {}
+    for complete_targets in configs:
+        built[complete_targets] = get_Q_and_F(
             flat_param_names=flat_param_names,
             functions=functions,
             constraints=constraints,
             complete_targets=complete_targets,
-            incomplete_targets=incomplete_targets,
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
             compute_regime_transition_probs=compute_regime_transition_probs,
@@ -1401,20 +1400,20 @@ def _build_compute_intermediates_per_period(
 
     assert compute_regime_transition_probs is not None  # noqa: S101
 
-    configs: dict[tuple[tuple[str, ...], tuple[str, ...]], list[int]] = {}
+    configs: dict[tuple[str, ...], list[int]] = {}
     for period in range(ages.n_periods):
-        key = _partition_targets(
+        complete, _ = _partition_targets(
             period=period,
             transitions=transitions,
             regimes_to_active_periods=regimes_to_active_periods,
             stochastic_transition_names=stochastic_transition_names,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         )
-        configs.setdefault(key, []).append(period)
+        configs.setdefault(complete, []).append(period)
 
-    built: dict[tuple[tuple[str, ...], tuple[str, ...]], Callable] = {}
-    for complete_targets, incomplete_targets in configs:
-        built[(complete_targets, incomplete_targets)] = get_compute_intermediates(
+    built: dict[tuple[str, ...], Callable] = {}
+    for complete_targets in configs:
+        built[complete_targets] = get_compute_intermediates(
             functions=functions,
             constraints=constraints,
             complete_targets=complete_targets,
