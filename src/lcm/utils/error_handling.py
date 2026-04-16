@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any, overload
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 import pandas as pd
 from jax import Array
 
@@ -137,44 +136,27 @@ def _enrich_with_diagnostics(
 ) -> None:
     """Run diagnostic intermediates and attach summary to exception.
 
-    Run `compute_intermediates` eagerly (GPU first, CPU fallback on error).
-    Grid arrays are meshed into the full Cartesian product so that the
-    resulting diagnostic arrays have one axis per state/action variable.
+    `compute_intermediates` is productmap-wrapped over the full state-action
+    space (same structure as `max_Q_over_a`) and JIT-compiled. Reduction to
+    NaN fractions runs on device via `jnp`.
     """
-    # Mesh grid arrays so broadcasting produces the full Cartesian product.
     all_names = (*state_action_space.state_names, *state_action_space.action_names)
-    grids = {**state_action_space.states, **state_action_space.actions}
-    n_vars = len(grids)
-    meshed: dict[str, Any] = {}
-    for i, (name, arr) in enumerate(grids.items()):
-        shape = [1] * n_vars
-        shape[i] = len(arr)
-        meshed[name] = jnp.reshape(arr, shape)
-
     call_kwargs: dict[str, Any] = {
-        **meshed,
+        **state_action_space.states,
+        **state_action_space.actions,
         "next_regime_to_V_arr": next_regime_to_V_arr,
         **(dict(internal_params) if internal_params else {}),
         "age": age,
         "period": period,
     }
 
-    try:
-        result = compute_intermediates(**call_kwargs)
-    except Exception:  # noqa: BLE001
-        cpu = jax.devices("cpu")[0]
-        call_kwargs = jax.device_put(call_kwargs, cpu)
-        result = compute_intermediates(**call_kwargs)
-
-    U_arr, F_arr, E_next_V, Q_arr, regime_probs = result
+    U_arr, F_arr, E_next_V, Q_arr, regime_probs = compute_intermediates(**call_kwargs)
     exc.diagnostics = _summarize_diagnostics(
-        U_arr=np.asarray(U_arr),
-        F_arr=np.asarray(F_arr),
-        E_next_V=np.asarray(E_next_V),
-        Q_arr=np.asarray(Q_arr),
-        regime_probs={
-            k: float(np.mean(np.asarray(v))) for k, v in regime_probs.items()
-        },
+        U_arr=U_arr,
+        F_arr=F_arr,
+        E_next_V=E_next_V,
+        Q_arr=Q_arr,
+        regime_probs={k: float(jnp.mean(v)) for k, v in regime_probs.items()},
         variable_names=all_names,
         regime_name=regime_name,
         age=age,
@@ -195,10 +177,10 @@ def _enrich_with_diagnostics(
 
 def _summarize_diagnostics(
     *,
-    U_arr: np.ndarray,
-    F_arr: np.ndarray,
-    E_next_V: np.ndarray,
-    Q_arr: np.ndarray,
+    U_arr: Array,
+    F_arr: Array,
+    E_next_V: Array,
+    Q_arr: Array,
     regime_probs: dict[str, float],
     variable_names: tuple[str, ...],
     regime_name: str,
@@ -212,11 +194,11 @@ def _summarize_diagnostics(
         ("E_nan_fraction", E_next_V),
         ("Q_nan_fraction", Q_arr),
     ]:
-        nan_frac = np.isnan(arr).astype(float)
+        nan_frac = jnp.isnan(arr).astype(float)
         summary[key] = {
-            "overall": float(np.mean(nan_frac)),
+            "overall": float(jnp.mean(nan_frac)),
             "by_dim": {
-                name: np.mean(
+                name: jnp.mean(
                     nan_frac, axis=tuple(j for j in range(nan_frac.ndim) if j != i)
                 ).tolist()
                 for i, name in enumerate(variable_names)
@@ -226,9 +208,9 @@ def _summarize_diagnostics(
 
     feasible = F_arr.astype(float)
     summary["F_feasible_fraction"] = {
-        "overall": float(np.mean(feasible)),
+        "overall": float(jnp.mean(feasible)),
         "by_dim": {
-            name: np.mean(
+            name: jnp.mean(
                 feasible, axis=tuple(j for j in range(feasible.ndim) if j != i)
             ).tolist()
             for i, name in enumerate(variable_names)

@@ -32,7 +32,6 @@ def get_Q_and_F(
     functions: FunctionsMapping,
     constraints: FunctionsMapping,
     complete_targets: tuple[str, ...],
-    incomplete_targets: tuple[str, ...],
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[str],
     compute_regime_transition_probs: RegimeTransitionFunction,
@@ -49,8 +48,6 @@ def get_Q_and_F(
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to internal user functions.
         complete_targets: Target regimes with all required stochastic transitions.
-        incomplete_targets: Target regimes missing stochastic transitions (must
-            have zero transition probability at runtime).
         transitions: Immutable mapping of transition names to transition functions.
         stochastic_transition_names: Frozenset of stochastic transition function names.
         compute_regime_transition_probs: Regime transition probability function
@@ -212,7 +209,6 @@ def get_Q_and_F(
         # In that case, Q_arr and F_arr are scalars, but we require arrays as output.
         return jnp.asarray(Q_arr), jnp.asarray(F_arr)
 
-    Q_and_F.incomplete_targets = tuple(incomplete_targets)  # ty: ignore[unresolved-attribute]
     return Q_and_F
 
 
