@@ -165,7 +165,7 @@ def _enrich_with_diagnostics(
 
     incomplete = getattr(compute_intermediates, "incomplete_targets", ())
     for target in incomplete:
-        mean_prob = float(np.mean(np.asarray(regime_probs.get(target, 0))))
+        mean_prob = float(jnp.mean(regime_probs.get(target, jnp.array(0.0))))
         if mean_prob > 0:
             exc.add_note(
                 f"Target '{target}' has mean transition probability "
