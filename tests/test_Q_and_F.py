@@ -359,4 +359,7 @@ def test_incomplete_target_zero_prob_succeeds():
         )
 
     model, params = _build_incomplete_target_model(next_regime_func=_next_regime)
-    model.solve(params=params)
+    period_to_regime_to_V_arr = model.solve(params=params)
+    for regime_to_V_arr in period_to_regime_to_V_arr.values():
+        for V_arr in regime_to_V_arr.values():
+            assert not jnp.any(jnp.isnan(V_arr))

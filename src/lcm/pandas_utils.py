@@ -22,6 +22,11 @@ from lcm.utils.error_handling import (
     _get_func_indexing_params,
 )
 
+# Sentinel code for discrete-state cells whose subject's regime lacks that state.
+# Written into the result array before the int32 cast; consumers must filter
+# subjects by regime before reading discrete state values.
+_INT32_SENTINEL = np.iinfo(np.int32).min
+
 
 def has_series(params: Mapping) -> bool:
     """Check if any leaf value in a params mapping is a pd.Series."""
@@ -134,7 +139,6 @@ def initial_conditions_from_dataframe(  # noqa: C901
     # Replace remaining NaN in discrete columns with an explicit int sentinel
     # before casting to int32. This avoids platform-undefined NaN→int behavior
     # and the associated RuntimeWarning.
-    _INT32_SENTINEL = np.iinfo(np.int32).min
     for col in discrete_state_names:
         if col in result_arrays:
             nan_mask = np.isnan(result_arrays[col])
@@ -800,14 +804,26 @@ def _validate_state_columns(
     unknown = state_columns - expected
     if unknown:
         msg = (
-            f"Unknown columns not matching any model state: {sorted(unknown)}. "
+            f"Unknown columns not matching any state of an initial regime: "
+            f"{sorted(unknown)}. "
             f"Expected states: {sorted(expected)}."
         )
         raise ValueError(msg)
 
     missing = expected - state_columns
     if missing:
-        msg = f"Missing required state columns: {sorted(missing)}."
+        required_by: dict[str, list[str]] = {name: [] for name in missing}
+        for regime_name in set(initial_regimes):
+            if regime_name == "age":
+                continue
+            for name in regimes[regime_name].states:
+                if name in required_by:
+                    required_by[name].append(regime_name)
+        details = ", ".join(
+            f"'{name}' (required by {sorted(required_by[name]) or ['all regimes']})"
+            for name in sorted(missing)
+        )
+        msg = f"Missing required state columns: {details}."
         raise ValueError(msg)
 
 
