@@ -338,7 +338,9 @@ def _validate_no_reachable_incomplete_targets(
     A target is "incomplete" from the source regime if the source's
     `transitions[target]` does not cover all of the target's stochastic
     state needs. Such targets must have zero transition probability,
-    otherwise the continuation value cannot be computed.
+    otherwise the continuation value cannot be computed. This includes
+    self-transitions (regime reaches itself): omitting the self-entry in
+    a per-target dict is a common user error.
 
     """
     solve_functions = internal_regime.solve_functions
@@ -346,8 +348,6 @@ def _validate_no_reachable_incomplete_targets(
     stochastic_names = solve_functions.stochastic_transition_names
 
     for target in active_regimes_next_period:
-        if target == regime_name:
-            continue
         target_regime = internal_regimes[target]
         target_state_names = tuple(target_regime.variable_info.query("is_state").index)
         needs = {
@@ -357,16 +357,19 @@ def _validate_no_reachable_incomplete_targets(
             continue
         if target in transitions and needs.issubset(transitions[target]):
             continue
-        # Target is incomplete — verify zero transition probability.
-        if jnp.any(regime_transition_probs[target] > 0):
-            raise InvalidRegimeTransitionProbabilitiesError(
-                f"Regime '{regime_name}' at age {age} has positive transition "
-                f"probability to '{target}' but no stochastic state transition "
-                f"is provided for the following state(s) required by '{target}': "
-                f"{sorted(needs - set(transitions.get(target, {})))}. "
-                f"Add the missing entries to the per-target 'state_transitions' "
-                f"dict in '{regime_name}'."
-            )
+        if not jnp.any(regime_transition_probs[target] > 0):
+            continue
+        missing = sorted(needs - set(transitions.get(target, {})))
+        if target not in transitions:
+            missing = sorted(f"next_{s}" for s in target_state_names)
+        raise InvalidRegimeTransitionProbabilitiesError(
+            f"Regime '{regime_name}' at age {age} has positive transition "
+            f"probability to '{target}', but '{regime_name}' does not provide "
+            f"state transition(s) for: {missing}. Extend "
+            f"`state_transitions` in '{regime_name}' to cover '{target}' "
+            f"(via a per-target dict if the transition differs by target), "
+            f"or ensure '{target}' is unreachable."
+        )
 
 
 def _get_func_indexing_params(
