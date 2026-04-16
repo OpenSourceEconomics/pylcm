@@ -1,5 +1,6 @@
 import ast
 import inspect
+import logging
 import textwrap
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
@@ -47,10 +48,9 @@ def validate_V(
 ) -> None:
     """Validate the value function array for NaN values.
 
-    When `compute_intermediates` is provided, NaN detection triggers lazy
-    diagnostic compilation: the closure is productmapped, JIT-compiled, and
-    run (GPU first, CPU fallback) to pinpoint which intermediate (U, F,
-    E[V], Q) contains NaN.
+    When `compute_intermediates` is provided, NaN detection triggers a
+    diagnostic run of the (already productmapped + JIT-compiled) closure to
+    pinpoint which intermediate (U, F, E[V], Q) contains NaN.
 
     Args:
         V_arr: The value function array to validate.
@@ -110,8 +110,6 @@ def validate_V(
                 age=float(age),
             )
         except Exception:  # noqa: BLE001
-            import logging  # noqa: PLC0415
-
             logging.getLogger("lcm").warning(
                 "Diagnostic enrichment failed; raising original NaN error",
                 exc_info=True,
@@ -137,11 +135,21 @@ def _enrich_with_diagnostics(
     NaN fractions runs on device via `jnp`.
     """
     all_names = (*state_action_space.state_names, *state_action_space.action_names)
-    call_kwargs: dict[str, Any] = {
+    state_action_kwargs: dict[str, Any] = {
         **state_action_space.states,
         **state_action_space.actions,
+    }
+    # Drop any flat regime params that collide with state/action names so
+    # they don't silently overwrite the grids.
+    param_kwargs = (
+        {k: v for k, v in internal_params.items() if k not in state_action_kwargs}
+        if internal_params
+        else {}
+    )
+    call_kwargs: dict[str, Any] = {
+        **state_action_kwargs,
         "next_regime_to_V_arr": next_regime_to_V_arr,
-        **(dict(internal_params) if internal_params else {}),
+        **param_kwargs,
     }
 
     U_arr, F_arr, E_next_V, Q_arr, regime_probs = compute_intermediates(**call_kwargs)

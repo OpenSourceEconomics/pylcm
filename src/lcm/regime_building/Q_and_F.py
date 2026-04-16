@@ -262,9 +262,9 @@ def get_compute_intermediates(
 ) -> Callable:
     """Build a closure that computes Q_and_F intermediates for diagnostics.
 
-    Same setup as `get_Q_and_F` but returns all intermediates instead of
-    just (Q, F). NOT JIT-compiled — only called in the error path when
-    `validate_V` detects NaN.
+    Mirrors `get_Q_and_F` but returns all intermediates instead of just
+    (Q, F). The caller productmaps and JIT-compiles the closure; it runs
+    only in the error path when `validate_V` detects NaN.
 
     Returns:
         Closure with the same signature as Q_and_F, returning
@@ -277,11 +277,13 @@ def get_compute_intermediates(
     joint_weights_from_marginals = {}
     next_V = {}
 
-    target_regime_names = tuple(transitions)
+    # Match the enumeration logic of `get_Q_and_F` exactly — including
+    # targets entirely absent from `transitions`, so diagnostics surface
+    # the same incomplete-target cases as the main solve.
     all_active_next_period = tuple(
         name
-        for name in target_regime_names
-        if period + 1 in regimes_to_active_periods[name]
+        for name in regime_to_v_interpolation_info
+        if period + 1 in regimes_to_active_periods.get(name, ())
     )
 
     complete_targets: list[str] = []
@@ -291,7 +293,7 @@ def get_compute_intermediates(
             for s in regime_to_v_interpolation_info[name].state_names
             if f"next_{s}" in stochastic_transition_names
         }
-        if target_stochastic_needs.issubset(transitions[name]):
+        if name in transitions and target_stochastic_needs.issubset(transitions[name]):
             complete_targets.append(name)
 
     next_V_extra_param_names: dict[str, frozenset[str]] = {}
@@ -358,7 +360,7 @@ def get_compute_intermediates(
             age=age,
         )
         active_regime_probs = MappingProxyType(
-            {r: regime_transition_probs[r] for r in all_active_next_period}
+            {r: regime_transition_probs[r] for r in complete_targets}
         )
 
         E_next_V = jnp.zeros_like(U_arr)
