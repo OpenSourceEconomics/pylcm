@@ -118,11 +118,20 @@ def solve(
             )
             log_V_stats(logger=logger, regime_name=name, V_arr=V_arr)
 
+            # Include sibling regimes already solved this period (and the
+            # current regime's V_arr, even though it is NaN-bearing — users
+            # debugging the snapshot want to see all of it).
+            partial = MappingProxyType(
+                {
+                    **solution,
+                    period: MappingProxyType({**period_solution, name: V_arr}),
+                }
+            )
             validate_V(
                 V_arr=V_arr,
                 age=float(ages.values[period]),
                 regime_name=name,
-                partial_solution=MappingProxyType(solution),
+                partial_solution=partial,
                 compute_intermediates=internal_regime.solve_functions.compute_intermediates.get(
                     period
                 ),
@@ -204,7 +213,7 @@ def _compile_all_functions(
         if func_id not in unique:
             unique[func_id] = (func, name, period)
 
-    n_workers = max_compilation_workers or os.cpu_count() or 1
+    n_workers = _resolve_compilation_workers(max_compilation_workers)
     n_unique = len(unique)
 
     logger.info(
@@ -230,7 +239,7 @@ def _compile_all_functions(
             "period": jnp.int32(period),
             "age": ages.values[period],
         }
-        label = f"{name} (age {ages.values[period]})"
+        label = f"{name} (age {ages.values[period].item()})"
         labels[func_id] = label
         logger.info("%d/%d  %s", i, n_unique, label)
         logger.info("  lowering ...")
@@ -267,12 +276,30 @@ def _compile_all_functions(
     return {key: compiled[_func_dedup_key(func)] for key, func in all_functions.items()}
 
 
+def _resolve_compilation_workers(max_compilation_workers: int | None) -> int:
+    """Return the number of threads to use for parallel XLA compilation."""
+    if max_compilation_workers is None:
+        return os.cpu_count() or 1
+    if max_compilation_workers < 1:
+        msg = f"max_compilation_workers must be >= 1, got {max_compilation_workers}."
+        raise ValueError(msg)
+    return max_compilation_workers
+
+
 def _func_dedup_key(func: Callable) -> Hashable:
     """Return a hashable deduplication key for a callable.
 
     For `functools.partial` objects wrapping shared JIT functions, deduplicate
     by the underlying function's identity and the keyword argument names.
     For plain callables, use object identity.
+
+    Note:
+        The dedup ignores keyword argument *values*. This relies on the
+        invariant that partials sharing the same underlying function and
+        keyword names also share identical (same-object) keyword values,
+        which holds today because `_apply_fixed_params` uses the same
+        `regime_fixed` mapping for all periods of a regime.
+
     """
     if isinstance(func, functools.partial):
         return (id(func.func), tuple(sorted(func.keywords)))
