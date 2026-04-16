@@ -262,7 +262,10 @@ def _build_solve_functions(
         stochastic_transition_names=core.stochastic_transition_names,
         compute_regime_transition_probs=compute_regime_transition_probs,
         regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        state_action_space=state_action_space,
+        grids=all_grids[regime_name],
         ages=ages,
+        enable_jit=enable_jit,
     )
 
     return SolveFunctions(
@@ -1325,19 +1328,32 @@ def _build_compute_intermediates_per_period(
     stochastic_transition_names: frozenset[str],
     compute_regime_transition_probs: RegimeTransitionFunction | None,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+    state_action_space: StateActionSpace,
+    grids: MappingProxyType[str, Grid],
     ages: AgeGrid,
+    enable_jit: bool,
 ) -> MappingProxyType[int, Callable]:
     """Build diagnostic intermediate closures for each period.
 
-    These are raw closures (not JIT-compiled) that return all Q_and_F
-    intermediates. Only used in the error path when `validate_V` detects NaN.
+    The closures return all Q_and_F intermediates over the full state-action
+    space. Used in the error path when `validate_V` detects NaN. They follow
+    the same productmap + JIT structure as `max_Q_over_a`.
+
     """
+    if regime.terminal:
+        return MappingProxyType({})
+
+    assert compute_regime_transition_probs is not None  # noqa: S101
+
+    state_batch_sizes = {
+        name: grid.batch_size
+        for name, grid in grids.items()
+        if name in state_action_space.state_names
+    }
+
     intermediates: dict[int, Callable] = {}
     for period, age in enumerate(ages.values):
-        if regime.terminal:
-            continue
-        assert compute_regime_transition_probs is not None  # noqa: S101
-        intermediates[period] = get_compute_intermediates(
+        scalar = get_compute_intermediates(
             age=age,
             period=period,
             functions=functions,
@@ -1348,8 +1364,41 @@ def _build_compute_intermediates_per_period(
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         )
+        mapped = _productmap_over_state_action_space(
+            func=scalar,
+            action_names=state_action_space.action_names,
+            state_names=state_action_space.state_names,
+            state_batch_sizes=state_batch_sizes,
+        )
+        intermediates[period] = jax.jit(mapped) if enable_jit else mapped
 
     return MappingProxyType(intermediates)
+
+
+def _productmap_over_state_action_space(
+    *,
+    func: Callable,
+    action_names: tuple[str, ...],
+    state_names: tuple[str, ...],
+    state_batch_sizes: dict[str, int],
+) -> Callable:
+    """Wrap a scalar state-action function with productmap over actions then states.
+
+    Matches the pattern used by `get_max_Q_over_a`: actions form the inner
+    Cartesian product (unbatched), states form the outer loop (with batching).
+    """
+    from lcm.utils.dispatchers import productmap  # noqa: PLC0415
+
+    inner = productmap(
+        func=func,
+        variables=action_names,
+        batch_sizes=dict.fromkeys(action_names, 0),
+    )
+    return productmap(
+        func=inner,
+        variables=state_names,
+        batch_sizes=state_batch_sizes,
+    )
 
 
 def _build_max_Q_over_a_per_period(
