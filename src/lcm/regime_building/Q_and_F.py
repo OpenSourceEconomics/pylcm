@@ -74,12 +74,12 @@ def get_Q_and_F(
         if period + 1 in regimes_to_active_periods.get(name, ())
     )
 
-    # Partition active targets into complete (have all stochastic transitions
-    # in transitions) and incomplete (missing some or entirely absent from
-    # transitions). Incomplete targets must have zero transition probability
-    # at runtime; enforced by NaN-poisoning below.
+    # Keep only targets whose stochastic state needs are all covered by
+    # `transitions`. Targets with missing stochastic transitions are dropped
+    # from the traced function; pre-solve validation in
+    # `_validate_no_reachable_incomplete_targets` raises if any such target
+    # has non-zero transition probability.
     complete_targets: list[str] = []
-    incomplete_targets: list[str] = []
     for name in all_active_next_period:
         target_stochastic_needs = {
             f"next_{s}"
@@ -88,8 +88,6 @@ def get_Q_and_F(
         }
         if name in transitions and target_stochastic_needs.issubset(transitions[name]):
             complete_targets.append(name)
-        elif target_stochastic_needs:
-            incomplete_targets.append(name)
 
     next_V_extra_param_names: dict[str, frozenset[str]] = {}
 
@@ -189,10 +187,10 @@ def get_Q_and_F(
             period=period,
             age=age,
         )
-        # Use only complete targets for the traced function — incomplete
-        # target validation happens outside JIT to keep the HLO (and thus
-        # the persistent compilation cache key) independent of the
-        # partition.
+        # `complete_targets` is resolved at trace time (it is a closure over
+        # a Python list); incomplete-target validation happens outside JIT
+        # in `_validate_no_reachable_incomplete_targets` so that the traced
+        # graph contains no runtime error-raising callbacks.
         active_regime_probs = MappingProxyType(
             {r: regime_transition_probs[r] for r in complete_targets}
         )
@@ -247,7 +245,6 @@ def get_Q_and_F(
         # In that case, Q_arr and F_arr are scalars, but we require arrays as output.
         return jnp.asarray(Q_arr), jnp.asarray(F_arr)
 
-    Q_and_F.incomplete_targets = tuple(incomplete_targets)  # ty: ignore[unresolved-attribute]
     return Q_and_F
 
 
