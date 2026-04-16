@@ -872,6 +872,6 @@ def test_incomplete_per_target_reachable_target():
 
     with pytest.raises(
         InvalidRegimeTransitionProbabilitiesError,
-        match=r"no stochastic state transition",
+        match=r"does not provide state transition",
     ):
         model.solve(params={"discount_factor": 0.95})
