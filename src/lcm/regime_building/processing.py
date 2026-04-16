@@ -1418,7 +1418,6 @@ def _build_compute_intermediates_per_period(
             functions=functions,
             constraints=constraints,
             complete_targets=complete_targets,
-            incomplete_targets=incomplete_targets,
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
             compute_regime_transition_probs=compute_regime_transition_probs,
