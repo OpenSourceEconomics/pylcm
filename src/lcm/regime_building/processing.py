@@ -61,7 +61,7 @@ from lcm.typing import (
     VmappedRegimeTransitionFunction,
 )
 from lcm.utils.containers import ensure_containers_are_immutable
-from lcm.utils.dispatchers import simulation_spacemap, vmap_1d
+from lcm.utils.dispatchers import productmap, simulation_spacemap, vmap_1d
 from lcm.utils.namespace import flatten_regime_namespace, unflatten_regime_namespace
 
 
@@ -1463,8 +1463,6 @@ def _productmap_over_state_action_space(
     Matches the pattern used by `get_max_Q_over_a`: actions form the inner
     Cartesian product (unbatched), states form the outer loop (with batching).
     """
-    from lcm.utils.dispatchers import productmap  # noqa: PLC0415
-
     inner = productmap(
         func=func,
         variables=action_names,

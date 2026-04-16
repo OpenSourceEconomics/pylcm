@@ -163,8 +163,9 @@ class SolveFunctions:
     compute_intermediates: MappingProxyType[int, Callable]
     """Immutable mapping of period to intermediate-computation closures.
 
-    NOT JIT-compiled — only used in the error path when `validate_V`
-    detects NaN. Each closure returns `(U, F, E_next_V, Q, regime_probs)`.
+    Productmap-wrapped and JIT-compiled on first use; invoked only in the
+    error path when `validate_V` detects NaN. Each closure returns
+    `(U, F, E_next_V, Q, regime_probs)`.
     """
 
 

@@ -1,5 +1,6 @@
 import ast
 import inspect
+import logging
 import textwrap
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
@@ -113,8 +114,6 @@ def validate_V(
                 period=period,
             )
         except Exception:  # noqa: BLE001
-            import logging  # noqa: PLC0415
-
             logging.getLogger("lcm").warning(
                 "Diagnostic enrichment failed; raising original NaN error",
                 exc_info=True,
@@ -141,11 +140,21 @@ def _enrich_with_diagnostics(
     NaN fractions runs on device via `jnp`.
     """
     all_names = (*state_action_space.state_names, *state_action_space.action_names)
-    call_kwargs: dict[str, Any] = {
+    state_action_kwargs: dict[str, Any] = {
         **state_action_space.states,
         **state_action_space.actions,
+    }
+    # Drop any flat regime params that collide with state/action names so
+    # they don't silently overwrite the grids.
+    param_kwargs = (
+        {k: v for k, v in internal_params.items() if k not in state_action_kwargs}
+        if internal_params
+        else {}
+    )
+    call_kwargs: dict[str, Any] = {
+        **state_action_kwargs,
         "next_regime_to_V_arr": next_regime_to_V_arr,
-        **(dict(internal_params) if internal_params else {}),
+        **param_kwargs,
         "age": age,
         "period": period,
     }
@@ -516,7 +525,9 @@ def _validate_no_reachable_incomplete_targets(
     A target is "incomplete" from the source regime if the source's
     `transitions[target]` does not cover all of the target's stochastic
     state needs. Such targets must have zero transition probability,
-    otherwise the continuation value cannot be computed.
+    otherwise the continuation value cannot be computed. This includes
+    self-transitions (regime reaches itself): omitting the self-entry in
+    a per-target dict is a common user error.
 
     """
     solve_functions = internal_regime.solve_functions
@@ -524,8 +535,6 @@ def _validate_no_reachable_incomplete_targets(
     stochastic_names = solve_functions.stochastic_transition_names
 
     for target in active_regimes_next_period:
-        if target == regime_name:
-            continue
         target_regime = internal_regimes[target]
         target_state_names = tuple(target_regime.variable_info.query("is_state").index)
         needs = {
@@ -535,16 +544,19 @@ def _validate_no_reachable_incomplete_targets(
             continue
         if target in transitions and needs.issubset(transitions[target]):
             continue
-        # Target is incomplete — verify zero transition probability.
-        if jnp.any(regime_transition_probs[target] > 0):
-            raise InvalidRegimeTransitionProbabilitiesError(
-                f"Regime '{regime_name}' at age {age} has positive transition "
-                f"probability to '{target}' but no stochastic state transition "
-                f"is provided for the following state(s) required by '{target}': "
-                f"{sorted(needs - set(transitions.get(target, {})))}. "
-                f"Add the missing entries to the per-target 'state_transitions' "
-                f"dict in '{regime_name}'."
-            )
+        if not jnp.any(regime_transition_probs[target] > 0):
+            continue
+        missing = sorted(needs - set(transitions.get(target, {})))
+        if target not in transitions:
+            missing = sorted(f"next_{s}" for s in target_state_names)
+        raise InvalidRegimeTransitionProbabilitiesError(
+            f"Regime '{regime_name}' at age {age} has positive transition "
+            f"probability to '{target}', but '{regime_name}' does not provide "
+            f"state transition(s) for: {missing}. Extend "
+            f"`state_transitions` in '{regime_name}' to cover '{target}' "
+            f"(via a per-target dict if the transition differs by target), "
+            f"or ensure '{target}' is unreachable."
+        )
 
 
 def _get_func_indexing_params(

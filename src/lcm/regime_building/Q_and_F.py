@@ -224,9 +224,9 @@ def get_compute_intermediates(
 ) -> Callable:
     """Build a closure that computes Q_and_F intermediates for diagnostics.
 
-    Same setup as `get_Q_and_F` but returns all intermediates instead of
-    just (Q, F). NOT JIT-compiled — only called in the error path when
-    `validate_V` detects NaN.
+    Mirrors `get_Q_and_F` but returns all intermediates instead of just
+    (Q, F). The caller productmaps and JIT-compiles the closure; it runs
+    only in the error path when `validate_V` detects NaN.
 
     Returns:
         Closure returning `(U_arr, F_arr, E_next_V, Q_arr, active_regime_probs)`.
