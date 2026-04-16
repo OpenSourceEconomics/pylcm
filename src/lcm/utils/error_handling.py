@@ -434,6 +434,7 @@ def validate_regime_transitions_all_periods(
 
             _validate_regime_transition_single(
                 internal_regime=internal_regime,
+                internal_regimes=internal_regimes,
                 regime_params=internal_params[name],
                 active_regimes_next_period=active_regimes_next_period,
                 regime_name=name,
@@ -445,6 +446,7 @@ def validate_regime_transitions_all_periods(
 def _validate_regime_transition_single(
     *,
     internal_regime: InternalRegime,
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_params: FlatRegimeParams,
     active_regimes_next_period: tuple[str, ...],
     regime_name: str,
@@ -518,6 +520,60 @@ def _validate_regime_transition_single(
         next_age=ages.values[period + 1],  # noqa: PD011
         state_action_values=MappingProxyType(point),
     )
+
+    _validate_no_reachable_incomplete_targets(
+        internal_regime=internal_regime,
+        internal_regimes=internal_regimes,
+        regime_transition_probs=regime_transition_probs,
+        active_regimes_next_period=active_regimes_next_period,
+        regime_name=regime_name,
+        age=ages.values[period],  # noqa: PD011
+    )
+
+
+def _validate_no_reachable_incomplete_targets(
+    *,
+    internal_regime: InternalRegime,
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    regime_transition_probs: MappingProxyType[str, Array],
+    active_regimes_next_period: tuple[str, ...],
+    regime_name: str,
+    age: ScalarInt | ScalarFloat,
+) -> None:
+    """Check that targets with incomplete stochastic transitions are unreachable.
+
+    A target is "incomplete" from the source regime if the source's
+    `transitions[target]` does not cover all of the target's stochastic
+    state needs. Such targets must have zero transition probability,
+    otherwise the continuation value cannot be computed.
+
+    """
+    solve_functions = internal_regime.solve_functions
+    transitions = solve_functions.transitions
+    stochastic_names = solve_functions.stochastic_transition_names
+
+    for target in active_regimes_next_period:
+        if target == regime_name:
+            continue
+        target_regime = internal_regimes[target]
+        target_state_names = tuple(target_regime.variable_info.query("is_state").index)
+        needs = {
+            f"next_{s}" for s in target_state_names if f"next_{s}" in stochastic_names
+        }
+        if not needs:
+            continue
+        if target in transitions and needs.issubset(transitions[target]):
+            continue
+        # Target is incomplete — verify zero transition probability.
+        if jnp.any(regime_transition_probs[target] > 0):
+            raise InvalidRegimeTransitionProbabilitiesError(
+                f"Regime '{regime_name}' at age {age} has positive transition "
+                f"probability to '{target}' but no stochastic state transition "
+                f"is provided for the following state(s) required by '{target}': "
+                f"{sorted(needs - set(transitions.get(target, {})))}. "
+                f"Add the missing entries to the per-target 'state_transitions' "
+                f"dict in '{regime_name}'."
+            )
 
 
 def _get_func_indexing_params(
