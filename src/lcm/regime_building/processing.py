@@ -1307,7 +1307,7 @@ def _build_Q_and_F_per_period(
     # Group periods by target configuration
     configs: dict[tuple[str, ...], list[int]] = {}
     for period in range(ages.n_periods):
-        complete, _ = _partition_targets(
+        complete = _get_complete_targets(
             period=period,
             transitions=transitions,
             regimes_to_active_periods=regimes_to_active_periods,
@@ -1339,45 +1339,45 @@ def _build_Q_and_F_per_period(
     return MappingProxyType(result)
 
 
-def _partition_targets(
+def _get_complete_targets(
     *,
     period: int,
     transitions: TransitionFunctionsMapping,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     stochastic_transition_names: frozenset[str],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Partition active target regimes into complete and incomplete.
+) -> tuple[str, ...]:
+    """Return active target regimes whose stochastic needs are fully covered.
 
-    Complete targets have all required stochastic transitions. Incomplete
-    targets are missing some (assumed to have zero transition probability,
-    validated at runtime by `_check_zero_probs`).
+    Enumerates every regime active in the next period (from
+    `regime_to_v_interpolation_info`) and keeps those whose stochastic
+    state needs are all covered by `transitions`. Targets missing stochastic
+    transitions (including those entirely absent from `transitions`) are
+    dropped; `_validate_no_reachable_incomplete_targets` in
+    `lcm.utils.error_handling` raises pre-solve if any dropped target has
+    non-zero transition probability.
 
     Returns:
-        Tuple of (complete_targets, incomplete_targets).
+        Tuple of complete target regime names.
 
     """
-    target_regime_names = tuple(transitions)
     all_active = tuple(
         name
-        for name in target_regime_names
-        if period + 1 in regimes_to_active_periods[name]
+        for name in regime_to_v_interpolation_info
+        if period + 1 in regimes_to_active_periods.get(name, ())
     )
 
     complete: list[str] = []
-    incomplete: list[str] = []
     for name in all_active:
         target_stochastic_needs = {
             f"next_{s}"
             for s in regime_to_v_interpolation_info[name].state_names
             if f"next_{s}" in stochastic_transition_names
         }
-        if target_stochastic_needs.issubset(transitions[name]):
+        if name in transitions and target_stochastic_needs.issubset(transitions[name]):
             complete.append(name)
-        else:
-            incomplete.append(name)
 
-    return tuple(complete), tuple(incomplete)
+    return tuple(complete)
 
 
 def _build_compute_intermediates_per_period(
@@ -1415,7 +1415,7 @@ def _build_compute_intermediates_per_period(
 
     configs: dict[tuple[str, ...], list[int]] = {}
     for period in range(ages.n_periods):
-        complete, _ = _partition_targets(
+        complete = _get_complete_targets(
             period=period,
             transitions=transitions,
             regimes_to_active_periods=regimes_to_active_periods,
