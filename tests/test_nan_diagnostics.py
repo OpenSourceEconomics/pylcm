@@ -37,15 +37,24 @@ def test_diagnostic_arrays_have_state_action_grid_shape():
     n_wealth, n_consumption = 3, 2
     sas = _make_state_action_space(n_wealth=n_wealth, n_consumption=n_consumption)
 
-    def mock_compute_intermediates(**kwargs: jnp.ndarray) -> tuple:  # noqa: ARG001
-        # Return arrays shaped as (n_wealth, n_consumption) — the shape
-        # a productmap-wrapped compute_intermediates would produce.
-        U = jnp.zeros((n_wealth, n_consumption))
-        F = jnp.ones((n_wealth, n_consumption), dtype=bool)
-        E_next_V = jnp.zeros((n_wealth, n_consumption))
-        Q = jnp.zeros((n_wealth, n_consumption))
-        probs = MappingProxyType({"alive": jnp.ones((n_wealth, n_consumption))})
-        return U, F, E_next_V, Q, probs
+    def mock_compute_intermediates(**kwargs: jnp.ndarray) -> dict:  # noqa: ARG001
+        # Return the fused-reduction dict the real closure produces after
+        # productmap-wrapping + on-device reduction.
+        return {
+            "U_nan_overall": jnp.array(0.0),
+            "U_nan_by_wealth": jnp.zeros(n_wealth),
+            "U_nan_by_consumption": jnp.zeros(n_consumption),
+            "E_nan_overall": jnp.array(0.0),
+            "E_nan_by_wealth": jnp.zeros(n_wealth),
+            "E_nan_by_consumption": jnp.zeros(n_consumption),
+            "Q_nan_overall": jnp.array(0.0),
+            "Q_nan_by_wealth": jnp.zeros(n_wealth),
+            "Q_nan_by_consumption": jnp.zeros(n_consumption),
+            "F_feasible_overall": jnp.array(1.0),
+            "F_feasible_by_wealth": jnp.ones(n_wealth),
+            "F_feasible_by_consumption": jnp.ones(n_consumption),
+            "regime_probs": MappingProxyType({"alive": jnp.array(1.0)}),
+        }
 
     with pytest.raises(InvalidValueFunctionError) as exc_info:
         validate_V(

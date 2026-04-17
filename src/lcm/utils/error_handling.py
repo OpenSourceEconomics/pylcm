@@ -136,8 +136,10 @@ def _enrich_with_diagnostics(
     """Run diagnostic intermediates and attach summary to exception.
 
     `compute_intermediates` is productmap-wrapped over the full state-action
-    space (same structure as `max_Q_over_a`) and JIT-compiled. Reduction to
-    NaN fractions runs on device via `jnp`.
+    space (same structure as `max_Q_over_a`) and fused with an on-device
+    reduction step in a single JIT region — so the full-shape U/F/E/Q
+    arrays never materialise in host-visible memory. It returns a flat
+    dict of scalars + per-dimension vectors.
     """
     all_names = (*state_action_space.state_names, *state_action_space.action_names)
     state_action_kwargs: dict[str, Any] = {
@@ -159,13 +161,9 @@ def _enrich_with_diagnostics(
         "period": period,
     }
 
-    U_arr, F_arr, E_next_V, Q_arr, regime_probs = compute_intermediates(**call_kwargs)
+    reductions = compute_intermediates(**call_kwargs)
     exc.diagnostics = _summarize_diagnostics(
-        U_arr=U_arr,
-        F_arr=F_arr,
-        E_next_V=E_next_V,
-        Q_arr=Q_arr,
-        regime_probs={k: float(jnp.mean(v)) for k, v in regime_probs.items()},
+        reductions=reductions,
         variable_names=all_names,
         regime_name=regime_name,
         age=age,
@@ -175,48 +173,39 @@ def _enrich_with_diagnostics(
 
 def _summarize_diagnostics(
     *,
-    U_arr: Array,
-    F_arr: Array,
-    E_next_V: Array,
-    Q_arr: Array,
-    regime_probs: dict[str, float],
+    reductions: Mapping[str, Any],
     variable_names: tuple[str, ...],
     regime_name: str,
     age: float,
 ) -> dict[str, Any]:
-    """Reduce diagnostic arrays to NaN fractions per variable dimension."""
+    """Restructure the flat reduction pytree into the summary dict shape.
+
+    Pure host-side — no device computation. Consumes the output of the
+    fused compute-and-reduce function built in
+    `_build_compute_intermediates_per_period`.
+
+    """
     summary: dict[str, Any] = {"regime_name": regime_name, "age": age}
 
-    for key, arr in [
-        ("U_nan_fraction", U_arr),
-        ("E_nan_fraction", E_next_V),
-        ("Q_nan_fraction", Q_arr),
+    for key_out, key_in in [
+        ("U_nan_fraction", "U_nan"),
+        ("E_nan_fraction", "E_nan"),
+        ("Q_nan_fraction", "Q_nan"),
+        ("F_feasible_fraction", "F_feasible"),
     ]:
-        nan_frac = jnp.isnan(arr).astype(float)
-        summary[key] = {
-            "overall": float(jnp.mean(nan_frac)),
-            "by_dim": {
-                name: jnp.mean(
-                    nan_frac, axis=tuple(j for j in range(nan_frac.ndim) if j != i)
-                ).tolist()
-                for i, name in enumerate(variable_names)
-                if i < nan_frac.ndim
-            },
+        by_dim: dict[str, list[float]] = {}
+        for name in variable_names:
+            k = f"{key_in}_by_{name}"
+            if k in reductions:
+                by_dim[name] = reductions[k].tolist()
+        summary[key_out] = {
+            "overall": float(reductions[f"{key_in}_overall"]),
+            "by_dim": by_dim,
         }
 
-    feasible = F_arr.astype(float)
-    summary["F_feasible_fraction"] = {
-        "overall": float(jnp.mean(feasible)),
-        "by_dim": {
-            name: jnp.mean(
-                feasible, axis=tuple(j for j in range(feasible.ndim) if j != i)
-            ).tolist()
-            for i, name in enumerate(variable_names)
-            if i < feasible.ndim
-        },
+    summary["regime_probs"] = {
+        k: float(v) for k, v in reductions["regime_probs"].items()
     }
-
-    summary["regime_probs"] = regime_probs
     return summary
 
 
