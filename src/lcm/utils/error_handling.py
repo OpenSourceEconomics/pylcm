@@ -135,6 +135,20 @@ def _enrich_with_diagnostics(
     reduction step in a single JIT region — so the full-shape U/F/E/Q
     arrays never materialise in host-visible memory. It returns a flat
     dict of scalars + per-dimension vectors.
+
+    Args:
+        exc: The `InvalidValueFunctionError` to enrich with a diagnostic
+            note and a `diagnostics` attribute.
+        compute_intermediates: Fused productmap + reduction closure for the
+            regime/period whose V array contained NaN.
+        state_action_space: State-action space for the regime/period; used
+            to build call kwargs and label per-dimension reductions.
+        next_regime_to_V_arr: Immutable mapping of next-period value
+            function arrays per regime (or `None`).
+        internal_params: Optional mapping of flat regime parameter values.
+        regime_name: Name of the regime whose V array failed validation.
+        age: Age at which the V array failed validation.
+
     """
     all_names = (*state_action_space.state_names, *state_action_space.action_names)
     state_action_kwargs: dict[str, Any] = {
@@ -177,6 +191,18 @@ def _summarize_diagnostics(
     fused compute-and-reduce function built in
     `_build_compute_intermediates_per_period`.
 
+    Args:
+        reductions: Flat mapping of reduction keys (`{metric}_overall`,
+            `{metric}_by_{name}`, and `regime_probs`) to device arrays.
+        variable_names: Tuple of state + action names in the order that
+            matches the productmap axes.
+        regime_name: Name of the regime for the summary header.
+        age: Age for the summary header.
+
+    Returns:
+        Dict with per-metric `"overall"` and `"by_dim"` entries plus a
+        `"regime_probs"` mapping, suitable for `_format_diagnostic_summary`.
+
     """
     summary: dict[str, Any] = {"regime_name": regime_name, "age": age}
 
@@ -203,7 +229,15 @@ def _summarize_diagnostics(
 
 
 def _format_diagnostic_summary(summary: dict[str, Any]) -> str:
-    """Format diagnostic summary for exception note."""
+    """Format diagnostic summary for exception note.
+
+    Args:
+        summary: Nested summary dict as produced by `_summarize_diagnostics`.
+
+    Returns:
+        Human-readable multi-line string suitable for `Exception.add_note`.
+
+    """
     lines = [
         f"\nDiagnostics for regime '{summary['regime_name']}' at age {summary['age']}:",
     ]

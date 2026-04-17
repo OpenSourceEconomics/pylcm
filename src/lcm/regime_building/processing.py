@@ -1335,9 +1335,34 @@ def _build_compute_intermediates_per_period(
 ) -> MappingProxyType[int, Callable]:
     """Build diagnostic intermediate closures for each period.
 
-    The closures return all Q_and_F intermediates over the full state-action
-    space. Used in the error path when `validate_V` detects NaN. They follow
-    the same productmap + JIT structure as `max_Q_over_a`.
+    The closures fuse a productmap over the full state-action space with
+    on-device reductions (matching the `max_Q_over_a` productmap pattern)
+    and are JIT-compiled. Used in the error path when `validate_V` detects
+    NaN; returns an empty mapping for terminal regimes.
+
+    Args:
+        regime: User regime; only the terminal flag is consulted.
+        regimes_to_active_periods: Immutable mapping of regime names to
+            their active period tuples.
+        functions: Immutable mapping of internal user functions.
+        constraints: Immutable mapping of constraint functions.
+        transitions: Immutable mapping of regime-to-regime transition
+            functions.
+        stochastic_transition_names: Frozenset of stochastic transition
+            function names.
+        compute_regime_transition_probs: Regime transition probability
+            function, or `None` for terminal regimes.
+        regime_to_v_interpolation_info: Mapping of regime names to
+            V-interpolation info.
+        state_action_space: State-action space used for productmap sizing.
+        grids: Immutable mapping of state/action names to grid specs; used
+            for per-state batch sizes.
+        ages: Age grid for the model.
+        enable_jit: Whether to JIT-compile the fused closure.
+
+    Returns:
+        Immutable mapping of period index to fused closure; empty for
+        terminal regimes.
 
     """
     if regime.terminal:
