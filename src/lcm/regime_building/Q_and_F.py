@@ -135,6 +135,11 @@ def get_Q_and_F(
         exclude=frozenset(),
     )
 
+    # Resolve H arguments that are regime-function outputs (e.g. a
+    # `discount_factor` DAG function that indexes a per-type Series by a
+    # state). `None` when H only needs state/action/user-param values.
+    _h_dag_fn = _get_h_dag_fn(functions=functions, h_accepted_params=_H_accepted_params)
+
     @with_signature(
         args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
     )
@@ -203,6 +208,8 @@ def get_Q_and_F(
         H_kwargs = {
             k: v for k, v in states_actions_params.items() if k in _H_accepted_params
         }
+        if _h_dag_fn is not None:
+            H_kwargs |= _h_dag_fn(**states_actions_params)
         Q_arr = _H_func(utility=U_arr, E_next_V=E_next_V, **H_kwargs)
 
         # Handle cases when there is only one state.
@@ -301,6 +308,7 @@ def get_compute_intermediates(
     _H_accepted_params = frozenset(
         get_union_of_args([_H_func]) - {"utility", "E_next_V"}
     )
+    _h_dag_fn = _get_h_dag_fn(functions=functions, h_accepted_params=_H_accepted_params)
 
     arg_names_of_compute_intermediates = _get_arg_names_of_Q_and_F(
         [
@@ -357,6 +365,8 @@ def get_compute_intermediates(
         H_kwargs = {
             k: v for k, v in states_actions_params.items() if k in _H_accepted_params
         }
+        if _h_dag_fn is not None:
+            H_kwargs |= _h_dag_fn(**states_actions_params)
         Q_arr = _H_func(utility=U_arr, E_next_V=E_next_V, **H_kwargs)
 
         return U_arr, F_arr, E_next_V, Q_arr, active_regime_probs
@@ -533,6 +543,47 @@ def _get_joint_weights_function(
     variables = tuple(arg_names)
     return productmap(
         func=_outer, variables=variables, batch_sizes=dict.fromkeys(variables, 0)
+    )
+
+
+def _get_h_dag_fn(
+    *,
+    functions: FunctionsMapping,
+    h_accepted_params: frozenset[str],
+) -> Callable[..., dict[str, Any]] | None:
+    """Compile a DAG that resolves H arguments from regime functions.
+
+    `H`'s signature may name arguments that are neither states, actions,
+    nor user params — they are DAG function outputs (e.g. a
+    `discount_factor` computed from a `pref_type` state). For every such
+    name, compile a DAG target so it can be evaluated at runtime and
+    merged into `H_kwargs` alongside state/action/user-param values.
+
+    `utility`, `feasibility` and `H` itself are never targets here:
+    `utility` is passed directly from `U_and_F`, `feasibility` is not a
+    legitimate H input, and `H` cannot consume its own output.
+
+    Args:
+        functions: Regime functions (user and generated).
+        h_accepted_params: Names H accepts beyond `utility` / `E_next_V`.
+
+    Returns:
+        A callable mapping `states_actions_params` kwargs to a dict of
+        the resolved DAG outputs, or `None` if H needs no DAG outputs.
+
+    """
+    dag_targets = tuple(
+        sorted(h_accepted_params & set(functions) - {"H", "utility", "feasibility"})
+    )
+
+    if not dag_targets:
+        return None
+
+    return concatenate_functions(
+        functions={k: v for k, v in functions.items() if k != "H"},
+        targets=list(dag_targets),
+        return_type="dict",
+        enforce_signature=False,
     )
 
 
