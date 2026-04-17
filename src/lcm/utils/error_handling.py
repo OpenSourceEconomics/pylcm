@@ -61,15 +61,17 @@ def validate_V(
             "reasons:\n"
             "- The user-defined functions returned invalid values.\n"
             "- It is impossible to reach an active regime, resulting in NaN regime\n"
-            "  transition probabilities."
+            "  transition probabilities.\n"
+            "- A per-target state_transitions dict omits a reachable target\n"
+            "  (non-zero transition probability to an incomplete target)."
         )
 
 
 def validate_regime_transition_probs(
     *,
     regime_transition_probs: MappingProxyType[str, Array],
-    active_regimes_next_period: tuple[str, ...],
-    regime_name: str,
+    active_regimes_next_period: tuple[RegimeName, ...],
+    regime_name: RegimeName,
     age: ScalarInt | ScalarFloat,
     next_age: ScalarInt | ScalarFloat,
     state_action_values: MappingProxyType[str, Array] | None = None,
@@ -224,7 +226,7 @@ def validate_regime_transitions_all_periods(
                 continue
 
             _validate_regime_transition_single(
-                internal_regime=internal_regime,
+                internal_regimes=internal_regimes,
                 regime_params=internal_params[name],
                 active_regimes_next_period=active_regimes_next_period,
                 regime_name=name,
@@ -235,10 +237,10 @@ def validate_regime_transitions_all_periods(
 
 def _validate_regime_transition_single(
     *,
-    internal_regime: InternalRegime,
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_params: FlatRegimeParams,
-    active_regimes_next_period: tuple[str, ...],
-    regime_name: str,
+    active_regimes_next_period: tuple[RegimeName, ...],
+    regime_name: RegimeName,
     period: int,
     ages: AgeGrid,
 ) -> None:
@@ -248,6 +250,7 @@ def _validate_regime_transition_single(
     variables it accepts, using `jax.vmap` for vectorised evaluation.
 
     """
+    internal_regime = internal_regimes[regime_name]
     # Non-None guaranteed: only called for non-terminal regimes
     regime_transition_func = (
         internal_regime.solve_functions.compute_regime_transition_probs
@@ -309,6 +312,64 @@ def _validate_regime_transition_single(
         next_age=ages.values[period + 1],  # noqa: PD011
         state_action_values=MappingProxyType(point),
     )
+
+    _validate_no_reachable_incomplete_targets(
+        internal_regimes=internal_regimes,
+        regime_transition_probs=regime_transition_probs,
+        active_regimes_next_period=active_regimes_next_period,
+        regime_name=regime_name,
+        age=ages.values[period],  # noqa: PD011
+    )
+
+
+def _validate_no_reachable_incomplete_targets(
+    *,
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    regime_transition_probs: MappingProxyType[str, Array],
+    active_regimes_next_period: tuple[RegimeName, ...],
+    regime_name: RegimeName,
+    age: ScalarInt | ScalarFloat,
+) -> None:
+    """Check that targets with incomplete stochastic transitions are unreachable.
+
+    A target is "incomplete" from the source regime if the source's
+    `transitions[target_regime_name]` does not cover all of the target's
+    stochastic state needs. Such targets must have zero transition
+    probability, otherwise the continuation value cannot be computed. This
+    includes self-transitions (regime reaches itself): omitting the
+    self-entry in a per-target dict is a common user error.
+
+    """
+    solve_functions = internal_regimes[regime_name].solve_functions
+    transitions = solve_functions.transitions
+    stochastic_names = solve_functions.stochastic_transition_names
+
+    for target_regime_name in active_regimes_next_period:
+        target_regime = internal_regimes[target_regime_name]
+        target_state_names = tuple(target_regime.variable_info.query("is_state").index)
+        needs = {
+            f"next_{s}" for s in target_state_names if f"next_{s}" in stochastic_names
+        }
+        if not needs:
+            continue
+        if target_regime_name in transitions and needs.issubset(
+            transitions[target_regime_name]
+        ):
+            continue
+        if not jnp.any(regime_transition_probs[target_regime_name] > 0):
+            continue
+        missing = sorted(needs - set(transitions.get(target_regime_name, {})))
+        if target_regime_name not in transitions:
+            missing = sorted(f"next_{s}" for s in target_state_names)
+        raise InvalidRegimeTransitionProbabilitiesError(
+            f"Regime '{regime_name}' at age {age} has positive transition "
+            f"probability to '{target_regime_name}', but '{regime_name}' "
+            f"does not provide state transition(s) for: {missing}. Extend "
+            f"`state_transitions` in '{regime_name}' to cover "
+            f"'{target_regime_name}' (via a per-target dict if the "
+            f"transition differs by target), or ensure "
+            f"'{target_regime_name}' is unreachable."
+        )
 
 
 def _get_func_indexing_params(

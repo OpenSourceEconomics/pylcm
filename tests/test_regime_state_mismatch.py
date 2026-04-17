@@ -12,7 +12,10 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.exceptions import ModelInitializationError
+from lcm.exceptions import (
+    InvalidRegimeTransitionProbabilitiesError,
+    ModelInitializationError,
+)
 from lcm.regime_building.processing import _merge_ordered_categories
 from lcm.typing import (
     ContinuousAction,
@@ -561,3 +564,106 @@ def test_both_ordered_contradictory_raises():
         ]
     )
     assert result is None
+
+
+def _next_health_3to3(health: DiscreteState) -> FloatND:
+    """Stochastic same-grid transition (3→3)."""
+    return jnp.where(
+        health == HealthWorkingLife.good,
+        jnp.array([0.05, 0.15, 0.8]),
+        jnp.where(
+            health == HealthWorkingLife.bad,
+            jnp.array([0.1, 0.7, 0.2]),
+            jnp.array([0.8, 0.15, 0.05]),
+        ),
+    )
+
+
+def _next_wealth(
+    wealth: ContinuousState, consumption: ContinuousAction
+) -> ContinuousState:
+    return wealth - consumption
+
+
+_BORROWING_CONSTRAINT = {"borrowing": lambda consumption, wealth: consumption <= wealth}
+_WEALTH_GRID = LinSpacedGrid(start=1, stop=50, n_points=10)
+_CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=50, n_points=20)
+
+
+def test_incomplete_per_target_reachable_target():
+    """Per-target dict omits a target the source CAN reach (prob>0).
+
+    Regime A's transition function produces B's id, but A's per-target dict
+    does not list B. This is a user error — the missing transition means
+    B's continuation value cannot be computed. The pre-solve validation
+    raises `InvalidRegimeTransitionProbabilitiesError`.
+    """
+
+    @categorical(ordered=False)
+    class _RegimeId:
+        regime_a: int
+        regime_b: int
+        dead: int
+
+    def next_regime_a(age: float) -> ScalarInt:
+        """A → B at age 1. B IS reachable."""
+        return jnp.where(
+            age >= 2,
+            _RegimeId.dead,
+            jnp.where(
+                age >= 1,
+                _RegimeId.regime_b,
+                _RegimeId.regime_a,
+            ),
+        )
+
+    # A only lists A and dead — NOT B (but A can reach B).
+    regime_a = Regime(
+        states={
+            "health": DiscreteGrid(HealthWorkingLife),
+            "wealth": _WEALTH_GRID,
+        },
+        state_transitions={
+            "health": {
+                "regime_a": MarkovTransition(_next_health_3to3),
+                "dead": MarkovTransition(_next_health_3to3),
+            },
+            "wealth": _next_wealth,
+        },
+        actions={"consumption": _CONSUMPTION_GRID},
+        constraints=_BORROWING_CONSTRAINT,
+        functions={
+            "utility": lambda consumption, health: jnp.log(consumption) + 0.1 * health,
+        },
+        transition=next_regime_a,
+        active=lambda age: age < 3,
+    )
+
+    regime_b = Regime(
+        states={
+            "health": DiscreteGrid(HealthRetirement),
+            "wealth": _WEALTH_GRID,
+        },
+        state_transitions={"health": None, "wealth": _next_wealth},
+        actions={"consumption": _CONSUMPTION_GRID},
+        constraints=_BORROWING_CONSTRAINT,
+        functions={
+            "utility": lambda consumption, health: jnp.log(consumption) + 0.05 * health,
+        },
+        transition=lambda age: jnp.where(age >= 3, _RegimeId.dead, _RegimeId.regime_b),
+        active=lambda age: age < 4,
+    )
+
+    dead = Regime(transition=None, functions={"utility": lambda: 0.0})
+
+    model = Model(
+        regimes={"regime_a": regime_a, "regime_b": regime_b, "dead": dead},
+        ages=AgeGrid(start=0, stop=4, step="Y"),
+        regime_id_class=_RegimeId,
+    )
+
+    with pytest.raises(
+        InvalidRegimeTransitionProbabilitiesError,
+        match=r"does not provide state transition",
+    ):
+        model.solve(params={"discount_factor": 0.95})

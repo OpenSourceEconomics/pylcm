@@ -66,15 +66,35 @@ def get_Q_and_F(
     joint_weights_from_marginals = {}
     next_V = {}
 
-    target_regime_names = tuple(transitions)
-    active_regimes_next_period = tuple(
-        target_regime_name
-        for target_regime_name in target_regime_names
-        if period + 1 in regimes_to_active_periods[target_regime_name]
+    # Enumerate all active targets, not just those in transitions — targets
+    # entirely absent from per-target dicts must also be detected.
+    all_active_next_period = tuple(
+        regime_name
+        for regime_name in regime_to_v_interpolation_info
+        if period + 1 in regimes_to_active_periods.get(regime_name, ())
     )
+
+    # Keep only targets whose stochastic state needs are all covered by
+    # `transitions`. Targets with missing stochastic transitions are dropped
+    # from the traced function; `validate_regime_transitions_all_periods`
+    # (via `_validate_no_reachable_incomplete_targets` in
+    # `lcm.utils.error_handling`) raises pre-solve if any such target has
+    # non-zero transition probability.
+    complete_targets: list[RegimeName] = []
+    for regime_name in all_active_next_period:
+        target_stochastic_needs = {
+            f"next_{s}"
+            for s in regime_to_v_interpolation_info[regime_name].state_names
+            if f"next_{s}" in stochastic_transition_names
+        }
+        if regime_name in transitions and target_stochastic_needs.issubset(
+            transitions[regime_name]
+        ):
+            complete_targets.append(regime_name)
+
     next_V_extra_param_names: dict[str, frozenset[str]] = {}
 
-    for target_regime_name in active_regimes_next_period:
+    for target_regime_name in complete_targets:
         # Transitions from the current regime to the target regime
         target_transitions = transitions[target_regime_name]
 
@@ -170,14 +190,16 @@ def get_Q_and_F(
             period=period,
             age=age,
         )
-        # Filter to active regimes only — inactive regimes must have 0
-        # probability (validated before solve).
+        # `complete_targets` is resolved at trace time (it is a closure over
+        # a Python list); incomplete-target validation happens outside JIT
+        # in `_validate_no_reachable_incomplete_targets` so that the traced
+        # graph contains no runtime error-raising callbacks.
         active_regime_probs = MappingProxyType(
-            {r: regime_transition_probs[r] for r in active_regimes_next_period}
+            {r: regime_transition_probs[r] for r in complete_targets}
         )
 
         E_next_V = jnp.zeros_like(U_arr)
-        for target_regime_name in active_regimes_next_period:
+        for target_regime_name in complete_targets:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,
                 period=period,

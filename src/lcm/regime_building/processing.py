@@ -9,7 +9,7 @@ import jax
 import pandas as pd
 from dags import concatenate_functions, get_annotations, with_signature
 from dags.signature import rename_arguments
-from dags.tree import qname_from_tree_path, tree_path_from_qname
+from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
 from jax import Array
 from jax import numpy as jnp
 
@@ -85,7 +85,7 @@ def process_regimes(
         The processed regimes.
 
     """
-    states_per_regime: dict[str, set[str]] = {
+    states_per_regime: dict[RegimeName, set[str]] = {
         name: set(regime.states.keys()) for name, regime in regimes.items()
     }
 
@@ -174,7 +174,7 @@ def process_regimes(
 def _build_solve_functions(
     *,
     regime: Regime,
-    regime_name: str,
+    regime_name: RegimeName,
     nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
     regime_params_template: RegimeParamsTemplate,
@@ -262,7 +262,7 @@ def _build_solve_functions(
 def _build_simulate_functions(
     *,
     regime: Regime,
-    regime_name: str,
+    regime_name: RegimeName,
     nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
     regime_params_template: RegimeParamsTemplate,
@@ -508,13 +508,21 @@ def _process_regime_core(
         )
 
     # Shock transitions bypass the stub pipeline entirely. Build weight and
-    # next functions for ALL target regimes directly from each target's grid.
+    # next functions for reachable target regimes from each target's grid.
+    # Scope to targets already present in non-shock transitions to avoid
+    # spurious entries for unreachable regimes.
     shock_names = variable_info.query("is_shock").index.tolist()
-    target_shock_grids: dict[tuple[str, str], _ShockGrid] = {  # ty: ignore[invalid-assignment]
-        (regime, shock): grids[shock]
+    reachable_targets = {
+        tree_path_from_qname(k)[0]
+        for k in flat_nested_transitions
+        if QNAME_DELIMITER in k
+    }
+    target_shock_grids: dict[tuple[RegimeName, str], _ShockGrid] = {
+        (regime, shock): grid
         for regime, grids in all_grids.items()
+        if regime in reachable_targets
         for shock in shock_names
-        if isinstance(grids.get(shock), _ShockGrid)
+        if isinstance(grid := grids.get(shock), _ShockGrid)
     }
     functions |= {
         f"weight_{regime}__next_{shock}": _get_weights_func_for_shock(
@@ -567,7 +575,7 @@ def _process_regime_core(
 def _extract_transitions_from_regime(
     *,
     regime: Regime,
-    states_per_regime: Mapping[str, set[str]],
+    states_per_regime: Mapping[RegimeName, set[str]],
 ) -> dict[str, dict[str, UserFunction] | UserFunction]:
     """Extract transitions from `regime.state_transitions` and regime transition.
 
@@ -600,7 +608,14 @@ def _extract_transitions_from_regime(
         {"next_regime": regime.transition},
     )
 
-    for target_regime_name, target_regime_state_names in states_per_regime.items():
+    reachable_targets = _get_reachable_targets(
+        per_target_transitions=per_target_transitions,
+        simple_transitions=simple_transitions,
+        states_per_regime=states_per_regime,
+    )
+
+    for target_regime_name in reachable_targets:
+        target_regime_state_names = states_per_regime[target_regime_name]
         target_dict: dict[str, UserFunction] = {}
         for state_name in target_regime_state_names:
             next_key = f"next_{state_name}"
@@ -614,6 +629,34 @@ def _extract_transitions_from_regime(
             nested[target_regime_name] = target_dict
 
     return nested
+
+
+def _get_reachable_targets(
+    *,
+    per_target_transitions: dict[str, dict[str, UserFunction]],
+    simple_transitions: dict[str, UserFunction],
+    states_per_regime: Mapping[RegimeName, set[str]],
+) -> set[RegimeName]:
+    """Determine which target regimes need transition entries.
+
+    When per-target transitions exist, start from the explicitly named targets
+    and add any target whose state needs are fully covered by simple
+    (non-per-target) transitions. Without per-target transitions, all regimes
+    are reachable.
+
+    """
+    if not per_target_transitions:
+        return set(states_per_regime.keys())
+
+    targets: set[RegimeName] = set()
+    for variants in per_target_transitions.values():
+        targets |= variants.keys()
+    for target_name, target_states in states_per_regime.items():
+        if target_name not in targets:
+            needed = {f"next_{s}" for s in target_states}
+            if needed and needed.issubset(simple_transitions):
+                targets.add(target_name)
+    return targets
 
 
 def _classify_transitions(
