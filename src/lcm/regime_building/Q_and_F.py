@@ -76,9 +76,10 @@ def get_Q_and_F(
 
     # Keep only targets whose stochastic state needs are all covered by
     # `transitions`. Targets with missing stochastic transitions are dropped
-    # from the traced function; pre-solve validation in
-    # `_validate_no_reachable_incomplete_targets` raises if any such target
-    # has non-zero transition probability.
+    # from the traced function; `validate_regime_transitions_all_periods`
+    # (via `_validate_no_reachable_incomplete_targets` in
+    # `lcm.utils.error_handling`) raises pre-solve if any such target has
+    # non-zero transition probability.
     complete_targets: list[RegimeName] = []
     for regime_name in all_active_next_period:
         target_stochastic_needs = {
