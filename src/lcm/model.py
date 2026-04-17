@@ -187,6 +187,8 @@ class Model:
                   specification
                 Values may be `pd.Series` with labeled indices; they are
                 auto-converted to JAX arrays.
+            max_compilation_workers: Maximum number of threads for parallel XLA
+                compilation. Defaults to the number of physical CPU cores.
             log_level: Logging verbosity. `"off"` suppresses output, `"warning"` shows
                 NaN/Inf warnings, `"progress"` adds timing, `"debug"` adds stats and
                 requires `log_path`.

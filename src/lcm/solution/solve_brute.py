@@ -193,7 +193,7 @@ def _compile_all_functions(
         logger: Logger for compilation progress.
 
     Returns:
-        Mapping of (regime_name, period) to callable (compiled or raw) functions.
+        Dict of (regime_name, period) to callable (compiled or raw) functions.
 
     """
     # Collect all (regime, period) -> function mappings.
@@ -209,11 +209,13 @@ def _compile_all_functions(
     # Deduplicate by identity (or by underlying function for partials).
     unique: dict[Hashable, tuple[Callable, RegimeName, int]] = {}
     for (name, period), func in all_functions.items():
-        func_id = _func_dedup_key(func)
+        func_id = _func_dedup_key(func=func)
         if func_id not in unique:
             unique[func_id] = (func, name, period)
 
-    n_workers = _resolve_compilation_workers(max_compilation_workers)
+    n_workers = _resolve_compilation_workers(
+        max_compilation_workers=max_compilation_workers
+    )
     n_unique = len(unique)
 
     logger.info(
@@ -252,6 +254,7 @@ def _compile_all_functions(
     compiled: dict[Hashable, jax.stages.Compiled] = {}
 
     def _compile_and_log(
+        *,
         func_id: Hashable,
         low: jax.stages.Lowered,
         label: str,
@@ -265,7 +268,9 @@ def _compile_all_functions(
 
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
         futures = [
-            pool.submit(_compile_and_log, func_id, low, labels[func_id])
+            pool.submit(
+                _compile_and_log, func_id=func_id, low=low, label=labels[func_id]
+            )
             for func_id, low in lowered.items()
         ]
         for future in as_completed(futures):
@@ -273,10 +278,12 @@ def _compile_all_functions(
             compiled[func_id] = comp
 
     # Map back to (regime, period) keys.
-    return {key: compiled[_func_dedup_key(func)] for key, func in all_functions.items()}
+    return {
+        key: compiled[_func_dedup_key(func=func)] for key, func in all_functions.items()
+    }
 
 
-def _resolve_compilation_workers(max_compilation_workers: int | None) -> int:
+def _resolve_compilation_workers(*, max_compilation_workers: int | None) -> int:
     """Return the number of threads to use for parallel XLA compilation."""
     if max_compilation_workers is None:
         return os.cpu_count() or 1
@@ -286,23 +293,23 @@ def _resolve_compilation_workers(max_compilation_workers: int | None) -> int:
     return max_compilation_workers
 
 
-def _func_dedup_key(func: Callable) -> Hashable:
+def _func_dedup_key(*, func: Callable) -> Hashable:
     """Return a hashable deduplication key for a callable.
 
     For `functools.partial` objects wrapping shared JIT functions, deduplicate
-    by the underlying function's identity and the keyword argument names.
-    For plain callables, use object identity.
+    by the underlying function's identity together with the `id()` of every
+    keyword-argument value. This is correct even when different partials
+    bind different value objects — two partials share a compiled program
+    only when every keyword value is the same object.
 
-    Note:
-        The dedup ignores keyword argument *values*. This relies on the
-        invariant that partials sharing the same underlying function and
-        keyword names also share identical (same-object) keyword values,
-        which holds today because `_apply_fixed_params` uses the same
-        `regime_fixed` mapping for all periods of a regime.
+    For plain callables, use object identity.
 
     """
     if isinstance(func, functools.partial):
-        return (id(func.func), tuple(sorted(func.keywords)))
+        return (
+            id(func.func),
+            tuple((k, id(v)) for k, v in sorted(func.keywords.items())),
+        )
     return id(func)
 
 
@@ -321,7 +328,7 @@ def _get_regime_V_shapes(
         internal_params: Regime parameters (needed for runtime grid shapes).
 
     Returns:
-        Mapping of regime names to V array shapes.
+        Dict of regime names to V array shapes.
 
     """
     shapes: dict[RegimeName, tuple[int, ...]] = {}
