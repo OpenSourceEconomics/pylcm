@@ -1351,6 +1351,11 @@ def _build_compute_intermediates_per_period(
         if name in state_action_space.state_names
     }
 
+    variable_names = (
+        *state_action_space.state_names,
+        *state_action_space.action_names,
+    )
+
     intermediates: dict[int, Callable] = {}
     for period, age in enumerate(ages.values):
         scalar = get_compute_intermediates(
@@ -1370,9 +1375,54 @@ def _build_compute_intermediates_per_period(
             state_names=state_action_space.state_names,
             state_batch_sizes=state_batch_sizes,
         )
-        intermediates[period] = jax.jit(mapped) if enable_jit else mapped
+        fused = _wrap_with_reduction(
+            func=mapped,
+            variable_names=variable_names,
+        )
+        intermediates[period] = jax.jit(fused) if enable_jit else fused
 
     return MappingProxyType(intermediates)
+
+
+def _wrap_with_reduction(
+    *,
+    func: Callable,
+    variable_names: tuple[str, ...],
+) -> Callable:
+    """Fuse a productmap'd intermediates function with on-device reductions.
+
+    The wrapped function returns a flat pytree of scalars and per-dimension
+    vectors instead of full state-action-shaped arrays. When JIT-compiled,
+    XLA can fuse the compute and reduce steps so the full-shape
+    intermediates never materialise.
+
+    Returns:
+        Callable taking the same kwargs as `func` and returning a dict with
+        `{Y}_overall` scalars and `{Y}_by_{name}` vectors for `Y` in
+        {`U_nan`, `E_nan`, `Q_nan`, `F_feasible`}, plus `regime_probs` as
+        a dict of per-target scalar means.
+
+    """
+
+    def reduced(**kwargs: Array) -> dict[str, Any]:
+        U_arr, F_arr, E_next_V, Q_arr, regime_probs = func(**kwargs)
+        arrays: dict[str, Array] = {
+            "U_nan": jnp.isnan(U_arr).astype(float),
+            "E_nan": jnp.isnan(E_next_V).astype(float),
+            "Q_nan": jnp.isnan(Q_arr).astype(float),
+            "F_feasible": F_arr.astype(float),
+        }
+        out: dict[str, Any] = {}
+        for key, arr in arrays.items():
+            out[f"{key}_overall"] = jnp.mean(arr)
+            for i, name in enumerate(variable_names):
+                if i < arr.ndim:
+                    axes = tuple(j for j in range(arr.ndim) if j != i)
+                    out[f"{key}_by_{name}"] = jnp.mean(arr, axis=axes)
+        out["regime_probs"] = {k: jnp.mean(v) for k, v in regime_probs.items()}
+        return out
+
+    return reduced
 
 
 def _productmap_over_state_action_space(
