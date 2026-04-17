@@ -1346,7 +1346,7 @@ def _get_complete_targets(
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     stochastic_transition_names: frozenset[str],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
-) -> tuple[str, ...]:
+) -> tuple[RegimeName, ...]:
     """Return active target regimes whose stochastic needs are fully covered.
 
     Enumerates every regime active in the next period (from
@@ -1362,20 +1362,22 @@ def _get_complete_targets(
 
     """
     all_active = tuple(
-        name
-        for name in regime_to_v_interpolation_info
-        if period + 1 in regimes_to_active_periods.get(name, ())
+        regime_name
+        for regime_name in regime_to_v_interpolation_info
+        if period + 1 in regimes_to_active_periods.get(regime_name, ())
     )
 
-    complete: list[str] = []
-    for name in all_active:
+    complete: list[RegimeName] = []
+    for regime_name in all_active:
         target_stochastic_needs = {
             f"next_{s}"
-            for s in regime_to_v_interpolation_info[name].state_names
+            for s in regime_to_v_interpolation_info[regime_name].state_names
             if f"next_{s}" in stochastic_transition_names
         }
-        if name in transitions and target_stochastic_needs.issubset(transitions[name]):
-            complete.append(name)
+        if regime_name in transitions and target_stochastic_needs.issubset(
+            transitions[regime_name]
+        ):
+            complete.append(regime_name)
 
     return tuple(complete)
 
