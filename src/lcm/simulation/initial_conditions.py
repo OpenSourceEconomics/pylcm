@@ -15,7 +15,7 @@ import pandas as pd
 from jax import Array
 from jax import numpy as jnp
 
-from lcm.ages import AgeGrid
+from lcm.ages import PSEUDO_STATE_NAMES, AgeGrid
 from lcm.exceptions import (
     InvalidInitialConditionsError,
     format_messages,
@@ -198,7 +198,7 @@ def _format_missing_states_message(missing: set[str], required: set[str]) -> str
             "knows each subject's starting age. Example: "
             "initial_states={'age': jnp.array([25.0, 25.0]), ...}"
         )
-    missing_model_states = sorted(missing - {"age"})
+    missing_model_states = sorted(missing - PSEUDO_STATE_NAMES)
     if missing_model_states:
         parts.append(f"Missing model states: {missing_model_states}.")
     parts.append(f"Required initial states are: {sorted(required)}")
@@ -234,12 +234,12 @@ def _collect_state_name_errors(
     errors: list[str] = []
 
     # All known states (union across all regimes) — used for the "extra" check
-    all_known_states: set[str] = {"age"}
+    all_known_states: set[str] = set(PSEUDO_STATE_NAMES)
     for internal_regime in internal_regimes.values():
         all_known_states.update(_get_regime_state_names(internal_regime))
 
     # Required states — only from regimes subjects actually start in
-    required_states: set[str] = {"age"}
+    required_states: set[str] = set(PSEUDO_STATE_NAMES)
     used_ids = jnp.unique(regime_id_arr)
     used_regime_names = {
         ids_to_regime_names[int(i)] for i in used_ids if int(i) in ids_to_regime_names
@@ -665,6 +665,10 @@ def _raise_feasibility_type_error(
         internal_regime: The internal regime containing variable info.
         subject_states: Mapping of state names to arrays for subjects in
             this regime.
+
+    Raises:
+        InvalidInitialConditionsError: Always — wraps `exc` with a dtype hint
+            when any discrete state has a non-integer dtype.
 
     """
     discrete_names = {

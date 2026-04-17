@@ -687,7 +687,7 @@ def test_incomplete_per_target_reachable_target():
         model.solve(params={"discount_factor": 0.95})
 
 
-def test_complete_per_target_stochastic_cross_grid():
+def test_complete_per_target_stochastic_cross_grid() -> None:
     """Per-target dict covers all targets, with cross-grid stochastic transition.
 
     Regime A (3-state) → B (2-state) via stochastic cross-grid. All active
@@ -758,7 +758,7 @@ def test_complete_per_target_stochastic_cross_grid():
     model.solve(params={"discount_factor": 0.95})
 
 
-def test_incomplete_per_target_unreachable_target():
+def test_incomplete_per_target_unreachable_target() -> None:
     """Per-target dict omits a target the source cannot reach (prob=0).
 
     Regime A lists transitions to A and B only. C is reachable from B but not

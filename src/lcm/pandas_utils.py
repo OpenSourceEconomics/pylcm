@@ -11,21 +11,17 @@ import pandas as pd
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import Array
 
-from lcm.ages import AgeGrid
+from lcm.ages import PSEUDO_STATE_NAMES, AgeGrid
 from lcm.grids import DiscreteGrid, IrregSpacedGrid
 from lcm.params import MappingLeaf
 from lcm.params.sequence_leaf import SequenceLeaf
 from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
+from lcm.simulation.initial_conditions import MISSING_CAT_CODE
 from lcm.typing import InternalParams, RegimeNamesToIds
 from lcm.utils.error_handling import (
     _get_func_indexing_params,
 )
-
-# Sentinel code for discrete-state cells whose subject's regime lacks that state.
-# Written into the result array before the int32 cast; consumers must filter
-# subjects by regime before reading discrete state values.
-_INT32_SENTINEL = np.iinfo(np.int32).min
 
 
 def has_series(params: Mapping) -> bool:
@@ -114,7 +110,7 @@ def initial_conditions_from_dataframe(  # noqa: C901
         }
         discrete_state_names |= discrete_grids.keys()
 
-        regime_state_names = set(regime.states.keys()) | {"age"}
+        regime_state_names = set(regime.states.keys()) | PSEUDO_STATE_NAMES
 
         for col in state_cols:
             if col not in regime_state_names:
@@ -142,7 +138,7 @@ def initial_conditions_from_dataframe(  # noqa: C901
     for col in discrete_state_names:
         if col in result_arrays:
             nan_mask = np.isnan(result_arrays[col])
-            result_arrays[col][nan_mask] = _INT32_SENTINEL
+            result_arrays[col][nan_mask] = MISSING_CAT_CODE
 
     initial_conditions: dict[str, Array] = {
         col: jnp.array(arr, dtype=jnp.int32)
@@ -814,17 +810,23 @@ def _validate_state_columns(
     if missing:
         required_by: dict[str, list[str]] = {name: [] for name in missing}
         for regime_name in set(initial_regimes):
-            if regime_name == "age":
-                continue
             for name in regimes[regime_name].states:
                 if name in required_by:
                     required_by[name].append(regime_name)
         details = ", ".join(
-            f"'{name}' (required by {sorted(required_by[name]) or ['all regimes']})"
+            _format_missing_state_detail(name=name, required_by=required_by[name])
             for name in sorted(missing)
         )
         msg = f"Missing required state columns: {details}."
         raise ValueError(msg)
+
+
+def _format_missing_state_detail(*, name: str, required_by: list[str]) -> str:
+    if name in PSEUDO_STATE_NAMES:
+        return f"'{name}' (required for every subject)"
+    if required_by:
+        return f"'{name}' (required by {sorted(required_by)})"
+    return f"'{name}' (required by an initial regime)"
 
 
 def _collect_state_names(
@@ -835,11 +837,11 @@ def _collect_state_names(
     """Collect all state names (including shock grids) from initial regimes.
 
     Returns:
-        Set of all state names from the initial regimes, plus `'age'`
-        (always required).
+        Set of all state names from the initial regimes, plus the pseudo-state
+        names from `PSEUDO_STATE_NAMES` (always required).
 
     """
-    names: set[str] = {"age"}
+    names: set[str] = set(PSEUDO_STATE_NAMES)
     for regime_name in set(initial_regimes):
         names.update(regimes[regime_name].states.keys())
     return names

@@ -571,6 +571,69 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
     assert jnp.allclose(result["wealth"], jnp.array([10.0, 20.0, 30.0]))
 
 
+def test_initial_conditions_shock_grid_heterogeneous_state_sets() -> None:
+    """A shock state (income) only present in one regime is NaN-filled elsewhere."""
+    import lcm.shocks.iid  # noqa: PLC0415
+
+    @categorical(ordered=False)
+    class _Rid:
+        earner: int
+        retiree: int
+        dead: int
+
+    def _next_regime() -> int:
+        return _Rid.dead
+
+    def _earner_utility(wealth: float, income: float) -> float:
+        return wealth + income
+
+    def _retiree_utility(wealth: float) -> float:
+        return wealth
+
+    earner = Regime(
+        transition=_next_regime,
+        states={
+            "wealth": LinSpacedGrid(start=0, stop=100, n_points=5),
+            "income": lcm.shocks.iid.Uniform(n_points=5),
+        },
+        state_transitions={"wealth": None},
+        functions={"utility": _earner_utility},
+    )
+    retiree = Regime(
+        transition=_next_regime,
+        states={"wealth": LinSpacedGrid(start=0, stop=100, n_points=5)},
+        state_transitions={"wealth": None},
+        functions={"utility": _retiree_utility},
+    )
+    dead = Regime(transition=None, functions={"utility": lambda: 0.0})
+
+    model = Model(
+        regimes={"earner": earner, "retiree": retiree, "dead": dead},
+        ages=AgeGrid(start=50, stop=52, step="Y"),
+        regime_id_class=_Rid,
+    )
+
+    df = pd.DataFrame(
+        {
+            "regime": ["earner", "earner", "retiree"],
+            "wealth": [10.0, 20.0, 30.0],
+            "income": [0.3, 0.7, float("nan")],
+            "age": [50.0, 51.0, 50.0],
+        }
+    )
+    result = initial_conditions_from_dataframe(
+        df=df,
+        regimes=model.regimes,
+        regime_names_to_ids=model.regime_names_to_ids,
+    )
+
+    # earner subjects retain provided shock values
+    assert jnp.isclose(result["income"][0], 0.3)
+    assert jnp.isclose(result["income"][1], 0.7)
+    # retiree has no shock state; value is not asserted (only earner reads it)
+    assert jnp.allclose(result["wealth"], jnp.array([10.0, 20.0, 30.0]))
+
+
 def test_convert_series_heterogeneous_grids() -> None:
     """convert_series_in_params handles per-regime grid lookup."""
     model = _get_heterogeneous_health_model()
