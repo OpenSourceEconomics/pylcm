@@ -90,6 +90,33 @@ If GPU acceleration is set up correctly, you will see a `GpuDevice` or `MetalDev
 the output. Otherwise, you will see `CpuDevice`, which is fine for development and
 smaller models.
 
+## JAX Settings
+
+pylcm sets two JAX environment variables on import:
+
+- **`XLA_PYTHON_CLIENT_PREALLOCATE=false`** — disables JAX's default of reserving 75% of
+  GPU memory upfront. This lets `nvidia-smi` reflect actual usage and plays nicely with
+  other GPU processes.
+- **`JAX_COMPILATION_CACHE_DIR=~/.cache/jax`** — enables persistent JIT compilation
+  caching. Large models (many regimes and states) can take minutes to compile on first
+  run; the cache makes subsequent runs near-instant.
+
+Both use `os.environ.setdefault`, so they only apply if the variable is not already set.
+
+On HPC systems where the home directory is on a slow network filesystem, you may want to
+point the compilation cache at a fast local disk. Set the environment variable before
+importing pylcm:
+
+```python
+import os
+
+os.environ["JAX_COMPILATION_CACHE_DIR"] = os.path.expandvars(
+    "/scratch/$USER/.cache/jax"
+)
+
+import lcm
+```
+
 ## Troubleshooting
 
 - **Python version too old**: pylcm requires Python 3.14+. Check with
