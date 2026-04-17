@@ -58,7 +58,9 @@ def validate_V(
         regime_name: Name of the regime (for error messages).
         partial_solution: Value function arrays for periods completed before
             the error. Attached to the exception for debug snapshots.
-        compute_intermediates: Raw closure returning Q_and_F intermediates.
+        compute_intermediates: Productmap + reduction closure (already
+            JIT-compiled by `_build_compute_intermediates_per_period`)
+            for the regime/period whose V array is being validated.
         state_action_space: StateActionSpace for the current regime/period.
         next_regime_to_V_arr: Next-period value function arrays.
         internal_params: Flat regime parameters.

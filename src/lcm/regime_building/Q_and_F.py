@@ -266,8 +266,25 @@ def get_compute_intermediates(
     """Build a closure that computes Q_and_F intermediates for diagnostics.
 
     Mirrors `get_Q_and_F` but returns all intermediates instead of just
-    (Q, F). The caller productmaps and JIT-compiles the closure; it runs
+    `(Q, F)`. The caller productmaps and JIT-compiles the closure; it runs
     only in the error path when `validate_V` detects NaN.
+
+    Args:
+        age: The age corresponding to the current period.
+        period: The current period.
+        functions: Immutable mapping of function names to internal user functions.
+        constraints: Immutable mapping of constraint names to constraint functions.
+        transitions: Immutable mapping of target regime names to state transition
+            functions.
+        stochastic_transition_names: Frozenset of stochastic transition function
+            names.
+        regimes_to_active_periods: Immutable mapping of regime names to their
+            active periods. Used to determine complete targets for the current
+            period.
+        compute_regime_transition_probs: Callable returning regime transition
+            probabilities for the current regime.
+        regime_to_v_interpolation_info: Immutable mapping of regime names to
+            V-interpolation info.
 
     Returns:
         Closure with the same signature as Q_and_F, returning
@@ -348,7 +365,7 @@ def get_compute_intermediates(
     def compute_intermediates(
         next_regime_to_V_arr: FloatND,
         **states_actions_params: Array,
-    ) -> tuple:
+    ) -> tuple[FloatND, FloatND, FloatND, FloatND, MappingProxyType[RegimeName, Array]]:
         """Compute all Q_and_F intermediates."""
         regime_transition_probs: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
             compute_regime_transition_probs(

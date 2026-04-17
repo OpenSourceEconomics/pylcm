@@ -1421,6 +1421,15 @@ def _wrap_with_reduction(
     XLA can fuse the compute and reduce steps so the full-shape
     intermediates never materialise.
 
+    Args:
+        func: Productmap'd closure returning
+            `(U_arr, F_arr, E_next_V, Q_arr, regime_probs)`. `regime_probs`
+            is a mapping of target regime names to per-point probability
+            arrays.
+        variable_names: Tuple of state + action names in the order that
+            matches the productmap axes of `func`. Used to label the
+            `{metric}_by_{name}` reductions.
+
     Returns:
         Callable taking the same kwargs as `func` and returning a dict with
         `{Y}_overall` scalars and `{Y}_by_{name}` vectors for `Y` in
@@ -1461,6 +1470,21 @@ def _productmap_over_state_action_space(
 
     Matches the pattern used by `get_max_Q_over_a`: actions form the inner
     Cartesian product (unbatched), states form the outer loop (with batching).
+
+    Args:
+        func: Scalar function taking state and action values as keyword
+            arguments.
+        action_names: Tuple of action variable names; becomes the inner
+            productmap (unbatched).
+        state_names: Tuple of state variable names; becomes the outer
+            productmap.
+        state_batch_sizes: Mapping of state name to productmap batch size.
+
+    Returns:
+        Callable taking the same kwargs as `func` but expecting grid arrays
+        instead of scalars for state and action variables. Output axes are
+        ordered as `(*state_names, *action_names)`.
+
     """
     inner = productmap(
         func=func,
