@@ -49,8 +49,11 @@ def create_regime_params_template(
         else:
             tree = dt.create_tree_with_input_types({name: func})
 
-        excl = H_variables if name == "H" else variables
-        params = {k: v for k, v in sorted(tree.items()) if k not in excl}
+        # H is exempt from param-template extraction for state/action names
+        # that appear in its signature: pylcm wires those values through
+        # `states_actions_params` at call time, so they must not surface as
+        # user-facing params in the template.
+        params = {k: v for k, v in sorted(tree.items()) if k not in variables}
 
         path = tree_path_from_qname(name)
         template_key = f"to_{path[1]}_{path[0]}" if len(path) > 1 else name
