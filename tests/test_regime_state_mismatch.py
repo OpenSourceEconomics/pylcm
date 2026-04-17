@@ -384,6 +384,188 @@ def test_per_target_dict_transitions():
     )
 
 
+def test_discrete_state_same_count_different_names():
+    """Same number of categories but different names should still raise."""
+
+    @categorical(ordered=False)
+    class StatusA:
+        employed: int
+        unemployed: int
+
+    @categorical(ordered=False)
+    class StatusB:
+        married: int
+        single: int
+
+    @categorical(ordered=False)
+    class _RegimeId:
+        work: int
+        retire: int
+        dead: int
+
+    def next_regime(age: float) -> ScalarInt:
+        return jnp.where(
+            age >= 2,
+            _RegimeId.dead,
+            jnp.where(age >= 1, _RegimeId.retire, _RegimeId.work),
+        )
+
+    work = Regime(
+        states={"status": DiscreteGrid(StatusA)},
+        state_transitions={"status": lambda status: status},
+        actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
+        functions={
+            "utility": lambda consumption, status: jnp.log(consumption) + status
+        },
+        transition=next_regime,
+        active=lambda age: age < 2,
+    )
+
+    retire = Regime(
+        states={"status": DiscreteGrid(StatusB)},
+        state_transitions={"status": None},
+        actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
+        functions={
+            "utility": lambda consumption, status: jnp.log(consumption) + status
+        },
+        transition=lambda age: jnp.where(age >= 2, _RegimeId.dead, _RegimeId.retire),
+        active=lambda age: age < 3,
+    )
+
+    dead = Regime(transition=None, functions={"utility": lambda: 0.0})
+
+    with pytest.raises(ModelInitializationError, match="status"):
+        Model(
+            regimes={"work": work, "retire": retire, "dead": dead},
+            ages=AgeGrid(start=0, stop=3, step="Y"),
+            regime_id_class=_RegimeId,
+        )
+
+
+def test_mixed_ordered_flags_raises():
+    """Mixed ordered flags (True in one regime, False in another) should raise."""
+
+    @categorical(ordered=True)
+    class HealthOrdered:
+        bad: int
+        good: int
+
+    @categorical(ordered=False)
+    class HealthUnordered:
+        bad: int
+        good: int
+
+    @categorical(ordered=False)
+    class _RegimeId:
+        a: int
+        b: int
+        dead: int
+
+    def next_regime() -> ScalarInt:
+        return _RegimeId.dead
+
+    a = Regime(
+        states={"health": DiscreteGrid(HealthOrdered)},
+        state_transitions={"health": None},
+        functions={"utility": lambda health: health},
+        transition=next_regime,
+    )
+    b = Regime(
+        states={"health": DiscreteGrid(HealthUnordered)},
+        state_transitions={"health": None},
+        functions={"utility": lambda health: health},
+        transition=next_regime,
+    )
+    dead = Regime(transition=None, functions={"utility": lambda: 0.0})
+
+    with pytest.raises(ModelInitializationError, match="inconsistent ordered flags"):
+        Model(
+            regimes={"a": a, "b": b, "dead": dead},
+            ages=AgeGrid(start=0, stop=2, step="Y"),
+            regime_id_class=_RegimeId,
+        )
+
+
+def test_both_ordered_same_categories_passes():
+    """Both ordered with same categories should pass without error."""
+
+    @categorical(ordered=True)
+    class HealthA:
+        bad: int
+        good: int
+
+    @categorical(ordered=True)
+    class HealthB:
+        bad: int
+        good: int
+
+    @categorical(ordered=False)
+    class _RegimeId:
+        a: int
+        b: int
+        dead: int
+
+    def next_regime() -> ScalarInt:
+        return _RegimeId.dead
+
+    a = Regime(
+        states={"health": DiscreteGrid(HealthA)},
+        state_transitions={"health": None},
+        functions={"utility": lambda health: health},
+        transition=next_regime,
+    )
+    b = Regime(
+        states={"health": DiscreteGrid(HealthB)},
+        state_transitions={"health": None},
+        functions={"utility": lambda health: health},
+        transition=next_regime,
+    )
+    dead = Regime(transition=None, functions={"utility": lambda: 0.0})
+
+    # Should not raise
+    Model(
+        regimes={"a": a, "b": b, "dead": dead},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=_RegimeId,
+    )
+
+
+def test_both_ordered_different_categories_ambiguous_raises():
+    """Both ordered with ambiguous merge should raise."""
+    # p < r and q < r — p vs q ordering is undetermined
+    result = _merge_ordered_categories(
+        [
+            ("regime_a", ("p", "r")),
+            ("regime_b", ("q", "r")),
+        ]
+    )
+    assert result is None
+
+
+def test_both_ordered_different_categories_unique_merge():
+    """Both ordered with unique topological merge should succeed."""
+    # p < q from regime_a, q < r from regime_b → p < q < r
+    result = _merge_ordered_categories(
+        [
+            ("regime_a", ("p", "q")),
+            ("regime_b", ("q", "r")),
+        ]
+    )
+    assert result == ("p", "q", "r")
+
+
+def test_both_ordered_contradictory_raises():
+    """Contradictory orderings (cycle) should fail merge."""
+    # a < b from regime_a, b < a from regime_b → cycle
+    result = _merge_ordered_categories(
+        [
+            ("regime_a", ("a", "b")),
+            ("regime_b", ("b", "a")),
+        ]
+    )
+    assert result is None
+
+
 def _next_health_3to3(health: DiscreteState) -> FloatND:
     """Stochastic same-grid transition (3→3)."""
     return jnp.where(
@@ -424,6 +606,85 @@ def _next_wealth(
 _BORROWING_CONSTRAINT = {"borrowing": lambda consumption, wealth: consumption <= wealth}
 _WEALTH_GRID = LinSpacedGrid(start=1, stop=50, n_points=10)
 _CONSUMPTION_GRID = LinSpacedGrid(start=1, stop=50, n_points=20)
+
+
+def test_incomplete_per_target_reachable_target():
+    """Per-target dict omits a target the source CAN reach (prob>0).
+
+    Regime A's transition function produces B's id, but A's per-target dict
+    does not list B. This is a user error — the missing transition means
+    B's continuation value cannot be computed. The pre-solve validation
+    raises `InvalidRegimeTransitionProbabilitiesError`.
+    """
+
+    @categorical(ordered=False)
+    class _RegimeId:
+        regime_a: int
+        regime_b: int
+        dead: int
+
+    def next_regime_a(age: float) -> ScalarInt:
+        """A → B at age 1. B IS reachable."""
+        return jnp.where(
+            age >= 2,
+            _RegimeId.dead,
+            jnp.where(
+                age >= 1,
+                _RegimeId.regime_b,
+                _RegimeId.regime_a,
+            ),
+        )
+
+    # A only lists A and dead — NOT B (but A can reach B).
+    regime_a = Regime(
+        states={
+            "health": DiscreteGrid(HealthWorkingLife),
+            "wealth": _WEALTH_GRID,
+        },
+        state_transitions={
+            "health": {
+                "regime_a": MarkovTransition(_next_health_3to3),
+                "dead": MarkovTransition(_next_health_3to3),
+            },
+            "wealth": _next_wealth,
+        },
+        actions={"consumption": _CONSUMPTION_GRID},
+        constraints=_BORROWING_CONSTRAINT,
+        functions={
+            "utility": lambda consumption, health: jnp.log(consumption) + 0.1 * health,
+        },
+        transition=next_regime_a,
+        active=lambda age: age < 3,
+    )
+
+    regime_b = Regime(
+        states={
+            "health": DiscreteGrid(HealthRetirement),
+            "wealth": _WEALTH_GRID,
+        },
+        state_transitions={"health": None, "wealth": _next_wealth},
+        actions={"consumption": _CONSUMPTION_GRID},
+        constraints=_BORROWING_CONSTRAINT,
+        functions={
+            "utility": lambda consumption, health: jnp.log(consumption) + 0.05 * health,
+        },
+        transition=lambda age: jnp.where(age >= 3, _RegimeId.dead, _RegimeId.regime_b),
+        active=lambda age: age < 4,
+    )
+
+    dead = Regime(transition=None, functions={"utility": lambda: 0.0})
+
+    model = Model(
+        regimes={"regime_a": regime_a, "regime_b": regime_b, "dead": dead},
+        ages=AgeGrid(start=0, stop=4, step="Y"),
+        regime_id_class=_RegimeId,
+    )
+
+    with pytest.raises(
+        InvalidRegimeTransitionProbabilitiesError,
+        match=r"does not provide state transition",
+    ):
+        model.solve(params={"discount_factor": 0.95})
 
 
 def test_complete_per_target_stochastic_cross_grid():
@@ -614,264 +875,3 @@ def test_incomplete_per_target_unreachable_target():
         regime_id_class=_RegimeId,
     )
     model.solve(params={"discount_factor": 0.95})
-
-
-def test_discrete_state_same_count_different_names():
-    """Same number of categories but different names should still raise."""
-
-    @categorical(ordered=False)
-    class StatusA:
-        employed: int
-        unemployed: int
-
-    @categorical(ordered=False)
-    class StatusB:
-        married: int
-        single: int
-
-    @categorical(ordered=False)
-    class _RegimeId:
-        work: int
-        retire: int
-        dead: int
-
-    def next_regime(age: float) -> ScalarInt:
-        return jnp.where(
-            age >= 2,
-            _RegimeId.dead,
-            jnp.where(age >= 1, _RegimeId.retire, _RegimeId.work),
-        )
-
-    work = Regime(
-        states={"status": DiscreteGrid(StatusA)},
-        state_transitions={"status": lambda status: status},
-        actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
-        functions={
-            "utility": lambda consumption, status: jnp.log(consumption) + status
-        },
-        transition=next_regime,
-        active=lambda age: age < 2,
-    )
-
-    retire = Regime(
-        states={"status": DiscreteGrid(StatusB)},
-        state_transitions={"status": None},
-        actions={"consumption": LinSpacedGrid(start=1, stop=10, n_points=5)},
-        functions={
-            "utility": lambda consumption, status: jnp.log(consumption) + status
-        },
-        transition=lambda age: jnp.where(age >= 2, _RegimeId.dead, _RegimeId.retire),
-        active=lambda age: age < 3,
-    )
-
-    dead = Regime(transition=None, functions={"utility": lambda: 0.0})
-
-    with pytest.raises(ModelInitializationError, match="status"):
-        Model(
-            regimes={"work": work, "retire": retire, "dead": dead},
-            ages=AgeGrid(start=0, stop=3, step="Y"),
-            regime_id_class=_RegimeId,
-        )
-
-
-def test_mixed_ordered_flags_raises():
-    """Mixed ordered flags (True in one regime, False in another) should raise."""
-
-    @categorical(ordered=True)
-    class HealthOrdered:
-        bad: int
-        good: int
-
-    @categorical(ordered=False)
-    class HealthUnordered:
-        bad: int
-        good: int
-
-    @categorical(ordered=False)
-    class _RegimeId:
-        a: int
-        b: int
-        dead: int
-
-    def next_regime() -> ScalarInt:
-        return _RegimeId.dead
-
-    a = Regime(
-        states={"health": DiscreteGrid(HealthOrdered)},
-        state_transitions={"health": None},
-        functions={"utility": lambda health: health},
-        transition=next_regime,
-    )
-    b = Regime(
-        states={"health": DiscreteGrid(HealthUnordered)},
-        state_transitions={"health": None},
-        functions={"utility": lambda health: health},
-        transition=next_regime,
-    )
-    dead = Regime(transition=None, functions={"utility": lambda: 0.0})
-
-    with pytest.raises(ModelInitializationError, match="inconsistent ordered flags"):
-        Model(
-            regimes={"a": a, "b": b, "dead": dead},
-            ages=AgeGrid(start=0, stop=2, step="Y"),
-            regime_id_class=_RegimeId,
-        )
-
-
-def test_both_ordered_same_categories_passes():
-    """Both ordered with same categories should pass without error."""
-
-    @categorical(ordered=True)
-    class HealthA:
-        bad: int
-        good: int
-
-    @categorical(ordered=True)
-    class HealthB:
-        bad: int
-        good: int
-
-    @categorical(ordered=False)
-    class _RegimeId:
-        a: int
-        b: int
-        dead: int
-
-    def next_regime() -> ScalarInt:
-        return _RegimeId.dead
-
-    a = Regime(
-        states={"health": DiscreteGrid(HealthA)},
-        state_transitions={"health": None},
-        functions={"utility": lambda health: health},
-        transition=next_regime,
-    )
-    b = Regime(
-        states={"health": DiscreteGrid(HealthB)},
-        state_transitions={"health": None},
-        functions={"utility": lambda health: health},
-        transition=next_regime,
-    )
-    dead = Regime(transition=None, functions={"utility": lambda: 0.0})
-
-    # Should not raise
-    Model(
-        regimes={"a": a, "b": b, "dead": dead},
-        ages=AgeGrid(start=0, stop=2, step="Y"),
-        regime_id_class=_RegimeId,
-    )
-
-
-def test_both_ordered_different_categories_ambiguous_raises():
-    """Both ordered with ambiguous merge should raise."""
-    # p < r and q < r — p vs q ordering is undetermined
-    result = _merge_ordered_categories(
-        [
-            ("regime_a", ("p", "r")),
-            ("regime_b", ("q", "r")),
-        ]
-    )
-    assert result is None
-
-
-def test_both_ordered_different_categories_unique_merge():
-    """Both ordered with unique topological merge should succeed."""
-    # p < q from regime_a, q < r from regime_b → p < q < r
-    result = _merge_ordered_categories(
-        [
-            ("regime_a", ("p", "q")),
-            ("regime_b", ("q", "r")),
-        ]
-    )
-    assert result == ("p", "q", "r")
-
-
-def test_both_ordered_contradictory_raises():
-    """Contradictory orderings (cycle) should fail merge."""
-    # a < b from regime_a, b < a from regime_b → cycle
-    result = _merge_ordered_categories(
-        [
-            ("regime_a", ("a", "b")),
-            ("regime_b", ("b", "a")),
-        ]
-    )
-    assert result is None
-
-
-def test_incomplete_per_target_reachable_target():
-    """Per-target dict omits a target the source CAN reach (prob>0).
-
-    Regime A's transition function produces B's id, but A's per-target dict
-    does not list B. This is a user error — the missing transition means
-    B's continuation value cannot be computed. The pre-solve validation
-    raises `InvalidRegimeTransitionProbabilitiesError`.
-    """
-
-    @categorical(ordered=False)
-    class _RegimeId:
-        regime_a: int
-        regime_b: int
-        dead: int
-
-    def next_regime_a(age: float) -> ScalarInt:
-        """A → B at age 1. B IS reachable."""
-        return jnp.where(
-            age >= 2,
-            _RegimeId.dead,
-            jnp.where(
-                age >= 1,
-                _RegimeId.regime_b,
-                _RegimeId.regime_a,
-            ),
-        )
-
-    # A only lists A and dead — NOT B (but A can reach B).
-    regime_a = Regime(
-        states={
-            "health": DiscreteGrid(HealthWorkingLife),
-            "wealth": _WEALTH_GRID,
-        },
-        state_transitions={
-            "health": {
-                "regime_a": MarkovTransition(_next_health_3to3),
-                "dead": MarkovTransition(_next_health_3to3),
-            },
-            "wealth": _next_wealth,
-        },
-        actions={"consumption": _CONSUMPTION_GRID},
-        constraints=_BORROWING_CONSTRAINT,
-        functions={
-            "utility": lambda consumption, health: jnp.log(consumption) + 0.1 * health,
-        },
-        transition=next_regime_a,
-        active=lambda age: age < 3,
-    )
-
-    regime_b = Regime(
-        states={
-            "health": DiscreteGrid(HealthRetirement),
-            "wealth": _WEALTH_GRID,
-        },
-        state_transitions={"health": None, "wealth": _next_wealth},
-        actions={"consumption": _CONSUMPTION_GRID},
-        constraints=_BORROWING_CONSTRAINT,
-        functions={
-            "utility": lambda consumption, health: jnp.log(consumption) + 0.05 * health,
-        },
-        transition=lambda age: jnp.where(age >= 3, _RegimeId.dead, _RegimeId.regime_b),
-        active=lambda age: age < 4,
-    )
-
-    dead = Regime(transition=None, functions={"utility": lambda: 0.0})
-
-    model = Model(
-        regimes={"regime_a": regime_a, "regime_b": regime_b, "dead": dead},
-        ages=AgeGrid(start=0, stop=4, step="Y"),
-        regime_id_class=_RegimeId,
-    )
-
-    with pytest.raises(
-        InvalidRegimeTransitionProbabilitiesError,
-        match=r"does not provide state transition",
-    ):
-        model.solve(params={"discount_factor": 0.95})
