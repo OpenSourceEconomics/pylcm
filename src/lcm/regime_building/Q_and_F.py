@@ -69,9 +69,9 @@ def get_Q_and_F(
     # Enumerate all active targets, not just those in transitions — targets
     # entirely absent from per-target dicts must also be detected.
     all_active_next_period = tuple(
-        name
-        for name in regime_to_v_interpolation_info
-        if period + 1 in regimes_to_active_periods.get(name, ())
+        regime_name
+        for regime_name in regime_to_v_interpolation_info
+        if period + 1 in regimes_to_active_periods.get(regime_name, ())
     )
 
     # Keep only targets whose stochastic state needs are all covered by
@@ -79,15 +79,17 @@ def get_Q_and_F(
     # from the traced function; pre-solve validation in
     # `_validate_no_reachable_incomplete_targets` raises if any such target
     # has non-zero transition probability.
-    complete_targets: list[str] = []
-    for name in all_active_next_period:
+    complete_targets: list[RegimeName] = []
+    for regime_name in all_active_next_period:
         target_stochastic_needs = {
             f"next_{s}"
-            for s in regime_to_v_interpolation_info[name].state_names
+            for s in regime_to_v_interpolation_info[regime_name].state_names
             if f"next_{s}" in stochastic_transition_names
         }
-        if name in transitions and target_stochastic_needs.issubset(transitions[name]):
-            complete_targets.append(name)
+        if regime_name in transitions and target_stochastic_needs.issubset(
+            transitions[regime_name]
+        ):
+            complete_targets.append(regime_name)
 
     next_V_extra_param_names: dict[str, frozenset[str]] = {}
 
