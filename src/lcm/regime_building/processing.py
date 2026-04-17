@@ -1404,11 +1404,34 @@ def _build_compute_intermediates_per_period(
 ) -> MappingProxyType[int, Callable]:
     """Build diagnostic intermediate closures for each period of a non-terminal regime.
 
-    Each closure returns all Q_and_F intermediates over the full state-action
-    space. Used in the error path when `validate_V` detects NaN. Periods
-    sharing the same target configuration reuse a single scalar closure,
-    productmap-wrapped and JIT-compiled — same structure as `max_Q_over_a`.
-    The caller is responsible for handling terminal regimes.
+    Each closure fuses a productmap over the full state-action space with
+    on-device reductions (matching the `max_Q_over_a` productmap pattern)
+    and is JIT-compiled. Periods sharing the same target configuration
+    reuse a single scalar closure. The caller is responsible for handling
+    terminal regimes. Used in the error path when `validate_V` detects NaN.
+
+    Args:
+        regimes_to_active_periods: Immutable mapping of regime names to
+            their active period tuples.
+        functions: Immutable mapping of internal user functions.
+        constraints: Immutable mapping of constraint functions.
+        transitions: Immutable mapping of regime-to-regime transition
+            functions.
+        stochastic_transition_names: Frozenset of stochastic transition
+            function names.
+        compute_regime_transition_probs: Regime transition probability
+            function for the current regime.
+        regime_to_v_interpolation_info: Mapping of regime names to
+            V-interpolation info.
+        state_action_space: State-action space used for productmap sizing.
+        grids: Immutable mapping of state/action names to grid specs; used
+            for per-state batch sizes.
+        ages: Age grid for the model.
+        enable_jit: Whether to JIT-compile the fused closure.
+
+    Returns:
+        Immutable mapping of period index to fused closure.
+
     """
     state_batch_sizes = {
         name: grid.batch_size
