@@ -59,7 +59,9 @@ def validate_V(
         regime_name: Name of the regime (for error messages).
         partial_solution: Value function arrays for periods completed before
             the error. Attached to the exception for debug snapshots.
-        compute_intermediates: Raw closure returning Q_and_F intermediates.
+        compute_intermediates: Productmap + reduction closure (already
+            JIT-compiled by `_build_compute_intermediates_per_period`)
+            for the regime/period whose V array is being validated.
         state_action_space: StateActionSpace for the current regime/period.
         next_regime_to_V_arr: Next-period value function arrays.
         internal_params: Flat regime parameters.
@@ -166,12 +168,15 @@ def _enrich_with_diagnostics(
         if internal_params
         else {}
     )
+    # Wrap Python scalars as JAX arrays so the call matches the dtype used
+    # at trace time in `_build_compute_intermediates_per_period`; avoids a
+    # retrace for the diagnostic invocation.
     call_kwargs: dict[str, Any] = {
         **state_action_kwargs,
         "next_regime_to_V_arr": next_regime_to_V_arr,
         **param_kwargs,
-        "age": age,
-        "period": period,
+        "age": jnp.asarray(age),
+        "period": jnp.int32(period) if period is not None else None,
     }
 
     reductions = compute_intermediates(**call_kwargs)

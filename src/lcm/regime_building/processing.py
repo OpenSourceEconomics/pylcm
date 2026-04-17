@@ -255,6 +255,7 @@ def _build_solve_functions(
             flat_param_names=flat_param_names,
         )
         compute_intermediates = _build_compute_intermediates_per_period(
+            flat_param_names=flat_param_names,
             regimes_to_active_periods=regimes_to_active_periods,
             functions=core.functions,
             constraints=core.constraints,
@@ -1308,6 +1309,26 @@ def _build_Q_and_F_per_period(
     Periods sharing the same target-regime configuration reuse a single
     closure, reducing the number of distinct JIT compilations. The caller
     is responsible for handling terminal regimes.
+
+    Args:
+        regimes_to_active_periods: Immutable mapping of regime names to
+            their active period tuples.
+        functions: Immutable mapping of internal user functions.
+        constraints: Immutable mapping of constraint functions.
+        transitions: Immutable mapping of regime-to-regime transition
+            functions.
+        stochastic_transition_names: Frozenset of stochastic transition
+            function names.
+        compute_regime_transition_probs: Regime transition probability
+            function for the current regime.
+        regime_to_v_interpolation_info: Mapping of regime names to
+            V-interpolation info.
+        ages: Age grid for the model.
+        flat_param_names: Frozenset of flat parameter names for the regime.
+
+    Returns:
+        Immutable mapping of period index to the per-period Q-and-F closure.
+
     """
     # Group periods by target configuration
     configs: dict[tuple[str, ...], list[int]] = {}
@@ -1363,6 +1384,17 @@ def _get_complete_targets(
     `lcm.utils.error_handling`) raises pre-solve if any dropped target has
     non-zero transition probability.
 
+    Args:
+        period: The period to enumerate active targets for.
+        transitions: Immutable mapping of target regime names to their
+            state transition functions.
+        regimes_to_active_periods: Immutable mapping of regime names to
+            their active period tuples.
+        stochastic_transition_names: Frozenset of stochastic transition
+            function names.
+        regime_to_v_interpolation_info: Mapping of regime names to
+            V-interpolation info.
+
     Returns:
         Tuple of complete target regime names.
 
@@ -1390,6 +1422,7 @@ def _get_complete_targets(
 
 def _build_compute_intermediates_per_period(
     *,
+    flat_param_names: frozenset[str],
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     functions: FunctionsMapping,
     constraints: FunctionsMapping,
@@ -1411,6 +1444,7 @@ def _build_compute_intermediates_per_period(
     terminal regimes. Used in the error path when `validate_V` detects NaN.
 
     Args:
+        flat_param_names: Frozenset of flat parameter names for the regime.
         regimes_to_active_periods: Immutable mapping of regime names to
             their active period tuples.
         functions: Immutable mapping of internal user functions.
@@ -1450,9 +1484,14 @@ def _build_compute_intermediates_per_period(
         )
         configs.setdefault(complete, []).append(period)
 
+    variable_names = (
+        *state_action_space.state_names,
+        *state_action_space.action_names,
+    )
     built: dict[tuple[str, ...], Callable] = {}
     for complete_targets in configs:
         scalar = get_compute_intermediates(
+            flat_param_names=flat_param_names,
             functions=functions,
             constraints=constraints,
             complete_targets=complete_targets,
@@ -1467,7 +1506,8 @@ def _build_compute_intermediates_per_period(
             state_names=state_action_space.state_names,
             state_batch_sizes=state_batch_sizes,
         )
-        built[complete_targets] = jax.jit(mapped) if enable_jit else mapped
+        fused = _wrap_with_reduction(func=mapped, variable_names=variable_names)
+        built[complete_targets] = jax.jit(fused) if enable_jit else fused
 
     result: dict[int, Callable] = {}
     for key, periods in configs.items():
@@ -1475,6 +1515,56 @@ def _build_compute_intermediates_per_period(
             result[period] = built[key]
 
     return MappingProxyType(result)
+
+
+def _wrap_with_reduction(
+    *,
+    func: Callable,
+    variable_names: tuple[str, ...],
+) -> Callable:
+    """Fuse a productmap'd intermediates function with on-device reductions.
+
+    The wrapped function returns a flat pytree of scalars and per-dimension
+    vectors instead of full state-action-shaped arrays. When JIT-compiled,
+    XLA can fuse the compute and reduce steps so the full-shape
+    intermediates never materialise.
+
+    Args:
+        func: Productmap'd closure returning
+            `(U_arr, F_arr, E_next_V, Q_arr, regime_probs)`. `regime_probs`
+            is a mapping of target regime names to per-point probability
+            arrays.
+        variable_names: Tuple of state + action names in the order that
+            matches the productmap axes of `func`. Used to label the
+            `{metric}_by_{name}` reductions.
+
+    Returns:
+        Callable taking the same kwargs as `func` and returning a dict with
+        `{Y}_overall` scalars and `{Y}_by_{name}` vectors for `Y` in
+        {`U_nan`, `E_nan`, `Q_nan`, `F_feasible`}, plus `regime_probs` as
+        a dict of per-target scalar means.
+
+    """
+
+    def reduced(**kwargs: Array) -> dict[str, Any]:
+        U_arr, F_arr, E_next_V, Q_arr, regime_probs = func(**kwargs)
+        arrays: dict[str, Array] = {
+            "U_nan": jnp.isnan(U_arr).astype(float),
+            "E_nan": jnp.isnan(E_next_V).astype(float),
+            "Q_nan": jnp.isnan(Q_arr).astype(float),
+            "F_feasible": F_arr.astype(float),
+        }
+        out: dict[str, Any] = {}
+        for key, arr in arrays.items():
+            out[f"{key}_overall"] = jnp.mean(arr)
+            for i, name in enumerate(variable_names):
+                if i < arr.ndim:
+                    axes = tuple(j for j in range(arr.ndim) if j != i)
+                    out[f"{key}_by_{name}"] = jnp.mean(arr, axis=axes)
+        out["regime_probs"] = {k: jnp.mean(v) for k, v in regime_probs.items()}
+        return out
+
+    return reduced
 
 
 def _productmap_over_state_action_space(
@@ -1488,6 +1578,21 @@ def _productmap_over_state_action_space(
 
     Matches the pattern used by `get_max_Q_over_a`: actions form the inner
     Cartesian product (unbatched), states form the outer loop (with batching).
+
+    Args:
+        func: Scalar function taking state and action values as keyword
+            arguments.
+        action_names: Tuple of action variable names; becomes the inner
+            productmap (unbatched).
+        state_names: Tuple of state variable names; becomes the outer
+            productmap.
+        state_batch_sizes: Mapping of state name to productmap batch size.
+
+    Returns:
+        Callable taking the same kwargs as `func` but expecting grid arrays
+        instead of scalars for state and action variables. Output axes are
+        ordered as `(*state_names, *action_names)`.
+
     """
     inner = productmap(
         func=func,

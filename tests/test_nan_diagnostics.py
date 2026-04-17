@@ -25,6 +25,7 @@ def _make_state_action_space(
     n_wealth: int = 3,
     n_consumption: int = 2,
 ) -> StateActionSpace:
+    """Build a minimal `StateActionSpace` used across diagnostic tests."""
     return StateActionSpace(
         states=MappingProxyType(
             {"wealth": jnp.linspace(1.0, 5.0, n_wealth)},
