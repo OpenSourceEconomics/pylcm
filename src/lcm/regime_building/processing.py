@@ -1353,8 +1353,9 @@ def _get_complete_targets(
     `regime_to_v_interpolation_info`) and keeps those whose stochastic
     state needs are all covered by `transitions`. Targets missing stochastic
     transitions (including those entirely absent from `transitions`) are
-    dropped; `_validate_no_reachable_incomplete_targets` in
-    `lcm.utils.error_handling` raises pre-solve if any dropped target has
+    dropped; `validate_regime_transitions_all_periods` (via
+    `_validate_no_reachable_incomplete_targets` in
+    `lcm.utils.error_handling`) raises pre-solve if any dropped target has
     non-zero transition probability.
 
     Returns:
