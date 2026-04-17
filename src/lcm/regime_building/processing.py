@@ -89,7 +89,7 @@ def process_regimes(
         The processed regimes.
 
     """
-    states_per_regime: dict[str, set[str]] = {
+    states_per_regime: dict[RegimeName, set[str]] = {
         name: set(regime.states.keys()) for name, regime in regimes.items()
     }
 
@@ -178,7 +178,7 @@ def process_regimes(
 def _build_solve_functions(
     *,
     regime: Regime,
-    regime_name: str,
+    regime_name: RegimeName,
     nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
     regime_params_template: RegimeParamsTemplate,
@@ -282,7 +282,7 @@ def _build_solve_functions(
 def _build_simulate_functions(
     *,
     regime: Regime,
-    regime_name: str,
+    regime_name: RegimeName,
     nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
     regime_params_template: RegimeParamsTemplate,
@@ -537,12 +537,12 @@ def _process_regime_core(
         for k in flat_nested_transitions
         if QNAME_DELIMITER in k
     }
-    target_shock_grids: dict[tuple[str, str], _ShockGrid] = {  # ty: ignore[invalid-assignment]
-        (regime, shock): grids[shock]
+    target_shock_grids: dict[tuple[RegimeName, str], _ShockGrid] = {
+        (regime, shock): grid
         for regime, grids in all_grids.items()
         if regime in reachable_targets
         for shock in shock_names
-        if isinstance(grids.get(shock), _ShockGrid)
+        if isinstance(grid := grids.get(shock), _ShockGrid)
     }
     functions |= {
         f"weight_{regime}__next_{shock}": _get_weights_func_for_shock(
@@ -595,7 +595,7 @@ def _process_regime_core(
 def _extract_transitions_from_regime(
     *,
     regime: Regime,
-    states_per_regime: Mapping[str, set[str]],
+    states_per_regime: Mapping[RegimeName, set[str]],
 ) -> dict[str, dict[str, UserFunction] | UserFunction]:
     """Extract transitions from `regime.state_transitions` and regime transition.
 
@@ -655,8 +655,8 @@ def _get_reachable_targets(
     *,
     per_target_transitions: dict[str, dict[str, UserFunction]],
     simple_transitions: dict[str, UserFunction],
-    states_per_regime: Mapping[str, set[str]],
-) -> set[str]:
+    states_per_regime: Mapping[RegimeName, set[str]],
+) -> set[RegimeName]:
     """Determine which target regimes need transition entries.
 
     When per-target transitions exist, start from the explicitly named targets
@@ -668,7 +668,7 @@ def _get_reachable_targets(
     if not per_target_transitions:
         return set(states_per_regime.keys())
 
-    targets: set[str] = set()
+    targets: set[RegimeName] = set()
     for variants in per_target_transitions.values():
         targets |= variants.keys()
     for target_name, target_states in states_per_regime.items():
