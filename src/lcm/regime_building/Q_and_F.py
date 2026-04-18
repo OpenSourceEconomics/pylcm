@@ -421,6 +421,61 @@ def get_Q_and_F_terminal(
     return Q_and_F
 
 
+def get_complete_targets(
+    *,
+    period: int,
+    transitions: TransitionFunctionsMapping,
+    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    stochastic_transition_names: frozenset[str],
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+) -> tuple[RegimeName, ...]:
+    """Return active target regimes whose stochastic needs are fully covered.
+
+    Enumerates every regime active in the next period (from
+    `regime_to_v_interpolation_info`) and keeps those whose stochastic
+    state needs are all covered by `transitions`. Targets missing stochastic
+    transitions (including those entirely absent from `transitions`) are
+    dropped; `validate_regime_transitions_all_periods` (via
+    `_validate_no_reachable_incomplete_targets` in
+    `lcm.utils.error_handling`) raises pre-solve if any dropped target has
+    non-zero transition probability.
+
+    Args:
+        period: The period to enumerate active targets for.
+        transitions: Immutable mapping of target regime names to their
+            state transition functions.
+        regimes_to_active_periods: Immutable mapping of regime names to
+            their active period tuples.
+        stochastic_transition_names: Frozenset of stochastic transition
+            function names.
+        regime_to_v_interpolation_info: Mapping of regime names to
+            V-interpolation info.
+
+    Returns:
+        Tuple of complete target regime names.
+
+    """
+    all_active = tuple(
+        regime_name
+        for regime_name in regime_to_v_interpolation_info
+        if period + 1 in regimes_to_active_periods.get(regime_name, ())
+    )
+
+    complete: list[RegimeName] = []
+    for regime_name in all_active:
+        target_stochastic_needs = {
+            f"next_{s}"
+            for s in regime_to_v_interpolation_info[regime_name].state_names
+            if f"next_{s}" in stochastic_transition_names
+        }
+        if regime_name in transitions and target_stochastic_needs.issubset(
+            transitions[regime_name]
+        ):
+            complete.append(regime_name)
+
+    return tuple(complete)
+
+
 def _get_arg_names_of_Q_and_F(
     deps: list[Callable[..., Any]],
     *,
