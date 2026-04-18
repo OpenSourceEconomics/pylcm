@@ -556,13 +556,20 @@ def _get_h_dag_func(
     functions: FunctionsMapping,
     h_accepted_params: frozenset[str],
 ) -> Callable[..., dict[str, Any]] | None:
-    """Compile a DAG that resolves H arguments from regime functions.
+    """Compile a DAG that resolves H arguments computed by regime functions.
 
-    `H`'s signature may name arguments that are neither states, actions,
-    nor user params — they are DAG function outputs (e.g. a
-    `discount_factor` computed from a `pref_type` state). For every such
-    name, compile a DAG target so it can be evaluated at runtime and
-    merged into `H_kwargs` alongside state/action/user-param values.
+    `H` may name any argument supported by regime functions: states,
+    actions, flat params, or outputs of other user-provided functions.
+    Names in H's signature are resolved at runtime from, in order:
+
+    1. `states_actions_params` (states, actions, and flat params — the
+       same scalar pool every regime function draws from), and
+    2. DAG-output functions, compiled here.
+
+    This helper handles only (2): for every name in H's signature that
+    is also a user-provided function, compile a DAG target so its
+    output can be merged into `H_kwargs` alongside the values supplied
+    by (1). If no such names exist, return `None`.
 
     Args:
         functions: Regime functions (user and generated).
