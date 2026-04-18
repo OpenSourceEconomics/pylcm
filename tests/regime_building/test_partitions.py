@@ -287,7 +287,7 @@ def test_simulate_subject_ids_globally_unique():
 
 
 @pytest.mark.parametrize("reorder_subjects", [False, True])
-def test_simulate_invariant_to_subject_ordering(reorder_subjects: bool):
+def test_simulate_invariant_to_subject_ordering(*, reorder_subjects: bool):
     """Simulation results depend only on the (pref_type, wealth) pair per subject.
 
     Reordering the subjects in `initial_conditions` must yield the same

@@ -65,8 +65,15 @@ def detect_model_partitions(
     """
     candidates: dict[str, DiscreteGrid] = {}
     disqualified: set[str] = set()
+    # A partition value must come from initial_conditions, which implies the
+    # state exists in at least one non-terminal regime where subjects can
+    # start. Target-only states (declared only in terminal regimes, populated
+    # by per-target transitions at the boundary) are therefore excluded.
+    seen_in_non_terminal: set[str] = set()
 
     for regime in regimes.values():
+        if not regime.terminal:
+            seen_in_non_terminal.update(regime.states)
         for name, grid in regime.states.items():
             if name in disqualified:
                 continue
@@ -74,7 +81,12 @@ def detect_model_partitions(
                 disqualified.add(name)
                 candidates.pop(name, None)
                 continue
-            if regime.state_transitions.get(name, "MISSING") is not None:
+            # Terminal regimes require `state_transitions` to be empty by
+            # validation, so the absence of an entry is the terminal-regime
+            # analogue of `None` — the value is carried through unchanged.
+            if not regime.terminal and (
+                regime.state_transitions.get(name, "MISSING") is not None
+            ):
                 disqualified.add(name)
                 candidates.pop(name, None)
                 continue
@@ -84,7 +96,13 @@ def detect_model_partitions(
             elif existing.categories != grid.categories:
                 disqualified.add(name)
                 candidates.pop(name, None)
-    return MappingProxyType(candidates)
+    return MappingProxyType(
+        {
+            name: grid
+            for name, grid in candidates.items()
+            if name in seen_in_non_terminal
+        }
+    )
 
 
 def lift_partitions_from_regime(

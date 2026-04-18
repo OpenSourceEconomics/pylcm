@@ -333,10 +333,12 @@ def test_dag_output_feeds_default_h_monotone_in_discount_factor():
     }
     V = model.solve(params=params)
 
-    # Pick a non-terminal period; slice each pref_type.
-    non_terminal_periods = [p for p in V if p < max(V.keys())]
-    assert non_terminal_periods
-    for period in non_terminal_periods:
+    # At the last working_life-active period (FINAL_AGE_ALIVE), the deterministic
+    # transition goes to `dead` and V_dead = 0, so V = U is pref_type-independent.
+    # Check earlier periods where the discount factor actually multiplies E[V_next].
+    periods_with_future = [p for p in V if p < FINAL_AGE_ALIVE]
+    assert periods_with_future
+    for period in periods_with_future:
         # Shape is (..., n_pref_type). Compare averages across the
         # other axes so the comparison is robust to the grid layout.
         v = V[period]["working_life"]
