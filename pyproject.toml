@@ -87,6 +87,8 @@ pybaum = "*"
 scipy = ">=1.16"
 snakeviz = "*"
 [tool.pixi.environments]
+benchmarks-cuda12 = { features = [ "benchmarks", "cuda12" ], solve-group = "benchmarks-cuda12" }
+benchmarks-cuda13 = { features = [ "benchmarks", "cuda13" ], solve-group = "benchmarks-cuda13" }
 cuda12 = { features = [ "cuda12" ], solve-group = "cuda12" }
 cuda13 = { features = [ "cuda13" ], solve-group = "cuda13" }
 docs = { features = [ "docs" ], solve-group = "default" }
@@ -96,6 +98,8 @@ tests-cuda12 = { features = [ "tests", "cuda12" ], solve-group = "cuda12" }
 tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
 tests-metal = { features = [ "tests", "metal" ], solve-group = "metal" }
 type-checking = { features = [ "type-checking", "tests" ], solve-group = "default" }
+[tool.pixi.feature.benchmarks.pypi-dependencies]
+aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "9a5c332aa2e6c7d8001fd136c79e36345a656363" }
 [tool.pixi.feature.cuda12]
 platforms = [ "linux-64" ]
 system-requirements = { cuda = "12" }

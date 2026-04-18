@@ -35,15 +35,15 @@ jobs:
       - name: Ensure main ref exists
         run: git fetch origin main:main || true
       - name: Install environment
-        run: pixi install -e tests-cuda12
+        run: pixi install -e benchmarks-cuda12
       - name: Regenerate _version.py
         run: >-
           echo "__version__ = '$(git describe --tags --always)'"
           > src/lcm/_version.py
       - name: Setup ASV machine
-        run: pixi run -e tests-cuda12 asv machine --yes
+        run: pixi run -e benchmarks-cuda12 asv machine --yes
       - name: Run benchmarks and post PR comment
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: pixi run -e tests-cuda12 asv-run-and-pr-comment
+        run: pixi run -e benchmarks-cuda12 asv-run-and-pr-comment
