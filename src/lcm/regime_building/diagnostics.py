@@ -35,6 +35,7 @@ from lcm.utils.dispatchers import productmap
 def _build_compute_intermediates_per_period(
     *,
     regime: Regime,
+    flat_param_names: frozenset[str],
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     functions: FunctionsMapping,
     constraints: FunctionsMapping,
@@ -56,6 +57,9 @@ def _build_compute_intermediates_per_period(
 
     Args:
         regime: User regime; only the terminal flag is consulted.
+        flat_param_names: Frozenset of flat parameter names for the regime;
+            forwarded to `get_compute_intermediates` for the explicit
+            signature productmap requires.
         regimes_to_active_periods: Immutable mapping of regime names to
             their active period tuples.
         functions: Immutable mapping of internal user functions.
@@ -100,6 +104,7 @@ def _build_compute_intermediates_per_period(
         scalar = get_compute_intermediates(
             age=age,
             period=period,
+            flat_param_names=flat_param_names,
             functions=functions,
             constraints=constraints,
             transitions=transitions,

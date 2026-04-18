@@ -255,6 +255,7 @@ def get_compute_intermediates(
     *,
     age: float,
     period: int,
+    flat_param_names: frozenset[str],
     functions: FunctionsMapping,
     constraints: FunctionsMapping,
     transitions: TransitionFunctionsMapping,
@@ -272,6 +273,9 @@ def get_compute_intermediates(
     Args:
         age: The age corresponding to the current period.
         period: The current period.
+        flat_param_names: Frozenset of flat parameter names for the regime;
+            used to build the explicit signature via `with_signature` so
+            productmap can introspect the closure correctly.
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to constraint functions.
         transitions: Immutable mapping of target regime names to state transition
@@ -362,6 +366,24 @@ def get_compute_intermediates(
         get_union_of_args([_H_func]) - {"utility", "E_next_V"}
     )
 
+    arg_names_of_compute_intermediates = _get_arg_names_of_Q_and_F(
+        [
+            U_and_F,
+            compute_regime_transition_probs,
+            *list(state_transitions.values()),
+            *list(next_stochastic_states_weights.values()),
+        ],
+        include=frozenset({"next_regime_to_V_arr"} | flat_param_names),
+        exclude=frozenset({"age", "period"}),
+    )
+
+    @with_signature(
+        args=arg_names_of_compute_intermediates,
+        return_annotation=(
+            "tuple[FloatND, FloatND, FloatND, FloatND, "
+            "MappingProxyType[RegimeName, Array]]"
+        ),
+    )
     def compute_intermediates(
         next_regime_to_V_arr: FloatND,
         **states_actions_params: Array,

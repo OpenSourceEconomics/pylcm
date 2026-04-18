@@ -255,6 +255,7 @@ def _build_solve_functions(
 
     compute_intermediates = _build_compute_intermediates_per_period(
         regime=regime,
+        flat_param_names=frozenset(get_flat_param_names(regime_params_template)),
         regimes_to_active_periods=regimes_to_active_periods,
         functions=core.functions,
         constraints=core.constraints,
