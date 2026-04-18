@@ -139,12 +139,7 @@ def utility(
     fcost: FloatND,
     disutil: FloatND,
     cons_util: FloatND,
-    discount_type: DiscreteState,  # noqa: ARG001
 ) -> FloatND:
-    # `discount_type` is accepted (but unused) so pylcm's state-usage
-    # check sees it as reached from utility. The actual per-period
-    # discount factor is produced by the `discount_factor` DAG function
-    # and consumed by the default Bellman aggregator.
     return cons_util - disutil - fcost - scaled_adjustment_cost
 
 

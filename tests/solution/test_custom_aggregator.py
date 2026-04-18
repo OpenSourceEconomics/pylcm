@@ -37,24 +37,6 @@ def utility(
     return consumption * work_factor
 
 
-def utility_with_pref_type(
-    consumption: ContinuousAction,
-    is_working: BoolND,
-    pref_type: DiscreteState,  # noqa: ARG001 — kept so pylcm validates the state
-    disutility_of_work: float,
-) -> FloatND:
-    """Variant of `utility` that threads `pref_type` through.
-
-    pylcm requires every declared state to be referenced by some DAG
-    function; `discount_factor` (the H-feeding DAG fn) is not on the
-    utility/feasibility/transition path that the usage check walks, so
-    utility takes `pref_type` as an unused argument purely to satisfy
-    the check.
-    """
-    work_factor = jnp.where(is_working, 1.0 / (1.0 + disutility_of_work), 1.0)
-    return consumption * work_factor
-
-
 def labor_income(is_working: BoolND) -> FloatND:
     return jnp.where(is_working, 1.5, 0.0)
 
@@ -121,14 +103,16 @@ def discount_factor_from_type(
 def _make_model(custom_H=None, *, with_pref_type: bool = False):
     """Create a simple model, optionally with a custom H and pref_type state.
 
-    When `with_pref_type=True`, both regimes gain a `pref_type` discrete
-    state (`batch_size=1`, three categories) and the working-life
-    regime wires `discount_factor` as a DAG function that indexes
+    When `with_pref_type=True`, the working-life regime gains a
+    `pref_type` discrete state (`batch_size=1`, three categories) and
+    wires `discount_factor` as a DAG function that indexes
     `discount_factor_by_type` by the state. This exercises the
-    "DAG output feeds H" path in pylcm's Q_and_F.
+    "DAG output feeds H" path in pylcm's Q_and_F — and relies on
+    `_validate_all_variables_used` treating H-DAG targets as reachable
+    so `pref_type` counts as used without any workaround in `utility`.
     """
     functions: dict[str, Callable] = {
-        "utility": utility_with_pref_type if with_pref_type else utility,
+        "utility": utility,
         "labor_income": labor_income,
         "is_working": is_working,
     }
@@ -162,8 +146,10 @@ def _make_model(custom_H=None, *, with_pref_type: bool = False):
         active=lambda age: age <= FINAL_AGE_ALIVE,
     )
 
-    # Dead utility: when pref_type is in the state space, declare it in
-    # the signature so pylcm's usage check passes.
+    # Terminal regime: when pref_type is declared as a state across
+    # regimes, dead_utility must reference it so pylcm's state-usage
+    # check accepts the declaration (terminal regimes have no H, so
+    # the H-DAG reachability fix does not apply here).
     if with_pref_type:
 
         def dead_utility(pref_type: DiscreteState) -> FloatND:  # noqa: ARG001
@@ -313,6 +299,18 @@ def test_terminal_regime_value_unchanged_by_H():
 # DAG-output feeds H: `discount_factor` computed by a DAG function that
 # indexes a per-type Series by the `pref_type` state.
 # ---------------------------------------------------------------------------
+
+
+def test_model_constructs_when_state_reachable_only_via_h_dag():
+    """State reached only via H's DAG deps must pass the usage check.
+
+    `pref_type` is used by `discount_factor_from_type`, whose output
+    feeds the default H. `utility` / `feasibility` / transitions do
+    not reference `pref_type`. Pre-fix, this failed with
+    "states defined but never used"; post-fix, the state-usage walk
+    treats H-DAG targets as reachable.
+    """
+    _make_model(with_pref_type=True)
 
 
 def test_dag_output_feeds_default_h_monotone_in_discount_factor():

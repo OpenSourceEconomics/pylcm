@@ -6,6 +6,7 @@ import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
 from jax import Array
 
+from lcm.regime_building.h_dag import get_h_dag_target_names
 from lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
     get_next_stochastic_weights_function,
@@ -563,10 +564,6 @@ def _get_h_dag_func(
     name, compile a DAG target so it can be evaluated at runtime and
     merged into `H_kwargs` alongside state/action/user-param values.
 
-    `utility`, `feasibility` and `H` itself are never targets here:
-    `utility` is passed directly from `U_and_F`, `feasibility` is not a
-    legitimate H input, and `H` cannot consume its own output.
-
     Args:
         functions: Regime functions (user and generated).
         h_accepted_params: Names H accepts beyond `utility` / `E_next_V`.
@@ -577,7 +574,11 @@ def _get_h_dag_func(
 
     """
     dag_targets = tuple(
-        sorted(h_accepted_params & set(functions) - {"H", "utility", "feasibility"})
+        sorted(
+            get_h_dag_target_names(
+                functions=functions, h_accepted_params=h_accepted_params
+            )
+        )
     )
 
     if not dag_targets:
