@@ -1542,25 +1542,44 @@ def _wrap_with_reduction(
         Callable taking the same kwargs as `func` and returning a dict with
         `{Y}_overall` scalars and `{Y}_by_{name}` vectors for `Y` in
         {`U_nan`, `E_nan`, `Q_nan`, `F_feasible`}, plus `regime_probs` as
-        a dict of per-target scalar means.
+        a dict of per-target scalar means. The `{U,E,Q}_nan_*` fractions
+        are conditional on feasibility (numerator restricted to feasible
+        cells, denominator is the feasible-cell count); `F_feasible_*`
+        is the plain mean over all cells.
 
     """
 
     def reduced(**kwargs: Array) -> dict[str, Any]:
         U_arr, F_arr, E_next_V, Q_arr, regime_probs = func(**kwargs)
-        arrays: dict[str, Array] = {
-            "U_nan": jnp.isnan(U_arr).astype(float),
-            "E_nan": jnp.isnan(E_next_V).astype(float),
-            "Q_nan": jnp.isnan(Q_arr).astype(float),
-            "F_feasible": F_arr.astype(float),
+        F_float = F_arr.astype(float)
+        # NaN-count arrays are masked by feasibility: only feasible cells
+        # contribute to numerators. Infeasible cells are zeroed out because
+        # the solver masks them before the max, so a NaN there never
+        # propagates to V_arr — reporting it would conflate causes.
+        nan_arrays: dict[str, Array] = {
+            "U_nan": jnp.isnan(U_arr).astype(float) * F_float,
+            "E_nan": jnp.isnan(E_next_V).astype(float) * F_float,
+            "Q_nan": jnp.isnan(Q_arr).astype(float) * F_float,
         }
+
         out: dict[str, Any] = {}
-        for key, arr in arrays.items():
-            out[f"{key}_overall"] = jnp.mean(arr)
+        F_total = jnp.maximum(jnp.sum(F_float), 1.0)
+        for key, arr in nan_arrays.items():
+            out[f"{key}_overall"] = jnp.sum(arr) / F_total
             for i, name in enumerate(variable_names):
                 if i < arr.ndim:
                     axes = tuple(j for j in range(arr.ndim) if j != i)
-                    out[f"{key}_by_{name}"] = jnp.mean(arr, axis=axes)
+                    F_slice = jnp.maximum(jnp.sum(F_float, axis=axes), 1.0)
+                    out[f"{key}_by_{name}"] = jnp.sum(arr, axis=axes) / F_slice
+
+        # F itself is a plain mean over all cells — it is the denominator's
+        # source, not a conditional metric.
+        out["F_feasible_overall"] = jnp.mean(F_float)
+        for i, name in enumerate(variable_names):
+            if i < F_float.ndim:
+                axes = tuple(j for j in range(F_float.ndim) if j != i)
+                out[f"F_feasible_by_{name}"] = jnp.mean(F_float, axis=axes)
+
         out["regime_probs"] = {k: jnp.mean(v) for k, v in regime_probs.items()}
         return out
 
