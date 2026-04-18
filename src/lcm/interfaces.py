@@ -296,3 +296,11 @@ class PeriodRegimeSimulationData:
 
     in_regime: Bool1D
     """Boolean mask indicating which subjects are in this regime at this period."""
+
+    subject_ids: Array
+    """Global subject-id array aligned with `in_regime` / `V_arr` / states / actions.
+
+    Threaded explicitly (rather than recomputed as `jnp.arange(n_subjects)`) so
+    that downstream concatenation across partition-dispatch groups preserves
+    the caller's subject ordering.
+    """

@@ -520,7 +520,7 @@ def _extract_period_data(
 ) -> dict[str, Array]:
     """Extract data from a single period's simulation results."""
     data: dict[str, Array] = {
-        "subject_id": jnp.arange(len(result.in_regime)),
+        "subject_id": result.subject_ids,
         "period": jnp.full_like(result.in_regime, period, dtype=jnp.int32),
         "_in_regime": result.in_regime,
         "value": result.V_arr,
