@@ -1,5 +1,7 @@
 """Test that a custom aggregation function H can be used in a model."""
 
+from collections.abc import Callable
+
 import jax.numpy as jnp
 from numpy.testing import assert_array_equal
 
@@ -125,7 +127,7 @@ def _make_model(custom_H=None, *, with_pref_type: bool = False):
     `discount_factor_by_type` by the state. This exercises the
     "DAG output feeds H" path in pylcm's Q_and_F.
     """
-    functions = {
+    functions: dict[str, Callable] = {
         "utility": utility_with_pref_type if with_pref_type else utility,
         "labor_income": labor_income,
         "is_working": is_working,
