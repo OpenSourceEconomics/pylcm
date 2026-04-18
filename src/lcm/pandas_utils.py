@@ -11,12 +11,13 @@ import pandas as pd
 from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import Array
 
-from lcm.ages import AgeGrid
+from lcm.ages import PSEUDO_STATE_NAMES, AgeGrid
 from lcm.grids import DiscreteGrid, IrregSpacedGrid
 from lcm.params import MappingLeaf
 from lcm.params.sequence_leaf import SequenceLeaf
 from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
+from lcm.simulation.initial_conditions import MISSING_CAT_CODE
 from lcm.typing import InternalParams, RegimeNamesToIds
 from lcm.utils.error_handling import (
     _get_func_indexing_params,
@@ -39,7 +40,7 @@ def has_series(params: Mapping) -> bool:
     return False
 
 
-def initial_conditions_from_dataframe(
+def initial_conditions_from_dataframe(  # noqa: C901
     *,
     df: pd.DataFrame,
     regimes: Mapping[str, Regime],
@@ -92,9 +93,9 @@ def initial_conditions_from_dataframe(
     n_subjects = len(df)
     state_cols = [col for col in df.columns if col != "regime"]
 
-    # Pre-allocate result arrays
+    # Pre-allocate result arrays (NaN default surfaces bugs for missing states)
     result_arrays: dict[str, np.ndarray] = {
-        col: np.empty(n_subjects, dtype=float) for col in state_cols
+        col: np.full(n_subjects, np.nan) for col in state_cols
     }
     discrete_state_names: set[str] = set()
 
@@ -109,7 +110,12 @@ def initial_conditions_from_dataframe(
         }
         discrete_state_names |= discrete_grids.keys()
 
+        regime_state_names = set(regime.states.keys()) | PSEUDO_STATE_NAMES
+
         for col in state_cols:
+            if col not in regime_state_names:
+                continue
+
             values = group[col]
             if hasattr(values, "cat"):
                 values = values.astype(str)
@@ -125,6 +131,14 @@ def initial_conditions_from_dataframe(
                 )
             else:
                 result_arrays[col][idx] = values.to_numpy(dtype=float)
+
+    # Replace remaining NaN in discrete columns with an explicit int sentinel
+    # before casting to int32. This avoids platform-undefined NaN→int behavior
+    # and the associated RuntimeWarning.
+    for col in discrete_state_names:
+        if col in result_arrays:
+            nan_mask = np.isnan(result_arrays[col])
+            result_arrays[col][nan_mask] = MISSING_CAT_CODE
 
     initial_conditions: dict[str, Array] = {
         col: jnp.array(arr, dtype=jnp.int32)
@@ -786,15 +800,33 @@ def _validate_state_columns(
     unknown = state_columns - expected
     if unknown:
         msg = (
-            f"Unknown columns not matching any model state: {sorted(unknown)}. "
+            f"Unknown columns not matching any state of an initial regime: "
+            f"{sorted(unknown)}. "
             f"Expected states: {sorted(expected)}."
         )
         raise ValueError(msg)
 
     missing = expected - state_columns
     if missing:
-        msg = f"Missing required state columns: {sorted(missing)}."
+        required_by: dict[str, list[str]] = {name: [] for name in missing}
+        for regime_name in set(initial_regimes):
+            for name in regimes[regime_name].states:
+                if name in required_by:
+                    required_by[name].append(regime_name)
+        details = ", ".join(
+            _format_missing_state_detail(name=name, required_by=required_by[name])
+            for name in sorted(missing)
+        )
+        msg = f"Missing required state columns: {details}."
         raise ValueError(msg)
+
+
+def _format_missing_state_detail(*, name: str, required_by: list[str]) -> str:
+    if name in PSEUDO_STATE_NAMES:
+        return f"'{name}' (required for every subject)"
+    if required_by:
+        return f"'{name}' (required by {sorted(required_by)})"
+    return f"'{name}' (required by an initial regime)"
 
 
 def _collect_state_names(
@@ -805,11 +837,11 @@ def _collect_state_names(
     """Collect all state names (including shock grids) from initial regimes.
 
     Returns:
-        Set of all state names from the initial regimes, plus `'age'`
-        (always required).
+        Set of all state names from the initial regimes, plus the pseudo-state
+        names from `PSEUDO_STATE_NAMES` (always required).
 
     """
-    names: set[str] = {"age"}
+    names: set[str] = set(PSEUDO_STATE_NAMES)
     for regime_name in set(initial_regimes):
         names.update(regimes[regime_name].states.keys())
     return names
