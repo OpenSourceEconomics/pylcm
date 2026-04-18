@@ -55,6 +55,7 @@ def simulate(
     ages: AgeGrid,
     simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     seed: int | None = None,
+    subject_ids: Int1D | None = None,
 ) -> SimulationResult:
     """Simulate the model forward in time given pre-computed value function arrays.
 
@@ -75,6 +76,11 @@ def simulate(
             used for building simulation metadata.
         seed: Random number seed; will be passed to `jax.random.key`. If not provided,
             a random seed will be generated.
+        subject_ids: Optional global subject-id array aligned with
+            `initial_conditions` row order. Defaults to
+            `jnp.arange(n_subjects)`. Pass explicit ids when this simulate call
+            is one of several partition groups so downstream concatenation
+            preserves the caller's subject ordering.
 
     Returns:
         SimulationResult object. Call .to_dataframe() to get a pandas DataFrame.
@@ -100,7 +106,8 @@ def simulate(
         initial_ages=initial_states["age"], ages=ages
     )
     subject_regime_ids = jnp.full_like(initial_conditions["regime"], MISSING_CAT_CODE)
-    subject_ids = jnp.arange(initial_conditions["regime"].shape[0], dtype=jnp.int32)
+    if subject_ids is None:
+        subject_ids = jnp.arange(initial_conditions["regime"].shape[0], dtype=jnp.int32)
 
     # Forward simulation
     simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {

@@ -64,7 +64,11 @@ def build_initial_states(
             key = f"{regime_name}__{state_name}"
             if state_name in initial_states:
                 flat[key] = initial_states[state_name]
-            elif isinstance(internal_regime.grids[state_name], DiscreteGrid):
+                continue
+            spec = internal_regime.grids.get(
+                state_name
+            ) or internal_regime.partitions.get(state_name)
+            if isinstance(spec, DiscreteGrid):
                 flat[key] = jnp.full(n_subjects, MISSING_CAT_CODE, dtype=jnp.int32)
             else:
                 flat[key] = jnp.full(n_subjects, jnp.nan)
@@ -168,14 +172,21 @@ def _get_regime_state_names(
 ) -> set[str]:
     """Get state names from an internal regime's variable info.
 
+    Partition dimensions count as "states" at the initial-conditions boundary
+    even though they are lifted out of the state-action space internally:
+    subjects must supply a concrete value per partition dim so simulate can
+    dispatch them into the correct sub-solution.
+
     Args:
         internal_regime: The internal regime instance.
 
     Returns:
-        Set of state variable names.
+        Set of state variable names plus partition names.
 
     """
-    return set(internal_regime.variable_info.query("is_state").index)
+    return set(internal_regime.variable_info.query("is_state").index) | set(
+        internal_regime.partitions
+    )
 
 
 def _format_missing_states_message(missing: set[str], required: set[str]) -> str:

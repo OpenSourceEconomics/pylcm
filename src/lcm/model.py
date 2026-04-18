@@ -5,12 +5,14 @@ from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
 
+import jax.numpy as jnp
 import pandas as pd
 from jax import Array
 
 from lcm.ages import AgeGrid
 from lcm.exceptions import InvalidValueFunctionError, ModelInitializationError
 from lcm.grids import DiscreteGrid
+from lcm.interfaces import PeriodRegimeSimulationData
 from lcm.model_processing import (
     _validate_param_types,
     build_regimes_and_template,
@@ -30,8 +32,11 @@ from lcm.persistence import (
 )
 from lcm.regime import Regime
 from lcm.regime_building.partitions import (
+    group_subjects_by_partition,
     inject_partition_scalars,
     iterate_partition_points,
+    slice_initial_conditions,
+    slice_V_at_partition_point,
     stack_partition_V_arrays,
 )
 from lcm.regime_building.processing import InternalRegime
@@ -146,6 +151,12 @@ class Model:
             fixed_params=self.fixed_params,
         )
         self._partition_grid = _build_partition_grid(self.internal_regimes)
+        self._regime_partitions = MappingProxyType(
+            {
+                name: internal_regime.partitions
+                for name, internal_regime in self.internal_regimes.items()
+            }
+        )
         self.enable_jit = enable_jit
         self.simulation_output_dtypes = get_simulation_output_dtypes(
             regimes=self.regimes,
@@ -208,11 +219,6 @@ class Model:
         """
         _validate_log_args(log_level=log_level, log_path=log_path)
         internal_params = self._process_params(params)
-        validate_regime_transitions_all_periods(
-            internal_regimes=self.internal_regimes,
-            internal_params=internal_params,
-            ages=self.ages,
-        )
         logger = get_logger(log_level=log_level)
         sub_V_arrays: list[
             MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
@@ -220,7 +226,14 @@ class Model:
         try:
             for partition_point in iterate_partition_points(self._partition_grid):
                 partition_params = inject_partition_scalars(
-                    internal_params=internal_params, partition_point=partition_point
+                    internal_params=internal_params,
+                    partition_point=partition_point,
+                    regime_partitions=self._regime_partitions,
+                )
+                validate_regime_transitions_all_periods(
+                    internal_regimes=self.internal_regimes,
+                    internal_params=partition_params,
+                    ages=self.ages,
                 )
                 sub_V_arrays.append(
                     solve(
@@ -329,42 +342,62 @@ class Model:
                 internal_params=internal_params,
                 ages=self.ages,
             )
-        validate_regime_transitions_all_periods(
-            internal_regimes=self.internal_regimes,
-            internal_params=internal_params,
-            ages=self.ages,
-        )
         log = get_logger(log_level=log_level)
         if period_to_regime_to_V_arr is None:
-            try:
-                period_to_regime_to_V_arr = solve(
-                    internal_params=internal_params,
-                    ages=self.ages,
-                    internal_regimes=self.internal_regimes,
-                    logger=log,
-                    enable_jit=self.enable_jit,
-                    max_compilation_workers=max_compilation_workers,
-                )
-            except InvalidValueFunctionError as exc:
-                if log_path is not None and exc.partial_solution is not None:
-                    save_solve_snapshot(
-                        model=self,
-                        params=params,
-                        period_to_regime_to_V_arr=exc.partial_solution,  # ty: ignore[invalid-argument-type]
-                        log_path=Path(log_path),
-                        log_keep_n_latest=log_keep_n_latest,
-                    )
-                raise
-        result = simulate(
-            internal_params=internal_params,
+            period_to_regime_to_V_arr = self.solve(
+                params=params,
+                max_compilation_workers=max_compilation_workers,
+                log_level=log_level,
+                log_path=log_path,
+                log_keep_n_latest=log_keep_n_latest,
+            )
+        subject_ids = jnp.arange(initial_conditions["regime"].shape[0], dtype=jnp.int32)
+        sub_results: list[SimulationResult] = []
+        for partition_point, subject_mask in group_subjects_by_partition(
             initial_conditions=initial_conditions,
-            internal_regimes=self.internal_regimes,
-            regime_names_to_ids=self.regime_names_to_ids,
-            logger=log,
+            partition_grid=self._partition_grid,
+        ):
+            if not bool(jnp.any(subject_mask)):
+                continue
+            partition_params = inject_partition_scalars(
+                internal_params=internal_params,
+                partition_point=partition_point,
+                regime_partitions=self._regime_partitions,
+            )
+            validate_regime_transitions_all_periods(
+                internal_regimes=self.internal_regimes,
+                internal_params=partition_params,
+                ages=self.ages,
+            )
+            group_conditions = slice_initial_conditions(
+                initial_conditions=initial_conditions, subject_mask=subject_mask
+            )
+            group_V = slice_V_at_partition_point(
+                period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+                partition_point=partition_point,
+                partition_grid=self._partition_grid,
+            )
+            sub_results.append(
+                simulate(
+                    internal_params=partition_params,
+                    initial_conditions=group_conditions,
+                    internal_regimes=self.internal_regimes,
+                    regime_names_to_ids=self.regime_names_to_ids,
+                    logger=log,
+                    period_to_regime_to_V_arr=group_V,
+                    ages=self.ages,
+                    simulation_output_dtypes=self.simulation_output_dtypes,
+                    seed=seed,
+                    subject_ids=subject_ids[subject_mask],
+                )
+            )
+        result = _merge_sub_simulation_results(
+            sub_results=sub_results,
+            internal_params=internal_params,
             period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+            internal_regimes=self.internal_regimes,
             ages=self.ages,
             simulation_output_dtypes=self.simulation_output_dtypes,
-            seed=seed,
         )
         if log_level == "debug" and log_path is not None:
             save_simulate_snapshot(
@@ -438,6 +471,107 @@ def _validate_log_args(*, log_level: LogLevel, log_path: str | Path | None) -> N
     if log_level == "debug" and log_path is None:
         msg = "log_path is required when log_level='debug'"
         raise ValueError(msg)
+
+
+def _merge_sub_simulation_results(
+    *,
+    sub_results: list[SimulationResult],
+    internal_params: InternalParams,
+    period_to_regime_to_V_arr: MappingProxyType[
+        int, MappingProxyType[RegimeName, FloatND]
+    ],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    ages: AgeGrid,
+    simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
+) -> SimulationResult:
+    """Merge per-partition sub-simulation results into one `SimulationResult`.
+
+    For every (regime, period) present in any sub-result, concatenate the
+    per-subject arrays (`V_arr`, `actions[*]`, `states[*]`, `in_regime`,
+    `subject_ids`) across sub-results. Partition scalars injected into
+    each sub-result's `internal_params` are NOT carried forward; the
+    returned object reports the user-supplied `internal_params` and the
+    stacked V-arrays so downstream consumers see an undivided view.
+
+    Args:
+        sub_results: Non-empty list of per-partition-group sub-results.
+        internal_params: Original internal params (without partition
+            injection).
+        period_to_regime_to_V_arr: Stacked V-arrays (with partition axes
+            appended).
+        internal_regimes: Mapping of regime names to internal regimes.
+        ages: AgeGrid for the model.
+        simulation_output_dtypes: Metadata for categorical dtypes.
+
+    Returns:
+        A single `SimulationResult`.
+
+    """
+    if len(sub_results) == 1:
+        only = sub_results[0]
+        return SimulationResult(
+            raw_results=only.raw_results,
+            internal_regimes=internal_regimes,
+            internal_params=internal_params,
+            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+            ages=ages,
+            simulation_output_dtypes=simulation_output_dtypes,
+        )
+
+    merged_raw: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
+        regime_name: {} for regime_name in internal_regimes
+    }
+    for regime_name in internal_regimes:
+        periods = set()
+        for sub in sub_results:
+            periods |= set(sub.raw_results[regime_name])
+        for period in sorted(periods):
+            slices = [
+                sub.raw_results[regime_name][period]
+                for sub in sub_results
+                if period in sub.raw_results[regime_name]
+            ]
+            if not slices:
+                continue
+            V_arr = jnp.concatenate([s.V_arr for s in slices])
+            action_names = tuple(slices[0].actions)
+            actions = MappingProxyType(
+                {
+                    name: jnp.concatenate([s.actions[name] for s in slices])
+                    for name in action_names
+                }
+            )
+            state_names = tuple(slices[0].states)
+            states = MappingProxyType(
+                {
+                    name: jnp.concatenate([s.states[name] for s in slices])
+                    for name in state_names
+                }
+            )
+            in_regime = jnp.concatenate([s.in_regime for s in slices])
+            subject_ids = jnp.concatenate([s.subject_ids for s in slices])
+            merged_raw[regime_name][period] = PeriodRegimeSimulationData(
+                V_arr=V_arr,
+                actions=actions,
+                states=states,
+                in_regime=in_regime,
+                subject_ids=subject_ids,
+            )
+
+    wrapped = MappingProxyType(
+        {
+            regime_name: MappingProxyType(periods)
+            for regime_name, periods in merged_raw.items()
+        }
+    )
+    return SimulationResult(
+        raw_results=wrapped,
+        internal_regimes=internal_regimes,
+        internal_params=internal_params,
+        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+        ages=ages,
+        simulation_output_dtypes=simulation_output_dtypes,
+    )
 
 
 def _build_partition_grid(
