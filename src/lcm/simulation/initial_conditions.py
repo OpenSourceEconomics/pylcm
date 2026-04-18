@@ -596,7 +596,10 @@ def _check_regime_feasibility(  # noqa: C901
     flat_actions = _build_flat_action_grid(action_names=action_names, grids=grids)
 
     filtered_params = {k: v for k, v in regime_params.items() if k in accepted}
-    state_names = list(internal_regime.variable_info.query("is_state").index)
+    state_names = [
+        *internal_regime.variable_info.query("is_state").index,
+        *internal_regime.partitions,
+    ]
     needs_age = "age" in accepted
     needs_period = "period" in accepted
 

@@ -330,3 +330,72 @@ def test_simulate_invariant_to_subject_ordering(*, reorder_subjects: bool):
     np.testing.assert_allclose(
         alive_period_0["wealth"].to_numpy(), np.asarray(wealth), atol=1e-10
     )
+
+
+def _borrowing_uses_pref_type(
+    consumption: ContinuousAction,
+    wealth: ContinuousState,
+    pref_type: DiscreteState,
+) -> BoolND:
+    """Feasibility function that references a partition state."""
+    return (consumption <= wealth) & (pref_type >= 0)
+
+
+def test_simulate_feasibility_validation_sees_partition_states():
+    """Feasibility check during `validate_initial_conditions` must see partition values.
+
+    Regression guard: the Mahler-Yum GPU regression test failed with
+    `InvalidFunctionArgumentsError: missing required arguments:
+    education, productivity` because partition states were lifted out
+    of `variable_info` but the feasibility validator still drew its
+    per-subject state set from there. Now `internal_regime.partitions`
+    is walked alongside `variable_info`.
+    """
+    alive = Regime(
+        actions={
+            "consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=20),
+        },
+        states={
+            "wealth": LinSpacedGrid(start=0.1, stop=5.0, n_points=10),
+            "pref_type": DiscreteGrid(TypeGrid),
+        },
+        state_transitions={
+            "wealth": _next_wealth,
+            "pref_type": None,
+        },
+        constraints={"borrowing": _borrowing_uses_pref_type},
+        functions={"utility": _utility},
+        transition=_next_regime,
+        active=lambda age: age <= _FINAL_AGE,
+    )
+
+    def dead_utility() -> float:
+        return 0.0
+
+    dead = Regime(
+        transition=None,
+        functions={"utility": dead_utility},
+        active=lambda age: age > _FINAL_AGE,
+    )
+
+    model = Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, stop=_FINAL_AGE + 1, step="Y"),
+        regime_id_class=_RegimeId,
+    )
+
+    n_subjects = 3
+    model.simulate(
+        params={
+            "discount_factor": 0.9,
+            "alive": {"next_regime": {"final_age_alive": _FINAL_AGE}},
+        },
+        initial_conditions={
+            "wealth": jnp.full(n_subjects, 2.0),
+            "pref_type": jnp.array([TypeGrid.type_a, TypeGrid.type_b, TypeGrid.type_c]),
+            "age": jnp.zeros(n_subjects),
+            "regime": jnp.full(n_subjects, _RegimeId.alive),
+        },
+        period_to_regime_to_V_arr=None,
+        log_level="off",
+    )
