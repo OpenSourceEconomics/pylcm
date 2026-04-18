@@ -1,6 +1,6 @@
 import functools
 import inspect
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal, cast
@@ -27,6 +27,7 @@ from lcm.interfaces import (
 from lcm.params.processing import get_flat_param_names
 from lcm.params.regime_template import create_regime_params_template
 from lcm.regime import MarkovTransition, Regime
+from lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
 from lcm.regime_building.max_Q_over_a import (
     get_argmax_and_max_Q_over_a,
     get_max_Q_over_a,
@@ -34,7 +35,6 @@ from lcm.regime_building.max_Q_over_a import (
 from lcm.regime_building.ndimage import map_coordinates
 from lcm.regime_building.next_state import get_next_state_function_for_simulation
 from lcm.regime_building.Q_and_F import (
-    get_compute_intermediates,
     get_Q_and_F,
     get_Q_and_F_terminal,
 )
@@ -61,7 +61,7 @@ from lcm.typing import (
     VmappedRegimeTransitionFunction,
 )
 from lcm.utils.containers import ensure_containers_are_immutable
-from lcm.utils.dispatchers import productmap, simulation_spacemap, vmap_1d
+from lcm.utils.dispatchers import simulation_spacemap, vmap_1d
 from lcm.utils.namespace import flatten_regime_namespace, unflatten_regime_namespace
 
 
