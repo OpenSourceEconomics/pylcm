@@ -20,22 +20,13 @@ class MahlerYum:
             create_inputs,
         )
 
-        start_params_without_beta = {
-            k: v for k, v in START_PARAMS.items() if k != "beta"
-        }
-
         self.model = MAHLER_YUM_MODEL
-        common_params, initial_states, _discount_factor_type = create_inputs(
+        common_params, initial_states = create_inputs(
             seed=0,
             n_simulation_subjects=_N_SUBJECTS,
-            **start_params_without_beta,
+            **START_PARAMS,
         )
-        self.model_params = {
-            "alive": {
-                "discount_factor": START_PARAMS["beta"]["mean"],
-                **common_params,
-            },
-        }
+        self.model_params = {"alive": common_params}
         self.initial_conditions = {
             **initial_states,
             "regime": jnp.full(
