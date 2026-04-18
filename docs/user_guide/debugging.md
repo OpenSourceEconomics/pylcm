@@ -277,19 +277,25 @@ source. The error message includes a diagnostic summary like:
 
 ```text
 Diagnostics for regime 'working' at age 55:
-  U: 0.0000 NaN  |  E[V]: 0.3200 NaN  |  F: 0.9500 feasible
+  F: 0.9500 feasible
+  Among feasible state-action pairs:  U: 0.0000 NaN  |  E[V]: 0.3200 NaN
   Regime probs: working: 0.8500 | retired: 0.1500
-  E[V] NaN fraction by state:
-    wealth                   [0.00, 0.00, 0.12, 0.45, 0.80, ...]
+  E[V] NaN fraction by state (among feasible state-action pairs):
+    wealth                   [0.00, 0.00, 0.12, 0.45, 0.80, 0.95, 1.00, 1.00, 1.00, 1.00]
     health                   [0.00, 0.64]
 ```
 
 This tells you:
 
-- **U: 0.0000 NaN** --- utility is clean, the problem is not in the utility function.
-- **E\[V\]: 0.3200 NaN** --- 32% of E[V] values are NaN. The NaN comes from the
-  continuation value, not from utility.
-- **F: 0.9500 feasible** --- 95% of state-action combinations are feasible.
+- **F: 0.9500 feasible** --- 95% of state-action combinations satisfy all constraints.
+- **U: 0.0000 NaN** (among feasible) --- utility is clean in every feasible cell; the
+  problem is not in the utility function.
+- **E\[V\]: 0.3200 NaN** (among feasible) --- 32% of E[V] values in feasible cells are
+  NaN. The NaN comes from the continuation value, not from utility. Infeasible cells are
+  excluded because the solver masks them out before taking the max, so a NaN there would
+  not propagate to `V_arr`.
+- **Regime probs** --- how much weight the failing cell places on each reachable target
+  regime.
 - **By-state breakdown** --- NaN concentrates at high wealth levels and in the second
   health state. This points to the regime transition function or next-period value
   interpolation for those states.

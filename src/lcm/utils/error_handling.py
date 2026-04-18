@@ -247,8 +247,10 @@ def _format_diagnostic_summary(summary: dict[str, Any]) -> str:
     u_frac = summary.get("U_nan_fraction", {}).get("overall", 0)
     e_frac = summary.get("E_nan_fraction", {}).get("overall", 0)
     f_feas = summary.get("F_feasible_fraction", {}).get("overall", 0)
+    lines.append(f"  F: {f_feas:.4f} feasible")
     lines.append(
-        f"  U: {u_frac:.4f} NaN  |  E[V]: {e_frac:.4f} NaN  |  F: {f_feas:.4f} feasible"
+        f"  Among feasible state-action pairs:  "
+        f"U: {u_frac:.4f} NaN  |  E[V]: {e_frac:.4f} NaN"
     )
 
     probs = summary.get("regime_probs", {})
@@ -261,13 +263,12 @@ def _format_diagnostic_summary(summary: dict[str, Any]) -> str:
         frac = info.get("overall", 0)
         by_dim = info.get("by_dim", {})
         if frac > 0 and by_dim:
-            lines.append(f"  {label} NaN fraction by state:")
+            lines.append(
+                f"  {label} NaN fraction by state (among feasible state-action pairs):"
+            )
             for dim_name, values in by_dim.items():
-                max_shown = 8
-                formatted = ", ".join(f"{v:.2f}" for v in values[:max_shown])
-                suffix = ", ..." if len(values) > max_shown else ""
-                lines.append(f"    {dim_name:24s} [{formatted}{suffix}]")
-            break
+                formatted = ", ".join(f"{v:.2f}" for v in values)
+                lines.append(f"    {dim_name:24s} [{formatted}]")
 
     return "\n".join(lines)
 
