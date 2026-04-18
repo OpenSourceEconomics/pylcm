@@ -6,7 +6,7 @@ from typing import cast
 import pandas as pd
 from jax import Array
 
-from lcm.grids import Grid, IrregSpacedGrid
+from lcm.grids import DiscreteGrid, Grid, IrregSpacedGrid
 from lcm.shocks import _ShockGrid
 from lcm.typing import (
     ArgmaxQOverAFunction,
@@ -232,6 +232,18 @@ class InternalRegime:
 
     resolved_fixed_params: FlatRegimeParams = MappingProxyType({})
     """Flat resolved fixed params for this regime, used by to_dataframe targets."""
+
+    partitions: MappingProxyType[str, DiscreteGrid] = MappingProxyType({})
+    """Immutable mapping of partition-dimension names to their discrete grids.
+
+    Partitions are states declared via `state_transitions[name] = None`:
+    because their value never changes along its own axis in the Bellman
+    equation, they are lifted out of `grids` / `variable_info` at
+    regime-processing time. Solve and simulate iterate over the product
+    of partition grids once per point, compile-once / run-N-times, instead
+    of vectorising over a partition axis. Empty when the user declared no
+    `None` transitions (default — no behavioural change).
+    """
 
     def state_action_space(self, regime_params: FlatRegimeParams) -> StateActionSpace:
         """Return the state-action space with runtime state grids filled in.

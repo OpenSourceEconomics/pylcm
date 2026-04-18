@@ -29,6 +29,11 @@ from lcm.persistence import (
     save_solve_snapshot,
 )
 from lcm.regime import Regime
+from lcm.regime_building.partitions import (
+    inject_partition_scalars,
+    iterate_partition_points,
+    stack_partition_V_arrays,
+)
 from lcm.regime_building.processing import InternalRegime
 from lcm.simulation.initial_conditions import validate_initial_conditions
 from lcm.simulation.result import SimulationResult, get_simulation_output_dtypes
@@ -140,6 +145,7 @@ class Model:
             enable_jit=enable_jit,
             fixed_params=self.fixed_params,
         )
+        self._partition_grid = _build_partition_grid(self.internal_regimes)
         self.enable_jit = enable_jit
         self.simulation_output_dtypes = get_simulation_output_dtypes(
             regimes=self.regimes,
@@ -207,15 +213,25 @@ class Model:
             internal_params=internal_params,
             ages=self.ages,
         )
+        logger = get_logger(log_level=log_level)
+        sub_V_arrays: list[
+            MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
+        ] = []
         try:
-            period_to_regime_to_V_arr = solve(
-                internal_params=internal_params,
-                ages=self.ages,
-                internal_regimes=self.internal_regimes,
-                logger=get_logger(log_level=log_level),
-                enable_jit=self.enable_jit,
-                max_compilation_workers=max_compilation_workers,
-            )
+            for partition_point in iterate_partition_points(self._partition_grid):
+                partition_params = inject_partition_scalars(
+                    internal_params=internal_params, partition_point=partition_point
+                )
+                sub_V_arrays.append(
+                    solve(
+                        internal_params=partition_params,
+                        ages=self.ages,
+                        internal_regimes=self.internal_regimes,
+                        logger=logger,
+                        enable_jit=self.enable_jit,
+                        max_compilation_workers=max_compilation_workers,
+                    )
+                )
         except InvalidValueFunctionError as exc:
             if log_path is not None and exc.partial_solution is not None:
                 save_solve_snapshot(
@@ -226,6 +242,9 @@ class Model:
                     log_keep_n_latest=log_keep_n_latest,
                 )
             raise
+        period_to_regime_to_V_arr = stack_partition_V_arrays(
+            sub_V_arrays=sub_V_arrays, partition_grid=self._partition_grid
+        )
         if log_level == "debug" and log_path is not None:
             save_solve_snapshot(
                 model=self,
@@ -419,3 +438,42 @@ def _validate_log_args(*, log_level: LogLevel, log_path: str | Path | None) -> N
     if log_level == "debug" and log_path is None:
         msg = "log_path is required when log_level='debug'"
         raise ValueError(msg)
+
+
+def _build_partition_grid(
+    internal_regimes: Mapping[RegimeName, InternalRegime],
+) -> MappingProxyType[str, DiscreteGrid]:
+    """Aggregate `InternalRegime.partitions` into a single model-level grid.
+
+    Every regime that declares a partition name must agree on its grid
+    (same categories). A partition name declared in one regime and absent
+    from another is allowed — the outer partition loop simply iterates
+    identical sub-solves for regimes that do not reference the partition.
+
+    Args:
+        internal_regimes: Mapping of regime names to `InternalRegime` instances.
+
+    Returns:
+        Immutable mapping of partition name to `DiscreteGrid`. Empty when
+        no regime declares any partition.
+
+    Raises:
+        ModelInitializationError: If two regimes declare the same partition
+            name with different categories.
+
+    """
+    grid: dict[str, DiscreteGrid] = {}
+    for regime_name, internal_regime in internal_regimes.items():
+        for name, spec in internal_regime.partitions.items():
+            existing = grid.get(name)
+            if existing is None:
+                grid[name] = spec
+            elif existing.categories != spec.categories:
+                msg = (
+                    f"Partition dimension '{name}' has inconsistent categories "
+                    f"across regimes: {existing.categories} vs {spec.categories} "
+                    f"(regime '{regime_name}'). All regimes that declare a "
+                    f"partition must agree on its grid."
+                )
+                raise ModelInitializationError(msg)
+    return MappingProxyType(grid)
