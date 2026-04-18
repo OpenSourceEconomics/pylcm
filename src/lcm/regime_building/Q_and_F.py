@@ -138,7 +138,9 @@ def get_Q_and_F(
     # Resolve H arguments that are regime-function outputs (e.g. a
     # `discount_factor` DAG function that indexes a per-type Series by a
     # state). `None` when H only needs state/action/user-param values.
-    _h_dag_fn = _get_h_dag_fn(functions=functions, h_accepted_params=_H_accepted_params)
+    _h_dag_func = _get_h_dag_func(
+        functions=functions, h_accepted_params=_H_accepted_params
+    )
 
     @with_signature(
         args=arg_names_of_Q_and_F, return_annotation="tuple[FloatND, BoolND]"
@@ -208,8 +210,8 @@ def get_Q_and_F(
         H_kwargs = {
             k: v for k, v in states_actions_params.items() if k in _H_accepted_params
         }
-        if _h_dag_fn is not None:
-            H_kwargs |= _h_dag_fn(**states_actions_params)
+        if _h_dag_func is not None:
+            H_kwargs |= _h_dag_func(**states_actions_params)
         Q_arr = _H_func(utility=U_arr, E_next_V=E_next_V, **H_kwargs)
 
         # Handle cases when there is only one state.
@@ -308,7 +310,9 @@ def get_compute_intermediates(
     _H_accepted_params = frozenset(
         get_union_of_args([_H_func]) - {"utility", "E_next_V"}
     )
-    _h_dag_fn = _get_h_dag_fn(functions=functions, h_accepted_params=_H_accepted_params)
+    _h_dag_func = _get_h_dag_func(
+        functions=functions, h_accepted_params=_H_accepted_params
+    )
 
     arg_names_of_compute_intermediates = _get_arg_names_of_Q_and_F(
         [
@@ -365,8 +369,8 @@ def get_compute_intermediates(
         H_kwargs = {
             k: v for k, v in states_actions_params.items() if k in _H_accepted_params
         }
-        if _h_dag_fn is not None:
-            H_kwargs |= _h_dag_fn(**states_actions_params)
+        if _h_dag_func is not None:
+            H_kwargs |= _h_dag_func(**states_actions_params)
         Q_arr = _H_func(utility=U_arr, E_next_V=E_next_V, **H_kwargs)
 
         return U_arr, F_arr, E_next_V, Q_arr, active_regime_probs
@@ -546,7 +550,7 @@ def _get_joint_weights_function(
     )
 
 
-def _get_h_dag_fn(
+def _get_h_dag_func(
     *,
     functions: FunctionsMapping,
     h_accepted_params: frozenset[str],
