@@ -99,7 +99,7 @@ def process_regimes(
         The processed regimes.
 
     """
-    partition_names = frozenset(detect_model_partitions(regimes))
+    partition_names = frozenset(detect_model_partitions(regimes=regimes))
     lifted = {
         name: lift_partitions_from_regime(
             regime=regime, partition_names=partition_names
@@ -148,7 +148,7 @@ def process_regimes(
 
     internal_regimes = {}
     for name, regime in reduced_regimes.items():
-        partition_names = frozenset(partitions_per_regime[name])
+        regime_partition_names = frozenset(partitions_per_regime[name])
         # Template is built from the user-facing regime so partition states
         # (still in `regimes[name].states`) remain excluded from function
         # params — they are never user-supplied.
@@ -165,7 +165,7 @@ def process_regimes(
             regimes_to_active_periods=regimes_to_active_periods,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             state_action_space=state_action_spaces[name],
-            partition_names=partition_names,
+            partition_names=regime_partition_names,
             ages=ages,
             enable_jit=enable_jit,
         )
@@ -181,7 +181,7 @@ def process_regimes(
             regimes_to_active_periods=regimes_to_active_periods,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             state_action_space=state_action_spaces[name],
-            partition_names=partition_names,
+            partition_names=regime_partition_names,
             ages=ages,
             enable_jit=enable_jit,
             solve_transitions=solve_functions.transitions,

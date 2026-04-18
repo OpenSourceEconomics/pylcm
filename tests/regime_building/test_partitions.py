@@ -52,7 +52,7 @@ def _next_regime(age: float, final_age_alive: float) -> ScalarInt:
 
 
 def _utility(consumption: ContinuousAction, pref_type: DiscreteState) -> FloatND:
-    """Utility scales with pref_type's integer code.
+    """Scale log-consumption by `pref_type`'s integer code.
 
     `pref_type` is used directly by utility (no H-DAG machinery needed on
     this branch). `type_c` gets 3x, `type_a` gets 1x.
@@ -112,7 +112,7 @@ def _make_model() -> Model:
 def test_detect_partitions_identifies_discrete_none():
     """`detect_model_partitions` picks up a DiscreteGrid state with None transition."""
     model = _make_model()
-    detected = detect_model_partitions(model.regimes)
+    detected = detect_model_partitions(regimes=model.regimes)
     assert set(detected) == {"pref_type"}
     assert detected["pref_type"].categories == ("type_a", "type_b", "type_c")
 
@@ -127,7 +127,7 @@ def test_detect_partitions_rejects_non_none_transition():
         transition=lambda: 0,
         active=lambda age: age < 1,
     )
-    assert detect_model_partitions({"r": regime}) == {}
+    assert detect_model_partitions(regimes={"r": regime}) == {}
 
 
 def test_detect_partitions_rejects_continuous():
@@ -140,7 +140,7 @@ def test_detect_partitions_rejects_continuous():
         transition=lambda: 0,
         active=lambda age: age < 1,
     )
-    assert detect_model_partitions({"r": regime}) == {}
+    assert detect_model_partitions(regimes={"r": regime}) == {}
 
 
 def test_lift_removes_partition_from_states_and_transitions():
@@ -172,7 +172,7 @@ def test_model_partition_grid_union():
 def test_iterate_partition_points_cardinality():
     """The product iterator yields one dict per category code."""
     model = _make_model()
-    points = list(iterate_partition_points(model._partition_grid))
+    points = list(iterate_partition_points(partition_grid=model._partition_grid))
     assert len(points) == 3  # type_a, type_b, type_c
     assert {int(p["pref_type"]) for p in points} == {0, 1, 2}
 

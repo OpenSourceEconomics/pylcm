@@ -523,7 +523,13 @@ def _extract_period_data(
     regime_states: tuple[str, ...],
     regime_actions: tuple[str, ...],
 ) -> dict[str, Array]:
-    """Extract data from a single period's simulation results."""
+    """Extract data from a single period's simulation results.
+
+    `subject_id` is taken from `result.subject_ids` verbatim — it is the
+    caller-supplied global subject identifier, threaded through
+    `simulate()` so per-partition dispatch groups concatenate into one
+    dataframe with stable subject identity.
+    """
     data: dict[str, Array] = {
         "subject_id": result.subject_ids,
         "period": jnp.full_like(result.in_regime, period, dtype=jnp.int32),

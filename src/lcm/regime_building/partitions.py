@@ -1,18 +1,23 @@
-"""Partition-dimension iteration and result stacking.
+"""Partition-dimension detection, iteration, and result stacking.
 
-A partition dimension is a state declared via `state_transitions[name] = None`.
-The Bellman backward induction never couples values across such a dimension,
-so instead of vectorising over the partition axis (doubling memory per added
-partition dim), pylcm compiles the reduced sub-model once and runs it once
-per point in the Cartesian product of all partition grids.
+A partition dimension is a state declared via `state_transitions[name] = None`
+on a `DiscreteGrid`. The Bellman backward induction never couples values
+across such a dimension, so instead of vectorising over the partition axis
+(doubling memory per added partition dim), pylcm compiles the reduced
+sub-model once and runs it once per point in the Cartesian product of all
+partition grids.
 
-This module provides the small set of helpers that model.solve / model.simulate
-use to iterate over partition points, inject partition-scalar values into
-`internal_params`, group subjects by their partition values at simulate time,
-and stack sub-solve V-arrays back into the user-visible shape.
+The module exposes two layers:
 
-All helpers handle the empty-partition case transparently: a single iteration
-with an empty scalar dict, no subject grouping, no axis stacking.
+- **Model-building** (called from `process_regimes`):
+  `detect_model_partitions`, `lift_partitions_from_regime`.
+- **Solve / simulate runtime** (called from `Model.solve` / `Model.simulate`):
+  `iterate_partition_points`, `inject_partition_scalars`,
+  `stack_partition_V_arrays`, `group_subjects_by_partition`,
+  `slice_V_at_partition_point`, `slice_initial_conditions`.
+
+All helpers handle the empty-partition case transparently: a single
+iteration with an empty scalar dict, no subject grouping, no axis stacking.
 """
 
 import dataclasses
@@ -35,6 +40,7 @@ PartitionPoint = Mapping[str, ScalarInt]
 
 
 def detect_model_partitions(
+    *,
     regimes: Mapping[str, Regime],
 ) -> MappingProxyType[str, DiscreteGrid]:
     """Identify states that qualify as partition dimensions.
@@ -156,6 +162,7 @@ def lift_partitions_from_regime(
 
 
 def iterate_partition_points(
+    *,
     partition_grid: PartitionGrid,
 ) -> Iterator[PartitionPoint]:
     """Yield each point in the Cartesian product of partition grids.
@@ -313,7 +320,7 @@ def group_subjects_by_partition(
         yield MappingProxyType({}), jnp.ones(n_subjects, dtype=bool)
         return
 
-    for point in iterate_partition_points(partition_grid):
+    for point in iterate_partition_points(partition_grid=partition_grid):
         mask = jnp.ones_like(initial_conditions["regime"], dtype=bool)
         for name, scalar in point.items():
             mask = mask & (initial_conditions[name] == scalar)
@@ -335,6 +342,11 @@ def slice_V_at_partition_point(
     `stack_partition_V_arrays`). To hand a slice to one simulation
     dispatch group, fix each partition axis at its corresponding scalar
     code and drop the axis.
+
+    The stacked V-arrays violate `V._fail_if_interpolation_axes_are_not_last`
+    because continuous state axes are no longer the trailing axes; this
+    invariant is restored by slicing here. **`Model.simulate` must call
+    this before handing the V-arrays to the per-subject interpolator.**
 
     Args:
         period_to_regime_to_V_arr: V-arrays with partition axes appended.

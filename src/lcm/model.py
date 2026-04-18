@@ -150,7 +150,9 @@ class Model:
             enable_jit=enable_jit,
             fixed_params=self.fixed_params,
         )
-        self._partition_grid = _build_partition_grid(self.internal_regimes)
+        self._partition_grid = _build_partition_grid(
+            internal_regimes=self.internal_regimes
+        )
         self._regime_partitions = MappingProxyType(
             {
                 name: internal_regime.partitions
@@ -224,7 +226,9 @@ class Model:
             MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
         ] = []
         try:
-            for partition_point in iterate_partition_points(self._partition_grid):
+            for partition_point in iterate_partition_points(
+                partition_grid=self._partition_grid
+            ):
                 partition_params = inject_partition_scalars(
                     internal_params=internal_params,
                     partition_point=partition_point,
@@ -353,9 +357,11 @@ class Model:
             )
         subject_ids = jnp.arange(initial_conditions["regime"].shape[0], dtype=jnp.int32)
         sub_results: list[SimulationResult] = []
-        for partition_point, subject_mask in group_subjects_by_partition(
-            initial_conditions=initial_conditions,
-            partition_grid=self._partition_grid,
+        for group_index, (partition_point, subject_mask) in enumerate(
+            group_subjects_by_partition(
+                initial_conditions=initial_conditions,
+                partition_grid=self._partition_grid,
+            )
         ):
             if not bool(jnp.any(subject_mask)):
                 continue
@@ -377,6 +383,11 @@ class Model:
                 partition_point=partition_point,
                 partition_grid=self._partition_grid,
             )
+            # Derive a distinct seed per partition group so stochastic
+            # transitions do not draw identical key streams across groups.
+            # `seed=None` still hits `draw_random_seed()` independently per
+            # call, so no derivation is needed.
+            group_seed = None if seed is None else seed + group_index
             sub_results.append(
                 simulate(
                     internal_params=partition_params,
@@ -387,7 +398,7 @@ class Model:
                     period_to_regime_to_V_arr=group_V,
                     ages=self.ages,
                     simulation_output_dtypes=self.simulation_output_dtypes,
-                    seed=seed,
+                    seed=group_seed,
                     subject_ids=subject_ids[subject_mask],
                 )
             )
@@ -507,17 +518,6 @@ def _merge_sub_simulation_results(
         A single `SimulationResult`.
 
     """
-    if len(sub_results) == 1:
-        only = sub_results[0]
-        return SimulationResult(
-            raw_results=only.raw_results,
-            internal_regimes=internal_regimes,
-            internal_params=internal_params,
-            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-            ages=ages,
-            simulation_output_dtypes=simulation_output_dtypes,
-        )
-
     merged_raw: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
         regime_name: {} for regime_name in internal_regimes
     }
@@ -533,15 +533,28 @@ def _merge_sub_simulation_results(
             ]
             if not slices:
                 continue
-            V_arr = jnp.concatenate([s.V_arr for s in slices])
+            state_names = tuple(slices[0].states)
             action_names = tuple(slices[0].actions)
+            # Every sub-result for the same (regime, period) must expose
+            # identical state/action keys — regime structure is fixed at
+            # model build time, so differing sets indicate a bug in the
+            # partition dispatch.
+            for s in slices[1:]:
+                if tuple(s.states) != state_names or tuple(s.actions) != action_names:
+                    msg = (
+                        f"Inconsistent state/action keys across partition groups "
+                        f"for regime '{regime_name}' period {period}. Expected "
+                        f"states={state_names} actions={action_names}, got "
+                        f"states={tuple(s.states)} actions={tuple(s.actions)}."
+                    )
+                    raise RuntimeError(msg)
+            V_arr = jnp.concatenate([s.V_arr for s in slices])
             actions = MappingProxyType(
                 {
                     name: jnp.concatenate([s.actions[name] for s in slices])
                     for name in action_names
                 }
             )
-            state_names = tuple(slices[0].states)
             states = MappingProxyType(
                 {
                     name: jnp.concatenate([s.states[name] for s in slices])
@@ -575,6 +588,7 @@ def _merge_sub_simulation_results(
 
 
 def _build_partition_grid(
+    *,
     internal_regimes: Mapping[RegimeName, InternalRegime],
 ) -> MappingProxyType[str, DiscreteGrid]:
     """Aggregate `InternalRegime.partitions` into a single model-level grid.
