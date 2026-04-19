@@ -20,11 +20,14 @@ import time
 
 from benchmarks import _gpu_mem
 
-_N_SUBJECTS = 100
+_N_SUBJECTS = 1000
 
 
 class AcaBaseline:
     timeout = 1800
+    # setup() compiles (~10+ min); avoid asv re-running it across repeats.
+    repeat = 1
+    number = 1
 
     def _build(self) -> None:
         from aca_model.benchmark import (
