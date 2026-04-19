@@ -313,22 +313,6 @@ def _build_solve_functions(
         enable_jit=enable_jit,
     )
 
-    compute_intermediates = _build_compute_intermediates_per_period(
-        regime=regime,
-        flat_param_names=frozenset(get_flat_param_names(regime_params_template)),
-        regimes_to_active_periods=regimes_to_active_periods,
-        functions=core.functions,
-        constraints=core.constraints,
-        transitions=core.transitions,
-        stochastic_transition_names=core.stochastic_transition_names,
-        compute_regime_transition_probs=compute_regime_transition_probs,
-        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-        state_action_space=state_action_space,
-        grids=all_grids[regime_name],
-        ages=ages,
-        enable_jit=enable_jit,
-    )
-
     return SolveFunctions(
         functions=core.functions,
         constraints=core.constraints,
