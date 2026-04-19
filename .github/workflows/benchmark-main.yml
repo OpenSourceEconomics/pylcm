@@ -28,14 +28,14 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install environment
-        run: pixi install -e tests-cuda12
+        run: pixi install -e benchmarks-cuda12
       - name: Regenerate _version.py
         run: >-
           echo "__version__ = '$(git describe --tags --always)'"
           > src/lcm/_version.py
       - name: Setup ASV machine
-        run: pixi run -e tests-cuda12 asv machine --yes
+        run: pixi run -e benchmarks-cuda12 asv machine --yes
       - name: Run benchmarks and publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pixi run -e tests-cuda12 asv-run-and-publish-main
+        run: pixi run -e benchmarks-cuda12 asv-run-and-publish-main

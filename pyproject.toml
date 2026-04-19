@@ -87,6 +87,7 @@ pybaum = "*"
 scipy = ">=1.16"
 snakeviz = "*"
 [tool.pixi.environments]
+benchmarks-cuda12 = { features = [ "benchmarks", "cuda12" ], solve-group = "benchmarks-cuda12" }
 cuda12 = { features = [ "cuda12" ], solve-group = "cuda12" }
 cuda13 = { features = [ "cuda13" ], solve-group = "cuda13" }
 docs = { features = [ "docs" ], solve-group = "default" }
@@ -96,6 +97,8 @@ tests-cuda12 = { features = [ "tests", "cuda12" ], solve-group = "cuda12" }
 tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
 tests-metal = { features = [ "tests", "metal" ], solve-group = "metal" }
 type-checking = { features = [ "type-checking", "tests" ], solve-group = "default" }
+[tool.pixi.feature.benchmarks.pypi-dependencies]
+aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "5f1a4557721b90235f1408d2a99bf3a7005e4e95" }
 [tool.pixi.feature.cuda12]
 platforms = [ "linux-64" ]
 system-requirements = { cuda = "12" }
@@ -150,8 +153,8 @@ asv-compare = "asv compare"
 asv-preview = "asv preview"
 asv-pr-comment = "python benchmarks/pr_comment.py"
 asv-publish = "python benchmarks/publish.py"
-asv-quick = { cmd = "asv run --quick --set-commit-hash=$(git rev-parse HEAD)", env = { XLA_PYTHON_CLIENT_MEM_FRACTION = "0.3" } }
-asv-run = { cmd = 'git status --porcelain --ignore-submodules | grep -q . && echo "Refusing to benchmark: worktree is dirty. Commit first." && exit 1; asv run --set-commit-hash=$(git rev-parse HEAD)', env = { XLA_PYTHON_CLIENT_MEM_FRACTION = "0.3" } }
+asv-quick = { cmd = "asv run --quick --set-commit-hash=$(git rev-parse HEAD)", env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
+asv-run = { cmd = 'git status --porcelain --ignore-submodules | grep -q . && echo "Refusing to benchmark: worktree is dirty. Commit first." && exit 1; asv run --set-commit-hash=$(git rev-parse HEAD)', env = { XLA_PYTHON_CLIENT_PREALLOCATE = "false" } }
 asv-run-and-pr-comment = { depends-on = [ "asv-run", "asv-pr-comment" ] }
 asv-run-and-publish-main = { depends-on = [ "asv-run", "asv-publish" ] }
 [tool.pixi.workspace]
