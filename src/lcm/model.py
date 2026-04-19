@@ -43,7 +43,7 @@ from lcm.regime_building.processing import InternalRegime
 from lcm.simulation.initial_conditions import validate_initial_conditions
 from lcm.simulation.result import SimulationResult, get_simulation_output_dtypes
 from lcm.simulation.simulate import simulate
-from lcm.solution.solve_brute import solve
+from lcm.solution.solve_brute import compile_solve, run_compiled_solve
 from lcm.typing import (
     FloatND,
     InternalParams,
@@ -222,31 +222,51 @@ class Model:
         _validate_log_args(log_level=log_level, log_path=log_path)
         internal_params = self._process_params(params)
         logger = get_logger(log_level=log_level)
+
+        # Build the per-iteration param pytrees up-front so compile_solve
+        # sees the full signature (partition scalars included). All points
+        # are shape/dtype-equivalent, so compiling against the first point's
+        # params gives a kernel reusable for every point.
+        partition_params_per_point = [
+            inject_partition_scalars(
+                internal_params=internal_params,
+                partition_point=partition_point,
+                regime_partitions=self._regime_partitions,
+            )
+            for partition_point in iterate_partition_points(
+                partition_grid=self._partition_grid
+            )
+        ]
+
+        # Compile once. Partition scalars flow in through `internal_params`
+        # at run time and hit the JAX dispatch cache — no recompile per
+        # partition point.
+        compiled = compile_solve(
+            internal_params=partition_params_per_point[0],
+            ages=self.ages,
+            internal_regimes=self.internal_regimes,
+            logger=logger,
+            enable_jit=self.enable_jit,
+            max_compilation_workers=max_compilation_workers,
+        )
+
         sub_V_arrays: list[
             MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
         ] = []
         try:
-            for partition_point in iterate_partition_points(
-                partition_grid=self._partition_grid
-            ):
-                partition_params = inject_partition_scalars(
-                    internal_params=internal_params,
-                    partition_point=partition_point,
-                    regime_partitions=self._regime_partitions,
-                )
+            for partition_params in partition_params_per_point:
                 validate_regime_transitions_all_periods(
                     internal_regimes=self.internal_regimes,
                     internal_params=partition_params,
                     ages=self.ages,
                 )
                 sub_V_arrays.append(
-                    solve(
+                    run_compiled_solve(
+                        compiled=compiled,
                         internal_params=partition_params,
                         ages=self.ages,
                         internal_regimes=self.internal_regimes,
                         logger=logger,
-                        enable_jit=self.enable_jit,
-                        max_compilation_workers=max_compilation_workers,
                     )
                 )
         except InvalidValueFunctionError as exc:
