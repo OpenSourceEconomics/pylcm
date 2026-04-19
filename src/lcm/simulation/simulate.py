@@ -1,6 +1,7 @@
 import logging
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
 
 import jax
@@ -42,52 +43,96 @@ from lcm.utils.logging import (
 )
 
 
-def simulate(
+@dataclass(frozen=True)
+class CompiledSimulate:
+    """Everything about a model that stays fixed across simulate calls.
+
+    `Model.simulate` builds this once and reuses it for every partition point,
+    replacing the per-point Python overhead of recomputing kwargs. The compiled
+    per-regime kernels (`argmax_and_max_Q_over_a`, `calculate_next_states`,
+    `calculate_next_regime_membership`) already live on `internal_regimes` from
+    model initialization, so this container is a reference bundle, not a fresh
+    compile pass. `devices` is declared so a future multi-GPU PR can place
+    kernels on specific devices; today it is always `None`.
+    """
+
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime]
+    regime_names_to_ids: RegimeNamesToIds
+    ages: AgeGrid
+    simulation_output_dtypes: Mapping[str, pd.CategoricalDtype]
+    logger: logging.Logger
+    devices: tuple[jax.Device, ...] | None = None
+
+
+def compile_simulate(
     *,
-    internal_params: InternalParams,
-    initial_conditions: Mapping[str, Array],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_names_to_ids: RegimeNamesToIds,
+    ages: AgeGrid,
+    simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     logger: logging.Logger,
+    devices: tuple[jax.Device, ...] | None = None,
+) -> CompiledSimulate:
+    """Bundle the simulate inputs that do not vary across partition points.
+
+    Mirrors `compile_solve` in shape so `Model.simulate` can hoist this call
+    out of its partition loop. See `CompiledSimulate` for the per-field
+    rationale. `devices` is a seam for the future multi-GPU partition
+    dispatch PR and is unused today.
+    """
+    return CompiledSimulate(
+        internal_regimes=internal_regimes,
+        regime_names_to_ids=regime_names_to_ids,
+        ages=ages,
+        simulation_output_dtypes=simulation_output_dtypes,
+        logger=logger,
+        devices=devices,
+    )
+
+
+def run_compiled_simulate(
+    *,
+    compiled: CompiledSimulate,
+    internal_params: InternalParams,
+    initial_conditions: Mapping[str, Array],
     period_to_regime_to_V_arr: MappingProxyType[
         int, MappingProxyType[RegimeName, FloatND]
     ],
-    ages: AgeGrid,
-    simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     seed: int | None = None,
     subject_ids: Int1D | None = None,
 ) -> SimulationResult:
-    """Simulate the model forward in time given pre-computed value function arrays.
+    """Simulate one partition point's subjects using the compiled bundle.
 
     Args:
-        internal_params: Immutable mapping of regime names to flat parameter mappings.
-        initial_conditions: Flat mapping of state names (plus `"regime"`) to arrays.
-            All arrays must have the same length (number of subjects). The `"regime"`
-            entry must contain integer regime codes.
-            Example: {"wealth": jnp.array([10.0, 50.0]), "regime": jnp.array([0, 0])}
-        internal_regimes: Immutable mapping of regime names to internal regime
-            instances.
-        regime_names_to_ids: Immutable mapping of regime names to integer indices.
-        logger: Logger that logs to stdout.
-        period_to_regime_to_V_arr: Immutable mapping of periods to regime
-            value function arrays.
-        ages: AgeGrid for the model, used to convert periods to ages.
-        simulation_output_dtypes: Mapping of variable name to `pd.CategoricalDtype`,
-            used for building simulation metadata.
-        seed: Random number seed; will be passed to `jax.random.key`. If not provided,
-            a random seed will be generated.
+        compiled: Output of `compile_simulate`.
+        internal_params: Immutable mapping of regime names to flat parameter
+            mappings — for partition-lifted models, the caller injects this
+            partition point's scalars before calling.
+        initial_conditions: Flat mapping of state names (plus `"regime"`) to
+            arrays. All arrays must have the same length (number of subjects
+            in this partition group). The `"regime"` entry must contain
+            integer regime codes.
+        period_to_regime_to_V_arr: Value-function arrays already sliced at this
+            partition point (partition axes dropped).
+        seed: Random number seed. If `None`, a random seed is drawn.
         subject_ids: Optional global subject-id array aligned with
             `initial_conditions` row order. Defaults to
-            `jnp.arange(n_subjects)`. Pass explicit ids when this simulate call
-            is one of several partition groups so downstream concatenation
+            `jnp.arange(n_subjects)`. Pass explicit ids when this call is one
+            partition group out of several so downstream concatenation
             preserves the caller's subject ordering.
 
     Returns:
-        SimulationResult object. Call .to_dataframe() to get a pandas DataFrame.
+        SimulationResult for this partition group.
 
     """
     if seed is None:
         seed = draw_random_seed()
+
+    internal_regimes = compiled.internal_regimes
+    regime_names_to_ids = compiled.regime_names_to_ids
+    ages = compiled.ages
+    simulation_output_dtypes = compiled.simulation_output_dtypes
+    logger = compiled.logger
 
     logger.info("Starting simulation")
     total_start = time.monotonic()
@@ -198,6 +243,45 @@ def simulate(
         period_to_regime_to_V_arr=period_to_regime_to_V_arr,
         ages=ages,
         simulation_output_dtypes=simulation_output_dtypes,
+    )
+
+
+def simulate(
+    *,
+    internal_params: InternalParams,
+    initial_conditions: Mapping[str, Array],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    regime_names_to_ids: RegimeNamesToIds,
+    logger: logging.Logger,
+    period_to_regime_to_V_arr: MappingProxyType[
+        int, MappingProxyType[RegimeName, FloatND]
+    ],
+    ages: AgeGrid,
+    simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
+    seed: int | None = None,
+    subject_ids: Int1D | None = None,
+) -> SimulationResult:
+    """Simulate the model forward in time given pre-computed value function arrays.
+
+    Thin wrapper around `compile_simulate` + `run_compiled_simulate` preserved
+    for direct callers in `tests/simulation/*`. Production callers in
+    `Model.simulate` use the two-step form so the compile bundle can be
+    reused across partition points.
+    """
+    compiled = compile_simulate(
+        internal_regimes=internal_regimes,
+        regime_names_to_ids=regime_names_to_ids,
+        ages=ages,
+        simulation_output_dtypes=simulation_output_dtypes,
+        logger=logger,
+    )
+    return run_compiled_simulate(
+        compiled=compiled,
+        internal_params=internal_params,
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+        seed=seed,
+        subject_ids=subject_ids,
     )
 
 
