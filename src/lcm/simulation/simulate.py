@@ -55,6 +55,7 @@ def simulate(
     ages: AgeGrid,
     simulation_output_dtypes: Mapping[str, pd.CategoricalDtype],
     seed: int | None = None,
+    subject_ids: Int1D | None = None,
 ) -> SimulationResult:
     """Simulate the model forward in time given pre-computed value function arrays.
 
@@ -75,6 +76,11 @@ def simulate(
             used for building simulation metadata.
         seed: Random number seed; will be passed to `jax.random.key`. If not provided,
             a random seed will be generated.
+        subject_ids: Optional global subject-id array aligned with
+            `initial_conditions` row order. Defaults to
+            `jnp.arange(n_subjects)`. Pass explicit ids when this simulate call
+            is one of several partition groups so downstream concatenation
+            preserves the caller's subject ordering.
 
     Returns:
         SimulationResult object. Call .to_dataframe() to get a pandas DataFrame.
@@ -100,6 +106,8 @@ def simulate(
         initial_ages=initial_states["age"], ages=ages
     )
     subject_regime_ids = jnp.full_like(initial_conditions["regime"], MISSING_CAT_CODE)
+    if subject_ids is None:
+        subject_ids = jnp.arange(initial_conditions["regime"].shape[0], dtype=jnp.int32)
 
     # Forward simulation
     simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
@@ -145,6 +153,7 @@ def simulate(
                     states=states,
                     subject_regime_ids=subject_regime_ids,
                     new_subject_regime_ids=new_subject_regime_ids,
+                    subject_ids=subject_ids,
                     period_to_regime_to_V_arr=period_to_regime_to_V_arr,
                     internal_params=internal_params,
                     regime_names_to_ids=regime_names_to_ids,
@@ -201,6 +210,7 @@ def _simulate_regime_in_period(
     states: MappingProxyType[str, Array],
     subject_regime_ids: Int1D,
     new_subject_regime_ids: Int1D,
+    subject_ids: Int1D,
     period_to_regime_to_V_arr: MappingProxyType[
         int, MappingProxyType[RegimeName, FloatND]
     ],
@@ -222,6 +232,9 @@ def _simulate_regime_in_period(
         states: Current states for all subjects (namespaced by regime).
         subject_regime_ids: Current regime membership for all subjects.
         new_subject_regime_ids: Array to populate with next period's regime memberships.
+        subject_ids: Global subject-id array, stored verbatim on the returned
+            `PeriodRegimeSimulationData` so downstream concatenation (across
+            partition groups) can restore subject ordering.
         period_to_regime_to_V_arr: Value function arrays for all periods and regimes.
         internal_params: Model parameters for all regimes.
         regime_names_to_ids: Mapping from regime names to integer IDs.
@@ -293,6 +306,7 @@ def _simulate_regime_in_period(
         actions=optimal_actions,
         states=MappingProxyType(res),
         in_regime=subject_ids_in_regime,
+        subject_ids=subject_ids,
     )
 
     # Update states and regime membership for next period

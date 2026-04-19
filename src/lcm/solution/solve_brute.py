@@ -4,6 +4,7 @@ import os
 import time
 from collections.abc import Callable, Hashable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from types import MappingProxyType
 
 import jax
@@ -22,6 +23,21 @@ from lcm.utils.logging import (
 )
 
 
+@dataclass(frozen=True)
+class CompiledSolve:
+    """AOT-compiled solve kernels plus the shape-consistent V template.
+
+    Reused across partition-point sweeps so `Model.solve` pays the compile
+    cost once, not once per point.
+    """
+
+    compiled_functions: dict[tuple[RegimeName, int], Callable]
+    """Compiled `max_Q_over_a` callable per `(regime_name, period)`."""
+    next_regime_to_V_arr_template: MappingProxyType[RegimeName, FloatND]
+    """Zero-initialised V-arrays keyed by regime name; used as starting
+    value for backward induction on every call to `run_compiled_solve`."""
+
+
 def solve(
     *,
     internal_params: InternalParams,
@@ -31,7 +47,11 @@ def solve(
     enable_jit: bool,
     max_compilation_workers: int | None = None,
 ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
-    """Solve a model using grid search.
+    """Solve a model using grid search (compile + run in one call).
+
+    Thin wrapper around `compile_solve` + `run_compiled_solve`. Callers
+    that sweep partition points should split these two steps themselves
+    so the compile cost is paid exactly once.
 
     Args:
         internal_params: Immutable mapping of regime names to flat parameter mappings.
@@ -47,9 +67,53 @@ def solve(
         Immutable mapping of periods to regime value function arrays.
 
     """
-    # Compute V array shapes and build a consistent next_regime_to_V_arr
-    # template.  Using the same pytree structure (keys and shapes) across
-    # all periods avoids JIT re-compilation from pytree mismatches.
+    compiled = compile_solve(
+        internal_params=internal_params,
+        ages=ages,
+        internal_regimes=internal_regimes,
+        logger=logger,
+        enable_jit=enable_jit,
+        max_compilation_workers=max_compilation_workers,
+    )
+    return run_compiled_solve(
+        compiled=compiled,
+        internal_params=internal_params,
+        ages=ages,
+        internal_regimes=internal_regimes,
+        logger=logger,
+    )
+
+
+def compile_solve(
+    *,
+    internal_params: InternalParams,
+    ages: AgeGrid,
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    logger: logging.Logger,
+    enable_jit: bool,
+    max_compilation_workers: int | None = None,
+) -> CompiledSolve:
+    """AOT-compile all max_Q_over_a functions and build the V template.
+
+    Separated from `run_compiled_solve` so callers can sweep partition
+    points (or similar scalar-param variations) over the same compiled
+    kernels, paying the compile cost exactly once.
+
+    Args:
+        internal_params: Regime params used to construct state-action
+            spaces for lowering (only shapes/dtypes are consulted).
+        ages: Age grid for the model.
+        internal_regimes: The internal regimes.
+        logger: Logger for compilation progress.
+        enable_jit: Whether to JIT-compile. When `False`, returns raw
+            functions bundled in a `CompiledSolve` unchanged.
+        max_compilation_workers: Maximum threads for parallel compilation.
+
+    Returns:
+        A `CompiledSolve` holding the compiled per-period kernels and
+        the zero-initialised V template.
+
+    """
     regime_V_shapes = _get_regime_V_shapes(
         internal_regimes=internal_regimes,
         internal_params=internal_params,
@@ -58,7 +122,6 @@ def solve(
         {name: jnp.zeros(shape) for name, shape in regime_V_shapes.items()}
     )
 
-    # AOT-compile all unique max_Q_over_a functions in parallel.
     compiled_functions = _compile_all_functions(
         internal_regimes=internal_regimes,
         internal_params=internal_params,
@@ -68,6 +131,39 @@ def solve(
         max_compilation_workers=max_compilation_workers,
         logger=logger,
     )
+    return CompiledSolve(
+        compiled_functions=compiled_functions,
+        next_regime_to_V_arr_template=next_regime_to_V_arr,
+    )
+
+
+def run_compiled_solve(
+    *,
+    compiled: CompiledSolve,
+    internal_params: InternalParams,
+    ages: AgeGrid,
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    logger: logging.Logger,
+) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
+    """Run backward induction using an already-compiled solve.
+
+    Args:
+        compiled: Result of `compile_solve`. Reused across partition
+            points so no recompilation happens between calls.
+        internal_params: Immutable mapping of regime names to flat
+            parameter mappings. Partition scalars flow in here and are
+            picked up at dispatch time — no new compile.
+        ages: Age grid.
+        internal_regimes: The internal regimes (needed for active-period
+            bookkeeping and diagnostic machinery).
+        logger: Logger.
+
+    Returns:
+        Immutable mapping of periods to regime value function arrays.
+
+    """
+    next_regime_to_V_arr = compiled.next_regime_to_V_arr_template
+    compiled_functions = compiled.compiled_functions
 
     solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
 

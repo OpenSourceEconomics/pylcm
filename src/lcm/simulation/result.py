@@ -309,7 +309,10 @@ def _compute_metadata(
 
     for regime_name, regime in internal_regimes.items():
         vi = regime.variable_info
-        states = tuple(vi.query("is_state").index.tolist())
+        # Partition dimensions were lifted out of `variable_info` but the
+        # simulation output must still surface them as "state" columns —
+        # every subject's value is tracked in `raw_results.states`.
+        states = tuple(vi.query("is_state").index.tolist()) + tuple(regime.partitions)
         actions = tuple(vi.query("is_action").index.tolist())
         regime_to_states[regime_name] = states
         regime_to_actions[regime_name] = actions
@@ -331,6 +334,8 @@ def _compute_metadata(
         for var_name, grid in regime.grids.items():
             if isinstance(grid, DiscreteGrid):
                 regime_discrete_categories[(regime_name, var_name)] = grid.categories
+        for var_name, grid in regime.partitions.items():
+            regime_discrete_categories[(regime_name, var_name)] = grid.categories
 
     n_periods = ages.n_periods
     n_subjects = _get_n_subjects(raw_results)
@@ -518,9 +523,15 @@ def _extract_period_data(
     regime_states: tuple[str, ...],
     regime_actions: tuple[str, ...],
 ) -> dict[str, Array]:
-    """Extract data from a single period's simulation results."""
+    """Extract data from a single period's simulation results.
+
+    `subject_id` is taken from `result.subject_ids` verbatim — it is the
+    caller-supplied global subject identifier, threaded through
+    `simulate()` so per-partition dispatch groups concatenate into one
+    dataframe with stable subject identity.
+    """
     data: dict[str, Array] = {
-        "subject_id": jnp.arange(len(result.in_regime)),
+        "subject_id": result.subject_ids,
         "period": jnp.full_like(result.in_regime, period, dtype=jnp.int32),
         "_in_regime": result.in_regime,
         "value": result.V_arr,
