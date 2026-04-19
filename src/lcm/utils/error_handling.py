@@ -45,6 +45,7 @@ def validate_V(
     state_action_space: StateActionSpace | None = None,
     next_regime_to_V_arr: MappingProxyType | None = None,
     internal_params: Mapping | None = None,
+    period: int | None = None,
 ) -> None:
     """Validate the value function array for NaN values.
 
@@ -64,6 +65,7 @@ def validate_V(
         state_action_space: StateActionSpace for the current regime/period.
         next_regime_to_V_arr: Next-period value function arrays.
         internal_params: Flat regime parameters.
+        period: The current period index (forwarded to diagnostic closure).
 
     Raises:
         InvalidValueFunctionError: If the value function array contains NaN values.
@@ -110,6 +112,7 @@ def validate_V(
                 internal_params=internal_params,
                 regime_name=regime_name or "",
                 age=float(age),
+                period=period,
             )
         except Exception:  # noqa: BLE001
             logging.getLogger("lcm").warning(
@@ -129,6 +132,7 @@ def _enrich_with_diagnostics(
     internal_params: Mapping | None,
     regime_name: str,
     age: float,
+    period: int | None,
 ) -> None:
     """Run diagnostic intermediates and attach summary to exception.
 
@@ -164,10 +168,15 @@ def _enrich_with_diagnostics(
         if internal_params
         else {}
     )
+    # Wrap Python scalars as JAX arrays so the call matches the dtype used
+    # at trace time in `_build_compute_intermediates_per_period`; avoids a
+    # retrace for the diagnostic invocation.
     call_kwargs: dict[str, Any] = {
         **state_action_kwargs,
         "next_regime_to_V_arr": next_regime_to_V_arr,
         **param_kwargs,
+        "age": jnp.asarray(age),
+        "period": jnp.int32(period) if period is not None else None,
     }
 
     reductions = compute_intermediates(**call_kwargs)

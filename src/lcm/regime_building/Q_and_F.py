@@ -29,27 +29,27 @@ from lcm.utils.functools import get_union_of_args
 def get_Q_and_F(
     *,
     flat_param_names: frozenset[str],
-    age: float,
-    period: int,
     functions: FunctionsMapping,
     constraints: FunctionsMapping,
+    complete_targets: tuple[str, ...],
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[str],
-    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> QAndFFunction:
     """Get the state-action (Q) and feasibility (F) function for a non-terminal period.
 
+    `age` and `period` are runtime arguments (via `**states_actions_params`),
+    not closure constants. This allows periods with the same target
+    configuration to share a single JIT-compiled function.
+
     Args:
         flat_param_names: Frozenset of flat parameter names for the regime.
-        age: The age corresponding to the current period.
-        period: The current period.
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to internal user functions.
+        complete_targets: Target regimes with all required stochastic transitions.
         transitions: Immutable mapping of transition names to transition functions.
         stochastic_transition_names: Frozenset of stochastic transition function names.
-        regimes_to_active_periods: Mapping regime names to their active periods.
         compute_regime_transition_probs: Regime transition probability function
             for solve.
         regime_to_v_interpolation_info: Mapping of regime names to V-interpolation
@@ -65,32 +65,6 @@ def get_Q_and_F(
     next_stochastic_states_weights = {}
     joint_weights_from_marginals = {}
     next_V = {}
-
-    # Enumerate all active targets, not just those in transitions — targets
-    # entirely absent from per-target dicts must also be detected.
-    all_active_next_period = tuple(
-        regime_name
-        for regime_name in regime_to_v_interpolation_info
-        if period + 1 in regimes_to_active_periods.get(regime_name, ())
-    )
-
-    # Keep only targets whose stochastic state needs are all covered by
-    # `transitions`. Targets with missing stochastic transitions are dropped
-    # from the traced function; `validate_regime_transitions_all_periods`
-    # (via `_validate_no_reachable_incomplete_targets` in
-    # `lcm.utils.error_handling`) raises pre-solve if any such target has
-    # non-zero transition probability.
-    complete_targets: list[RegimeName] = []
-    for regime_name in all_active_next_period:
-        target_stochastic_needs = {
-            f"next_{s}"
-            for s in regime_to_v_interpolation_info[regime_name].state_names
-            if f"next_{s}" in stochastic_transition_names
-        }
-        if regime_name in transitions and target_stochastic_needs.issubset(
-            transitions[regime_name]
-        ):
-            complete_targets.append(regime_name)
 
     next_V_extra_param_names: dict[str, frozenset[str]] = {}
 
@@ -157,8 +131,8 @@ def get_Q_and_F(
             *list(state_transitions.values()),
             *list(next_stochastic_states_weights.values()),
         ],
-        include=frozenset({"next_regime_to_V_arr"} | flat_param_names),
-        exclude=frozenset({"period", "age"}),
+        include=frozenset({"next_regime_to_V_arr", "period", "age"} | flat_param_names),
+        exclude=frozenset(),
     )
 
     @with_signature(
@@ -172,28 +146,21 @@ def get_Q_and_F(
 
         Args:
             next_regime_to_V_arr: The next period's value function array.
-            **states_actions_params: States, actions, and flat regime params.
+            **states_actions_params: States, actions, age, period, and flat
+                regime params.
 
         Returns:
             A tuple containing the arrays with state-action values and feasibilities.
 
         """
         regime_transition_probs: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
-            compute_regime_transition_probs(
-                **states_actions_params,
-                period=period,
-                age=age,
-            )
+            compute_regime_transition_probs(**states_actions_params)
         )
-        U_arr, F_arr = U_and_F(
-            **states_actions_params,
-            period=period,
-            age=age,
-        )
-        # `complete_targets` is resolved at trace time (it is a closure over
-        # a Python list); incomplete-target validation happens outside JIT
-        # in `_validate_no_reachable_incomplete_targets` so that the traced
-        # graph contains no runtime error-raising callbacks.
+        U_arr, F_arr = U_and_F(**states_actions_params)
+        # Use only complete targets for the traced function — incomplete
+        # target validation happens outside JIT to keep the HLO (and thus
+        # the persistent compilation cache key) independent of the
+        # partition.
         active_regime_probs = MappingProxyType(
             {r: regime_transition_probs[r] for r in complete_targets}
         )
@@ -202,16 +169,10 @@ def get_Q_and_F(
         for target_regime_name in complete_targets:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,
-                period=period,
-                age=age,
             )
             marginal_next_stochastic_states_weights = next_stochastic_states_weights[
                 target_regime_name
-            ](
-                **states_actions_params,
-                period=period,
-                age=age,
-            )
+            ](**states_actions_params)
             joint_next_stochastic_states_weights = joint_weights_from_marginals[
                 target_regime_name
             ](**marginal_next_stochastic_states_weights)
@@ -253,14 +214,12 @@ def get_Q_and_F(
 
 def get_compute_intermediates(
     *,
-    age: float,
-    period: int,
     flat_param_names: frozenset[str],
     functions: FunctionsMapping,
     constraints: FunctionsMapping,
+    complete_targets: tuple[str, ...],
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[str],
-    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> Callable:
@@ -268,31 +227,27 @@ def get_compute_intermediates(
 
     Mirrors `get_Q_and_F` but returns all intermediates instead of just
     `(Q, F)`. The caller productmaps and JIT-compiles the closure; it runs
-    only in the error path when `validate_V` detects NaN.
+    only in the error path when `validate_V` detects NaN. `age` and `period`
+    are runtime arguments (passed via `states_actions_params`) so that
+    periods sharing the same target configuration share a single
+    JIT-compiled function.
 
     Args:
-        age: The age corresponding to the current period.
-        period: The current period.
-        flat_param_names: Frozenset of flat parameter names for the regime;
-            used to build the explicit signature via `with_signature` so
-            productmap can introspect the closure correctly.
+        flat_param_names: Frozenset of flat parameter names for the regime.
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to constraint functions.
+        complete_targets: Target regimes with all required stochastic transitions.
         transitions: Immutable mapping of target regime names to state transition
             functions.
         stochastic_transition_names: Frozenset of stochastic transition function
             names.
-        regimes_to_active_periods: Immutable mapping of regime names to their
-            active periods. Used to determine complete targets for the current
-            period.
         compute_regime_transition_probs: Callable returning regime transition
             probabilities for the current regime.
         regime_to_v_interpolation_info: Immutable mapping of regime names to
             V-interpolation info.
 
     Returns:
-        Closure with the same signature as Q_and_F, returning
-        `(U_arr, F_arr, E_next_V, Q_arr, active_regime_probs)`.
+        Closure returning `(U_arr, F_arr, E_next_V, Q_arr, active_regime_probs)`.
 
     """
     U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
@@ -300,25 +255,6 @@ def get_compute_intermediates(
     next_stochastic_states_weights = {}
     joint_weights_from_marginals = {}
     next_V = {}
-
-    # Match the enumeration logic of `get_Q_and_F` exactly — including
-    # targets entirely absent from `transitions`, so diagnostics surface
-    # the same incomplete-target cases as the main solve.
-    all_active_next_period = tuple(
-        name
-        for name in regime_to_v_interpolation_info
-        if period + 1 in regimes_to_active_periods.get(name, ())
-    )
-
-    complete_targets: list[str] = []
-    for name in all_active_next_period:
-        target_stochastic_needs = {
-            f"next_{s}"
-            for s in regime_to_v_interpolation_info[name].state_names
-            if f"next_{s}" in stochastic_transition_names
-        }
-        if name in transitions and target_stochastic_needs.issubset(transitions[name]):
-            complete_targets.append(name)
 
     next_V_extra_param_names: dict[str, frozenset[str]] = {}
 
@@ -373,8 +309,8 @@ def get_compute_intermediates(
             *list(state_transitions.values()),
             *list(next_stochastic_states_weights.values()),
         ],
-        include=frozenset({"next_regime_to_V_arr"} | flat_param_names),
-        exclude=frozenset({"age", "period"}),
+        include=frozenset({"next_regime_to_V_arr", "period", "age"} | flat_param_names),
+        exclude=frozenset(),
     )
 
     @with_signature(
@@ -390,17 +326,9 @@ def get_compute_intermediates(
     ) -> tuple[FloatND, FloatND, FloatND, FloatND, MappingProxyType[RegimeName, Array]]:
         """Compute all Q_and_F intermediates."""
         regime_transition_probs: MappingProxyType[str, Array] = (  # ty: ignore[invalid-assignment]
-            compute_regime_transition_probs(
-                **states_actions_params,
-                period=period,
-                age=age,
-            )
+            compute_regime_transition_probs(**states_actions_params)
         )
-        U_arr, F_arr = U_and_F(
-            **states_actions_params,
-            period=period,
-            age=age,
-        )
+        U_arr, F_arr = U_and_F(**states_actions_params)
         active_regime_probs = MappingProxyType(
             {r: regime_transition_probs[r] for r in complete_targets}
         )
@@ -409,13 +337,9 @@ def get_compute_intermediates(
         for target_regime_name in complete_targets:
             next_states = state_transitions[target_regime_name](
                 **states_actions_params,
-                period=period,
-                age=age,
             )
             marginal = next_stochastic_states_weights[target_regime_name](
                 **states_actions_params,
-                period=period,
-                age=age,
             )
             joint = joint_weights_from_marginals[target_regime_name](**marginal)
             extra_kw = {
@@ -443,23 +367,21 @@ def get_compute_intermediates(
 def get_Q_and_F_terminal(
     *,
     flat_param_names: frozenset[str],
-    age: float,
-    period: int,
     functions: FunctionsMapping,
     constraints: FunctionsMapping,
 ) -> QAndFFunction:
-    """Get the state-action (Q) and feasibility (F) function for the terminal period.
+    """Get the state-action (Q) and feasibility (F) function for a terminal period.
+
+    `age` and `period` are runtime arguments (via `**states_actions_params`).
 
     Args:
         flat_param_names: Frozenset of flat parameter names for the regime.
-        age: The age corresponding to the current period.
-        period: The current period.
         functions: Immutable mapping of function names to internal user functions.
         constraints: Immutable mapping of constraint names to internal user functions.
 
     Returns:
         A function that computes the state-action values (Q) and the feasibilities (F)
-        for the terminal period.
+        for a terminal period.
 
     """
     U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
@@ -469,8 +391,8 @@ def get_Q_and_F_terminal(
         # While the terminal period does not depend on the value function array, we
         # include it in the signature, such that we can treat all periods uniformly
         # during the solution and simulation.
-        include=frozenset({"next_regime_to_V_arr"} | flat_param_names),
-        exclude=frozenset({"period", "age"}),
+        include=frozenset({"next_regime_to_V_arr", "period", "age"} | flat_param_names),
+        exclude=frozenset(),
     )
 
     @with_signature(
@@ -480,25 +402,78 @@ def get_Q_and_F_terminal(
         next_regime_to_V_arr: FloatND,  # noqa: ARG001
         **states_actions_params: Array,
     ) -> tuple[FloatND, BoolND]:
-        """Calculate the state-action values and feasibilities for the terminal period.
+        """Calculate the state-action values and feasibilities for a terminal period.
 
         Args:
-            next_regime_to_V_arr: The next period's value function array (unused here).
-            **states_actions_params: States, actions, and flat regime params.
+            next_regime_to_V_arr: Unused in the terminal period; accepted so that
+                solve and simulate treat all periods uniformly.
+            **states_actions_params: States, actions, age, period, and flat
+                regime params.
 
         Returns:
-            A tuple containing the arrays with state-action values and feasibilities.
+            A tuple of the state-action value array (Q) and the feasibility
+            mask (F).
 
         """
-        U_arr, F_arr = U_and_F(
-            **states_actions_params,
-            period=period,
-            age=age,
-        )
-
+        U_arr, F_arr = U_and_F(**states_actions_params)
         return jnp.asarray(U_arr), jnp.asarray(F_arr)
 
     return Q_and_F
+
+
+def get_complete_targets(
+    *,
+    period: int,
+    transitions: TransitionFunctionsMapping,
+    regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
+    stochastic_transition_names: frozenset[str],
+    regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
+) -> tuple[RegimeName, ...]:
+    """Return active target regimes whose stochastic needs are fully covered.
+
+    Enumerates every regime active in the next period (from
+    `regime_to_v_interpolation_info`) and keeps those whose stochastic
+    state needs are all covered by `transitions`. Targets missing stochastic
+    transitions (including those entirely absent from `transitions`) are
+    dropped; `validate_regime_transitions_all_periods` (via
+    `_validate_no_reachable_incomplete_targets` in
+    `lcm.utils.error_handling`) raises pre-solve if any dropped target has
+    non-zero transition probability.
+
+    Args:
+        period: The period to enumerate active targets for.
+        transitions: Immutable mapping of target regime names to their
+            state transition functions.
+        regimes_to_active_periods: Immutable mapping of regime names to
+            their active period tuples.
+        stochastic_transition_names: Frozenset of stochastic transition
+            function names.
+        regime_to_v_interpolation_info: Mapping of regime names to
+            V-interpolation info.
+
+    Returns:
+        Tuple of complete target regime names.
+
+    """
+    all_active = tuple(
+        regime_name
+        for regime_name in regime_to_v_interpolation_info
+        if period + 1 in regimes_to_active_periods.get(regime_name, ())
+    )
+
+    complete: list[RegimeName] = []
+    for regime_name in all_active:
+        target_stochastic_needs = {
+            f"next_{s}"
+            for s in regime_to_v_interpolation_info[regime_name].state_names
+            if f"next_{s}" in stochastic_transition_names
+        }
+        if regime_name in transitions and target_stochastic_needs.issubset(
+            transitions[regime_name]
+        ):
+            complete.append(regime_name)
+
+    return tuple(complete)
 
 
 def _get_arg_names_of_Q_and_F(

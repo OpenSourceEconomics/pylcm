@@ -94,7 +94,7 @@ def log_V_stats(
         return
 
     logger.debug(
-        "  regime '%s': V min=%.3g max=%.3g mean=%.3g",
+        "  - %s: V min=%.3g max=%.3g mean=%.3g",
         regime_name,
         float(jnp.min(V_arr)),
         float(jnp.max(V_arr)),
@@ -102,28 +102,36 @@ def log_V_stats(
     )
 
 
-def log_period_timing(
+def log_period_header(
     *,
     logger: logging.Logger,
     age: ScalarInt | ScalarFloat,
     n_active_regimes: int,
-    elapsed: float,
 ) -> None:
-    """Log period timing with regime count.
+    """Log the start of a period.
 
     Args:
         logger: Logger instance.
         age: Age corresponding to the current period.
         n_active_regimes: Number of active regimes in the period.
+
+    """
+    logger.info("Age %s (%d regimes):", age, n_active_regimes)
+
+
+def log_period_timing(
+    *,
+    logger: logging.Logger,
+    elapsed: float,
+) -> None:
+    """Log period elapsed time.
+
+    Args:
+        logger: Logger instance.
         elapsed: Elapsed time in seconds.
 
     """
-    logger.info(
-        "Age: %s  regimes=%d  (%s)",
-        age,
-        n_active_regimes,
-        format_duration(seconds=elapsed),
-    )
+    logger.info("  finished in %s", format_duration(seconds=elapsed))
 
 
 def log_regime_transitions(

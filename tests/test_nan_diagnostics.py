@@ -91,29 +91,6 @@ def test_diagnostic_arrays_have_state_action_grid_shape():
     )
 
 
-def test_diagnostic_failure_preserves_original_error():
-    """If diagnostics crash, the original InvalidValueFunctionError survives."""
-    sas = _make_state_action_space()
-
-    def broken_compute_intermediates(**kwargs: jnp.ndarray) -> None:  # noqa: ARG001
-        msg = "intentional diagnostic failure"
-        raise RuntimeError(msg)
-
-    with pytest.raises(InvalidValueFunctionError, match="NaN"):
-        validate_V(
-            V_arr=_make_nan_V(),
-            age=0.0,
-            regime_name="test",
-            partial_solution=MappingProxyType({}),
-            compute_intermediates=broken_compute_intermediates,
-            state_action_space=sas,
-            next_regime_to_V_arr=MappingProxyType(
-                {"test": jnp.zeros(3)},
-            ),
-            internal_params=MappingProxyType({}),
-        )
-
-
 def _build_nan_model() -> tuple[Model, dict]:
     """Build a minimal model that produces NaN in V during backward induction."""
 
@@ -172,12 +149,10 @@ def _build_nan_model() -> tuple[Model, dict]:
 def test_nan_diagnostics_end_to_end() -> None:
     """Real model: `model.solve()` attaches a diagnostics dict when V has NaN.
 
-    Exercises the full build → productmap → reduction → summarize
-    chain. If the inner `compute_intermediates` closure lacks
-    `with_signature(...)`, the productmap introspection raises inside
-    `_enrich_with_diagnostics`; the broad try/except in `validate_V`
-    swallows the failure and `exc.diagnostics` is never set. This
-    test catches that regression.
+    This exercises the full build → productmap → reduction → summarize
+    chain. If `_build_compute_intermediates_per_period` does not produce
+    a dict-returning closure, `_summarize_diagnostics` silently fails
+    (broad try/except) and `exc.diagnostics` is missing.
     """
     model, params = _build_nan_model()
 
@@ -187,11 +162,34 @@ def test_nan_diagnostics_end_to_end() -> None:
     exc = exc_info.value
     assert exc.diagnostics is not None, (
         "Diagnostic enrichment failed: exception has no diagnostics attribute. "
-        "Likely cause: compute_intermediates closure signature cannot be "
-        "introspected by productmap — see with_signature on the inner closure."
+        "Likely cause: compute_intermediates closure returns a tuple but "
+        "_summarize_diagnostics expects a dict — see _wrap_with_reduction."
     )
     diagnostics: dict = exc.diagnostics  # ty: ignore[invalid-assignment]
     assert "U_nan_fraction" in diagnostics
     by_dim = diagnostics["U_nan_fraction"]["by_dim"]
     assert "wealth" in by_dim
     assert "consumption" in by_dim
+
+
+def test_diagnostic_failure_preserves_original_error():
+    """If diagnostics crash, the original InvalidValueFunctionError survives."""
+    sas = _make_state_action_space()
+
+    def broken_compute_intermediates(**kwargs: jnp.ndarray) -> None:  # noqa: ARG001
+        msg = "intentional diagnostic failure"
+        raise RuntimeError(msg)
+
+    with pytest.raises(InvalidValueFunctionError, match="NaN"):
+        validate_V(
+            V_arr=_make_nan_V(),
+            age=0.0,
+            regime_name="test",
+            partial_solution=MappingProxyType({}),
+            compute_intermediates=broken_compute_intermediates,
+            state_action_space=sas,
+            next_regime_to_V_arr=MappingProxyType(
+                {"test": jnp.zeros(3)},
+            ),
+            internal_params=MappingProxyType({}),
+        )

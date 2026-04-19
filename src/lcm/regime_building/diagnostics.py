@@ -20,8 +20,7 @@ from jax import Array
 from lcm.ages import AgeGrid
 from lcm.grids import Grid
 from lcm.interfaces import StateActionSpace
-from lcm.regime import Regime
-from lcm.regime_building.Q_and_F import get_compute_intermediates
+from lcm.regime_building.Q_and_F import get_complete_targets, get_compute_intermediates
 from lcm.regime_building.V import VInterpolationInfo
 from lcm.typing import (
     FunctionsMapping,
@@ -34,32 +33,29 @@ from lcm.utils.dispatchers import productmap
 
 def _build_compute_intermediates_per_period(
     *,
-    regime: Regime,
     flat_param_names: frozenset[str],
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     functions: FunctionsMapping,
     constraints: FunctionsMapping,
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[str],
-    compute_regime_transition_probs: RegimeTransitionFunction | None,
+    compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     state_action_space: StateActionSpace,
     grids: MappingProxyType[str, Grid],
     ages: AgeGrid,
     enable_jit: bool,
 ) -> MappingProxyType[int, Callable]:
-    """Build diagnostic intermediate closures for each period.
+    """Build diagnostic intermediate closures for each period of a non-terminal regime.
 
-    The closures fuse a productmap over the full state-action space with
+    Each closure fuses a productmap over the full state-action space with
     on-device reductions (matching the `max_Q_over_a` productmap pattern)
-    and are JIT-compiled. Used in the error path when `validate_V` detects
-    NaN; returns an empty mapping for terminal regimes.
+    and is JIT-compiled. Periods sharing the same target configuration
+    reuse a single scalar closure. The caller is responsible for handling
+    terminal regimes. Used in the error path when `validate_V` detects NaN.
 
     Args:
-        regime: User regime; only the terminal flag is consulted.
-        flat_param_names: Frozenset of flat parameter names for the regime;
-            forwarded to `get_compute_intermediates` for the explicit
-            signature productmap requires.
+        flat_param_names: Frozenset of flat parameter names for the regime.
         regimes_to_active_periods: Immutable mapping of regime names to
             their active period tuples.
         functions: Immutable mapping of internal user functions.
@@ -69,7 +65,7 @@ def _build_compute_intermediates_per_period(
         stochastic_transition_names: Frozenset of stochastic transition
             function names.
         compute_regime_transition_probs: Regime transition probability
-            function, or `None` for terminal regimes.
+            function for the current regime.
         regime_to_v_interpolation_info: Mapping of regime names to
             V-interpolation info.
         state_action_space: State-action space used for productmap sizing.
@@ -79,37 +75,39 @@ def _build_compute_intermediates_per_period(
         enable_jit: Whether to JIT-compile the fused closure.
 
     Returns:
-        Immutable mapping of period index to fused closure; empty for
-        terminal regimes.
+        Immutable mapping of period index to fused closure.
 
     """
-    if regime.terminal:
-        return MappingProxyType({})
-
-    assert compute_regime_transition_probs is not None  # noqa: S101
-
     state_batch_sizes = {
         name: grid.batch_size
         for name, grid in grids.items()
         if name in state_action_space.state_names
     }
 
+    configs: dict[tuple[str, ...], list[int]] = {}
+    for period in range(ages.n_periods):
+        complete = get_complete_targets(
+            period=period,
+            transitions=transitions,
+            regimes_to_active_periods=regimes_to_active_periods,
+            stochastic_transition_names=stochastic_transition_names,
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        )
+        configs.setdefault(complete, []).append(period)
+
     variable_names = (
         *state_action_space.state_names,
         *state_action_space.action_names,
     )
-
-    intermediates: dict[int, Callable] = {}
-    for period, age in enumerate(ages.values):
+    built: dict[tuple[str, ...], Callable] = {}
+    for complete_targets in configs:
         scalar = get_compute_intermediates(
-            age=age,
-            period=period,
             flat_param_names=flat_param_names,
             functions=functions,
             constraints=constraints,
+            complete_targets=complete_targets,
             transitions=transitions,
             stochastic_transition_names=stochastic_transition_names,
-            regimes_to_active_periods=regimes_to_active_periods,
             compute_regime_transition_probs=compute_regime_transition_probs,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
         )
@@ -119,13 +117,15 @@ def _build_compute_intermediates_per_period(
             state_names=state_action_space.state_names,
             state_batch_sizes=state_batch_sizes,
         )
-        fused = _wrap_with_reduction(
-            func=mapped,
-            variable_names=variable_names,
-        )
-        intermediates[period] = jax.jit(fused) if enable_jit else fused
+        fused = _wrap_with_reduction(func=mapped, variable_names=variable_names)
+        built[complete_targets] = jax.jit(fused) if enable_jit else fused
 
-    return MappingProxyType(intermediates)
+    result: dict[int, Callable] = {}
+    for key, periods in configs.items():
+        for period in periods:
+            result[period] = built[key]
+
+    return MappingProxyType(result)
 
 
 def _wrap_with_reduction(

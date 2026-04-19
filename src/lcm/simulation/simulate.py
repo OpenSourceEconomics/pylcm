@@ -36,6 +36,7 @@ from lcm.utils.error_handling import validate_V
 from lcm.utils.logging import (
     format_duration,
     log_nan_in_V,
+    log_period_header,
     log_period_timing,
     log_regime_transitions,
 )
@@ -132,6 +133,8 @@ def simulate(
             if period + 1 in regime.active_periods
         )
 
+        log_period_header(logger=logger, age=age, n_active_regimes=len(active_regimes))
+
         for regime_name, internal_regime in active_regimes.items():
             result, new_states, new_subject_regime_ids, key = (
                 _simulate_regime_in_period(
@@ -166,12 +169,7 @@ def simulate(
         )
 
         elapsed = time.monotonic() - period_start
-        log_period_timing(
-            logger=logger,
-            age=age,
-            n_active_regimes=len(active_regimes),
-            elapsed=elapsed,
-        )
+        log_period_timing(logger=logger, elapsed=elapsed)
 
     total_elapsed = time.monotonic() - total_start
     logger.info("Simulation complete  (%s)", format_duration(seconds=total_elapsed))
@@ -268,6 +266,8 @@ def _simulate_regime_in_period(
         **state_action_space.continuous_actions,
         next_regime_to_V_arr=next_regime_to_V_arr,
         **internal_params[regime_name],
+        period=jnp.int32(period),
+        age=jnp.asarray(age),
     )
     validate_V(V_arr=V_arr, age=age, regime_name=regime_name)
 

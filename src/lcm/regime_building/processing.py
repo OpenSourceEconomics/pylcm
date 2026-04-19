@@ -1,6 +1,6 @@
 import functools
 import inspect
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal, cast
@@ -35,6 +35,7 @@ from lcm.regime_building.max_Q_over_a import (
 from lcm.regime_building.ndimage import map_coordinates
 from lcm.regime_building.next_state import get_next_state_function_for_simulation
 from lcm.regime_building.Q_and_F import (
+    get_complete_targets,
     get_Q_and_F,
     get_Q_and_F_terminal,
 )
@@ -219,8 +220,19 @@ def _build_solve_functions(
         phase="solve",
     )
 
+    flat_param_names = frozenset(get_flat_param_names(regime_params_template))
+
     if regime.terminal:
         compute_regime_transition_probs = None
+        terminal_func = get_Q_and_F_terminal(
+            flat_param_names=flat_param_names,
+            functions=core.functions,
+            constraints=core.constraints,
+        )
+        Q_and_F_functions = MappingProxyType(
+            dict.fromkeys(range(ages.n_periods), terminal_func)
+        )
+        compute_intermediates: MappingProxyType[int, Callable] = MappingProxyType({})
     else:
         compute_regime_transition_probs = build_regime_transition_probs_functions(
             functions=core.functions,
@@ -232,40 +244,36 @@ def _build_solve_functions(
             enable_jit=enable_jit,
             phase="solve",
         )
-
-    Q_and_F_functions = _build_Q_and_F_per_period(
-        regime=regime,
-        regimes_to_active_periods=regimes_to_active_periods,
-        functions=core.functions,
-        constraints=core.constraints,
-        transitions=core.transitions,
-        stochastic_transition_names=core.stochastic_transition_names,
-        compute_regime_transition_probs=compute_regime_transition_probs,
-        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-        ages=ages,
-        regime_params_template=regime_params_template,
-    )
+        Q_and_F_functions = _build_Q_and_F_per_period(
+            regimes_to_active_periods=regimes_to_active_periods,
+            functions=core.functions,
+            constraints=core.constraints,
+            transitions=core.transitions,
+            stochastic_transition_names=core.stochastic_transition_names,
+            compute_regime_transition_probs=compute_regime_transition_probs,
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+            ages=ages,
+            flat_param_names=flat_param_names,
+        )
+        compute_intermediates = _build_compute_intermediates_per_period(
+            flat_param_names=flat_param_names,
+            regimes_to_active_periods=regimes_to_active_periods,
+            functions=core.functions,
+            constraints=core.constraints,
+            transitions=core.transitions,
+            stochastic_transition_names=core.stochastic_transition_names,
+            compute_regime_transition_probs=compute_regime_transition_probs,
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+            state_action_space=state_action_space,
+            grids=all_grids[regime_name],
+            ages=ages,
+            enable_jit=enable_jit,
+        )
 
     max_Q_over_a = _build_max_Q_over_a_per_period(
         state_action_space=state_action_space,
         Q_and_F_functions=Q_and_F_functions,
         grids=all_grids[regime_name],
-        enable_jit=enable_jit,
-    )
-
-    compute_intermediates = _build_compute_intermediates_per_period(
-        regime=regime,
-        flat_param_names=frozenset(get_flat_param_names(regime_params_template)),
-        regimes_to_active_periods=regimes_to_active_periods,
-        functions=core.functions,
-        constraints=core.constraints,
-        transitions=core.transitions,
-        stochastic_transition_names=core.stochastic_transition_names,
-        compute_regime_transition_probs=compute_regime_transition_probs,
-        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-        state_action_space=state_action_space,
-        grids=all_grids[regime_name],
-        ages=ages,
         enable_jit=enable_jit,
     )
 
@@ -343,8 +351,18 @@ def _build_simulate_functions(
     functions = core.functions
     constraints = core.constraints
 
+    flat_param_names = frozenset(get_flat_param_names(regime_params_template))
+
     if regime.terminal:
         compute_regime_transition_probs = None
+        terminal_func = get_Q_and_F_terminal(
+            flat_param_names=flat_param_names,
+            functions=functions,
+            constraints=constraints,
+        )
+        Q_and_F_functions = MappingProxyType(
+            dict.fromkeys(range(ages.n_periods), terminal_func)
+        )
     else:
         compute_regime_transition_probs = build_regime_transition_probs_functions(
             functions=functions,
@@ -356,21 +374,21 @@ def _build_simulate_functions(
             enable_jit=enable_jit,
             phase="simulate",
         )
-
-    # Q_and_F uses the solve (non-vmapped) regime transition probs since it
-    # evaluates on the Cartesian grid, not per-subject.
-    Q_and_F_functions = _build_Q_and_F_per_period(
-        regime=regime,
-        regimes_to_active_periods=regimes_to_active_periods,
-        functions=functions,
-        constraints=constraints,
-        transitions=solve_transitions,
-        stochastic_transition_names=solve_stochastic_transition_names,
-        compute_regime_transition_probs=solve_compute_regime_transition_probs,
-        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-        ages=ages,
-        regime_params_template=regime_params_template,
-    )
+        # Q_and_F uses the solve (non-vmapped) regime transition probs since
+        # it evaluates on the Cartesian grid, not per-subject. The solve
+        # phase built that function unconditionally for non-terminal regimes.
+        assert solve_compute_regime_transition_probs is not None  # noqa: S101
+        Q_and_F_functions = _build_Q_and_F_per_period(
+            regimes_to_active_periods=regimes_to_active_periods,
+            functions=functions,
+            constraints=constraints,
+            transitions=solve_transitions,
+            stochastic_transition_names=solve_stochastic_transition_names,
+            compute_regime_transition_probs=solve_compute_regime_transition_probs,
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+            ages=ages,
+            flat_param_names=flat_param_names,
+        )
 
     argmax_and_max_Q_over_a = _build_argmax_and_max_Q_over_a_per_period(
         state_action_space=state_action_space,
@@ -1277,46 +1295,75 @@ def _get_vmap_params(
 
 def _build_Q_and_F_per_period(
     *,
-    regime: Regime,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     functions: FunctionsMapping,
     constraints: FunctionsMapping,
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[str],
-    compute_regime_transition_probs: RegimeTransitionFunction | None,
+    compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     ages: AgeGrid,
-    regime_params_template: RegimeParamsTemplate,
+    flat_param_names: frozenset[str],
 ) -> MappingProxyType[int, QAndFFunction]:
-    """Build Q-and-F closures for each period."""
-    flat_param_names = frozenset(get_flat_param_names(regime_params_template))
+    """Build Q-and-F closures for each period of a non-terminal regime.
 
-    Q_and_F_functions = {}
-    for period, age in enumerate(ages.values):
-        if regime.terminal:
-            Q_and_F_functions[period] = get_Q_and_F_terminal(
-                flat_param_names=flat_param_names,
-                age=age,
-                period=period,
-                functions=functions,
-                constraints=constraints,
-            )
-        else:
-            assert compute_regime_transition_probs is not None  # noqa: S101
-            Q_and_F_functions[period] = get_Q_and_F(
-                flat_param_names=flat_param_names,
-                age=age,
-                period=period,
-                functions=functions,
-                constraints=constraints,
-                transitions=transitions,
-                stochastic_transition_names=stochastic_transition_names,
-                regimes_to_active_periods=regimes_to_active_periods,
-                compute_regime_transition_probs=compute_regime_transition_probs,
-                regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-            )
+    Periods sharing the same target-regime configuration reuse a single
+    closure, reducing the number of distinct JIT compilations. The caller
+    is responsible for handling terminal regimes.
 
-    return MappingProxyType(Q_and_F_functions)
+    Args:
+        regimes_to_active_periods: Immutable mapping of regime names to
+            their active period tuples.
+        functions: Immutable mapping of internal user functions.
+        constraints: Immutable mapping of constraint functions.
+        transitions: Immutable mapping of regime-to-regime transition
+            functions.
+        stochastic_transition_names: Frozenset of stochastic transition
+            function names.
+        compute_regime_transition_probs: Regime transition probability
+            function for the current regime.
+        regime_to_v_interpolation_info: Mapping of regime names to
+            V-interpolation info.
+        ages: Age grid for the model.
+        flat_param_names: Frozenset of flat parameter names for the regime.
+
+    Returns:
+        Immutable mapping of period index to the per-period Q-and-F closure.
+
+    """
+    # Group periods by target configuration
+    configs: dict[tuple[str, ...], list[int]] = {}
+    for period in range(ages.n_periods):
+        complete = get_complete_targets(
+            period=period,
+            transitions=transitions,
+            regimes_to_active_periods=regimes_to_active_periods,
+            stochastic_transition_names=stochastic_transition_names,
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        )
+        configs.setdefault(complete, []).append(period)
+
+    # Build one Q_and_F per distinct configuration
+    built: dict[tuple[str, ...], QAndFFunction] = {}
+    for complete_targets in configs:
+        built[complete_targets] = get_Q_and_F(
+            flat_param_names=flat_param_names,
+            functions=functions,
+            constraints=constraints,
+            complete_targets=complete_targets,
+            transitions=transitions,
+            stochastic_transition_names=stochastic_transition_names,
+            compute_regime_transition_probs=compute_regime_transition_probs,
+            regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        )
+
+    # Map each period to its group's function
+    result: dict[int, QAndFFunction] = {}
+    for key, periods in configs.items():
+        for period in periods:
+            result[period] = built[key]
+
+    return MappingProxyType(result)
 
 
 def _build_max_Q_over_a_per_period(
@@ -1326,20 +1373,27 @@ def _build_max_Q_over_a_per_period(
     grids: MappingProxyType[str, Grid],
     enable_jit: bool,
 ) -> MappingProxyType[int, MaxQOverAFunction]:
-    """Build max-Q-over-a closures for each period."""
-    result = {}
+    """Build max-Q-over-a closures for each period.
+
+    Periods sharing the same Q_and_F object reuse a single compiled function.
+    """
+    built: dict[int, MaxQOverAFunction] = {}
+    result: dict[int, MaxQOverAFunction] = {}
     for period, Q_and_F in Q_and_F_functions.items():
-        func = get_max_Q_over_a(
-            Q_and_F=Q_and_F,
-            batch_sizes={
-                name: grid.batch_size
-                for name, grid in grids.items()
-                if name in state_action_space.state_names
-            },
-            action_names=state_action_space.action_names,
-            state_names=state_action_space.state_names,
-        )
-        result[period] = jax.jit(func) if enable_jit else func
+        q_id = id(Q_and_F)
+        if q_id not in built:
+            func = get_max_Q_over_a(
+                Q_and_F=Q_and_F,
+                batch_sizes={
+                    name: grid.batch_size
+                    for name, grid in grids.items()
+                    if name in state_action_space.state_names
+                },
+                action_names=state_action_space.action_names,
+                state_names=state_action_space.state_names,
+            )
+            built[q_id] = jax.jit(func) if enable_jit else func
+        result[period] = built[q_id]
     return MappingProxyType(result)
 
 
@@ -1349,21 +1403,28 @@ def _build_argmax_and_max_Q_over_a_per_period(
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
     enable_jit: bool,
 ) -> MappingProxyType[int, ArgmaxQOverAFunction]:
-    """Build argmax-and-max-Q-over-a closures for each period."""
-    result = {}
+    """Build argmax-and-max-Q-over-a closures for each period.
+
+    Periods sharing the same Q_and_F object reuse a single compiled function.
+    """
+    built: dict[int, ArgmaxQOverAFunction] = {}
+    result: dict[int, ArgmaxQOverAFunction] = {}
     for period, Q_and_F in Q_and_F_functions.items():
-        func = get_argmax_and_max_Q_over_a(
-            Q_and_F=Q_and_F,
-            action_names=state_action_space.action_names,
-            state_names=state_action_space.state_names,
-        )
-        if enable_jit:
-            func = jax.jit(func)
-        result[period] = simulation_spacemap(
-            func=func,
-            action_names=(),
-            state_names=tuple(state_action_space.states),
-        )
+        q_id = id(Q_and_F)
+        if q_id not in built:
+            func = get_argmax_and_max_Q_over_a(
+                Q_and_F=Q_and_F,
+                action_names=state_action_space.action_names,
+                state_names=state_action_space.state_names,
+            )
+            if enable_jit:
+                func = jax.jit(func)
+            built[q_id] = simulation_spacemap(
+                func=func,
+                action_names=(),
+                state_names=tuple(state_action_space.states),
+            )
+        result[period] = built[q_id]
     return MappingProxyType(result)
 
 
