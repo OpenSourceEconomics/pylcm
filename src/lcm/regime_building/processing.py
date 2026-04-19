@@ -27,13 +27,17 @@ from lcm.interfaces import (
 from lcm.params.processing import get_flat_param_names
 from lcm.params.regime_template import create_regime_params_template
 from lcm.regime import MarkovTransition, Regime
+from lcm.regime_building.diagnostics import _build_compute_intermediates_per_period
 from lcm.regime_building.max_Q_over_a import (
     get_argmax_and_max_Q_over_a,
     get_max_Q_over_a,
 )
 from lcm.regime_building.ndimage import map_coordinates
 from lcm.regime_building.next_state import get_next_state_function_for_simulation
-from lcm.regime_building.Q_and_F import get_Q_and_F, get_Q_and_F_terminal
+from lcm.regime_building.Q_and_F import (
+    get_Q_and_F,
+    get_Q_and_F_terminal,
+)
 from lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
 from lcm.regime_building.validation import collect_state_transitions
 from lcm.regime_building.variable_info import get_grids, get_variable_info
@@ -249,6 +253,22 @@ def _build_solve_functions(
         enable_jit=enable_jit,
     )
 
+    compute_intermediates = _build_compute_intermediates_per_period(
+        regime=regime,
+        flat_param_names=frozenset(get_flat_param_names(regime_params_template)),
+        regimes_to_active_periods=regimes_to_active_periods,
+        functions=core.functions,
+        constraints=core.constraints,
+        transitions=core.transitions,
+        stochastic_transition_names=core.stochastic_transition_names,
+        compute_regime_transition_probs=compute_regime_transition_probs,
+        regime_to_v_interpolation_info=regime_to_v_interpolation_info,
+        state_action_space=state_action_space,
+        grids=all_grids[regime_name],
+        ages=ages,
+        enable_jit=enable_jit,
+    )
+
     return SolveFunctions(
         functions=core.functions,
         constraints=core.constraints,
@@ -256,6 +276,7 @@ def _build_solve_functions(
         stochastic_transition_names=core.stochastic_transition_names,
         compute_regime_transition_probs=compute_regime_transition_probs,
         max_Q_over_a=max_Q_over_a,
+        compute_intermediates=compute_intermediates,
     )
 
 

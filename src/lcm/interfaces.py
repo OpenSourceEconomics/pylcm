@@ -1,4 +1,5 @@
 import dataclasses
+from collections.abc import Callable
 from types import MappingProxyType
 from typing import cast
 
@@ -158,6 +159,18 @@ class SolveFunctions:
 
     max_Q_over_a: MappingProxyType[int, MaxQOverAFunction]
     """Immutable mapping of period to max-Q-over-actions functions."""
+
+    compute_intermediates: MappingProxyType[int, Callable]
+    """Immutable mapping of period to intermediate-computation closures.
+
+    Productmap-wrapped and fused with on-device reductions inside a single
+    `jax.jit`; invoked only in the error path when `validate_V` detects
+    NaN. Each closure returns a flat dict of reductions — scalar
+    `{U_nan,E_nan,Q_nan,F_feasible}_overall` entries, per-dimension
+    `{...}_by_{name}` vectors, and `regime_probs` as a dict of per-target
+    scalar means — so full-shape U/F/E/Q arrays never materialise in
+    host-visible memory.
+    """
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
