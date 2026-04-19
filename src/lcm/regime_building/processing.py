@@ -34,6 +34,10 @@ from lcm.regime_building.max_Q_over_a import (
 )
 from lcm.regime_building.ndimage import map_coordinates
 from lcm.regime_building.next_state import get_next_state_function_for_simulation
+from lcm.regime_building.partitions import (
+    detect_model_partitions,
+    lift_partitions_from_regime,
+)
 from lcm.regime_building.Q_and_F import (
     get_complete_targets,
     get_Q_and_F,
@@ -75,10 +79,15 @@ def process_regimes(
 ) -> MappingProxyType[RegimeName, InternalRegime]:
     """Process user regimes into internal regimes.
 
-    Extract state transitions from `regime.state_transitions` and
-    regime transitions from `regime.transition`. For fixed states (value `None`
-    in `state_transitions`), an identity transition is auto-generated. ShockGrid
-    transitions are generated from the grid's intrinsic transition logic.
+    Before any downstream machinery runs, states declared with
+    `state_transitions[name] = None` are lifted out of the regime via
+    `lift_partitions` and stored on the returned `InternalRegime` as
+    `partitions`. Solve and simulate iterate over the product of
+    partition grids once per point — the reduced regime below never
+    sees a partition state as a vmap'd axis.
+
+    ShockGrid transitions are still generated from the grid's intrinsic
+    transition logic. Regime transitions come from `regime.transition`.
 
     Args:
         regimes: Mapping of regime names to Regime instances.
@@ -90,43 +99,60 @@ def process_regimes(
         The processed regimes.
 
     """
+    partition_names = frozenset(detect_model_partitions(regimes=regimes))
+    lifted = {
+        name: lift_partitions_from_regime(
+            regime=regime, partition_names=partition_names
+        )
+        for name, regime in regimes.items()
+    }
+    reduced_regimes = MappingProxyType({n: rp[0] for n, rp in lifted.items()})
+    partitions_per_regime = MappingProxyType({n: rp[1] for n, rp in lifted.items()})
+
     states_per_regime: dict[RegimeName, set[str]] = {
-        name: set(regime.states.keys()) for name, regime in regimes.items()
+        name: set(regime.states.keys()) for name, regime in reduced_regimes.items()
     }
 
     nested_transitions = {}
-    for name, regime in regimes.items():
+    for name, regime in reduced_regimes.items():
         nested_transitions[name] = _extract_transitions_from_regime(
             regime=regime,
             states_per_regime=states_per_regime,
         )
+    # Validate against user-facing regimes so partition states still appear
+    # in `regime.states` — category-mismatch checks must see the original
+    # grids regardless of which states have been lifted.
     _validate_categoricals(regimes)
 
     variable_info = MappingProxyType(
-        {n: get_variable_info(r) for n, r in regimes.items()}
+        {n: get_variable_info(r) for n, r in reduced_regimes.items()}
     )
-    all_grids = MappingProxyType({n: get_grids(r) for n, r in regimes.items()})
+    all_grids = MappingProxyType({n: get_grids(r) for n, r in reduced_regimes.items()})
 
-    _fail_if_action_has_batch_size(regimes)
+    _fail_if_action_has_batch_size(reduced_regimes)
 
     regime_to_v_interpolation_info = MappingProxyType(
-        {n: create_v_interpolation_info(r) for n, r in regimes.items()}
+        {n: create_v_interpolation_info(r) for n, r in reduced_regimes.items()}
     )
     state_action_spaces = MappingProxyType(
         {
             n: create_state_action_space(
                 variable_info=variable_info[n], grids=all_grids[n]
             )
-            for n in regimes
+            for n in reduced_regimes
         }
     )
     regimes_to_active_periods = MappingProxyType(
-        {n: ages.get_periods_where(r.active) for n, r in regimes.items()}
+        {n: ages.get_periods_where(r.active) for n, r in reduced_regimes.items()}
     )
 
     internal_regimes = {}
-    for name, regime in regimes.items():
-        regime_params_template = create_regime_params_template(regime)
+    for name, regime in reduced_regimes.items():
+        regime_partition_names = frozenset(partitions_per_regime[name])
+        # Template is built from the user-facing regime so partition states
+        # (still in `regimes[name].states`) remain excluded from function
+        # params — they are never user-supplied.
+        regime_params_template = create_regime_params_template(regimes[name])
 
         solve_functions = _build_solve_functions(
             regime=regime,
@@ -139,6 +165,7 @@ def process_regimes(
             regimes_to_active_periods=regimes_to_active_periods,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             state_action_space=state_action_spaces[name],
+            partition_names=regime_partition_names,
             ages=ages,
             enable_jit=enable_jit,
         )
@@ -154,6 +181,7 @@ def process_regimes(
             regimes_to_active_periods=regimes_to_active_periods,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
             state_action_space=state_action_spaces[name],
+            partition_names=regime_partition_names,
             ages=ages,
             enable_jit=enable_jit,
             solve_transitions=solve_functions.transitions,
@@ -171,6 +199,7 @@ def process_regimes(
             solve_functions=solve_functions,
             simulate_functions=simulate_functions,
             _base_state_action_space=state_action_spaces[name],
+            partitions=partitions_per_regime[name],
         )
 
     return ensure_containers_are_immutable(internal_regimes)
@@ -188,6 +217,7 @@ def _build_solve_functions(
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     state_action_space: StateActionSpace,
+    partition_names: frozenset[str],
     ages: AgeGrid,
     enable_jit: bool,
 ) -> SolveFunctions:
@@ -204,6 +234,9 @@ def _build_solve_functions(
         regimes_to_active_periods: Mapping of regime names to active period tuples.
         regime_to_v_interpolation_info: Mapping of regime names to state space info.
         state_action_space: The state-action space for this regime.
+        partition_names: Frozenset of partition-dimension names lifted out of
+            the state space. Threaded into `flat_param_names` so downstream
+            builders treat them as scalar kwargs (not vmap'd axes).
         ages: The AgeGrid for the model.
         enable_jit: Whether to jit the internal functions.
 
@@ -220,7 +253,9 @@ def _build_solve_functions(
         phase="solve",
     )
 
-    flat_param_names = frozenset(get_flat_param_names(regime_params_template))
+    flat_param_names = (
+        frozenset(get_flat_param_names(regime_params_template)) | partition_names
+    )
 
     if regime.terminal:
         compute_regime_transition_probs = None
@@ -240,6 +275,7 @@ def _build_solve_functions(
             grids=all_grids[regime_name],
             regime_names_to_ids=regime_names_to_ids,
             regime_params_template=regime_params_template,
+            partition_names=partition_names,
             is_stochastic=regime.stochastic_regime_transition,
             enable_jit=enable_jit,
             phase="solve",
@@ -300,6 +336,7 @@ def _build_simulate_functions(
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     state_action_space: StateActionSpace,
+    partition_names: frozenset[str],
     ages: AgeGrid,
     enable_jit: bool,
     solve_transitions: TransitionFunctionsMapping,
@@ -351,7 +388,9 @@ def _build_simulate_functions(
     functions = core.functions
     constraints = core.constraints
 
-    flat_param_names = frozenset(get_flat_param_names(regime_params_template))
+    flat_param_names = (
+        frozenset(get_flat_param_names(regime_params_template)) | partition_names
+    )
 
     if regime.terminal:
         compute_regime_transition_probs = None
@@ -370,6 +409,7 @@ def _build_simulate_functions(
             grids=all_grids[regime_name],
             regime_names_to_ids=regime_names_to_ids,
             regime_params_template=regime_params_template,
+            partition_names=partition_names,
             is_stochastic=regime.stochastic_regime_transition,
             enable_jit=enable_jit,
             phase="simulate",
@@ -405,6 +445,7 @@ def _build_simulate_functions(
         all_grids=all_grids,
         variable_info=variable_info,
         regime_params_template=regime_params_template,
+        partition_names=partition_names,
         enable_jit=enable_jit,
     )
 
@@ -1135,6 +1176,7 @@ def build_regime_transition_probs_functions(
     grids: MappingProxyType[str, Grid],
     regime_names_to_ids: RegimeNamesToIds,
     regime_params_template: RegimeParamsTemplate,
+    partition_names: frozenset[str],
     is_stochastic: bool,
     enable_jit: bool,
     phase: Literal["solve", "simulate"],
@@ -1194,6 +1236,7 @@ def build_regime_transition_probs_functions(
         variables=_get_vmap_params(
             all_args=tuple(inspect.signature(next_regime_accepting_all).parameters),
             regime_params_template=regime_params_template,
+            partition_names=partition_names,
         ),
     )
 
@@ -1287,9 +1330,18 @@ def _get_vmap_params(
     *,
     all_args: tuple[str, ...],
     regime_params_template: RegimeParamsTemplate,
+    partition_names: frozenset[str] = frozenset(),
 ) -> tuple[str, ...]:
-    """Get parameter names that should be vmapped (states and actions)."""
-    non_vmap = {"period", "age"} | get_flat_param_names(regime_params_template)
+    """Get parameter names that should be vmapped (states and actions).
+
+    Partition names, `period`, `age`, and any user-supplied flat param are
+    runtime scalars, not vmap'd axes.
+    """
+    non_vmap = (
+        {"period", "age"}
+        | get_flat_param_names(regime_params_template)
+        | partition_names
+    )
     return tuple(arg for arg in all_args if arg not in non_vmap)
 
 
@@ -1436,6 +1488,7 @@ def _build_next_state_vmapped(
     all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
     variable_info: pd.DataFrame,
     regime_params_template: RegimeParamsTemplate,
+    partition_names: frozenset[str],
     enable_jit: bool,
 ) -> NextStateSimulationFunction:
     """Build a vmapped next-state function for simulation."""
@@ -1448,7 +1501,11 @@ def _build_next_state_vmapped(
     )
     sig_args = tuple(inspect.signature(next_state).parameters)
 
-    non_vmap = {"period", "age"} | get_flat_param_names(regime_params_template)
+    non_vmap = (
+        {"period", "age"}
+        | get_flat_param_names(regime_params_template)
+        | partition_names
+    )
     vmap_variables = tuple(arg for arg in sig_args if arg not in non_vmap)
 
     next_state_vmapped = vmap_1d(func=next_state, variables=vmap_variables)
