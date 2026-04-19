@@ -24,6 +24,7 @@ from lcm.regime_building.partitions import (
     iterate_partition_points,
     lift_partitions_from_regime,
 )
+from lcm.simulation import simulate as simulate_module
 from lcm.solution import solve_brute
 from lcm.typing import (
     BoolND,
@@ -467,6 +468,64 @@ def test_solve_compiles_once_for_multi_point_partition(monkeypatch):
     )
     assert call_count == 1, (
         f"_compile_all_functions called {call_count} times for a "
+        f"{len(model._partition_grid['pref_type'].codes)}-point partition; "
+        "expected 1."
+    )
+
+
+def test_simulate_compiles_once_for_multi_point_partition(monkeypatch):
+    """`Model.simulate` calls `compile_simulate` exactly once per call.
+
+    Mirrors `test_solve_compiles_once_for_multi_point_partition`. The
+    compile bundle is static across partition points (regimes/ages/kernels
+    don't change), so calling `compile_simulate` per point would be pure
+    overhead — and it is also the seam a future multi-GPU PR will use to
+    place kernels on specific devices. Hoisting the call above the
+    partition loop keeps that seam stable.
+    """
+    original = simulate_module.compile_simulate
+    call_count = 0
+
+    def counting_compile(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        return original(**kwargs)
+
+    monkeypatch.setattr(simulate_module, "compile_simulate", counting_compile)
+    # `Model.simulate` imports `compile_simulate` into `lcm.model` at module
+    # load, so patch that binding too.
+    import lcm.model  # noqa: PLC0415
+
+    monkeypatch.setattr(lcm.model, "compile_simulate", counting_compile)
+
+    model = _make_model()
+    assert len(model._partition_grid["pref_type"].codes) >= 2
+    params = {
+        "discount_factor": 0.9,
+        "alive": {"next_regime": {"final_age_alive": _FINAL_AGE}},
+    }
+    n_subjects = 3
+    initial_conditions = {
+        "wealth": jnp.full(n_subjects, 2.0),
+        "age": jnp.zeros(n_subjects, dtype=jnp.float32),
+        "pref_type": jnp.array(
+            [
+                TypeGrid.type_a,
+                TypeGrid.type_b,
+                TypeGrid.type_c,
+            ],
+            dtype=jnp.int32,
+        ),
+        "regime": jnp.full(n_subjects, _RegimeId.alive, dtype=jnp.int32),
+    }
+    model.simulate(
+        params=params,
+        initial_conditions=initial_conditions,
+        period_to_regime_to_V_arr=None,
+        log_level="off",
+    )
+    assert call_count == 1, (
+        f"compile_simulate called {call_count} times for a "
         f"{len(model._partition_grid['pref_type'].codes)}-point partition; "
         "expected 1."
     )

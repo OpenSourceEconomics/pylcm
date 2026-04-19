@@ -42,7 +42,7 @@ from lcm.regime_building.partitions import (
 from lcm.regime_building.processing import InternalRegime
 from lcm.simulation.initial_conditions import validate_initial_conditions
 from lcm.simulation.result import SimulationResult, get_simulation_output_dtypes
-from lcm.simulation.simulate import simulate
+from lcm.simulation.simulate import compile_simulate, run_compiled_simulate
 from lcm.solution.solve_brute import compile_solve, run_compiled_solve
 from lcm.typing import (
     FloatND,
@@ -376,6 +376,13 @@ class Model:
                 log_keep_n_latest=log_keep_n_latest,
             )
         subject_ids = jnp.arange(initial_conditions["regime"].shape[0], dtype=jnp.int32)
+        compiled = compile_simulate(
+            internal_regimes=self.internal_regimes,
+            regime_names_to_ids=self.regime_names_to_ids,
+            ages=self.ages,
+            simulation_output_dtypes=self.simulation_output_dtypes,
+            logger=log,
+        )
         sub_results: list[SimulationResult] = []
         for group_index, (partition_point, subject_mask) in enumerate(
             group_subjects_by_partition(
@@ -409,15 +416,11 @@ class Model:
             # call, so no derivation is needed.
             group_seed = None if seed is None else seed + group_index
             sub_results.append(
-                simulate(
+                run_compiled_simulate(
+                    compiled=compiled,
                     internal_params=partition_params,
                     initial_conditions=group_conditions,
-                    internal_regimes=self.internal_regimes,
-                    regime_names_to_ids=self.regime_names_to_ids,
-                    logger=log,
                     period_to_regime_to_V_arr=group_V,
-                    ages=self.ages,
-                    simulation_output_dtypes=self.simulation_output_dtypes,
                     seed=group_seed,
                     subject_ids=subject_ids[subject_mask],
                 )
