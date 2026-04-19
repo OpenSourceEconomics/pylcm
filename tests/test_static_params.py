@@ -1,5 +1,7 @@
 """Tests for static params (fixed_params partialled at model initialization)."""
 
+import logging
+
 import jax.numpy as jnp
 import pandas as pd
 import pytest
@@ -135,6 +137,47 @@ def test_simulate_with_fixed_params():
     df_fixed = result_fixed.to_dataframe()
     aaae(df_full["wealth"].values, df_fixed["wealth"].values)
     aaae(df_full["consumption"].values, df_fixed["consumption"].values)
+
+
+def test_solve_fixed_params_aot_parity():
+    """Solve with fixed_params produces identical V arrays via AOT compilation."""
+    params_full: UserParams = {"discount_factor": 0.95, "interest_rate": 0.05}
+
+    model_runtime = _make_model()
+    result_runtime = model_runtime.solve(params=params_full, log_level="off")
+
+    model_fixed = _make_model(extra_fixed_params={"interest_rate": 0.05})
+    result_fixed = model_fixed.solve(params={"discount_factor": 0.95}, log_level="off")
+
+    for period in result_runtime:
+        for regime_name in result_runtime[period]:
+            aaae(
+                result_runtime[period][regime_name],
+                result_fixed[period][regime_name],
+            )
+
+
+def test_aot_dedup_with_fixed_params(caplog: pytest.LogCaptureFixture) -> None:
+    """AOT compilation deduplicates partial objects wrapping the same JIT function."""
+    # Without fixed_params, count the unique functions as baseline.
+    model_baseline = _make_model()
+    with caplog.at_level(logging.INFO):
+        model_baseline.solve(
+            params={"discount_factor": 0.95, "interest_rate": 0.05},
+            log_level="progress",
+        )
+    baseline_lines = [r for r in caplog.records if "unique functions" in r.message]
+    assert len(baseline_lines) == 1
+
+    caplog.clear()
+
+    # With fixed_params (partial-wrapped), should get the same dedup count.
+    model_fixed = _make_model(extra_fixed_params={"interest_rate": 0.05})
+    with caplog.at_level(logging.INFO):
+        model_fixed.solve(params={"discount_factor": 0.95}, log_level="progress")
+    fixed_lines = [r for r in caplog.records if "unique functions" in r.message]
+    assert len(fixed_lines) == 1
+    assert baseline_lines[0].message == fixed_lines[0].message
 
 
 def test_regime_level_fixed_param():

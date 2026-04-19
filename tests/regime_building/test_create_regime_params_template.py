@@ -1,6 +1,3 @@
-import pytest
-
-from lcm.exceptions import InvalidNameError
 from lcm.grids import DiscreteGrid
 from lcm.interfaces import SolveSimulateFunctionPair
 from lcm.params.regime_template import (
@@ -54,8 +51,15 @@ def test_create_params_with_custom_H_no_extra_params():
     )
 
 
-def test_default_H_with_state_named_discount_factor_raises():
-    """Default H has a discount_factor param; a state with the same name must error."""
+def test_default_H_with_state_named_discount_factor_is_allowed():
+    """H params matching a state name are excluded from the template.
+
+    pylcm wires state/action values through `states_actions_params` and
+    filters into `H_kwargs` via the signature-derived `_H_accepted_params`.
+    Names that match a state are therefore sourced from state values at
+    runtime, not from the user-facing params dict, so they do not appear
+    in the template.
+    """
     regime = RegimeMock(
         actions={"a": None},
         states={"discount_factor": None},
@@ -63,12 +67,25 @@ def test_default_H_with_state_named_discount_factor_raises():
         functions={"utility": lambda a, discount_factor: None},  # noqa: ARG005
         transition=lambda discount_factor: discount_factor,
     )
-    with pytest.raises(InvalidNameError, match="shadow state/action"):
-        create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
+    got = create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
+    assert got == ensure_containers_are_immutable(
+        {
+            "H": {},
+            "utility": {},
+            "next_discount_factor": {},
+            "next_regime": {},
+        }
+    )
 
 
-def test_custom_function_shadowing_state_raises():
-    """A custom function whose param name matches a state must error."""
+def test_custom_H_shadowing_state_is_allowed():
+    """Custom H may declare a state in its signature to subscript it.
+
+    This is how a model with a `pref_type` state can have a custom H that
+    indexes a Series-valued param like `discount_factor_by_type[pref_type]`.
+    The shadowed state name is excluded from the template and injected at
+    call time from the state space.
+    """
 
     def custom_H(utility: float, E_next_V: float, wealth: float) -> float:
         return utility + wealth * E_next_V
@@ -78,8 +95,8 @@ def test_custom_function_shadowing_state_raises():
         states={"wealth": None},
         functions={"utility": lambda a, wealth: None, "H": custom_H},  # noqa: ARG005
     )
-    with pytest.raises(InvalidNameError, match="shadow state/action"):
-        create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
+    got = create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
+    assert got == ensure_containers_are_immutable({"H": {}, "utility": {}})
 
 
 def test_solve_simulate_pair_template_contains_union_of_params() -> None:
