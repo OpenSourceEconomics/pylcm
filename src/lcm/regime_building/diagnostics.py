@@ -137,7 +137,7 @@ def _wrap_with_reduction(
 
     The wrapped function returns a flat pytree of scalars and per-dimension
     vectors instead of full state-action-shaped arrays. When JIT-compiled,
-    XLA can fuse the compute and reduce steps so the full-shape
+    XLA can often fuse the compute and reduce steps so the full-shape
     intermediates never materialise.
 
     Args:
