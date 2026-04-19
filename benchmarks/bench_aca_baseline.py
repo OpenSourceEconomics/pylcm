@@ -20,11 +20,18 @@ import time
 
 from benchmarks import _gpu_mem
 
-_N_SUBJECTS = 100
+_N_SUBJECTS = 1000
 
 
 class AcaBaseline:
     timeout = 1800
+    # setup() compiles (~10+ min); asv's defaults would re-run setup
+    # across rounds and repeats, blowing the 1800s timeout. Pin everything
+    # to 1 so setup runs once per subprocess and one warm call is timed.
+    rounds = 1
+    repeat = 1
+    number = 1
+    warmup_time = 0
 
     def _build(self) -> None:
         from aca_model.benchmark import (
