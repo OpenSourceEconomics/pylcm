@@ -447,20 +447,24 @@ def _validate_discrete_state_values(
         InvalidInitialConditionsError: If any discrete state contains invalid codes.
 
     """
-    # Build per-state: valid codes + regime IDs that have this state
+    # Build per-state: valid codes + regime IDs that have this state.
+    # Partitions are lifted out of variable_info but still carry valid-code sets
+    # the user's initial_conditions must respect.
     discrete_info: dict[str, tuple[set[int], set[int]]] = {}
     for regime_name, internal_regime in internal_regimes.items():
         regime_id = regime_names_to_ids[regime_name]
-        for state_name in internal_regime.variable_info.query(
-            "is_state and is_discrete"
-        ).index:
-            grid = internal_regime.grids[state_name]
+        discrete_state_grids: dict[str, DiscreteGrid] = {}
+        for sn in internal_regime.variable_info.query("is_state and is_discrete").index:
+            grid = internal_regime.grids[sn]
             if isinstance(grid, DiscreteGrid):
-                codes, regime_ids = discrete_info.get(state_name, (set(), set()))
-                discrete_info[state_name] = (
-                    codes | set(grid.codes),
-                    regime_ids | {regime_id},
-                )
+                discrete_state_grids[sn] = grid
+        discrete_state_grids.update(internal_regime.partitions)
+        for state_name, grid in discrete_state_grids.items():
+            codes, regime_ids = discrete_info.get(state_name, (set(), set()))
+            discrete_info[state_name] = (
+                codes | set(grid.codes),
+                regime_ids | {regime_id},
+            )
 
     for state_name, (valid_codes, regime_ids) in discrete_info.items():
         if state_name not in initial_states:
@@ -596,10 +600,7 @@ def _check_regime_feasibility(  # noqa: C901
     flat_actions = _build_flat_action_grid(action_names=action_names, grids=grids)
 
     filtered_params = {k: v for k, v in regime_params.items() if k in accepted}
-    state_names = [
-        *internal_regime.variable_info.query("is_state").index,
-        *internal_regime.partitions,
-    ]
+    state_names = list(_get_regime_state_names(internal_regime))
     needs_age = "age" in accepted
     needs_period = "period" in accepted
 
@@ -687,7 +688,10 @@ def _raise_feasibility_type_error(
     """
     discrete_names = {
         name
-        for name, grid in internal_regime.grids.items()
+        for name, grid in {
+            **internal_regime.grids,
+            **internal_regime.partitions,
+        }.items()
         if isinstance(grid, DiscreteGrid)
     }
 

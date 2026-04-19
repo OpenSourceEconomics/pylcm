@@ -385,7 +385,7 @@ def test_simulate_feasibility_validation_sees_partition_states():
     )
 
     n_subjects = 3
-    model.simulate(
+    result = model.simulate(
         params={
             "discount_factor": 0.9,
             "alive": {"next_regime": {"final_age_alive": _FINAL_AGE}},
@@ -399,3 +399,37 @@ def test_simulate_feasibility_validation_sees_partition_states():
         period_to_regime_to_V_arr=None,
         log_level="off",
     )
+    df = result.to_dataframe(use_labels=False)
+    # Each subject kept their pref_type across all periods, confirming the
+    # feasibility check actually saw the partition value (and so didn't just
+    # skip validation silently).
+    per_subject_pref_types = df.groupby("subject_id")["pref_type"].nunique()
+    assert (per_subject_pref_types == 1).all()
+    assert set(df["pref_type"].dropna().unique()) == {0.0, 1.0, 2.0}
+
+
+def test_invalid_partition_code_raises():
+    """A user-supplied partition code outside the grid must fail validation.
+
+    Regression guard: `_validate_discrete_state_values` used to skip
+    partition states entirely because they were absent from
+    `variable_info`. A bad code (e.g. 99 for a 3-category partition)
+    would silently propagate to sub-solution dispatch.
+    """
+    model = _make_model()
+    n_subjects = 3
+    with pytest.raises(Exception, match=r"(?i)invalid.*pref_type"):
+        model.simulate(
+            params={
+                "discount_factor": 0.9,
+                "alive": {"next_regime": {"final_age_alive": _FINAL_AGE}},
+            },
+            initial_conditions={
+                "wealth": jnp.full(n_subjects, 2.0),
+                "pref_type": jnp.array([0, 1, 99]),
+                "age": jnp.zeros(n_subjects),
+                "regime": jnp.full(n_subjects, _RegimeId.alive),
+            },
+            period_to_regime_to_V_arr=None,
+            log_level="off",
+        )
