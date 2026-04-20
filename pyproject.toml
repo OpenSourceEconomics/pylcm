@@ -134,9 +134,9 @@ pytest-xdist = "*"
 [tool.pixi.feature.tests.pypi-dependencies]
 quantecon = "*"
 [tool.pixi.feature.tests.tasks]
-tests = "pytest tests"
-tests-32bit = "pytest tests --precision=32"
-tests-with-cov = "pytest tests --cov-report=xml --cov=./"
+tests = { cmd = "pytest tests", env = { PYTHONHASHSEED = "0" } }
+tests-32bit = { cmd = "pytest tests --precision=32", env = { PYTHONHASHSEED = "0" } }
+tests-with-cov = { cmd = "pytest tests --cov-report=xml --cov=./", env = { PYTHONHASHSEED = "0" } }
 [tool.pixi.feature.type-checking.dependencies]
 matplotlib = "*"
 pandas-stubs = "*"

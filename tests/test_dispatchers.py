@@ -191,6 +191,38 @@ def test_productmap_batch_size_produces_same_result(batch_size):
     aaae(batched, reference)
 
 
+def test_productmap_mixed_batching_preserves_declared_axis_order():
+    """With one axis batched and one not, output axes still follow the declared order.
+
+    The internal canonical ordering wraps the batched axis outermost, but the
+    caller-facing shape must remain `(len(a), len(b), len(c))` because the
+    caller declared `variables=("a", "b", "c")`.
+    """
+    grids = {
+        "a": jnp.linspace(-5, 5, 4),
+        "b": jnp.linspace(1, 5, 3),
+        "c": jnp.linspace(0, 2, 5),
+    }
+
+    def h(*, a, b, c):
+        return a**2 + b + c**3
+
+    reference = productmap(
+        func=h,
+        variables=("a", "b", "c"),
+        batch_sizes=dict.fromkeys(("a", "b", "c"), 0),
+    )(**grids)
+
+    mixed = productmap(
+        func=h,
+        variables=("a", "b", "c"),
+        batch_sizes={"a": 0, "b": 1, "c": 0},
+    )(**grids)
+
+    assert mixed.shape == (4, 3, 5)
+    aaae(mixed, reference)
+
+
 def test_productmap_with_some_argument_mapped_twice():
     error_msg = "Same argument provided more than once."
     with pytest.raises(ValueError, match=error_msg):

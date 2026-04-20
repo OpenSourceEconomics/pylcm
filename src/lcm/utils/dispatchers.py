@@ -223,6 +223,12 @@ def _base_productmap_batched(
 
     Like `jax.lax.map`, this function does not preserve the function signature.
 
+    Axes are wrapped in a canonical order — batched axes (`batch_size > 0`)
+    outermost, non-batched axes innermost — so that a `jax.lax.map` serial scan
+    only holds one slice of the inner `vmap` product in memory at a time. The
+    output is then transposed so its leading dimensions match the declared
+    `product_axes` order, preserving the caller contract.
+
     Args:
         func: The function to be dispatched. Cannot have keyword-only arguments.
         product_axes: Tuple with names of arguments over which we apply
@@ -234,6 +240,22 @@ def _base_productmap_batched(
 
     """
     parameters = inspect.signature(func).parameters
+
+    # Canonical order: batched axes (batch_size > 0) first, non-batched after.
+    # Stable by declared position within each group.
+    canonical_order = tuple(
+        sorted(
+            product_axes,
+            key=lambda name: (
+                0 if batch_sizes.get(name, 0) > 0 else 1,
+                product_axes.index(name),
+            ),
+        )
+    )
+    needs_transpose = canonical_order != product_axes
+    if needs_transpose:
+        n_leading = len(product_axes)
+        leading_perm = tuple(canonical_order.index(name) for name in product_axes)
 
     def batched_vmap(**kwargs: FloatND) -> FloatND:
         non_array_kwargs = {
@@ -268,9 +290,21 @@ def _base_productmap_batched(
 
             return cast("FunctionWithArrayReturn", func_mapped_over_one_more_axis)
 
-        # Loop over all product axes
-        for axis in reversed(product_axes):
+        # Wrap axes in canonical order (innermost wrapped first, so
+        # `reversed(canonical_order)` means the first canonical axis becomes
+        # the outermost dimension of the output).
+        for axis in reversed(canonical_order):
             func_with_partialled_args = map_one_more(func_with_partialled_args, axis)
-        return cast("FloatND", func_with_partialled_args())
+        out = func_with_partialled_args()
+
+        if needs_transpose:
+
+            def _permute_leading(arr: FloatND) -> FloatND:
+                full_perm = leading_perm + tuple(range(n_leading, arr.ndim))
+                return jnp.transpose(arr, full_perm)
+
+            out = jax.tree_util.tree_map(_permute_leading, out)
+
+        return cast("FloatND", out)
 
     return cast("FunctionWithArrayReturn", batched_vmap)

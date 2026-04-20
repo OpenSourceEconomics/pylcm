@@ -127,11 +127,9 @@ def _make_model(custom_H=None, *, with_pref_type: bool = False):
     working_life_state_transitions: dict = {
         "wealth": next_wealth,
     }
-    dead_states: dict = {}
     if with_pref_type:
         working_life_states["pref_type"] = DiscreteGrid(PrefType, batch_size=1)
         working_life_state_transitions["pref_type"] = None
-        dead_states["pref_type"] = DiscreteGrid(PrefType, batch_size=1)
 
     working_life_regime = Regime(
         actions={
@@ -146,23 +144,12 @@ def _make_model(custom_H=None, *, with_pref_type: bool = False):
         active=lambda age: age <= FINAL_AGE_ALIVE,
     )
 
-    # Terminal regime: when pref_type is declared as a state across
-    # regimes, dead_utility must reference it so pylcm's state-usage
-    # check accepts the declaration (terminal regimes have no H, so
-    # the H-DAG reachability fix does not apply here).
-    if with_pref_type:
-
-        def dead_utility(pref_type: DiscreteState) -> FloatND:  # noqa: ARG001
-            return jnp.asarray(0.0)
-    else:
-
-        def dead_utility() -> float:
-            return 0.0
+    def dead_utility() -> float:
+        return 0.0
 
     dead_regime = Regime(
         transition=None,
         functions={"utility": dead_utility},
-        states=dead_states,
         active=lambda age: age > FINAL_AGE_ALIVE,
     )
 
@@ -333,10 +320,12 @@ def test_dag_output_feeds_default_h_monotone_in_discount_factor():
     }
     V = model.solve(params=params)
 
-    # Pick a non-terminal period; slice each pref_type.
-    non_terminal_periods = [p for p in V if p < max(V.keys())]
-    assert non_terminal_periods
-    for period in non_terminal_periods:
+    # At the last working_life-active period (FINAL_AGE_ALIVE), the deterministic
+    # transition goes to `dead` and V_dead = 0, so V = U is pref_type-independent.
+    # Check earlier periods where the discount factor actually multiplies E[V_next].
+    periods_with_future = [p for p in V if p < FINAL_AGE_ALIVE]
+    assert periods_with_future
+    for period in periods_with_future:
         # Shape is (..., n_pref_type). Compare averages across the
         # other axes so the comparison is robust to the grid layout.
         v = V[period]["working_life"]
