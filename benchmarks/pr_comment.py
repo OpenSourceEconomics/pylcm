@@ -27,10 +27,10 @@ _MARKER = "<!-- benchmark-check -->"
 _RESULTS_DIR = Path(".asv/results")
 
 _CLASS_DISPLAY = {
+    "AcaBaseline": "aca-baseline",
+    "AcaBaselineGpuPeakMem": "aca-baseline",
     "MahlerYum": "Mahler-Yum",
     "MahlerYumGpuPeakMem": "Mahler-Yum",
-    "Mortality": "Mortality",
-    "MortalityGpuPeakMem": "Mortality",
     "PrecautionarySavingsSolve": "Precautionary Savings - Solve",
     "PrecautionarySavingsSolveGpuPeakMem": "Precautionary Savings - Solve",
     "PrecautionarySavingsSimulate": "Precautionary Savings - Simulate",
