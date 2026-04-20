@@ -7,6 +7,10 @@ model with those states vmap'd in-place would produce, and that the
 partition axes surface at the expected position in returned V-arrays.
 """
 
+import ast
+import inspect
+import textwrap
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -24,7 +28,6 @@ from lcm.regime_building.partitions import (
     iterate_partition_points,
     lift_partitions_from_regime,
 )
-from lcm.simulation import simulate as simulate_module
 from lcm.solution import solve_brute
 from lcm.typing import (
     BoolND,
@@ -473,59 +476,47 @@ def test_solve_compiles_once_for_multi_point_partition(monkeypatch):
     )
 
 
-def test_simulate_compiles_once_for_multi_point_partition(monkeypatch):
-    """`Model.simulate` calls `compile_simulate` exactly once per call.
+def test_compile_simulate_hoisted_above_partition_loop():
+    """`Model.simulate` calls `compile_simulate` exactly once, outside any loop.
 
-    Mirrors `test_solve_compiles_once_for_multi_point_partition`. The
-    compile bundle is static across partition points (regimes/ages/kernels
-    don't change), so calling `compile_simulate` per point would be pure
-    overhead — and it is also the seam a future multi-GPU PR will use to
-    place kernels on specific devices. Hoisting the call above the
-    partition loop keeps that seam stable.
+    Structural guard against re-introducing per-partition-point compile
+    overhead. Asserted on the AST of `Model.simulate`'s source so the check
+    does not depend on any mocking and is immune to import-order quirks.
     """
-    original = simulate_module.compile_simulate
-    call_count = 0
+    source = textwrap.dedent(inspect.getsource(Model.simulate))
+    tree = ast.parse(source)
 
-    def counting_compile(**kwargs):
-        nonlocal call_count
-        call_count += 1
-        return original(**kwargs)
+    class _Visitor(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.outside_loop = 0
+            self.inside_loop = 0
+            self._loop_depth = 0
 
-    monkeypatch.setattr(simulate_module, "compile_simulate", counting_compile)
-    # `Model.simulate` imports `compile_simulate` into `lcm.model` at module
-    # load, so patch that binding too.
-    import lcm.model  # noqa: PLC0415
+        def visit_For(self, node: ast.For) -> None:
+            self._loop_depth += 1
+            self.generic_visit(node)
+            self._loop_depth -= 1
 
-    monkeypatch.setattr(lcm.model, "compile_simulate", counting_compile)
+        def visit_While(self, node: ast.While) -> None:
+            self._loop_depth += 1
+            self.generic_visit(node)
+            self._loop_depth -= 1
 
-    model = _make_model()
-    assert len(model._partition_grid["pref_type"].codes) >= 2
-    params = {
-        "discount_factor": 0.9,
-        "alive": {"next_regime": {"final_age_alive": _FINAL_AGE}},
-    }
-    n_subjects = 3
-    initial_conditions = {
-        "wealth": jnp.full(n_subjects, 2.0),
-        "age": jnp.zeros(n_subjects, dtype=jnp.float32),
-        "pref_type": jnp.array(
-            [
-                TypeGrid.type_a,
-                TypeGrid.type_b,
-                TypeGrid.type_c,
-            ],
-            dtype=jnp.int32,
-        ),
-        "regime": jnp.full(n_subjects, _RegimeId.alive, dtype=jnp.int32),
-    }
-    model.simulate(
-        params=params,
-        initial_conditions=initial_conditions,
-        period_to_regime_to_V_arr=None,
-        log_level="off",
+        def visit_Call(self, node: ast.Call) -> None:
+            if isinstance(node.func, ast.Name) and node.func.id == "compile_simulate":
+                if self._loop_depth:
+                    self.inside_loop += 1
+                else:
+                    self.outside_loop += 1
+            self.generic_visit(node)
+
+    visitor = _Visitor()
+    visitor.visit(tree)
+    assert visitor.outside_loop == 1, (
+        f"expected exactly 1 `compile_simulate(...)` call outside the "
+        f"partition loop, saw {visitor.outside_loop}"
     )
-    assert call_count == 1, (
-        f"compile_simulate called {call_count} times for a "
-        f"{len(model._partition_grid['pref_type'].codes)}-point partition; "
-        "expected 1."
+    assert visitor.inside_loop == 0, (
+        f"`compile_simulate(...)` must not be called inside the partition "
+        f"loop, saw {visitor.inside_loop} nested call(s)"
     )

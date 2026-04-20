@@ -45,23 +45,30 @@ from lcm.utils.logging import (
 
 @dataclass(frozen=True)
 class CompiledSimulate:
-    """Everything about a model that stays fixed across simulate calls.
+    """Reusable simulate bundle: the parts of `Model.simulate` that do not
+    vary across partition points.
 
-    `Model.simulate` builds this once and reuses it for every partition point,
-    replacing the per-point Python overhead of recomputing kwargs. The compiled
-    per-regime kernels (`argmax_and_max_Q_over_a`, `calculate_next_states`,
-    `calculate_next_regime_membership`) already live on `internal_regimes` from
-    model initialization, so this container is a reference bundle, not a fresh
-    compile pass. `devices` is declared so a future multi-GPU PR can place
-    kernels on specific devices; today it is always `None`.
+    Mirrors `CompiledSolve`: `Model.simulate` builds this once above its
+    partition loop and passes it into `run_compiled_simulate` per point.
     """
 
     internal_regimes: MappingProxyType[RegimeName, InternalRegime]
+    """Immutable mapping of regime name to `InternalRegime`. The per-regime
+    `argmax_and_max_Q_over_a`, `calculate_next_states`, and
+    `calculate_next_regime_membership` kernels already live here from model
+    initialization — this class does not recompile them."""
     regime_names_to_ids: RegimeNamesToIds
+    """Immutable mapping of regime name to integer ID."""
     ages: AgeGrid
-    simulation_output_dtypes: Mapping[str, pd.CategoricalDtype]
+    """Lifecycle age grid used to convert periods to ages during simulation."""
+    simulation_output_dtypes: MappingProxyType[str, pd.CategoricalDtype]
+    """Immutable mapping of output variable name to `pd.CategoricalDtype`,
+    used when materializing `SimulationResult` as a DataFrame."""
     logger: logging.Logger
+    """Logger threaded into every `run_compiled_simulate` call."""
     devices: tuple[jax.Device, ...] | None = None
+    """Seam for a future multi-GPU PR that will dispatch partition points
+    across devices. Unused today; always `None`."""
 
 
 def compile_simulate(
@@ -84,7 +91,7 @@ def compile_simulate(
         internal_regimes=internal_regimes,
         regime_names_to_ids=regime_names_to_ids,
         ages=ages,
-        simulation_output_dtypes=simulation_output_dtypes,
+        simulation_output_dtypes=MappingProxyType(dict(simulation_output_dtypes)),
         logger=logger,
         devices=devices,
     )
