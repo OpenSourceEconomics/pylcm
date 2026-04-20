@@ -24,10 +24,7 @@ from lcm.params.processing import (
 )
 from lcm.params.sequence_leaf import SequenceLeaf
 from lcm.regime import Regime
-from lcm.regime_building.h_dag import (
-    get_h_accepted_params,
-    get_h_dag_target_names,
-)
+from lcm.regime_building.h_dag import get_dag_targets_consumed_by_H
 from lcm.regime_building.processing import (
     InternalRegime,
     process_regimes,
@@ -209,7 +206,7 @@ def _validate_all_variables_used(regimes: Mapping[str, Regime]) -> list[str]:
     Each state or action must appear in at least one of:
     - The concurrent valuation (utility or constraints)
     - A transition function
-    - An H-DAG target function (a regime function whose output H consumes)
+    - A regime function whose output H consumes at the Bellman step
 
     Args:
         regimes: Mapping of regime names to regimes to validate.
@@ -224,11 +221,6 @@ def _validate_all_variables_used(regimes: Mapping[str, Regime]) -> list[str]:
         variable_names = set(regime.states) | set(regime.actions)
         user_functions = dict(regime.get_all_functions(phase="solve"))
 
-        h_accepted_params = get_h_accepted_params(user_functions)
-        h_dag_target_names = get_h_dag_target_names(
-            functions=user_functions, h_accepted_params=h_accepted_params
-        )
-
         targets = [
             "utility",
             *list(regime.constraints),
@@ -238,7 +230,7 @@ def _validate_all_variables_used(regimes: Mapping[str, Regime]) -> list[str]:
                 if name.startswith("next_")
                 and not getattr(user_functions[name], "_is_auto_identity", False)
             ),
-            *h_dag_target_names,
+            *get_dag_targets_consumed_by_H(user_functions),
         ]
         reachable = get_ancestors(
             user_functions, targets=targets, include_targets=False

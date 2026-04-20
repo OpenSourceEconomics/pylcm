@@ -6,7 +6,7 @@ import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
 from jax import Array
 
-from lcm.regime_building.h_dag import get_h_dag_target_names
+from lcm.regime_building.h_dag import _get_H_kwargs_builder
 from lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
     get_next_stochastic_weights_function,
@@ -117,13 +117,8 @@ def get_Q_and_F(
     # Create the state-action value and feasibility function
     # ----------------------------------------------------------------------------------
 
-    # Determine which qname params H accepts so we can filter at runtime.
-    # This is necessary when the params template is the union of multiple
-    # SolveSimulateFunctionPair signatures but each variant only uses its own subset.
     _H_func = functions["H"]
-    _H_accepted_params = frozenset(
-        get_union_of_args([_H_func]) - {"utility", "E_next_V"}
-    )
+    _build_H_kwargs = _get_H_kwargs_builder(functions)
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         [
@@ -134,13 +129,6 @@ def get_Q_and_F(
         ],
         include=frozenset({"next_regime_to_V_arr", "period", "age"} | flat_param_names),
         exclude=frozenset(),
-    )
-
-    # Resolve H arguments that are regime-function outputs (e.g. a
-    # `discount_factor` DAG function that indexes a per-type Series by a
-    # state). `None` when H only needs state/action/user-param values.
-    _h_dag_func = _get_h_dag_func(
-        functions=functions, h_accepted_params=_H_accepted_params
     )
 
     @with_signature(
@@ -208,12 +196,11 @@ def get_Q_and_F(
                 E_next_V + active_regime_probs[target_regime_name] * next_V_expected_arr
             )
 
-        H_kwargs = {
-            k: v for k, v in states_actions_params.items() if k in _H_accepted_params
-        }
-        if _h_dag_func is not None:
-            H_kwargs |= _h_dag_func(**states_actions_params)
-        Q_arr = _H_func(utility=U_arr, E_next_V=E_next_V, **H_kwargs)
+        Q_arr = _H_func(
+            utility=U_arr,
+            E_next_V=E_next_V,
+            **_build_H_kwargs(states_actions_params),
+        )
 
         # Handle cases when there is only one state.
         # In that case, Q_arr and F_arr are scalars, but we require arrays as output.
@@ -308,12 +295,7 @@ def get_compute_intermediates(
         )
 
     _H_func = functions["H"]
-    _H_accepted_params = frozenset(
-        get_union_of_args([_H_func]) - {"utility", "E_next_V"}
-    )
-    _h_dag_func = _get_h_dag_func(
-        functions=functions, h_accepted_params=_H_accepted_params
-    )
+    _build_H_kwargs = _get_H_kwargs_builder(functions)
 
     arg_names_of_compute_intermediates = _get_arg_names_of_Q_and_F(
         [
@@ -367,12 +349,11 @@ def get_compute_intermediates(
             contribution = jnp.average(next_V_stoch, weights=joint)
             E_next_V = E_next_V + active_regime_probs[target_regime_name] * contribution
 
-        H_kwargs = {
-            k: v for k, v in states_actions_params.items() if k in _H_accepted_params
-        }
-        if _h_dag_func is not None:
-            H_kwargs |= _h_dag_func(**states_actions_params)
-        Q_arr = _H_func(utility=U_arr, E_next_V=E_next_V, **H_kwargs)
+        Q_arr = _H_func(
+            utility=U_arr,
+            E_next_V=E_next_V,
+            **_build_H_kwargs(states_actions_params),
+        )
 
         return U_arr, F_arr, E_next_V, Q_arr, active_regime_probs
 
@@ -548,54 +529,6 @@ def _get_joint_weights_function(
     variables = tuple(arg_names)
     return productmap(
         func=_outer, variables=variables, batch_sizes=dict.fromkeys(variables, 0)
-    )
-
-
-def _get_h_dag_func(
-    *,
-    functions: FunctionsMapping,
-    h_accepted_params: frozenset[str],
-) -> Callable[..., dict[str, Any]] | None:
-    """Compile a DAG that resolves H arguments computed by regime functions.
-
-    `H` may name any argument supported by regime functions: states,
-    actions, flat params, or outputs of other user-provided functions.
-    Names in H's signature are resolved at runtime from, in order:
-
-    1. `states_actions_params` (states, actions, and flat params — the
-       same scalar pool every regime function draws from), and
-    2. DAG-output functions, compiled here.
-
-    This helper handles only (2): for every name in H's signature that
-    is also a user-provided function, compile a DAG target so its
-    output can be merged into `H_kwargs` alongside the values supplied
-    by (1). If no such names exist, return `None`.
-
-    Args:
-        functions: Regime functions (user and generated).
-        h_accepted_params: Names H accepts beyond `utility` / `E_next_V`.
-
-    Returns:
-        A callable mapping `states_actions_params` kwargs to a dict of
-        the resolved DAG outputs, or `None` if H needs no DAG outputs.
-
-    """
-    dag_targets = tuple(
-        sorted(
-            get_h_dag_target_names(
-                functions=functions, h_accepted_params=h_accepted_params
-            )
-        )
-    )
-
-    if not dag_targets:
-        return None
-
-    return concatenate_functions(
-        functions={k: v for k, v in functions.items() if k != "H"},
-        targets=list(dag_targets),
-        return_type="dict",
-        enforce_signature=False,
     )
 
 

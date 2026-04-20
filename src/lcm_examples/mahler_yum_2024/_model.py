@@ -355,10 +355,6 @@ ALIVE_REGIME = Regime(
         "taxed_income": taxed_income,
         "pension": pension,
         "scaled_productivity_shock": scaled_productivity_shock,
-        # Heterogeneous β: the scalar is produced by indexing
-        # `discount_factor_by_type` by the `discount_type` state, and
-        # pylcm's default Bellman aggregator picks it up as a DAG-output
-        # argument (see `_default_H`).
         "discount_factor": discount_factor,
     },
     constraints={
@@ -369,8 +365,14 @@ ALIVE_REGIME = Regime(
 
 
 def dead_utility(discount_type: DiscreteState) -> FloatND:  # noqa: ARG001
-    """Dead-regime utility: always zero. `discount_type` is in the
-    signature so pylcm's usage check accepts the state declaration."""
+    """Return zero utility for the dead regime.
+
+    `discount_type` is in the signature so pylcm's state-usage check
+    accepts the state declaration.
+
+    TODO: Workaround until pylcm supports first-class partitioning of
+    types; at that point the dummy arg can disappear.
+    """
     return jnp.asarray(0.0)
 
 
