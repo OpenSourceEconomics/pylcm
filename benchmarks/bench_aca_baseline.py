@@ -24,10 +24,11 @@ _N_SUBJECTS = 1000
 
 
 class AcaBaseline:
-    timeout = 1800
-    # setup() compiles (~10+ min); asv's defaults would re-run setup
-    # across rounds and repeats, blowing the 1800s timeout. Pin everything
-    # to 1 so setup runs once per subprocess and one warm call is timed.
+    timeout = 3600
+    # setup() compiles (~28 min on GPU with partition-fixed-states);
+    # pin everything to 1 so setup runs once per subprocess and one
+    # warm call is timed. `timeout=3600` gives headroom for setup +
+    # the timed call.
     rounds = 1
     repeat = 1
     number = 1
@@ -94,3 +95,4 @@ class AcaBaseline:
 class AcaBaselineGpuPeakMem(_gpu_mem.GpuPeakMem):
     bench_module = "benchmarks.bench_aca_baseline"
     bench_class = "AcaBaseline"
+    timeout = 3600
