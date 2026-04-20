@@ -2,12 +2,18 @@
 
 Usage: pixi run asv-pr-comment
 
-Compares HEAD against the merge-base with main (if local results exist for it)
-and posts a formatted markdown comment on the current pull request.  If no
-merge-base results are available, posts raw benchmark numbers instead.
+Compares HEAD against the merge-base with main (if local or published results
+exist for it) and posts a formatted markdown comment on the current pull
+request. If no merge-base results are available, posts raw HEAD numbers
+instead.
 
 The comment uses the ``<!-- benchmark-check -->`` marker so the CI workflow
 can verify that benchmarks have been run.
+
+Comparison is done by parsing both ASV result JSON files directly (not by
+parsing ``asv compare`` text output). That way every benchmark present in
+both files gets a filled before/ratio cell; benchmarks present only in HEAD
+(e.g. a newly added one) fall through with empty before/ratio.
 """
 
 import json
@@ -74,15 +80,7 @@ _DISPLAY_SORT = {
 
 _ALERT_RATIO = 1.10
 
-_DATA_ROW_RE = re.compile(
-    r"^\|\s*[-+~x]?\s*"  # | change_indicator
-    r"\|\s*(\S+)\s*"  # | before_value
-    r"\|\s*(\S+)\s*"  # | after_value
-    r"\|\s*~?([\w/.]+)\s*"  # | ratio (numeric or n/a)
-    r"\|\s*(.+?)\s*\|$"  # | benchmark_name |
-)
 _BENCH_NAME_RE = re.compile(r"(?:\w+\.)*(\w+)\.(\w+)(?:\(([^)]*)\))?$")
-_HASH_RE = re.compile(r"\[(\w+)\]")
 
 
 class _BenchmarkRow(NamedTuple):
@@ -105,29 +103,28 @@ def post_pr_comment() -> None:
         sys.exit(1)
 
     head_result_file = _ensure_head_result(machine_dir, head_sha, head_sha_full)
+    base_file = _find_baseline_file(machine_dir)
 
-    comparison_md = _try_comparison(machine_dir, head_sha_full)
-    processed = (
-        _postprocess_comparison(comparison_md, head_result_file)
-        if comparison_md is not None
-        else None
-    )
-
-    if processed is not None:
-        body = _format_comparison_comment(head_sha, processed)
+    if base_file is not None:
+        rows = _build_comparison_rows(base_file, head_result_file)
+        if rows:
+            base_sha = _get_commit_hash(base_file)[:8]
+            body = _format_comparison_comment(head_sha, base_sha, rows)
+        else:
+            body = _format_raw_comment(
+                head_sha, _format_raw_results(head_result_file, head_sha)
+            )
     else:
-        raw_md = _format_raw_results(head_result_file, head_sha)
-        body = _format_raw_comment(head_sha, raw_md)
+        body = _format_raw_comment(
+            head_sha, _format_raw_results(head_result_file, head_sha)
+        )
 
     _upsert_pr_comment(body)
     print(f"Benchmark comment posted for {head_sha}.")
 
 
-def _try_comparison(
-    machine_dir: Path,
-    head_sha_full: str,
-) -> str | None:
-    """Run ``asv compare`` against the merge-base, returning markdown or None."""
+def _find_baseline_file(machine_dir: Path) -> Path | None:
+    """Return the merge-base result file, fetching from the published site if needed."""
     try:
         base_sha_full = subprocess.run(
             ["git", "merge-base", "main", "HEAD"],
@@ -143,37 +140,57 @@ def _try_comparison(
     if base_file is None:
         base_file = _fetch_baseline_from_site(machine_dir, base_sha)
     if base_file is None:
-        print(
-            f"No results for merge-base {base_sha} — "
-            "will post raw numbers instead of comparison."
-        )
-        return None
+        print(f"No results for merge-base {base_sha} — posting raw numbers instead.")
+    return base_file
 
-    try:
-        result = subprocess.run(
-            [
-                "asv",
-                "compare",
-                base_sha_full,
-                head_sha_full,
-                "--split",
-                "--factor",
-                "1.05",
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
+
+def _build_comparison_rows(
+    base_file: Path,
+    head_file: Path,
+) -> list[_BenchmarkRow]:
+    """Build rows by diffing parsed base and HEAD JSON result files.
+
+    For every (class, method, params) entry in HEAD that corresponds to a
+    tracked display name, look up the same key in base. If present, compute
+    the ratio and format both before and after. Otherwise, emit an entry
+    with empty before/ratio — a head-only benchmark.
+    """
+    base_raw = _parse_raw_values(base_file)
+    head_raw = _parse_raw_values(head_file)
+
+    rows: list[_BenchmarkRow] = []
+    for (class_name, method_name, params), head_value in head_raw.items():
+        if class_name not in _CLASS_DISPLAY and method_name not in _METHOD_DISPLAY:
+            continue
+        after_formatted = _format_value(method_name, head_value)
+        base_value = base_raw.get((class_name, method_name, params))
+        if base_value is not None and base_value != 0:
+            before_formatted = _format_value(method_name, base_value)
+            ratio: float | None = head_value / base_value
+        else:
+            before_formatted = ""
+            ratio = None
+        rows.append(
+            _BenchmarkRow(
+                class_name=class_name,
+                method_name=method_name,
+                params=params,
+                before_value=before_formatted,
+                after_value=after_formatted,
+                ratio=ratio,
+            )
         )
-        return result.stdout.strip()
-    except subprocess.CalledProcessError:
-        return None
+    return rows
 
 
 def _format_comparison_comment(
     head_sha: str,
-    processed_md: str,
+    base_sha: str,
+    rows: list[_BenchmarkRow],
 ) -> str:
     """Format the full PR comment body for a comparison."""
+    base_link = f"[`{base_sha}`]({_REPO_URL}/commit/{base_sha})"
+    head_link = f"[`{head_sha}`]({_REPO_URL}/commit/{head_sha})"
     return "\n".join(
         [
             _MARKER,
@@ -181,108 +198,15 @@ def _format_comparison_comment(
             "",
             "### Benchmark comparison (main \u2192 HEAD)",
             "",
-            processed_md,
+            f"Comparing {base_link} (main) \u2192 {head_link} (HEAD)",
+            "",
+            _build_grouped_table(rows),
         ]
     )
 
 
-def _postprocess_comparison(raw: str, head_result_file: Path) -> str | None:
-    """Parse ASV compare output and reformat as a grouped benchmark table.
-
-    Benchmarks present in HEAD but missing from the baseline appear with
-    empty before/ratio columns.  Return ``None`` when no rows are found.
-
-    """
-    rows, hashes = _parse_comparison_rows(raw)
-    rows.extend(_find_head_only_rows(rows, head_result_file))
-
-    if not rows:
-        return None
-
-    parts: list[str] = []
-
-    if len(hashes) >= 2:
-        base_link = f"[`{hashes[0]}`]({_REPO_URL}/commit/{hashes[0]})"
-        head_link = f"[`{hashes[1]}`]({_REPO_URL}/commit/{hashes[1]})"
-        parts.append(f"Comparing {base_link} (main) \u2192 {head_link} (HEAD)")
-        parts.append("")
-
-    parts.append(_build_grouped_table(rows))
-
-    return "\n".join(parts)
-
-
-def _parse_comparison_rows(
-    raw: str,
-) -> tuple[list[_BenchmarkRow], list[str]]:
-    """Parse ASV compare text into structured rows and commit hashes."""
-    rows: list[_BenchmarkRow] = []
-    hashes: list[str] = []
-
-    for line in raw.splitlines():
-        hash_matches = _HASH_RE.findall(line)
-        if hash_matches and not hashes:
-            hashes = hash_matches
-            continue
-
-        row_match = _DATA_ROW_RE.match(line)
-        if not row_match:
-            continue
-
-        before_val, after_val, ratio_str, bench_name = row_match.groups()
-
-        name_match = _BENCH_NAME_RE.match(bench_name)
-        if not name_match:
-            continue
-
-        class_name, method_name, params = name_match.groups()
-
-        if class_name not in _CLASS_DISPLAY and method_name not in _METHOD_DISPLAY:
-            continue
-
-        try:
-            ratio = float(ratio_str)
-        except ValueError:
-            ratio = None
-
-        rows.append(
-            _BenchmarkRow(
-                class_name=class_name,
-                method_name=method_name,
-                params=params or "",
-                before_value=before_val,
-                after_value=after_val,
-                ratio=ratio,
-            )
-        )
-
-    return rows, hashes
-
-
-def _find_head_only_rows(
-    comparison_rows: list[_BenchmarkRow],
-    head_result_file: Path,
-) -> list[_BenchmarkRow]:
-    """Return rows for benchmarks present in HEAD but missing from the comparison."""
-    seen = {(r.class_name, r.method_name, r.params) for r in comparison_rows}
-    head_entries = _parse_raw_entries(head_result_file)
-    return [
-        _BenchmarkRow(
-            class_name=class_name,
-            method_name=method_name,
-            params=params,
-            before_value="",
-            after_value=value,
-            ratio=None,
-        )
-        for class_name, method_name, params, value in head_entries
-        if (class_name, method_name, params) not in seen
-        and (class_name in _CLASS_DISPLAY or method_name in _METHOD_DISPLAY)
-    ]
-
-
 def _build_grouped_table(rows: list[_BenchmarkRow]) -> str:
-    """Build a grouped markdown table from parsed benchmark rows."""
+    """Build a grouped markdown table from benchmark rows."""
     groups: dict[tuple[str, str], list[_BenchmarkRow]] = {}
     for row in rows:
         key = (_CLASS_DISPLAY.get(row.class_name, row.class_name), row.params)
@@ -313,16 +237,14 @@ def _build_grouped_table(rows: list[_BenchmarkRow]) -> str:
             bench_col = label if i == 0 else ""
             stat_col = _METHOD_DISPLAY.get(row.method_name, row.method_name)
             if row.ratio is not None:
-                before_col = row.before_value
                 ratio_col = f"{row.ratio:.2f}"
                 alert = "\u274c" if row.ratio > _ALERT_RATIO else ""
             else:
-                before_col = ""
                 ratio_col = ""
                 alert = ""
             lines.append(
                 f"| {bench_col} | {stat_col} "
-                f"| {before_col} | {row.after_value} "
+                f"| {row.before_value} | {row.after_value} "
                 f"| {ratio_col} | {alert} |"
             )
 
@@ -371,11 +293,23 @@ def _format_raw_results(result_file: Path, head_sha: str) -> str:
 def _parse_raw_entries(
     result_file: Path,
 ) -> list[tuple[str, str, str, str]]:
-    """Parse an ASV result JSON into (class, method, params, value) tuples."""
+    """Parse an ASV result JSON into (class, method, params, formatted_value) tuples."""
+    return [
+        (class_name, method_name, params, _format_value(method_name, value))
+        for (class_name, method_name, params), value in _parse_raw_values(
+            result_file
+        ).items()
+    ]
+
+
+def _parse_raw_values(
+    result_file: Path,
+) -> dict[tuple[str, str, str], float]:
+    """Parse an ASV result JSON into a (class, method, params) → raw value dict."""
     data: dict[str, Any] = json.loads(result_file.read_text(encoding="utf-8"))
     results: dict[str, list[Any]] = data.get("results", {})
 
-    entries: list[tuple[str, str, str, str]] = []
+    values_by_key: dict[tuple[str, str, str], float] = {}
 
     for bench_name, values in results.items():
         if not values or values[0] is None:
@@ -392,25 +326,23 @@ def _parse_raw_entries(
         if params_list:
             for idx, combo_str in enumerate(_expand_params(params_list)):
                 if idx < len(raw_values) and raw_values[idx] is not None:
-                    entries.append(
-                        (
-                            class_name,
-                            method_name,
-                            combo_str,
-                            _format_value(method_name, raw_values[idx]),
-                        )
-                    )
-        elif isinstance(raw_values, list) and len(raw_values) == 1:
-            entries.append(
-                (
-                    class_name,
-                    method_name,
-                    "",
-                    _format_value(method_name, raw_values[0]),
-                )
-            )
+                    values_by_key[(class_name, method_name, combo_str)] = raw_values[
+                        idx
+                    ]
+        elif (
+            isinstance(raw_values, list)
+            and len(raw_values) == 1
+            and raw_values[0] is not None
+        ):
+            values_by_key[(class_name, method_name, "")] = raw_values[0]
 
-    return entries
+    return values_by_key
+
+
+def _get_commit_hash(result_file: Path) -> str:
+    """Return the full commit hash stored in an ASV result file."""
+    data = json.loads(result_file.read_text(encoding="utf-8"))
+    return data.get("commit_hash", "unknown")
 
 
 def _expand_params(params: list[list[str]]) -> list[str]:
@@ -599,9 +531,8 @@ def _find_latest_result_file(machine_dir: Path) -> Path | None:
     """Return the most recently modified result file, or None.
 
     Fallback when ``--set-commit-hash`` did not produce a file matching
-    HEAD.  ASV may store results under a different commit hash depending
+    HEAD. ASV may store results under a different commit hash depending
     on how it resolves the configured branches.
-
     """
     candidates = [
         p
@@ -623,8 +554,7 @@ def _ensure_head_result(
     ASV ignores ``--set-commit-hash`` when iterating over configured
     branches, storing results under the main-branch commit instead.
     When no file matches HEAD, copy the most recent result file and
-    retag it so ``asv compare`` can find two distinct commits.
-
+    retag it so downstream tools can find two distinct commits.
     """
     existing = _find_result_file(machine_dir, head_sha)
     if existing is not None:
@@ -653,8 +583,7 @@ def _fetch_baseline_from_site(
 
     The main-branch workflow publishes ASV results to the github.io repo.
     This function clones that repo (shallow) and copies the matching result
-    file into the local ``.asv/results/`` directory so ``asv compare`` can
-    find it.
+    file into the local ``.asv/results/`` directory.
 
     Args:
         machine_dir: Local ASV machine results directory.
