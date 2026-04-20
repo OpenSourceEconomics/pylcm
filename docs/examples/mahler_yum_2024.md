@@ -39,8 +39,6 @@ common_params, initial_states = create_inputs(
     **START_PARAMS,
 )
 
-# One solve, one simulate — both discount types are handled inside the
-# regime via the `discount_type` state.
 result = MAHLER_YUM_MODEL.simulate(
     params={"alive": common_params},
     initial_conditions={
