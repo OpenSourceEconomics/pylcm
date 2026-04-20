@@ -571,56 +571,48 @@ def _wrap_with_partition_vmap(
             f"to remove them before this wrap."
         )
         raise AssertionError(msg)
-    # Classify each top-level kwarg: 0 for vmap'd partition leaves, None for
-    # broadcast. `_broadcast_in_axes_like` then expands None into a matching
-    # all-None pytree for nested kwargs so JAX's in_axes structure aligns
-    # exactly with the input pytree.
-    top_level_axes: dict[str, object] = {}
+    # Classify each top-level kwarg: "per-partition-point" (leading
+    # axis = partition_size, scan unpacks it one slice per iteration)
+    # vs. "broadcast" (closed over by the scan body). Partition scalars
+    # and `next_regime_to_V_arr` are per-partition-point; state / action
+    # grids, non-partition params, period, and age are broadcast.
+    is_per_point: dict[str, bool] = {}
     for name in state_action_space.states:
-        top_level_axes[name] = None
+        is_per_point[name] = False
     for name in state_action_space.actions:
-        top_level_axes[name] = None
+        is_per_point[name] = False
     for name in internal_params_for_regime:
-        top_level_axes[name] = 0 if name in partition_names_for_regime else None
-    top_level_axes["next_regime_to_V_arr"] = 0
-    top_level_axes["period"] = None
-    top_level_axes["age"] = None
-
-    def _call_with_kwargs_dict(kwargs_dict: Mapping[str, object]) -> FloatND:
-        return func(**kwargs_dict)
+        is_per_point[name] = name in partition_names_for_regime
+    is_per_point["next_regime_to_V_arr"] = True
+    is_per_point["period"] = False
+    is_per_point["age"] = False
 
     def call_as_kwargs(**kwargs: object) -> FloatND:
-        # jax.jit canonicalises kwargs to alphabetical order; sorting here
-        # keeps in_axes and the value pytree byte-identical in structure.
-        sorted_kwargs = MappingProxyType(
-            {name: kwargs[name] for name in sorted(kwargs)}
-        )
-        in_axes = MappingProxyType(
-            {
-                name: _broadcast_in_axes_like(
-                    axis=top_level_axes[name], value=sorted_kwargs[name]
-                )
-                for name in sorted_kwargs
-            }
-        )
-        return jax.vmap(_call_with_kwargs_dict, in_axes=(in_axes,))(sorted_kwargs)
+        # `jax.lax.scan` unpacks `xs` along axis 0 once per iteration
+        # and carries `broadcast` values closed over through the body.
+        # The serialised-over-partition approach trades vmap's parallel
+        # fused mega-kernel (which blows up XLA compile time on aca /
+        # Mahler-Yum scale models) for an in-kernel while-loop — the
+        # axis stays JAX-visible so a future `shard_map` swap is still
+        # a one-liner at the wrap site.
+        broadcast = {
+            name: kwargs[name]
+            for name, per_point in is_per_point.items()
+            if not per_point
+        }
+        xs = {
+            name: kwargs[name] for name, per_point in is_per_point.items() if per_point
+        }
+
+        def scan_body(
+            _carry: None, xs_slice: Mapping[str, object]
+        ) -> tuple[None, FloatND]:
+            return None, func(**broadcast, **xs_slice)
+
+        _, V_stacked = jax.lax.scan(scan_body, init=None, xs=xs)
+        return V_stacked
 
     return call_as_kwargs
-
-
-def _broadcast_in_axes_like(*, axis: object, value: object) -> object:
-    """Expand a scalar `axis` spec into a pytree matching `value`'s structure.
-
-    `jax.vmap`'s `in_axes` supports a prefix-tree form where a scalar (e.g.
-    `None`) is interpreted as "apply to every leaf below". In practice some
-    JAX versions are stricter and require the `in_axes` pytree to match the
-    value structure exactly, so we expand here instead of relying on the
-    prefix semantics.
-    """
-    # Leaves get the axis as-is.
-    leaves_and_tree = jax.tree_util.tree_flatten(value)
-    leaves, treedef = leaves_and_tree
-    return jax.tree_util.tree_unflatten(treedef, [axis] * len(leaves))
 
 
 def _func_dedup_key(*, func: Callable) -> Hashable:
