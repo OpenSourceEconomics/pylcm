@@ -87,7 +87,7 @@ pybaum = "*"
 scipy = ">=1.16"
 snakeviz = "*"
 [tool.pixi.environments]
-benchmarks-cuda12 = { features = [ "benchmarks", "cuda12" ], solve-group = "benchmarks-cuda12" }
+benchmarks-cuda12 = { features = [ "benchmarks", "cuda12" ], solve-group = "cuda12" }
 cuda12 = { features = [ "cuda12" ], solve-group = "cuda12" }
 cuda13 = { features = [ "cuda13" ], solve-group = "cuda13" }
 docs = { features = [ "docs" ], solve-group = "default" }
