@@ -29,18 +29,15 @@ from lcm_examples.mahler_yum_2024 import (
 
 n_subjects = 1_000
 
-# Build inputs: per-subject initial states include `discount_type`
-# (small/large), and `params["discount_factor"]["discount_factor_by_type"]`
-# carries the two-element beta array that the `discount_factor` DAG
-# function indexes with the state.
-common_params, initial_states = create_inputs(
+
+params, initial_states = create_inputs(
     seed=7235,
     n_simulation_subjects=n_subjects,
     **START_PARAMS,
 )
 
 result = MAHLER_YUM_MODEL.simulate(
-    params={"alive": common_params},
+    params={"alive": params},
     initial_conditions={
         **initial_states,
         "regime": jnp.full(

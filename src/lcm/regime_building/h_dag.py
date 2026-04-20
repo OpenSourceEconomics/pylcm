@@ -8,7 +8,7 @@ that indexes a per-type Series by a `pref_type` state).
 
 This module exposes:
 
-- `_get_H_kwargs_builder`: factory that returns a closure computing
+- `_get_build_H_kwargs`: factory that returns a closure computing
   `H_kwargs` from `states_actions_params` at runtime. Used by Q_and_F.
 - `get_dag_targets_consumed_by_H`: names of regime functions whose
   outputs H consumes. Used by `_validate_all_variables_used` as
@@ -50,7 +50,7 @@ def get_dag_targets_consumed_by_H(
     return H_accepted_params & set(functions) - {"H", "utility", "feasibility"}
 
 
-def _get_H_kwargs_builder(
+def _get_build_H_kwargs(
     functions: Mapping[str, Callable[..., Any]],
 ) -> Callable[[Mapping[str, Any]], dict[str, Any]]:
     """Return a closure that builds `H_kwargs` from `states_actions_params`.

@@ -6,7 +6,7 @@ import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
 from jax import Array
 
-from lcm.regime_building.h_dag import _get_H_kwargs_builder
+from lcm.regime_building.h_dag import _get_build_H_kwargs
 from lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
     get_next_stochastic_weights_function,
@@ -117,8 +117,7 @@ def get_Q_and_F(
     # Create the state-action value and feasibility function
     # ----------------------------------------------------------------------------------
 
-    _H_func = functions["H"]
-    _build_H_kwargs = _get_H_kwargs_builder(functions)
+    _build_H_kwargs = _get_build_H_kwargs(functions)
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         [
@@ -196,7 +195,7 @@ def get_Q_and_F(
                 E_next_V + active_regime_probs[target_regime_name] * next_V_expected_arr
             )
 
-        Q_arr = _H_func(
+        Q_arr = functions["H"](
             utility=U_arr,
             E_next_V=E_next_V,
             **_build_H_kwargs(states_actions_params),
@@ -294,9 +293,6 @@ def get_compute_intermediates(
             batch_sizes=dict.fromkeys(stochastic_variables, 0),
         )
 
-    _H_func = functions["H"]
-    _build_H_kwargs = _get_H_kwargs_builder(functions)
-
     arg_names_of_compute_intermediates = _get_arg_names_of_Q_and_F(
         [
             U_and_F,
@@ -349,10 +345,10 @@ def get_compute_intermediates(
             contribution = jnp.average(next_V_stoch, weights=joint)
             E_next_V = E_next_V + active_regime_probs[target_regime_name] * contribution
 
-        Q_arr = _H_func(
+        Q_arr = functions["H"](
             utility=U_arr,
             E_next_V=E_next_V,
-            **_build_H_kwargs(states_actions_params),
+            **_get_build_H_kwargs(functions)(states_actions_params),
         )
 
         return U_arr, F_arr, E_next_V, Q_arr, active_regime_probs
