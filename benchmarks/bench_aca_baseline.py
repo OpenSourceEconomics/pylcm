@@ -7,12 +7,11 @@ pipeline over 19 regimes, DAG resolution, pref_type batching) while
 shrinking per-call numerical work so the benchmark fits in an asv
 invocation.
 
-Requires the `aca_model` package to be importable. Use one of the
-`benchmarks-cuda12` / `benchmarks-cuda13` pixi environments, which pull
-aca-model from its public git URL. Inside the aca-dev monorepo the
-editable path install takes precedence. Benchmark params are loaded
-from a frozen pickle shipped in aca-model — no aca-data pipeline run
-required.
+Requires the `aca_model` package to be importable. Use the
+`benchmarks-cuda12` pixi environment, which pulls aca-model from its
+public git URL. Inside the aca-dev monorepo the editable path install
+takes precedence. Benchmark params are loaded from a frozen pickle
+shipped in aca-model — no aca-data pipeline run required.
 """
 
 import gc

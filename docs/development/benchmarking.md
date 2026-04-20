@@ -26,13 +26,13 @@ branch:
 **PR branches** — run benchmarks and post a comparison comment on your PR:
 
 ```bash
-pixi run -e tests-cuda13 asv-run-and-pr-comment
+pixi run -e benchmarks-cuda12 asv-run-and-pr-comment
 ```
 
 **Main branch** — run benchmarks and publish results to the dashboard:
 
 ```bash
-pixi run -e tests-cuda13 asv-run-and-publish-main
+pixi run -e benchmarks-cuda12 asv-run-and-publish-main
 ```
 
 Both workflows run `asv-run` (which requires a clean worktree) followed by their
@@ -42,10 +42,10 @@ Individual tasks are also available:
 
 ```bash
 # Run all benchmarks (GPU required)
-pixi run -e tests-cuda13 asv-run
+pixi run -e benchmarks-cuda12 asv-run
 
 # Quick smoke test (not saved)
-pixi run -e tests-cuda13 asv-quick
+pixi run -e benchmarks-cuda12 asv-quick
 
 # Post benchmark comment to current PR (no GPU needed)
 pixi run asv-pr-comment
@@ -60,17 +60,17 @@ pixi run asv-preview
 pixi run asv-publish
 ```
 
-The `asv-run` and `asv-quick` tasks set `XLA_PYTHON_CLIENT_PREALLOCATE=false` and
-`XLA_PYTHON_CLIENT_MEM_FRACTION=0.3` automatically to prevent JAX from grabbing all GPU
-memory.
+The `asv-run` and `asv-quick` tasks set `XLA_PYTHON_CLIENT_PREALLOCATE=false`
+automatically so JAX allocates GPU memory on demand rather than grabbing it all up
+front.
 
 ## Benchmark Scenarios
 
 | File                             | What it benchmarks                                                                                    |
 | -------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `bench_precautionary_savings.py` | Solve (varying grid sizes), simulate (varying subjects), solve+simulate, lin vs irreg grid comparison |
-| `bench_mortality.py`             | Mortality model — solve + simulate                                                                    |
 | `bench_mahler_yum.py`            | Mahler & Yum (2024) replication (GPU only)                                                            |
+| `bench_aca_baseline.py`          | ACA baseline (18 regimes) end-to-end simulate on benchmark-sized grids (GPU only)                     |
 
 Each benchmark tracks three metrics:
 
@@ -104,7 +104,7 @@ the PR's HEAD:
 To satisfy the check:
 
 ```bash
-pixi run -e tests-cuda13 asv-run-and-pr-comment
+pixi run -e benchmarks-cuda12 asv-run-and-pr-comment
 ```
 
 ## Adding New Benchmarks
