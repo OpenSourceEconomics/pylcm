@@ -50,6 +50,12 @@ class TypeGrid:
 
 
 @categorical(ordered=False)
+class _TwoCat:
+    low: int
+    high: int
+
+
+@categorical(ordered=False)
 class _RegimeId:
     alive: int
     dead: int
@@ -226,6 +232,73 @@ def test_stack_partition_scalars_empty_is_identity():
     )
     assert partition_shape == ()
     assert stacked is internal_params
+
+
+def test_solve_handles_multi_dimensional_partition_shape():
+    """Multi-axis partition_shape — e.g. `(3, 2)` — solves without errors.
+
+    Regression guard for a bug in `run_compiled_solve`'s deferred-
+    diagnostic reductions: it used to treat `len(partition_shape)` as
+    the number of leading axes on `V_arr`, but `V_arr` always has a
+    single flattened leading axis of size `prod(partition_shape)`.
+    Multi-dim partitions broke `jnp.stack(reductions)` with
+    "All input arrays must have the same shape" as soon as one regime
+    had a different inner state shape than another.
+    """
+
+    def _extra_next_regime(age: float, final_age_alive: float) -> ScalarInt:
+        return jnp.where(age >= final_age_alive, _RegimeId.dead, _RegimeId.alive)
+
+    def _extra_utility(
+        consumption: ContinuousAction,
+        pref_type: DiscreteState,
+        extra: DiscreteState,
+    ) -> FloatND:
+        scale = 1.0 + pref_type.astype(jnp.float32) + extra.astype(jnp.float32)
+        return jnp.log(consumption) * scale
+
+    alive = Regime(
+        actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=20)},
+        states={
+            "wealth": LinSpacedGrid(start=0.1, stop=5.0, n_points=10),
+            "pref_type": DiscreteGrid(TypeGrid),
+            "extra": DiscreteGrid(_TwoCat),
+        },
+        state_transitions={
+            "wealth": _next_wealth,
+            "pref_type": None,
+            "extra": None,
+        },
+        constraints={"borrowing": _borrowing},
+        functions={"utility": _extra_utility},
+        transition=_extra_next_regime,
+        active=lambda age: age <= _FINAL_AGE,
+    )
+
+    def dead_utility() -> float:
+        return 0.0
+
+    dead = Regime(
+        transition=None,
+        functions={"utility": dead_utility},
+        active=lambda age: age > _FINAL_AGE,
+    )
+    model = Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, stop=_FINAL_AGE + 1, step="Y"),
+        regime_id_class=_RegimeId,
+    )
+    assert len(model._partition_grid) == 2  # pref_type (3) x extra (2)
+
+    V = model.solve(
+        params={
+            "discount_factor": 0.9,
+            "alive": {"next_regime": {"final_age_alive": _FINAL_AGE}},
+        },
+        log_level="off",
+    )
+    # Alive at period 0: (pref_type, extra, wealth) = (3, 2, 10).
+    assert V[0]["alive"].shape == (3, 2, 10)
 
 
 def test_reshape_leading_partition_axis_rejects_shape_mismatch():

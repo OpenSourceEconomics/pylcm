@@ -14,14 +14,13 @@ import jax.numpy as jnp
 from lcm.ages import AgeGrid
 from lcm.grids import DiscreteGrid
 from lcm.interfaces import InternalRegime
+from lcm.regime_building.partitions import PartitionGrid, iterate_partition_points
 from lcm.typing import FlatRegimeParams, FloatND, InternalParams, RegimeName
 from lcm.utils.error_handling import validate_V
 from lcm.utils.logging import (
     format_duration,
-    log_nan_in_V,
     log_period_header,
     log_period_timing,
-    log_V_stats,
 )
 
 
@@ -45,6 +44,11 @@ class CompiledSolve:
     `prod(partition_shape)` is the leading axis of every returned
     V-array. Consumed by `run_compiled_solve` for per-partition-point
     diagnostic logging."""
+    partition_coord_labels: tuple[str, ...] = ()
+    """Per-flat-partition-index human-readable coordinate labels such as
+    `"edu=0, prod=1, health_type=0, discount_type=1"`. Precomputed once at
+    compile time so `run_compiled_solve` pays no device syncs for logging.
+    Empty when `partition_shape` is empty."""
 
 
 def solve(
@@ -105,6 +109,7 @@ def compile_solve(
     regime_partitions: Mapping[
         RegimeName, Mapping[str, DiscreteGrid]
     ] = MappingProxyType({}),
+    partition_grid: PartitionGrid = MappingProxyType({}),
 ) -> CompiledSolve:
     """AOT-compile all max_Q_over_a functions and build the V template.
 
@@ -132,6 +137,9 @@ def compile_solve(
         regime_partitions: Per-regime mapping of partition names → grid.
             Only consulted when `partition_shape` is non-empty; tells the
             wrap which kwargs carry the leading partition axis.
+        partition_grid: Model-level mapping of partition names → grid.
+            Used only for precomputing human-readable coordinate labels;
+            ignored when `partition_shape` is empty.
 
     Returns:
         A `CompiledSolve` holding the compiled per-period kernels and
@@ -165,6 +173,9 @@ def compile_solve(
         compiled_functions=MappingProxyType(dict(compiled_functions)),
         next_regime_to_V_arr_template=next_regime_to_V_arr,
         partition_shape=partition_shape,
+        partition_coord_labels=_build_partition_coord_labels(
+            partition_grid=partition_grid
+        ),
     )
 
 
@@ -196,8 +207,21 @@ def run_compiled_solve(
     next_regime_to_V_arr = compiled.next_regime_to_V_arr_template
     compiled_functions = compiled.compiled_functions
     partition_shape = compiled.partition_shape
+    partition_coord_labels = compiled.partition_coord_labels
 
     solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
+
+    # Async diagnostics accumulators: populated inside the hot loop as
+    # JAX arrays with no host syncs. Reduced to host values once at the
+    # end so the backward induction sees a single flush of the GPU
+    # kernel queue instead of n_regime * n_period * n_partition stalls.
+    stats_enabled = logger.isEnabledFor(logging.DEBUG)
+    diag_rows: list[_DiagRow] = []
+    diag_red_min: list[FloatND] = []
+    diag_red_max: list[FloatND] = []
+    diag_red_mean: list[FloatND] = []
+    diag_red_any_nan: list[FloatND] = []
+    diag_red_any_inf: list[FloatND] = []
 
     logger.info("Starting solution")
     total_start = time.monotonic()
@@ -238,52 +262,44 @@ def run_compiled_solve(
                 age=ages.values[period],
             )
 
-            # Diagnostic logging: when the kernel was vmap'd over a
-            # partition axis the leading axis of `V_arr` is the flat
-            # partition index. Loop over it so NaN warnings and stats
-            # attribute to a specific point rather than being aggregated.
-            if partition_shape:
-                for point_idx in range(V_arr.shape[0]):
-                    V_slice = V_arr[point_idx]
-                    label = f"{name}[partition point {point_idx}]"
-                    log_nan_in_V(
-                        logger=logger,
-                        regime_name=label,
-                        age=ages.values[period],
-                        V_arr=V_slice,
-                    )
-                    log_V_stats(logger=logger, regime_name=label, V_arr=V_slice)
-            else:
-                log_nan_in_V(
-                    logger=logger,
+            # Compute reductions along the state / action axes,
+            # keeping the single leading partition axis. V_arr always
+            # has shape `prod(partition_shape)` on axis 0 — the
+            # partition axes are unraveled into separate dims later by
+            # `_reshape_leading_partition_axis`, so here axis 0 is the
+            # only axis that must survive the reduction.
+            #
+            # Gate min/max/mean behind the debug log level (matches the
+            # old `log_V_stats` semantics) so non-debug benchmark runs
+            # launch only the two cheap isnan/isinf reductions per
+            # (regime, period) rather than five — those three extra
+            # full-V reads per row would add up to a substantial GPU
+            # memory-bandwidth tax on aca-baseline-sized V arrays.
+            inner_axes: tuple[int, ...] | None = (
+                tuple(range(1, V_arr.ndim)) if partition_shape else None
+            )
+            if stats_enabled:
+                diag_red_min.append(jnp.min(V_arr, axis=inner_axes))
+                diag_red_max.append(jnp.max(V_arr, axis=inner_axes))
+                diag_red_mean.append(jnp.mean(V_arr, axis=inner_axes))
+            diag_red_any_nan.append(jnp.any(jnp.isnan(V_arr), axis=inner_axes))
+            diag_red_any_inf.append(jnp.any(jnp.isinf(V_arr), axis=inner_axes))
+            diag_rows.append(
+                _DiagRow(
                     regime_name=name,
-                    age=ages.values[period],
-                    V_arr=V_arr,
+                    period=period,
+                    age=float(ages.values[period]),
+                    state_action_space=state_action_space,
+                    next_regime_to_V_arr=next_regime_to_V_arr,
+                    regime_params=internal_params[name],
+                    compute_intermediates=(
+                        internal_regime.solve_functions.compute_intermediates.get(
+                            period
+                        )
+                    ),
                 )
-                log_V_stats(logger=logger, regime_name=name, V_arr=V_arr)
+            )
 
-            # Include sibling regimes already solved this period (and the
-            # current regime's V_arr, even though it is NaN-bearing — users
-            # debugging the snapshot want to see all of it).
-            partial = MappingProxyType(
-                {
-                    **solution,
-                    period: MappingProxyType({**period_solution, name: V_arr}),
-                }
-            )
-            validate_V(
-                V_arr=V_arr,
-                age=float(ages.values[period]),
-                regime_name=name,
-                partial_solution=partial,
-                compute_intermediates=internal_regime.solve_functions.compute_intermediates.get(
-                    period
-                ),
-                state_action_space=state_action_space,
-                next_regime_to_V_arr=next_regime_to_V_arr,
-                internal_params=internal_params[name],
-                period=period,
-            )
             period_solution[name] = V_arr
 
         # Maintain consistent pytree structure: keep all regime keys,
@@ -298,6 +314,24 @@ def run_compiled_solve(
 
         elapsed = time.monotonic() - period_start
         log_period_timing(logger=logger, elapsed=elapsed)
+
+    # One flush of the GPU kernel queue: stack and ship five reductions
+    # at once: two host transfers (isnan / isinf) by default, plus three
+    # more (min / max / mean) when debug stats were enabled.
+    _emit_deferred_diagnostics(
+        logger=logger,
+        partition_shape=partition_shape,
+        partition_coord_labels=partition_coord_labels,
+        diag_rows=diag_rows,
+        reductions=_StackedReductions(
+            mins=jnp.stack(diag_red_min) if diag_red_min else None,
+            maxs=jnp.stack(diag_red_max) if diag_red_max else None,
+            means=jnp.stack(diag_red_mean) if diag_red_mean else None,
+            any_nan=jnp.stack(diag_red_any_nan),
+            any_inf=jnp.stack(diag_red_any_inf),
+        ),
+        solution=MappingProxyType(solution),
+    )
 
     total_elapsed = time.monotonic() - total_start
     logger.info("Solution complete  (%s)", format_duration(seconds=total_elapsed))
@@ -634,3 +668,215 @@ def _get_regime_V_shapes(
         )
         shapes[name] = tuple(len(v) for v in state_action_space.states.values())
     return shapes
+
+
+@dataclass(frozen=True)
+class _DiagRow:
+    """Metadata captured during `run_compiled_solve`'s hot loop.
+
+    Stored refs only — no device work — so appending these rows to a
+    list inside the backward induction loop costs essentially nothing.
+    The expensive part (NaN-diagnostic enrichment via
+    `compute_intermediates`) runs at most once per solve, on the first
+    offending row found post-loop.
+    """
+
+    regime_name: RegimeName
+    period: int
+    age: float
+    state_action_space: object
+    """Typed as `object` to avoid a heavy import cycle; consumers know the
+    actual runtime type from the `max_Q_over_a` signature."""
+    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND]
+    regime_params: FlatRegimeParams
+    compute_intermediates: Callable | None
+
+
+@dataclass(frozen=True)
+class _StackedReductions:
+    """Per-stat JAX arrays stacked across all diag rows; still on device.
+
+    `mins` / `maxs` / `means` are `None` when the solve ran with a log
+    level below `debug` — the GPU wasn't asked to compute those
+    statistics so there's nothing to stack.
+    """
+
+    mins: FloatND | None
+    maxs: FloatND | None
+    means: FloatND | None
+    any_nan: FloatND
+    any_inf: FloatND
+
+
+def _emit_deferred_diagnostics(
+    *,
+    logger: logging.Logger,
+    partition_shape: tuple[int, ...],
+    partition_coord_labels: tuple[str, ...],
+    diag_rows: list[_DiagRow],
+    reductions: _StackedReductions,
+    solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
+) -> None:
+    """Flush async diagnostics to host, emit logs, raise on NaN.
+
+    Exactly five host transfers (one per stat stack). Ordering: NaN check
+    first so we raise before emitting any stats lines the user wouldn't
+    see anyway; inf check next (warning only); per-period stats last at
+    debug log level. The `.tolist()` calls are what actually block on
+    the GPU queue — everything above this function ran async.
+    """
+    any_nan = reductions.any_nan.tolist()
+    any_inf = reductions.any_inf.tolist()
+
+    _raise_if_nan(
+        diag_rows=diag_rows,
+        any_nan_per_row=any_nan,
+        partition_shape=partition_shape,
+        partition_coord_labels=partition_coord_labels,
+        solution=solution,
+    )
+    _warn_if_inf(
+        logger=logger,
+        diag_rows=diag_rows,
+        any_inf_per_row=any_inf,
+        partition_shape=partition_shape,
+        partition_coord_labels=partition_coord_labels,
+    )
+
+    if (
+        not logger.isEnabledFor(logging.DEBUG)
+        or reductions.mins is None
+        or reductions.maxs is None
+        or reductions.means is None
+    ):
+        return
+
+    mins = reductions.mins.tolist()
+    maxs = reductions.maxs.tolist()
+    means = reductions.means.tolist()
+    if partition_shape:
+        for row, row_mins, row_maxs, row_means in zip(
+            diag_rows, mins, maxs, means, strict=True
+        ):
+            for coord, v_min, v_max, v_mean in zip(
+                partition_coord_labels, row_mins, row_maxs, row_means, strict=True
+            ):
+                logger.debug(
+                    "  %s  age %s, %s   V min=%.3g  max=%.3g  mean=%.3g",
+                    row.regime_name,
+                    row.age,
+                    coord,
+                    v_min,
+                    v_max,
+                    v_mean,
+                )
+    else:
+        for row, v_min, v_max, v_mean in zip(diag_rows, mins, maxs, means, strict=True):
+            logger.debug(
+                "  %s  age %s   V min=%.3g  max=%.3g  mean=%.3g",
+                row.regime_name,
+                row.age,
+                v_min,
+                v_max,
+                v_mean,
+            )
+
+
+def _raise_if_nan(
+    *,
+    diag_rows: list[_DiagRow],
+    any_nan_per_row: list,  # list[bool] or list[list[bool]] depending on partition
+    partition_shape: tuple[int, ...],
+    partition_coord_labels: tuple[str, ...],
+    solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
+) -> None:
+    """Find the first NaN-bearing (regime, period, partition) and raise."""
+    for row, flag in zip(diag_rows, any_nan_per_row, strict=True):
+        if partition_shape:
+            for part_idx, bad in enumerate(flag):
+                if bad:
+                    _raise_at(
+                        row=row,
+                        partition_idx=part_idx,
+                        partition_coord_labels=partition_coord_labels,
+                        solution=solution,
+                    )
+        elif flag:
+            _raise_at(
+                row=row,
+                partition_idx=None,
+                partition_coord_labels=partition_coord_labels,
+                solution=solution,
+            )
+
+
+def _raise_at(
+    *,
+    row: _DiagRow,
+    partition_idx: int | None,
+    partition_coord_labels: tuple[str, ...],
+    solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
+) -> None:
+    """Run the enriched NaN diagnostic on a single offending row and raise."""
+    V_arr = solution[row.period][row.regime_name]
+    if partition_idx is not None:
+        V_slice = V_arr[partition_idx]
+        coord_suffix = f"[{partition_coord_labels[partition_idx]}]"
+    else:
+        V_slice = V_arr
+        coord_suffix = ""
+    validate_V(
+        V_arr=V_slice,
+        age=row.age,
+        regime_name=f"{row.regime_name}{coord_suffix}",
+        partial_solution=solution,
+        compute_intermediates=row.compute_intermediates,
+        state_action_space=row.state_action_space,  # ty: ignore[invalid-argument-type]
+        next_regime_to_V_arr=row.next_regime_to_V_arr,
+        internal_params=row.regime_params,
+        period=row.period,
+    )
+
+
+def _warn_if_inf(
+    *,
+    logger: logging.Logger,
+    diag_rows: list[_DiagRow],
+    any_inf_per_row: list,
+    partition_shape: tuple[int, ...],
+    partition_coord_labels: tuple[str, ...],
+) -> None:
+    """Emit a warning per (regime, period, partition) with Inf values."""
+    for row, flag in zip(diag_rows, any_inf_per_row, strict=True):
+        if partition_shape:
+            for part_idx, bad in enumerate(flag):
+                if bad:
+                    logger.warning(
+                        "Inf in V_arr for regime '%s' at age %s, %s",
+                        row.regime_name,
+                        row.age,
+                        partition_coord_labels[part_idx],
+                    )
+        elif flag:
+            logger.warning(
+                "Inf in V_arr for regime '%s' at age %s",
+                row.regime_name,
+                row.age,
+            )
+
+
+def _build_partition_coord_labels(*, partition_grid: PartitionGrid) -> tuple[str, ...]:
+    """Precompute one human-readable coordinate label per flat partition index.
+
+    Example output for `partition_grid = {"edu": Edu, "prod": Prod}` with
+    two codes each: `("edu=0, prod=0", "edu=0, prod=1", ...)`.
+
+    Returns an empty tuple when `partition_grid` is empty, which matches
+    the "no partition sweep" case in `CompiledSolve`.
+    """
+    if not partition_grid:
+        return ()
+    return tuple(
+        ", ".join(f"{name}={int(code)}" for name, code in point.items())
+        for point in iterate_partition_points(partition_grid=partition_grid)
+    )

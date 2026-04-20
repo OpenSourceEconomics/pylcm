@@ -134,28 +134,35 @@ def lift_partitions_from_regime(
         simulate know which scalars to inject for this regime).
 
     """
-    to_strip = {name for name in partition_names if name in regime.states}
-    if not to_strip:
+    # Walk `regime.states` in the user-declared insertion order so the
+    # resulting `partitions` (and the reduced states) retain a
+    # deterministic axis ordering across processes. Using
+    # `partition_names` as a membership set — not as the iteration
+    # driver — avoids hash-randomised set ordering leaking into the
+    # partition axis layout (visible as shape (2, 3, 10) vs (3, 2, 10)
+    # swaps between runs under different `PYTHONHASHSEED` values).
+    partitions: dict[str, DiscreteGrid] = {}
+    reduced_states: dict[str, object] = {}
+    for name, grid in regime.states.items():
+        if name in partition_names:
+            assert isinstance(grid, DiscreteGrid)  # noqa: S101 — model-level check
+            partitions[name] = grid
+        else:
+            reduced_states[name] = grid
+
+    if not partitions:
         return regime, MappingProxyType({})
 
-    partitions: dict[str, DiscreteGrid] = {}
-    for name in to_strip:
-        grid = regime.states[name]
-        assert isinstance(grid, DiscreteGrid)  # noqa: S101 — model-level check
-        partitions[name] = grid
-    reduced_states = MappingProxyType(
-        {name: grid for name, grid in regime.states.items() if name not in to_strip}
-    )
     reduced_state_transitions = MappingProxyType(
         {
             name: transition
             for name, transition in regime.state_transitions.items()
-            if name not in to_strip
+            if name not in partitions
         }
     )
     reduced = dataclasses.replace(
         regime,
-        states=reduced_states,
+        states=MappingProxyType(reduced_states),
         state_transitions=reduced_state_transitions,
     )
     return reduced, MappingProxyType(partitions)

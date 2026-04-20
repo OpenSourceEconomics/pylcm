@@ -242,6 +242,7 @@ class Model:
             max_compilation_workers=max_compilation_workers,
             partition_shape=partition_shape,
             regime_partitions=self._regime_partitions,
+            partition_grid=self._partition_grid,
         )
 
         try:
