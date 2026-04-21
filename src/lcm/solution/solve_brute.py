@@ -12,9 +12,13 @@ import jax
 import jax.numpy as jnp
 
 from lcm.ages import AgeGrid
-from lcm.grids import DiscreteGrid
+from lcm.grids import DiscreteGrid, DispatchStrategy
 from lcm.interfaces import InternalRegime
-from lcm.regime_building.partitions import PartitionGrid, iterate_partition_points
+from lcm.regime_building.partitions import (
+    PartitionGrid,
+    iterate_partition_points,
+    model_partition_dispatch,
+)
 from lcm.typing import FlatRegimeParams, FloatND, InternalParams, RegimeName
 from lcm.utils.error_handling import validate_V
 from lcm.utils.logging import (
@@ -168,6 +172,7 @@ def compile_solve(
         logger=logger,
         partition_shape=partition_shape,
         regime_partitions=regime_partitions,
+        partition_dispatch=model_partition_dispatch(partition_grid=partition_grid),
     )
     return CompiledSolve(
         compiled_functions=MappingProxyType(dict(compiled_functions)),
@@ -352,6 +357,7 @@ def _compile_all_functions(
     regime_partitions: Mapping[
         RegimeName, Mapping[str, DiscreteGrid]
     ] = MappingProxyType({}),
+    partition_dispatch: DispatchStrategy | None = None,
 ) -> dict[tuple[RegimeName, int], Callable]:
     """AOT-compile all unique max_Q_over_a functions in parallel.
 
@@ -390,11 +396,15 @@ def _compile_all_functions(
             all_functions[(name, period)] = regime.solve_functions.max_Q_over_a[period]
 
     if partition_shape:
+        assert partition_dispatch is not None, (  # noqa: S101
+            "partition_shape non-empty implies a resolved partition_dispatch"
+        )
         all_functions = _vmap_raw_functions_over_partition_axis(
             all_functions=all_functions,
             internal_regimes=internal_regimes,
             internal_params=internal_params,
             regime_partitions=regime_partitions,
+            partition_dispatch=partition_dispatch,
         )
 
     # If JIT is disabled, return raw functions directly.
@@ -494,8 +504,9 @@ def _vmap_raw_functions_over_partition_axis(
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     internal_params: InternalParams,
     regime_partitions: Mapping[RegimeName, Mapping[str, DiscreteGrid]],
+    partition_dispatch: DispatchStrategy,
 ) -> dict[tuple[RegimeName, int], Callable]:
-    """Wrap each unique raw function once in vmap over the leading partition axis.
+    """Wrap each unique raw function once with the model's partition dispatch.
 
     Within a regime, multiple periods share a raw function (shared-JIT), so
     the per-(regime, raw-func) cache keeps the wrapper object stable across
@@ -512,31 +523,39 @@ def _vmap_raw_functions_over_partition_axis(
     for (name, period), raw_func in all_functions.items():
         cache_key = (name, _func_dedup_key(func=raw_func))
         if cache_key not in wrap_cache:
-            wrap_cache[cache_key] = _wrap_with_partition_vmap(
+            wrap_cache[cache_key] = _wrap_with_partition_dispatch(
                 func=raw_func,
                 internal_regime=internal_regimes[name],
                 internal_params_for_regime=internal_params[name],
                 partition_names_for_regime=frozenset(regime_partitions.get(name, ())),
+                strategy=partition_dispatch,
             )
         wrapped_functions[(name, period)] = wrap_cache[cache_key]
     return wrapped_functions
 
 
-def _wrap_with_partition_vmap(
+def _wrap_with_partition_dispatch(
     *,
     func: Callable,
     internal_regime: InternalRegime,
     internal_params_for_regime: FlatRegimeParams,
     partition_names_for_regime: frozenset[str],
+    strategy: DispatchStrategy,
 ) -> Callable:
-    """Wrap `max_Q_over_a` in `jax.vmap` over the leading partition axis.
+    """Wrap `max_Q_over_a` with the model's partition dispatch strategy.
 
-    The wrap uses a dict-shaped `in_axes` that marks:
+    - `PARTITION_SCAN` → `jax.lax.scan`. Serial sweep, small compiled
+      program, minimal GPU memory.
+    - `PARTITION_VMAP` → `jax.vmap`. Parallel fused kernel, larger
+      compile cost, matches `batch_size=0` memory behaviour but keeps
+      the axis JAX-visible so `shard_map` can later shard it.
 
-    - partition-valued entries of `internal_params` → axis 0
-    - every entry of `next_regime_to_V_arr` → axis 0 (leading partition axis)
-    - everything else (state/action grids, non-partition params, period, age)
-      → None
+    Both paths produce a V-array whose leading axis is the flat
+    partition index; downstream reshape / slice code sees the same
+    shape either way. Regimes that declare no partition dims still get
+    wrapped — their `next_regime_to_V_arr` argument carries the leading
+    partition axis, so the wrap must sweep it even though no
+    partition-valued scalar params are injected.
 
     Args:
         func: Raw `max_Q_over_a` callable (typically a shared-JIT function).
@@ -546,20 +565,29 @@ def _wrap_with_partition_vmap(
         internal_params_for_regime: The regime's params dict; its keys
             define the param kwargs the wrap will forward.
         partition_names_for_regime: Subset of `internal_params` keys that
-            carry a leading partition axis.
+            carry the leading partition axis in this regime.
+        strategy: Partition-dispatch strategy — `PARTITION_SCAN` or
+            `PARTITION_VMAP`. Consistency across all partition dims is
+            enforced at model-build time by `detect_model_partitions`.
 
     Returns:
-        A kw-only callable with the same external signature as `func`, but
-        internally vmap'd over the leading partition axis.
+        A kw-only callable with the same external signature as `func`,
+        internally wrapped with the chosen partition-dispatch primitive.
 
     """
+    if not strategy.is_partition_lifted:
+        msg = (
+            f"_wrap_with_partition_dispatch called with non-partition "
+            f"strategy {strategy!r}."
+        )
+        raise AssertionError(msg)
     state_action_space = internal_regime.state_action_space(
         regime_params=internal_params_for_regime
     )
     # Partition states are supposed to be lifted out of the regime's
     # state-action space by `lift_partitions_from_regime`. If one ever leaks
-    # back in, `top_level_axes[name] = None` below would silently broadcast
-    # where it should vmap, so we stop here with a loud error.
+    # back in, the broadcast path below would silently fuse it into the
+    # inner kernel rather than sweep it at the top level.
     state_action_names = set(state_action_space.states) | set(
         state_action_space.actions
     )
@@ -571,11 +599,11 @@ def _wrap_with_partition_vmap(
             f"to remove them before this wrap."
         )
         raise AssertionError(msg)
+
     # Classify each top-level kwarg: "per-partition-point" (leading
-    # axis = partition_size, scan unpacks it one slice per iteration)
-    # vs. "broadcast" (closed over by the scan body). Partition scalars
-    # and `next_regime_to_V_arr` are per-partition-point; state / action
-    # grids, non-partition params, period, and age are broadcast.
+    # axis = partition_size) vs. "broadcast". Partition scalars and
+    # `next_regime_to_V_arr` are per-partition-point; state/action
+    # grids, non-partition params, period and age are broadcast.
     is_per_point: dict[str, bool] = {}
     for name in state_action_space.states:
         is_per_point[name] = False
@@ -587,14 +615,27 @@ def _wrap_with_partition_vmap(
     is_per_point["period"] = False
     is_per_point["age"] = False
 
+    if strategy is DispatchStrategy.PARTITION_SCAN:
+        return _wrap_with_partition_scan(func=func, is_per_point=is_per_point)
+    if strategy is DispatchStrategy.PARTITION_VMAP:
+        return _wrap_with_partition_vmap(func=func, is_per_point=is_per_point)
+    msg = f"Unexpected partition dispatch {strategy!r}."
+    raise AssertionError(msg)
+
+
+def _wrap_with_partition_scan(
+    *, func: Callable, is_per_point: Mapping[str, bool]
+) -> Callable:
+    """Wrap `func` in `jax.lax.scan` over the leading partition axis.
+
+    `jax.lax.scan` unpacks `xs` along axis 0 once per iteration and
+    carries `broadcast` values closed over through the body. Trades the
+    fused-mega-kernel cost of `PARTITION_VMAP` for serial execution
+    inside an XLA while-loop. The axis stays JAX-visible so `shard_map`
+    can later swap in at this wrap site.
+    """
+
     def call_as_kwargs(**kwargs: object) -> FloatND:
-        # `jax.lax.scan` unpacks `xs` along axis 0 once per iteration
-        # and carries `broadcast` values closed over through the body.
-        # The serialised-over-partition approach trades vmap's parallel
-        # fused mega-kernel (which blows up XLA compile time on aca /
-        # Mahler-Yum scale models) for an in-kernel while-loop — the
-        # axis stays JAX-visible so a future `shard_map` swap is still
-        # a one-liner at the wrap site.
         broadcast = {
             name: kwargs[name]
             for name, per_point in is_per_point.items()
@@ -613,6 +654,56 @@ def _wrap_with_partition_vmap(
         return V_stacked
 
     return call_as_kwargs
+
+
+def _wrap_with_partition_vmap(
+    *, func: Callable, is_per_point: Mapping[str, bool]
+) -> Callable:
+    """Wrap `func` in `jax.vmap` over the leading partition axis.
+
+    `jax.vmap` produces a single fused XLA program whose compiled size
+    scales with `N * (other state sizes)`. On a single GPU this is
+    equivalent to `FUSED_VMAP` with partition bookkeeping on top, so
+    `PARTITION_VMAP`'s benefit appears once `shard_map` multi-device
+    dispatch lands — `shard_map` shards the partition axis across
+    devices and `jax.vmap` keeps per-device parallelism.
+    """
+
+    def call_as_kwargs(**kwargs: object) -> FloatND:
+        # `jax.jit` canonicalises kwargs into alphabetical order before
+        # tracing, so the `in_axes` pytree keys must match that order
+        # exactly — otherwise vmap sees a structure mismatch.
+        sorted_kwargs = MappingProxyType(
+            {name: kwargs[name] for name in sorted(kwargs)}
+        )
+        in_axes = MappingProxyType(
+            {
+                name: _broadcast_axis_spec_like(
+                    axis=(0 if is_per_point[name] else None),
+                    value=sorted_kwargs[name],
+                )
+                for name in sorted_kwargs
+            }
+        )
+
+        def _call_with_kwargs_dict(kwargs_dict: Mapping[str, object]) -> FloatND:
+            return func(**kwargs_dict)
+
+        return jax.vmap(_call_with_kwargs_dict, in_axes=(in_axes,))(sorted_kwargs)
+
+    return call_as_kwargs
+
+
+def _broadcast_axis_spec_like(*, axis: object, value: object) -> object:
+    """Expand a scalar `axis` spec into a pytree matching `value`'s structure.
+
+    `jax.vmap`'s `in_axes` supports a prefix-tree form where a scalar
+    (e.g. `None`) is interpreted as "apply to every leaf below". In
+    practice some JAX versions are stricter and require the `in_axes`
+    pytree to match the value structure exactly, so we expand here.
+    """
+    leaves, treedef = jax.tree_util.tree_flatten(value)
+    return jax.tree_util.tree_unflatten(treedef, [axis] * len(leaves))
 
 
 def _func_dedup_key(*, func: Callable) -> Hashable:

@@ -30,7 +30,7 @@ import jax.numpy as jnp
 from jax import Array
 
 from lcm.exceptions import ModelInitializationError
-from lcm.grids import DiscreteGrid
+from lcm.grids import DiscreteGrid, DispatchStrategy
 from lcm.regime import Regime
 from lcm.typing import FloatND, InternalParams, RegimeName, ScalarInt
 
@@ -108,6 +108,18 @@ def detect_model_partitions(
                     state_name=name,
                 )
 
+    _fail_if_partition_only_in_terminal_regimes(
+        candidates=candidates, seen_in_non_terminal=seen_in_non_terminal
+    )
+    _fail_if_partition_dispatch_mixed(candidates=candidates)
+
+    return MappingProxyType(candidates)
+
+
+def _fail_if_partition_only_in_terminal_regimes(
+    *, candidates: Mapping[str, DiscreteGrid], seen_in_non_terminal: set[str]
+) -> None:
+    """Partition states must have an entry point via `initial_conditions`."""
     for name in candidates:
         if name not in seen_in_non_terminal:
             msg = (
@@ -118,7 +130,42 @@ def detect_model_partitions(
             )
             raise ModelInitializationError(msg)
 
-    return MappingProxyType(candidates)
+
+def _fail_if_partition_dispatch_mixed(
+    *, candidates: Mapping[str, DiscreteGrid]
+) -> None:
+    """All partition-lifted dims in the model must share one DispatchStrategy.
+
+    Supporting mixed strategies would need two different wrap primitives
+    around the same kernel — defer that until a workload actually needs it.
+    """
+    strategies = {grid.dispatch for grid in candidates.values()}
+    if len(strategies) > 1:
+        msg = (
+            f"Multiple partition-lifted DiscreteGrids in the model disagree on "
+            f"`DispatchStrategy`: "
+            f"{sorted(s.name for s in strategies)}. Pick one of "
+            f"`PARTITION_SCAN` or `PARTITION_VMAP` and use it for every "
+            f"partition-lifted dim."
+        )
+        raise ModelInitializationError(msg)
+
+
+def model_partition_dispatch(
+    *,
+    partition_grid: PartitionGrid,
+) -> DispatchStrategy | None:
+    """Return the single `DispatchStrategy` the model's partition dims share.
+
+    Returns `None` when the model has no partition-lifted dims. Any
+    disagreement was already raised by `detect_model_partitions`, so
+    picking the first grid's dispatch is safe.
+    """
+    if not partition_grid:
+        return None
+    # All dims agree — any representative works.
+    first = next(iter(partition_grid.values()))
+    return first.dispatch
 
 
 def _fail_if_partition_dim_has_non_identity_transition(

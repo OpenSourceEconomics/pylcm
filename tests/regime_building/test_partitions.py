@@ -257,6 +257,106 @@ def test_stack_partition_scalars_empty_is_identity():
     assert stacked is internal_params
 
 
+def test_solve_with_partition_vmap_matches_partition_scan():
+    """`PARTITION_VMAP` and `PARTITION_SCAN` compute identical V-arrays.
+
+    Both lift the dim out of the state-action space and sweep it at the
+    top level; only the dispatch primitive (`jax.vmap` vs `jax.lax.scan`)
+    differs. Single-GPU behaviour must be numerically identical.
+    """
+
+    def _build(
+        strategy: DispatchStrategy,
+    ) -> MappingProxyType[int, MappingProxyType[str, FloatND]]:
+        alive = Regime(
+            actions={
+                "consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=20),
+            },
+            states={
+                "wealth": LinSpacedGrid(start=0.1, stop=5.0, n_points=10),
+                "pref_type": DiscreteGrid(TypeGrid, dispatch=strategy),
+            },
+            state_transitions={"wealth": _next_wealth, "pref_type": None},
+            constraints={"borrowing": _borrowing},
+            functions={"utility": _utility},
+            transition=_next_regime,
+            active=lambda age: age <= _FINAL_AGE,
+        )
+
+        def dead_utility() -> float:
+            return 0.0
+
+        dead = Regime(
+            transition=None,
+            functions={"utility": dead_utility},
+            active=lambda age: age > _FINAL_AGE,
+        )
+        model = Model(
+            regimes={"alive": alive, "dead": dead},
+            ages=AgeGrid(start=0, stop=_FINAL_AGE + 1, step="Y"),
+            regime_id_class=_RegimeId,
+        )
+        return model.solve(
+            params={
+                "discount_factor": 0.9,
+                "alive": {"next_regime": {"final_age_alive": _FINAL_AGE}},
+            },
+            log_level="off",
+        )
+
+    V_scan = _build(DispatchStrategy.PARTITION_SCAN)
+    V_vmap = _build(DispatchStrategy.PARTITION_VMAP)
+    for period in V_scan:
+        for regime in V_scan[period]:
+            np.testing.assert_allclose(
+                V_scan[period][regime], V_vmap[period][regime], rtol=1e-6
+            )
+
+
+def test_model_partition_dispatch_mismatch_raises():
+    """Two partition-lifted DiscreteGrids with different DispatchStrategies raise."""
+    alive = Regime(
+        actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=10)},
+        states={
+            "wealth": LinSpacedGrid(start=0.1, stop=5.0, n_points=5),
+            "pref_type": DiscreteGrid(
+                TypeGrid, dispatch=DispatchStrategy.PARTITION_SCAN
+            ),
+            "extra": DiscreteGrid(_TwoCat, dispatch=DispatchStrategy.PARTITION_VMAP),
+        },
+        state_transitions={
+            "wealth": _next_wealth,
+            "pref_type": None,
+            "extra": None,
+        },
+        constraints={"borrowing": _borrowing},
+        functions={
+            "utility": lambda consumption, pref_type, extra: (
+                jnp.log(consumption)
+                + pref_type.astype(jnp.float32)
+                + extra.astype(jnp.float32)
+            )
+        },
+        transition=_next_regime,
+        active=lambda age: age <= _FINAL_AGE,
+    )
+
+    def dead_utility() -> float:
+        return 0.0
+
+    dead = Regime(
+        transition=None,
+        functions={"utility": dead_utility},
+        active=lambda age: age > _FINAL_AGE,
+    )
+    with pytest.raises(ModelInitializationError, match="DispatchStrategy"):
+        Model(
+            regimes={"alive": alive, "dead": dead},
+            ages=AgeGrid(start=0, stop=_FINAL_AGE + 1, step="Y"),
+            regime_id_class=_RegimeId,
+        )
+
+
 def test_solve_handles_multi_dimensional_partition_shape():
     """Multi-axis partition_shape — e.g. `(3, 2)` — solves without errors.
 
