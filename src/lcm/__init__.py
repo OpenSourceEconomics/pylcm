@@ -33,6 +33,7 @@ from lcm._version import __version__
 from lcm.ages import AgeGrid
 from lcm.grids import (
     DiscreteGrid,
+    DispatchStrategy,
     IrregSpacedGrid,
     LinSpacedGrid,
     LogSpacedGrid,
@@ -65,6 +66,7 @@ jax.tree_util.register_pytree_node(
 __all__ = [
     "AgeGrid",
     "DiscreteGrid",
+    "DispatchStrategy",
     "IrregSpacedGrid",
     "LinSpacedGrid",
     "LogSpacedGrid",

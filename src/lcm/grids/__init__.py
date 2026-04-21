@@ -1,3 +1,4 @@
+from lcm.grids._dispatch import DispatchStrategy
 from lcm.grids.base import Grid
 from lcm.grids.categorical import categorical, validate_category_class
 from lcm.grids.continuous import (
@@ -17,6 +18,7 @@ from lcm.grids.piecewise import (
 __all__ = [
     "ContinuousGrid",
     "DiscreteGrid",
+    "DispatchStrategy",
     "Grid",
     "IrregSpacedGrid",
     "LinSpacedGrid",
