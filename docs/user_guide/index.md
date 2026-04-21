@@ -15,6 +15,7 @@ philosophy. The remaining pages cover individual topics in depth.
 - [Defining Models](defining_models.md)
 - [Regimes](regimes.ipynb)
 - [Grids](grids.md)
+- [Dispatch Strategies](dispatch.md)
 - [Transitions](transitions.ipynb)
 - [Shocks](shocks.md)
 - [Parameters](parameters.md)

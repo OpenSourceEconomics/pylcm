@@ -61,6 +61,12 @@ When used as an **action**, no further configuration is needed. When used as a
 **state**, the transition is specified via `state_transitions` on the `Regime` — see
 [Transitions](transitions.ipynb).
 
+For state-space dimensions, `DiscreteGrid` accepts a `dispatch=` kwarg that controls how
+the dim is compiled into the Bellman kernel — trading memory for parallelism, and
+optionally lifting the dim out of the state-action space so a later multi-GPU release
+can shard across it. See [Dispatch Strategies](dispatch.md) for the four options, when
+to pick each, and the full trade-off table.
+
 ## Continuous Grids
 
 ### LinSpacedGrid

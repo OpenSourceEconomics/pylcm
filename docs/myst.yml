@@ -41,6 +41,7 @@ project:
         - file: user_guide/defining_models.md
         - file: user_guide/regimes.ipynb
         - file: user_guide/grids.md
+        - file: user_guide/dispatch.md
         - file: user_guide/transitions.ipynb
         - file: user_guide/shocks.md
         - file: user_guide/parameters.md
