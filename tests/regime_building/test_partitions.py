@@ -19,11 +19,13 @@ import pytest
 from lcm import (
     AgeGrid,
     DiscreteGrid,
+    DispatchStrategy,
     LinSpacedGrid,
     Model,
     Regime,
     categorical,
 )
+from lcm.exceptions import ModelInitializationError
 from lcm.regime_building.partitions import (
     detect_model_partitions,
     iterate_partition_points,
@@ -95,7 +97,9 @@ def _make_model() -> Model:
         },
         states={
             "wealth": LinSpacedGrid(start=0.1, stop=5.0, n_points=10),
-            "pref_type": DiscreteGrid(TypeGrid),
+            "pref_type": DiscreteGrid(
+                TypeGrid, dispatch=DispatchStrategy.PARTITION_SCAN
+            ),
         },
         state_transitions={
             "wealth": _next_wealth,
@@ -123,20 +127,25 @@ def _make_model() -> Model:
     )
 
 
-def test_detect_partitions_identifies_discrete_none():
-    """`detect_model_partitions` picks up a DiscreteGrid state with None transition."""
+def test_detect_partitions_identifies_opt_in_dispatch():
+    """Picks up a DiscreteGrid that opted into partition-lifted dispatch."""
     model = _make_model()
     detected = detect_model_partitions(regimes=model.regimes)
     assert set(detected) == {"pref_type"}
     assert detected["pref_type"].categories == ("type_a", "type_b", "type_c")
 
 
-def test_detect_partitions_rejects_non_none_transition():
-    """A state with any non-None transition is never a partition."""
+def test_detect_partitions_skips_default_dispatch():
+    """A DiscreteGrid with default dispatch (FUSED_VMAP) is not a partition.
+
+    Even with `state_transitions[name] = None`, a discrete state without
+    an explicit partition-lifted dispatch stays in the state-action space
+    with an identity transition.
+    """
     regime = Regime(
         actions={},
         states={"x": DiscreteGrid(TypeGrid)},
-        state_transitions={"x": lambda x: x},
+        state_transitions={"x": None},
         functions={"utility": lambda x: x},
         transition=lambda: 0,
         active=lambda age: age < 1,
@@ -144,8 +153,22 @@ def test_detect_partitions_rejects_non_none_transition():
     assert detect_model_partitions(regimes={"r": regime}) == {}
 
 
-def test_detect_partitions_rejects_continuous():
-    """Continuous `None` transitions fall through to identity, not partition."""
+def test_detect_partitions_rejects_non_none_transition():
+    """A partition-lifted state with a non-identity transition is an error."""
+    regime = Regime(
+        actions={},
+        states={"x": DiscreteGrid(TypeGrid, dispatch=DispatchStrategy.PARTITION_SCAN)},
+        state_transitions={"x": lambda x: x},
+        functions={"utility": lambda x: x},
+        transition=lambda: 0,
+        active=lambda age: age < 1,
+    )
+    with pytest.raises(ModelInitializationError, match="partition-lifted"):
+        detect_model_partitions(regimes={"r": regime})
+
+
+def test_detect_partitions_skips_continuous():
+    """Continuous grids have no `dispatch` kwarg, so they are never partition-lifted."""
     regime = Regime(
         actions={"consumption": LinSpacedGrid(start=0.1, stop=1.0, n_points=3)},
         states={"wealth": LinSpacedGrid(start=0.1, stop=1.0, n_points=3)},
@@ -261,8 +284,10 @@ def test_solve_handles_multi_dimensional_partition_shape():
         actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=20)},
         states={
             "wealth": LinSpacedGrid(start=0.1, stop=5.0, n_points=10),
-            "pref_type": DiscreteGrid(TypeGrid),
-            "extra": DiscreteGrid(_TwoCat),
+            "pref_type": DiscreteGrid(
+                TypeGrid, dispatch=DispatchStrategy.PARTITION_SCAN
+            ),
+            "extra": DiscreteGrid(_TwoCat, dispatch=DispatchStrategy.PARTITION_SCAN),
         },
         state_transitions={
             "wealth": _next_wealth,

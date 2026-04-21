@@ -1,11 +1,12 @@
 """Partition-dimension detection, iteration, and result stacking.
 
-A partition dimension is a state declared via `state_transitions[name] = None`
-on a `DiscreteGrid`. The Bellman backward induction never couples values
-across such a dimension, so instead of vectorising over the partition axis
-(doubling memory per added partition dim), pylcm compiles the reduced
-sub-model once and runs it once per point in the Cartesian product of all
-partition grids.
+A partition dimension is a `DiscreteGrid` state the user opted into
+partition dispatch for by setting `dispatch=DispatchStrategy.PARTITION_SCAN`
+or `PARTITION_VMAP` on the grid. The Bellman backward induction never
+couples values across such a dimension, so pylcm lifts the dim out of
+the state-action space and sweeps it at the kernel's top level — either
+by `jax.lax.scan` (`PARTITION_SCAN`) or `jax.vmap` (`PARTITION_VMAP`).
+See `docs/user_guide/dispatch.md` for the trade-offs.
 
 The module exposes two layers:
 
@@ -28,6 +29,7 @@ from types import MappingProxyType
 import jax.numpy as jnp
 from jax import Array
 
+from lcm.exceptions import ModelInitializationError
 from lcm.grids import DiscreteGrid
 from lcm.regime import Regime
 from lcm.typing import FloatND, InternalParams, RegimeName, ScalarInt
@@ -43,72 +45,128 @@ def detect_model_partitions(
     *,
     regimes: Mapping[str, Regime],
 ) -> MappingProxyType[str, DiscreteGrid]:
-    """Identify states that qualify as partition dimensions.
+    """Identify states that the user opted into partition dispatch for.
 
-    A partition dimension is a discrete state whose value truly never
-    changes — not just within one regime, but across the entire model.
-    The qualification is:
+    A partition dimension is a `DiscreteGrid` state the user opted into
+    explicitly by setting `dispatch=DispatchStrategy.PARTITION_SCAN` or
+    `PARTITION_VMAP` on the grid. The qualification is:
 
-    1. The state's grid is a `DiscreteGrid`.
-    2. Every regime that includes the state declares `state_transitions[name]
-       = None` for it (never via a non-None transition or per-target dict).
-    3. All such regimes agree on the `DiscreteGrid.categories`.
+    1. The state's grid is a `DiscreteGrid` with a partition-lifted
+       `dispatch`.
+    2. Every regime that includes the state agrees on the
+       `DispatchStrategy` and on the grid's `DiscreteGrid.categories`.
+    3. Every regime that includes the state either omits it from
+       `state_transitions` (terminal regimes) or sets
+       `state_transitions[name] = None` (non-terminal regimes).
+    4. The state appears in at least one non-terminal regime so an
+       initial value can flow in through `initial_conditions`.
 
-    Why all three: if any regime carries a non-identity transition for the
-    state, the state changes in that regime, so it cannot be modelled as a
-    fixed partition dimension. If categories differ across regimes, the
-    state behaves like different things in different regimes — again not a
-    partition. Continuous fixed states are never lifted (identity
-    transitions remain the correct implementation for them).
+    Items 2-4 are *invariants* rather than heuristics — the detector
+    raises `ModelInitializationError` if the user's model violates
+    them rather than silently skipping the partition.
 
     Args:
         regimes: Mapping of regime names to user-facing regimes.
 
     Returns:
         Immutable mapping of partition name to its `DiscreteGrid`. Empty
-        when no state in the model meets the criteria above.
+        when no state in the model has a partition-lifted dispatch.
+
+    Raises:
+        ModelInitializationError: If a partition-lifted state has a
+            non-identity transition, disagrees with another regime on
+            `dispatch` or `categories`, lives only in terminal regimes,
+            or appears on a non-`DiscreteGrid`.
 
     """
-    candidates: dict[str, DiscreteGrid] = {}
-    disqualified: set[str] = set()
-    # A partition value must come from initial_conditions, which implies the
-    # state exists in at least one non-terminal regime where subjects can
-    # start. Target-only states (declared only in terminal regimes, populated
-    # by per-target transitions at the boundary) are therefore excluded.
+    # A partition value must come from `initial_conditions`, which implies
+    # the state exists in at least one non-terminal regime where subjects
+    # can start.
     seen_in_non_terminal: set[str] = set()
-
     for regime in regimes.values():
         if not regime.terminal:
             seen_in_non_terminal.update(regime.states)
+
+    candidates: dict[str, DiscreteGrid] = {}
+    for regime_name, regime in regimes.items():
         for name, grid in regime.states.items():
-            if name in disqualified:
-                continue
             if not isinstance(grid, DiscreteGrid):
-                disqualified.add(name)
-                candidates.pop(name, None)
                 continue
-            # Terminal regimes require `state_transitions` to be empty by
-            # validation, so the absence of an entry is the terminal-regime
-            # analogue of `None` — the value is carried through unchanged.
-            if not regime.terminal and (
-                regime.state_transitions.get(name, "MISSING") is not None
-            ):
-                disqualified.add(name)
-                candidates.pop(name, None)
+            if not grid.dispatch.is_partition_lifted:
                 continue
+            _fail_if_partition_dim_has_non_identity_transition(
+                regime=regime, regime_name=regime_name, state_name=name
+            )
             existing = candidates.get(name)
             if existing is None:
                 candidates[name] = grid
-            elif existing.categories != grid.categories:
-                disqualified.add(name)
-                candidates.pop(name, None)
-    return MappingProxyType(
-        {
-            name: grid
-            for name, grid in candidates.items()
-            if name in seen_in_non_terminal
-        }
-    )
+            else:
+                _fail_if_partition_dim_disagrees_across_regimes(
+                    existing=existing,
+                    seen=grid,
+                    regime_name=regime_name,
+                    state_name=name,
+                )
+
+    for name in candidates:
+        if name not in seen_in_non_terminal:
+            msg = (
+                f"Partition state '{name}' appears only in terminal regimes. "
+                f"An initial value must flow in through `initial_conditions`, "
+                f"so the state must be declared on at least one non-terminal "
+                f"regime."
+            )
+            raise ModelInitializationError(msg)
+
+    return MappingProxyType(candidates)
+
+
+def _fail_if_partition_dim_has_non_identity_transition(
+    *, regime: Regime, regime_name: str, state_name: str
+) -> None:
+    """Raise if a partition-lifted state has a non-identity transition."""
+    if regime.terminal:
+        # Terminal regimes must have empty `state_transitions` by separate
+        # validation; nothing to check here — the value simply carries through.
+        return
+    transition = regime.state_transitions.get(state_name, "MISSING")
+    if transition is not None:
+        msg = (
+            f"State '{state_name}' has dispatch=PARTITION_* (partition-lifted) "
+            f"on its DiscreteGrid but regime '{regime_name}' declares a "
+            f"non-identity `state_transitions[{state_name!r}]` "
+            f"({transition!r}). Partition-lifted states require the identity "
+            f"transition in every regime — set "
+            f"`state_transitions[{state_name!r}] = None` on regime "
+            f"'{regime_name}' or change the grid's dispatch."
+        )
+        raise ModelInitializationError(msg)
+
+
+def _fail_if_partition_dim_disagrees_across_regimes(
+    *,
+    existing: DiscreteGrid,
+    seen: DiscreteGrid,
+    regime_name: str,
+    state_name: str,
+) -> None:
+    """Raise if two regimes declare the same partition state with mismatched specs."""
+    if existing.categories != seen.categories:
+        msg = (
+            f"Partition state '{state_name}' has inconsistent categories "
+            f"across regimes: {existing.categories} vs {seen.categories} "
+            f"(regime '{regime_name}')."
+        )
+        raise ModelInitializationError(msg)
+    if existing.dispatch is not seen.dispatch:
+        msg = (
+            f"Partition state '{state_name}' has inconsistent dispatch "
+            f"strategies across regimes: {existing.dispatch} vs "
+            f"{seen.dispatch} (regime '{regime_name}'). Every regime must "
+            f"agree on a single `DispatchStrategy` for a given partition "
+            f"state."
+        )
+        raise ModelInitializationError(msg)
 
 
 def lift_partitions_from_regime(

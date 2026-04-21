@@ -5,7 +5,15 @@ from collections.abc import Callable
 import jax.numpy as jnp
 from numpy.testing import assert_array_equal
 
-from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import (
+    AgeGrid,
+    DiscreteGrid,
+    DispatchStrategy,
+    LinSpacedGrid,
+    Model,
+    Regime,
+    categorical,
+)
 from lcm.typing import (
     BoolND,
     ContinuousAction,
@@ -128,7 +136,9 @@ def _make_model(custom_H=None, *, with_pref_type: bool = False):
         "wealth": next_wealth,
     }
     if with_pref_type:
-        working_life_states["pref_type"] = DiscreteGrid(PrefType, batch_size=1)
+        working_life_states["pref_type"] = DiscreteGrid(
+            PrefType, dispatch=DispatchStrategy.PARTITION_SCAN
+        )
         working_life_state_transitions["pref_type"] = None
 
     working_life_regime = Regime(
