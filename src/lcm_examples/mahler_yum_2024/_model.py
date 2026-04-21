@@ -35,6 +35,7 @@ from lcm.typing import (
     FloatND,
     Int1D,
     Period,
+    RegimeName,
 )
 from lcm.utils.dispatchers import productmap
 
@@ -110,28 +111,10 @@ class ProductivityShock:
     val4: int
 
 
-@categorical(ordered=True)
-class DiscountType:
-    small: int
-    large: int
-
-
 @categorical(ordered=False)
 class RegimeId:
     alive: int
     dead: int
-
-
-def discount_factor(
-    discount_type: DiscreteState,
-    discount_factor_by_type: FloatND,
-) -> FloatND:
-    """Per-period discount factor indexed by `discount_type`.
-
-    Wired as a DAG function on `ALIVE_REGIME.functions`; pylcm's default
-    Bellman aggregator picks the scalar up as a DAG-output H input.
-    """
-    return discount_factor_by_type[discount_type]
 
 
 def utility(
@@ -326,7 +309,6 @@ ALIVE_REGIME = Regime(
         "education": DiscreteGrid(Education),
         "productivity": DiscreteGrid(ProductivityType),
         "health_type": DiscreteGrid(HealthType),
-        "discount_type": DiscreteGrid(DiscountType, batch_size=1),
     },
     state_transitions={
         "wealth": next_wealth,
@@ -335,7 +317,6 @@ ALIVE_REGIME = Regime(
         "education": None,
         "productivity": None,
         "health_type": None,
-        "discount_type": None,
     },
     actions={
         "labor_supply": DiscreteGrid(LaborSupply),
@@ -355,7 +336,6 @@ ALIVE_REGIME = Regime(
         "taxed_income": taxed_income,
         "pension": pension,
         "scaled_productivity_shock": scaled_productivity_shock,
-        "discount_factor": discount_factor,
     },
     constraints={
         "retirement_constraint": retirement_constraint,
@@ -363,26 +343,10 @@ ALIVE_REGIME = Regime(
     },
 )
 
-
-def dead_utility(discount_type: DiscreteState) -> FloatND:  # noqa: ARG001
-    """Return zero utility for the dead regime.
-
-    `discount_type` is in the signature so pylcm's state-usage check
-    accepts the state declaration.
-
-    TODO: Workaround until pylcm supports first-class partitioning of
-    types; at that point the dummy arg can disappear.
-    """
-    return jnp.asarray(0.0)
-
-
 DEAD_REGIME = Regime(
     transition=None,
     active=partial(dead_is_active, initial_age=ages.values[0]),
-    states={
-        "discount_type": DiscreteGrid(DiscountType, batch_size=1),
-    },
-    functions={"utility": dead_utility},
+    functions={"utility": lambda: 0.0},
 )
 
 MAHLER_YUM_MODEL = Model(
@@ -618,13 +582,12 @@ def create_inputs(
     xi: dict[str, dict[str, list[float]]],
     income_process: dict[str, dict[str, float] | float],
     chi: list[float],
-    beta: dict[str, float],
     psi: float,
     bb: float,
     conp: float,
     penre: float,
     sigma: int,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[RegimeName, Any], dict[RegimeName, Any], Int1D]:
     # Create variable grids from supplied parameters
     income_grid = create_income_grid(income_process)  # ty: ignore[invalid-argument-type]
     chimax_grid = create_chimaxgrid(chi)
@@ -634,10 +597,6 @@ def create_inputs(
     phi_grid = create_phigrid(nu)
 
     regime_transition = create_regime_transition_grid()
-
-    discount_factor_by_type = jnp.array(
-        [beta["mean"] - beta["std"], beta["mean"] + beta["std"]]
-    )
 
     params = {
         "disutil": {"phigrid": phi_grid},
@@ -649,7 +608,6 @@ def create_inputs(
         "scaled_productivity_shock": {"sigx": jnp.sqrt(income_process["sigx"])},  # ty: ignore[invalid-argument-type]
         "next_health": {"probs_array": tr2yp_grid},
         "next_regime": {"probs_array": regime_transition},
-        "discount_factor": {"discount_factor_by_type": discount_factor_by_type},
     }
 
     # Create initial states for the simulation
@@ -688,6 +646,7 @@ def create_inputs(
     initial_productivity = prod[types]
     initial_effort = jnp.searchsorted(eff_grid, init_distr_2b2t2h[:, 2][types])
     initial_adjustment_cost = random.uniform(new_keys[1], (n_simulation_subjects,))
+    discount_factor_type = discount[types]
     prod_dist = jax.lax.fori_loop(
         0,
         200,
@@ -707,6 +666,5 @@ def create_inputs(
         "adjustment_cost": initial_adjustment_cost,
         "education": initial_education,
         "productivity": initial_productivity,
-        "discount_type": discount[types],
     }
-    return params, initial_states
+    return params, initial_states, discount_factor_type
