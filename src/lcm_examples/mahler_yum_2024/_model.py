@@ -326,7 +326,7 @@ ALIVE_REGIME = Regime(
         "education": DiscreteGrid(Education),
         "productivity": DiscreteGrid(ProductivityType),
         "health_type": DiscreteGrid(HealthType),
-        "discount_type": DiscreteGrid(DiscountType, batch_size=1),
+        "discount_type": DiscreteGrid(DiscountType),
     },
     state_transitions={
         "wealth": next_wealth,
@@ -380,7 +380,7 @@ DEAD_REGIME = Regime(
     transition=None,
     active=partial(dead_is_active, initial_age=ages.values[0]),
     states={
-        "discount_type": DiscreteGrid(DiscountType, batch_size=1),
+        "discount_type": DiscreteGrid(DiscountType),
     },
     functions={"utility": dead_utility},
 )
