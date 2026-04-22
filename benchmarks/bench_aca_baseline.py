@@ -48,13 +48,24 @@ class AcaBaseline:
     warmup_time = 0
 
     def _build(self) -> None:
+        from aca_model.agent.preferences import BenchmarkPrefType
         from aca_model.benchmark import (
             create_benchmark_model,
             get_benchmark_initial_conditions,
             get_benchmark_params,
         )
 
-        self.model = create_benchmark_model()
+        from lcm import DiscreteGrid, DispatchStrategy
+
+        # Partition-lifted pref_type so the benchmark kernel runs one
+        # Bellman compile per partition point with a JAX-visible sweep.
+        # aca-model's default is fused vmap (for compatibility with
+        # pylcm versions that pre-date `DispatchStrategy`); the PR #331
+        # benchmark intentionally exercises the partition path.
+        pref_type_grid = DiscreteGrid(
+            BenchmarkPrefType, dispatch=DispatchStrategy.PARTITION_SCAN
+        )
+        self.model = create_benchmark_model(pref_type_grid=pref_type_grid)
         _, self.model_params = get_benchmark_params()
         self.initial_conditions = get_benchmark_initial_conditions(
             model=self.model, n_subjects=_N_SUBJECTS, seed=0
