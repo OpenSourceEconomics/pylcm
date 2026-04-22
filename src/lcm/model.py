@@ -384,59 +384,80 @@ class Model:
             simulation_output_dtypes=self.simulation_output_dtypes,
             logger=log,
         )
-        # Pre-split a master key into one sub-key per enumerated partition
-        # group so stochastic transitions across groups use independent key
-        # streams (`jax.random.split` produces cryptographically independent
-        # streams; `seed + group_index` produces adjacent Threefry streams
-        # that are correlated).
-        groups = list(
-            group_subjects_by_partition(
-                initial_conditions=initial_conditions,
-                partition_grid=self._partition_grid,
-            )
-        )
-        master_seed = draw_random_seed() if seed is None else seed
-        group_keys = jax.random.split(jax.random.key(seed=master_seed), len(groups))
-        sub_results: list[SimulationResult] = []
-        for group_index, (partition_point, subject_mask) in enumerate(groups):
-            if not bool(jnp.any(subject_mask)):
-                continue
-            partition_params = inject_partition_scalars(
-                internal_params=internal_params,
-                partition_point=partition_point,
-                regime_partitions=self._regime_partitions,
-            )
+        if not self._partition_grid:
+            # No-partition fast path: skip the grouping / masking / merge
+            # wrappers entirely. For large `n_subjects` the mask-copy of
+            # every initial-conditions array (and the sync on
+            # `bool(jnp.any(all_true_mask))`) are pure overhead and make
+            # simulate meaningfully slower on models that don't use
+            # partition dispatch.
             validate_regime_transitions_all_periods(
                 internal_regimes=self.internal_regimes,
-                internal_params=partition_params,
+                internal_params=internal_params,
                 ages=self.ages,
             )
-            group_conditions = slice_initial_conditions(
-                initial_conditions=initial_conditions, subject_mask=subject_mask
-            )
-            group_V = slice_V_at_partition_point(
+            result = run_compiled_simulate(
+                compiled=compiled,
+                internal_params=internal_params,
+                initial_conditions=initial_conditions,
                 period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-                partition_point=partition_point,
-                partition_grid=self._partition_grid,
+                seed=seed,
+                subject_ids=subject_ids,
             )
-            sub_results.append(
-                run_compiled_simulate(
-                    compiled=compiled,
-                    internal_params=partition_params,
-                    initial_conditions=group_conditions,
-                    period_to_regime_to_V_arr=group_V,
-                    rng_key=group_keys[group_index],
-                    subject_ids=subject_ids[subject_mask],
+        else:
+            # Pre-split a master key into one sub-key per enumerated partition
+            # group so stochastic transitions across groups use independent key
+            # streams (`jax.random.split` produces cryptographically independent
+            # streams; `seed + group_index` produces adjacent Threefry streams
+            # that are correlated).
+            groups = list(
+                group_subjects_by_partition(
+                    initial_conditions=initial_conditions,
+                    partition_grid=self._partition_grid,
                 )
             )
-        result = _merge_sub_simulation_results(
-            sub_results=sub_results,
-            internal_params=internal_params,
-            period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-            internal_regimes=self.internal_regimes,
-            ages=self.ages,
-            simulation_output_dtypes=self.simulation_output_dtypes,
-        )
+            master_seed = draw_random_seed() if seed is None else seed
+            group_keys = jax.random.split(jax.random.key(seed=master_seed), len(groups))
+            sub_results: list[SimulationResult] = []
+            for group_index, (partition_point, subject_mask) in enumerate(groups):
+                if not bool(jnp.any(subject_mask)):
+                    continue
+                partition_params = inject_partition_scalars(
+                    internal_params=internal_params,
+                    partition_point=partition_point,
+                    regime_partitions=self._regime_partitions,
+                )
+                validate_regime_transitions_all_periods(
+                    internal_regimes=self.internal_regimes,
+                    internal_params=partition_params,
+                    ages=self.ages,
+                )
+                group_conditions = slice_initial_conditions(
+                    initial_conditions=initial_conditions, subject_mask=subject_mask
+                )
+                group_V = slice_V_at_partition_point(
+                    period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+                    partition_point=partition_point,
+                    partition_grid=self._partition_grid,
+                )
+                sub_results.append(
+                    run_compiled_simulate(
+                        compiled=compiled,
+                        internal_params=partition_params,
+                        initial_conditions=group_conditions,
+                        period_to_regime_to_V_arr=group_V,
+                        rng_key=group_keys[group_index],
+                        subject_ids=subject_ids[subject_mask],
+                    )
+                )
+            result = _merge_sub_simulation_results(
+                sub_results=sub_results,
+                internal_params=internal_params,
+                period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+                internal_regimes=self.internal_regimes,
+                ages=self.ages,
+                simulation_output_dtypes=self.simulation_output_dtypes,
+            )
         if log_level == "debug" and log_path is not None:
             save_simulate_snapshot(
                 model=self,
