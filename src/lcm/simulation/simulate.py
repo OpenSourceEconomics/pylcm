@@ -106,6 +106,7 @@ def run_compiled_simulate(
         int, MappingProxyType[RegimeName, FloatND]
     ],
     seed: int | None = None,
+    rng_key: Array | None = None,
     subject_ids: Int1D | None = None,
 ) -> SimulationResult:
     """Simulate one partition point's subjects using the compiled bundle.
@@ -121,7 +122,13 @@ def run_compiled_simulate(
             integer regime codes.
         period_to_regime_to_V_arr: Value-function arrays already sliced at this
             partition point (partition axes dropped).
-        seed: Random number seed. If `None`, a random seed is drawn.
+        seed: Random number seed. If `None` and `rng_key` is also `None`, a
+            random seed is drawn. Ignored when `rng_key` is provided.
+        rng_key: Pre-built JAX PRNG key. Takes precedence over `seed`.
+            `Model.simulate` uses this to pass `jax.random.split`-derived
+            keys per partition group so stochastic transitions across groups
+            are independent rather than correlated (which they would be
+            if each group built a key from `seed + group_index`).
         subject_ids: Optional global subject-id array aligned with
             `initial_conditions` row order. Defaults to
             `jnp.arange(n_subjects)`. Pass explicit ids when this call is one
@@ -132,8 +139,10 @@ def run_compiled_simulate(
         SimulationResult for this partition group.
 
     """
-    if seed is None:
-        seed = draw_random_seed()
+    if rng_key is None:
+        if seed is None:
+            seed = draw_random_seed()
+        rng_key = jax.random.key(seed=seed)
 
     internal_regimes = compiled.internal_regimes
     regime_names_to_ids = compiled.regime_names_to_ids
@@ -148,7 +157,7 @@ def run_compiled_simulate(
     initial_states = {k: v for k, v in initial_conditions.items() if k != "regime"}
 
     # Preparations
-    key = jax.random.key(seed=seed)
+    key = rng_key
 
     # The following variables are updated during the forward simulation
     states = build_initial_states(

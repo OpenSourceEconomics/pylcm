@@ -11,7 +11,8 @@ See `docs/user_guide/dispatch.md` for the trade-offs.
 The module exposes two layers:
 
 - **Model-building** (called from `process_regimes`):
-  `detect_model_partitions`, `lift_partitions_from_regime`.
+  `detect_model_partitions`, `model_partition_dispatch`,
+  `lift_partitions_from_regime`.
 - **Solve / simulate runtime** (called from `Model.solve` / `Model.simulate`):
   `iterate_partition_points`, `stack_partition_scalars`,
   `inject_partition_scalars`, `group_subjects_by_partition`,
@@ -116,41 +117,6 @@ def detect_model_partitions(
     return MappingProxyType(candidates)
 
 
-def _fail_if_partition_only_in_terminal_regimes(
-    *, candidates: Mapping[str, DiscreteGrid], seen_in_non_terminal: set[str]
-) -> None:
-    """Partition states must have an entry point via `initial_conditions`."""
-    for name in candidates:
-        if name not in seen_in_non_terminal:
-            msg = (
-                f"Partition state '{name}' appears only in terminal regimes. "
-                f"An initial value must flow in through `initial_conditions`, "
-                f"so the state must be declared on at least one non-terminal "
-                f"regime."
-            )
-            raise ModelInitializationError(msg)
-
-
-def _fail_if_partition_dispatch_mixed(
-    *, candidates: Mapping[str, DiscreteGrid]
-) -> None:
-    """All partition-lifted dims in the model must share one DispatchStrategy.
-
-    Supporting mixed strategies would need two different wrap primitives
-    around the same kernel — defer that until a workload actually needs it.
-    """
-    strategies = {grid.dispatch for grid in candidates.values()}
-    if len(strategies) > 1:
-        msg = (
-            f"Multiple partition-lifted DiscreteGrids in the model disagree on "
-            f"`DispatchStrategy`: "
-            f"{sorted(s.name for s in strategies)}. Pick one of "
-            f"`PARTITION_SCAN` or `PARTITION_VMAP` and use it for every "
-            f"partition-lifted dim."
-        )
-        raise ModelInitializationError(msg)
-
-
 def model_partition_dispatch(
     *,
     partition_grid: PartitionGrid,
@@ -166,54 +132,6 @@ def model_partition_dispatch(
     # All dims agree — any representative works.
     first = next(iter(partition_grid.values()))
     return first.dispatch
-
-
-def _fail_if_partition_dim_has_non_identity_transition(
-    *, regime: Regime, regime_name: str, state_name: str
-) -> None:
-    """Raise if a partition-lifted state has a non-identity transition."""
-    if regime.terminal:
-        # Terminal regimes must have empty `state_transitions` by separate
-        # validation; nothing to check here — the value simply carries through.
-        return
-    transition = regime.state_transitions.get(state_name, "MISSING")
-    if transition is not None:
-        msg = (
-            f"State '{state_name}' has dispatch=PARTITION_* (partition-lifted) "
-            f"on its DiscreteGrid but regime '{regime_name}' declares a "
-            f"non-identity `state_transitions[{state_name!r}]` "
-            f"({transition!r}). Partition-lifted states require the identity "
-            f"transition in every regime — set "
-            f"`state_transitions[{state_name!r}] = None` on regime "
-            f"'{regime_name}' or change the grid's dispatch."
-        )
-        raise ModelInitializationError(msg)
-
-
-def _fail_if_partition_dim_disagrees_across_regimes(
-    *,
-    existing: DiscreteGrid,
-    seen: DiscreteGrid,
-    regime_name: str,
-    state_name: str,
-) -> None:
-    """Raise if two regimes declare the same partition state with mismatched specs."""
-    if existing.categories != seen.categories:
-        msg = (
-            f"Partition state '{state_name}' has inconsistent categories "
-            f"across regimes: {existing.categories} vs {seen.categories} "
-            f"(regime '{regime_name}')."
-        )
-        raise ModelInitializationError(msg)
-    if existing.dispatch is not seen.dispatch:
-        msg = (
-            f"Partition state '{state_name}' has inconsistent dispatch "
-            f"strategies across regimes: {existing.dispatch} vs "
-            f"{seen.dispatch} (regime '{regime_name}'). Every regime must "
-            f"agree on a single `DispatchStrategy` for a given partition "
-            f"state."
-        )
-        raise ModelInitializationError(msg)
 
 
 def lift_partitions_from_regime(
@@ -520,3 +438,102 @@ def slice_initial_conditions(
     return MappingProxyType(
         {name: arr[subject_mask] for name, arr in initial_conditions.items()}
     )
+
+
+def _fail_if_partition_only_in_terminal_regimes(
+    *, candidates: Mapping[str, DiscreteGrid], seen_in_non_terminal: set[str]
+) -> None:
+    """Partition states must have an entry point via `initial_conditions`."""
+    for name in candidates:
+        if name not in seen_in_non_terminal:
+            msg = (
+                f"Partition state '{name}' appears only in terminal regimes. "
+                f"An initial value must flow in through `initial_conditions`, "
+                f"so the state must be declared on at least one non-terminal "
+                f"regime."
+            )
+            raise ModelInitializationError(msg)
+
+
+def _fail_if_partition_dispatch_mixed(
+    *, candidates: Mapping[str, DiscreteGrid]
+) -> None:
+    """All partition-lifted dims in the model must share one DispatchStrategy.
+
+    Supporting mixed strategies would need two different wrap primitives
+    around the same kernel — defer that until a workload actually needs it.
+    """
+    strategies = {grid.dispatch for grid in candidates.values()}
+    if len(strategies) > 1:
+        msg = (
+            f"Multiple partition-lifted DiscreteGrids in the model disagree on "
+            f"`DispatchStrategy`: "
+            f"{sorted(s.name for s in strategies)}. Pick one of "
+            f"`PARTITION_SCAN` or `PARTITION_VMAP` and use it for every "
+            f"partition-lifted dim."
+        )
+        raise ModelInitializationError(msg)
+
+
+def _fail_if_partition_dim_has_non_identity_transition(
+    *, regime: Regime, regime_name: str, state_name: str
+) -> None:
+    """Raise if a partition-lifted state has a non-identity transition.
+
+    Two distinct user mistakes produce two distinct error messages:
+    - state omitted from `state_transitions` entirely (a non-terminal regime
+      must list every non-shock state);
+    - state listed with a non-`None` (non-identity) transition.
+    """
+    if regime.terminal:
+        # Terminal regimes must have empty `state_transitions` by separate
+        # validation; nothing to check here — the value simply carries through.
+        return
+    if state_name not in regime.state_transitions:
+        msg = (
+            f"State '{state_name}' has dispatch=PARTITION_* (partition-lifted) "
+            f"on its DiscreteGrid but regime '{regime_name}' omits it from "
+            f"`state_transitions`. Partition-lifted states require an explicit "
+            f"identity transition in every non-terminal regime — set "
+            f"`state_transitions[{state_name!r}] = None` on regime "
+            f"'{regime_name}' or change the grid's dispatch."
+        )
+        raise ModelInitializationError(msg)
+    transition = regime.state_transitions[state_name]
+    if transition is not None:
+        msg = (
+            f"State '{state_name}' has dispatch=PARTITION_* (partition-lifted) "
+            f"on its DiscreteGrid but regime '{regime_name}' declares a "
+            f"non-identity `state_transitions[{state_name!r}]` "
+            f"({transition!r}). Partition-lifted states require the identity "
+            f"transition in every regime — set "
+            f"`state_transitions[{state_name!r}] = None` on regime "
+            f"'{regime_name}' or change the grid's dispatch."
+        )
+        raise ModelInitializationError(msg)
+
+
+def _fail_if_partition_dim_disagrees_across_regimes(
+    *,
+    existing: DiscreteGrid,
+    seen: DiscreteGrid,
+    regime_name: str,
+    state_name: str,
+) -> None:
+    """Raise if two regimes declare the same partition state with mismatched specs."""
+    if existing.categories != seen.categories:
+        msg = (
+            f"Partition state '{state_name}' has inconsistent categories "
+            f"across regimes: {existing.categories} vs {seen.categories} "
+            f"(regime '{regime_name}')."
+        )
+        raise ModelInitializationError(msg)
+    if existing.dispatch is not seen.dispatch:
+        msg = (
+            f"Partition state '{state_name}' has inconsistent dispatch "
+            f"strategies across regimes: {existing.dispatch} vs "
+            f"{seen.dispatch} (regime '{regime_name}'). Every regime must "
+            f"agree on a single `DispatchStrategy` for a given partition "
+            f"state."
+        )
+        raise ModelInitializationError(msg)

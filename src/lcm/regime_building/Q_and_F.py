@@ -293,6 +293,8 @@ def get_compute_intermediates(
             batch_sizes=dict.fromkeys(stochastic_variables, 0),
         )
 
+    _build_H_kwargs = _get_build_H_kwargs(functions)
+
     arg_names_of_compute_intermediates = _get_arg_names_of_Q_and_F(
         [
             U_and_F,
@@ -348,7 +350,7 @@ def get_compute_intermediates(
         Q_arr = functions["H"](
             utility=U_arr,
             E_next_V=E_next_V,
-            **_get_build_H_kwargs(functions)(states_actions_params),
+            **_build_H_kwargs(states_actions_params),
         )
 
         return U_arr, F_arr, E_next_V, Q_arr, active_regime_probs

@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
 
+import jax
 import jax.numpy as jnp
 import pandas as pd
 from jax import Array
@@ -42,6 +43,7 @@ from lcm.regime_building.partitions import (
 )
 from lcm.regime_building.processing import InternalRegime
 from lcm.simulation.initial_conditions import validate_initial_conditions
+from lcm.simulation.random import draw_random_seed
 from lcm.simulation.result import SimulationResult, get_simulation_output_dtypes
 from lcm.simulation.simulate import compile_simulate, run_compiled_simulate
 from lcm.solution.solve_brute import compile_solve, run_compiled_solve
@@ -382,13 +384,21 @@ class Model:
             simulation_output_dtypes=self.simulation_output_dtypes,
             logger=log,
         )
-        sub_results: list[SimulationResult] = []
-        for group_index, (partition_point, subject_mask) in enumerate(
+        # Pre-split a master key into one sub-key per enumerated partition
+        # group so stochastic transitions across groups use independent key
+        # streams (`jax.random.split` produces cryptographically independent
+        # streams; `seed + group_index` produces adjacent Threefry streams
+        # that are correlated).
+        groups = list(
             group_subjects_by_partition(
                 initial_conditions=initial_conditions,
                 partition_grid=self._partition_grid,
             )
-        ):
+        )
+        master_seed = draw_random_seed() if seed is None else seed
+        group_keys = jax.random.split(jax.random.key(seed=master_seed), len(groups))
+        sub_results: list[SimulationResult] = []
+        for group_index, (partition_point, subject_mask) in enumerate(groups):
             if not bool(jnp.any(subject_mask)):
                 continue
             partition_params = inject_partition_scalars(
@@ -409,18 +419,13 @@ class Model:
                 partition_point=partition_point,
                 partition_grid=self._partition_grid,
             )
-            # Derive a distinct seed per partition group so stochastic
-            # transitions do not draw identical key streams across groups.
-            # `seed=None` still hits `draw_random_seed()` independently per
-            # call, so no derivation is needed.
-            group_seed = None if seed is None else seed + group_index
             sub_results.append(
                 run_compiled_simulate(
                     compiled=compiled,
                     internal_params=partition_params,
                     initial_conditions=group_conditions,
                     period_to_regime_to_V_arr=group_V,
-                    seed=group_seed,
+                    rng_key=group_keys[group_index],
                     subject_ids=subject_ids[subject_mask],
                 )
             )

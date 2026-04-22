@@ -310,8 +310,10 @@ def _compute_metadata(
     for regime_name, regime in internal_regimes.items():
         vi = regime.variable_info
         # Partition dimensions were lifted out of `variable_info` but the
-        # simulation output must still surface them as "state" columns —
-        # every subject's value is tracked in `raw_results.states`.
+        # simulation output must still surface them as "state" columns.
+        # Per-subject partition values are carried through unchanged from
+        # the initial conditions into `raw_results.states` (one column per
+        # partition name, constant across periods) by `build_initial_states`.
         states = tuple(vi.query("is_state").index.tolist()) + tuple(regime.partitions)
         actions = tuple(vi.query("is_action").index.tolist())
         regime_to_states[regime_name] = states

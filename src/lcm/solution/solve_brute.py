@@ -741,7 +741,7 @@ def _get_regime_V_shapes(
         internal_params: Regime parameters (needed for runtime grid shapes).
 
     Returns:
-        Dict of regime names to V array shapes.
+        dict of regime names to V array shapes.
 
     """
     shapes: dict[RegimeName, tuple[int, ...]] = {}
@@ -765,14 +765,24 @@ class _DiagRow:
     """
 
     regime_name: RegimeName
+    """Name of the regime whose V-array this row summarises."""
     period: int
+    """Period index in the backward-induction loop."""
     age: float
+    """Age corresponding to `period` (pulled off `AgeGrid.values`)."""
     state_action_space: object
     """Typed as `object` to avoid a heavy import cycle; consumers know the
     actual runtime type from the `max_Q_over_a` signature."""
     next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND]
+    """Incoming next-period V-arrays (one leading partition axis when the
+    solve is partition-lifted). Sliced at the offending partition point
+    before being passed to `compute_intermediates`."""
     regime_params: FlatRegimeParams
+    """Flat regime parameters used at this (regime, period)."""
     compute_intermediates: Callable | None
+    """Optional closure that recomputes U / F / E[V] / Q for NaN-diagnostic
+    enrichment. `None` when the regime has no compute-intermediates
+    closure (e.g. terminal periods)."""
 
 
 @dataclass(frozen=True)
@@ -785,10 +795,20 @@ class _StackedReductions:
     """
 
     mins: FloatND | None
+    """Per-row min of V across the state-action axes, or `None` below
+    debug log level."""
     maxs: FloatND | None
+    """Per-row max of V across the state-action axes, or `None` below
+    debug log level."""
     means: FloatND | None
+    """Per-row mean of V across the state-action axes, or `None` below
+    debug log level."""
     any_nan: FloatND
+    """Per-row boolean flag: any NaN in V at this (regime, period,
+    partition-point)."""
     any_inf: FloatND
+    """Per-row boolean flag: any Inf in V at this (regime, period,
+    partition-point)."""
 
 
 def _emit_deferred_diagnostics(
@@ -905,9 +925,19 @@ def _raise_at(
     if partition_idx is not None:
         V_slice = V_arr[partition_idx]
         coord_suffix = f"[{partition_coord_labels[partition_idx]}]"
+        # `compute_intermediates` was traced against the unlifted
+        # state-action space (partition dims removed), so its
+        # `next_regime_to_V_arr` must also be sliced to a single
+        # partition point. Passing the stacked mapping through would
+        # retrace with a different shape or raise a shape error and
+        # swallow the NaN diagnostic.
+        next_regime_to_V_arr_slice = MappingProxyType(
+            {name: v[partition_idx] for name, v in row.next_regime_to_V_arr.items()}
+        )
     else:
         V_slice = V_arr
         coord_suffix = ""
+        next_regime_to_V_arr_slice = row.next_regime_to_V_arr
     validate_V(
         V_arr=V_slice,
         age=row.age,
@@ -915,7 +945,7 @@ def _raise_at(
         partial_solution=solution,
         compute_intermediates=row.compute_intermediates,
         state_action_space=row.state_action_space,  # ty: ignore[invalid-argument-type]
-        next_regime_to_V_arr=row.next_regime_to_V_arr,
+        next_regime_to_V_arr=next_regime_to_V_arr_slice,
         internal_params=row.regime_params,
         period=row.period,
     )
