@@ -1,11 +1,12 @@
 """End-to-end benchmark for the aca baseline model (benchmark-sized grids).
 
 Uses `aca_model.benchmark.create_benchmark_model()` — the full 18-regime
-aca baseline with tiny continuous grids (`BENCHMARK_GRID_CONFIG`). This
-keeps the expensive parts of aca-baseline's cost structure (compile
-pipeline over 19 regimes, DAG resolution, pref_type batching) while
-shrinking per-call numerical work so the benchmark fits in an asv
-invocation.
+aca baseline with tiny continuous grids (`BENCHMARK_GRID_CONFIG`) and a
+2-type `BenchmarkPrefType` (half the compile + execution volume of the
+production 3-type `PrefType`). The kernel exercised here keeps the
+expensive parts of aca-baseline's cost structure (compile pipeline
+over 19 regimes, DAG resolution, pref_type batching) while shrinking
+per-call numerical work so the benchmark fits in an asv invocation.
 
 Requires the `aca_model` package to be importable. Use the
 `benchmarks-cuda12` pixi environment, which pulls aca-model from its
