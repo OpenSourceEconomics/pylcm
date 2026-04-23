@@ -13998,7 +13998,7 @@ packages:
   timestamp: 1774796815820
 - pypi: ./
   name: pylcm
-  version: 0.0.2.dev159+g356c16ac9.d20260422
+  version: 0.0.2.dev161+g0d19aa85a.d20260423
   sha256: 4193cfc7bd3bc6331b763dba05f54b5f4dc19857b7f0f5a3dc0983e0306c0ff8
   requires_dist:
   - cloudpickle>=3.1.2
