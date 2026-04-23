@@ -2,11 +2,12 @@
 
 Uses `aca_model.benchmark.create_benchmark_model()` — the full 18-regime
 aca baseline with tiny continuous grids (`BENCHMARK_GRID_CONFIG`) and a
-2-type `BenchmarkPrefType` lifted via
-`DispatchStrategy.PARTITION_SCAN`. The kernel exercised here keeps the
-expensive parts of aca-baseline's cost structure (compile pipeline
-over 19 regimes, DAG resolution, partition sweep) while shrinking
-per-call numerical work so the benchmark fits in an asv invocation.
+2-type `BenchmarkPrefType` dispatched via `DispatchStrategy.FUSED_VMAP`
+(the pylcm default). This matches the kernel that PR #328 benchmarks —
+pref_type stays inside the state-action space and is fused with the
+other state / action axes into one XLA program — so PR #331's numbers
+isolate the infrastructure changes (lazy diagnostics, compile/run
+split, `DispatchStrategy` plumbing) from the dispatch-strategy switch.
 
 Requires the `aca_model` package to be importable. Use the
 `benchmarks-cuda12` pixi environment, which pulls aca-model from its
@@ -16,14 +17,6 @@ shipped in aca-model — no aca-data pipeline run required.
 
 ASV wiring notes:
 
-- ASV re-runs `setup()` (and the full AOT compile it carries) before
-  every benchmark method. The class therefore only defines
-  `time_execution` and `track_compilation_time` — two setups, two
-  compiles, already a saving versus the historical three-method shape
-  that also paid a third compile for `peakmem_execution`.
-- GPU peak memory comes from the separate `AcaBaselineGpuPeakMem`
-  subprocess class; CPU peakmem for this GPU-heavy workload does not
-  justify a third compile.
 - We deliberately do *not* use `setup_cache`: ASV's cache machinery
   serialises the cached value through plain `pickle`, which cannot
   handle the `MappingProxyType` leaves that pylcm uses throughout
@@ -35,7 +28,7 @@ import time
 
 from benchmarks import _gpu_mem
 
-_N_SUBJECTS = 100
+_N_SUBJECTS = 1000
 
 
 class AcaBaseline:
@@ -57,13 +50,12 @@ class AcaBaseline:
 
         from lcm import DiscreteGrid, DispatchStrategy
 
-        # Partition-lifted pref_type so the benchmark kernel runs one
-        # Bellman compile per partition point with a JAX-visible sweep.
-        # aca-model's default is fused vmap (for compatibility with
-        # pylcm versions that pre-date `DispatchStrategy`); the PR #331
-        # benchmark intentionally exercises the partition path.
+        # Explicit `FUSED_VMAP` to match PR #328, which pre-dates
+        # `DispatchStrategy` and always fuses pref_type into the
+        # state-action space. Same kernel, same memory footprint;
+        # only the infrastructure around it differs between branches.
         pref_type_grid = DiscreteGrid(
-            BenchmarkPrefType, dispatch=DispatchStrategy.PARTITION_SCAN
+            BenchmarkPrefType, dispatch=DispatchStrategy.FUSED_VMAP
         )
         self.model = create_benchmark_model(pref_type_grid=pref_type_grid)
         _, self.model_params = get_benchmark_params()
@@ -87,6 +79,15 @@ class AcaBaseline:
         self._build()
 
     def time_execution(self) -> None:
+        self.model.simulate(
+            params=self.model_params,
+            initial_conditions=self.initial_conditions,
+            period_to_regime_to_V_arr=None,
+            log_level="off",
+            check_initial_conditions=False,
+        )
+
+    def peakmem_execution(self) -> None:
         self.model.simulate(
             params=self.model_params,
             initial_conditions=self.initial_conditions,
