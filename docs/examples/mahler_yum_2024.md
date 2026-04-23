@@ -27,35 +27,21 @@ from lcm_examples.mahler_yum_2024 import (
     create_inputs,
 )
 
-# Build inputs (params, initial states, discount factor types)
-start_params_without_beta = {k: v for k, v in START_PARAMS.items() if k != "beta"}
-common_params, initial_states, discount_factor_types = create_inputs(
+n_subjects = 1_000
+
+
+params, initial_states = create_inputs(
     seed=7235,
-    n_simulation_subjects=1_000,
-    **start_params_without_beta,
+    n_simulation_subjects=n_subjects,
+    **START_PARAMS,
 )
 
-beta_mean = START_PARAMS["beta"]["mean"]
-beta_std = START_PARAMS["beta"]["std"]
-
-# Select initial states with high discount factor type
-selected_ids_high = jnp.flatnonzero(discount_factor_types)
-initial_states_high = {
-    state: values[selected_ids_high] for state, values in initial_states.items()
-}
-
-# Solve and simulate for high discount factor type
 result = MAHLER_YUM_MODEL.simulate(
-    params={
-        "alive": {
-            "discount_factor": beta_mean + beta_std,
-            **common_params,
-        },
-    },
+    params={"alive": params},
     initial_conditions={
-        **initial_states_high,
+        **initial_states,
         "regime": jnp.full(
-            selected_ids_high.shape[0],
+            n_subjects,
             MAHLER_YUM_MODEL.regime_names_to_ids["alive"],
         ),
     },

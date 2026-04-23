@@ -6,6 +6,7 @@ import jax.numpy as jnp
 from dags import concatenate_functions, with_signature
 from jax import Array
 
+from lcm.regime_building.h_dag import _get_build_H_kwargs
 from lcm.regime_building.next_state import (
     get_next_state_function_for_solution,
     get_next_stochastic_weights_function,
@@ -116,13 +117,7 @@ def get_Q_and_F(
     # Create the state-action value and feasibility function
     # ----------------------------------------------------------------------------------
 
-    # Determine which qname params H accepts so we can filter at runtime.
-    # This is necessary when the params template is the union of multiple
-    # SolveSimulateFunctionPair signatures but each variant only uses its own subset.
-    _H_func = functions["H"]
-    _H_accepted_params = frozenset(
-        get_union_of_args([_H_func]) - {"utility", "E_next_V"}
-    )
+    _build_H_kwargs = _get_build_H_kwargs(functions)
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
         [
@@ -200,10 +195,11 @@ def get_Q_and_F(
                 E_next_V + active_regime_probs[target_regime_name] * next_V_expected_arr
             )
 
-        H_kwargs = {
-            k: v for k, v in states_actions_params.items() if k in _H_accepted_params
-        }
-        Q_arr = _H_func(utility=U_arr, E_next_V=E_next_V, **H_kwargs)
+        Q_arr = functions["H"](
+            utility=U_arr,
+            E_next_V=E_next_V,
+            **_build_H_kwargs(states_actions_params),
+        )
 
         # Handle cases when there is only one state.
         # In that case, Q_arr and F_arr are scalars, but we require arrays as output.
@@ -297,11 +293,6 @@ def get_compute_intermediates(
             batch_sizes=dict.fromkeys(stochastic_variables, 0),
         )
 
-    _H_func = functions["H"]
-    _H_accepted_params = frozenset(
-        get_union_of_args([_H_func]) - {"utility", "E_next_V"}
-    )
-
     arg_names_of_compute_intermediates = _get_arg_names_of_Q_and_F(
         [
             U_and_F,
@@ -354,10 +345,11 @@ def get_compute_intermediates(
             contribution = jnp.average(next_V_stoch, weights=joint)
             E_next_V = E_next_V + active_regime_probs[target_regime_name] * contribution
 
-        H_kwargs = {
-            k: v for k, v in states_actions_params.items() if k in _H_accepted_params
-        }
-        Q_arr = _H_func(utility=U_arr, E_next_V=E_next_V, **H_kwargs)
+        Q_arr = functions["H"](
+            utility=U_arr,
+            E_next_V=E_next_V,
+            **_get_build_H_kwargs(functions)(states_actions_params),
+        )
 
         return U_arr, F_arr, E_next_V, Q_arr, active_regime_probs
 

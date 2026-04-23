@@ -167,19 +167,13 @@ def test_regression_mahler_yum():
     expected = pd.read_pickle(_PRECISION_DIR / "mahler_yum_simulation.pkl")
 
     n_subjects = 4
-    start_params_without_beta = {k: v for k, v in START_PARAMS.items() if k != "beta"}
-    common_params, initial_states, _discount_factor_type = create_inputs(
+    common_params, initial_states = create_inputs(
         seed=0,
         n_simulation_subjects=n_subjects,
-        **start_params_without_beta,  # ty: ignore[invalid-argument-type]
+        **START_PARAMS,  # ty: ignore[invalid-argument-type]
     )
     model = MAHLER_YUM_MODEL
-    params = {
-        "alive": {
-            "discount_factor": START_PARAMS["beta"]["mean"],  # ty: ignore[invalid-argument-type, not-subscriptable]
-            **common_params,
-        },
-    }
+    params = {"alive": common_params}
     initial_conditions = {
         **initial_states,
         "regime": jnp.full(
@@ -190,7 +184,7 @@ def test_regression_mahler_yum():
     }
 
     got = model.simulate(
-        params=params,  # ty: ignore[invalid-argument-type]
+        params=params,
         initial_conditions=initial_conditions,
         period_to_regime_to_V_arr=None,
         seed=12345,

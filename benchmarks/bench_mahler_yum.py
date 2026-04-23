@@ -1,9 +1,4 @@
-"""End-to-end benchmark for the Mahler & Yum (2024) replication model.
-
-Loops over the two discount-factor types externally: one solve+simulate per
-type, covering disjoint subsets of the subject population. Total simulated
-subjects across the two runs equal `_N_SUBJECTS`.
-"""
+"""End-to-end benchmark for the Mahler & Yum (2024) replication model."""
 
 import gc
 import time
@@ -25,67 +20,54 @@ class MahlerYum:
             create_inputs,
         )
 
-        start_params_without_beta = {
-            k: v for k, v in START_PARAMS.items() if k != "beta"
-        }
-
         self.model = MAHLER_YUM_MODEL
-        common_params, initial_states, discount_factor_type = create_inputs(
+        common_params, initial_states = create_inputs(
             seed=0,
             n_simulation_subjects=_N_SUBJECTS,
-            **start_params_without_beta,
+            **START_PARAMS,
         )
-
-        beta_mean = START_PARAMS["beta"]["mean"]
-        beta_std = START_PARAMS["beta"]["std"]
-        alive_id = self.model.regime_names_to_ids["alive"]
-
-        self._runs = []
-        for type_idx, beta in enumerate([beta_mean - beta_std, beta_mean + beta_std]):
-            subset_ids = jnp.flatnonzero(discount_factor_type == type_idx)
-            subset_initial_states = {
-                state: values[subset_ids] for state, values in initial_states.items()
-            }
-            params = {
-                "alive": {
-                    "discount_factor": beta,
-                    **common_params,
-                },
-            }
-            initial_conditions = {
-                **subset_initial_states,
-                "regime": jnp.full(
-                    subset_ids.shape[0],
-                    alive_id,
-                    dtype=jnp.int32,
-                ),
-            }
-            self._runs.append((params, initial_conditions))
-
-    def _simulate_all(self):
-        for params, initial_conditions in self._runs:
-            self.model.simulate(
-                params=params,
-                initial_conditions=initial_conditions,
-                period_to_regime_to_V_arr=None,
-                log_level="off",
-                check_initial_conditions=False,
-            )
+        self.model_params = {"alive": common_params}
+        self.initial_conditions = {
+            **initial_states,
+            "regime": jnp.full(
+                _N_SUBJECTS,
+                self.model.regime_names_to_ids["alive"],
+                dtype=jnp.int32,
+            ),
+        }
 
     def setup(self):
         self._build()
         start = time.perf_counter()
-        self._simulate_all()
+        self.model.simulate(
+            params=self.model_params,
+            initial_conditions=self.initial_conditions,
+            period_to_regime_to_V_arr=None,
+            log_level="off",
+            check_initial_conditions=False,
+        )
         self._compile_time = time.perf_counter() - start
 
     def setup_for_gpu_measurement(self):
         self._build()
 
     def time_execution(self):
-        self._simulate_all()
+        self.model.simulate(
+            params=self.model_params,
+            initial_conditions=self.initial_conditions,
+            period_to_regime_to_V_arr=None,
+            log_level="off",
+            check_initial_conditions=False,
+        )
 
     def peakmem_execution(self):
-        self._simulate_all()
+        self.model.simulate(
+            params=self.model_params,
+            initial_conditions=self.initial_conditions,
+            period_to_regime_to_V_arr=None,
+            log_level="off",
+            check_initial_conditions=False,
+        )
 
     def teardown(self):
         import jax
