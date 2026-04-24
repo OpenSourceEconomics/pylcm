@@ -76,32 +76,6 @@ def log_nan_in_V(
         logger.warning("NaN/Inf in V_arr for regime '%s' at age %s", regime_name, age)
 
 
-def log_V_stats(
-    *,
-    logger: logging.Logger,
-    regime_name: str,
-    V_arr: FloatND,
-) -> None:
-    """Log min/max/mean statistics of a value function array at debug level.
-
-    Args:
-        logger: Logger instance.
-        regime_name: Name of the regime.
-        V_arr: Value function array.
-
-    """
-    if not logger.isEnabledFor(logging.DEBUG):
-        return
-
-    logger.debug(
-        "  - %s: V min=%.3g max=%.3g mean=%.3g",
-        regime_name,
-        float(jnp.min(V_arr)),
-        float(jnp.max(V_arr)),
-        float(jnp.mean(V_arr)),
-    )
-
-
 def log_period_header(
     *,
     logger: logging.Logger,
