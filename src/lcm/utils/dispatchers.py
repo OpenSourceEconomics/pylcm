@@ -234,7 +234,14 @@ def _base_productmap_batched(
 
     """
     parameters = inspect.signature(func).parameters
-
+    reordered_axes = sorted(enumerate(product_axes), key=lambda x: batch_sizes[x[1]] if batch_sizes[x[1]] != 0 else jnp.inf)
+    reverse_reorder = [x[0] for x in reversed(sorted(enumerate(reordered_axes), key=lambda x: x[1][0]))]
+    inserted = []
+    positions = []
+    for axis in reordered_axes:
+            pos = jnp.searchsorted(jnp.asarray(inserted), axis[0])
+            inserted.insert(pos, axis[0])
+            positions.append(pos)
     def batched_vmap(**kwargs: FloatND) -> FloatND:
         non_array_kwargs = {
             key: val for key, val in kwargs.items() if key not in product_axes
@@ -242,10 +249,10 @@ def _base_productmap_batched(
         func_with_partialled_args = cast(
             "FunctionWithArrayReturn", partial(func, **non_array_kwargs)
         )
-
+        inserted = []
         # Recursively map over one more product axis
         def map_one_more(
-            loop_func: FunctionWithArrayReturn, axis: str
+            loop_func: FunctionWithArrayReturn, axis: str, pos: int
         ) -> FunctionWithArrayReturn:
             def func_mapped_over_one_more_axis(
                 *already_mapped_args: Float1D, **already_mapped_kwargs: Float1D
@@ -253,7 +260,7 @@ def _base_productmap_batched(
                 if parameters[axis].kind == inspect.Parameter.POSITIONAL_ONLY:
                     return jax.lax.map(
                         lambda axis_i: loop_func(
-                            axis_i, *already_mapped_args, **already_mapped_kwargs
+                            *[already_mapped_args[i] if i != pos else x for x in [axis_i,already_mapped_args[i]] for i in range(len(already_mapped_args)) if len(already_mapped_args)>0],axis_i if pos >= len(already_mapped_args) or len(already_mapped_args)==0 else None, **already_mapped_kwargs
                         ),
                         jnp.atleast_1d(kwargs[axis]),
                         batch_size=batch_sizes[axis],
@@ -267,10 +274,16 @@ def _base_productmap_batched(
                 )
 
             return cast("FunctionWithArrayReturn", func_mapped_over_one_more_axis)
-
+        
         # Loop over all product axes
-        for axis in reversed(product_axes):
-            func_with_partialled_args = map_one_more(func_with_partialled_args, axis)
-        return cast("FloatND", func_with_partialled_args())
+        for i, axis in enumerate(reordered_axes):
+            func_with_partialled_args = map_one_more(func_with_partialled_args, axis[1], positions[i])
+
+        results = func_with_partialled_args()
+        if isinstance(results,tuple):
+            results = tuple(jnp.transpose(result, axes=reverse_reorder) for result in results)
+        else:
+            results = jnp.transpose(results, axes=reverse_reorder)
+        return cast("FloatND", results)
 
     return cast("FunctionWithArrayReturn", batched_vmap)
