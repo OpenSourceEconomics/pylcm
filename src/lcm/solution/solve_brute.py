@@ -78,6 +78,12 @@ def solve(
     # `log_V_stats` + `validate_V` triple, which forced one host
     # transfer per (regime, period) — ~n_regimes * n_periods stalls
     # per solve, a meaningful throughput tax in MSM-style loops.
+    # Both gates fall out of the public log level: `"off"` ⇒ nothing,
+    # `"warning"` / `"progress"` ⇒ NaN/Inf only, `"debug"` ⇒ adds the
+    # min/max/mean trio. `"off"` skips even the NaN fail-fast — that
+    # is the documented contract of `"off"` (suppress all output) and
+    # is what makes the level useful for tight estimation loops.
+    diagnostics_enabled = logger.isEnabledFor(logging.WARNING)
     stats_enabled = logger.isEnabledFor(logging.DEBUG)
     diagnostic_rows: list[_DiagnosticRow] = []
     diagnostic_min: list[FloatND] = []
@@ -125,33 +131,35 @@ def solve(
                 age=ages.values[period],
             )
 
-            # Async reductions: the two isnan/isinf checks always fire
-            # (same warning semantics as before); the min/max/mean trio
-            # is gated on debug log level so non-debug runs launch only
-            # two cheap reductions per (regime, period) rather than
-            # five — those extra full-V reads would be a measurable
-            # memory-bandwidth tax on the larger models.
-            if stats_enabled:
-                diagnostic_min.append(jnp.min(V_arr))
-                diagnostic_max.append(jnp.max(V_arr))
-                diagnostic_mean.append(jnp.mean(V_arr))
-            diagnostic_any_nan.append(jnp.any(jnp.isnan(V_arr)))
-            diagnostic_any_inf.append(jnp.any(jnp.isinf(V_arr)))
-            diagnostic_rows.append(
-                _DiagnosticRow(
-                    regime_name=name,
-                    period=period,
-                    age=float(ages.values[period]),
-                    state_action_space=state_action_space,
-                    next_regime_to_V_arr=next_regime_to_V_arr,
-                    regime_params=internal_params[name],
-                    compute_intermediates=(
-                        internal_regime.solve_functions.compute_intermediates.get(
-                            period
-                        )
-                    ),
+            # Async reductions: gated on log level. `"off"` skips
+            # everything — no kernel launches, no host syncs, no
+            # NaN fail-fast. `"warning"` / `"progress"` launches the
+            # two cheap isnan/isinf reductions; `"debug"` adds the
+            # min/max/mean trio. Each extra full-V read is a
+            # memory-bandwidth tax on the larger models, so the
+            # default keeps it to two reductions per (regime, period).
+            if diagnostics_enabled:
+                if stats_enabled:
+                    diagnostic_min.append(jnp.min(V_arr))
+                    diagnostic_max.append(jnp.max(V_arr))
+                    diagnostic_mean.append(jnp.mean(V_arr))
+                diagnostic_any_nan.append(jnp.any(jnp.isnan(V_arr)))
+                diagnostic_any_inf.append(jnp.any(jnp.isinf(V_arr)))
+                diagnostic_rows.append(
+                    _DiagnosticRow(
+                        regime_name=name,
+                        period=period,
+                        age=float(ages.values[period]),
+                        state_action_space=state_action_space,
+                        next_regime_to_V_arr=next_regime_to_V_arr,
+                        regime_params=internal_params[name],
+                        compute_intermediates=(
+                            internal_regime.solve_functions.compute_intermediates.get(
+                                period
+                            )
+                        ),
+                    )
                 )
-            )
 
             period_solution[name] = V_arr
 
@@ -170,19 +178,21 @@ def solve(
 
     # One flush of the GPU kernel queue: ship the stacked reductions
     # to host in two transfers (isnan / isinf) by default, plus three
-    # more (min / max / mean) when debug stats were enabled.
-    _emit_deferred_diagnostics(
-        logger=logger,
-        diagnostic_rows=diagnostic_rows,
-        reductions=_StackedReductions(
-            mins=jnp.stack(diagnostic_min) if diagnostic_min else None,
-            maxs=jnp.stack(diagnostic_max) if diagnostic_max else None,
-            means=jnp.stack(diagnostic_mean) if diagnostic_mean else None,
-            any_nan=jnp.stack(diagnostic_any_nan),
-            any_inf=jnp.stack(diagnostic_any_inf),
-        ),
-        solution=MappingProxyType(solution),
-    )
+    # more (min / max / mean) when debug stats were enabled. Skipped
+    # entirely at `log_level="off"` — nothing was accumulated.
+    if diagnostics_enabled:
+        _emit_deferred_diagnostics(
+            logger=logger,
+            diagnostic_rows=diagnostic_rows,
+            reductions=_StackedReductions(
+                mins=jnp.stack(diagnostic_min) if diagnostic_min else None,
+                maxs=jnp.stack(diagnostic_max) if diagnostic_max else None,
+                means=jnp.stack(diagnostic_mean) if diagnostic_mean else None,
+                any_nan=jnp.stack(diagnostic_any_nan),
+                any_inf=jnp.stack(diagnostic_any_inf),
+            ),
+            solution=MappingProxyType(solution),
+        )
 
     total_elapsed = time.monotonic() - total_start
     logger.info("Solution complete  (%s)", format_duration(seconds=total_elapsed))
