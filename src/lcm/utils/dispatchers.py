@@ -242,14 +242,6 @@ def _base_productmap_batched(
                 f"The parmeter '{name}' to the function {func.__name__} "
                 "is POSITIONAL_ONLY."
             )
-    reordered_axes = sorted(
-        enumerate(product_axes),
-        key=lambda x: batch_sizes[x[1]] if batch_sizes[x[1]] != 0 else jnp.inf,
-    )
-    reverse_reorder = [
-        x[0]
-        for x in sorted(enumerate(reordered_axes), key=lambda x: x[1][0], reverse=True)
-    ]
 
     def batched_vmap(**kwargs: FloatND) -> FloatND:
         non_array_kwargs = {
@@ -277,22 +269,9 @@ def _base_productmap_batched(
             return cast("FunctionWithArrayReturn", func_mapped_over_one_more_axis)
 
         # Loop over all product axes
-        for _index, axis in reordered_axes:
+        for axis in reversed(product_axes):
             func_with_partialled_args = map_one_more(func_with_partialled_args, axis)
 
-        # Reorder the first len(product_axes) axes of each array
-        def revert_order(array: Float1D) -> Float1D:
-            n_axes = len(array.shape)
-            if n_axes == 0:
-                return array
-            new_order = [
-                i if i >= len(reverse_reorder) else reverse_reorder[i]
-                for i in range(n_axes)
-            ]
-            return jnp.transpose(array, axes=new_order)
-
-        # Revert the reordering of all leaves to restore the originl order
-        result = jax.tree.map(revert_order, func_with_partialled_args())
-        return cast("FloatND", result)
+        return cast("FloatND", func_with_partialled_args())
 
     return cast("FunctionWithArrayReturn", batched_vmap)

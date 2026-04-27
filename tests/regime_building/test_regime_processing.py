@@ -93,12 +93,12 @@ def test_process_regimes():
     # Variable Info
     assert (
         internal_working_regime.variable_info["is_state"].to_numpy()
-        == np.array([False, True, False])
+        == np.array([True, False, False])
     ).all()
 
     assert (
         internal_working_regime.variable_info["is_continuous"].to_numpy()
-        == np.array([False, True, True])
+        == np.array([True, False, True])
     ).all()
 
     # Grids — compare the grid objects (which now include transition attributes)

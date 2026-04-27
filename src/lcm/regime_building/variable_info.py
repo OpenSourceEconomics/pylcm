@@ -1,5 +1,6 @@
 from types import MappingProxyType
 
+import jax.numpy as jnp
 import pandas as pd
 
 from lcm.grids import ContinuousGrid, Grid
@@ -34,15 +35,29 @@ def get_variable_info(regime: Regime) -> pd.DataFrame:
     ]
     info["is_discrete"] = ~info["is_continuous"]
 
-    order = info.query("is_discrete & is_state").index.tolist()
-    order += info.query("is_discrete & is_action").index.tolist()
-    order += info.query("is_continuous & is_state").index.tolist()
-    order += info.query("is_continuous & is_action").index.tolist()
+    # Fix the order of the state-action space
+    # First discrete states ordered by batch size
+    # then continuous states ordered by batch size then actions
+    state_order_disc = info.query("is_discrete & is_state").index.tolist()
+    state_order_disc = sorted(
+        state_order_disc,
+        key=lambda x: (
+            regime.states[x].batch_size if regime.states[x].batch_size != 0 else jnp.inf
+        ),
+    )
+    state_order_cont = info.query("is_continuous & is_state").index.tolist()
+    state_order_cont = sorted(
+        state_order_cont,
+        key=lambda x: (
+            regime.states[x].batch_size if regime.states[x].batch_size != 0 else jnp.inf
+        ),
+    )
+    action_order = info.query("is_action").index.tolist()
 
-    if set(order) != set(info.index):
+    if set(state_order_disc + state_order_cont + action_order) != set(info.index):
         raise ValueError("Order and index do not match.")
 
-    return info.loc[order]
+    return info.loc[state_order_disc + state_order_cont + action_order]
 
 
 def get_grids(
