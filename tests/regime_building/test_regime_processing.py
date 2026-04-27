@@ -7,8 +7,8 @@ import pandas as pd
 from numpy.testing import assert_array_equal
 from pandas.testing import assert_frame_equal
 
-from lcm import DiscreteGrid
 from lcm.ages import AgeGrid
+from lcm.grids import DiscreteGrid, LinSpacedGrid
 from lcm.regime_building.processing import (
     _rename_params_to_qnames,
     process_regimes,
@@ -74,6 +74,35 @@ def test_get_grids(binary_category_class):
     assert isinstance(got["c"], DiscreteGrid)
     assert got["c"].categories == ("cat0", "cat1")
     assert got["c"].codes == (0, 1)
+
+
+def test_get_grids_reorder(binary_category_class):
+    def next_state(a, b):
+        pass
+
+    regime_mock = RegimeMock(
+        actions={
+            "a": DiscreteGrid(binary_category_class),
+        },
+        states={
+            "b": DiscreteGrid(binary_category_class),
+            "c": DiscreteGrid(binary_category_class, batch_size=1),
+            "d": LinSpacedGrid(start=0, stop=1, n_points=5, batch_size=3),
+            "e": LinSpacedGrid(start=0, stop=1, n_points=5, batch_size=1),
+            "f": LinSpacedGrid(start=0, stop=1, n_points=5),
+        },
+        state_transitions={
+            "b": next_state,
+            "c": next_state,
+            "d": next_state,
+            "e": next_state,
+            "f": next_state,
+        },
+        functions={"utility": lambda _c: None},
+    )
+
+    got = get_grids(regime_mock)  # ty: ignore[invalid-argument-type]
+    assert list(got.keys()) == ["c", "b", "e", "d", "f", "a"]
 
 
 def test_process_regimes():
