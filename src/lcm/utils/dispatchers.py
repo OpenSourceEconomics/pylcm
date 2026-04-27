@@ -277,9 +277,10 @@ def _base_productmap_batched(
             return cast("FunctionWithArrayReturn", func_mapped_over_one_more_axis)
 
         # Loop over all product axes
-        for axis in reordered_axes:
+        for _index, axis in reordered_axes:
             func_with_partialled_args = map_one_more(func_with_partialled_args, axis)
 
+        # Reorder the first len(product_axes) axes of each array
         def revert_order(array: Float1D) -> Float1D:
             n_axes = len(array.shape)
             if n_axes == 0:
@@ -290,6 +291,7 @@ def _base_productmap_batched(
             ]
             return jnp.transpose(array, axes=new_order)
 
+        # Revert the reordering of all leaves to restore the originl order
         result = jax.tree.map(revert_order, func_with_partialled_args())
         return cast("FloatND", result)
 

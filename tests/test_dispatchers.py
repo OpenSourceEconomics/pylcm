@@ -101,7 +101,7 @@ def test_productmap_change_arg_order(setup_productmap_f, expected_productmap_f):
     decorated = productmap(
         func=f, variables=("b", "a", "c"), batch_sizes=dict.fromkeys(("b", "a", "c"), 0)
     )
-    calculated = decorated(**setup_productmap_f)  # ty: ignore[missing-argument]
+    calculated = decorated(**setup_productmap_f)
 
     aaae(calculated, expected)
 
@@ -120,7 +120,7 @@ def test_productmap_with_all_arguments_mapped_some_len_one():
     decorated = productmap(
         func=f, variables=("a", "b", "c"), batch_sizes=dict.fromkeys(("a", "b", "c"), 0)
     )
-    calculated = decorated(**grids)  # ty: ignore[missing-argument]
+    calculated = decorated(**grids)
     aaae(calculated, expected)
 
 
@@ -138,7 +138,7 @@ def test_productmap_with_some_arguments_mapped():
     decorated = productmap(
         func=f, variables=("a", "c"), batch_sizes=dict.fromkeys(("a", "c"), 0)
     )
-    calculated = decorated(**grids)  # ty: ignore[missing-argument]
+    calculated = decorated(**grids)
     aaae(calculated, expected)
 
 
@@ -220,7 +220,7 @@ def test_spacemap_all_arguments_mapped(
         action_names=tuple(product_vars),
         state_names=tuple(combination_vars),
     )
-    calculated = decorated(**product_vars, **combination_vars)  # ty: ignore[missing-argument]
+    calculated = decorated(**product_vars, **combination_vars)
 
     aaae(calculated, jnp.transpose(expected_spacemap, axes=(2, 0, 1)))
 
