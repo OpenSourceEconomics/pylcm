@@ -50,6 +50,10 @@ class GridInitializationError(PyLCMError):
     """Raised when there is an error in the grid initialization."""
 
 
+class FunctionDispatchError(PyLCMError):
+    """Raised when there is an error during the function dispatch."""
+
+
 def format_messages(errors: str | list[str]) -> str:
     """Convert message or list of messages into a single string."""
     if isinstance(errors, str):
