@@ -276,7 +276,6 @@ def _base_productmap_batched(
 
             return cast("FunctionWithArrayReturn", func_mapped_over_one_more_axis)
 
-
         # Loop over all product axes
         for axis in reordered_axes:
             func_with_partialled_args = map_one_more(func_with_partialled_args, axis)
