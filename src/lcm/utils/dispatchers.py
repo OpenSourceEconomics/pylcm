@@ -8,6 +8,7 @@ import jax
 import jax.numpy as jnp
 from jax import Array, vmap
 
+from lcm.exceptions import FunctionDispatchError
 from lcm.typing import Float1D, FloatND
 from lcm.utils.containers import find_duplicates
 from lcm.utils.functools import allow_args, allow_only_kwargs
@@ -224,7 +225,7 @@ def _base_productmap_batched(
     Like `jax.lax.map`, this function does not preserve the function signature.
 
     Args:
-        func: The function to be dispatched. Cannot have keyword-only arguments.
+        func: The function to be dispatched. Cannot have positional-only parameters.
         product_axes: Tuple with names of arguments over which we apply
             `jax.lax.map`.
         batch_sizes: Dict with the batch sizes for each product_axis.
@@ -234,6 +235,13 @@ def _base_productmap_batched(
 
     """
     parameters = inspect.signature(func).parameters
+    for name, param in parameters.items():
+        if param.kind == inspect.Parameter.POSITIONAL_ONLY:
+            raise FunctionDispatchError(
+                "Positional-only parameters are not allowed in dispatched functions. "
+                f"The parameter '{name}' to the function {func.__name__} "
+                "is POSITIONAL_ONLY."
+            )
 
     def batched_vmap(**kwargs: FloatND) -> FloatND:
         non_array_kwargs = {
@@ -250,14 +258,6 @@ def _base_productmap_batched(
             def func_mapped_over_one_more_axis(
                 *already_mapped_args: Float1D, **already_mapped_kwargs: Float1D
             ) -> FloatND:
-                if parameters[axis].kind == inspect.Parameter.POSITIONAL_ONLY:
-                    return jax.lax.map(
-                        lambda axis_i: loop_func(
-                            axis_i, *already_mapped_args, **already_mapped_kwargs
-                        ),
-                        jnp.atleast_1d(kwargs[axis]),
-                        batch_size=batch_sizes[axis],
-                    )
                 return jax.lax.map(
                     lambda axis_i: loop_func(
                         *already_mapped_args, **{axis: axis_i}, **already_mapped_kwargs
@@ -271,6 +271,7 @@ def _base_productmap_batched(
         # Loop over all product axes
         for axis in reversed(product_axes):
             func_with_partialled_args = map_one_more(func_with_partialled_args, axis)
+
         return cast("FloatND", func_with_partialled_args())
 
     return cast("FunctionWithArrayReturn", batched_vmap)

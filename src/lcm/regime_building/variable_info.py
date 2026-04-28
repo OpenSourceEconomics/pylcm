@@ -1,3 +1,4 @@
+import math
 from types import MappingProxyType
 
 import pandas as pd
@@ -34,15 +35,32 @@ def get_variable_info(regime: Regime) -> pd.DataFrame:
     ]
     info["is_discrete"] = ~info["is_continuous"]
 
-    order = info.query("is_discrete & is_state").index.tolist()
-    order += info.query("is_discrete & is_action").index.tolist()
-    order += info.query("is_continuous & is_state").index.tolist()
-    order += info.query("is_continuous & is_action").index.tolist()
+    ordered_discrete_states = sorted(
+        info.query("is_discrete & is_state").index.tolist(),
+        key=lambda x: (
+            regime.states[x].batch_size
+            if regime.states[x].batch_size != 0
+            else math.inf
+        ),
+    )
+    ordered_continuous_states = sorted(
+        info.query("is_continuous & is_state").index.tolist(),
+        key=lambda x: (
+            regime.states[x].batch_size
+            if regime.states[x].batch_size != 0
+            else math.inf
+        ),
+    )
+    ordered_states_and_actions = [
+        *ordered_discrete_states,
+        *ordered_continuous_states,
+        *info.query("is_action").index.tolist(),
+    ]
 
-    if set(order) != set(info.index):
+    if set(ordered_states_and_actions) != set(info.index):
         raise ValueError("Order and index do not match.")
 
-    return info.loc[order]
+    return info.loc[ordered_states_and_actions]
 
 
 def get_grids(

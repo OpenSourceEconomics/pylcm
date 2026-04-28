@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
+from lcm.exceptions import FunctionDispatchError
 from lcm.utils.dispatchers import (
     productmap,
     simulation_spacemap,
@@ -12,28 +13,12 @@ from lcm.utils.dispatchers import (
 from lcm.utils.functools import allow_args
 
 
-def f(a, /, *, b, c):
-    """Tests that dispatchers can handle positional-only and keyword-only arguments.
+def f(a, *, b, c):
+    """Tests that dispatchers can handle standard arguments and keyword-only arguments.
 
-    a is positional-only, b and c are keyword-only
+    a is positional-or-keyword, b and c are keyword-only
     """
     return jnp.sin(a) + jnp.cos(b) + jnp.tan(c)
-
-
-def f2(b, a, /, *, c):
-    """Tests that dispatchers can handle positional-only and keyword-only arguments.
-
-    b and a are positional-only, c is keyword-only
-    """
-    return jnp.sin(a) + jnp.cos(b) + jnp.tan(c)
-
-
-def g(a, /, b, *, c, d):
-    """Tests that dispatchers can handle positional-only and keyword-only arguments.
-
-    a is positional-only, b is positional-or-keyword, c and d are keyword-only
-    """
-    return f(a, b=b, c=c) + jnp.log(d)
 
 
 @pytest.fixture
@@ -57,34 +42,10 @@ def expected_productmap_f():
     return allow_args(f)(*helper).reshape(10, 7, 5)
 
 
-@pytest.fixture
-def setup_productmap_g():
-    return {
-        "a": jnp.linspace(-5, 5, 10),
-        "b": jnp.linspace(0, 3, 7),
-        "c": jnp.linspace(1, 5, 5),
-        "d": jnp.linspace(1, 3, 4),
-    }
-
-
-@pytest.fixture
-def expected_productmap_g():
-    grids = {
-        "a": jnp.linspace(-5, 5, 10),
-        "b": jnp.linspace(0, 3, 7),
-        "c": jnp.linspace(1, 5, 5),
-        "d": jnp.linspace(1, 3, 4),
-    }
-
-    helper = jnp.array(list(itertools.product(*grids.values()))).T
-    return allow_args(g)(*helper).reshape(10, 7, 5, 4)
-
-
 @pytest.mark.parametrize(
     ("func", "args", "grids", "expected"),
     [
         (f, ["a", "b", "c"], "setup_productmap_f", "expected_productmap_f"),
-        (g, ["a", "b", "c", "d"], "setup_productmap_g", "expected_productmap_g"),
     ],
 )
 def test_productmap_with_all_arguments_mapped(func, args, grids, expected, request):
@@ -112,24 +73,13 @@ def test_productmap_with_positional_args(setup_productmap_f):
         decorated(*setup_productmap_f.values())  # ty: ignore[missing-argument]
 
 
-def test_productmap_different_func_order(setup_productmap_f):
-    _bs = dict.fromkeys(("a", "b", "c"), 0)
-    decorated_f = productmap(func=f, variables=("a", "b", "c"), batch_sizes=_bs)
-    expected = decorated_f(**setup_productmap_f)  # ty: ignore[missing-argument]
-
-    decorated_f2 = productmap(func=f2, variables=("a", "b", "c"), batch_sizes=_bs)
-    calculated_f2 = decorated_f2(**setup_productmap_f)  # ty: ignore[missing-argument]
-
-    aaae(calculated_f2, expected)
-
-
 def test_productmap_change_arg_order(setup_productmap_f, expected_productmap_f):
     expected = jnp.transpose(expected_productmap_f, (1, 0, 2))
 
     decorated = productmap(
         func=f, variables=("b", "a", "c"), batch_sizes=dict.fromkeys(("b", "a", "c"), 0)
     )
-    calculated = decorated(**setup_productmap_f)  # ty: ignore[missing-argument]
+    calculated = decorated(**setup_productmap_f)
 
     aaae(calculated, expected)
 
@@ -148,7 +98,7 @@ def test_productmap_with_all_arguments_mapped_some_len_one():
     decorated = productmap(
         func=f, variables=("a", "b", "c"), batch_sizes=dict.fromkeys(("a", "b", "c"), 0)
     )
-    calculated = decorated(**grids)  # ty: ignore[missing-argument]
+    calculated = decorated(**grids)
     aaae(calculated, expected)
 
 
@@ -166,7 +116,7 @@ def test_productmap_with_some_arguments_mapped():
     decorated = productmap(
         func=f, variables=("a", "c"), batch_sizes=dict.fromkeys(("a", "c"), 0)
     )
-    calculated = decorated(**grids)  # ty: ignore[missing-argument]
+    calculated = decorated(**grids)
     aaae(calculated, expected)
 
 
@@ -201,6 +151,14 @@ def test_productmap_with_some_argument_mapped_twice():
         )
 
 
+def test_productmap_rejects_positional_only():
+    def h(a, /, *, b):
+        return a + b
+
+    with pytest.raises(FunctionDispatchError, match="POSITIONAL_ONLY"):
+        productmap(func=h, variables=("a", "b"), batch_sizes={"a": 0, "b": 0})
+
+
 @pytest.fixture
 def setup_spacemap():
     value_grid = {
@@ -210,14 +168,12 @@ def setup_spacemap():
 
     combination_values = {
         "c": jnp.array([7.0, 8, 9, 10]),
-        "d": jnp.array([9.0, 10, 11, 12, 13]),
     }
 
     helper = jnp.array(list(itertools.product(*combination_values.values()))).T
 
     combination_grid = {
         "c": helper[0],
-        "d": helper[1],
     }
     return value_grid, combination_grid
 
@@ -231,13 +187,12 @@ def expected_spacemap():
 
     combination_grid = {
         "c": jnp.array([7.0, 8, 9, 10]),
-        "d": jnp.array([9.0, 10, 11, 12, 13]),
     }
 
     all_grids = {**value_grid, **combination_grid}
     helper = jnp.array(list(itertools.product(*all_grids.values()))).T
 
-    return allow_args(g)(*helper).reshape(3, 2, 4 * 5)
+    return allow_args(f)(*helper).reshape(3, 2, 4)
 
 
 def test_spacemap_all_arguments_mapped(
@@ -247,11 +202,11 @@ def test_spacemap_all_arguments_mapped(
     product_vars, combination_vars = setup_spacemap
 
     decorated = simulation_spacemap(
-        func=g,
+        func=f,
         action_names=tuple(product_vars),
         state_names=tuple(combination_vars),
     )
-    calculated = decorated(**product_vars, **combination_vars)  # ty: ignore[missing-argument]
+    calculated = decorated(**product_vars, **combination_vars)
 
     aaae(calculated, jnp.transpose(expected_spacemap, axes=(2, 0, 1)))
 
@@ -274,7 +229,7 @@ def test_spacemap_all_arguments_mapped(
 def test_spacemap_arguments_overlap(error_msg, product_vars, combination_vars):
     with pytest.raises(ValueError, match=error_msg):
         simulation_spacemap(
-            func=g, action_names=product_vars, state_names=combination_vars
+            func=f, action_names=product_vars, state_names=combination_vars
         )
 
 
