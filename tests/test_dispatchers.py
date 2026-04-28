@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
+from lcm.exceptions import FunctionDispatchError
 from lcm.utils.dispatchers import (
     productmap,
     simulation_spacemap,
@@ -13,9 +14,9 @@ from lcm.utils.functools import allow_args
 
 
 def f(a, *, b, c):
-    """Tests that dispatchers can handle keyword-only arguments.
+    """Tests that dispatchers can handle standard arguments and keyword-only arguments.
 
-    a is positional-only, b and c are keyword-only
+    a is positional-or-keyword, b and c are keyword-only
     """
     return jnp.sin(a) + jnp.cos(b) + jnp.tan(c)
 
@@ -39,29 +40,6 @@ def expected_productmap_f():
 
     helper = jnp.array(list(itertools.product(*grids.values()))).T
     return allow_args(f)(*helper).reshape(10, 7, 5)
-
-
-@pytest.fixture
-def setup_productmap_g():
-    return {
-        "a": jnp.linspace(-5, 5, 10),
-        "b": jnp.linspace(0, 3, 7),
-        "c": jnp.linspace(1, 5, 5),
-        "d": jnp.linspace(1, 3, 4),
-    }
-
-
-@pytest.fixture
-def expected_productmap_g():
-    grids = {
-        "a": jnp.linspace(-5, 5, 10),
-        "b": jnp.linspace(0, 3, 7),
-        "c": jnp.linspace(1, 5, 5),
-        "d": jnp.linspace(1, 3, 4),
-    }
-
-    helper = jnp.array(list(itertools.product(*grids.values()))).T
-    return allow_args(f)(*helper).reshape(10, 7, 5, 4)
 
 
 @pytest.mark.parametrize(
@@ -171,6 +149,14 @@ def test_productmap_with_some_argument_mapped_twice():
             variables=("a", "a", "c"),
             batch_sizes=dict.fromkeys(("a", "a", "c"), 0),
         )
+
+
+def test_productmap_rejects_positional_only():
+    def h(a, /, *, b):
+        return a + b
+
+    with pytest.raises(FunctionDispatchError, match="POSITIONAL_ONLY"):
+        productmap(func=h, variables=("a", "b"), batch_sizes={"a": 0, "b": 0})
 
 
 @pytest.fixture

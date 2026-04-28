@@ -126,11 +126,11 @@ def get_model(
     alive = Regime(
         active=lambda age, n=final_age_alive: age <= n,
         states={
+            "wealth": wealth_grid,
             "income": _SHOCK_GRID_CLASSES[shock_type](
                 n_points=income_n_points,
                 **_SHOCK_GRID_KWARGS[shock_type],  # ty: ignore[invalid-argument-type]
             ),
-            "wealth": wealth_grid,
         },
         state_transitions={
             "wealth": next_wealth,

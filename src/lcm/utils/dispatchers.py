@@ -225,7 +225,7 @@ def _base_productmap_batched(
     Like `jax.lax.map`, this function does not preserve the function signature.
 
     Args:
-        func: The function to be dispatched. Cannot have keyword-only arguments.
+        func: The function to be dispatched. Cannot have positional-only parameters.
         product_axes: Tuple with names of arguments over which we apply
             `jax.lax.map`.
         batch_sizes: Dict with the batch sizes for each product_axis.
@@ -238,8 +238,8 @@ def _base_productmap_batched(
     for name, param in parameters.items():
         if param.kind == inspect.Parameter.POSITIONAL_ONLY:
             raise FunctionDispatchError(
-                f"Positional only prameters are not allowed in dispatched functions."
-                f"The parmeter '{name}' to the function {func.__name__} "
+                "Positional-only parameters are not allowed in dispatched functions. "
+                f"The parameter '{name}' to the function {func.__name__} "
                 "is POSITIONAL_ONLY."
             )
 
