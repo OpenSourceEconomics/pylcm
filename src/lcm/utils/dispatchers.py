@@ -9,7 +9,7 @@ import jax.numpy as jnp
 from jax import Array, vmap
 
 from lcm.exceptions import FunctionDispatchError
-from lcm.typing import Float1D, FloatND, StateName
+from lcm.typing import ActionName, Float1D, FloatND, StateName
 from lcm.utils.containers import find_duplicates
 from lcm.utils.functools import allow_args, allow_only_kwargs
 
@@ -25,7 +25,7 @@ FunctionWithArrayReturn = TypeVar(
 def simulation_spacemap(
     *,
     func: FunctionWithArrayReturn,
-    action_names: tuple[str, ...],
+    action_names: tuple[ActionName, ...],
     state_names: tuple[StateName, ...],
 ) -> FunctionWithArrayReturn:
     """Apply jax.lax.map so func can be evaluated on actions and simulated states.

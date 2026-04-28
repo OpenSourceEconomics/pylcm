@@ -9,6 +9,7 @@ from jax import Array
 from lcm.grids import Grid, IrregSpacedGrid
 from lcm.shocks import _ShockGrid
 from lcm.typing import (
+    ActionName,
     ArgmaxQOverAFunction,
     Bool1D,
     ContinuousAction,
@@ -56,10 +57,10 @@ class StateActionSpace:
     states: MappingProxyType[StateName, ContinuousState | DiscreteState]
     """Immutable mapping of state variable names to their values."""
 
-    discrete_actions: MappingProxyType[str, DiscreteAction]
+    discrete_actions: MappingProxyType[ActionName, DiscreteAction]
     """Immutable mapping of discrete action variable names to their values."""
 
-    continuous_actions: MappingProxyType[str, ContinuousAction]
+    continuous_actions: MappingProxyType[ActionName, ContinuousAction]
     """Immutable mapping of continuous action variable names to their values."""
 
     state_and_discrete_action_names: tuple[str, ...]
@@ -71,12 +72,14 @@ class StateActionSpace:
         return tuple(self.states)
 
     @property
-    def action_names(self) -> tuple[str, ...]:
+    def action_names(self) -> tuple[ActionName, ...]:
         """Tuple with names of all action variables."""
         return tuple(self.discrete_actions) + tuple(self.continuous_actions)
 
     @property
-    def actions(self) -> MappingProxyType[str, DiscreteAction | ContinuousAction]:
+    def actions(
+        self,
+    ) -> MappingProxyType[ActionName, DiscreteAction | ContinuousAction]:
         """Read-only mapping with all action variables."""
         return MappingProxyType(
             dict(self.discrete_actions) | dict(self.continuous_actions)
@@ -91,8 +94,9 @@ class StateActionSpace:
         self,
         states: MappingProxyType[StateName, ContinuousState | DiscreteState]
         | None = None,
-        discrete_actions: MappingProxyType[str, DiscreteAction] | None = None,
-        continuous_actions: MappingProxyType[str, ContinuousAction] | None = None,
+        discrete_actions: MappingProxyType[ActionName, DiscreteAction] | None = None,
+        continuous_actions: MappingProxyType[ActionName, ContinuousAction]
+        | None = None,
     ) -> StateActionSpace:
         """Replace the states or actions in the state-action space.
 
@@ -290,7 +294,7 @@ class PeriodRegimeSimulationData:
     V_arr: Array
     """Value function array for all subjects at this period."""
 
-    actions: MappingProxyType[str, Array]
+    actions: MappingProxyType[ActionName, Array]
     """Immutable mapping of action names to optimal action arrays for all subjects."""
 
     states: MappingProxyType[StateName, Array]

@@ -9,6 +9,7 @@ from lcm.exceptions import RegimeInitializationError
 from lcm.grids import DiscreteGrid, Grid
 from lcm.interfaces import SolveSimulateFunctionPair
 from lcm.typing import (
+    ActionName,
     ActiveFunction,
     ContinuousState,
     DiscreteState,
@@ -146,7 +147,9 @@ class Regime:
     regime names to transition functions — every reachable target must be listed.
     """
 
-    actions: Mapping[str, Grid] = field(default_factory=lambda: MappingProxyType({}))
+    actions: Mapping[ActionName, Grid] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     """Mapping of action variable names to grid objects."""
 
     functions: Mapping[str, UserFunction] = field(

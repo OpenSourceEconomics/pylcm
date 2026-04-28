@@ -23,6 +23,7 @@ from lcm.interfaces import StateActionSpace
 from lcm.regime_building.Q_and_F import get_complete_targets, get_compute_intermediates
 from lcm.regime_building.V import VInterpolationInfo
 from lcm.typing import (
+    ActionName,
     FunctionsMapping,
     RegimeName,
     RegimeTransitionFunction,
@@ -201,7 +202,7 @@ def _wrap_with_reduction(
 def _productmap_over_state_action_space(
     *,
     func: Callable,
-    action_names: tuple[str, ...],
+    action_names: tuple[ActionName, ...],
     state_names: tuple[StateName, ...],
     state_batch_sizes: dict[StateName, int],
 ) -> Callable:

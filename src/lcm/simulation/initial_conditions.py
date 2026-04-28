@@ -24,6 +24,7 @@ from lcm.grids import DiscreteGrid
 from lcm.interfaces import InternalRegime
 from lcm.regime_building.Q_and_F import _get_feasibility
 from lcm.typing import (
+    ActionName,
     InternalParams,
     RegimeName,
     RegimeNamesToIds,
@@ -484,7 +485,7 @@ def _batched_feasibility_check(
     subject_states: Mapping[str, Array],
     action_kwargs: Mapping[str, Array],
     filtered_params: Mapping[str, object],
-    flat_actions: Mapping[str, Array],
+    flat_actions: Mapping[ActionName, Array],
 ) -> Array:
     """Check feasibility for all subjects, batching to avoid OOM.
 
@@ -758,7 +759,7 @@ def _format_infeasibility_message(
 
 def _build_flat_action_grid(
     *,
-    action_names: list[str],
+    action_names: list[ActionName],
     grids: MappingProxyType[str, Array],
 ) -> dict[str, Array]:
     """Build a flat array of all action combinations from action grids.

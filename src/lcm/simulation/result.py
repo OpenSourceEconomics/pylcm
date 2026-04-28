@@ -23,6 +23,7 @@ from lcm.persistence import atomic_dump
 from lcm.regime import Regime
 from lcm.regime_building.processing import compute_merged_discrete_categories
 from lcm.typing import (
+    ActionName,
     FlatRegimeParams,
     FloatND,
     InternalParams,
@@ -103,7 +104,7 @@ class SimulationResult:
         return self._metadata.state_names
 
     @property
-    def action_names(self) -> list[str]:
+    def action_names(self) -> list[ActionName]:
         """Names of all action variables (union across regimes)."""
         return self._metadata.action_names
 
@@ -268,7 +269,7 @@ class SimulationMetadata:
     state_names: list[StateName]
     """Sorted union of state variable names across all regimes."""
 
-    action_names: list[str]
+    action_names: list[ActionName]
     """Sorted union of action variable names across all regimes."""
 
     n_periods: int
@@ -280,7 +281,7 @@ class SimulationMetadata:
     regime_to_states: MappingProxyType[RegimeName, tuple[StateName, ...]]
     """Immutable mapping of regime names to their state variable names."""
 
-    regime_to_actions: MappingProxyType[RegimeName, tuple[str, ...]]
+    regime_to_actions: MappingProxyType[RegimeName, tuple[ActionName, ...]]
     """Immutable mapping of regime names to their action variable names."""
 
     discrete_categories: MappingProxyType[str, tuple[str, ...]]
@@ -308,9 +309,9 @@ def _compute_metadata(
     regime_names = list(internal_regimes.keys())
 
     all_states: set[StateName] = set()
-    all_actions: set[str] = set()
+    all_actions: set[ActionName] = set()
     regime_to_states: dict[RegimeName, tuple[StateName, ...]] = {}
-    regime_to_actions: dict[RegimeName, tuple[str, ...]] = {}
+    regime_to_actions: dict[RegimeName, tuple[ActionName, ...]] = {}
 
     for regime_name, regime in internal_regimes.items():
         vi = regime.variable_info
@@ -568,7 +569,7 @@ def _assemble_dataframe(
     *,
     regime_dfs: list[pd.DataFrame],
     state_names: list[StateName],
-    action_names: list[str],
+    action_names: list[ActionName],
 ) -> pd.DataFrame:
     """Combine regime DataFrames, add missing columns, reorder, and sort."""
     if not regime_dfs:
@@ -583,7 +584,7 @@ def _assemble_dataframe(
 def _empty_dataframe(
     *,
     state_names: list[StateName],
-    action_names: list[str],
+    action_names: list[ActionName],
 ) -> pd.DataFrame:
     """Create empty DataFrame with correct columns."""
     columns = ["subject_id", "period", "regime", "value"]
@@ -596,7 +597,7 @@ def _add_missing_columns(
     *,
     df: pd.DataFrame,
     state_names: list[StateName],
-    action_names: list[str],
+    action_names: list[ActionName],
 ) -> pd.DataFrame:
     """Add NaN columns for states/actions not present in DataFrame."""
     for name in state_names:
@@ -612,7 +613,7 @@ def _reorder_columns(
     *,
     df: pd.DataFrame,
     state_names: list[StateName],
-    action_names: list[str],
+    action_names: list[ActionName],
 ) -> pd.DataFrame:
     """Reorder columns: subject_id, period, regime, value, states, actions, rest."""
     base = ["subject_id", "period", "regime", "value"]
