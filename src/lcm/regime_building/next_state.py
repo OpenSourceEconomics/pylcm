@@ -24,6 +24,7 @@ from lcm.typing import (
     StateName,
     StateOrActionName,
     StochasticNextFunction,
+    TransitionFunctionName,
     TransitionFunctionsMapping,
 )
 from lcm.utils.namespace import flatten_regime_namespace
@@ -64,7 +65,7 @@ def get_next_state_function_for_simulation(
     functions: FunctionsMapping,
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     variable_info: pd.DataFrame,
-    stochastic_transition_names: frozenset[str] = frozenset(),
+    stochastic_transition_names: frozenset[TransitionFunctionName] = frozenset(),
 ) -> NextStateSimulationFunction:
     """Get function that computes the next states during the simulation.
 
@@ -108,7 +109,7 @@ def get_next_stochastic_weights_function(
     regime_name: RegimeName,
     functions: FunctionsMapping,
     transitions: FunctionsMapping,
-    stochastic_transition_names: frozenset[str],
+    stochastic_transition_names: frozenset[TransitionFunctionName],
 ) -> Callable[..., dict[str, Array]]:
     """Get function that computes the weights for the next stochastic states.
 
@@ -141,7 +142,7 @@ def _extend_transitions_for_simulation(
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     flat_transitions: FunctionsMapping,
     variable_info: pd.DataFrame,
-    stochastic_transition_names: frozenset[str],
+    stochastic_transition_names: frozenset[TransitionFunctionName],
 ) -> dict[str, Callable[..., Array]]:
     """Extend the functions dictionary for the simulation target.
 

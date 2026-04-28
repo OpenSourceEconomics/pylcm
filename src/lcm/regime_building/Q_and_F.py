@@ -21,6 +21,7 @@ from lcm.typing import (
     QAndFFunction,
     RegimeName,
     RegimeTransitionFunction,
+    TransitionFunctionName,
     TransitionFunctionsMapping,
 )
 from lcm.utils.dispatchers import productmap
@@ -34,7 +35,7 @@ def get_Q_and_F(
     constraints: FunctionsMapping,
     complete_targets: tuple[str, ...],
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[str],
+    stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> QAndFFunction:
@@ -215,7 +216,7 @@ def get_compute_intermediates(
     constraints: FunctionsMapping,
     complete_targets: tuple[str, ...],
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[str],
+    stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> Callable:
@@ -418,7 +419,7 @@ def get_complete_targets(
     period: int,
     transitions: TransitionFunctionsMapping,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
-    stochastic_transition_names: frozenset[str],
+    stochastic_transition_names: frozenset[TransitionFunctionName],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> tuple[RegimeName, ...]:
     """Return active target regimes whose stochastic needs are fully covered.
@@ -492,7 +493,7 @@ def _get_arg_names_of_Q_and_F(
 def _get_joint_weights_function(
     *,
     transitions: FunctionsMapping,
-    stochastic_transition_names: frozenset[str],
+    stochastic_transition_names: frozenset[TransitionFunctionName],
     regime_name: RegimeName,
 ) -> Callable[..., FloatND]:
     """Get function that calculates the joint weights.

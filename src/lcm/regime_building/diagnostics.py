@@ -29,6 +29,7 @@ from lcm.typing import (
     RegimeTransitionFunction,
     StateName,
     StateOrActionName,
+    TransitionFunctionName,
     TransitionFunctionsMapping,
 )
 from lcm.utils.dispatchers import productmap
@@ -41,7 +42,7 @@ def _build_compute_intermediates_per_period(
     functions: FunctionsMapping,
     constraints: FunctionsMapping,
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[str],
+    stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     state_action_space: StateActionSpace,

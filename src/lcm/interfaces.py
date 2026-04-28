@@ -24,6 +24,7 @@ from lcm.typing import (
     RegimeTransitionFunction,
     StateName,
     StateOrActionName,
+    TransitionFunctionName,
     TransitionFunctionsMapping,
     VmappedRegimeTransitionFunction,
 )
@@ -158,7 +159,7 @@ class SolveFunctions:
     transitions: TransitionFunctionsMapping
     """Immutable mapping of transition names to transition functions."""
 
-    stochastic_transition_names: frozenset[str]
+    stochastic_transition_names: frozenset[TransitionFunctionName]
     """Frozenset of stochastic transition function names."""
 
     compute_regime_transition_probs: RegimeTransitionFunction | None
@@ -193,7 +194,7 @@ class SimulateFunctions:
     transitions: TransitionFunctionsMapping
     """Immutable mapping of transition names to transition functions."""
 
-    stochastic_transition_names: frozenset[str]
+    stochastic_transition_names: frozenset[TransitionFunctionName]
     """Frozenset of stochastic transition function names."""
 
     compute_regime_transition_probs: VmappedRegimeTransitionFunction | None

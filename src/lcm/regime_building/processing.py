@@ -60,6 +60,7 @@ from lcm.typing import (
     ShockName,
     StateName,
     StateOrActionName,
+    TransitionFunctionName,
     TransitionFunctionsMapping,
     UserFunction,
     VmappedRegimeTransitionFunction,
@@ -319,7 +320,7 @@ def _build_simulate_functions(
     ages: AgeGrid,
     enable_jit: bool,
     solve_transitions: TransitionFunctionsMapping,
-    solve_stochastic_transition_names: frozenset[str],
+    solve_stochastic_transition_names: frozenset[TransitionFunctionName],
     solve_compute_regime_transition_probs: RegimeTransitionFunction | None,
 ) -> SimulateFunctions:
     """Build all compiled functions for the forward-simulation phase.
@@ -448,7 +449,7 @@ class _CoreResult:
     transitions: TransitionFunctionsMapping
     """Nested mapping of transition names to transition functions."""
 
-    stochastic_transition_names: frozenset[str]
+    stochastic_transition_names: frozenset[TransitionFunctionName]
     """Frozenset of stochastic transition function names."""
 
     next_regime_func: InternalUserFunction | None
@@ -1317,7 +1318,7 @@ def _build_Q_and_F_per_period(
     functions: FunctionsMapping,
     constraints: FunctionsMapping,
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[str],
+    stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     ages: AgeGrid,
@@ -1450,7 +1451,7 @@ def _build_next_state_vmapped(
     *,
     functions: FunctionsMapping,
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[str],
+    stochastic_transition_names: frozenset[TransitionFunctionName],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     variable_info: pd.DataFrame,
     regime_params_template: RegimeParamsTemplate,

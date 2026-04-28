@@ -35,11 +35,14 @@ type ActionName = str
 type StateOrActionName = str
 type ShockName = str
 type FunctionName = str
+type TransitionFunctionName = str
 type RegimeNamesToIds = MappingProxyType[RegimeName, int]
 
 type FunctionsMapping = MappingProxyType[FunctionName, InternalUserFunction]
 
-type TransitionFunctionsMapping = MappingProxyType[RegimeName, FunctionsMapping]
+type TransitionFunctionsMapping = MappingProxyType[
+    RegimeName, MappingProxyType[TransitionFunctionName, InternalUserFunction]
+]
 
 
 type _ParamsLeaf = bool | float | Array | pd.Series | MappingLeaf | SequenceLeaf
