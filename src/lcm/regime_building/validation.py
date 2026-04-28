@@ -174,7 +174,9 @@ def collect_state_transitions(
         raw = state_transitions[name]
         if raw is None:
             ann = DiscreteState if isinstance(grid, DiscreteGrid) else ContinuousState
-            transitions[f"next_{name}"] = _make_identity_fn(name, annotation=ann)
+            transitions[f"next_{name}"] = _make_identity_fn(
+                state_name=name, annotation=ann
+            )
         else:
             _add_raw_transition(transitions, name, raw)
 
@@ -283,7 +285,7 @@ def _validate_per_target_dict(
 
 
 def _make_identity_fn(
-    state_name: StateName, *, annotation: TypeAliasType
+    *, state_name: StateName, annotation: TypeAliasType
 ) -> _IdentityTransition:
     """Create an identity transition for a fixed state."""
     return _IdentityTransition(state_name, annotation=annotation)

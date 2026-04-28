@@ -121,7 +121,7 @@ def get_Q_and_F(
     _build_H_kwargs = _get_build_H_kwargs(functions)
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
-        [
+        deps=[
             U_and_F,
             compute_regime_transition_probs,
             *list(state_transitions.values()),
@@ -295,7 +295,7 @@ def get_compute_intermediates(
         )
 
     arg_names_of_compute_intermediates = _get_arg_names_of_Q_and_F(
-        [
+        deps=[
             U_and_F,
             compute_regime_transition_probs,
             *list(state_transitions.values()),
@@ -380,7 +380,7 @@ def get_Q_and_F_terminal(
     U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
-        [U_and_F],
+        deps=[U_and_F],
         # While the terminal period does not depend on the value function array, we
         # include it in the signature, such that we can treat all periods uniformly
         # during the solution and simulation.
@@ -470,8 +470,8 @@ def get_complete_targets(
 
 
 def _get_arg_names_of_Q_and_F(
-    deps: list[Callable[..., Any]],
     *,
+    deps: list[Callable[..., Any]],
     include: frozenset[str] = frozenset(),
     exclude: frozenset[str] = frozenset(),
 ) -> tuple[str, ...]:

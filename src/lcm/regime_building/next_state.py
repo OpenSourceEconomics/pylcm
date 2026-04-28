@@ -181,12 +181,12 @@ def _extend_transitions_for_simulation(
     # ----------------------------------------------------------------------------------
     discrete_stochastic_next = {
         name: _create_discrete_stochastic_next_func(
-            name, labels=flat_grids[name.replace("next_", "")].to_jax()
+            name=name, labels=flat_grids[name.replace("next_", "")].to_jax()
         )
         for name in discrete_stochastic_targets
     }
     continuous_stochastic_next = {
-        name: _create_continuous_stochastic_next_func(name, flat_grids=flat_grids)
+        name: _create_continuous_stochastic_next_func(name=name, flat_grids=flat_grids)
         for name in continuous_stochastic_targets
     }
 
@@ -198,7 +198,7 @@ def _extend_transitions_for_simulation(
 
 
 def _create_discrete_stochastic_next_func(
-    name: str, *, labels: DiscreteState
+    *, name: str, labels: DiscreteState
 ) -> StochasticNextFunction:
     """Get function that simulates the next state of a stochastic variable.
 
@@ -231,7 +231,7 @@ def _create_discrete_stochastic_next_func(
 
 
 def _create_continuous_stochastic_next_func(
-    name: str, *, flat_grids: MappingProxyType[str, Grid]
+    *, name: str, flat_grids: MappingProxyType[str, Grid]
 ) -> StochasticNextFunction:
     """Get function that simulates the next state of a stochastic variable.
 
@@ -253,16 +253,20 @@ def _create_continuous_stochastic_next_func(
     grid: _ShockGrid = flat_grids[flat_key]  # ty: ignore [invalid-assignment]
 
     if isinstance(grid, _ShockGridAR1):
-        return _create_ar1_next_func(name, prev_state_name, grid=grid)
+        return _create_ar1_next_func(
+            name=name, prev_state_name=prev_state_name, grid=grid
+        )
     if isinstance(grid, _ShockGridIID):
-        return _create_iid_next_func(name, prev_state_name, grid=grid)
+        return _create_iid_next_func(
+            name=name, prev_state_name=prev_state_name, grid=grid
+        )
 
     msg = f"Expected _ShockGridIID or _ShockGridAR1, got {type(grid)}"
     raise TypeError(msg)
 
 
 def _create_ar1_next_func(
-    name: str, prev_state_name: StateName, *, grid: _ShockGridAR1
+    *, name: str, prev_state_name: StateName, grid: _ShockGridAR1
 ) -> StochasticNextFunction:
     fixed_params = dict(grid.params)
     runtime_param_names = {
@@ -294,7 +298,7 @@ def _create_ar1_next_func(
 
 
 def _create_iid_next_func(
-    name: str, prev_state_name: StateName, *, grid: _ShockGridIID
+    *, name: str, prev_state_name: StateName, grid: _ShockGridIID
 ) -> StochasticNextFunction:
     fixed_params = dict(grid.params)
     runtime_param_names = {
