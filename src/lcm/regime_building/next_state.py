@@ -143,7 +143,7 @@ def _extend_transitions_for_simulation(
     flat_transitions: FunctionsMapping,
     variable_info: pd.DataFrame,
     stochastic_transition_names: frozenset[TransitionFunctionName],
-) -> dict[str, Callable[..., Array]]:
+) -> dict[TransitionFunctionName, Callable[..., Array]]:
     """Extend the functions dictionary for the simulation target.
 
     Args:

@@ -180,12 +180,12 @@ def collect_state_transitions(
                 state_name=name, annotation=ann
             )
         else:
-            _add_raw_transition(transitions, name, raw)
+            _add_raw_transition(transitions=transitions, name=name, raw=raw)
 
     # Second pass: target-only states (in state_transitions but not in states).
     for name, raw in state_transitions.items():
         if name not in states and raw is not None:
-            _add_raw_transition(transitions, name, raw)
+            _add_raw_transition(transitions=transitions, name=name, raw=raw)
 
     return transitions
 
@@ -246,7 +246,9 @@ def _validate_state_transitions(regime: Regime) -> list[str]:
         if value is None or callable(value):
             continue
         if isinstance(value, Mapping):
-            error_messages.extend(_validate_per_target_dict(name, value))
+            error_messages.extend(
+                _validate_per_target_dict(state_name=name, targets=value)
+            )
         else:
             error_messages.append(
                 f"state_transitions['{name}'] must be callable, MarkovTransition, "
@@ -257,7 +259,7 @@ def _validate_state_transitions(regime: Regime) -> list[str]:
 
 
 def _validate_per_target_dict(
-    state_name: StateName, targets: Mapping[str, object]
+    *, state_name: StateName, targets: Mapping[RegimeName, object]
 ) -> list[str]:
     """Validate a per-target transition dict for stochastic consistency and types."""
     error_messages: list[str] = []
@@ -294,6 +296,7 @@ def _make_identity_fn(
 
 
 def _add_raw_transition(
+    *,
     transitions: dict[TransitionFunctionName, UserFunction],
     name: StateName,
     raw: UserFunction | Callable | Mapping[RegimeName, UserFunction | Callable],

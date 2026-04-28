@@ -87,7 +87,7 @@ def process_regimes(
     Args:
         regimes: Mapping of regime names to Regime instances.
         ages: The AgeGrid for the model.
-        regime_names_to_ids: Immutable mapping from regime names to integer indices.
+        regime_names_to_ids: Immutable mapping of regime names to integer indices.
         enable_jit: Whether to jit the functions of the internal regime.
 
     Returns:
@@ -225,7 +225,7 @@ def _build_solve_functions(
         nested_transitions: Nested transitions dict for internal processing.
         all_grids: Immutable mapping of regime names to Grid spec objects.
         regime_params_template: The regime's parameter template.
-        regime_names_to_ids: Mapping from regime names to integer indices.
+        regime_names_to_ids: Immutable mapping of regime names to integer indices.
         variable_info: Variable info of the regime.
         regimes_to_active_periods: Mapping of regime names to active period tuples.
         regime_to_v_interpolation_info: Mapping of regime names to state space info.
@@ -350,7 +350,7 @@ def _build_simulate_functions(
         nested_transitions: Nested transitions dict for internal processing.
         all_grids: Immutable mapping of regime names to Grid spec objects.
         regime_params_template: The regime's parameter template.
-        regime_names_to_ids: Mapping from regime names to integer indices.
+        regime_names_to_ids: Immutable mapping of regime names to integer indices.
         variable_info: Variable info of the regime.
         regimes_to_active_periods: Mapping of regime names to active period tuples.
         regime_to_v_interpolation_info: Mapping of regime names to state space info.
@@ -1186,8 +1186,8 @@ def build_regime_transition_probs_functions(
     Args:
         functions: Immutable mapping of function names to internal user functions.
         compute_regime_transition_probs: The user's next_regime function.
-        grids: Immutable mapping of grid names to grid objects.
-        regime_names_to_ids: Mapping from regime names to integer indices.
+        grids: Immutable mapping of state and action variable names to grid objects.
+        regime_names_to_ids: Immutable mapping of regime names to integer indices.
         regime_params_template: The regime's parameter template.
         is_stochastic: Whether the regime transition is stochastic.
         enable_jit: Whether to JIT-compile the functions.
@@ -1255,7 +1255,7 @@ def _wrap_regime_transition_probs(
 
     Args:
         func: The user's next_regime function (with qname parameters).
-        regime_names_to_ids: Mapping from regime names to integer indices.
+        regime_names_to_ids: Immutable mapping of regime names to integer indices.
 
     Returns:
         A wrapped function that returns MappingProxyType[str, float|Array].
@@ -1302,7 +1302,7 @@ def _wrap_deterministic_regime_transition(
 
     Args:
         func: The user's deterministic next_regime function (returns int).
-        regime_names_to_ids: Mapping from regime names to integer indices.
+        regime_names_to_ids: Immutable mapping of regime names to integer indices.
 
     Returns:
         A wrapped function that returns a one-hot probability array.

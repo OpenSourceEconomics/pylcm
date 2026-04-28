@@ -15,6 +15,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     FunctionName,
+    RegimeName,
     StateName,
     UserFunction,
 )
@@ -138,7 +139,7 @@ class Regime:
         UserFunction
         | MarkovTransition
         | None
-        | Mapping[str, UserFunction | MarkovTransition],
+        | Mapping[RegimeName, UserFunction | MarkovTransition],
     ] = field(default_factory=lambda: MappingProxyType({}))
     """Mapping of state names to transition functions, `None`, or per-target dicts.
 
