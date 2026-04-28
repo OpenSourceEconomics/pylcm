@@ -57,6 +57,7 @@ from lcm.typing import (
     RegimeNamesToIds,
     RegimeParamsTemplate,
     RegimeTransitionFunction,
+    ShockName,
     StateName,
     StateOrActionName,
     TransitionFunctionsMapping,
@@ -571,7 +572,7 @@ def _process_regime_core(
         for k in flat_nested_transitions
         if QNAME_DELIMITER in k
     }
-    target_shock_grids: dict[tuple[RegimeName, str], _ShockGrid] = {
+    target_shock_grids: dict[tuple[RegimeName, ShockName], _ShockGrid] = {
         (regime, shock): grid
         for regime, grids in all_grids.items()
         if regime in reachable_targets
@@ -763,7 +764,7 @@ def _get_stochastic_transition_names(
         Frozenset of stochastic transition function names (e.g., "next_health").
 
     """
-    markov_state_names: set[str] = set()
+    markov_state_names: set[StateName] = set()
     for name in regime.state_transitions:
         raw = regime.state_transitions[name]
         if isinstance(raw, MarkovTransition) or (
@@ -771,7 +772,9 @@ def _get_stochastic_transition_names(
             and any(isinstance(v, MarkovTransition) for v in raw.values())
         ):
             markov_state_names.add(name)
-    shock_state_names = set(variable_info.query("is_shock").index.tolist())
+    shock_state_names: set[ShockName] = set(
+        variable_info.query("is_shock").index.tolist()
+    )
     return frozenset(f"next_{name}" for name in markov_state_names | shock_state_names)
 
 

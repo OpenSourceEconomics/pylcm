@@ -19,6 +19,7 @@ from lcm.typing import (
     ActiveFunction,
     ContinuousState,
     DiscreteState,
+    ShockName,
     StateName,
     UserFunction,
 )
@@ -196,10 +197,10 @@ def _validate_state_transitions(regime: Regime) -> list[str]:
     """Validate state_transitions against states."""
     error_messages: list[str] = []
 
-    shock_names = {
+    shock_names: set[ShockName] = {
         name for name, grid in regime.states.items() if isinstance(grid, _ShockGrid)
     }
-    non_shock_names = set(regime.states) - shock_names
+    non_shock_names: set[StateName] = set(regime.states) - shock_names
 
     # Keys not in states are allowed only with actual transitions (not None).
     # None means identity, which requires the state to exist in this regime.

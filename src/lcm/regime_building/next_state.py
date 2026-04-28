@@ -20,6 +20,7 @@ from lcm.typing import (
     FunctionsMapping,
     NextStateSimulationFunction,
     RegimeName,
+    ShockName,
     StateName,
     StateOrActionName,
     StochasticNextFunction,
@@ -154,7 +155,7 @@ def _extend_transitions_for_simulation(
         Extended functions dictionary.
 
     """
-    shock_names = set(variable_info.query("is_shock").index.to_list())
+    shock_names: set[ShockName] = set(variable_info.query("is_shock").index.to_list())
     flat_grids = flatten_regime_namespace(all_grids)
     discrete_stochastic_targets = [
         func_name
