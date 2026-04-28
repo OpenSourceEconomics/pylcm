@@ -21,6 +21,7 @@ from lcm.typing import (
     NextStateSimulationFunction,
     RegimeName,
     StateName,
+    StateOrActionName,
     StochasticNextFunction,
     TransitionFunctionsMapping,
 )
@@ -60,7 +61,7 @@ def get_next_state_function_for_simulation(
     *,
     transitions: TransitionFunctionsMapping,
     functions: FunctionsMapping,
-    all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
+    all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     variable_info: pd.DataFrame,
     stochastic_transition_names: frozenset[str] = frozenset(),
 ) -> NextStateSimulationFunction:
@@ -136,7 +137,7 @@ def get_next_stochastic_weights_function(
 
 def _extend_transitions_for_simulation(
     *,
-    all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
+    all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     flat_transitions: FunctionsMapping,
     variable_info: pd.DataFrame,
     stochastic_transition_names: frozenset[str],

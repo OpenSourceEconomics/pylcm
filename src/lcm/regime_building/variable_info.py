@@ -6,6 +6,7 @@ import pandas as pd
 from lcm.grids import ContinuousGrid, Grid
 from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
+from lcm.typing import StateOrActionName
 
 
 def get_variable_info(regime: Regime) -> pd.DataFrame:
@@ -65,7 +66,7 @@ def get_variable_info(regime: Regime) -> pd.DataFrame:
 
 def get_grids(
     regime: Regime,
-) -> MappingProxyType[str, Grid]:
+) -> MappingProxyType[StateOrActionName, Grid]:
     """Create a dictionary of grid objects for each variable in the regime.
 
     Args:

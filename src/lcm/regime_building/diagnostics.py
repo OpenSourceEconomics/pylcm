@@ -28,6 +28,7 @@ from lcm.typing import (
     RegimeName,
     RegimeTransitionFunction,
     StateName,
+    StateOrActionName,
     TransitionFunctionsMapping,
 )
 from lcm.utils.dispatchers import productmap
@@ -44,7 +45,7 @@ def _build_compute_intermediates_per_period(
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     state_action_space: StateActionSpace,
-    grids: MappingProxyType[str, Grid],
+    grids: MappingProxyType[StateOrActionName, Grid],
     ages: AgeGrid,
     enable_jit: bool,
 ) -> MappingProxyType[int, Callable]:

@@ -23,6 +23,7 @@ from lcm.typing import (
     RegimeParamsTemplate,
     RegimeTransitionFunction,
     StateName,
+    StateOrActionName,
     TransitionFunctionsMapping,
     VmappedRegimeTransitionFunction,
 )
@@ -63,7 +64,7 @@ class StateActionSpace:
     continuous_actions: MappingProxyType[ActionName, ContinuousAction]
     """Immutable mapping of continuous action variable names to their values."""
 
-    state_and_discrete_action_names: tuple[str, ...]
+    state_and_discrete_action_names: tuple[StateOrActionName, ...]
     """Names of states and discrete actions in variable info table order."""
 
     @property
@@ -215,7 +216,7 @@ class InternalRegime:
     terminal: bool
     """Whether this is a terminal regime."""
 
-    grids: MappingProxyType[str, Grid]
+    grids: MappingProxyType[StateOrActionName, Grid]
     """Immutable mapping of variable names to grid objects."""
 
     variable_info: pd.DataFrame
