@@ -19,6 +19,10 @@ from lcm.typing import (
     ActiveFunction,
     ContinuousState,
     DiscreteState,
+    RegimeName,
+    ShockName,
+    StateName,
+    TransitionFunctionName,
     UserFunction,
 )
 
@@ -135,12 +139,12 @@ def validate_logical_consistency(regime: Regime) -> None:
 
 
 def collect_state_transitions(
-    states: Mapping[str, Grid],
+    states: Mapping[StateName, Grid],
     state_transitions: Mapping[
-        str,
-        UserFunction | Callable | None | Mapping[str, UserFunction | Callable],
+        StateName,
+        UserFunction | Callable | None | Mapping[RegimeName, UserFunction | Callable],
     ],
-) -> dict[str, UserFunction]:
+) -> dict[TransitionFunctionName, UserFunction]:
     """Collect state transition functions from `state_transitions`.
 
     For each state, produces entries keyed as `f"next_{name}"`:
@@ -156,7 +160,7 @@ def collect_state_transitions(
     validation, so only callables, MarkovTransition, and per-target dicts remain.
 
     """
-    transitions: dict[str, UserFunction] = {}
+    transitions: dict[TransitionFunctionName, UserFunction] = {}
     for name, grid in states.items():
         # Shock transitions built directly in _process_regime_core
         if isinstance(grid, _ShockGrid):
@@ -172,14 +176,16 @@ def collect_state_transitions(
         raw = state_transitions[name]
         if raw is None:
             ann = DiscreteState if isinstance(grid, DiscreteGrid) else ContinuousState
-            transitions[f"next_{name}"] = _make_identity_fn(name, annotation=ann)
+            transitions[f"next_{name}"] = _make_identity_fn(
+                state_name=name, annotation=ann
+            )
         else:
-            _add_raw_transition(transitions, name, raw)
+            _add_raw_transition(transitions=transitions, name=name, raw=raw)
 
     # Second pass: target-only states (in state_transitions but not in states).
     for name, raw in state_transitions.items():
         if name not in states and raw is not None:
-            _add_raw_transition(transitions, name, raw)
+            _add_raw_transition(transitions=transitions, name=name, raw=raw)
 
     return transitions
 
@@ -195,10 +201,10 @@ def _validate_state_transitions(regime: Regime) -> list[str]:
     """Validate state_transitions against states."""
     error_messages: list[str] = []
 
-    shock_names = {
+    shock_names: set[ShockName] = {
         name for name, grid in regime.states.items() if isinstance(grid, _ShockGrid)
     }
-    non_shock_names = set(regime.states) - shock_names
+    non_shock_names: set[StateName] = set(regime.states) - shock_names
 
     # Keys not in states are allowed only with actual transitions (not None).
     # None means identity, which requires the state to exist in this regime.
@@ -240,7 +246,9 @@ def _validate_state_transitions(regime: Regime) -> list[str]:
         if value is None or callable(value):
             continue
         if isinstance(value, Mapping):
-            error_messages.extend(_validate_per_target_dict(name, value))
+            error_messages.extend(
+                _validate_per_target_dict(state_name=name, targets=value)
+            )
         else:
             error_messages.append(
                 f"state_transitions['{name}'] must be callable, MarkovTransition, "
@@ -251,7 +259,7 @@ def _validate_state_transitions(regime: Regime) -> list[str]:
 
 
 def _validate_per_target_dict(
-    state_name: str, targets: Mapping[str, object]
+    *, state_name: StateName, targets: Mapping[RegimeName, object]
 ) -> list[str]:
     """Validate a per-target transition dict for stochastic consistency and types."""
     error_messages: list[str] = []
@@ -281,16 +289,17 @@ def _validate_per_target_dict(
 
 
 def _make_identity_fn(
-    state_name: str, *, annotation: TypeAliasType
+    *, state_name: StateName, annotation: TypeAliasType
 ) -> _IdentityTransition:
     """Create an identity transition for a fixed state."""
     return _IdentityTransition(state_name, annotation=annotation)
 
 
 def _add_raw_transition(
-    transitions: dict[str, UserFunction],
-    name: str,
-    raw: UserFunction | Callable | Mapping[str, UserFunction | Callable],
+    *,
+    transitions: dict[TransitionFunctionName, UserFunction],
+    name: StateName,
+    raw: UserFunction | Callable | Mapping[RegimeName, UserFunction | Callable],
 ) -> None:
     """Add a single raw transition entry to the transitions dict."""
     if callable(raw):

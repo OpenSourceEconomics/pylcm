@@ -6,6 +6,7 @@ import pandas as pd
 from lcm.grids import ContinuousGrid, Grid
 from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
+from lcm.typing import StateOrActionName
 
 
 def get_variable_info(regime: Regime) -> pd.DataFrame:
@@ -65,17 +66,17 @@ def get_variable_info(regime: Regime) -> pd.DataFrame:
 
 def get_grids(
     regime: Regime,
-) -> MappingProxyType[str, Grid]:
-    """Create a dictionary of grid objects for each variable in the regime.
+) -> MappingProxyType[StateOrActionName, Grid]:
+    """Create a mapping of grid objects for each variable in the regime.
 
     Args:
         regime: The regime as provided by the user.
 
     Returns:
-        Immutable dictionary containing all variables of the regime. The keys are the
-        names of the variables. The values describe which values the variable can take.
-        For discrete variables these are the codes. For continuous variables this is
-        information about how to build the grids.
+        Immutable mapping of state and action variable names to their grid objects.
+        The values describe which values the variable can take. For discrete variables
+        these are the codes. For continuous variables this is information about how to
+        build the grids.
 
     """
     variable_info = get_variable_info(regime)

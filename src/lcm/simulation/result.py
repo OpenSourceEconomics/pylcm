@@ -23,10 +23,12 @@ from lcm.persistence import atomic_dump
 from lcm.regime import Regime
 from lcm.regime_building.processing import compute_merged_discrete_categories
 from lcm.typing import (
+    ActionName,
     FlatRegimeParams,
     FloatND,
     InternalParams,
     RegimeName,
+    StateName,
     UserFunction,
 )
 from lcm.utils.dispatchers import vmap_1d
@@ -45,7 +47,7 @@ class SimulationResult:
         self,
         *,
         raw_results: MappingProxyType[
-            str, MappingProxyType[int, PeriodRegimeSimulationData]
+            RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
         ],
         internal_regimes: MappingProxyType[RegimeName, InternalRegime],
         internal_params: InternalParams,
@@ -73,7 +75,9 @@ class SimulationResult:
     @property
     def raw_results(
         self,
-    ) -> MappingProxyType[str, MappingProxyType[int, PeriodRegimeSimulationData]]:
+    ) -> MappingProxyType[
+        RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
+    ]:
         """Raw simulation results by regime and period."""
         return self._raw_results
 
@@ -90,17 +94,17 @@ class SimulationResult:
         return self._period_to_regime_to_V_arr
 
     @property
-    def regime_names(self) -> list[str]:
+    def regime_names(self) -> list[RegimeName]:
         """Names of all regimes."""
         return self._metadata.regime_names
 
     @property
-    def state_names(self) -> list[str]:
+    def state_names(self) -> list[StateName]:
         """Names of all state variables (union across regimes)."""
         return self._metadata.state_names
 
     @property
-    def action_names(self) -> list[str]:
+    def action_names(self) -> list[ActionName]:
         """Names of all action variables (union across regimes)."""
         return self._metadata.action_names
 
@@ -221,8 +225,8 @@ class SimulationResult:
 
 
 def get_simulation_output_dtypes(
-    regimes: Mapping[str, Regime],
-    regime_names_to_ids: Mapping[str, int],
+    regimes: Mapping[RegimeName, Regime],
+    regime_names_to_ids: Mapping[RegimeName, int],
 ) -> MappingProxyType[str, pd.CategoricalDtype]:
     """Compute pandas CategoricalDtype for all discrete output columns.
 
@@ -259,13 +263,13 @@ def get_simulation_output_dtypes(
 class SimulationMetadata:
     """Pre-computed metadata about the simulation."""
 
-    regime_names: list[str]
+    regime_names: list[RegimeName]
     """Names of all regimes in the model."""
 
-    state_names: list[str]
+    state_names: list[StateName]
     """Sorted union of state variable names across all regimes."""
 
-    action_names: list[str]
+    action_names: list[ActionName]
     """Sorted union of action variable names across all regimes."""
 
     n_periods: int
@@ -274,10 +278,10 @@ class SimulationMetadata:
     n_subjects: int
     """Number of subjects simulated."""
 
-    regime_to_states: MappingProxyType[str, tuple[str, ...]]
+    regime_to_states: MappingProxyType[RegimeName, tuple[StateName, ...]]
     """Immutable mapping of regime names to their state variable names."""
 
-    regime_to_actions: MappingProxyType[str, tuple[str, ...]]
+    regime_to_actions: MappingProxyType[RegimeName, tuple[ActionName, ...]]
     """Immutable mapping of regime names to their action variable names."""
 
     discrete_categories: MappingProxyType[str, tuple[str, ...]]
@@ -286,7 +290,9 @@ class SimulationMetadata:
     discrete_ordered: MappingProxyType[str, bool]
     """Immutable mapping of discrete variable names to their ordered flag."""
 
-    regime_discrete_categories: MappingProxyType[tuple[str, str], tuple[str, ...]]
+    regime_discrete_categories: MappingProxyType[
+        tuple[RegimeName, str], tuple[str, ...]
+    ]
     """Immutable mapping of (regime_name, var_name) to per-regime categories."""
 
 
@@ -302,10 +308,10 @@ def _compute_metadata(
     """Compute metadata from internal regimes, raw results, and output dtypes."""
     regime_names = list(internal_regimes.keys())
 
-    all_states: set[str] = set()
-    all_actions: set[str] = set()
-    regime_to_states: dict[str, tuple[str, ...]] = {}
-    regime_to_actions: dict[str, tuple[str, ...]] = {}
+    all_states: set[StateName] = set()
+    all_actions: set[ActionName] = set()
+    regime_to_states: dict[RegimeName, tuple[StateName, ...]] = {}
+    regime_to_actions: dict[RegimeName, tuple[ActionName, ...]] = {}
 
     for regime_name, regime in internal_regimes.items():
         vi = regime.variable_info
@@ -326,7 +332,7 @@ def _compute_metadata(
         discrete_ordered[var_name] = bool(dtype.ordered)
 
     # Per-regime discrete categories for correct code→label mapping
-    regime_discrete_categories: dict[tuple[str, str], tuple[str, ...]] = {}
+    regime_discrete_categories: dict[tuple[RegimeName, str], tuple[str, ...]] = {}
     for regime_name, regime in internal_regimes.items():
         for var_name, grid in regime.grids.items():
             if isinstance(grid, DiscreteGrid):
@@ -433,7 +439,7 @@ def _get_stochastic_weight_function_names(regime: InternalRegime) -> set[str]:
 def _create_flat_dataframe(
     *,
     raw_results: MappingProxyType[
-        str, MappingProxyType[int, PeriodRegimeSimulationData]
+        RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
     ],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     internal_params: InternalParams,
@@ -562,8 +568,8 @@ def _filter_targets_for_regime(
 def _assemble_dataframe(
     *,
     regime_dfs: list[pd.DataFrame],
-    state_names: list[str],
-    action_names: list[str],
+    state_names: list[StateName],
+    action_names: list[ActionName],
 ) -> pd.DataFrame:
     """Combine regime DataFrames, add missing columns, reorder, and sort."""
     if not regime_dfs:
@@ -577,8 +583,8 @@ def _assemble_dataframe(
 
 def _empty_dataframe(
     *,
-    state_names: list[str],
-    action_names: list[str],
+    state_names: list[StateName],
+    action_names: list[ActionName],
 ) -> pd.DataFrame:
     """Create empty DataFrame with correct columns."""
     columns = ["subject_id", "period", "regime", "value"]
@@ -590,8 +596,8 @@ def _empty_dataframe(
 def _add_missing_columns(
     *,
     df: pd.DataFrame,
-    state_names: list[str],
-    action_names: list[str],
+    state_names: list[StateName],
+    action_names: list[ActionName],
 ) -> pd.DataFrame:
     """Add NaN columns for states/actions not present in DataFrame."""
     for name in state_names:
@@ -606,8 +612,8 @@ def _add_missing_columns(
 def _reorder_columns(
     *,
     df: pd.DataFrame,
-    state_names: list[str],
-    action_names: list[str],
+    state_names: list[StateName],
+    action_names: list[ActionName],
 ) -> pd.DataFrame:
     """Reorder columns: subject_id, period, regime, value, states, actions, rest."""
     base = ["subject_id", "period", "regime", "value"]

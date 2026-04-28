@@ -18,7 +18,13 @@ from lcm.params.sequence_leaf import SequenceLeaf
 from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
 from lcm.simulation.initial_conditions import MISSING_CAT_CODE
-from lcm.typing import InternalParams, RegimeNamesToIds
+from lcm.typing import (
+    FunctionName,
+    InternalParams,
+    RegimeName,
+    RegimeNamesToIds,
+    StateName,
+)
 from lcm.utils.error_handling import (
     _get_func_indexing_params,
 )
@@ -43,7 +49,7 @@ def has_series(params: Mapping) -> bool:
 def initial_conditions_from_dataframe(  # noqa: C901
     *,
     df: pd.DataFrame,
-    regimes: Mapping[str, Regime],
+    regimes: Mapping[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
 ) -> dict[str, Array]:
     """Convert a DataFrame of initial conditions to LCM initial conditions format.
@@ -97,7 +103,7 @@ def initial_conditions_from_dataframe(  # noqa: C901
     result_arrays: dict[str, np.ndarray] = {
         col: np.full(n_subjects, np.nan) for col in state_cols
     }
-    discrete_state_names: set[str] = set()
+    discrete_state_names: set[StateName] = set()
 
     # Process per regime group (vectorised .map() within each group)
     for regime_name, group in df.groupby("regime"):
@@ -160,7 +166,7 @@ def _map_discrete_labels(
     result_array: np.ndarray,
     idx: pd.Index,
     col: str,
-    regime_name: str,
+    regime_name: RegimeName,
 ) -> None:
     """Map string labels to integer codes for a discrete state column in-place."""
     label_to_code = dict(zip(grid.categories, grid.codes, strict=True))
@@ -179,9 +185,9 @@ def _map_discrete_labels(
 
 def convert_series_in_params(
     *,
-    internal_params: Mapping[str, Mapping[str, object]],
+    internal_params: Mapping[RegimeName, Mapping[str, object]],
     ages: AgeGrid,
-    regimes: Mapping[str, Regime],
+    regimes: Mapping[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
 ) -> InternalParams:
     """Convert pd.Series leaves in already-broadcast internal params to JAX arrays.
@@ -208,7 +214,7 @@ def convert_series_in_params(
         arrays.
 
     """
-    result: dict[str, dict[str, object]] = {}
+    result: dict[RegimeName, dict[str, object]] = {}
     for regime_name, regime_params in internal_params.items():
         regime = regimes[regime_name]
         all_funcs = regime.get_all_functions()
@@ -262,11 +268,11 @@ def _convert_param_value(
     value: object,
     func: Callable | None,
     param_name: str,
-    func_name: str,
+    func_name: FunctionName,
     ages: AgeGrid,
-    regimes: Mapping[str, Regime],
+    regimes: Mapping[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
-    regime_name: str | None,
+    regime_name: RegimeName | None,
 ) -> object:
     """Convert a single param value, dispatching on type.
 
@@ -323,11 +329,11 @@ def array_from_series(
     sr: pd.Series,
     func: Callable | None,
     param_name: str,
-    func_name: str,
+    func_name: FunctionName,
     ages: AgeGrid,
-    regimes: Mapping[str, Regime],
+    regimes: Mapping[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
-    regime_name: str | None = None,
+    regime_name: RegimeName | None = None,
 ) -> Array:
     """Convert a pandas Series to a JAX array.
 
@@ -407,8 +413,8 @@ def array_from_series(
 
 def _resolve_categoricals(
     *,
-    regimes: Mapping[str, Regime],
-    regime_name: str | None,
+    regimes: Mapping[RegimeName, Regime],
+    regime_name: RegimeName | None,
 ) -> dict[str, DiscreteGrid]:
     """Build combined categorical lookup from model grids and regime overrides.
 
@@ -460,7 +466,7 @@ def _resolve_categoricals(
 
 def _resolve_per_target_template_key(
     *,
-    func_name: str,
+    func_name: FunctionName,
     regime: Regime,
 ) -> str | None:
     """Translate a per-target template key to `get_all_functions()` format.
@@ -496,7 +502,7 @@ def _resolve_per_target_template_key(
     return None
 
 
-def _is_runtime_grid_param(*, func_name: str, regime: Regime) -> bool:
+def _is_runtime_grid_param(*, func_name: FunctionName, regime: Regime) -> bool:
     """Check if a template function key refers to a runtime grid param."""
     if func_name not in regime.states:
         return False
@@ -620,9 +626,9 @@ def _build_level_mappings_for_param(
 
 def _build_outcome_mapping(
     *,
-    func_name: str,
+    func_name: FunctionName,
     grids: dict[str, DiscreteGrid],
-    regimes: Mapping[str, Regime],
+    regimes: Mapping[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
 ) -> _LevelMapping:
     """Build a `_LevelMapping` for the outcome axis of a `next_*` function.
@@ -791,8 +797,8 @@ def _validate_and_reorder_levels(
 def _validate_state_columns(
     *,
     state_columns: set[str],
-    regimes: Mapping[str, Regime],
-    initial_regimes: list[str],
+    regimes: Mapping[RegimeName, Regime],
+    initial_regimes: list[RegimeName],
 ) -> None:
     """Validate that DataFrame columns match model states."""
     expected = _collect_state_names(regimes=regimes, initial_regimes=initial_regimes)
@@ -831,8 +837,8 @@ def _format_missing_state_detail(*, name: str, required_by: list[str]) -> str:
 
 def _collect_state_names(
     *,
-    regimes: Mapping[str, Regime],
-    initial_regimes: list[str],
+    regimes: Mapping[RegimeName, Regime],
+    initial_regimes: list[RegimeName],
 ) -> set[str]:
     """Collect all state names (including shock grids) from initial regimes.
 
@@ -848,7 +854,7 @@ def _collect_state_names(
 
 
 def _build_discrete_grid_lookup(
-    regimes: Mapping[str, Regime],
+    regimes: Mapping[RegimeName, Regime],
 ) -> dict[str, DiscreteGrid]:
     """Collect all DiscreteGrid instances from states and actions across regimes.
 

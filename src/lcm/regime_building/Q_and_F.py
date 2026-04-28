@@ -21,6 +21,7 @@ from lcm.typing import (
     QAndFFunction,
     RegimeName,
     RegimeTransitionFunction,
+    TransitionFunctionName,
     TransitionFunctionsMapping,
 )
 from lcm.utils.dispatchers import productmap
@@ -32,9 +33,9 @@ def get_Q_and_F(
     flat_param_names: frozenset[str],
     functions: FunctionsMapping,
     constraints: FunctionsMapping,
-    complete_targets: tuple[str, ...],
+    complete_targets: tuple[RegimeName, ...],
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[str],
+    stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> QAndFFunction:
@@ -67,7 +68,7 @@ def get_Q_and_F(
     joint_weights_from_marginals = {}
     next_V = {}
 
-    next_V_extra_param_names: dict[str, frozenset[str]] = {}
+    next_V_extra_param_names: dict[RegimeName, frozenset[str]] = {}
 
     for target_regime_name in complete_targets:
         # Transitions from the current regime to the target regime
@@ -120,7 +121,7 @@ def get_Q_and_F(
     _build_H_kwargs = _get_build_H_kwargs(functions)
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
-        [
+        deps=[
             U_and_F,
             compute_regime_transition_probs,
             *list(state_transitions.values()),
@@ -213,9 +214,9 @@ def get_compute_intermediates(
     flat_param_names: frozenset[str],
     functions: FunctionsMapping,
     constraints: FunctionsMapping,
-    complete_targets: tuple[str, ...],
+    complete_targets: tuple[RegimeName, ...],
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[str],
+    stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> Callable:
@@ -252,7 +253,7 @@ def get_compute_intermediates(
     joint_weights_from_marginals = {}
     next_V = {}
 
-    next_V_extra_param_names: dict[str, frozenset[str]] = {}
+    next_V_extra_param_names: dict[RegimeName, frozenset[str]] = {}
 
     for target_regime_name in complete_targets:
         target_transitions = transitions[target_regime_name]
@@ -294,7 +295,7 @@ def get_compute_intermediates(
         )
 
     arg_names_of_compute_intermediates = _get_arg_names_of_Q_and_F(
-        [
+        deps=[
             U_and_F,
             compute_regime_transition_probs,
             *list(state_transitions.values()),
@@ -379,7 +380,7 @@ def get_Q_and_F_terminal(
     U_and_F = _get_U_and_F(functions=functions, constraints=constraints)
 
     arg_names_of_Q_and_F = _get_arg_names_of_Q_and_F(
-        [U_and_F],
+        deps=[U_and_F],
         # While the terminal period does not depend on the value function array, we
         # include it in the signature, such that we can treat all periods uniformly
         # during the solution and simulation.
@@ -418,7 +419,7 @@ def get_complete_targets(
     period: int,
     transitions: TransitionFunctionsMapping,
     regimes_to_active_periods: MappingProxyType[RegimeName, tuple[int, ...]],
-    stochastic_transition_names: frozenset[str],
+    stochastic_transition_names: frozenset[TransitionFunctionName],
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
 ) -> tuple[RegimeName, ...]:
     """Return active target regimes whose stochastic needs are fully covered.
@@ -469,8 +470,8 @@ def get_complete_targets(
 
 
 def _get_arg_names_of_Q_and_F(
-    deps: list[Callable[..., Any]],
     *,
+    deps: list[Callable[..., Any]],
     include: frozenset[str] = frozenset(),
     exclude: frozenset[str] = frozenset(),
 ) -> tuple[str, ...]:
@@ -492,7 +493,7 @@ def _get_arg_names_of_Q_and_F(
 def _get_joint_weights_function(
     *,
     transitions: FunctionsMapping,
-    stochastic_transition_names: frozenset[str],
+    stochastic_transition_names: frozenset[TransitionFunctionName],
     regime_name: RegimeName,
 ) -> Callable[..., FloatND]:
     """Get function that calculates the joint weights.

@@ -30,11 +30,19 @@ type ScalarFloat = float | Float[Scalar, ""]
 type Period = int | Int1D
 type Age = int | float
 type RegimeName = str
+type StateName = str
+type ActionName = str
+type StateOrActionName = str
+type ShockName = str
+type FunctionName = str
+type TransitionFunctionName = str
 type RegimeNamesToIds = MappingProxyType[RegimeName, int]
 
-type FunctionsMapping = MappingProxyType[str, InternalUserFunction]
+type FunctionsMapping = MappingProxyType[FunctionName, InternalUserFunction]
 
-type TransitionFunctionsMapping = MappingProxyType[RegimeName, FunctionsMapping]
+type TransitionFunctionsMapping = MappingProxyType[
+    RegimeName, MappingProxyType[TransitionFunctionName, InternalUserFunction]
+]
 
 
 type _ParamsLeaf = bool | float | Array | pd.Series | MappingLeaf | SequenceLeaf
@@ -50,11 +58,11 @@ type FlatRegimeParams = MappingProxyType[str, bool | float | Array]
 type InternalParams = MappingProxyType[RegimeName, FlatRegimeParams]
 
 # Immutable templates, used internally
-type RegimeParamsTemplate = MappingProxyType[str, MappingProxyType[str, str]]
+type RegimeParamsTemplate = MappingProxyType[FunctionName, MappingProxyType[str, str]]
 type ParamsTemplate = MappingProxyType[RegimeName, RegimeParamsTemplate]
 
 # User-facing template; types rendered as strings.
-type UserFacingParamsTemplate = dict[RegimeName, dict[str, dict[str, str]]]
+type UserFacingParamsTemplate = dict[RegimeName, dict[FunctionName, dict[str, str]]]
 
 # Type aliases for value function arrays
 type PeriodToRegimeToVArr = MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]

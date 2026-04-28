@@ -9,10 +9,14 @@ from lcm.exceptions import RegimeInitializationError
 from lcm.grids import DiscreteGrid, Grid
 from lcm.interfaces import SolveSimulateFunctionPair
 from lcm.typing import (
+    ActionName,
     ActiveFunction,
     ContinuousState,
     DiscreteState,
     FloatND,
+    FunctionName,
+    RegimeName,
+    StateName,
     UserFunction,
 )
 from lcm.utils.containers import (
@@ -76,7 +80,7 @@ class _IdentityTransition:
 
     _is_auto_identity: bool = True
 
-    def __init__(self, state_name: str, *, annotation: TypeAliasType) -> None:
+    def __init__(self, state_name: StateName, *, annotation: TypeAliasType) -> None:
         self._state_name = state_name
         self.__name__ = f"next_{state_name}"
         param = inspect.Parameter(
@@ -125,15 +129,17 @@ class Regime:
     active: ActiveFunction = lambda _age: True
     """Callable that takes age (float) and returns True if regime is active."""
 
-    states: Mapping[str, Grid] = field(default_factory=lambda: MappingProxyType({}))
+    states: Mapping[StateName, Grid] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     """Mapping of state variable names to grid objects."""
 
     state_transitions: Mapping[
-        str,
+        StateName,
         UserFunction
         | MarkovTransition
         | None
-        | Mapping[str, UserFunction | MarkovTransition],
+        | Mapping[RegimeName, UserFunction | MarkovTransition],
     ] = field(default_factory=lambda: MappingProxyType({}))
     """Mapping of state names to transition functions, `None`, or per-target dicts.
 
@@ -143,20 +149,22 @@ class Regime:
     regime names to transition functions — every reachable target must be listed.
     """
 
-    actions: Mapping[str, Grid] = field(default_factory=lambda: MappingProxyType({}))
+    actions: Mapping[ActionName, Grid] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     """Mapping of action variable names to grid objects."""
 
-    functions: Mapping[str, UserFunction] = field(
+    functions: Mapping[FunctionName, UserFunction] = field(
         default_factory=lambda: MappingProxyType({})
     )
     """Mapping of function names to callables; must include 'utility'."""
 
-    constraints: Mapping[str, UserFunction] = field(
+    constraints: Mapping[FunctionName, UserFunction] = field(
         default_factory=lambda: MappingProxyType({})
     )
     """Mapping of constraint names to constraint functions."""
 
-    derived_categoricals: Mapping[str, DiscreteGrid] = field(
+    derived_categoricals: Mapping[FunctionName, DiscreteGrid] = field(
         default_factory=lambda: MappingProxyType({})
     )
     """Categorical grids for DAG function outputs not in states/actions."""

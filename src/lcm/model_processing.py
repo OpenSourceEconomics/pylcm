@@ -30,6 +30,7 @@ from lcm.regime_building.processing import (
     process_regimes,
 )
 from lcm.typing import (
+    FunctionName,
     InternalParams,
     ParamsTemplate,
     RegimeName,
@@ -42,7 +43,7 @@ from lcm.utils.containers import get_field_names_and_values
 def build_regimes_and_template(
     *,
     ages: AgeGrid,
-    regimes: Mapping[str, Regime],
+    regimes: Mapping[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
@@ -89,7 +90,7 @@ def build_regimes_and_template(
 def _build_regimes_and_template_with_fixed_params(
     *,
     ages: AgeGrid,
-    regimes: Mapping[str, Regime],
+    regimes: Mapping[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
     fixed_params: UserParams,
@@ -144,7 +145,7 @@ def _build_regimes_and_template_with_fixed_params(
 def validate_model_inputs(
     *,
     n_periods: int,
-    regimes: Mapping[str, Regime],
+    regimes: Mapping[RegimeName, Regime],
     regime_id_class: type,
 ) -> None:
     """Validate model constructor inputs."""
@@ -200,7 +201,7 @@ def validate_model_inputs(
         raise ModelInitializationError(msg)
 
 
-def _validate_all_variables_used(regimes: Mapping[str, Regime]) -> list[str]:
+def _validate_all_variables_used(regimes: Mapping[RegimeName, Regime]) -> list[str]:
     """Validate that all states and actions are used somewhere in each regime.
 
     Each state or action must appear in at least one of:
@@ -288,10 +289,10 @@ def _remove_fixed_params_from_template(
     template so users don't need to supply them at solve/simulate time.
 
     """
-    result: dict[str, dict[str, dict[str, str]]] = {}
+    result: dict[RegimeName, dict[FunctionName, dict[str, str]]] = {}
     for regime_name, regime_template in template.items():
         regime_fixed = fixed_internal.get(regime_name, MappingProxyType({}))
-        new_regime: dict[str, dict[str, str]] = {}
+        new_regime: dict[FunctionName, dict[str, str]] = {}
         for func_name, func_params in regime_template.items():
             new_func_params = {
                 param_name: param_type
@@ -324,11 +325,11 @@ def _partial_fixed_params_into_regimes(
     fixed_internal: InternalParams,
 ) -> MappingProxyType[RegimeName, InternalRegime]:
     """Partial fixed params into all compiled functions on each InternalRegime."""
-    result = {}
-    for name, regime in internal_regimes.items():
-        regime_fixed = dict(fixed_internal.get(name, MappingProxyType({})))
+    result: dict[RegimeName, InternalRegime] = {}
+    for regime_name, regime in internal_regimes.items():
+        regime_fixed = dict(fixed_internal.get(regime_name, MappingProxyType({})))
         if not regime_fixed:
-            result[name] = regime
+            result[regime_name] = regime
             continue
 
         # Build new solve_functions with partialled functions
@@ -378,7 +379,7 @@ def _partial_fixed_params_into_regimes(
             ),
         )
 
-        result[name] = dataclasses.replace(
+        result[regime_name] = dataclasses.replace(
             regime,
             solve_functions=new_solve,
             simulate_functions=new_simulate,

@@ -23,9 +23,13 @@ from lcm.interfaces import StateActionSpace
 from lcm.regime_building.Q_and_F import get_complete_targets, get_compute_intermediates
 from lcm.regime_building.V import VInterpolationInfo
 from lcm.typing import (
+    ActionName,
     FunctionsMapping,
     RegimeName,
     RegimeTransitionFunction,
+    StateName,
+    StateOrActionName,
+    TransitionFunctionName,
     TransitionFunctionsMapping,
 )
 from lcm.utils.dispatchers import productmap
@@ -38,11 +42,11 @@ def _build_compute_intermediates_per_period(
     functions: FunctionsMapping,
     constraints: FunctionsMapping,
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[str],
+    stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     state_action_space: StateActionSpace,
-    grids: MappingProxyType[str, Grid],
+    grids: MappingProxyType[StateOrActionName, Grid],
     ages: AgeGrid,
     enable_jit: bool,
 ) -> MappingProxyType[int, Callable]:
@@ -84,7 +88,7 @@ def _build_compute_intermediates_per_period(
         if name in state_action_space.state_names
     }
 
-    configs: dict[tuple[str, ...], list[int]] = {}
+    configs: dict[tuple[RegimeName, ...], list[int]] = {}
     for period in range(ages.n_periods):
         complete = get_complete_targets(
             period=period,
@@ -99,7 +103,7 @@ def _build_compute_intermediates_per_period(
         *state_action_space.state_names,
         *state_action_space.action_names,
     )
-    built: dict[tuple[str, ...], Callable] = {}
+    built: dict[tuple[RegimeName, ...], Callable] = {}
     for complete_targets in configs:
         scalar = get_compute_intermediates(
             flat_param_names=flat_param_names,
@@ -200,9 +204,9 @@ def _wrap_with_reduction(
 def _productmap_over_state_action_space(
     *,
     func: Callable,
-    action_names: tuple[str, ...],
-    state_names: tuple[str, ...],
-    state_batch_sizes: dict[str, int],
+    action_names: tuple[ActionName, ...],
+    state_names: tuple[StateName, ...],
+    state_batch_sizes: dict[StateName, int],
 ) -> Callable:
     """Wrap a scalar state-action function with productmap over actions then states.
 

@@ -57,6 +57,10 @@ from lcm.typing import (
     RegimeNamesToIds,
     RegimeParamsTemplate,
     RegimeTransitionFunction,
+    ShockName,
+    StateName,
+    StateOrActionName,
+    TransitionFunctionName,
     TransitionFunctionsMapping,
     UserFunction,
     VmappedRegimeTransitionFunction,
@@ -68,7 +72,7 @@ from lcm.utils.namespace import flatten_regime_namespace, unflatten_regime_names
 
 def process_regimes(
     *,
-    regimes: Mapping[str, Regime],
+    regimes: Mapping[RegimeName, Regime],
     ages: AgeGrid,
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
@@ -83,77 +87,96 @@ def process_regimes(
     Args:
         regimes: Mapping of regime names to Regime instances.
         ages: The AgeGrid for the model.
-        regime_names_to_ids: Immutable mapping from regime names to integer indices.
+        regime_names_to_ids: Immutable mapping of regime names to integer indices.
         enable_jit: Whether to jit the functions of the internal regime.
 
     Returns:
         The processed regimes.
 
     """
-    states_per_regime: dict[RegimeName, set[str]] = {
-        name: set(regime.states.keys()) for name, regime in regimes.items()
+    states_per_regime: dict[RegimeName, set[StateName]] = {
+        regime_name: set(regime.states.keys())
+        for regime_name, regime in regimes.items()
     }
 
-    nested_transitions = {}
-    for name, regime in regimes.items():
-        nested_transitions[name] = _extract_transitions_from_regime(
+    nested_transitions: dict[
+        RegimeName,
+        dict[
+            RegimeName | TransitionFunctionName,
+            dict[TransitionFunctionName, UserFunction] | UserFunction,
+        ],
+    ] = {}
+    for regime_name, regime in regimes.items():
+        nested_transitions[regime_name] = _extract_transitions_from_regime(
             regime=regime,
             states_per_regime=states_per_regime,
         )
     _validate_categoricals(regimes)
 
     variable_info = MappingProxyType(
-        {n: get_variable_info(r) for n, r in regimes.items()}
+        {
+            regime_name: get_variable_info(regime)
+            for regime_name, regime in regimes.items()
+        }
     )
-    all_grids = MappingProxyType({n: get_grids(r) for n, r in regimes.items()})
+    all_grids = MappingProxyType(
+        {regime_name: get_grids(regime) for regime_name, regime in regimes.items()}
+    )
 
     _fail_if_action_has_batch_size(regimes)
 
     regime_to_v_interpolation_info = MappingProxyType(
-        {n: create_v_interpolation_info(r) for n, r in regimes.items()}
+        {
+            regime_name: create_v_interpolation_info(regime)
+            for regime_name, regime in regimes.items()
+        }
     )
     state_action_spaces = MappingProxyType(
         {
-            n: create_state_action_space(
-                variable_info=variable_info[n], grids=all_grids[n]
+            regime_name: create_state_action_space(
+                variable_info=variable_info[regime_name],
+                grids=all_grids[regime_name],
             )
-            for n in regimes
+            for regime_name in regimes
         }
     )
     regimes_to_active_periods = MappingProxyType(
-        {n: ages.get_periods_where(r.active) for n, r in regimes.items()}
+        {
+            regime_name: ages.get_periods_where(regime.active)
+            for regime_name, regime in regimes.items()
+        }
     )
 
-    internal_regimes = {}
-    for name, regime in regimes.items():
+    internal_regimes: dict[RegimeName, InternalRegime] = {}
+    for regime_name, regime in regimes.items():
         regime_params_template = create_regime_params_template(regime)
 
         solve_functions = _build_solve_functions(
             regime=regime,
-            regime_name=name,
-            nested_transitions=nested_transitions[name],
+            regime_name=regime_name,
+            nested_transitions=nested_transitions[regime_name],
             all_grids=all_grids,
             regime_params_template=regime_params_template,
             regime_names_to_ids=regime_names_to_ids,
-            variable_info=variable_info[name],
+            variable_info=variable_info[regime_name],
             regimes_to_active_periods=regimes_to_active_periods,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-            state_action_space=state_action_spaces[name],
+            state_action_space=state_action_spaces[regime_name],
             ages=ages,
             enable_jit=enable_jit,
         )
 
         simulate_functions = _build_simulate_functions(
             regime=regime,
-            regime_name=name,
-            nested_transitions=nested_transitions[name],
+            regime_name=regime_name,
+            nested_transitions=nested_transitions[regime_name],
             all_grids=all_grids,
             regime_params_template=regime_params_template,
             regime_names_to_ids=regime_names_to_ids,
-            variable_info=variable_info[name],
+            variable_info=variable_info[regime_name],
             regimes_to_active_periods=regimes_to_active_periods,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-            state_action_space=state_action_spaces[name],
+            state_action_space=state_action_spaces[regime_name],
             ages=ages,
             enable_jit=enable_jit,
             solve_transitions=solve_functions.transitions,
@@ -161,16 +184,16 @@ def process_regimes(
             solve_compute_regime_transition_probs=solve_functions.compute_regime_transition_probs,
         )
 
-        internal_regimes[name] = InternalRegime(
-            name=name,
+        internal_regimes[regime_name] = InternalRegime(
+            name=regime_name,
             terminal=regime.terminal,
-            grids=all_grids[name],
-            variable_info=variable_info[name],
-            active_periods=tuple(regimes_to_active_periods[name]),
+            grids=all_grids[regime_name],
+            variable_info=variable_info[regime_name],
+            active_periods=tuple(regimes_to_active_periods[regime_name]),
             regime_params_template=regime_params_template,
             solve_functions=solve_functions,
             simulate_functions=simulate_functions,
-            _base_state_action_space=state_action_spaces[name],
+            _base_state_action_space=state_action_spaces[regime_name],
         )
 
     return ensure_containers_are_immutable(internal_regimes)
@@ -180,8 +203,11 @@ def _build_solve_functions(
     *,
     regime: Regime,
     regime_name: RegimeName,
-    nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
-    all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
+    nested_transitions: dict[
+        RegimeName | TransitionFunctionName,
+        dict[TransitionFunctionName, UserFunction] | UserFunction,
+    ],
+    all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     regime_params_template: RegimeParamsTemplate,
     regime_names_to_ids: RegimeNamesToIds,
     variable_info: pd.DataFrame,
@@ -199,7 +225,7 @@ def _build_solve_functions(
         nested_transitions: Nested transitions dict for internal processing.
         all_grids: Immutable mapping of regime names to Grid spec objects.
         regime_params_template: The regime's parameter template.
-        regime_names_to_ids: Mapping from regime names to integer indices.
+        regime_names_to_ids: Immutable mapping of regime names to integer indices.
         variable_info: Variable info of the regime.
         regimes_to_active_periods: Mapping of regime names to active period tuples.
         regime_to_v_interpolation_info: Mapping of regime names to state space info.
@@ -292,8 +318,11 @@ def _build_simulate_functions(
     *,
     regime: Regime,
     regime_name: RegimeName,
-    nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
-    all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
+    nested_transitions: dict[
+        RegimeName | TransitionFunctionName,
+        dict[TransitionFunctionName, UserFunction] | UserFunction,
+    ],
+    all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     regime_params_template: RegimeParamsTemplate,
     regime_names_to_ids: RegimeNamesToIds,
     variable_info: pd.DataFrame,
@@ -303,7 +332,7 @@ def _build_simulate_functions(
     ages: AgeGrid,
     enable_jit: bool,
     solve_transitions: TransitionFunctionsMapping,
-    solve_stochastic_transition_names: frozenset[str],
+    solve_stochastic_transition_names: frozenset[TransitionFunctionName],
     solve_compute_regime_transition_probs: RegimeTransitionFunction | None,
 ) -> SimulateFunctions:
     """Build all compiled functions for the forward-simulation phase.
@@ -321,7 +350,7 @@ def _build_simulate_functions(
         nested_transitions: Nested transitions dict for internal processing.
         all_grids: Immutable mapping of regime names to Grid spec objects.
         regime_params_template: The regime's parameter template.
-        regime_names_to_ids: Mapping from regime names to integer indices.
+        regime_names_to_ids: Immutable mapping of regime names to integer indices.
         variable_info: Variable info of the regime.
         regimes_to_active_periods: Mapping of regime names to active period tuples.
         regime_to_v_interpolation_info: Mapping of regime names to state space info.
@@ -432,7 +461,7 @@ class _CoreResult:
     transitions: TransitionFunctionsMapping
     """Nested mapping of transition names to transition functions."""
 
-    stochastic_transition_names: frozenset[str]
+    stochastic_transition_names: frozenset[TransitionFunctionName]
     """Frozenset of stochastic transition function names."""
 
     next_regime_func: InternalUserFunction | None
@@ -442,8 +471,11 @@ class _CoreResult:
 def _process_regime_core(
     *,
     regime: Regime,
-    nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
-    all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
+    nested_transitions: dict[
+        RegimeName | TransitionFunctionName,
+        dict[TransitionFunctionName, UserFunction] | UserFunction,
+    ],
+    all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     regime_params_template: RegimeParamsTemplate,
     variable_info: pd.DataFrame,
     phase: Literal["solve", "simulate"],
@@ -556,7 +588,7 @@ def _process_regime_core(
         for k in flat_nested_transitions
         if QNAME_DELIMITER in k
     }
-    target_shock_grids: dict[tuple[RegimeName, str], _ShockGrid] = {
+    target_shock_grids: dict[tuple[RegimeName, ShockName], _ShockGrid] = {
         (regime, shock): grid
         for regime, grids in all_grids.items()
         if regime in reachable_targets
@@ -614,8 +646,11 @@ def _process_regime_core(
 def _extract_transitions_from_regime(
     *,
     regime: Regime,
-    states_per_regime: Mapping[RegimeName, set[str]],
-) -> dict[str, dict[str, UserFunction] | UserFunction]:
+    states_per_regime: Mapping[RegimeName, set[StateName]],
+) -> dict[
+    RegimeName | TransitionFunctionName,
+    dict[TransitionFunctionName, UserFunction] | UserFunction,
+]:
     """Extract transitions from `regime.state_transitions` and regime transition.
 
     For non-terminal regimes, reads state transitions from `regime.state_transitions`
@@ -642,10 +677,10 @@ def _extract_transitions_from_regime(
         state_transitions
     )
 
-    nested = cast(
-        "dict[str, dict[str, UserFunction] | UserFunction]",
-        {"next_regime": regime.transition},
-    )
+    nested: dict[
+        RegimeName | TransitionFunctionName,
+        dict[TransitionFunctionName, UserFunction] | UserFunction,
+    ] = {"next_regime": cast("UserFunction", regime.transition)}
 
     reachable_targets = _get_reachable_targets(
         per_target_transitions=per_target_transitions,
@@ -655,7 +690,7 @@ def _extract_transitions_from_regime(
 
     for target_regime_name in reachable_targets:
         target_regime_state_names = states_per_regime[target_regime_name]
-        target_dict: dict[str, UserFunction] = {}
+        target_dict: dict[TransitionFunctionName, UserFunction] = {}
         for state_name in target_regime_state_names:
             next_key = f"next_{state_name}"
             if next_key in simple_transitions:
@@ -672,9 +707,11 @@ def _extract_transitions_from_regime(
 
 def _get_reachable_targets(
     *,
-    per_target_transitions: dict[str, dict[str, UserFunction]],
-    simple_transitions: dict[str, UserFunction],
-    states_per_regime: Mapping[RegimeName, set[str]],
+    per_target_transitions: dict[
+        TransitionFunctionName, dict[RegimeName, UserFunction]
+    ],
+    simple_transitions: dict[TransitionFunctionName, UserFunction],
+    states_per_regime: Mapping[RegimeName, set[StateName]],
 ) -> set[RegimeName]:
     """Determine which target regimes need transition entries.
 
@@ -699,8 +736,11 @@ def _get_reachable_targets(
 
 
 def _classify_transitions(
-    state_transitions: dict[str, UserFunction],
-) -> tuple[dict[str, UserFunction], dict[str, dict[str, UserFunction]]]:
+    state_transitions: dict[TransitionFunctionName, UserFunction],
+) -> tuple[
+    dict[TransitionFunctionName, UserFunction],
+    dict[TransitionFunctionName, dict[RegimeName, UserFunction]],
+]:
     """Split collected transitions into simple and per-target groups.
 
     Qualified names like "next_health__working" (produced by
@@ -711,8 +751,8 @@ def _classify_transitions(
         Tuple of (simple_transitions, per_target_transitions).
 
     """
-    simple: dict[str, UserFunction] = {}
-    per_target: dict[str, dict[str, UserFunction]] = {}
+    simple: dict[TransitionFunctionName, UserFunction] = {}
+    per_target: dict[TransitionFunctionName, dict[RegimeName, UserFunction]] = {}
     for key, func in state_transitions.items():
         path = tree_path_from_qname(key)
         if len(path) == 1:
@@ -725,7 +765,7 @@ def _classify_transitions(
 
 
 def _wrap_transitions(
-    transitions: dict[RegimeName, dict[str, InternalUserFunction]],
+    transitions: dict[RegimeName, dict[TransitionFunctionName, InternalUserFunction]],
 ) -> TransitionFunctionsMapping:
     """Wrap nested transitions dict in MappingProxyType."""
     return MappingProxyType(
@@ -737,7 +777,7 @@ def _get_stochastic_transition_names(
     *,
     regime: Regime,
     variable_info: pd.DataFrame,
-) -> frozenset[str]:
+) -> frozenset[TransitionFunctionName]:
     """Compute stochastic transition names from regime state transitions and shocks.
 
     Args:
@@ -748,7 +788,7 @@ def _get_stochastic_transition_names(
         Frozenset of stochastic transition function names (e.g., "next_health").
 
     """
-    markov_state_names: set[str] = set()
+    markov_state_names: set[StateName] = set()
     for name in regime.state_transitions:
         raw = regime.state_transitions[name]
         if isinstance(raw, MarkovTransition) or (
@@ -756,7 +796,9 @@ def _get_stochastic_transition_names(
             and any(isinstance(v, MarkovTransition) for v in raw.values())
         ):
             markov_state_names.add(name)
-    shock_state_names = set(variable_info.query("is_shock").index.tolist())
+    shock_state_names: set[ShockName] = set(
+        variable_info.query("is_shock").index.tolist()
+    )
     return frozenset(f"next_{name}" for name in markov_state_names | shock_state_names)
 
 
@@ -887,7 +929,7 @@ def _get_weights_func_for_shock(*, name: str, grid: _ShockGrid) -> UserFunction:
 
 
 def _validate_categoricals(
-    regimes: Mapping[str, Regime],
+    regimes: Mapping[RegimeName, Regime],
 ) -> None:
     """Validate that simple transitions don't span mismatched discrete grids.
 
@@ -944,7 +986,7 @@ def _validate_categoricals(
 
 
 def compute_merged_discrete_categories(
-    regimes: Mapping[str, Regime],
+    regimes: Mapping[RegimeName, Regime],
 ) -> tuple[dict[str, tuple[str, ...]], dict[str, bool]]:
     """Compute merged categories and ordered flags for all discrete variables.
 
@@ -984,7 +1026,7 @@ def compute_merged_discrete_categories(
 
 
 def _validate_ordered_flags(
-    regimes: Mapping[str, Regime],
+    regimes: Mapping[RegimeName, Regime],
     error_messages: list[str],
 ) -> None:
     """Validate that the ordered flag is consistent for each discrete variable.
@@ -1106,7 +1148,7 @@ def _unique_topological_sort(
 
 def _get_simple_transition_discrete_grid(
     regime: Regime,
-    state_name: str,
+    state_name: StateName,
     raw: object,
 ) -> DiscreteGrid | None:
     """Return the source DiscreteGrid for a simple transition.
@@ -1132,7 +1174,7 @@ def build_regime_transition_probs_functions(
     *,
     functions: FunctionsMapping,
     compute_regime_transition_probs: InternalUserFunction,
-    grids: MappingProxyType[str, Grid],
+    grids: MappingProxyType[StateOrActionName, Grid],
     regime_names_to_ids: RegimeNamesToIds,
     regime_params_template: RegimeParamsTemplate,
     is_stochastic: bool,
@@ -1144,8 +1186,8 @@ def build_regime_transition_probs_functions(
     Args:
         functions: Immutable mapping of function names to internal user functions.
         compute_regime_transition_probs: The user's next_regime function.
-        grids: Immutable mapping of grid names to grid objects.
-        regime_names_to_ids: Mapping from regime names to integer indices.
+        grids: Immutable mapping of state and action variable names to grid objects.
+        regime_names_to_ids: Immutable mapping of regime names to integer indices.
         regime_params_template: The regime's parameter template.
         is_stochastic: Whether the regime transition is stochastic.
         enable_jit: Whether to JIT-compile the functions.
@@ -1213,7 +1255,7 @@ def _wrap_regime_transition_probs(
 
     Args:
         func: The user's next_regime function (with qname parameters).
-        regime_names_to_ids: Mapping from regime names to integer indices.
+        regime_names_to_ids: Immutable mapping of regime names to integer indices.
 
     Returns:
         A wrapped function that returns MappingProxyType[str, float|Array].
@@ -1260,7 +1302,7 @@ def _wrap_deterministic_regime_transition(
 
     Args:
         func: The user's deterministic next_regime function (returns int).
-        regime_names_to_ids: Mapping from regime names to integer indices.
+        regime_names_to_ids: Immutable mapping of regime names to integer indices.
 
     Returns:
         A wrapped function that returns a one-hot probability array.
@@ -1299,7 +1341,7 @@ def _build_Q_and_F_per_period(
     functions: FunctionsMapping,
     constraints: FunctionsMapping,
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[str],
+    stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
     regime_to_v_interpolation_info: MappingProxyType[RegimeName, VInterpolationInfo],
     ages: AgeGrid,
@@ -1332,7 +1374,7 @@ def _build_Q_and_F_per_period(
 
     """
     # Group periods by target configuration
-    configs: dict[tuple[str, ...], list[int]] = {}
+    configs: dict[tuple[RegimeName, ...], list[int]] = {}
     for period in range(ages.n_periods):
         complete = get_complete_targets(
             period=period,
@@ -1344,7 +1386,7 @@ def _build_Q_and_F_per_period(
         configs.setdefault(complete, []).append(period)
 
     # Build one Q_and_F per distinct configuration
-    built: dict[tuple[str, ...], QAndFFunction] = {}
+    built: dict[tuple[RegimeName, ...], QAndFFunction] = {}
     for complete_targets in configs:
         built[complete_targets] = get_Q_and_F(
             flat_param_names=flat_param_names,
@@ -1370,7 +1412,7 @@ def _build_max_Q_over_a_per_period(
     *,
     state_action_space: StateActionSpace,
     Q_and_F_functions: MappingProxyType[int, QAndFFunction],
-    grids: MappingProxyType[str, Grid],
+    grids: MappingProxyType[StateOrActionName, Grid],
     enable_jit: bool,
 ) -> MappingProxyType[int, MaxQOverAFunction]:
     """Build max-Q-over-a closures for each period.
@@ -1432,8 +1474,8 @@ def _build_next_state_vmapped(
     *,
     functions: FunctionsMapping,
     transitions: TransitionFunctionsMapping,
-    stochastic_transition_names: frozenset[str],
-    all_grids: MappingProxyType[RegimeName, MappingProxyType[str, Grid]],
+    stochastic_transition_names: frozenset[TransitionFunctionName],
+    all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     variable_info: pd.DataFrame,
     regime_params_template: RegimeParamsTemplate,
     enable_jit: bool,
@@ -1459,7 +1501,7 @@ def _build_next_state_vmapped(
     return jax.jit(next_state_vmapped) if enable_jit else next_state_vmapped
 
 
-def _fail_if_action_has_batch_size(regimes: Mapping[str, Regime]) -> None:
+def _fail_if_action_has_batch_size(regimes: Mapping[RegimeName, Regime]) -> None:
     """Raise if any action grid has a non-zero batch_size.
 
     Batching applies only to the outer state loop during solving, not to the

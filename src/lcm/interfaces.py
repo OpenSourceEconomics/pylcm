@@ -9,6 +9,7 @@ from jax import Array
 from lcm.grids import Grid, IrregSpacedGrid
 from lcm.shocks import _ShockGrid
 from lcm.typing import (
+    ActionName,
     ArgmaxQOverAFunction,
     Bool1D,
     ContinuousAction,
@@ -21,6 +22,9 @@ from lcm.typing import (
     NextStateSimulationFunction,
     RegimeParamsTemplate,
     RegimeTransitionFunction,
+    StateName,
+    StateOrActionName,
+    TransitionFunctionName,
     TransitionFunctionsMapping,
     VmappedRegimeTransitionFunction,
 )
@@ -52,30 +56,32 @@ class StateActionSpace:
 
     """
 
-    states: MappingProxyType[str, ContinuousState | DiscreteState]
+    states: MappingProxyType[StateName, ContinuousState | DiscreteState]
     """Immutable mapping of state variable names to their values."""
 
-    discrete_actions: MappingProxyType[str, DiscreteAction]
+    discrete_actions: MappingProxyType[ActionName, DiscreteAction]
     """Immutable mapping of discrete action variable names to their values."""
 
-    continuous_actions: MappingProxyType[str, ContinuousAction]
+    continuous_actions: MappingProxyType[ActionName, ContinuousAction]
     """Immutable mapping of continuous action variable names to their values."""
 
-    state_and_discrete_action_names: tuple[str, ...]
+    state_and_discrete_action_names: tuple[StateOrActionName, ...]
     """Names of states and discrete actions in variable info table order."""
 
     @property
-    def state_names(self) -> tuple[str, ...]:
+    def state_names(self) -> tuple[StateName, ...]:
         """Tuple with names of all state variables."""
         return tuple(self.states)
 
     @property
-    def action_names(self) -> tuple[str, ...]:
+    def action_names(self) -> tuple[ActionName, ...]:
         """Tuple with names of all action variables."""
         return tuple(self.discrete_actions) + tuple(self.continuous_actions)
 
     @property
-    def actions(self) -> MappingProxyType[str, DiscreteAction | ContinuousAction]:
+    def actions(
+        self,
+    ) -> MappingProxyType[ActionName, DiscreteAction | ContinuousAction]:
         """Read-only mapping with all action variables."""
         return MappingProxyType(
             dict(self.discrete_actions) | dict(self.continuous_actions)
@@ -88,9 +94,11 @@ class StateActionSpace:
 
     def replace(
         self,
-        states: MappingProxyType[str, ContinuousState | DiscreteState] | None = None,
-        discrete_actions: MappingProxyType[str, DiscreteAction] | None = None,
-        continuous_actions: MappingProxyType[str, ContinuousAction] | None = None,
+        states: MappingProxyType[StateName, ContinuousState | DiscreteState]
+        | None = None,
+        discrete_actions: MappingProxyType[ActionName, DiscreteAction] | None = None,
+        continuous_actions: MappingProxyType[ActionName, ContinuousAction]
+        | None = None,
     ) -> StateActionSpace:
         """Replace the states or actions in the state-action space.
 
@@ -151,7 +159,7 @@ class SolveFunctions:
     transitions: TransitionFunctionsMapping
     """Immutable mapping of transition names to transition functions."""
 
-    stochastic_transition_names: frozenset[str]
+    stochastic_transition_names: frozenset[TransitionFunctionName]
     """Frozenset of stochastic transition function names."""
 
     compute_regime_transition_probs: RegimeTransitionFunction | None
@@ -186,7 +194,7 @@ class SimulateFunctions:
     transitions: TransitionFunctionsMapping
     """Immutable mapping of transition names to transition functions."""
 
-    stochastic_transition_names: frozenset[str]
+    stochastic_transition_names: frozenset[TransitionFunctionName]
     """Frozenset of stochastic transition function names."""
 
     compute_regime_transition_probs: VmappedRegimeTransitionFunction | None
@@ -209,7 +217,7 @@ class InternalRegime:
     terminal: bool
     """Whether this is a terminal regime."""
 
-    grids: MappingProxyType[str, Grid]
+    grids: MappingProxyType[StateOrActionName, Grid]
     """Immutable mapping of variable names to grid objects."""
 
     variable_info: pd.DataFrame
@@ -288,10 +296,10 @@ class PeriodRegimeSimulationData:
     V_arr: Array
     """Value function array for all subjects at this period."""
 
-    actions: MappingProxyType[str, Array]
+    actions: MappingProxyType[ActionName, Array]
     """Immutable mapping of action names to optimal action arrays for all subjects."""
 
-    states: MappingProxyType[str, Array]
+    states: MappingProxyType[StateName, Array]
     """Immutable mapping of state names to state value arrays for all subjects."""
 
     in_regime: Bool1D

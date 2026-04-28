@@ -8,12 +8,14 @@ from jax import Array
 
 from lcm.regime_building.argmax import argmax_and_max
 from lcm.typing import (
+    ActionName,
     ArgmaxQOverAFunction,
     BoolND,
     FloatND,
     IntND,
     MaxQOverAFunction,
     RegimeName,
+    StateName,
 )
 from lcm.utils.dispatchers import productmap
 
@@ -21,9 +23,9 @@ from lcm.utils.dispatchers import productmap
 def get_max_Q_over_a(
     *,
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
-    batch_sizes: dict[str, int],
-    action_names: tuple[str, ...],
-    state_names: tuple[str, ...],
+    batch_sizes: dict[StateName, int],
+    action_names: tuple[ActionName, ...],
+    state_names: tuple[StateName, ...],
 ) -> MaxQOverAFunction:
     r"""Get the function returning the maximum of Q over all actions.
 
@@ -92,8 +94,8 @@ def get_max_Q_over_a(
 def get_argmax_and_max_Q_over_a(
     *,
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
-    action_names: tuple[str, ...],
-    state_names: tuple[str, ...],
+    action_names: tuple[ActionName, ...],
+    state_names: tuple[StateName, ...],
 ) -> ArgmaxQOverAFunction:
     r"""Get the function returning the arguments maximizing Q over all actions.
 
@@ -165,8 +167,8 @@ def get_argmax_and_max_Q_over_a(
 def _get_extra_param_names(
     *,
     Q_and_F: Callable[..., tuple[FloatND, BoolND]],
-    action_names: tuple[str, ...],
-    state_names: tuple[str, ...],
+    action_names: tuple[ActionName, ...],
+    state_names: tuple[StateName, ...],
 ) -> list[str]:
     """Get param names from Q_and_F not in actions, states, or next_regime_to_V_arr."""
     sig = inspect.signature(Q_and_F)

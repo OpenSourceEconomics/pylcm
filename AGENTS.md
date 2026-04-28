@@ -315,6 +315,30 @@ initial_conditions = {
 - Use `# ty: ignore[error-code]` for type suppression, never `# type: ignore`
 - JAX typing integration via jaxtyping
 
+#### Domain string aliases
+
+The following PEP 695 aliases (`type X = str`) live in `src/lcm/typing.py` and exist
+purely to make signatures self-documenting. They are runtime-equivalent to `str`; ty
+erases them, so misuse never crashes — it just hides intent. Prefer the alias over bare
+`str` whenever a string slot has a fixed semantic role.
+
+| Alias                    | Use for                                                                                                                                                 |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RegimeName`             | Names of regimes — keys of `regimes`, `internal_regimes`, `regime_names_to_ids`, `state_action_spaces`, `period_to_regime_to_V_arr`, `regime_to_V_arr`. |
+| `StateName`              | Names of states — entries of `state_names`, keys of `regime.states`, `states_per_regime` values.                                                        |
+| `ActionName`             | Names of actions — entries of `action_names`, keys of `regime.actions`.                                                                                 |
+| `StateOrActionName`      | Mixed flat keys covering both states and actions — `flat_grids`, `all_grids[regime]` values, `state_and_discrete_action_names`.                         |
+| `ShockName`              | Subset of `StateName` for shock grids — keys of `_ShockGrid`-typed mappings, stochastic-transition helpers.                                             |
+| `FunctionName`           | User-supplied function names — `"utility"`, `"H"`, helpers; keys of `Regime.functions`, `derived_categoricals`.                                         |
+| `TransitionFunctionName` | Names of transition callables — `next_<state>`, `weight_next_<state>`; keys of `state_transitions` and per-target dicts.                                |
+
+When a string slot covers more than one of the categories above, prefer a union (e.g.
+`dict[RegimeName | TransitionFunctionName, ...]`) over bare `str`. Plain `str` is the
+right type only when the keys really are heterogeneous and don't map onto any of the
+aliases — DataFrame column labels, free-form param-template leaf strings, and similar.
+Use `NewType` only when an opaque ID is required; the project has not needed that so
+far.
+
 ### Code Standards
 
 - Ruff for linting and formatting (configured in pyproject.toml)

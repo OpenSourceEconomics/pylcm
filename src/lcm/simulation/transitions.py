@@ -17,6 +17,7 @@ from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.simulation.random import generate_simulation_keys
 from lcm.state_action_space import create_state_action_space
 from lcm.typing import (
+    ActionName,
     Bool1D,
     FlatRegimeParams,
     Int1D,
@@ -57,7 +58,7 @@ def create_regime_state_action_space(
 def calculate_next_states(
     *,
     internal_regime: InternalRegime,
-    optimal_actions: MappingProxyType[str, Array],
+    optimal_actions: MappingProxyType[ActionName, Array],
     period: int,
     age: float,
     regime_params: FlatRegimeParams,
@@ -135,7 +136,7 @@ def calculate_next_regime_membership(
     *,
     internal_regime: InternalRegime,
     state_action_space: StateActionSpace,
-    optimal_actions: MappingProxyType[str, Array],
+    optimal_actions: MappingProxyType[ActionName, Array],
     period: int,
     age: float,
     regime_params: FlatRegimeParams,
@@ -206,7 +207,7 @@ def calculate_next_regime_membership(
 
 def draw_key_from_dict(
     *,
-    d: MappingProxyType[str, Array],
+    d: MappingProxyType[RegimeName, Array],
     regime_names_to_ids: RegimeNamesToIds,
     keys: Array,
 ) -> Int1D:
@@ -226,7 +227,9 @@ def draw_key_from_dict(
     """
     regime_names = list(d)
     regime_transition_probs = jnp.array(list(d.values())).T
-    regime_ids = jnp.array([regime_names_to_ids[name] for name in regime_names])
+    regime_ids = jnp.array(
+        [regime_names_to_ids[regime_name] for regime_name in regime_names]
+    )
 
     def random_id(
         key: Array,

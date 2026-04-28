@@ -26,6 +26,7 @@ from lcm.typing import (
     RegimeName,
     ScalarFloat,
     ScalarInt,
+    StateName,
 )
 
 # Genuine circular import: model.py imports from this module at module level.
@@ -39,7 +40,7 @@ def validate_V(
     *,
     V_arr: Array,
     age: ScalarInt | ScalarFloat,
-    regime_name: str | None = None,
+    regime_name: RegimeName | None = None,
     partial_solution: object = None,
     compute_intermediates: Callable | None = None,
     state_action_space: StateActionSpace | None = None,
@@ -130,7 +131,7 @@ def _enrich_with_diagnostics(
     state_action_space: StateActionSpace,
     next_regime_to_V_arr: MappingProxyType | None,
     internal_params: Mapping | None,
-    regime_name: str,
+    regime_name: RegimeName,
     age: float,
     period: int | None,
 ) -> None:
@@ -193,7 +194,7 @@ def _summarize_diagnostics(
     *,
     reductions: Mapping[str, Any],
     variable_names: tuple[str, ...],
-    regime_name: str,
+    regime_name: RegimeName,
     age: float,
 ) -> dict[str, Any]:
     """Restructure the flat reduction pytree into the summary dict shape.
@@ -414,8 +415,8 @@ def validate_regime_transitions_all_periods(
     """
     last_period = ages.n_periods - 1
     non_terminal_active_at_last = [
-        name
-        for name, regime in internal_regimes.items()
+        regime_name
+        for regime_name, regime in internal_regimes.items()
         if not regime.terminal and last_period in regime.active_periods
     ]
     if non_terminal_active_at_last:
@@ -429,12 +430,12 @@ def validate_regime_transitions_all_periods(
 
     for period in range(ages.n_periods - 1):
         active_regimes_next_period = tuple(
-            name
-            for name, regime in internal_regimes.items()
+            regime_name
+            for regime_name, regime in internal_regimes.items()
             if period + 1 in regime.active_periods
         )
 
-        for name, internal_regime in internal_regimes.items():
+        for regime_name, internal_regime in internal_regimes.items():
             if period not in internal_regime.active_periods:
                 continue
             if internal_regime.terminal:
@@ -442,9 +443,9 @@ def validate_regime_transitions_all_periods(
 
             _validate_regime_transition_single(
                 internal_regimes=internal_regimes,
-                regime_params=internal_params[name],
+                regime_params=internal_params[regime_name],
                 active_regimes_next_period=active_regimes_next_period,
-                regime_name=name,
+                regime_name=regime_name,
                 period=period,
                 ages=ages,
             )
@@ -740,8 +741,8 @@ def validate_transition_probs(
     *,
     probs: FloatND,
     model: Model,
-    regime_name: str,
-    state_name: str,
+    regime_name: RegimeName,
+    state_name: StateName,
 ) -> None: ...
 
 
@@ -750,9 +751,9 @@ def validate_transition_probs(
     *,
     probs: FloatND,
     model: Model,
-    regime_name: str,
-    state_name: str,
-    target_regime_name: str,
+    regime_name: RegimeName,
+    state_name: StateName,
+    target_regime_name: RegimeName,
 ) -> None: ...
 
 
@@ -761,7 +762,7 @@ def validate_transition_probs(
     *,
     probs: FloatND,
     model: Model,
-    regime_name: str,
+    regime_name: RegimeName,
 ) -> None: ...
 
 
@@ -769,9 +770,9 @@ def validate_transition_probs(
     *,
     probs: FloatND,
     model: Model,
-    regime_name: str,
-    state_name: str | None = None,
-    target_regime_name: str | None = None,
+    regime_name: RegimeName,
+    state_name: StateName | None = None,
+    target_regime_name: RegimeName | None = None,
 ) -> None:
     """Validate a transition probability array for shape, values, and row sums.
 
@@ -863,9 +864,9 @@ def validate_transition_probs(
 def _extract_markov_transition(
     *,
     raw_transition: object,
-    state_name: str,
-    regime_name: str,
-    target_regime_name: str | None,
+    state_name: StateName,
+    regime_name: RegimeName,
+    target_regime_name: RegimeName | None,
 ) -> MarkovTransition:
     """Extract a MarkovTransition from a raw transition, handling per-target dicts."""
     if isinstance(raw_transition, MarkovTransition):

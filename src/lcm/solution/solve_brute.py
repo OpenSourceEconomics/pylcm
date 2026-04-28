@@ -54,7 +54,10 @@ def solve(
         internal_params=internal_params,
     )
     next_regime_to_V_arr = MappingProxyType(
-        {name: jnp.zeros(shape) for name, shape in regime_V_shapes.items()}
+        {
+            regime_name: jnp.zeros(shape)
+            for regime_name, shape in regime_V_shapes.items()
+        }
     )
 
     # AOT-compile all unique max_Q_over_a functions in parallel.
@@ -112,11 +115,11 @@ def solve(
             n_active_regimes=len(active_regimes),
         )
 
-        for name, internal_regime in active_regimes.items():
+        for regime_name, internal_regime in active_regimes.items():
             state_action_space = internal_regime.state_action_space(
-                regime_params=internal_params[name],
+                regime_params=internal_params[regime_name],
             )
-            max_Q_over_a = compiled_functions[(name, period)]
+            max_Q_over_a = compiled_functions[(regime_name, period)]
 
             # evaluate Q-function on states and actions, and maximize over actions
             # Pass period/age as JAX arrays (not Python scalars) so the shared
@@ -126,7 +129,7 @@ def solve(
                 **state_action_space.states,
                 **state_action_space.actions,
                 next_regime_to_V_arr=next_regime_to_V_arr,
-                **internal_params[name],
+                **internal_params[regime_name],
                 period=jnp.int32(period),
                 age=ages.values[period],
             )
@@ -147,12 +150,12 @@ def solve(
                 diagnostic_any_inf.append(jnp.any(jnp.isinf(V_arr)))
                 diagnostic_rows.append(
                     _DiagnosticRow(
-                        regime_name=name,
+                        regime_name=regime_name,
                         period=period,
                         age=float(ages.values[period]),
                         state_action_space=state_action_space,
                         next_regime_to_V_arr=next_regime_to_V_arr,
-                        regime_params=internal_params[name],
+                        regime_params=internal_params[regime_name],
                         compute_intermediates=(
                             internal_regime.solve_functions.compute_intermediates.get(
                                 period
@@ -161,14 +164,16 @@ def solve(
                     )
                 )
 
-            period_solution[name] = V_arr
+            period_solution[regime_name] = V_arr
 
         # Maintain consistent pytree structure: keep all regime keys,
         # update active regimes with solved V arrays.
         next_regime_to_V_arr = MappingProxyType(
             {
-                name: period_solution.get(name, next_regime_to_V_arr[name])
-                for name in internal_regimes
+                regime_name: period_solution.get(
+                    regime_name, next_regime_to_V_arr[regime_name]
+                )
+                for regime_name in internal_regimes
             }
         )
         solution[period] = MappingProxyType(period_solution)
@@ -237,9 +242,11 @@ def _compile_all_functions(
     """
     # Collect all (regime, period) -> function mappings.
     all_functions: dict[tuple[RegimeName, int], Callable] = {}
-    for name, regime in internal_regimes.items():
+    for regime_name, regime in internal_regimes.items():
         for period in regime.active_periods:
-            all_functions[(name, period)] = regime.solve_functions.max_Q_over_a[period]
+            all_functions[(regime_name, period)] = regime.solve_functions.max_Q_over_a[
+                period
+            ]
 
     # If JIT is disabled, return raw functions directly.
     if not enable_jit:
@@ -247,10 +254,10 @@ def _compile_all_functions(
 
     # Deduplicate by identity (or by underlying function for partials).
     unique: dict[Hashable, tuple[Callable, RegimeName, int]] = {}
-    for (name, period), func in all_functions.items():
+    for (regime_name, period), func in all_functions.items():
         func_id = _func_dedup_key(func=func)
         if func_id not in unique:
-            unique[func_id] = (func, name, period)
+            unique[func_id] = (func, regime_name, period)
 
     n_workers = _resolve_compilation_workers(
         max_compilation_workers=max_compilation_workers
@@ -268,19 +275,19 @@ def _compile_all_functions(
     # thread-safe and must happen on the main thread).
     lowered: dict[Hashable, jax.stages.Lowered] = {}
     labels: dict[Hashable, str] = {}
-    for i, (func_id, (func, name, period)) in enumerate(unique.items(), 1):
-        state_action_space = internal_regimes[name].state_action_space(
-            regime_params=internal_params[name],
+    for i, (func_id, (func, regime_name, period)) in enumerate(unique.items(), 1):
+        state_action_space = internal_regimes[regime_name].state_action_space(
+            regime_params=internal_params[regime_name],
         )
         lower_args = {
             **dict(state_action_space.states),
             **dict(state_action_space.actions),
             "next_regime_to_V_arr": next_regime_to_V_arr,
-            **dict(internal_params[name]),
+            **dict(internal_params[regime_name]),
             "period": jnp.int32(period),
             "age": ages.values[period],
         }
-        label = f"{name} (age {ages.values[period].item()})"
+        label = f"{regime_name} (age {ages.values[period].item()})"
         labels[func_id] = label
         logger.info("%d/%d  %s", i, n_unique, label)
         logger.info("  lowering ...")
@@ -371,11 +378,11 @@ def _get_regime_V_shapes(
 
     """
     shapes: dict[RegimeName, tuple[int, ...]] = {}
-    for name, regime in internal_regimes.items():
+    for regime_name, regime in internal_regimes.items():
         state_action_space = regime.state_action_space(
-            regime_params=internal_params[name],
+            regime_params=internal_params[regime_name],
         )
-        shapes[name] = tuple(len(v) for v in state_action_space.states.values())
+        shapes[regime_name] = tuple(len(v) for v in state_action_space.states.values())
     return shapes
 
 

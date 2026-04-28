@@ -5,13 +5,14 @@ from jax import Array
 
 from lcm.grids import Grid
 from lcm.interfaces import StateActionSpace
+from lcm.typing import StateName, StateOrActionName
 
 
 def create_state_action_space(
     *,
     variable_info: pd.DataFrame,
-    grids: MappingProxyType[str, Grid],
-    states: dict[str, Array] | None = None,
+    grids: MappingProxyType[StateOrActionName, Grid],
+    states: dict[StateName, Array] | None = None,
 ) -> StateActionSpace:
     """Create a state-action-space.
 
@@ -62,7 +63,7 @@ def create_state_action_space(
 
 
 def _validate_all_states_present(
-    *, provided_states: dict[str, Array], required_state_names: set[str]
+    *, provided_states: dict[StateName, Array], required_state_names: set[StateName]
 ) -> None:
     """Check that all states are present in the provided states."""
     provided_state_names = set(provided_states)

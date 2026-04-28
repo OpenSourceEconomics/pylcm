@@ -106,7 +106,7 @@ def simulate(
         regime_name: {} for regime_name in internal_regimes
     }
     # Build reverse lookup for regime transition logging
-    ids_to_names: dict[int, str] = {v: k for k, v in regime_names_to_ids.items()}
+    ids_to_names: dict[int, RegimeName] = {v: k for k, v in regime_names_to_ids.items()}
 
     for period, age in enumerate(ages.values):
         period_start = time.monotonic()
