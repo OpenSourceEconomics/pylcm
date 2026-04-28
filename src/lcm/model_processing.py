@@ -30,6 +30,7 @@ from lcm.regime_building.processing import (
     process_regimes,
 )
 from lcm.typing import (
+    FunctionName,
     InternalParams,
     ParamsTemplate,
     RegimeName,
@@ -288,10 +289,10 @@ def _remove_fixed_params_from_template(
     template so users don't need to supply them at solve/simulate time.
 
     """
-    result: dict[RegimeName, dict[str, dict[str, str]]] = {}
+    result: dict[RegimeName, dict[FunctionName, dict[str, str]]] = {}
     for regime_name, regime_template in template.items():
         regime_fixed = fixed_internal.get(regime_name, MappingProxyType({}))
-        new_regime: dict[str, dict[str, str]] = {}
+        new_regime: dict[FunctionName, dict[str, str]] = {}
         for func_name, func_params in regime_template.items():
             new_func_params = {
                 param_name: param_type

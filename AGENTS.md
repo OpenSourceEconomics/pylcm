@@ -332,10 +332,12 @@ erases them, so misuse never crashes — it just hides intent. Prefer the alias 
 | `FunctionName`           | User-supplied function names — `"utility"`, `"H"`, helpers; keys of `Regime.functions`, `derived_categoricals`.                                         |
 | `TransitionFunctionName` | Names of transition callables — `next_<state>`, `weight_next_<state>`; keys of `state_transitions` and per-target dicts.                                |
 
-Use plain `str` where keys are heterogeneous — parameter dicts (mixing param names and
-function-qualified names), DataFrame column labels, anything not fitting a single
-category above. Use `NewType` only when an opaque ID is required; the project has not
-needed that so far.
+When a string slot covers more than one of the categories above, prefer a union (e.g.
+`dict[RegimeName | TransitionFunctionName, ...]`) over bare `str`. Plain `str` is the
+right type only when the keys really are heterogeneous and don't map onto any of the
+aliases — DataFrame column labels, free-form param-template leaf strings, and similar.
+Use `NewType` only when an opaque ID is required; the project has not needed that so
+far.
 
 ### Code Standards
 

@@ -88,7 +88,7 @@ def _build_compute_intermediates_per_period(
         if name in state_action_space.state_names
     }
 
-    configs: dict[tuple[str, ...], list[int]] = {}
+    configs: dict[tuple[RegimeName, ...], list[int]] = {}
     for period in range(ages.n_periods):
         complete = get_complete_targets(
             period=period,
@@ -103,7 +103,7 @@ def _build_compute_intermediates_per_period(
         *state_action_space.state_names,
         *state_action_space.action_names,
     )
-    built: dict[tuple[str, ...], Callable] = {}
+    built: dict[tuple[RegimeName, ...], Callable] = {}
     for complete_targets in configs:
         scalar = get_compute_intermediates(
             flat_param_names=flat_param_names,

@@ -99,7 +99,13 @@ def process_regimes(
         for regime_name, regime in regimes.items()
     }
 
-    nested_transitions: dict[RegimeName, dict[str, Any]] = {}
+    nested_transitions: dict[
+        RegimeName,
+        dict[
+            RegimeName | TransitionFunctionName,
+            dict[TransitionFunctionName, UserFunction] | UserFunction,
+        ],
+    ] = {}
     for regime_name, regime in regimes.items():
         nested_transitions[regime_name] = _extract_transitions_from_regime(
             regime=regime,
@@ -197,7 +203,10 @@ def _build_solve_functions(
     *,
     regime: Regime,
     regime_name: RegimeName,
-    nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
+    nested_transitions: dict[
+        RegimeName | TransitionFunctionName,
+        dict[TransitionFunctionName, UserFunction] | UserFunction,
+    ],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     regime_params_template: RegimeParamsTemplate,
     regime_names_to_ids: RegimeNamesToIds,
@@ -309,7 +318,10 @@ def _build_simulate_functions(
     *,
     regime: Regime,
     regime_name: RegimeName,
-    nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
+    nested_transitions: dict[
+        RegimeName | TransitionFunctionName,
+        dict[TransitionFunctionName, UserFunction] | UserFunction,
+    ],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     regime_params_template: RegimeParamsTemplate,
     regime_names_to_ids: RegimeNamesToIds,
@@ -459,7 +471,10 @@ class _CoreResult:
 def _process_regime_core(
     *,
     regime: Regime,
-    nested_transitions: dict[str, dict[str, UserFunction] | UserFunction],
+    nested_transitions: dict[
+        RegimeName | TransitionFunctionName,
+        dict[TransitionFunctionName, UserFunction] | UserFunction,
+    ],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     regime_params_template: RegimeParamsTemplate,
     variable_info: pd.DataFrame,
@@ -632,7 +647,10 @@ def _extract_transitions_from_regime(
     *,
     regime: Regime,
     states_per_regime: Mapping[RegimeName, set[StateName]],
-) -> dict[str, dict[str, UserFunction] | UserFunction]:
+) -> dict[
+    RegimeName | TransitionFunctionName,
+    dict[TransitionFunctionName, UserFunction] | UserFunction,
+]:
     """Extract transitions from `regime.state_transitions` and regime transition.
 
     For non-terminal regimes, reads state transitions from `regime.state_transitions`
@@ -659,10 +677,10 @@ def _extract_transitions_from_regime(
         state_transitions
     )
 
-    nested = cast(
-        "dict[str, dict[str, UserFunction] | UserFunction]",
-        {"next_regime": regime.transition},
-    )
+    nested: dict[
+        RegimeName | TransitionFunctionName,
+        dict[TransitionFunctionName, UserFunction] | UserFunction,
+    ] = {"next_regime": cast("UserFunction", regime.transition)}
 
     reachable_targets = _get_reachable_targets(
         per_target_transitions=per_target_transitions,
@@ -672,7 +690,7 @@ def _extract_transitions_from_regime(
 
     for target_regime_name in reachable_targets:
         target_regime_state_names = states_per_regime[target_regime_name]
-        target_dict: dict[str, UserFunction] = {}
+        target_dict: dict[TransitionFunctionName, UserFunction] = {}
         for state_name in target_regime_state_names:
             next_key = f"next_{state_name}"
             if next_key in simple_transitions:
@@ -689,8 +707,10 @@ def _extract_transitions_from_regime(
 
 def _get_reachable_targets(
     *,
-    per_target_transitions: dict[str, dict[str, UserFunction]],
-    simple_transitions: dict[str, UserFunction],
+    per_target_transitions: dict[
+        TransitionFunctionName, dict[RegimeName, UserFunction]
+    ],
+    simple_transitions: dict[TransitionFunctionName, UserFunction],
     states_per_regime: Mapping[RegimeName, set[StateName]],
 ) -> set[RegimeName]:
     """Determine which target regimes need transition entries.
@@ -716,8 +736,11 @@ def _get_reachable_targets(
 
 
 def _classify_transitions(
-    state_transitions: dict[str, UserFunction],
-) -> tuple[dict[str, UserFunction], dict[str, dict[str, UserFunction]]]:
+    state_transitions: dict[TransitionFunctionName, UserFunction],
+) -> tuple[
+    dict[TransitionFunctionName, UserFunction],
+    dict[TransitionFunctionName, dict[RegimeName, UserFunction]],
+]:
     """Split collected transitions into simple and per-target groups.
 
     Qualified names like "next_health__working" (produced by
@@ -728,8 +751,8 @@ def _classify_transitions(
         Tuple of (simple_transitions, per_target_transitions).
 
     """
-    simple: dict[str, UserFunction] = {}
-    per_target: dict[str, dict[str, UserFunction]] = {}
+    simple: dict[TransitionFunctionName, UserFunction] = {}
+    per_target: dict[TransitionFunctionName, dict[RegimeName, UserFunction]] = {}
     for key, func in state_transitions.items():
         path = tree_path_from_qname(key)
         if len(path) == 1:
@@ -742,7 +765,7 @@ def _classify_transitions(
 
 
 def _wrap_transitions(
-    transitions: dict[RegimeName, dict[str, InternalUserFunction]],
+    transitions: dict[RegimeName, dict[TransitionFunctionName, InternalUserFunction]],
 ) -> TransitionFunctionsMapping:
     """Wrap nested transitions dict in MappingProxyType."""
     return MappingProxyType(
@@ -754,7 +777,7 @@ def _get_stochastic_transition_names(
     *,
     regime: Regime,
     variable_info: pd.DataFrame,
-) -> frozenset[str]:
+) -> frozenset[TransitionFunctionName]:
     """Compute stochastic transition names from regime state transitions and shocks.
 
     Args:
@@ -1351,7 +1374,7 @@ def _build_Q_and_F_per_period(
 
     """
     # Group periods by target configuration
-    configs: dict[tuple[str, ...], list[int]] = {}
+    configs: dict[tuple[RegimeName, ...], list[int]] = {}
     for period in range(ages.n_periods):
         complete = get_complete_targets(
             period=period,
@@ -1363,7 +1386,7 @@ def _build_Q_and_F_per_period(
         configs.setdefault(complete, []).append(period)
 
     # Build one Q_and_F per distinct configuration
-    built: dict[tuple[str, ...], QAndFFunction] = {}
+    built: dict[tuple[RegimeName, ...], QAndFFunction] = {}
     for complete_targets in configs:
         built[complete_targets] = get_Q_and_F(
             flat_param_names=flat_param_names,

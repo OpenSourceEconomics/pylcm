@@ -33,7 +33,7 @@ def get_Q_and_F(
     flat_param_names: frozenset[str],
     functions: FunctionsMapping,
     constraints: FunctionsMapping,
-    complete_targets: tuple[str, ...],
+    complete_targets: tuple[RegimeName, ...],
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
@@ -68,7 +68,7 @@ def get_Q_and_F(
     joint_weights_from_marginals = {}
     next_V = {}
 
-    next_V_extra_param_names: dict[str, frozenset[str]] = {}
+    next_V_extra_param_names: dict[RegimeName, frozenset[str]] = {}
 
     for target_regime_name in complete_targets:
         # Transitions from the current regime to the target regime
@@ -214,7 +214,7 @@ def get_compute_intermediates(
     flat_param_names: frozenset[str],
     functions: FunctionsMapping,
     constraints: FunctionsMapping,
-    complete_targets: tuple[str, ...],
+    complete_targets: tuple[RegimeName, ...],
     transitions: TransitionFunctionsMapping,
     stochastic_transition_names: frozenset[TransitionFunctionName],
     compute_regime_transition_probs: RegimeTransitionFunction,
@@ -253,7 +253,7 @@ def get_compute_intermediates(
     joint_weights_from_marginals = {}
     next_V = {}
 
-    next_V_extra_param_names: dict[str, frozenset[str]] = {}
+    next_V_extra_param_names: dict[RegimeName, frozenset[str]] = {}
 
     for target_regime_name in complete_targets:
         target_transitions = transitions[target_regime_name]

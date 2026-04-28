@@ -9,7 +9,12 @@ from lcm.interfaces import SolveSimulateFunctionPair
 from lcm.regime import Regime
 from lcm.regime_building.validation import collect_state_transitions
 from lcm.shocks import _ShockGrid
-from lcm.typing import RegimeParamsTemplate, UserFunction
+from lcm.typing import (
+    FunctionName,
+    RegimeParamsTemplate,
+    TransitionFunctionName,
+    UserFunction,
+)
 
 
 def create_regime_params_template(
@@ -39,7 +44,7 @@ def create_regime_params_template(
     H_variables = {*regime.functions, "period", "age", "E_next_V"}
     variables = H_variables | set(regime.actions) | set(regime.states)
 
-    function_params: dict[str, dict[str, str]] = {}
+    function_params: dict[FunctionName, dict[str, str]] = {}
 
     for name, func in _collect_all_functions_for_template(regime).items():
         if isinstance(func, SolveSimulateFunctionPair):
@@ -90,14 +95,19 @@ def create_regime_params_template(
 
 def _collect_all_functions_for_template(
     regime: Regime,
-) -> dict[str, UserFunction | SolveSimulateFunctionPair]:
+) -> dict[
+    FunctionName | TransitionFunctionName, UserFunction | SolveSimulateFunctionPair
+]:
     """Collect all regime functions, preserving `SolveSimulateFunctionPair` entries.
 
     Unlike `regime.get_all_functions(phase=...)` which resolves pairs to a single
     variant, this returns pairs as-is so the caller can union both variants'
     parameters.
     """
-    result: dict[str, UserFunction | SolveSimulateFunctionPair] = dict(regime.functions)
+    result: dict[
+        FunctionName | TransitionFunctionName,
+        UserFunction | SolveSimulateFunctionPair,
+    ] = dict(regime.functions)
     result |= dict(regime.constraints)
     if callable(regime.transition):
         result |= collect_state_transitions(regime.states, regime.state_transitions)
@@ -106,7 +116,7 @@ def _collect_all_functions_for_template(
 
 
 def _validate_no_shadowing(
-    function_params: dict[str, dict[str, str]],
+    function_params: dict[FunctionName, dict[str, str]],
     regime: Regime,
 ) -> None:
     """Raise if any discovered parameter shadows a state or action name."""

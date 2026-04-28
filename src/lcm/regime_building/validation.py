@@ -19,8 +19,10 @@ from lcm.typing import (
     ActiveFunction,
     ContinuousState,
     DiscreteState,
+    RegimeName,
     ShockName,
     StateName,
+    TransitionFunctionName,
     UserFunction,
 )
 
@@ -137,12 +139,12 @@ def validate_logical_consistency(regime: Regime) -> None:
 
 
 def collect_state_transitions(
-    states: Mapping[str, Grid],
+    states: Mapping[StateName, Grid],
     state_transitions: Mapping[
-        str,
-        UserFunction | Callable | None | Mapping[str, UserFunction | Callable],
+        StateName,
+        UserFunction | Callable | None | Mapping[RegimeName, UserFunction | Callable],
     ],
-) -> dict[str, UserFunction]:
+) -> dict[TransitionFunctionName, UserFunction]:
     """Collect state transition functions from `state_transitions`.
 
     For each state, produces entries keyed as `f"next_{name}"`:
@@ -158,7 +160,7 @@ def collect_state_transitions(
     validation, so only callables, MarkovTransition, and per-target dicts remain.
 
     """
-    transitions: dict[str, UserFunction] = {}
+    transitions: dict[TransitionFunctionName, UserFunction] = {}
     for name, grid in states.items():
         # Shock transitions built directly in _process_regime_core
         if isinstance(grid, _ShockGrid):
@@ -292,9 +294,9 @@ def _make_identity_fn(
 
 
 def _add_raw_transition(
-    transitions: dict[str, UserFunction],
-    name: str,
-    raw: UserFunction | Callable | Mapping[str, UserFunction | Callable],
+    transitions: dict[TransitionFunctionName, UserFunction],
+    name: StateName,
+    raw: UserFunction | Callable | Mapping[RegimeName, UserFunction | Callable],
 ) -> None:
     """Add a single raw transition entry to the transitions dict."""
     if callable(raw):

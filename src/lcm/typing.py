@@ -58,11 +58,11 @@ type FlatRegimeParams = MappingProxyType[str, bool | float | Array]
 type InternalParams = MappingProxyType[RegimeName, FlatRegimeParams]
 
 # Immutable templates, used internally
-type RegimeParamsTemplate = MappingProxyType[str, MappingProxyType[str, str]]
+type RegimeParamsTemplate = MappingProxyType[FunctionName, MappingProxyType[str, str]]
 type ParamsTemplate = MappingProxyType[RegimeName, RegimeParamsTemplate]
 
 # User-facing template; types rendered as strings.
-type UserFacingParamsTemplate = dict[RegimeName, dict[str, dict[str, str]]]
+type UserFacingParamsTemplate = dict[RegimeName, dict[FunctionName, dict[str, str]]]
 
 # Type aliases for value function arrays
 type PeriodToRegimeToVArr = MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]
