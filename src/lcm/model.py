@@ -36,6 +36,7 @@ from lcm.simulation.simulate import simulate
 from lcm.solution.solve_brute import solve
 from lcm.typing import (
     FloatND,
+    FunctionName,
     InternalParams,
     ParamsTemplate,
     RegimeName,
@@ -96,7 +97,9 @@ class Model:
         regime_id_class: type,
         enable_jit: bool = True,
         fixed_params: UserParams = MappingProxyType({}),
-        derived_categoricals: Mapping[str, DiscreteGrid] = MappingProxyType({}),
+        derived_categoricals: Mapping[FunctionName, DiscreteGrid] = MappingProxyType(
+            {}
+        ),
     ) -> None:
         """Initialize the Model.
 
@@ -377,7 +380,7 @@ class Model:
 
 def _merge_derived_categoricals(
     regimes: Mapping[RegimeName, Regime],
-    derived_categoricals: Mapping[str, DiscreteGrid],
+    derived_categoricals: Mapping[FunctionName, DiscreteGrid],
 ) -> MappingProxyType[RegimeName, Regime]:
     """Merge model-level derived_categoricals into each regime.
 

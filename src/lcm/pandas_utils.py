@@ -18,7 +18,13 @@ from lcm.params.sequence_leaf import SequenceLeaf
 from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
 from lcm.simulation.initial_conditions import MISSING_CAT_CODE
-from lcm.typing import InternalParams, RegimeName, RegimeNamesToIds, StateName
+from lcm.typing import (
+    FunctionName,
+    InternalParams,
+    RegimeName,
+    RegimeNamesToIds,
+    StateName,
+)
 from lcm.utils.error_handling import (
     _get_func_indexing_params,
 )
@@ -262,7 +268,7 @@ def _convert_param_value(
     value: object,
     func: Callable | None,
     param_name: str,
-    func_name: str,
+    func_name: FunctionName,
     ages: AgeGrid,
     regimes: Mapping[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
@@ -323,7 +329,7 @@ def array_from_series(
     sr: pd.Series,
     func: Callable | None,
     param_name: str,
-    func_name: str,
+    func_name: FunctionName,
     ages: AgeGrid,
     regimes: Mapping[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,
@@ -460,7 +466,7 @@ def _resolve_categoricals(
 
 def _resolve_per_target_template_key(
     *,
-    func_name: str,
+    func_name: FunctionName,
     regime: Regime,
 ) -> str | None:
     """Translate a per-target template key to `get_all_functions()` format.
@@ -496,7 +502,7 @@ def _resolve_per_target_template_key(
     return None
 
 
-def _is_runtime_grid_param(*, func_name: str, regime: Regime) -> bool:
+def _is_runtime_grid_param(*, func_name: FunctionName, regime: Regime) -> bool:
     """Check if a template function key refers to a runtime grid param."""
     if func_name not in regime.states:
         return False
@@ -620,7 +626,7 @@ def _build_level_mappings_for_param(
 
 def _build_outcome_mapping(
     *,
-    func_name: str,
+    func_name: FunctionName,
     grids: dict[str, DiscreteGrid],
     regimes: Mapping[RegimeName, Regime],
     regime_names_to_ids: RegimeNamesToIds,

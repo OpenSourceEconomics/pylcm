@@ -34,9 +34,10 @@ type StateName = str
 type ActionName = str
 type StateOrActionName = str
 type ShockName = str
+type FunctionName = str
 type RegimeNamesToIds = MappingProxyType[RegimeName, int]
 
-type FunctionsMapping = MappingProxyType[str, InternalUserFunction]
+type FunctionsMapping = MappingProxyType[FunctionName, InternalUserFunction]
 
 type TransitionFunctionsMapping = MappingProxyType[RegimeName, FunctionsMapping]
 

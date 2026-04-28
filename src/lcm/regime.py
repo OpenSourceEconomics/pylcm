@@ -14,6 +14,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    FunctionName,
     StateName,
     UserFunction,
 )
@@ -152,17 +153,17 @@ class Regime:
     )
     """Mapping of action variable names to grid objects."""
 
-    functions: Mapping[str, UserFunction] = field(
+    functions: Mapping[FunctionName, UserFunction] = field(
         default_factory=lambda: MappingProxyType({})
     )
     """Mapping of function names to callables; must include 'utility'."""
 
-    constraints: Mapping[str, UserFunction] = field(
+    constraints: Mapping[FunctionName, UserFunction] = field(
         default_factory=lambda: MappingProxyType({})
     )
     """Mapping of constraint names to constraint functions."""
 
-    derived_categoricals: Mapping[str, DiscreteGrid] = field(
+    derived_categoricals: Mapping[FunctionName, DiscreteGrid] = field(
         default_factory=lambda: MappingProxyType({})
     )
     """Categorical grids for DAG function outputs not in states/actions."""

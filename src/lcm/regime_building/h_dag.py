@@ -21,12 +21,13 @@ from typing import Any
 
 from dags import concatenate_functions
 
+from lcm.typing import FunctionName
 from lcm.utils.functools import get_union_of_args
 
 
 def get_dag_targets_consumed_by_H(
-    functions: Mapping[str, Callable[..., Any]],
-) -> frozenset[str]:
+    functions: Mapping[FunctionName, Callable[..., Any]],
+) -> frozenset[FunctionName]:
     """Return names of regime functions whose outputs H consumes.
 
     These are H's signature parameters that are also regime functions,
@@ -51,7 +52,7 @@ def get_dag_targets_consumed_by_H(
 
 
 def _get_build_H_kwargs(
-    functions: Mapping[str, Callable[..., Any]],
+    functions: Mapping[FunctionName, Callable[..., Any]],
 ) -> Callable[[Mapping[str, Any]], dict[str, Any]]:
     """Return a closure that builds `H_kwargs` from `states_actions_params`.
 
