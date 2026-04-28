@@ -72,7 +72,7 @@ class Model:
     regime_names_to_ids: RegimeNamesToIds
     """Immutable mapping from regime names to integer indices."""
 
-    regimes: MappingProxyType[str, Regime]
+    regimes: MappingProxyType[RegimeName, Regime]
     """Immutable mapping of regime names to user `Regime` instances."""
 
     internal_regimes: MappingProxyType[RegimeName, InternalRegime]
@@ -92,7 +92,7 @@ class Model:
         *,
         description: str = "",
         ages: AgeGrid,
-        regimes: Mapping[str, Regime],
+        regimes: Mapping[RegimeName, Regime],
         regime_id_class: type,
         enable_jit: bool = True,
         fixed_params: UserParams = MappingProxyType({}),
@@ -376,9 +376,9 @@ class Model:
 
 
 def _merge_derived_categoricals(
-    regimes: Mapping[str, Regime],
+    regimes: Mapping[RegimeName, Regime],
     derived_categoricals: Mapping[str, DiscreteGrid],
-) -> MappingProxyType[str, Regime]:
+) -> MappingProxyType[RegimeName, Regime]:
     """Merge model-level derived_categoricals into each regime.
 
     Args:
@@ -395,20 +395,20 @@ def _merge_derived_categoricals(
     """
     if not derived_categoricals:
         return MappingProxyType(dict(regimes))
-    result = {}
-    for name, regime in regimes.items():
+    result: dict[RegimeName, Regime] = {}
+    for regime_name, regime in regimes.items():
         merged = dict(regime.derived_categoricals)
         for var, grid in derived_categoricals.items():
             existing = merged.get(var)
             if existing is not None and existing.categories != grid.categories:
                 msg = (
                     f"Model-level derived_categoricals['{var}'] conflicts "
-                    f"with regime '{name}': {grid.categories} vs "
+                    f"with regime '{regime_name}': {grid.categories} vs "
                     f"{existing.categories}."
                 )
                 raise ModelInitializationError(msg)
             merged[var] = grid
-        result[name] = dataclasses.replace(
+        result[regime_name] = dataclasses.replace(
             regime, derived_categoricals=MappingProxyType(merged)
         )
     return MappingProxyType(result)

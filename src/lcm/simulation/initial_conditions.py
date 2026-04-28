@@ -211,7 +211,7 @@ def _collect_state_name_errors(
     regime_id_arr: Array,
     ids_to_regime_names: dict[int, RegimeName],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-    valid_regime_names: set[str],
+    valid_regime_names: set[RegimeName],
 ) -> list[str]:
     """Collect errors about missing or unknown state names.
 
@@ -419,7 +419,7 @@ def _validate_discrete_state_values(
     initial_states: Mapping[str, Array],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_id_arr: Array,
-    regime_names_to_ids: Mapping[str, int],
+    regime_names_to_ids: Mapping[RegimeName, int],
 ) -> None:
     """Validate that discrete state values are valid codes.
 
@@ -548,7 +548,7 @@ def _batched_feasibility_check(
 def _check_regime_feasibility(  # noqa: C901
     *,
     internal_regime: InternalRegime,
-    regime_name: str,
+    regime_name: RegimeName,
     initial_states: Mapping[str, Array],
     subject_indices: list[int],
     regime_params: Mapping[str, object],
@@ -653,7 +653,7 @@ def _check_regime_feasibility(  # noqa: C901
 def _raise_feasibility_type_error(
     *,
     exc: TypeError,
-    regime_name: str,
+    regime_name: RegimeName,
     internal_regime: InternalRegime,
     subject_states: dict[str, Array],
 ) -> Never:
@@ -700,7 +700,7 @@ def _format_infeasibility_message(
     *,
     infeasible_indices: Sequence[int],
     internal_regime: InternalRegime,
-    regime_name: str,
+    regime_name: RegimeName,
     initial_states: Mapping[str, Array],
     state_names: Sequence[str],
 ) -> str:

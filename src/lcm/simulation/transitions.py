@@ -206,7 +206,7 @@ def calculate_next_regime_membership(
 
 def draw_key_from_dict(
     *,
-    d: MappingProxyType[str, Array],
+    d: MappingProxyType[RegimeName, Array],
     regime_names_to_ids: RegimeNamesToIds,
     keys: Array,
 ) -> Int1D:
@@ -226,7 +226,9 @@ def draw_key_from_dict(
     """
     regime_names = list(d)
     regime_transition_probs = jnp.array(list(d.values())).T
-    regime_ids = jnp.array([regime_names_to_ids[name] for name in regime_names])
+    regime_ids = jnp.array(
+        [regime_names_to_ids[regime_name] for regime_name in regime_names]
+    )
 
     def random_id(
         key: Array,

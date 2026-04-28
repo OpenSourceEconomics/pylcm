@@ -45,7 +45,7 @@ class SimulationResult:
         self,
         *,
         raw_results: MappingProxyType[
-            str, MappingProxyType[int, PeriodRegimeSimulationData]
+            RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
         ],
         internal_regimes: MappingProxyType[RegimeName, InternalRegime],
         internal_params: InternalParams,
@@ -73,7 +73,9 @@ class SimulationResult:
     @property
     def raw_results(
         self,
-    ) -> MappingProxyType[str, MappingProxyType[int, PeriodRegimeSimulationData]]:
+    ) -> MappingProxyType[
+        RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
+    ]:
         """Raw simulation results by regime and period."""
         return self._raw_results
 
@@ -90,7 +92,7 @@ class SimulationResult:
         return self._period_to_regime_to_V_arr
 
     @property
-    def regime_names(self) -> list[str]:
+    def regime_names(self) -> list[RegimeName]:
         """Names of all regimes."""
         return self._metadata.regime_names
 
@@ -221,8 +223,8 @@ class SimulationResult:
 
 
 def get_simulation_output_dtypes(
-    regimes: Mapping[str, Regime],
-    regime_names_to_ids: Mapping[str, int],
+    regimes: Mapping[RegimeName, Regime],
+    regime_names_to_ids: Mapping[RegimeName, int],
 ) -> MappingProxyType[str, pd.CategoricalDtype]:
     """Compute pandas CategoricalDtype for all discrete output columns.
 
@@ -259,7 +261,7 @@ def get_simulation_output_dtypes(
 class SimulationMetadata:
     """Pre-computed metadata about the simulation."""
 
-    regime_names: list[str]
+    regime_names: list[RegimeName]
     """Names of all regimes in the model."""
 
     state_names: list[str]
@@ -274,10 +276,10 @@ class SimulationMetadata:
     n_subjects: int
     """Number of subjects simulated."""
 
-    regime_to_states: MappingProxyType[str, tuple[str, ...]]
+    regime_to_states: MappingProxyType[RegimeName, tuple[str, ...]]
     """Immutable mapping of regime names to their state variable names."""
 
-    regime_to_actions: MappingProxyType[str, tuple[str, ...]]
+    regime_to_actions: MappingProxyType[RegimeName, tuple[str, ...]]
     """Immutable mapping of regime names to their action variable names."""
 
     discrete_categories: MappingProxyType[str, tuple[str, ...]]
@@ -286,7 +288,9 @@ class SimulationMetadata:
     discrete_ordered: MappingProxyType[str, bool]
     """Immutable mapping of discrete variable names to their ordered flag."""
 
-    regime_discrete_categories: MappingProxyType[tuple[str, str], tuple[str, ...]]
+    regime_discrete_categories: MappingProxyType[
+        tuple[RegimeName, str], tuple[str, ...]
+    ]
     """Immutable mapping of (regime_name, var_name) to per-regime categories."""
 
 
@@ -304,8 +308,8 @@ def _compute_metadata(
 
     all_states: set[str] = set()
     all_actions: set[str] = set()
-    regime_to_states: dict[str, tuple[str, ...]] = {}
-    regime_to_actions: dict[str, tuple[str, ...]] = {}
+    regime_to_states: dict[RegimeName, tuple[str, ...]] = {}
+    regime_to_actions: dict[RegimeName, tuple[str, ...]] = {}
 
     for regime_name, regime in internal_regimes.items():
         vi = regime.variable_info
@@ -326,7 +330,7 @@ def _compute_metadata(
         discrete_ordered[var_name] = bool(dtype.ordered)
 
     # Per-regime discrete categories for correct code→label mapping
-    regime_discrete_categories: dict[tuple[str, str], tuple[str, ...]] = {}
+    regime_discrete_categories: dict[tuple[RegimeName, str], tuple[str, ...]] = {}
     for regime_name, regime in internal_regimes.items():
         for var_name, grid in regime.grids.items():
             if isinstance(grid, DiscreteGrid):
@@ -433,7 +437,7 @@ def _get_stochastic_weight_function_names(regime: InternalRegime) -> set[str]:
 def _create_flat_dataframe(
     *,
     raw_results: MappingProxyType[
-        str, MappingProxyType[int, PeriodRegimeSimulationData]
+        RegimeName, MappingProxyType[int, PeriodRegimeSimulationData]
     ],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     internal_params: InternalParams,

@@ -68,7 +68,7 @@ from lcm.utils.namespace import flatten_regime_namespace, unflatten_regime_names
 
 def process_regimes(
     *,
-    regimes: Mapping[str, Regime],
+    regimes: Mapping[RegimeName, Regime],
     ages: AgeGrid,
     regime_names_to_ids: RegimeNamesToIds,
     enable_jit: bool,
@@ -91,69 +91,82 @@ def process_regimes(
 
     """
     states_per_regime: dict[RegimeName, set[str]] = {
-        name: set(regime.states.keys()) for name, regime in regimes.items()
+        regime_name: set(regime.states.keys())
+        for regime_name, regime in regimes.items()
     }
 
-    nested_transitions = {}
-    for name, regime in regimes.items():
-        nested_transitions[name] = _extract_transitions_from_regime(
+    nested_transitions: dict[RegimeName, dict[str, Any]] = {}
+    for regime_name, regime in regimes.items():
+        nested_transitions[regime_name] = _extract_transitions_from_regime(
             regime=regime,
             states_per_regime=states_per_regime,
         )
     _validate_categoricals(regimes)
 
     variable_info = MappingProxyType(
-        {n: get_variable_info(r) for n, r in regimes.items()}
+        {
+            regime_name: get_variable_info(regime)
+            for regime_name, regime in regimes.items()
+        }
     )
-    all_grids = MappingProxyType({n: get_grids(r) for n, r in regimes.items()})
+    all_grids = MappingProxyType(
+        {regime_name: get_grids(regime) for regime_name, regime in regimes.items()}
+    )
 
     _fail_if_action_has_batch_size(regimes)
 
     regime_to_v_interpolation_info = MappingProxyType(
-        {n: create_v_interpolation_info(r) for n, r in regimes.items()}
+        {
+            regime_name: create_v_interpolation_info(regime)
+            for regime_name, regime in regimes.items()
+        }
     )
     state_action_spaces = MappingProxyType(
         {
-            n: create_state_action_space(
-                variable_info=variable_info[n], grids=all_grids[n]
+            regime_name: create_state_action_space(
+                variable_info=variable_info[regime_name],
+                grids=all_grids[regime_name],
             )
-            for n in regimes
+            for regime_name in regimes
         }
     )
     regimes_to_active_periods = MappingProxyType(
-        {n: ages.get_periods_where(r.active) for n, r in regimes.items()}
+        {
+            regime_name: ages.get_periods_where(regime.active)
+            for regime_name, regime in regimes.items()
+        }
     )
 
-    internal_regimes = {}
-    for name, regime in regimes.items():
+    internal_regimes: dict[RegimeName, InternalRegime] = {}
+    for regime_name, regime in regimes.items():
         regime_params_template = create_regime_params_template(regime)
 
         solve_functions = _build_solve_functions(
             regime=regime,
-            regime_name=name,
-            nested_transitions=nested_transitions[name],
+            regime_name=regime_name,
+            nested_transitions=nested_transitions[regime_name],
             all_grids=all_grids,
             regime_params_template=regime_params_template,
             regime_names_to_ids=regime_names_to_ids,
-            variable_info=variable_info[name],
+            variable_info=variable_info[regime_name],
             regimes_to_active_periods=regimes_to_active_periods,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-            state_action_space=state_action_spaces[name],
+            state_action_space=state_action_spaces[regime_name],
             ages=ages,
             enable_jit=enable_jit,
         )
 
         simulate_functions = _build_simulate_functions(
             regime=regime,
-            regime_name=name,
-            nested_transitions=nested_transitions[name],
+            regime_name=regime_name,
+            nested_transitions=nested_transitions[regime_name],
             all_grids=all_grids,
             regime_params_template=regime_params_template,
             regime_names_to_ids=regime_names_to_ids,
-            variable_info=variable_info[name],
+            variable_info=variable_info[regime_name],
             regimes_to_active_periods=regimes_to_active_periods,
             regime_to_v_interpolation_info=regime_to_v_interpolation_info,
-            state_action_space=state_action_spaces[name],
+            state_action_space=state_action_spaces[regime_name],
             ages=ages,
             enable_jit=enable_jit,
             solve_transitions=solve_functions.transitions,
@@ -161,16 +174,16 @@ def process_regimes(
             solve_compute_regime_transition_probs=solve_functions.compute_regime_transition_probs,
         )
 
-        internal_regimes[name] = InternalRegime(
-            name=name,
+        internal_regimes[regime_name] = InternalRegime(
+            name=regime_name,
             terminal=regime.terminal,
-            grids=all_grids[name],
-            variable_info=variable_info[name],
-            active_periods=tuple(regimes_to_active_periods[name]),
+            grids=all_grids[regime_name],
+            variable_info=variable_info[regime_name],
+            active_periods=tuple(regimes_to_active_periods[regime_name]),
             regime_params_template=regime_params_template,
             solve_functions=solve_functions,
             simulate_functions=simulate_functions,
-            _base_state_action_space=state_action_spaces[name],
+            _base_state_action_space=state_action_spaces[regime_name],
         )
 
     return ensure_containers_are_immutable(internal_regimes)
@@ -887,7 +900,7 @@ def _get_weights_func_for_shock(*, name: str, grid: _ShockGrid) -> UserFunction:
 
 
 def _validate_categoricals(
-    regimes: Mapping[str, Regime],
+    regimes: Mapping[RegimeName, Regime],
 ) -> None:
     """Validate that simple transitions don't span mismatched discrete grids.
 
@@ -944,7 +957,7 @@ def _validate_categoricals(
 
 
 def compute_merged_discrete_categories(
-    regimes: Mapping[str, Regime],
+    regimes: Mapping[RegimeName, Regime],
 ) -> tuple[dict[str, tuple[str, ...]], dict[str, bool]]:
     """Compute merged categories and ordered flags for all discrete variables.
 
@@ -984,7 +997,7 @@ def compute_merged_discrete_categories(
 
 
 def _validate_ordered_flags(
-    regimes: Mapping[str, Regime],
+    regimes: Mapping[RegimeName, Regime],
     error_messages: list[str],
 ) -> None:
     """Validate that the ordered flag is consistent for each discrete variable.
@@ -1459,7 +1472,7 @@ def _build_next_state_vmapped(
     return jax.jit(next_state_vmapped) if enable_jit else next_state_vmapped
 
 
-def _fail_if_action_has_batch_size(regimes: Mapping[str, Regime]) -> None:
+def _fail_if_action_has_batch_size(regimes: Mapping[RegimeName, Regime]) -> None:
     """Raise if any action grid has a non-zero batch_size.
 
     Batching applies only to the outer state loop during solving, not to the
