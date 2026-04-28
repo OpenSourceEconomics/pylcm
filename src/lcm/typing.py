@@ -30,6 +30,7 @@ type ScalarFloat = float | Float[Scalar, ""]
 type Period = int | Int1D
 type Age = int | float
 type RegimeName = str
+type StateName = str
 type RegimeNamesToIds = MappingProxyType[RegimeName, int]
 
 type FunctionsMapping = MappingProxyType[str, InternalUserFunction]

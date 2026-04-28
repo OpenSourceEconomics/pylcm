@@ -57,6 +57,7 @@ from lcm.typing import (
     RegimeNamesToIds,
     RegimeParamsTemplate,
     RegimeTransitionFunction,
+    StateName,
     TransitionFunctionsMapping,
     UserFunction,
     VmappedRegimeTransitionFunction,
@@ -90,7 +91,7 @@ def process_regimes(
         The processed regimes.
 
     """
-    states_per_regime: dict[RegimeName, set[str]] = {
+    states_per_regime: dict[RegimeName, set[StateName]] = {
         regime_name: set(regime.states.keys())
         for regime_name, regime in regimes.items()
     }
@@ -627,7 +628,7 @@ def _process_regime_core(
 def _extract_transitions_from_regime(
     *,
     regime: Regime,
-    states_per_regime: Mapping[RegimeName, set[str]],
+    states_per_regime: Mapping[RegimeName, set[StateName]],
 ) -> dict[str, dict[str, UserFunction] | UserFunction]:
     """Extract transitions from `regime.state_transitions` and regime transition.
 
@@ -687,7 +688,7 @@ def _get_reachable_targets(
     *,
     per_target_transitions: dict[str, dict[str, UserFunction]],
     simple_transitions: dict[str, UserFunction],
-    states_per_regime: Mapping[RegimeName, set[str]],
+    states_per_regime: Mapping[RegimeName, set[StateName]],
 ) -> set[RegimeName]:
     """Determine which target regimes need transition entries.
 
@@ -1119,7 +1120,7 @@ def _unique_topological_sort(
 
 def _get_simple_transition_discrete_grid(
     regime: Regime,
-    state_name: str,
+    state_name: StateName,
     raw: object,
 ) -> DiscreteGrid | None:
     """Return the source DiscreteGrid for a simple transition.

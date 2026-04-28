@@ -26,6 +26,7 @@ from lcm.typing import (
     FunctionsMapping,
     RegimeName,
     RegimeTransitionFunction,
+    StateName,
     TransitionFunctionsMapping,
 )
 from lcm.utils.dispatchers import productmap
@@ -201,8 +202,8 @@ def _productmap_over_state_action_space(
     *,
     func: Callable,
     action_names: tuple[str, ...],
-    state_names: tuple[str, ...],
-    state_batch_sizes: dict[str, int],
+    state_names: tuple[StateName, ...],
+    state_batch_sizes: dict[StateName, int],
 ) -> Callable:
     """Wrap a scalar state-action function with productmap over actions then states.
 

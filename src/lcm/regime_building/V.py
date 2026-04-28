@@ -12,7 +12,7 @@ from lcm.grids.coordinates import get_irreg_coordinate
 from lcm.regime import Regime
 from lcm.regime_building.ndimage import map_coordinates
 from lcm.shocks import _ShockGrid
-from lcm.typing import FloatND, ScalarFloat
+from lcm.typing import FloatND, ScalarFloat, StateName
 from lcm.utils.functools import all_as_kwargs
 
 
@@ -25,13 +25,13 @@ class VInterpolationInfo:
 
     """
 
-    state_names: tuple[str, ...]
+    state_names: tuple[StateName, ...]
     """Tuple of state variable names."""
 
-    discrete_states: MappingProxyType[str, DiscreteGrid | _ShockGrid]
+    discrete_states: MappingProxyType[StateName, DiscreteGrid | _ShockGrid]
     """Immutable mapping of discrete state names to their grids."""
 
-    continuous_states: MappingProxyType[str, ContinuousGrid]
+    continuous_states: MappingProxyType[StateName, ContinuousGrid]
     """Immutable mapping of continuous state names to their grids."""
 
 

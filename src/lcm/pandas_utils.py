@@ -18,7 +18,7 @@ from lcm.params.sequence_leaf import SequenceLeaf
 from lcm.regime import Regime
 from lcm.shocks import _ShockGrid
 from lcm.simulation.initial_conditions import MISSING_CAT_CODE
-from lcm.typing import InternalParams, RegimeName, RegimeNamesToIds
+from lcm.typing import InternalParams, RegimeName, RegimeNamesToIds, StateName
 from lcm.utils.error_handling import (
     _get_func_indexing_params,
 )
@@ -97,7 +97,7 @@ def initial_conditions_from_dataframe(  # noqa: C901
     result_arrays: dict[str, np.ndarray] = {
         col: np.full(n_subjects, np.nan) for col in state_cols
     }
-    discrete_state_names: set[str] = set()
+    discrete_state_names: set[StateName] = set()
 
     # Process per regime group (vectorised .map() within each group)
     for regime_name, group in df.groupby("regime"):

@@ -27,6 +27,7 @@ from lcm.typing import (
     FloatND,
     InternalParams,
     RegimeName,
+    StateName,
     UserFunction,
 )
 from lcm.utils.dispatchers import vmap_1d
@@ -97,7 +98,7 @@ class SimulationResult:
         return self._metadata.regime_names
 
     @property
-    def state_names(self) -> list[str]:
+    def state_names(self) -> list[StateName]:
         """Names of all state variables (union across regimes)."""
         return self._metadata.state_names
 
@@ -264,7 +265,7 @@ class SimulationMetadata:
     regime_names: list[RegimeName]
     """Names of all regimes in the model."""
 
-    state_names: list[str]
+    state_names: list[StateName]
     """Sorted union of state variable names across all regimes."""
 
     action_names: list[str]
@@ -276,7 +277,7 @@ class SimulationMetadata:
     n_subjects: int
     """Number of subjects simulated."""
 
-    regime_to_states: MappingProxyType[RegimeName, tuple[str, ...]]
+    regime_to_states: MappingProxyType[RegimeName, tuple[StateName, ...]]
     """Immutable mapping of regime names to their state variable names."""
 
     regime_to_actions: MappingProxyType[RegimeName, tuple[str, ...]]
@@ -306,9 +307,9 @@ def _compute_metadata(
     """Compute metadata from internal regimes, raw results, and output dtypes."""
     regime_names = list(internal_regimes.keys())
 
-    all_states: set[str] = set()
+    all_states: set[StateName] = set()
     all_actions: set[str] = set()
-    regime_to_states: dict[RegimeName, tuple[str, ...]] = {}
+    regime_to_states: dict[RegimeName, tuple[StateName, ...]] = {}
     regime_to_actions: dict[RegimeName, tuple[str, ...]] = {}
 
     for regime_name, regime in internal_regimes.items():
@@ -566,7 +567,7 @@ def _filter_targets_for_regime(
 def _assemble_dataframe(
     *,
     regime_dfs: list[pd.DataFrame],
-    state_names: list[str],
+    state_names: list[StateName],
     action_names: list[str],
 ) -> pd.DataFrame:
     """Combine regime DataFrames, add missing columns, reorder, and sort."""
@@ -581,7 +582,7 @@ def _assemble_dataframe(
 
 def _empty_dataframe(
     *,
-    state_names: list[str],
+    state_names: list[StateName],
     action_names: list[str],
 ) -> pd.DataFrame:
     """Create empty DataFrame with correct columns."""
@@ -594,7 +595,7 @@ def _empty_dataframe(
 def _add_missing_columns(
     *,
     df: pd.DataFrame,
-    state_names: list[str],
+    state_names: list[StateName],
     action_names: list[str],
 ) -> pd.DataFrame:
     """Add NaN columns for states/actions not present in DataFrame."""
@@ -610,7 +611,7 @@ def _add_missing_columns(
 def _reorder_columns(
     *,
     df: pd.DataFrame,
-    state_names: list[str],
+    state_names: list[StateName],
     action_names: list[str],
 ) -> pd.DataFrame:
     """Reorder columns: subject_id, period, regime, value, states, actions, rest."""

@@ -19,6 +19,7 @@ from lcm.typing import (
     ActiveFunction,
     ContinuousState,
     DiscreteState,
+    StateName,
     UserFunction,
 )
 
@@ -251,7 +252,7 @@ def _validate_state_transitions(regime: Regime) -> list[str]:
 
 
 def _validate_per_target_dict(
-    state_name: str, targets: Mapping[str, object]
+    state_name: StateName, targets: Mapping[str, object]
 ) -> list[str]:
     """Validate a per-target transition dict for stochastic consistency and types."""
     error_messages: list[str] = []
@@ -281,7 +282,7 @@ def _validate_per_target_dict(
 
 
 def _make_identity_fn(
-    state_name: str, *, annotation: TypeAliasType
+    state_name: StateName, *, annotation: TypeAliasType
 ) -> _IdentityTransition:
     """Create an identity transition for a fixed state."""
     return _IdentityTransition(state_name, annotation=annotation)

@@ -21,6 +21,7 @@ from lcm.typing import (
     NextStateSimulationFunction,
     RegimeParamsTemplate,
     RegimeTransitionFunction,
+    StateName,
     TransitionFunctionsMapping,
     VmappedRegimeTransitionFunction,
 )
@@ -52,7 +53,7 @@ class StateActionSpace:
 
     """
 
-    states: MappingProxyType[str, ContinuousState | DiscreteState]
+    states: MappingProxyType[StateName, ContinuousState | DiscreteState]
     """Immutable mapping of state variable names to their values."""
 
     discrete_actions: MappingProxyType[str, DiscreteAction]
@@ -65,7 +66,7 @@ class StateActionSpace:
     """Names of states and discrete actions in variable info table order."""
 
     @property
-    def state_names(self) -> tuple[str, ...]:
+    def state_names(self) -> tuple[StateName, ...]:
         """Tuple with names of all state variables."""
         return tuple(self.states)
 
@@ -88,7 +89,8 @@ class StateActionSpace:
 
     def replace(
         self,
-        states: MappingProxyType[str, ContinuousState | DiscreteState] | None = None,
+        states: MappingProxyType[StateName, ContinuousState | DiscreteState]
+        | None = None,
         discrete_actions: MappingProxyType[str, DiscreteAction] | None = None,
         continuous_actions: MappingProxyType[str, ContinuousAction] | None = None,
     ) -> StateActionSpace:
@@ -291,7 +293,7 @@ class PeriodRegimeSimulationData:
     actions: MappingProxyType[str, Array]
     """Immutable mapping of action names to optimal action arrays for all subjects."""
 
-    states: MappingProxyType[str, Array]
+    states: MappingProxyType[StateName, Array]
     """Immutable mapping of state names to state value arrays for all subjects."""
 
     in_regime: Bool1D

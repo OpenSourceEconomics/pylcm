@@ -13,6 +13,7 @@ from lcm.typing import (
     ContinuousState,
     DiscreteState,
     FloatND,
+    StateName,
     UserFunction,
 )
 from lcm.utils.containers import (
@@ -76,7 +77,7 @@ class _IdentityTransition:
 
     _is_auto_identity: bool = True
 
-    def __init__(self, state_name: str, *, annotation: TypeAliasType) -> None:
+    def __init__(self, state_name: StateName, *, annotation: TypeAliasType) -> None:
         self._state_name = state_name
         self.__name__ = f"next_{state_name}"
         param = inspect.Parameter(
@@ -125,11 +126,13 @@ class Regime:
     active: ActiveFunction = lambda _age: True
     """Callable that takes age (float) and returns True if regime is active."""
 
-    states: Mapping[str, Grid] = field(default_factory=lambda: MappingProxyType({}))
+    states: Mapping[StateName, Grid] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     """Mapping of state variable names to grid objects."""
 
     state_transitions: Mapping[
-        str,
+        StateName,
         UserFunction
         | MarkovTransition
         | None

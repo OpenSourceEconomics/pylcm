@@ -20,6 +20,7 @@ from lcm.typing import (
     FunctionsMapping,
     NextStateSimulationFunction,
     RegimeName,
+    StateName,
     StochasticNextFunction,
     TransitionFunctionsMapping,
 )
@@ -258,7 +259,7 @@ def _create_continuous_stochastic_next_func(
 
 
 def _create_ar1_next_func(
-    name: str, prev_state_name: str, *, grid: _ShockGridAR1
+    name: str, prev_state_name: StateName, *, grid: _ShockGridAR1
 ) -> StochasticNextFunction:
     fixed_params = dict(grid.params)
     runtime_param_names = {
@@ -290,7 +291,7 @@ def _create_ar1_next_func(
 
 
 def _create_iid_next_func(
-    name: str, prev_state_name: str, *, grid: _ShockGridIID
+    name: str, prev_state_name: StateName, *, grid: _ShockGridIID
 ) -> StochasticNextFunction:
     fixed_params = dict(grid.params)
     runtime_param_names = {

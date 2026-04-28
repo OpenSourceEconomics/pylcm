@@ -26,6 +26,7 @@ from lcm.typing import (
     RegimeName,
     ScalarFloat,
     ScalarInt,
+    StateName,
 )
 
 # Genuine circular import: model.py imports from this module at module level.
@@ -741,7 +742,7 @@ def validate_transition_probs(
     probs: FloatND,
     model: Model,
     regime_name: RegimeName,
-    state_name: str,
+    state_name: StateName,
 ) -> None: ...
 
 
@@ -751,7 +752,7 @@ def validate_transition_probs(
     probs: FloatND,
     model: Model,
     regime_name: RegimeName,
-    state_name: str,
+    state_name: StateName,
     target_regime_name: RegimeName,
 ) -> None: ...
 
@@ -770,7 +771,7 @@ def validate_transition_probs(
     probs: FloatND,
     model: Model,
     regime_name: RegimeName,
-    state_name: str | None = None,
+    state_name: StateName | None = None,
     target_regime_name: RegimeName | None = None,
 ) -> None:
     """Validate a transition probability array for shape, values, and row sums.
@@ -863,7 +864,7 @@ def validate_transition_probs(
 def _extract_markov_transition(
     *,
     raw_transition: object,
-    state_name: str,
+    state_name: StateName,
     regime_name: RegimeName,
     target_regime_name: RegimeName | None,
 ) -> MarkovTransition:
