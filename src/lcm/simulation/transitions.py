@@ -15,7 +15,6 @@ from jax import numpy as jnp
 
 from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.simulation.random import generate_simulation_keys
-from lcm.state_action_space import create_state_action_space
 from lcm.typing import (
     ActionName,
     Bool1D,
@@ -31,28 +30,34 @@ def create_regime_state_action_space(
     *,
     internal_regime: InternalRegime,
     states: MappingProxyType[str, Array],
+    regime_params: FlatRegimeParams,
 ) -> StateActionSpace:
     """Create the state-action space containing only the relevant subjects in a regime.
+
+    Continuous action grids declared with `pass_points_at_runtime=True` are
+    completed from `regime_params` (via
+    `InternalRegime.state_action_space`) — otherwise they would carry the
+    NaN placeholder used during compilation, which propagates into
+    `optimal_actions` and ultimately `next_states`.
 
     Args:
         internal_regime: The internal regime instance.
         states: The current states of all subjects.
+        regime_params: Flat regime parameters supplied at runtime, used to
+            substitute runtime-supplied action gridpoints.
 
     Returns:
         The state-action space for the subjects in the regime.
 
     """
+    base = internal_regime.state_action_space(regime_params=regime_params)
+
     relevant_state_names = internal_regime.variable_info.query("is_state").index
-
-    states_for_state_action_space = {
-        sn: states[f"{internal_regime.name}__{sn}"] for sn in relevant_state_names
-    }
-
-    return create_state_action_space(
-        variable_info=internal_regime.variable_info,
-        grids=internal_regime.grids,
-        states=states_for_state_action_space,
+    states_for_state_action_space = MappingProxyType(
+        {sn: states[f"{internal_regime.name}__{sn}"] for sn in relevant_state_names}
     )
+
+    return base.replace(states=states_for_state_action_space)
 
 
 def calculate_next_states(
