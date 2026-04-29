@@ -5,6 +5,9 @@ Called from `Regime.__post_init__` (validation) and `Regime.get_all_functions`
 
 """
 
+import ast
+import inspect
+import textwrap
 from collections.abc import Callable, Mapping
 from typing import TypeAliasType
 
@@ -125,6 +128,7 @@ def validate_logical_consistency(regime: Regime) -> None:
 
     error_messages.extend(_validate_active(regime.active))
     error_messages.extend(_validate_state_transitions(regime))
+    error_messages.extend(_validate_function_output_state_indexing(regime))
 
     states_and_actions_overlap = set(regime.states) & set(regime.actions)
     if states_and_actions_overlap:
@@ -136,6 +140,82 @@ def validate_logical_consistency(regime: Regime) -> None:
     if error_messages:
         msg = format_messages(error_messages)
         raise RegimeInitializationError(msg)
+
+
+def _validate_function_output_state_indexing(regime: Regime) -> list[str]:
+    """Detect the regime-function-output / state-indexed-input name clash.
+
+    A regime function whose output is then re-indexed by a discrete state inside
+    another consumer (function, constraint, or transition) is a silent footgun:
+    pylcm broadcasts function outputs to per-cell scalars before consumption, so
+    the indexing produces NaN at runtime instead of the intended scalar.
+
+    The safe pattern is to take the state as input on the producing function and
+    return the scalar directly (see `aca_model.agent.preferences.discount_factor`).
+    """
+    function_output_names = set(regime.functions)
+    discrete_state_names = {
+        name for name, grid in regime.states.items() if isinstance(grid, DiscreteGrid)
+    }
+    if not function_output_names or not discrete_state_names:
+        return []
+
+    consumers: list[tuple[str, Callable]] = []
+    consumers.extend(regime.functions.items())
+    consumers.extend(regime.constraints.items())
+    if callable(regime.transition):
+        consumers.append(("regime_transition", regime.transition))
+
+    errors: list[str] = []
+    for consumer_name, func in consumers:
+        clashes = _find_function_output_state_indexing(
+            func=func,
+            function_output_names=function_output_names,
+            discrete_state_names=discrete_state_names,
+        )
+        for func_output_name, state_name in clashes:
+            errors.append(
+                f"Consumer '{consumer_name}' indexes regime function output "
+                f"'{func_output_name}' by discrete state '{state_name}' "
+                f"(`{func_output_name}[{state_name}]`). pylcm broadcasts "
+                f"function outputs to per-cell scalars before consumption, so "
+                f"this indexing silently produces NaN. Refactor "
+                f"'{func_output_name}' to take '{state_name}' as input and "
+                f"return the scalar directly."
+            )
+    return errors
+
+
+def _find_function_output_state_indexing(
+    *,
+    func: Callable,
+    function_output_names: set[str],
+    discrete_state_names: set[str],
+) -> list[tuple[str, str]]:
+    """Return `(function_output_name, state_name)` clashes inside `func`'s body."""
+    try:
+        source = textwrap.dedent(inspect.getsource(func))
+    except OSError, TypeError:
+        return []
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+
+    clashes: list[tuple[str, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Subscript):
+            continue
+        if not isinstance(node.value, ast.Name):
+            continue
+        if node.value.id not in function_output_names:
+            continue
+        if not isinstance(node.slice, ast.Name):
+            continue
+        if node.slice.id not in discrete_state_names:
+            continue
+        clashes.append((node.value.id, node.slice.id))
+    return clashes
 
 
 def collect_state_transitions(
