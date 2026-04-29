@@ -188,9 +188,24 @@ class IrregSpacedGrid(ContinuousGrid):
         return self.points is None
 
     def to_jax(self) -> Float1D:
-        """Convert the grid to a Jax array."""
+        """Convert the grid to a Jax array.
+
+        Raises `GridInitializationError` for runtime-supplied grids
+        (`pass_points_at_runtime=True`). Substitution happens at solve /
+        simulate time via `InternalRegime.state_action_space(regime_params=...)`;
+        any code path that reads the base grid's points before substitution is
+        a bug.
+        """
         if self.points is None:
-            return jnp.full(self.n_points, jnp.nan)
+            raise GridInitializationError(
+                f"IrregSpacedGrid was declared with n_points={self.n_points} "
+                f"and no points; values are supplied at runtime via "
+                f"params['<regime>']['<grid_name>']['points']. Reading the grid "
+                f"before substitution is a bug — call "
+                f"`internal_regime.state_action_space(regime_params=...)` and "
+                f"read points from there, or use `.n_points` if only the shape "
+                f"is needed."
+            )
         return jnp.asarray(self.points)
 
     @overload

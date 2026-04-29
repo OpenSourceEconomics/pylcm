@@ -69,7 +69,15 @@ def test_runtime_grid_creation():
     grid = IrregSpacedGrid(n_points=5)
     assert grid.pass_points_at_runtime
     assert grid.n_points == 5
-    assert grid.to_jax().shape == (5,)  # placeholder zeros
+
+
+def test_runtime_grid_to_jax_raises_before_substitution():
+    """`to_jax()` on a runtime grid is a bug — substitution happens at
+    solve/simulate time via `InternalRegime.state_action_space(regime_params=...)`.
+    The error message must point the caller at that API."""
+    grid = IrregSpacedGrid(n_points=5)
+    with pytest.raises(Exception, match="state_action_space"):
+        grid.to_jax()
 
 
 def test_fixed_grid_not_runtime():
