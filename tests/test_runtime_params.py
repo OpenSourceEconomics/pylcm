@@ -141,3 +141,93 @@ def test_runtime_grid_matches_fixed():
     for period in V_fixed:
         if "alive" in V_fixed[period] and "alive" in V_runtime[period]:
             aaae(V_fixed[period]["alive"], V_runtime[period]["alive"])
+
+
+def _make_action_grid_model(*, consumption_grid):
+    """Create a 2-regime model where consumption is the runtime-points action grid."""
+    alive = Regime(
+        functions={"utility": _utility},
+        states={"wealth": LinSpacedGrid(start=1, stop=10, n_points=5)},
+        state_transitions={"wealth": _next_wealth},
+        actions={"consumption": consumption_grid},
+        constraints={"borrowing_constraint": _borrowing_constraint},
+        transition=_next_regime,
+        active=lambda age: age < 2,
+    )
+    dead = Regime(
+        transition=None,
+        functions={"utility": lambda: 0.0},
+        active=lambda age: age >= 2,
+    )
+    return Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=RegimeId,
+    )
+
+
+def test_runtime_action_grid_in_params_template():
+    """IrregSpacedGrid action with runtime-supplied points adds 'points' to template."""
+    model = _make_action_grid_model(
+        consumption_grid=IrregSpacedGrid(n_points=5),
+    )
+    alive_template = model._params_template["alive"]
+    assert "consumption" in alive_template
+    assert "points" in alive_template["consumption"]
+
+
+def test_solve_with_runtime_action_grid():
+    """Solve should work when action grid points are provided via params."""
+    model = _make_action_grid_model(
+        consumption_grid=IrregSpacedGrid(n_points=5),
+    )
+    params = {
+        "discount_factor": 0.95,
+        "interest_rate": 0.05,
+        "alive": {"consumption": {"points": jnp.linspace(0.1, 5.0, 5)}},
+    }
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
+    assert len(period_to_regime_to_V_arr) > 0
+
+
+def test_runtime_action_grid_matches_fixed():
+    """Runtime action grid with same points gives same V as a fixed action grid."""
+    points = jnp.linspace(0.1, 5.0, 5)
+
+    model_fixed = _make_action_grid_model(
+        consumption_grid=IrregSpacedGrid(points=list(points.tolist())),
+    )
+    params_fixed = {"discount_factor": 0.95, "interest_rate": 0.05}
+    V_fixed = model_fixed.solve(params=params_fixed, log_level="off")
+
+    model_runtime = _make_action_grid_model(
+        consumption_grid=IrregSpacedGrid(n_points=5),
+    )
+    params_runtime = {
+        "discount_factor": 0.95,
+        "interest_rate": 0.05,
+        "alive": {"consumption": {"points": points}},
+    }
+    V_runtime = model_runtime.solve(params=params_runtime, log_level="off")
+
+    for period in V_fixed:
+        if "alive" in V_fixed[period] and "alive" in V_runtime[period]:
+            aaae(V_fixed[period]["alive"], V_runtime[period]["alive"])
+
+
+def test_runtime_action_grid_changes_solution():
+    """Different runtime action points should yield different V (sanity check)."""
+    model = _make_action_grid_model(
+        consumption_grid=IrregSpacedGrid(n_points=5),
+    )
+    base = {"discount_factor": 0.95, "interest_rate": 0.05}
+    V_low = model.solve(
+        params=base | {"alive": {"consumption": {"points": jnp.linspace(0.1, 1.0, 5)}}},
+        log_level="off",
+    )
+    V_high = model.solve(
+        params=base | {"alive": {"consumption": {"points": jnp.linspace(0.1, 5.0, 5)}}},
+        log_level="off",
+    )
+    # Period 0 alive value should differ when the action support differs
+    assert not jnp.allclose(V_low[0]["alive"], V_high[0]["alive"])

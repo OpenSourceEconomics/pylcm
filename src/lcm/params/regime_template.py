@@ -70,27 +70,53 @@ def create_regime_params_template(
 
     _validate_no_shadowing(function_params, regime)
 
-    for state_name, grid in regime.states.items():
-        if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:
-            if state_name in function_params:
-                raise InvalidNameError(
-                    f"IrregSpacedGrid state '{state_name}' (with runtime-supplied "
-                    f"points) conflicts with a function of the same name in the regime."
-                )
-            function_params[state_name] = {"points": "Float1D"}
-        elif isinstance(grid, _ShockGrid) and grid.params_to_pass_at_runtime:
-            if state_name in function_params:
-                raise InvalidNameError(
-                    f"_ShockGrid state '{state_name}' (with runtime-supplied params) "
-                    f"conflicts with a function of the same name in the regime."
-                )
-            function_params[state_name] = dict.fromkeys(
-                grid.params_to_pass_at_runtime, "float"
-            )
+    _add_runtime_grid_params(function_params, regime)
 
     return MappingProxyType(
         {k: MappingProxyType(v) for k, v in function_params.items()}
     )
+
+
+def _add_runtime_grid_params(
+    function_params: dict[FunctionName, dict[str, str]],
+    regime: Regime,
+) -> None:
+    """Add runtime-supplied state/action grid params to the template in place."""
+    for state_name, grid in regime.states.items():
+        if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:
+            _fail_if_runtime_grid_shadows_function(
+                function_params=function_params, name=state_name, kind="state"
+            )
+            function_params[state_name] = {"points": "Float1D"}
+        elif isinstance(grid, _ShockGrid) and grid.params_to_pass_at_runtime:
+            _fail_if_runtime_grid_shadows_function(
+                function_params=function_params,
+                name=state_name,
+                kind="_ShockGrid state",
+            )
+            function_params[state_name] = dict.fromkeys(
+                grid.params_to_pass_at_runtime, "float"
+            )
+
+    for action_name, grid in regime.actions.items():
+        if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:
+            _fail_if_runtime_grid_shadows_function(
+                function_params=function_params, name=action_name, kind="action"
+            )
+            function_params[action_name] = {"points": "Float1D"}
+
+
+def _fail_if_runtime_grid_shadows_function(
+    *,
+    function_params: dict[FunctionName, dict[str, str]],
+    name: str,
+    kind: str,
+) -> None:
+    if name in function_params:
+        raise InvalidNameError(
+            f"IrregSpacedGrid {kind} '{name}' (with runtime-supplied "
+            f"points/params) conflicts with a function of the same name in the regime."
+        )
 
 
 def _collect_all_functions_for_template(
