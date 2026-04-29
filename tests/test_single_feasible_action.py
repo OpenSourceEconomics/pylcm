@@ -25,8 +25,10 @@ points to also exercise the `feature/runtime-action-grids` path (PR #338).
 import jax.numpy as jnp
 import pytest
 
-from lcm import AgeGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.grids import IrregSpacedGrid
+from lcm.grids.coordinates import get_irreg_coordinate
+from lcm.regime_building.ndimage import map_coordinates
 from lcm.typing import ContinuousAction, ContinuousState, FloatND
 
 
@@ -276,12 +278,11 @@ def _crra_bequest(
     gamma = coefficient_rra[pref_type]
     assets_shifted = jnp.maximum(0.0, assets) + bequest_shifter
     one_minus_gamma = jnp.where(jnp.isclose(gamma, 1.0), 1.0, 1.0 - gamma)
-    val = jnp.where(
+    return jnp.where(
         jnp.isclose(gamma, 1.0),
         jnp.log(assets_shifted),
         assets_shifted ** (one_minus_gamma * alpha) / one_minus_gamma,
     )
-    return val
 
 
 def _alive_utility(
@@ -316,7 +317,6 @@ def _build_alive_dead_model(
     n_periods: int = 3,
 ) -> tuple[Model, dict]:
     last_alive_age = n_periods - 2
-    from lcm import DiscreteGrid
 
     alive = Regime(
         functions={"utility": _alive_utility},
@@ -418,8 +418,6 @@ def test_map_coordinates_returns_nan_for_non_finite_coordinate(bad_coord):
     overflow when V values are O(1e8), or a `0/0` in a degenerate
     IrregSpacedGrid segment) will produce NaN in V.
     """
-    from lcm.regime_building.ndimage import map_coordinates
-
     V_arr = jnp.array([1.0, 5.0, 12.0])
     out = map_coordinates(V_arr, coordinates=[jnp.array(bad_coord)])
     assert jnp.isnan(out)
@@ -435,8 +433,6 @@ def test_irreg_coordinate_divides_by_zero_on_duplicate_grid_points():
     `geomspace(consumption_floor, MAX, n_points)` with `consumption_floor ==
     MAX`, or any param-driven `linspace` whose endpoints can coincide).
     """
-    from lcm.grids.coordinates import get_irreg_coordinate
-
     # Duplicate adjacent points where the query value equals the duplicate.
     # `searchsorted([0, 1, 1], 1.0, side='right')=3` → clipped to n-1=2,
     # idx_lower=1, lower_point=points[1]=1.0, upper_point=points[2]=1.0,
@@ -474,7 +470,7 @@ def _runtime_state_grid_model() -> tuple[Model, dict, dict]:
     def next_wealth(wealth, consumption):
         return wealth - consumption
 
-    def borrow(consumption, wealth):
+    def borrow(consumption, wealth):  # noqa: ARG001
         # The validator sees `wealth` as a per-subject array with the
         # subject-supplied initial values, but `consumption` as the *grid*
         # (placeholder zeros for runtime grids). With a feasibility check
