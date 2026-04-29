@@ -55,7 +55,7 @@ def _build() -> tuple[object, object, object]:
     )
 
     model = create_benchmark_model()
-    _, model_params = get_benchmark_params()
+    _, model_params = get_benchmark_params(model=model)
     initial_conditions = get_benchmark_initial_conditions(
         model=model, n_subjects=_N_SUBJECTS, seed=0
     )
