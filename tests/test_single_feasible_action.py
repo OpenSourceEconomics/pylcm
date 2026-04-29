@@ -78,7 +78,9 @@ def _build_model(
     last_alive_age = n_periods - 2  # alive at ages 0..n-2; dead at n-1
     alive = Regime(
         functions={"utility": _utility},
-        states={"wealth": LinSpacedGrid(start=wealth_lo, stop=wealth_hi, n_points=n_wealth)},
+        states={
+            "wealth": LinSpacedGrid(start=wealth_lo, stop=wealth_hi, n_points=n_wealth)
+        },
         state_transitions={"wealth": _next_wealth},
         actions={"consumption": IrregSpacedGrid(n_points=n_consumption)},
         constraints={"borrowing_constraint": _borrowing_constraint},
@@ -290,7 +292,9 @@ def _alive_utility(
     return alpha * jnp.log(consumption)
 
 
-def _next_assets(assets: ContinuousState, consumption: ContinuousAction) -> ContinuousState:
+def _next_assets(
+    assets: ContinuousState, consumption: ContinuousAction
+) -> ContinuousState:
     return assets - consumption
 
 
@@ -479,7 +483,9 @@ def _runtime_state_grid_model() -> tuple[Model, dict, dict]:
         return consumption > 0
 
     def next_regime(age, last_alive_age):
-        return jnp.where(age >= last_alive_age, RuntimeRegimeId.dead, RuntimeRegimeId.alive)
+        return jnp.where(
+            age >= last_alive_age, RuntimeRegimeId.dead, RuntimeRegimeId.alive
+        )
 
     last_alive_age = 1
     alive = Regime(
