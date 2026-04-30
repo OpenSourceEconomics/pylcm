@@ -278,6 +278,11 @@ class InternalRegime:
                     action_replacements[name] = cast(
                         "ContinuousAction", all_params[points_key]
                     )
+            # `_ShockGrid` is state-only by construction (intrinsic
+            # transitions, forbidden as actions per AGENTS.md). The
+            # `in_states` gate makes that invariant explicit — a
+            # `_ShockGrid` reaching the action branch would be a model
+            # bug, not something this method should silently substitute.
             elif (
                 in_states
                 and isinstance(spec, _ShockGrid)

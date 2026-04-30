@@ -151,7 +151,7 @@ def test_runtime_grid_matches_fixed():
             aaae(V_fixed[period]["alive"], V_runtime[period]["alive"])
 
 
-def _make_action_grid_model(*, consumption_grid):
+def _make_action_grid_model(*, consumption_grid: IrregSpacedGrid) -> Model:
     """Create a 2-regime model where consumption is the runtime-points action grid."""
     alive = Regime(
         functions={"utility": _utility},
@@ -241,7 +241,9 @@ def test_runtime_action_grid_changes_solution():
     assert not jnp.allclose(V_low[0]["alive"], V_high[0]["alive"])
 
 
-def _make_action_grid_model_with_stateful_dead(*, consumption_grid):
+def _make_action_grid_model_with_stateful_dead(
+    *, consumption_grid: IrregSpacedGrid
+) -> Model:
     """Variant where `dead` has a `wealth` state so its utility depends on it.
 
     Mirrors the aca-model dead regime (carries assets / pref_type so the

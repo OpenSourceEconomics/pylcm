@@ -29,7 +29,7 @@ from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.grids import IrregSpacedGrid
 from lcm.grids.coordinates import get_irreg_coordinate
 from lcm.regime_building.ndimage import map_coordinates
-from lcm.typing import ContinuousAction, ContinuousState, FloatND
+from lcm.typing import ContinuousAction, ContinuousState, DiscreteState, FloatND
 
 
 @categorical(ordered=False)
@@ -244,12 +244,6 @@ def test_simulate_with_constrained_action_grid(wealth_lo, consumption_lo, label)
     )
 
 
-# ---------------------------------------------------------------------------
-# Replicas of the aca-baseline failure path: dead regime with a CRRA bequest
-# whose `gamma` is per-pref_type, evaluated through `jnp.where`.
-# ---------------------------------------------------------------------------
-
-
 @categorical(ordered=False)
 class PrefType:
     type_0: int
@@ -264,10 +258,10 @@ class AliveDeadRegimeId:
 
 def _crra_bequest(
     assets: ContinuousState,
-    pref_type,
+    pref_type: DiscreteState,
     bequest_shifter: float,
-    consumption_weight,
-    coefficient_rra,
+    consumption_weight: FloatND,
+    coefficient_rra: FloatND,
 ) -> FloatND:
     """Replica of aca_model.agent.preferences.bequest, simplified.
 
@@ -286,7 +280,9 @@ def _crra_bequest(
 
 
 def _alive_utility(
-    consumption: ContinuousAction, pref_type, consumption_weight
+    consumption: ContinuousAction,
+    pref_type: DiscreteState,
+    consumption_weight: FloatND,
 ) -> FloatND:
     """Make pref_type matter in alive's utility too (otherwise pylcm complains)."""
     alpha = consumption_weight[pref_type]
@@ -395,28 +391,19 @@ def test_bequest_gamma_exactly_one_for_one_type_only():
             )
 
 
-# ---------------------------------------------------------------------------
-# Direct probe: `map_coordinates` produces NaN at ±inf / NaN coordinates.
-# This is the concrete NaN source — `lower_weight = 1 - inf = -inf` and
-# `upper_weight = inf` combined with positive grid values gives `inf - inf =
-# NaN`. The aca-baseline NaN-in-V at age 51 is most plausibly traced back to
-# *some* upstream computation (next_assets / next_aime, or a state coordinate
-# from `get_irreg_coordinate` / `get_*_coordinate` that divides by zero on a
-# degenerate grid segment) producing inf, which then poisons the value
-# function via this interpolation path.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("bad_coord", [jnp.inf, -jnp.inf, jnp.nan])
 def test_map_coordinates_returns_nan_for_non_finite_coordinate(bad_coord):
     """`map_coordinates` cannot recover from a non-finite continuous-state
     coordinate: the linear-interp weights become `inf` and `1 - inf = -inf`,
-    and `inf * V[k] - inf * V[k-1]` reduces to NaN.
+    and `inf * V[k] - inf * V[k-1]` reduces to NaN. The aca-baseline NaN
+    at age 51 traces back to some upstream computation (next_assets,
+    next_aime, or a coordinate finder that divides by zero on a degenerate
+    grid segment) feeding inf into this path.
 
     Implication for callers: any path that can feed `inf` or `NaN` into the
-    coordinate finder (e.g. division by zero in a state transition, an
-    overflow when V values are O(1e8), or a `0/0` in a degenerate
-    IrregSpacedGrid segment) will produce NaN in V.
+    coordinate finder (division by zero in a state transition, overflow
+    when V values are O(1e8), or `0/0` in a degenerate IrregSpacedGrid
+    segment) will produce NaN in V.
     """
     V_arr = jnp.array([1.0, 5.0, 12.0])
     out = map_coordinates(V_arr, coordinates=[jnp.array(bad_coord)])
@@ -446,18 +433,17 @@ def test_irreg_coordinate_divides_by_zero_on_duplicate_grid_points():
     )
 
 
-# ---------------------------------------------------------------------------
-# `validate_initial_conditions` uses `_base_state_action_space` directly,
-# which still holds the placeholder zeros for runtime-supplied
-# `IrregSpacedGrid`. With a feasibility constraint that the all-zero
-# placeholder fails, every subject is reported infeasible — even though the
-# real (post-substitution) grid would pass. This affects runtime grids
-# regardless of whether they are state or action grids.
-# ---------------------------------------------------------------------------
-
-
 def _runtime_state_grid_model() -> tuple[Model, dict, dict]:
-    """A 2-regime model with a runtime-supplied IrregSpacedGrid *state*."""
+    """Build a 2-regime model with a runtime-supplied IrregSpacedGrid *state*.
+
+    Reproduces the failure mode where `validate_initial_conditions` reads
+    `_base_state_action_space` directly — still holding the placeholder
+    zeros for runtime-supplied `IrregSpacedGrid`s. With a feasibility
+    constraint that the all-zero placeholder fails, every subject is
+    reported infeasible even though the real (post-substitution) grid
+    would pass. The same mechanism affects runtime grids whether they
+    are states or actions.
+    """
 
     @categorical(ordered=False)
     class RuntimeRegimeId:

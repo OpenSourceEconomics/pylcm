@@ -15,6 +15,7 @@ from jax import numpy as jnp
 
 from lcm.interfaces import InternalRegime, StateActionSpace
 from lcm.simulation.random import generate_simulation_keys
+from lcm.state_action_space import _validate_all_states_present
 from lcm.typing import (
     ActionName,
     Bool1D,
@@ -53,11 +54,15 @@ def create_regime_state_action_space(
     base = internal_regime.state_action_space(regime_params=regime_params)
 
     relevant_state_names = internal_regime.variable_info.query("is_state").index
-    states_for_state_action_space = MappingProxyType(
-        {sn: states[f"{internal_regime.name}__{sn}"] for sn in relevant_state_names}
+    states_for_state_action_space = {
+        sn: states[f"{internal_regime.name}__{sn}"] for sn in relevant_state_names
+    }
+    _validate_all_states_present(
+        provided_states=states_for_state_action_space,
+        required_state_names=set(relevant_state_names),
     )
 
-    return base.replace(states=states_for_state_action_space)
+    return base.replace(states=MappingProxyType(states_for_state_action_space))
 
 
 def calculate_next_states(

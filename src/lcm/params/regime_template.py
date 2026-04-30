@@ -32,7 +32,7 @@ def create_regime_params_template(
 
     Grids with runtime-supplied values (IrregSpacedGrid without points,
     `_ShockGrid` without full shock_params) add entries to the template under
-    pseudo-function keys matching the state name.
+    pseudo-function keys matching the state or action name.
 
     Args:
         regime: The regime as provided by the user.
@@ -112,6 +112,23 @@ def _fail_if_runtime_grid_shadows_function(
     name: str,
     kind: str,
 ) -> None:
+    """Raise if a runtime grid name collides with an existing function name.
+
+    Runtime-supplied state and action grids contribute pseudo-function entries
+    to the params template (keyed by the state or action name). Letting such a
+    pseudo-function entry shadow a real regime function would silently break
+    parameter resolution, so we reject it at template-construction time.
+
+    Args:
+        function_params: Template entries collected so far, keyed by
+            (pseudo-)function name.
+        name: State or action name being added.
+        kind: `"state"` or `"action"`, surfaced in the error message.
+
+    Raises:
+        InvalidNameError: If `name` already exists in `function_params`.
+
+    """
     if name in function_params:
         raise InvalidNameError(
             f"IrregSpacedGrid {kind} '{name}' (with runtime-supplied "
