@@ -9,21 +9,6 @@ from lcm.interfaces import StateActionSpace
 from lcm.typing import StateName, StateOrActionName
 
 
-def _grid_to_jax_or_placeholder(grid: Grid) -> Array:
-    """Return the grid's points, or a NaN placeholder for runtime-supplied grids.
-
-    `IrregSpacedGrid.to_jax()` raises when its points haven't been supplied — that
-    is the right behaviour everywhere except here: the base state-action space
-    needs a *shape-correct* array to wire through pytree structures and AOT
-    tracing before runtime substitution by
-    `InternalRegime.state_action_space(regime_params=...)`. NaN (rather than
-    zero) makes any accidental computation against the placeholder fail loudly.
-    """
-    if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:
-        return jnp.full(grid.n_points, jnp.nan)
-    return grid.to_jax()
-
-
 def create_state_action_space(
     *,
     variable_info: pd.DataFrame,
@@ -77,6 +62,21 @@ def create_state_action_space(
         continuous_actions=MappingProxyType(continuous_actions),
         state_and_discrete_action_names=state_and_discrete_action_names,
     )
+
+
+def _grid_to_jax_or_placeholder(grid: Grid) -> Array:
+    """Return the grid's points, or a NaN placeholder for runtime-supplied grids.
+
+    `IrregSpacedGrid.to_jax()` raises when its points haven't been supplied — that
+    is the right behaviour everywhere except here: the base state-action space
+    needs a *shape-correct* array to wire through pytree structures and AOT
+    tracing before runtime substitution by
+    `InternalRegime.state_action_space(regime_params=...)`. NaN (rather than
+    zero) makes any accidental computation against the placeholder fail loudly.
+    """
+    if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:
+        return jnp.full(grid.n_points, jnp.nan)
+    return grid.to_jax()
 
 
 def _validate_all_states_present(
