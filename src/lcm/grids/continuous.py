@@ -208,13 +208,13 @@ class IrregSpacedGrid(ContinuousGrid):
         """
         if self.points is None:
             raise GridInitializationError(
-                f"IrregSpacedGrid was declared with n_points={self.n_points} "
-                f"and no points; values are supplied at runtime via "
-                f"params['<regime>']['<grid_name>']['points']. Reading the grid "
-                f"before substitution is a bug — call "
+                f"IrregSpacedGrid declared with n_points={self.n_points} and "
+                f"no points; values are supplied at runtime via "
+                f"params['<regime>']['<grid_name>']['points']. To get the "
+                f"substituted points, call "
                 f"`internal_regime.state_action_space(regime_params=...)` and "
-                f"read points from there, or use `.n_points` if only the shape "
-                f"is needed."
+                f"read from `.states[name]` or `.continuous_actions[name]`. "
+                f"Use `.n_points` if only the shape is needed."
             )
         return jnp.asarray(self.points)
 
