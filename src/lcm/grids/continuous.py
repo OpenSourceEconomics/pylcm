@@ -1,5 +1,4 @@
 import dataclasses
-import math
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -265,10 +264,10 @@ def _validate_continuous_grid(
 
     # Reject NaN/inf early — `start >= stop` returns False for NaN, so an
     # un-finite start would otherwise pass silently and produce a broken grid.
-    if valid_start_type and not math.isfinite(start):
+    if valid_start_type and not jnp.isfinite(start):
         error_messages.append(f"start must be finite, got {start}")
         valid_start_type = False
-    if valid_stop_type and not math.isfinite(stop):
+    if valid_stop_type and not jnp.isfinite(stop):
         error_messages.append(f"stop must be finite, got {stop}")
         valid_stop_type = False
 
@@ -320,7 +319,7 @@ def _validate_irreg_spaced_grid(points: Sequence[float] | Float1D) -> None:
         else:
             # Reject NaN/inf — comparisons with NaN are False, so the
             # ascending-order check below would silently let them through.
-            non_finite = [(i, p) for i, p in enumerate(points) if not math.isfinite(p)]
+            non_finite = [(i, p) for i, p in enumerate(points) if not jnp.isfinite(p)]
             if non_finite:
                 error_messages.append(
                     f"All elements of points must be finite. "
