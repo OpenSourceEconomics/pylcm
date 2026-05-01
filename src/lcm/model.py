@@ -1,6 +1,7 @@
 """Collection of classes that are used by the user to define the model and grids."""
 
 import dataclasses
+import logging
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
@@ -30,6 +31,7 @@ from lcm.persistence import (
 )
 from lcm.regime import Regime
 from lcm.regime_building.processing import InternalRegime
+from lcm.simulation.compile import compile_all_simulate_functions
 from lcm.simulation.initial_conditions import validate_initial_conditions
 from lcm.simulation.result import SimulationResult, get_simulation_output_dtypes
 from lcm.simulation.simulate import simulate
@@ -85,6 +87,16 @@ class Model:
     fixed_params: UserParams
     """Parameters fixed at model initialization."""
 
+    n_subjects: int | None = None
+    """Expected simulate batch size; enables AOT compile of simulate functions.
+
+    When set, the first matching `simulate(...)` call AOT-compiles all simulate
+    functions for batch shape `n_subjects` in parallel. Subsequent calls with the
+    same size reuse the compiled programs. Calls with a mismatching size warn
+    once per size and fall back to the runtime-traced path. `None` keeps the
+    purely lazy behaviour.
+    """
+
     _params_template: ParamsTemplate
     """Template for the model parameters."""
 
@@ -100,6 +112,7 @@ class Model:
         derived_categoricals: Mapping[FunctionName, DiscreteGrid] = MappingProxyType(
             {}
         ),
+        n_subjects: int | None = None,
     ) -> None:
         """Initialize the Model.
 
@@ -115,17 +128,27 @@ class Model:
                 not in states/actions. Broadcast to all regimes (merged with
                 each regime's own `derived_categoricals`). Raises if a regime
                 already has a conflicting entry.
+            n_subjects: Expected simulate batch size; if set, the first matching
+                `simulate(...)` call AOT-compiles all simulate functions for
+                batch shape `n_subjects` in parallel. `None` keeps the purely
+                lazy behaviour.
 
         """
         self.description = description
         self.ages = ages
         self.n_periods = ages.n_periods
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
+        self.n_subjects = n_subjects
+        self._simulate_compile_cache: dict[
+            int, MappingProxyType[RegimeName, InternalRegime]
+        ] = {}
+        self._warned_n_subjects: set[int] = set()
 
         validate_model_inputs(
             n_periods=self.n_periods,
             regimes=regimes,
             regime_id_class=regime_id_class,
+            n_subjects=n_subjects,
         )
         self.regime_names_to_ids = MappingProxyType(
             dict(
@@ -239,6 +262,46 @@ class Model:
             )
         return period_to_regime_to_V_arr
 
+    def _resolve_simulate_internal_regimes(
+        self,
+        *,
+        actual_n_subjects: int,
+        internal_params: InternalParams,
+        log: logging.Logger,
+        max_compilation_workers: int | None,
+    ) -> MappingProxyType[RegimeName, InternalRegime]:
+        """Return internal_regimes to use for simulate; AOT cache when matching.
+
+        Returns the original `internal_regimes` when `n_subjects` is `None` or
+        when the actual batch size mismatches the declared one (logging a
+        warning once per mismatching size). Otherwise builds and caches the
+        AOT-compiled regimes for the matching size.
+        """
+        if self.n_subjects is None:
+            return self.internal_regimes
+        if actual_n_subjects != self.n_subjects:
+            if actual_n_subjects not in self._warned_n_subjects:
+                log.warning(
+                    "simulate called with n_subjects=%d but model declared "
+                    "n_subjects=%d; falling back to runtime compile.",
+                    actual_n_subjects,
+                    self.n_subjects,
+                )
+                self._warned_n_subjects.add(actual_n_subjects)
+            return self.internal_regimes
+        if self.n_subjects not in self._simulate_compile_cache:
+            self._simulate_compile_cache[self.n_subjects] = (
+                compile_all_simulate_functions(
+                    internal_regimes=self.internal_regimes,
+                    internal_params=internal_params,
+                    ages=self.ages,
+                    n_subjects=self.n_subjects,
+                    max_compilation_workers=max_compilation_workers,
+                    logger=log,
+                )
+            )
+        return self._simulate_compile_cache[self.n_subjects]
+
     def simulate(
         self,
         *,
@@ -339,10 +402,17 @@ class Model:
                         log_keep_n_latest=log_keep_n_latest,
                     )
                 raise
+        actual_n_subjects = len(next(iter(initial_conditions.values())))
+        simulate_internal_regimes = self._resolve_simulate_internal_regimes(
+            actual_n_subjects=actual_n_subjects,
+            internal_params=internal_params,
+            log=log,
+            max_compilation_workers=max_compilation_workers,
+        )
         result = simulate(
             internal_params=internal_params,
             initial_conditions=initial_conditions,
-            internal_regimes=self.internal_regimes,
+            internal_regimes=simulate_internal_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             logger=log,
             period_to_regime_to_V_arr=period_to_regime_to_V_arr,
