@@ -246,10 +246,8 @@ def _make_action_grid_model_with_stateful_dead(
 ) -> Model:
     """Variant where `dead` has a `wealth` state so its utility depends on it.
 
-    Mirrors the aca-model dead regime (carries assets / pref_type so the
-    bequest function can read them). Used to surface NaN propagation
-    when the simulate path forgets to substitute runtime-supplied action
-    gridpoints.
+    Used to surface NaN propagation when the simulate path forgets to
+    substitute runtime-supplied action gridpoints.
     """
 
     def _alive_utility(

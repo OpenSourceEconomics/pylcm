@@ -1,5 +1,4 @@
-"""Reproduce the aca-model NaN failure (issue OpenSourceEconomics/aca-model#9):
-solve raises `InvalidValueFunctionError: ... regime 'dead': all values are NaN`.
+"""Reproduce ways `solve` can raise `InvalidValueFunctionError: all values are NaN`.
 
 Two hypotheses are exercised here:
 
@@ -10,16 +9,16 @@ Two hypotheses are exercised here:
    the tests in this file. `-inf` from all-infeasible cells does not cascade
    to NaN by itself either.
 
-2. **CRRA bequest with pref_type indexing under jnp.where**: the bequest
+2. **CRRA bequest with discrete-state indexing under jnp.where**: a bequest
    function evaluates *both* branches of `jnp.where(jnp.isclose(gamma, 1),
    log_branch, power_branch)`. For a parameter set where gamma is exactly 1
-   for one preference type but not the other, the power_branch divides by
+   for one categorical type but not the other, the power_branch divides by
    `1 - gamma = 0` for the gamma=1 type. NaN/Inf from the *unselected*
    branch leaks through `jnp.where`'s gradient/forward pass under JIT
    tracing in some configurations.
 
 The model uses an `IrregSpacedGrid` consumption action with runtime-supplied
-points to also exercise the `feature/runtime-action-grids` path (PR #338).
+points to also exercise the runtime-action-grids substitution path.
 """
 
 import jax.numpy as jnp
@@ -263,7 +262,7 @@ def _crra_bequest(
     consumption_weight: FloatND,
     coefficient_rra: FloatND,
 ) -> FloatND:
-    """Replica of aca_model.agent.preferences.bequest, simplified.
+    """Simplified CRRA bequest used to probe NaN propagation under jnp.where.
 
     `consumption_weight` and `coefficient_rra` are FloatND indexed by
     `pref_type`. Both branches of the `jnp.where` are traced.
@@ -395,14 +394,11 @@ def test_bequest_gamma_exactly_one_for_one_type_only():
 def test_map_coordinates_returns_nan_for_non_finite_coordinate(bad_coord):
     """`map_coordinates` cannot recover from a non-finite continuous-state
     coordinate: the linear-interp weights become `inf` and `1 - inf = -inf`,
-    and `inf * V[k] - inf * V[k-1]` reduces to NaN. The aca-baseline NaN
-    at age 51 traces back to some upstream computation (next_assets,
-    next_aime, or a coordinate finder that divides by zero on a degenerate
-    grid segment) feeding inf into this path.
+    and `inf * V[k] - inf * V[k-1]` reduces to NaN.
 
     Implication for callers: any path that can feed `inf` or `NaN` into the
     coordinate finder (division by zero in a state transition, overflow
-    when V values are O(1e8), or `0/0` in a degenerate IrregSpacedGrid
+    when V values are large, or `0/0` in a degenerate IrregSpacedGrid
     segment) will produce NaN in V.
     """
     V_arr = jnp.array([1.0, 5.0, 12.0])
@@ -414,11 +410,10 @@ def test_irreg_coordinate_divides_by_zero_on_duplicate_grid_points():
     """`get_irreg_coordinate` divides by `upper_point - lower_point`. If a
     runtime-supplied points array contains duplicates, the divisor is 0.
 
-    Reproduces a class of failures that is *only* possible under
-    `feature/runtime-action-grids` / runtime-state-grids when the caller
-    constructs the points from a parameter that can collapse (e.g.
-    `geomspace(consumption_floor, MAX, n_points)` with `consumption_floor ==
-    MAX`, or any param-driven `linspace` whose endpoints can coincide).
+    Reproduces a class of failures specific to runtime-supplied grids: when
+    the caller constructs points from a parameter that can collapse (e.g. a
+    `geomspace(lo, hi, n)` with `lo == hi`, or any param-driven `linspace`
+    whose endpoints can coincide).
     """
     # Duplicate adjacent points where the query value equals the duplicate.
     # `searchsorted([0, 1, 1], 1.0, side='right')=3` → clipped to n-1=2,

@@ -6,8 +6,8 @@ outputs to per-cell scalars before consumption, so the indexing produces
 NaN at runtime instead of the intended scalar.
 
 The validation layer must raise on construction with a clear message
-pointing the user at the safe pattern (see `discount_factor` in
-`aca_model.agent.preferences`: take the state as input, return a scalar).
+pointing the user at the safe pattern: take the discrete state as input
+on the producing function, return a scalar.
 """
 
 import jax.numpy as jnp
