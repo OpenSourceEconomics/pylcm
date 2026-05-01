@@ -37,9 +37,7 @@ def create_regime_state_action_space(
 
     Continuous action grids declared with `pass_points_at_runtime=True` are
     completed from `regime_params` (via
-    `InternalRegime.state_action_space`) — otherwise they would carry the
-    NaN placeholder used during compilation, which propagates into
-    `optimal_actions` and ultimately `next_states`.
+    `InternalRegime.state_action_space`).
 
     Args:
         internal_regime: The internal regime instance.
