@@ -117,9 +117,7 @@ class LinSpacedGrid(UniformContinuousGrid):
 class LogSpacedGrid(UniformContinuousGrid):
     """A logarithmically spaced grid of continuous values.
 
-    Requires `start > 0`; otherwise `log(start)` is undefined and `to_jax()`
-    silently returns NaN/-inf, which propagates through every downstream
-    interpolation.
+    Requires `start > 0`.
 
     Example:
     --------
