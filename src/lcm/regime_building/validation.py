@@ -151,7 +151,7 @@ def _validate_function_output_state_indexing(regime: Regime) -> list[str]:
     the indexing produces NaN at runtime instead of the intended scalar.
 
     The safe pattern is to take the state as input on the producing function and
-    return the scalar directly (see `aca_model.agent.preferences.discount_factor`).
+    return the scalar directly.
     """
     function_output_names = set(regime.functions)
     discrete_state_names = {
