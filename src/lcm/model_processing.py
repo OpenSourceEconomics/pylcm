@@ -147,8 +147,11 @@ def validate_model_inputs(
     n_periods: int,
     regimes: Mapping[RegimeName, Regime],
     regime_id_class: type,
+    n_subjects: int | None = None,
 ) -> None:
     """Validate model constructor inputs."""
+    _fail_if_invalid_n_subjects(n_subjects=n_subjects)
+
     # Early exit if regimes are not lcm.Regime instances
     if not all(isinstance(regime, Regime) for regime in regimes.values()):
         raise ModelInitializationError(
@@ -199,6 +202,19 @@ def validate_model_inputs(
     if error_messages:
         msg = format_messages(error_messages)
         raise ModelInitializationError(msg)
+
+
+def _fail_if_invalid_n_subjects(*, n_subjects: int | None) -> None:
+    """Raise TypeError if non-int, ValueError if non-positive."""
+    if n_subjects is None:
+        return
+    # `bool` is a subclass of `int`; reject explicitly so True/False don't slip through.
+    if not isinstance(n_subjects, int) or isinstance(n_subjects, bool):
+        msg = f"n_subjects must be an int or None, got {type(n_subjects).__name__}."
+        raise TypeError(msg)
+    if n_subjects <= 0:
+        msg = f"n_subjects must be a positive integer, got {n_subjects}."
+        raise ValueError(msg)
 
 
 def _validate_all_variables_used(regimes: Mapping[RegimeName, Regime]) -> list[str]:
