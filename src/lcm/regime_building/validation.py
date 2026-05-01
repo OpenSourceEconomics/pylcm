@@ -156,7 +156,7 @@ def _validate_function_output_state_indexing(regime: Regime) -> list[str]:
     function_output_names = set(regime.functions)
     discrete_state_names = {
         name for name, grid in regime.states.items() if isinstance(grid, DiscreteGrid)
-    }
+    } | set(regime.derived_categoricals)
     if not function_output_names or not discrete_state_names:
         return []
 

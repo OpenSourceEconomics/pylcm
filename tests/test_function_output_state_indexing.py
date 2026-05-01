@@ -123,6 +123,53 @@ def test_safe_pattern_does_not_raise():
     )
 
 
+def test_function_output_indexed_by_derived_categorical_raises():
+    """The check applies to derived categoricals (function outputs treated as
+    categoricals via `derived_categoricals`), not only states."""
+
+    @categorical(ordered=False)
+    class IsMarried:
+        single: int
+        married: int
+
+    def _is_married(spousal_income: DiscreteState) -> DiscreteState:
+        return jnp.int32(spousal_income > 0)
+
+    def _per_marital_scale(some_param: FloatND) -> FloatND:
+        return jnp.abs(1.0 / (1.0 - some_param))
+
+    def _utility_clash(
+        consumption: ContinuousAction,
+        is_married: DiscreteState,
+        per_marital_scale: FloatND,
+    ) -> FloatND:
+        return per_marital_scale[is_married] * jnp.log(consumption + 1.0)
+
+    @categorical(ordered=True)
+    class SpousalIncome:
+        single: int
+        married_no_inc: int
+        married_has_inc: int
+
+    with pytest.raises(
+        RegimeInitializationError,
+        match=r"per_marital_scale.*is_married",
+    ):
+        Regime(
+            functions={
+                "utility": _utility_clash,
+                "per_marital_scale": _per_marital_scale,
+                "is_married": _is_married,
+            },
+            states={"spousal_income": DiscreteGrid(SpousalIncome)},
+            state_transitions={"spousal_income": None},
+            actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
+            derived_categoricals={"is_married": DiscreteGrid(IsMarried)},
+            transition=_next_regime,
+            active=lambda age: age < 2,
+        )
+
+
 def test_constraint_indexing_function_output_by_state_raises():
     """The check applies to regime constraints too, not only `functions`."""
 
