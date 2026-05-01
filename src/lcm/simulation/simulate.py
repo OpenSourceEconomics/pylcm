@@ -244,6 +244,7 @@ def _simulate_regime_in_period(
     state_action_space = create_regime_state_action_space(
         internal_regime=internal_regime,
         states=states,
+        regime_params=internal_params[regime_name],
     )
     # Compute optimal actions
     # We need to pass the value function array of the next period to the

@@ -5,6 +5,9 @@ Called from `Regime.__post_init__` (validation) and `Regime.get_all_functions`
 
 """
 
+import ast
+import inspect
+import textwrap
 from collections.abc import Callable, Mapping
 from typing import TypeAliasType
 
@@ -125,6 +128,7 @@ def validate_logical_consistency(regime: Regime) -> None:
 
     error_messages.extend(_validate_active(regime.active))
     error_messages.extend(_validate_state_transitions(regime))
+    error_messages.extend(_validate_function_output_grid_indexing(regime))
 
     states_and_actions_overlap = set(regime.states) & set(regime.actions)
     if states_and_actions_overlap:
@@ -136,6 +140,103 @@ def validate_logical_consistency(regime: Regime) -> None:
     if error_messages:
         msg = format_messages(error_messages)
         raise RegimeInitializationError(msg)
+
+
+def _validate_function_output_grid_indexing(regime: Regime) -> list[str]:
+    """Detect the regime-function-output / discrete-grid-indexed-input name clash.
+
+    The unsafe pattern is: a regime function `f` takes a discrete grid `g`
+    (state, action, or derived categorical) as an input — so `f`'s output
+    is a per-cell scalar — and a consumer then indexes `f[g]`. The
+    consumer is indexing a 0-d array by a scalar integer, which raises
+    `IndexError` at trace time. The fix is to drop the redundant `[g]`
+    in the consumer (or refactor `f` not to take `g`).
+    """
+    function_output_names = set(regime.functions)
+    discrete_grid_names = (
+        {name for name, grid in regime.states.items() if isinstance(grid, DiscreteGrid)}
+        | {
+            name
+            for name, grid in regime.actions.items()
+            if isinstance(grid, DiscreteGrid)
+        }
+        | set(regime.derived_categoricals)
+    )
+    if not function_output_names or not discrete_grid_names:
+        return []
+
+    # Only treat `func_output[grid]` as unsafe when the producing function
+    # *also* takes `grid` as an input — that is the case where the output
+    # is per-cell scalar and the consumer's indexing is wrong. If the
+    # producing function does not take `grid`, its output shape is
+    # whatever it computed (typically an array indexable by `grid`) and
+    # the consumer pattern is correct.
+    function_inputs: dict[str, set[str]] = {}
+    for name, func in regime.functions.items():
+        try:
+            function_inputs[name] = set(inspect.signature(func).parameters)
+        except ValueError, TypeError:
+            function_inputs[name] = set()
+
+    consumers: list[tuple[str, Callable]] = []
+    consumers.extend(regime.functions.items())
+    consumers.extend(regime.constraints.items())
+    if callable(regime.transition):
+        consumers.append(("regime_transition", regime.transition))
+
+    errors: list[str] = []
+    for consumer_name, func in consumers:
+        clashes = _find_function_output_grid_indexing(
+            func=func,
+            function_output_names=function_output_names,
+            discrete_grid_names=discrete_grid_names,
+        )
+        for func_output_name, grid_name in clashes:
+            if grid_name not in function_inputs.get(func_output_name, set()):
+                continue
+            errors.append(
+                f"Consumer '{consumer_name}' indexes regime function output "
+                f"'{func_output_name}' by discrete grid '{grid_name}' "
+                f"(`{func_output_name}[{grid_name}]`), but '{func_output_name}' "
+                f"already takes '{grid_name}' as input — its output is a "
+                f"per-cell scalar, so the indexing raises IndexError at trace "
+                f"time. Drop the redundant `[{grid_name}]` in '{consumer_name}', "
+                f"or refactor '{func_output_name}' not to take '{grid_name}' "
+                f"as input."
+            )
+    return errors
+
+
+def _find_function_output_grid_indexing(
+    *,
+    func: Callable,
+    function_output_names: set[str],
+    discrete_grid_names: set[str],
+) -> list[tuple[str, str]]:
+    """Return `(function_output_name, grid_name)` clashes inside `func`'s body."""
+    try:
+        source = textwrap.dedent(inspect.getsource(func))
+    except OSError, TypeError:
+        return []
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+
+    clashes: list[tuple[str, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Subscript):
+            continue
+        if not isinstance(node.value, ast.Name):
+            continue
+        if node.value.id not in function_output_names:
+            continue
+        if not isinstance(node.slice, ast.Name):
+            continue
+        if node.slice.id not in discrete_grid_names:
+            continue
+        clashes.append((node.value.id, node.slice.id))
+    return clashes
 
 
 def collect_state_transitions(

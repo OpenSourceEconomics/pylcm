@@ -7,8 +7,8 @@ Solve and simulate avoid this by vmapping over individual state/action combos.
 Validation must do the same.
 
 This pattern arises in models that pass multi-dimensional lookup tables as parameters
-via MappingLeaf — e.g. tax schedules and pension accrual tables in aca-model, or
-tax-transfer schedules in ttsim/gettsim.
+via MappingLeaf — e.g. tax schedules, pension accrual tables, or tax-transfer
+schedules.
 """
 
 import jax

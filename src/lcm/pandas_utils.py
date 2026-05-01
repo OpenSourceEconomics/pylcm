@@ -504,12 +504,15 @@ def _resolve_per_target_template_key(
 
 def _is_runtime_grid_param(*, func_name: FunctionName, regime: Regime) -> bool:
     """Check if a template function key refers to a runtime grid param."""
-    if func_name not in regime.states:
-        return False
-    grid = regime.states[func_name]
-    return (isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime) or (
-        isinstance(grid, _ShockGrid) and bool(grid.params_to_pass_at_runtime)
-    )
+    if func_name in regime.states:
+        grid = regime.states[func_name]
+        return (isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime) or (
+            isinstance(grid, _ShockGrid) and bool(grid.params_to_pass_at_runtime)
+        )
+    if func_name in regime.actions:
+        grid = regime.actions[func_name]
+        return isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime
+    return False
 
 
 def _fail_if_period_level(sr: pd.Series) -> None:

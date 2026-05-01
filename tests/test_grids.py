@@ -217,6 +217,36 @@ def test_logspace_grid_invalid_start():
         LogSpacedGrid(start=1, stop=0, n_points=10)
 
 
+def test_logspace_grid_rejects_zero_start():
+    with pytest.raises(GridInitializationError, match="log-spaced grid"):
+        LogSpacedGrid(start=0, stop=10, n_points=5)
+
+
+def test_logspace_grid_rejects_negative_start():
+    with pytest.raises(GridInitializationError, match="log-spaced grid"):
+        LogSpacedGrid(start=-1.0, stop=10, n_points=5)
+
+
+def test_validate_continuous_grid_rejects_nan_start():
+    with pytest.raises(GridInitializationError, match="start must be finite"):
+        _validate_continuous_grid(start=float("nan"), stop=10, n_points=5)
+
+
+def test_validate_continuous_grid_rejects_inf_stop():
+    with pytest.raises(GridInitializationError, match="stop must be finite"):
+        _validate_continuous_grid(start=1, stop=float("inf"), n_points=5)
+
+
+def test_irreg_spaced_grid_rejects_nan_points():
+    with pytest.raises(GridInitializationError, match="must be finite"):
+        IrregSpacedGrid(points=(1.0, float("nan"), 3.0))
+
+
+def test_irreg_spaced_grid_rejects_inf_points():
+    with pytest.raises(GridInitializationError, match="must be finite"):
+        IrregSpacedGrid(points=(1.0, 2.0, float("inf")))
+
+
 def test_replace_mixin():
     grid = LinSpacedGrid(start=1, stop=5, n_points=5)
     new_grid = grid.replace(start=0)

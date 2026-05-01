@@ -116,11 +116,21 @@ class LinSpacedGrid(UniformContinuousGrid):
 class LogSpacedGrid(UniformContinuousGrid):
     """A logarithmically spaced grid of continuous values.
 
+    Requires `start > 0`.
+
     Example:
     --------
     Let `start = 1`, `stop = 100`, and `n_points = 3`. The grid is `[1, 10, 100]`.
 
     """
+
+    def __post_init__(self) -> None:
+        _validate_continuous_grid(
+            start=self.start,
+            stop=self.stop,
+            n_points=self.n_points,
+            requires_positive_start=True,
+        )
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
@@ -188,9 +198,23 @@ class IrregSpacedGrid(ContinuousGrid):
         return self.points is None
 
     def to_jax(self) -> Float1D:
-        """Convert the grid to a Jax array."""
+        """Convert the grid to a Jax array.
+
+        Raises `GridInitializationError` for runtime-supplied grids
+        (`pass_points_at_runtime=True`). To get the substituted points,
+        call `internal_regime.state_action_space(regime_params=...)` and
+        read from `.states[name]` or `.continuous_actions[name]`.
+        """
         if self.points is None:
-            return jnp.full(self.n_points, jnp.nan)
+            raise GridInitializationError(
+                f"IrregSpacedGrid declared with n_points={self.n_points} and "
+                f"no points; values are supplied at runtime via "
+                f"params['<regime>']['<grid_name>']['points']. To get the "
+                f"substituted points, call "
+                f"`internal_regime.state_action_space(regime_params=...)` and "
+                f"read from `.states[name]` or `.continuous_actions[name]`. "
+                f"Use `.n_points` if only the shape is needed."
+            )
         return jnp.asarray(self.points)
 
     @overload
@@ -213,6 +237,7 @@ def _validate_continuous_grid(
     start: float,
     stop: float,
     n_points: int,
+    requires_positive_start: bool = False,
 ) -> None:
     """Validate the continuous grid parameters.
 
@@ -220,6 +245,8 @@ def _validate_continuous_grid(
         start: The start value of the grid.
         stop: The stop value of the grid.
         n_points: The number of points in the grid.
+        requires_positive_start: If True, also require `start > 0` (used by
+            log-spaced grids since `log(x)` is undefined for `x <= 0`).
 
     Raises:
         GridInitializationError: If the grid parameters are invalid.
@@ -235,6 +262,15 @@ def _validate_continuous_grid(
     if not valid_stop_type:
         error_messages.append("stop must be a scalar int or float value")
 
+    # Reject NaN/inf early — `start >= stop` returns False for NaN, so an
+    # un-finite start would otherwise pass silently and produce a broken grid.
+    if valid_start_type and not jnp.isfinite(start):
+        error_messages.append(f"start must be finite, got {start}")
+        valid_start_type = False
+    if valid_stop_type and not jnp.isfinite(stop):
+        error_messages.append(f"stop must be finite, got {stop}")
+        valid_stop_type = False
+
     if not isinstance(n_points, int) or n_points < 1:
         error_messages.append(
             f"n_points must be an int greater than 0 but is {n_points}",
@@ -242,6 +278,12 @@ def _validate_continuous_grid(
 
     if valid_start_type and valid_stop_type and start >= stop:
         error_messages.append("start must be less than stop")
+
+    if valid_start_type and requires_positive_start and start <= 0:
+        error_messages.append(
+            f"start must be > 0 for a log-spaced grid (got {start}); "
+            f"`log(x)` is undefined for `x <= 0`."
+        )
 
     if error_messages:
         msg = format_messages(error_messages)
@@ -275,15 +317,24 @@ def _validate_irreg_spaced_grid(points: Sequence[float] | Float1D) -> None:
                 f"Non-numeric elements found at indices: {non_numeric}"
             )
         else:
-            # Check that points are in ascending order
-            for i in range(len(points) - 1):
-                if points[i] >= points[i + 1]:
-                    error_messages.append(
-                        "Points must be in strictly ascending order. "
-                        f"Found points[{i}]={points[i]} >= "
-                        f"points[{i + 1}]={points[i + 1]}"
-                    )
-                    break
+            # Reject NaN/inf — comparisons with NaN are False, so the
+            # ascending-order check below would silently let them through.
+            non_finite = [(i, p) for i, p in enumerate(points) if not jnp.isfinite(p)]
+            if non_finite:
+                error_messages.append(
+                    f"All elements of points must be finite. "
+                    f"Non-finite elements found at: {non_finite}"
+                )
+            else:
+                # Check that points are in strictly ascending order
+                for i in range(len(points) - 1):
+                    if points[i] >= points[i + 1]:
+                        error_messages.append(
+                            "Points must be in strictly ascending order. "
+                            f"Found points[{i}]={points[i]} >= "
+                            f"points[{i + 1}]={points[i + 1]}"
+                        )
+                        break
 
     if error_messages:
         msg = format_messages(error_messages)

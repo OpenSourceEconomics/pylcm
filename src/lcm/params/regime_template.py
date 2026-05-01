@@ -32,7 +32,7 @@ def create_regime_params_template(
 
     Grids with runtime-supplied values (IrregSpacedGrid without points,
     `_ShockGrid` without full shock_params) add entries to the template under
-    pseudo-function keys matching the state name.
+    pseudo-function keys matching the state or action name.
 
     Args:
         regime: The regime as provided by the user.
@@ -70,27 +70,70 @@ def create_regime_params_template(
 
     _validate_no_shadowing(function_params, regime)
 
-    for state_name, grid in regime.states.items():
-        if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:
-            if state_name in function_params:
-                raise InvalidNameError(
-                    f"IrregSpacedGrid state '{state_name}' (with runtime-supplied "
-                    f"points) conflicts with a function of the same name in the regime."
-                )
-            function_params[state_name] = {"points": "Float1D"}
-        elif isinstance(grid, _ShockGrid) and grid.params_to_pass_at_runtime:
-            if state_name in function_params:
-                raise InvalidNameError(
-                    f"_ShockGrid state '{state_name}' (with runtime-supplied params) "
-                    f"conflicts with a function of the same name in the regime."
-                )
-            function_params[state_name] = dict.fromkeys(
-                grid.params_to_pass_at_runtime, "float"
-            )
+    _add_runtime_grid_params(function_params, regime)
 
     return MappingProxyType(
         {k: MappingProxyType(v) for k, v in function_params.items()}
     )
+
+
+def _add_runtime_grid_params(
+    function_params: dict[FunctionName, dict[str, str]],
+    regime: Regime,
+) -> None:
+    """Add runtime-supplied state/action grid params to the template in place."""
+    for state_name, grid in regime.states.items():
+        if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:
+            _fail_if_runtime_grid_shadows_function(
+                function_params=function_params, name=state_name, kind="state"
+            )
+            function_params[state_name] = {"points": "Float1D"}
+        elif isinstance(grid, _ShockGrid) and grid.params_to_pass_at_runtime:
+            _fail_if_runtime_grid_shadows_function(
+                function_params=function_params,
+                name=state_name,
+                kind="_ShockGrid state",
+            )
+            function_params[state_name] = dict.fromkeys(
+                grid.params_to_pass_at_runtime, "float"
+            )
+
+    for action_name, grid in regime.actions.items():
+        if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:
+            _fail_if_runtime_grid_shadows_function(
+                function_params=function_params, name=action_name, kind="action"
+            )
+            function_params[action_name] = {"points": "Float1D"}
+
+
+def _fail_if_runtime_grid_shadows_function(
+    *,
+    function_params: dict[FunctionName, dict[str, str]],
+    name: str,
+    kind: str,
+) -> None:
+    """Raise if a runtime grid name collides with an existing function name.
+
+    Runtime-supplied state and action grids contribute pseudo-function entries
+    to the params template (keyed by the state or action name). Letting such a
+    pseudo-function entry shadow a real regime function would silently break
+    parameter resolution, so we reject it at template-construction time.
+
+    Args:
+        function_params: Template entries collected so far, keyed by
+            (pseudo-)function name.
+        name: State or action name being added.
+        kind: `"state"` or `"action"`, surfaced in the error message.
+
+    Raises:
+        InvalidNameError: If `name` already exists in `function_params`.
+
+    """
+    if name in function_params:
+        raise InvalidNameError(
+            f"IrregSpacedGrid {kind} '{name}' (with runtime-supplied "
+            f"points/params) conflicts with a function of the same name in the regime."
+        )
 
 
 def _collect_all_functions_for_template(
