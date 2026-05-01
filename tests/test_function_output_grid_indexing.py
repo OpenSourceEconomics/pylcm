@@ -1,14 +1,14 @@
 """Tests for the regime-function-output / discrete-grid-indexed-input name clash.
 
-A regime function whose output is then re-indexed by a discrete grid
-(state, action, or derived categorical) inside another function is a
-silent footgun: pylcm broadcasts function outputs to per-cell scalars
-before consumption, so the indexing produces NaN at runtime instead of
-the intended scalar.
+The unsafe pattern is: a regime function `f` takes a discrete grid `g` (state,
+action, or derived categorical) as an input — so `f`'s output is a per-cell
+scalar — and a consumer then indexes `f[g]`. The consumer is indexing a 0-d
+array by a scalar integer, which raises `IndexError` at trace time. The
+validator catches the pattern at construction so the user gets a clear message
+instead of a cryptic JAX trace error during solve.
 
-The validation layer must raise on construction with a clear message
-pointing the user at the safe pattern: take the discrete grid as input
-on the producing function, return a scalar.
+The fix is to drop the redundant `[g]` in the consumer (or refactor `f` not
+to take `g`).
 """
 
 import jax.numpy as jnp
@@ -31,19 +31,21 @@ class RegimeId:
     dead: int
 
 
-def _per_type_scale(some_param: FloatND) -> FloatND:
-    """Returns one scale per pref_type — depends only on a per-type Series param."""
-    return jnp.abs(1.0 / (1.0 - some_param))
+def _per_type_scale_takes_pref_type(
+    pref_type: DiscreteState, some_param: FloatND
+) -> FloatND:
+    """Takes pref_type — output is per-cell scalar; consumer must not re-index."""
+    return jnp.abs(1.0 / (1.0 - some_param[pref_type]))
 
 
-def _utility_with_state_indexed_function_output(
+def _utility_redundantly_indexes(
     consumption: ContinuousAction,
     pref_type: DiscreteState,
     per_type_scale: FloatND,
 ) -> FloatND:
-    # The clash: per_type_scale is registered as a regime function output
-    # (returns shape (n_pref_types,)), but here it is consumed and indexed
-    # by the `pref_type` discrete state.
+    # The clash: per_type_scale's producer takes pref_type, so its output is a
+    # per-cell scalar. Indexing that scalar by pref_type again raises IndexError
+    # at trace time.
     return per_type_scale[pref_type] * jnp.log(consumption + 1.0)
 
 
@@ -54,8 +56,8 @@ def _next_regime(period: int) -> FloatND:
 def _make_clashing_model() -> Model:
     alive = Regime(
         functions={
-            "utility": _utility_with_state_indexed_function_output,
-            "per_type_scale": _per_type_scale,
+            "utility": _utility_redundantly_indexes,
+            "per_type_scale": _per_type_scale_takes_pref_type,
         },
         states={"pref_type": DiscreteGrid(PrefType)},
         state_transitions={"pref_type": None},
@@ -76,8 +78,8 @@ def _make_clashing_model() -> Model:
 
 
 def test_function_output_indexed_by_state_raises():
-    """A regime function output indexed by a discrete state inside another regime
-    function must raise on construction (silent NaN bug otherwise)."""
+    """A regime function output redundantly indexed by a discrete state inside
+    another regime function must raise on construction."""
     with pytest.raises(
         RegimeInitializationError,
         match=r"per_type_scale.*pref_type",
@@ -85,7 +87,7 @@ def test_function_output_indexed_by_state_raises():
         _make_clashing_model()
 
 
-def _utility_safe(
+def _utility_consumes_scalar(
     consumption: ContinuousAction,
     pref_type: DiscreteState,  # noqa: ARG001
     per_type_scale: FloatND,
@@ -94,17 +96,48 @@ def _utility_safe(
     return per_type_scale * jnp.log(consumption + 1.0)
 
 
-def _per_type_scale_safe(pref_type: DiscreteState, some_param: FloatND) -> FloatND:
-    """Safe variant: takes pref_type, returns scalar (mirrors discount_factor)."""
-    return jnp.abs(1.0 / (1.0 - some_param[pref_type]))
-
-
 def test_safe_pattern_does_not_raise():
-    """The safe pattern (function takes the state, returns a scalar) builds fine."""
+    """The safe pattern (function takes the state, returns a scalar; consumer
+    uses it directly) builds fine."""
     alive = Regime(
         functions={
-            "utility": _utility_safe,
-            "per_type_scale": _per_type_scale_safe,
+            "utility": _utility_consumes_scalar,
+            "per_type_scale": _per_type_scale_takes_pref_type,
+        },
+        states={"pref_type": DiscreteGrid(PrefType)},
+        state_transitions={"pref_type": None},
+        actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
+        transition=_next_regime,
+        active=lambda age: age < 2,
+    )
+    dead = Regime(
+        transition=None,
+        functions={"utility": lambda: 0.0},
+        active=lambda age: age >= 2,
+    )
+    Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=RegimeId,
+    )
+
+
+def _per_type_scale_array_output(some_param: FloatND) -> FloatND:
+    """Does NOT take pref_type — output is `(n_pref_types,)`-shaped.
+
+    A consumer indexing this output by `pref_type` is correct: the indexing
+    selects the per-type entry. The validator must NOT flag this case.
+    """
+    return jnp.abs(1.0 / (1.0 - some_param))
+
+
+def test_array_valued_producer_indexed_by_state_does_not_raise():
+    """When the producing function does NOT take the discrete grid as input,
+    its output stays array-shaped and `func_output[grid]` is correct code."""
+    alive = Regime(
+        functions={
+            "utility": _utility_redundantly_indexes,
+            "per_type_scale": _per_type_scale_array_output,
         },
         states={"pref_type": DiscreteGrid(PrefType)},
         state_transitions={"pref_type": None},
@@ -136,8 +169,8 @@ def test_function_output_indexed_by_derived_categorical_raises():
     def _is_married(spousal_income: DiscreteState) -> DiscreteState:
         return jnp.int32(spousal_income > 0)
 
-    def _per_marital_scale(some_param: FloatND) -> FloatND:
-        return jnp.abs(1.0 / (1.0 - some_param))
+    def _per_marital_scale(is_married: DiscreteState, some_param: FloatND) -> FloatND:
+        return jnp.abs(1.0 / (1.0 - some_param[is_married]))
 
     def _utility_clash(
         consumption: ContinuousAction,
@@ -179,8 +212,8 @@ def test_function_output_indexed_by_discrete_action_raises():
         no_work: int
         work: int
 
-    def _per_choice_scale(some_param: FloatND) -> FloatND:
-        return jnp.abs(1.0 / (1.0 - some_param))
+    def _per_choice_scale(labor_supply: DiscreteAction, some_param: FloatND) -> FloatND:
+        return jnp.abs(1.0 / (1.0 - some_param[labor_supply]))
 
     def _utility_clash(
         consumption: ContinuousAction,
@@ -228,7 +261,7 @@ def test_constraint_indexing_function_output_by_state_raises():
                 "utility": lambda consumption, pref_type, per_type_scale: jnp.log(  # noqa: ARG005
                     consumption + 1.0
                 ),
-                "per_type_scale": _per_type_scale,
+                "per_type_scale": _per_type_scale_takes_pref_type,
             },
             states={"pref_type": DiscreteGrid(PrefType)},
             state_transitions={"pref_type": None},

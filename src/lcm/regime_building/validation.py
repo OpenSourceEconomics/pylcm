@@ -145,14 +145,12 @@ def validate_logical_consistency(regime: Regime) -> None:
 def _validate_function_output_grid_indexing(regime: Regime) -> list[str]:
     """Detect the regime-function-output / discrete-grid-indexed-input name clash.
 
-    A regime function whose output is then re-indexed by a discrete grid (state,
-    action, or derived categorical) inside another consumer (function,
-    constraint, or transition) is a silent footgun: pylcm broadcasts function
-    outputs to per-cell scalars before consumption, so the indexing produces
-    NaN at runtime instead of the intended scalar.
-
-    The safe pattern is to take the discrete grid as input on the producing
-    function and return the scalar directly.
+    The unsafe pattern is: a regime function `f` takes a discrete grid `g`
+    (state, action, or derived categorical) as an input — so `f`'s output
+    is a per-cell scalar — and a consumer then indexes `f[g]`. The
+    consumer is indexing a 0-d array by a scalar integer, which raises
+    `IndexError` at trace time. The fix is to drop the redundant `[g]`
+    in the consumer (or refactor `f` not to take `g`).
     """
     function_output_names = set(regime.functions)
     discrete_grid_names = (
@@ -166,6 +164,19 @@ def _validate_function_output_grid_indexing(regime: Regime) -> list[str]:
     )
     if not function_output_names or not discrete_grid_names:
         return []
+
+    # Only treat `func_output[grid]` as unsafe when the producing function
+    # *also* takes `grid` as an input — that is the case where the output
+    # is per-cell scalar and the consumer's indexing is wrong. If the
+    # producing function does not take `grid`, its output shape is
+    # whatever it computed (typically an array indexable by `grid`) and
+    # the consumer pattern is correct.
+    function_inputs: dict[str, set[str]] = {}
+    for name, func in regime.functions.items():
+        try:
+            function_inputs[name] = set(inspect.signature(func).parameters)
+        except ValueError, TypeError:
+            function_inputs[name] = set()
 
     consumers: list[tuple[str, Callable]] = []
     consumers.extend(regime.functions.items())
@@ -181,14 +192,17 @@ def _validate_function_output_grid_indexing(regime: Regime) -> list[str]:
             discrete_grid_names=discrete_grid_names,
         )
         for func_output_name, grid_name in clashes:
+            if grid_name not in function_inputs.get(func_output_name, set()):
+                continue
             errors.append(
                 f"Consumer '{consumer_name}' indexes regime function output "
                 f"'{func_output_name}' by discrete grid '{grid_name}' "
-                f"(`{func_output_name}[{grid_name}]`). pylcm broadcasts "
-                f"function outputs to per-cell scalars before consumption, so "
-                f"this indexing silently produces NaN. Refactor "
-                f"'{func_output_name}' to take '{grid_name}' as input and "
-                f"return the scalar directly."
+                f"(`{func_output_name}[{grid_name}]`), but '{func_output_name}' "
+                f"already takes '{grid_name}' as input — its output is a "
+                f"per-cell scalar, so the indexing raises IndexError at trace "
+                f"time. Drop the redundant `[{grid_name}]` in '{consumer_name}', "
+                f"or refactor '{func_output_name}' not to take '{grid_name}' "
+                f"as input."
             )
     return errors
 
