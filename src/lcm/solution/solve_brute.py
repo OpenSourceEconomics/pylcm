@@ -12,7 +12,7 @@ import jax.numpy as jnp
 
 from lcm.ages import AgeGrid
 from lcm.interfaces import InternalRegime
-from lcm.typing import FlatRegimeParams, FloatND, InternalParams, RegimeName
+from lcm.typing import FloatND, InternalParams, RegimeName
 from lcm.utils.error_handling import validate_V
 from lcm.utils.logging import (
     format_duration,
@@ -168,14 +168,6 @@ def solve(
                         regime_name=regime_name,
                         period=period,
                         age=float(ages.values[period]),
-                        state_action_space=state_action_space,
-                        next_regime_to_V_arr=next_regime_to_V_arr,
-                        regime_params=internal_params[regime_name],
-                        compute_intermediates=(
-                            internal_regime.solve_functions.compute_intermediates.get(
-                                period
-                            )
-                        ),
                     )
                 )
 
@@ -216,6 +208,8 @@ def solve(
             logger=logger,
             diagnostic_rows=diagnostic_rows,
             solution=MappingProxyType(solution),
+            internal_regimes=internal_regimes,
+            internal_params=internal_params,
             running_any_nan=running_any_nan,
             running_any_inf=running_any_inf,
             diagnostic_min=diagnostic_min if stats_enabled else None,
@@ -414,11 +408,17 @@ def _get_regime_V_shapes(
 class _DiagnosticRow:
     """Metadata captured during the backward-induction loop.
 
-    Stored refs only — no device work — so appending these rows inside
-    the hot loop costs essentially nothing. The expensive part (NaN
-    diagnostic enrichment via `compute_intermediates`) runs at most
-    once per solve, on the first offending row found after the single
-    post-loop host flush.
+    Holds only Python-scalar metadata — no device-array references — so
+    every (regime, period) row stays at a few bytes. The expensive bits
+    (state-action space, next-period V mapping, params, the
+    `compute_intermediates` closure) are reconstructed lazily on the
+    failure path from `internal_regimes`, `internal_params`, and the
+    partial `solution` that has been built up to that point.
+
+    The earlier design captured those device-backed objects directly on
+    each row, which pinned every period's V template in device memory
+    until the post-loop flush — at production grid sizes that hits OOM
+    well before the loop completes.
     """
 
     regime_name: RegimeName
@@ -427,18 +427,6 @@ class _DiagnosticRow:
     """Period index in the backward-induction loop."""
     age: float
     """Age corresponding to `period` (pulled off `AgeGrid.values`)."""
-    state_action_space: object
-    """Typed as `object` to avoid a heavy import cycle; consumers know
-    the actual runtime type from the `max_Q_over_a` signature."""
-    next_regime_to_V_arr: MappingProxyType[RegimeName, FloatND]
-    """Incoming next-period V-arrays, passed through unchanged to
-    `compute_intermediates` when a NaN is detected."""
-    regime_params: FlatRegimeParams
-    """Flat regime parameters used at this (regime, period)."""
-    compute_intermediates: Callable | None
-    """Optional closure that recomputes U / F / E[V] / Q for NaN
-    diagnostic enrichment. `None` when the regime has no
-    compute-intermediates closure (e.g. terminal periods)."""
 
 
 def _emit_post_loop_diagnostics(
@@ -446,6 +434,8 @@ def _emit_post_loop_diagnostics(
     logger: logging.Logger,
     diagnostic_rows: list[_DiagnosticRow],
     solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    internal_params: InternalParams,
     running_any_nan: FloatND,
     running_any_inf: FloatND,
     diagnostic_min: list[FloatND] | None,
@@ -465,6 +455,8 @@ def _emit_post_loop_diagnostics(
         _raise_first_nan_row(
             diagnostic_rows=diagnostic_rows,
             solution=solution,
+            internal_regimes=internal_regimes,
+            internal_params=internal_params,
         )
     if running_any_inf.item():
         _warn_inf_rows(
@@ -486,6 +478,8 @@ def _raise_first_nan_row(
     *,
     diagnostic_rows: list[_DiagnosticRow],
     solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    internal_params: InternalParams,
 ) -> None:
     """Find the first NaN-bearing (regime, period) and raise.
 
@@ -496,27 +490,80 @@ def _raise_first_nan_row(
     for row in diagnostic_rows:
         V_arr = solution[row.period][row.regime_name]
         if jnp.any(jnp.isnan(V_arr)).item():
-            _raise_at(row=row, solution=solution)
+            _raise_at(
+                row=row,
+                solution=solution,
+                internal_regimes=internal_regimes,
+                internal_params=internal_params,
+            )
 
 
 def _raise_at(
     *,
     row: _DiagnosticRow,
     solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    internal_params: InternalParams,
 ) -> None:
     """Run the enriched NaN diagnostic on a single offending row and raise."""
+    internal_regime = internal_regimes[row.regime_name]
+    regime_params = internal_params[row.regime_name]
+    state_action_space = internal_regime.state_action_space(regime_params=regime_params)
+    next_regime_to_V_arr = _reconstruct_next_regime_to_V_arr(
+        period=row.period,
+        internal_regimes=internal_regimes,
+        internal_params=internal_params,
+        solution=solution,
+    )
+    compute_intermediates = internal_regime.solve_functions.compute_intermediates.get(
+        row.period
+    )
     V_arr = solution[row.period][row.regime_name]
     validate_V(
         V_arr=V_arr,
         age=row.age,
         regime_name=row.regime_name,
         partial_solution=solution,
-        compute_intermediates=row.compute_intermediates,
-        state_action_space=row.state_action_space,  # ty: ignore[invalid-argument-type]
-        next_regime_to_V_arr=row.next_regime_to_V_arr,
-        internal_params=row.regime_params,
+        compute_intermediates=compute_intermediates,
+        state_action_space=state_action_space,
+        next_regime_to_V_arr=next_regime_to_V_arr,
+        internal_params=regime_params,
         period=row.period,
     )
+
+
+def _reconstruct_next_regime_to_V_arr(
+    *,
+    period: int,
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    internal_params: InternalParams,
+    solution: MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
+) -> MappingProxyType[RegimeName, FloatND]:
+    """Recreate the rolling `next_regime_to_V_arr` that was used at `period`.
+
+    The hot loop rolls the per-regime V forward via `period_solution.get(name,
+    next_regime_to_V_arr[name])`, so at iteration `period` each regime's slot
+    holds its V from the smallest later period where it was active, falling
+    back to a zeros template otherwise.
+
+    We rebuild the same mapping post-hoc from `solution`. The shapes come from
+    the regime's state-action space at the supplied params — identical to what
+    `_get_regime_V_shapes` saw during solve setup.
+    """
+    regime_V_shapes = _get_regime_V_shapes(
+        internal_regimes=internal_regimes,
+        internal_params=internal_params,
+    )
+    later_periods = sorted(p for p in solution if p > period)
+    result: dict[RegimeName, FloatND] = {}
+    for regime_name, shape in regime_V_shapes.items():
+        rolled: FloatND | None = None
+        for q in later_periods:
+            if regime_name in solution[q]:
+                rolled = solution[q][regime_name]
+                break
+        result[regime_name] = rolled if rolled is not None else jnp.zeros(shape)
+    return MappingProxyType(result)
 
 
 def _warn_inf_rows(

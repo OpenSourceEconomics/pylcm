@@ -146,6 +146,28 @@ def _build_nan_model() -> tuple[Model, dict]:
     return model, params
 
 
+def test_diagnostic_row_holds_only_python_scalars() -> None:
+    """`_DiagnosticRow` must not pin device-backed objects.
+
+    Earlier the row stored `state_action_space`, `next_regime_to_V_arr`,
+    `regime_params`, and a `compute_intermediates` closure (which itself
+    captured the state_action_space). Across periods these refs accumulated,
+    pinning every period's V template in device memory until the post-loop
+    flush — at production grid sizes that hits OOM well before the loop
+    completes. The failure path now reconstructs those objects from `solution`,
+    `internal_regimes`, and `internal_params` instead.
+    """
+    from lcm.solution.solve_brute import _DiagnosticRow  # noqa: PLC0415
+
+    expected = {"regime_name", "period", "age"}
+    actual = set(_DiagnosticRow.__dataclass_fields__)
+    assert actual == expected, (
+        f"_DiagnosticRow must hold only {expected}; got {actual}. Adding "
+        "device-backed fields here pins per-period V templates in device "
+        "memory and re-introduces the OOM during long backward inductions."
+    )
+
+
 def test_nan_diagnostics_end_to_end() -> None:
     """Real model: `model.solve()` attaches a diagnostics dict when V has NaN.
 
