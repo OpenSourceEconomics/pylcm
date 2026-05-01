@@ -1,12 +1,13 @@
-"""Tests for the regime-function-output / state-indexed-input name clash.
+"""Tests for the regime-function-output / discrete-grid-indexed-input name clash.
 
-A regime function whose output is then re-indexed by a discrete state
-inside another function is a silent footgun: pylcm broadcasts function
-outputs to per-cell scalars before consumption, so the indexing produces
-NaN at runtime instead of the intended scalar.
+A regime function whose output is then re-indexed by a discrete grid
+(state, action, or derived categorical) inside another function is a
+silent footgun: pylcm broadcasts function outputs to per-cell scalars
+before consumption, so the indexing produces NaN at runtime instead of
+the intended scalar.
 
 The validation layer must raise on construction with a clear message
-pointing the user at the safe pattern: take the discrete state as input
+pointing the user at the safe pattern: take the discrete grid as input
 on the producing function, return a scalar.
 """
 
@@ -15,7 +16,7 @@ import pytest
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.exceptions import RegimeInitializationError
-from lcm.typing import ContinuousAction, DiscreteState, FloatND
+from lcm.typing import ContinuousAction, DiscreteAction, DiscreteState, FloatND
 
 
 @categorical(ordered=False)
@@ -165,6 +166,44 @@ def test_function_output_indexed_by_derived_categorical_raises():
             state_transitions={"spousal_income": None},
             actions={"consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5)},
             derived_categoricals={"is_married": DiscreteGrid(IsMarried)},
+            transition=_next_regime,
+            active=lambda age: age < 2,
+        )
+
+
+def test_function_output_indexed_by_discrete_action_raises():
+    """The check applies to discrete actions, not only states/derived categoricals."""
+
+    @categorical(ordered=False)
+    class WorkChoice:
+        no_work: int
+        work: int
+
+    def _per_choice_scale(some_param: FloatND) -> FloatND:
+        return jnp.abs(1.0 / (1.0 - some_param))
+
+    def _utility_clash(
+        consumption: ContinuousAction,
+        labor_supply: DiscreteAction,
+        per_choice_scale: FloatND,
+    ) -> FloatND:
+        return per_choice_scale[labor_supply] * jnp.log(consumption + 1.0)
+
+    with pytest.raises(
+        RegimeInitializationError,
+        match=r"per_choice_scale.*labor_supply",
+    ):
+        Regime(
+            functions={
+                "utility": _utility_clash,
+                "per_choice_scale": _per_choice_scale,
+            },
+            states={"pref_type": DiscreteGrid(PrefType)},
+            state_transitions={"pref_type": None},
+            actions={
+                "consumption": LinSpacedGrid(start=0.1, stop=5.0, n_points=5),
+                "labor_supply": DiscreteGrid(WorkChoice),
+            },
             transition=_next_regime,
             active=lambda age: age < 2,
         )

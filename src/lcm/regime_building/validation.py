@@ -128,7 +128,7 @@ def validate_logical_consistency(regime: Regime) -> None:
 
     error_messages.extend(_validate_active(regime.active))
     error_messages.extend(_validate_state_transitions(regime))
-    error_messages.extend(_validate_function_output_state_indexing(regime))
+    error_messages.extend(_validate_function_output_grid_indexing(regime))
 
     states_and_actions_overlap = set(regime.states) & set(regime.actions)
     if states_and_actions_overlap:
@@ -142,22 +142,29 @@ def validate_logical_consistency(regime: Regime) -> None:
         raise RegimeInitializationError(msg)
 
 
-def _validate_function_output_state_indexing(regime: Regime) -> list[str]:
-    """Detect the regime-function-output / state-indexed-input name clash.
+def _validate_function_output_grid_indexing(regime: Regime) -> list[str]:
+    """Detect the regime-function-output / discrete-grid-indexed-input name clash.
 
-    A regime function whose output is then re-indexed by a discrete state inside
-    another consumer (function, constraint, or transition) is a silent footgun:
-    pylcm broadcasts function outputs to per-cell scalars before consumption, so
-    the indexing produces NaN at runtime instead of the intended scalar.
+    A regime function whose output is then re-indexed by a discrete grid (state,
+    action, or derived categorical) inside another consumer (function,
+    constraint, or transition) is a silent footgun: pylcm broadcasts function
+    outputs to per-cell scalars before consumption, so the indexing produces
+    NaN at runtime instead of the intended scalar.
 
-    The safe pattern is to take the state as input on the producing function and
-    return the scalar directly.
+    The safe pattern is to take the discrete grid as input on the producing
+    function and return the scalar directly.
     """
     function_output_names = set(regime.functions)
-    discrete_state_names = {
-        name for name, grid in regime.states.items() if isinstance(grid, DiscreteGrid)
-    } | set(regime.derived_categoricals)
-    if not function_output_names or not discrete_state_names:
+    discrete_grid_names = (
+        {name for name, grid in regime.states.items() if isinstance(grid, DiscreteGrid)}
+        | {
+            name
+            for name, grid in regime.actions.items()
+            if isinstance(grid, DiscreteGrid)
+        }
+        | set(regime.derived_categoricals)
+    )
+    if not function_output_names or not discrete_grid_names:
         return []
 
     consumers: list[tuple[str, Callable]] = []
@@ -168,31 +175,31 @@ def _validate_function_output_state_indexing(regime: Regime) -> list[str]:
 
     errors: list[str] = []
     for consumer_name, func in consumers:
-        clashes = _find_function_output_state_indexing(
+        clashes = _find_function_output_grid_indexing(
             func=func,
             function_output_names=function_output_names,
-            discrete_state_names=discrete_state_names,
+            discrete_grid_names=discrete_grid_names,
         )
-        for func_output_name, state_name in clashes:
+        for func_output_name, grid_name in clashes:
             errors.append(
                 f"Consumer '{consumer_name}' indexes regime function output "
-                f"'{func_output_name}' by discrete state '{state_name}' "
-                f"(`{func_output_name}[{state_name}]`). pylcm broadcasts "
+                f"'{func_output_name}' by discrete grid '{grid_name}' "
+                f"(`{func_output_name}[{grid_name}]`). pylcm broadcasts "
                 f"function outputs to per-cell scalars before consumption, so "
                 f"this indexing silently produces NaN. Refactor "
-                f"'{func_output_name}' to take '{state_name}' as input and "
+                f"'{func_output_name}' to take '{grid_name}' as input and "
                 f"return the scalar directly."
             )
     return errors
 
 
-def _find_function_output_state_indexing(
+def _find_function_output_grid_indexing(
     *,
     func: Callable,
     function_output_names: set[str],
-    discrete_state_names: set[str],
+    discrete_grid_names: set[str],
 ) -> list[tuple[str, str]]:
-    """Return `(function_output_name, state_name)` clashes inside `func`'s body."""
+    """Return `(function_output_name, grid_name)` clashes inside `func`'s body."""
     try:
         source = textwrap.dedent(inspect.getsource(func))
     except OSError, TypeError:
@@ -212,7 +219,7 @@ def _find_function_output_state_indexing(
             continue
         if not isinstance(node.slice, ast.Name):
             continue
-        if node.slice.id not in discrete_state_names:
+        if node.slice.id not in discrete_grid_names:
             continue
         clashes.append((node.value.id, node.slice.id))
     return clashes
