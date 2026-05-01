@@ -202,10 +202,9 @@ class IrregSpacedGrid(ContinuousGrid):
         """Convert the grid to a Jax array.
 
         Raises `GridInitializationError` for runtime-supplied grids
-        (`pass_points_at_runtime=True`). Substitution happens at solve /
-        simulate time via `InternalRegime.state_action_space(regime_params=...)`;
-        any code path that reads the base grid's points before substitution is
-        a bug.
+        (`pass_points_at_runtime=True`). To get the substituted points,
+        call `internal_regime.state_action_space(regime_params=...)` and
+        read from `.states[name]` or `.continuous_actions[name]`.
         """
         if self.points is None:
             raise GridInitializationError(
