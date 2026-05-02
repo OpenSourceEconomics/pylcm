@@ -65,15 +65,12 @@ def compile_all_simulate_functions(
         AOT-compiled programs.
 
     """
+    # Per-regime V-shape lookup for building period-specific templates that
+    # match the *sparse* mapping `simulate.simulate(...)` actually dispatches:
+    # `period_to_regime_to_V_arr.get(P+1, {})` — only regimes active at P+1.
     regime_V_shapes = _get_regime_V_shapes(
         internal_regimes=internal_regimes,
         internal_params=internal_params,
-    )
-    next_regime_to_V_arr = MappingProxyType(
-        {
-            regime_name: jnp.zeros(shape)
-            for regime_name, shape in regime_V_shapes.items()
-        }
     )
 
     unique, func_keys = _collect_unique_simulate_functions(
@@ -81,7 +78,7 @@ def compile_all_simulate_functions(
         internal_params=internal_params,
         ages=ages,
         n_subjects=n_subjects,
-        next_regime_to_V_arr=next_regime_to_V_arr,
+        regime_V_shapes=regime_V_shapes,
     )
 
     n_workers = _resolve_compilation_workers(
@@ -146,12 +143,19 @@ def _collect_unique_simulate_functions(
     internal_params: InternalParams,
     ages: AgeGrid,
     n_subjects: int,
-    next_regime_to_V_arr: MappingProxyType[RegimeName, Array],
+    regime_V_shapes: dict[RegimeName, tuple[int, ...]],
 ) -> tuple[
     dict[Hashable, tuple[Callable, dict, str]],
     dict[tuple[RegimeName, str, int | None], Hashable],
 ]:
-    """Walk every regime/period and dedup the simulate functions to compile."""
+    """Walk every regime/period and dedup the simulate functions to compile.
+
+    `argmax_and_max_Q_over_a` dedup keys on `(func_id, active_at_next_period)`
+    so two periods that share the same argmax callable but see a different
+    `next_regime_to_V_arr` pytree (different active-regime set at P+1) get
+    separate compiled programs whose signature matches what runtime actually
+    dispatches.
+    """
     unique: dict[Hashable, tuple[Callable, dict, str]] = {}
     func_keys: dict[tuple[RegimeName, str, int | None], Hashable] = {}
 
@@ -160,6 +164,12 @@ def _collect_unique_simulate_functions(
         sf = regime.simulate_functions
 
         for period, argmax_func in sf.argmax_and_max_Q_over_a.items():
+            active_next = _active_regimes_at_period(
+                internal_regimes=internal_regimes, period=period + 1
+            )
+            next_regime_to_V_arr = MappingProxyType(
+                {name: jnp.zeros(regime_V_shapes[name]) for name in active_next}
+            )
             args = _build_argmax_args(
                 internal_regime=regime,
                 regime_params=regime_params,
@@ -168,7 +178,7 @@ def _collect_unique_simulate_functions(
                 n_subjects=n_subjects,
                 next_regime_to_V_arr=next_regime_to_V_arr,
             )
-            key = ("argmax", _func_dedup_key(func=argmax_func))
+            key = ("argmax", _func_dedup_key(func=argmax_func), active_next)
             func_keys[(regime_name, "argmax", period)] = key
             if key not in unique:
                 label = (
@@ -258,6 +268,23 @@ def _get_regime_V_shapes(
         )
         shapes[regime_name] = tuple(len(v) for v in space.states.values())
     return shapes
+
+
+def _active_regimes_at_period(
+    *,
+    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
+    period: int,
+) -> tuple[RegimeName, ...]:
+    """Tuple of regime names active at `period`, in `internal_regimes` order.
+
+    Returned as a `tuple` so it's hashable and pytree-key-stable. An empty
+    tuple matches the runtime fallback for periods past the last (`{}`).
+    """
+    return tuple(
+        regime_name
+        for regime_name, regime in internal_regimes.items()
+        if period in regime.active_periods
+    )
 
 
 def _build_argmax_args(
