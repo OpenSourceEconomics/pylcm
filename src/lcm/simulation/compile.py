@@ -197,7 +197,14 @@ def _collect_unique_simulate_functions(
             key = ("next_state", _func_dedup_key(func=sf.next_state))
             func_keys[(regime_name, "next_state", None)] = key
             if key not in unique:
-                unique[key] = (sf.next_state, args, f"{regime_name}/next_state")
+                # Re-wrap with `jax.jit`: when `fixed_params` are partialled
+                # into the regime, `sf.next_state` is a `functools.partial`
+                # (no `.lower()`); plain jit objects are also fine to re-jit.
+                unique[key] = (
+                    jax.jit(sf.next_state),
+                    args,
+                    f"{regime_name}/next_state",
+                )
 
         if sf.compute_regime_transition_probs is not None:
             args = _build_crtp_args(
@@ -210,7 +217,7 @@ def _collect_unique_simulate_functions(
             func_keys[(regime_name, "crtp", None)] = key
             if key not in unique:
                 unique[key] = (
-                    sf.compute_regime_transition_probs,
+                    jax.jit(sf.compute_regime_transition_probs),
                     args,
                     f"{regime_name}/compute_regime_transition_probs",
                 )
