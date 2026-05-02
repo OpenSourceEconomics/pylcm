@@ -108,16 +108,6 @@ def simulate(
     # Build reverse lookup for regime transition logging
     ids_to_names: dict[int, RegimeName] = {v: k for k, v in regime_names_to_ids.items()}
 
-    # Normalize V arrays so every period (including the post-last fallback)
-    # has the same pytree structure: all regime keys, zeros for inactive
-    # regimes. This collapses the per-period dispatch to a single JIT-trace
-    # signature and matches the AOT-compiled programs.
-    period_to_regime_to_V_arr, empty_next_V = _normalize_period_V_arr(
-        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-        internal_regimes=internal_regimes,
-        internal_params=internal_params,
-    )
-
     for period, age in enumerate(ages.values):
         period_start = time.monotonic()
 
@@ -156,7 +146,6 @@ def simulate(
                     subject_regime_ids=subject_regime_ids,
                     new_subject_regime_ids=new_subject_regime_ids,
                     period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-                    empty_next_V=empty_next_V,
                     internal_params=internal_params,
                     regime_names_to_ids=regime_names_to_ids,
                     active_regimes_next_period=active_regimes_next_period,
@@ -215,7 +204,6 @@ def _simulate_regime_in_period(
     period_to_regime_to_V_arr: MappingProxyType[
         int, MappingProxyType[RegimeName, FloatND]
     ],
-    empty_next_V: MappingProxyType[RegimeName, FloatND],
     internal_params: InternalParams,
     regime_names_to_ids: MappingProxyType[RegimeName, int],
     active_regimes_next_period: tuple[RegimeName, ...],
@@ -261,10 +249,10 @@ def _simulate_regime_in_period(
     # Compute optimal actions
     # We need to pass the value function array of the next period to the
     # argmax_and_max_Q_over_a function, as the current Q-function requires the
-    # next period's value function. In the last period the next-period V is
-    # zeros (same shape as a populated period) — this keeps a single JIT-trace
-    # signature across all periods and matches the AOT-compile signature.
-    next_regime_to_V_arr = period_to_regime_to_V_arr.get(period + 1, empty_next_V)
+    # next period's value function. In the last period, we pass an empty dict.
+    next_regime_to_V_arr = period_to_regime_to_V_arr.get(
+        period + 1, MappingProxyType({})
+    )
 
     # The Q-function values contain the information of how much value each
     # action combination is worth. To find the optimal discrete action, we
@@ -374,53 +362,6 @@ def _lookup_values_from_indices(
 # vmap jnp.unravel_index over the first axis of the `indices` argument, while holding
 # the `shape` argument constant (in_axes = (0, None)).
 vmapped_unravel_index = vmap(jnp.unravel_index, in_axes=(0, None))
-
-
-def _normalize_period_V_arr(
-    *,
-    period_to_regime_to_V_arr: MappingProxyType[
-        int, MappingProxyType[RegimeName, FloatND]
-    ],
-    internal_regimes: MappingProxyType[RegimeName, InternalRegime],
-    internal_params: InternalParams,
-) -> tuple[
-    MappingProxyType[int, MappingProxyType[RegimeName, FloatND]],
-    MappingProxyType[RegimeName, FloatND],
-]:
-    """Fill missing regime keys with zero V arrays so every period has the same shape.
-
-    `solve()` returns active-only mappings per period; AOT compilation and the
-    JIT cache both work best with a fixed pytree, so we pad with zeros here.
-
-    Returns:
-        Tuple of (normalized period→regime→V mapping, all-zeros fallback for
-        post-last periods).
-
-    """
-    regime_V_shapes: dict[RegimeName, tuple[int, ...]] = {}
-    for regime_name, regime in internal_regimes.items():
-        space = regime.state_action_space(
-            regime_params=internal_params.get(regime_name, MappingProxyType({}))
-        )
-        regime_V_shapes[regime_name] = tuple(len(v) for v in space.states.values())
-
-    empty_next_V = MappingProxyType(
-        {
-            regime_name: jnp.zeros(shape)
-            for regime_name, shape in regime_V_shapes.items()
-        }
-    )
-
-    normalized: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
-    for period, regime_to_V in period_to_regime_to_V_arr.items():
-        normalized[period] = MappingProxyType(
-            {
-                regime_name: regime_to_V.get(regime_name, empty_next_V[regime_name])
-                for regime_name in internal_regimes
-            }
-        )
-
-    return MappingProxyType(normalized), empty_next_V
 
 
 def _compute_starting_periods(
