@@ -64,10 +64,24 @@ def build_initial_states(
     for regime_name, internal_regime in internal_regimes.items():
         for state_name in _get_regime_state_names(internal_regime):
             key = f"{regime_name}__{state_name}"
-            if state_name in initial_states:
+            grid = internal_regime.grids[state_name]
+            if isinstance(grid, DiscreteGrid):
+                # Match the grid's index dtype so the state is index-stable
+                # across the simulate loop. Without this, period-0 dispatch
+                # carries the user-supplied dtype (often int32) but post-
+                # transition states are promoted to the grid dtype (int64
+                # under x64), forcing JAX to compile two argmax variants
+                # per regime and breaking AOT-compiled programs that key
+                # on a single signature.
+                target_dtype = grid.to_jax().dtype
+                if state_name in initial_states:
+                    flat[key] = initial_states[state_name].astype(target_dtype)
+                else:
+                    flat[key] = jnp.full(
+                        n_subjects, MISSING_CAT_CODE, dtype=target_dtype
+                    )
+            elif state_name in initial_states:
                 flat[key] = initial_states[state_name]
-            elif isinstance(internal_regime.grids[state_name], DiscreteGrid):
-                flat[key] = jnp.full(n_subjects, MISSING_CAT_CODE, dtype=jnp.int32)
             else:
                 flat[key] = jnp.full(n_subjects, jnp.nan)
 
@@ -348,7 +362,7 @@ def _collect_structural_errors(
             active_mask = active_mask & (~in_regime | period_active)
 
         if not jnp.all(active_mask):
-            invalid_indices = jnp.where(~active_mask)[0]
+            invalid_indices = jnp.where(~active_mask)[0].astype(jnp.int32)
             invalid_combos = {
                 (ids_to_regime_names[int(regime_id_arr[i])], float(age_values[i]))
                 for i in invalid_indices
@@ -392,7 +406,7 @@ def _collect_feasibility_errors(
     errors: list[str] = []
     for regime_name, internal_regime in internal_regimes.items():
         regime_id = regime_names_to_ids[regime_name]
-        idx_arr = jnp.where(regime_id_arr == regime_id)[0]
+        idx_arr = jnp.where(regime_id_arr == regime_id)[0].astype(jnp.int32)
         subject_indices = idx_arr.tolist() if idx_arr.size > 0 else []
         if not subject_indices:
             continue
