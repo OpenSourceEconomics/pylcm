@@ -24,6 +24,7 @@ from dags.tree import tree_path_from_qname
 from jax import Array
 
 from lcm.ages import AgeGrid
+from lcm.grids import DiscreteGrid, Grid
 from lcm.interfaces import InternalRegime
 from lcm.simulation.random import generate_simulation_keys
 from lcm.solution.solve_brute import (
@@ -323,7 +324,11 @@ def _build_argmax_args(
     next_regime_to_V_arr: MappingProxyType[RegimeName, Array],
 ) -> dict[str, object]:
     base = internal_regime.state_action_space(regime_params=regime_params)
-    subject_states = _subject_shape_arrays(base.states, n_subjects=n_subjects)
+    subject_states = _subject_shape_state_arrays(
+        states=base.states,
+        grids=internal_regime.grids,
+        n_subjects=n_subjects,
+    )
     return {
         **subject_states,
         **base.discrete_actions,
@@ -343,7 +348,11 @@ def _build_next_state_args(
     n_subjects: int,
 ) -> dict[str, object]:
     base = internal_regime.state_action_space(regime_params=regime_params)
-    subject_states = _subject_shape_arrays(base.states, n_subjects=n_subjects)
+    subject_states = _subject_shape_state_arrays(
+        states=base.states,
+        grids=internal_regime.grids,
+        n_subjects=n_subjects,
+    )
     subject_actions = _subject_shape_arrays(
         {**base.discrete_actions, **base.continuous_actions},
         n_subjects=n_subjects,
@@ -386,7 +395,11 @@ def _build_crtp_args(
     n_subjects: int,
 ) -> dict[str, object]:
     base = internal_regime.state_action_space(regime_params=regime_params)
-    subject_states = _subject_shape_arrays(base.states, n_subjects=n_subjects)
+    subject_states = _subject_shape_state_arrays(
+        states=base.states,
+        grids=internal_regime.grids,
+        n_subjects=n_subjects,
+    )
     subject_actions = _subject_shape_arrays(
         {**base.discrete_actions, **base.continuous_actions},
         n_subjects=n_subjects,
@@ -410,3 +423,26 @@ def _subject_shape_arrays(
         name: jnp.zeros((n_subjects,), dtype=arr.dtype)
         for name, arr in base_arrays.items()
     }
+
+
+def _subject_shape_state_arrays(
+    *,
+    states: Mapping[str, Array],
+    grids: Mapping[str, Grid],
+    n_subjects: int,
+) -> dict[str, Array]:
+    """Subject-shape arrays for state inputs that match runtime dtypes.
+
+    Discrete states arrive at runtime as `int32` (forced by
+    `simulation.initial_conditions.build_initial_states`), regardless of
+    the grid array's own dtype. Continuous states inherit the grid dtype.
+    AOT lower-args must mirror this so the compiled program's expected
+    signature lines up with runtime dispatch.
+    """
+    out: dict[str, Array] = {}
+    for name, arr in states.items():
+        if isinstance(grids.get(name), DiscreteGrid):
+            out[name] = jnp.zeros((n_subjects,), dtype=jnp.int32)
+        else:
+            out[name] = jnp.zeros((n_subjects,), dtype=arr.dtype)
+    return out
