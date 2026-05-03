@@ -362,7 +362,7 @@ def _collect_structural_errors(
             active_mask = active_mask & (~in_regime | period_active)
 
         if not jnp.all(active_mask):
-            invalid_indices = jnp.where(~active_mask)[0]
+            invalid_indices = jnp.where(~active_mask)[0].astype(jnp.int32)
             invalid_combos = {
                 (ids_to_regime_names[int(regime_id_arr[i])], float(age_values[i]))
                 for i in invalid_indices
@@ -406,7 +406,7 @@ def _collect_feasibility_errors(
     errors: list[str] = []
     for regime_name, internal_regime in internal_regimes.items():
         regime_id = regime_names_to_ids[regime_name]
-        idx_arr = jnp.where(regime_id_arr == regime_id)[0]
+        idx_arr = jnp.where(regime_id_arr == regime_id)[0].astype(jnp.int32)
         subject_indices = idx_arr.tolist() if idx_arr.size > 0 else []
         if not subject_indices:
             continue

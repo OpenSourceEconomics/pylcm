@@ -153,7 +153,8 @@ def initial_conditions_from_dataframe(  # noqa: C901
         for col, arr in result_arrays.items()
     }
     initial_conditions["regime"] = jnp.array(
-        df["regime"].map(dict(regime_names_to_ids)).to_numpy()
+        df["regime"].map(dict(regime_names_to_ids)).to_numpy(),
+        dtype=jnp.int32,
     )
 
     return initial_conditions
