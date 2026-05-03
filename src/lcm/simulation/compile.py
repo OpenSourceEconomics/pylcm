@@ -163,7 +163,18 @@ def _collect_unique_simulate_functions(
         regime_params = internal_params.get(regime_name, MappingProxyType({}))
         sf = regime.simulate_functions
 
-        for period, argmax_func in sf.argmax_and_max_Q_over_a.items():
+        # `sf.argmax_and_max_Q_over_a` has entries for *every* period
+        # (pylcm builds them across the full age grid), but the regime is
+        # only dispatched at runtime for periods in `regime.active_periods`.
+        # The unused entries can carry a stale `complete_targets` set
+        # whose shape doesn't match the regime's actual transitions
+        # (e.g. a forced-canwork regime's argmax for a pre-FRA period
+        # has choose targets in scope, even though the regime never
+        # reaches that period at runtime). Tracing those would surface
+        # `next_<state>` bookkeeping inconsistencies that the lazy path
+        # never trips. Restrict AOT to active periods to mirror runtime.
+        for period in regime.active_periods:
+            argmax_func = sf.argmax_and_max_Q_over_a[period]
             active_next = _active_regimes_at_period(
                 internal_regimes=internal_regimes, period=period + 1
             )
@@ -235,10 +246,18 @@ def _swap_in_compiled(
     new_regimes: dict[RegimeName, InternalRegime] = {}
     for regime_name, regime in internal_regimes.items():
         sf = regime.simulate_functions
+        # Only active periods are AOT-compiled (see
+        # `_collect_unique_simulate_functions`); leave inactive-period
+        # entries untouched so the existing closure stays in place — they
+        # are never dispatched at runtime anyway.
+        argmax_compiled_for_active = {
+            period: compiled[func_keys[(regime_name, "argmax", period)]]
+            for period in regime.active_periods
+        }
         argmax_compiled = MappingProxyType(
             {
-                period: compiled[func_keys[(regime_name, "argmax", period)]]
-                for period in sf.argmax_and_max_Q_over_a
+                period: argmax_compiled_for_active.get(period, original_func)
+                for period, original_func in sf.argmax_and_max_Q_over_a.items()
             }
         )
         if regime.terminal:
