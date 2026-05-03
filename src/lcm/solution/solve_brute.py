@@ -508,6 +508,15 @@ def _raise_at(
     """Run the enriched NaN diagnostic on a single offending row and raise."""
     internal_regime = internal_regimes[row.regime_name]
     regime_params = internal_params[row.regime_name]
+    # `compute_intermediates` was built from the regime's full `flat_param_names`
+    # (per-iteration params + fixed params); the live solve loop merges
+    # `resolved_fixed_params` into `regime_params` implicitly via the partialled
+    # closures, but we have to do it by hand here to call the diagnostic
+    # directly. Same merge order as `interfaces.state_action_space` and
+    # `simulation.result`.
+    diag_params = MappingProxyType(
+        {**internal_regime.resolved_fixed_params, **regime_params}
+    )
     state_action_space = internal_regime.state_action_space(regime_params=regime_params)
     next_regime_to_V_arr = _reconstruct_next_regime_to_V_arr(
         period=row.period,
@@ -527,7 +536,7 @@ def _raise_at(
         compute_intermediates=compute_intermediates,
         state_action_space=state_action_space,
         next_regime_to_V_arr=next_regime_to_V_arr,
-        internal_params=regime_params,
+        internal_params=diag_params,
         period=row.period,
     )
 
