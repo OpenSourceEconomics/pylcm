@@ -188,7 +188,7 @@ def get_irreg_coordinate(
     n_points = len(points)
 
     # Find the index of the first point greater than value
-    idx_upper = jnp.searchsorted(points, value, side="right").astype(jnp.int32)
+    idx_upper = jnp.searchsorted(points, value, side="right")
 
     # Clamp to valid range for interpolation
     idx_upper = jnp.clip(idx_upper, 1, n_points - 1)
