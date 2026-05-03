@@ -373,7 +373,7 @@ def _format_sum_violation(
             {name: jnp.atleast_1d(arr) for name, arr in state_action_values.items()}
         )
     failing_mask = ~jnp.isclose(sum_all, 1.0)
-    failing_indices = jnp.where(failing_mask)[0]
+    failing_indices = jnp.where(failing_mask)[0].astype(jnp.int32)
     failing_sums = sum_all[failing_mask]
     n_failing = int(failing_indices.shape[0])
     n_show = min(n_failing, 5)
