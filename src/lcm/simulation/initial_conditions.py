@@ -64,10 +64,24 @@ def build_initial_states(
     for regime_name, internal_regime in internal_regimes.items():
         for state_name in _get_regime_state_names(internal_regime):
             key = f"{regime_name}__{state_name}"
-            if state_name in initial_states:
+            grid = internal_regime.grids[state_name]
+            if isinstance(grid, DiscreteGrid):
+                # Match the grid's index dtype so the state is index-stable
+                # across the simulate loop. Without this, period-0 dispatch
+                # carries the user-supplied dtype (often int32) but post-
+                # transition states are promoted to the grid dtype (int64
+                # under x64), forcing JAX to compile two argmax variants
+                # per regime and breaking AOT-compiled programs that key
+                # on a single signature.
+                target_dtype = grid.to_jax().dtype
+                if state_name in initial_states:
+                    flat[key] = initial_states[state_name].astype(target_dtype)
+                else:
+                    flat[key] = jnp.full(
+                        n_subjects, MISSING_CAT_CODE, dtype=target_dtype
+                    )
+            elif state_name in initial_states:
                 flat[key] = initial_states[state_name]
-            elif isinstance(internal_regime.grids[state_name], DiscreteGrid):
-                flat[key] = jnp.full(n_subjects, MISSING_CAT_CODE, dtype=jnp.int32)
             else:
                 flat[key] = jnp.full(n_subjects, jnp.nan)
 
