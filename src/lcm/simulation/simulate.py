@@ -99,7 +99,9 @@ def simulate(
     starting_periods = _compute_starting_periods(
         initial_ages=initial_states["age"], ages=ages
     )
-    subject_regime_ids = jnp.full_like(initial_conditions["regime"], MISSING_CAT_CODE)
+    subject_regime_ids = jnp.full_like(
+        initial_conditions["regime"], MISSING_CAT_CODE, dtype=jnp.int32
+    )
 
     # Forward simulation
     simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
@@ -353,7 +355,7 @@ def _lookup_values_from_indices(
     nd_indices = vmapped_unravel_index(flat_indices, grids_shapes)
     return MappingProxyType(
         {
-            name: grid[index]
+            name: grid[index.astype(jnp.int32)]
             for (name, grid), index in zip(grids.items(), nd_indices, strict=True)
         }
     )
@@ -383,7 +385,7 @@ def _compute_starting_periods(
 
     """
     age_values = jnp.asarray(ages.values)
-    starting_periods = jnp.searchsorted(age_values, initial_ages)
+    starting_periods = jnp.searchsorted(age_values, initial_ages).astype(jnp.int32)
 
     # Clamp indices to valid range before accessing age_values. searchsorted can
     # return len(age_values) for ages beyond the grid maximum.

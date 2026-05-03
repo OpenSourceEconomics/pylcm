@@ -43,7 +43,7 @@ def argmax_and_max(
         # When there are no dimensions to reduce over, return:
         # - index 0 (trivial argmax since there's only one element)
         # - the array itself (already the maximum)
-        return jnp.array(0), a
+        return jnp.array(0, dtype=jnp.int32), a
 
     # Move axis over which to compute the argmax to the back and flatten last dims
     # ==================================================================================
@@ -65,7 +65,7 @@ def argmax_and_max(
     max_value_mask = a == _max
     if where is not None:
         max_value_mask = jnp.logical_and(max_value_mask, where)
-    _argmax = jnp.argmax(max_value_mask, axis=-1)
+    _argmax = jnp.argmax(max_value_mask, axis=-1).astype(jnp.int32)
 
     return _argmax, _max.reshape(_argmax.shape)
 
