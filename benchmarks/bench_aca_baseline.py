@@ -44,7 +44,6 @@ import cloudpickle
 from benchmarks import _gpu_mem
 
 _N_SUBJECTS = 1000
-_MAX_CONSUMPTION = 300_000.0
 
 
 def _build() -> tuple[object, object, object]:
@@ -55,9 +54,7 @@ def _build() -> tuple[object, object, object]:
         get_benchmark_params,
     )
 
-    model = create_benchmark_model(
-        n_subjects=_N_SUBJECTS, max_consumption=_MAX_CONSUMPTION
-    )
+    model = create_benchmark_model(n_subjects=_N_SUBJECTS)
     _, model_params = get_benchmark_params(model=model)
     initial_conditions = get_benchmark_initial_conditions(
         model=model, n_subjects=_N_SUBJECTS, seed=0
