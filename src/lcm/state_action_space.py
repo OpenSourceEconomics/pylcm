@@ -1,9 +1,10 @@
 from types import MappingProxyType
 
+import jax.numpy as jnp
 import pandas as pd
 from jax import Array
 
-from lcm.grids import Grid
+from lcm.grids import Grid, IrregSpacedGrid
 from lcm.interfaces import StateActionSpace
 from lcm.typing import StateName, StateOrActionName
 
@@ -33,7 +34,8 @@ def create_state_action_space(
     """
     if states is None:
         _states = {
-            sn: grids[sn].to_jax() for sn in variable_info.query("is_state").index
+            sn: _grid_to_jax_or_placeholder(grids[sn])
+            for sn in variable_info.query("is_state").index
         }
     else:
         _validate_all_states_present(
@@ -47,7 +49,7 @@ def create_state_action_space(
         for name in variable_info.query("is_action & is_discrete").index
     }
     continuous_actions = {
-        name: grids[name].to_jax()
+        name: _grid_to_jax_or_placeholder(grids[name])
         for name in variable_info.query("is_action & is_continuous").index
     }
     state_and_discrete_action_names = tuple(
@@ -60,6 +62,21 @@ def create_state_action_space(
         continuous_actions=MappingProxyType(continuous_actions),
         state_and_discrete_action_names=state_and_discrete_action_names,
     )
+
+
+def _grid_to_jax_or_placeholder(grid: Grid) -> Array:
+    """Return the grid's points, or a NaN placeholder for runtime-supplied grids.
+
+    `IrregSpacedGrid.to_jax()` raises when its points haven't been supplied — that
+    is the right behaviour everywhere except here: the base state-action space
+    needs a *shape-correct* array to wire through pytree structures and AOT
+    tracing before runtime substitution by
+    `InternalRegime.state_action_space(regime_params=...)`. NaN (rather than
+    zero) makes any accidental computation against the placeholder fail loudly.
+    """
+    if isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime:
+        return jnp.full(grid.n_points, jnp.nan)
+    return grid.to_jax()
 
 
 def _validate_all_states_present(
