@@ -50,6 +50,7 @@ def create_regime_params_template(
     """
     H_variables = {*regime.functions, "period", "age", "E_next_V"}
     next_state_names = {f"next_{name}" for name in regime.states}
+    constraint_names = set(regime.constraints)
     variables = (
         H_variables | set(regime.actions) | set(regime.states) | next_state_names
     )
@@ -64,13 +65,22 @@ def create_regime_params_template(
         else:
             tree = dt.create_tree_with_input_types({name: func})
 
+        path = tree_path_from_qname(name)
+
+        _fail_if_non_transition_consumes_next_state(
+            func_name=name,
+            path=path,
+            param_names=set(tree),
+            next_state_names=next_state_names,
+            constraint_names=constraint_names,
+        )
+
         # H is exempt from param-template extraction for state/action names
         # that appear in its signature: pylcm wires those values through
         # `states_actions_params` at call time, so they must not surface as
         # user-facing params in the template.
         params = {k: v for k, v in sorted(tree.items()) if k not in variables}
 
-        path = tree_path_from_qname(name)
         template_key = f"to_{path[1]}_{path[0]}" if len(path) > 1 else name
 
         if template_key in function_params:
@@ -166,6 +176,41 @@ def _collect_all_functions_for_template(
         result |= collect_state_transitions(regime.states, regime.state_transitions)
         result["next_regime"] = regime.transition
     return result
+
+
+def _fail_if_non_transition_consumes_next_state(
+    *,
+    func_name: str,
+    path: tuple[str, ...],
+    param_names: set[str],
+    next_state_names: set[str],
+    constraint_names: set[str],
+) -> None:
+    """Reject `next_<state>` parameters on regular DAG functions.
+
+    The `next_<state>` exemption from fixed_param extraction lets state
+    transitions consume each other's outputs (dags resolves the chain at
+    evaluation time). Constraints also legitimately depend on transition
+    outputs (e.g. `borrowing_constraint(next_assets)` — see issue #230).
+    For everything else (utility, helpers, custom H), a `next_<state>`
+    parameter name is almost always a typo where the user meant the
+    current-period `<state>`. Without this guard, the typo'd param would
+    be silently filtered from the template and wired to the transition
+    output via dags, yielding a wrong result with no error. Catch the
+    mistake at template-construction time.
+    """
+    head = path[0]
+    if head == "next_regime" or head in next_state_names or head in constraint_names:
+        return
+    typos = sorted(param_names & next_state_names)
+    if typos:
+        raise InvalidNameError(
+            f"Function {func_name!r} has parameter(s) {typos} matching "
+            f"reserved `next_<state>` transition-output names. Drop the "
+            f"'next_' prefix to use the current-period state, or move the "
+            f"logic into a state transition (or constraint) if the "
+            f"next-period value is genuinely needed."
+        )
 
 
 def _validate_no_shadowing(
