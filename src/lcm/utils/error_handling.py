@@ -93,12 +93,12 @@ def validate_V(
         "(e.g. from a NaN survival probability or a NaN fixed param).\n"
         "- A per-target state_transitions dict omits a reachable target "
         "(non-zero transition probability to an incomplete target).\n\n"
-        "To diagnose, re-solve with debug logging:\n\n"
-        '  model.solve(params=params, log_level="debug", '
-        'log_path="./debug/")\n\n'
-        "The snapshot saved on failure contains diagnostics that pinpoint "
-        "where NaN enters (U, E[V], or regime transitions). See the "
-        "debugging guide:\n"
+        "When `compute_intermediates` is wired up (the default), the "
+        "[NOTE] below pinpoints which intermediate (U, F, E[V], or "
+        "regime transitions) introduces the NaN and along which state "
+        "axes it concentrates. To persist a snapshot of the partial "
+        "solution for offline inspection, pass `log_path=...` to "
+        "`solve(...)` / `simulate(...)`. See the debugging guide:\n"
         "https://pylcm.readthedocs.io/en/latest/user_guide/debugging/"
     )
     exc.partial_solution = partial_solution

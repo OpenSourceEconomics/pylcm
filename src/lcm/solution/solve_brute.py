@@ -203,6 +203,16 @@ def solve(
         elapsed = time.monotonic() - period_start
         log_period_timing(logger=logger, elapsed=elapsed)
 
+        # Fail-fast on NaN: surface the offending period immediately
+        # instead of finishing the whole backward induction. Costs one
+        # host transfer of a scalar bool per period — negligible next
+        # to the per-period `max_Q_over_a` kernel, and only paid when
+        # diagnostics are on. Inf is non-fatal so we don't break on
+        # it; the post-loop emitter still raises a warning if any
+        # period flagged Inf.
+        if diagnostics_enabled and running_any_nan.item():
+            break
+
     if diagnostics_enabled:
         _emit_post_loop_diagnostics(
             logger=logger,
