@@ -150,3 +150,43 @@ def test_regular_function_taking_state_as_argument_no_error(binary_category_clas
             "next_regime": {},
         }
     )
+
+
+def test_state_transition_consuming_other_next_state_is_not_a_param(
+    binary_category_class,
+):
+    """`next_<state>` names are exempt from param-template extraction.
+
+    A state transition (here, `next_wealth`) that consumes another transition's
+    output (here, `next_aime`) must not have `next_aime` classified as a
+    regime-level fixed_param. dags resolves the chain at evaluation time
+    (`get_next_state_function_for_solution` merges all transitions into a
+    single dict before calling `concatenate_functions`).
+    """
+
+    def next_wealth(wealth: float, next_aime: float) -> float:
+        return wealth + next_aime
+
+    regime = RegimeMock(
+        actions={"a": DiscreteGrid(binary_category_class)},
+        states={
+            "wealth": DiscreteGrid(binary_category_class),
+            "aime": DiscreteGrid(binary_category_class),
+        },
+        state_transitions={
+            "wealth": next_wealth,
+            "aime": lambda aime: aime,
+        },
+        transition=lambda: 0,
+        functions={"utility": lambda a, wealth, aime: None},  # noqa: ARG005
+    )
+    got = create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
+    assert got == ensure_containers_are_immutable(
+        {
+            "H": {"discount_factor": "float"},
+            "utility": {},
+            "next_wealth": {},
+            "next_aime": {},
+            "next_regime": {},
+        }
+    )
