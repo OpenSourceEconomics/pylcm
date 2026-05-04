@@ -93,12 +93,11 @@ def validate_V(
         "(e.g. from a NaN survival probability or a NaN fixed param).\n"
         "- A per-target state_transitions dict omits a reachable target "
         "(non-zero transition probability to an incomplete target).\n\n"
-        "When `compute_intermediates` is wired up (the default), the "
-        "[NOTE] below pinpoints which intermediate (U, F, E[V], or "
-        "regime transitions) introduces the NaN and along which state "
-        "axes it concentrates. To persist a snapshot of the partial "
-        "solution for offline inspection, pass `log_path=...` to "
-        "`solve(...)` / `simulate(...)`. See the debugging guide:\n"
+        "See the [NOTE] below for the per-intermediate / per-axis "
+        "breakdown produced by `compute_intermediates`. When `log_path` "
+        "is configured, an additional [NOTE] points to the on-disk "
+        "snapshot directory written before this exception was raised. "
+        "Debugging guide:\n"
         "https://pylcm.readthedocs.io/en/latest/user_guide/debugging/"
     )
     exc.partial_solution = partial_solution
