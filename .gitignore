@@ -31,9 +31,6 @@ docs/_build/
 .pixi/
 node_modules/
 
-# pytask
-.pytask.sqlite3
-
 # Python
 __pycache__/
 *.py[cod]
