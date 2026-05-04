@@ -1,3 +1,6 @@
+import pytest
+
+from lcm.exceptions import InvalidNameError
 from lcm.grids import DiscreteGrid
 from lcm.interfaces import SolveSimulateFunctionPair
 from lcm.params.regime_template import (
@@ -150,6 +153,54 @@ def test_regular_function_taking_state_as_argument_no_error(binary_category_clas
             "next_regime": {},
         }
     )
+
+
+def test_non_transition_function_with_next_state_param_raises(
+    binary_category_class,
+):
+    """A non-transition function declaring a `next_<state>` parameter must error.
+
+    Without this guard, a typo like `def utility(consumption, next_wealth)`
+    (intended: `wealth`) would silently be wired to the `next_wealth`
+    transition output via dags, returning a wrong result rather than raising
+    a missing-param error.
+    """
+
+    def bad_utility(a, wealth, next_wealth):  # noqa: ARG001
+        return None
+
+    regime = RegimeMock(
+        actions={"a": DiscreteGrid(binary_category_class)},
+        states={"wealth": DiscreteGrid(binary_category_class)},
+        state_transitions={"wealth": lambda wealth: wealth},
+        transition=lambda: 0,
+        functions={"utility": bad_utility},
+    )
+    with pytest.raises(InvalidNameError, match="next_wealth"):
+        create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
+
+
+def test_constraint_consuming_next_state_param_is_allowed(binary_category_class):
+    """Constraints may depend on transition outputs (issue #230).
+
+    The `next_<state>` validator skips constraints because checks like
+    `borrowing_constraint(next_assets) -> next_assets >= 0` are the
+    intended use of the chained-transition resolution.
+    """
+
+    def borrowing_constraint(next_wealth):  # noqa: ARG001
+        return None
+
+    regime = RegimeMock(
+        actions={"a": DiscreteGrid(binary_category_class)},
+        states={"wealth": DiscreteGrid(binary_category_class)},
+        state_transitions={"wealth": lambda wealth: wealth},
+        transition=lambda: 0,
+        functions={"utility": lambda a, wealth: None},  # noqa: ARG005
+        constraints={"borrowing_constraint": borrowing_constraint},
+    )
+    # Must not raise; constraint legitimately consumes `next_wealth`.
+    create_regime_params_template(regime)  # ty: ignore[invalid-argument-type]
 
 
 def test_state_transition_consuming_other_next_state_is_not_a_param(
