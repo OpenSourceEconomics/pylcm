@@ -16,6 +16,17 @@ class Grid(ABC):
 
         """
 
+    
+    @property
+    @abstractmethod
+    def distributed(self) -> bool:
+        """Whether to distribute the grid over the available devices.
+
+        `ContinuousGrid` overrides this via its dataclass field.
+        `DiscreteGrid` overrides this via its own property.
+
+        """
+
     @abstractmethod
     def to_jax(self) -> Int1D | Float1D:
         """Convert the grid to a Jax array."""

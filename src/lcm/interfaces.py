@@ -3,9 +3,12 @@ from collections.abc import Callable
 from types import MappingProxyType
 from typing import cast
 
+from functools import reduce
+from operator import mul
 import pandas as pd
 from jax import Array
-
+import jax
+from lcm.exceptions import PyLCMError
 from lcm.grids import Grid, IrregSpacedGrid
 from lcm.shocks import _ShockGrid
 from lcm.typing import (
@@ -281,12 +284,73 @@ class InternalRegime:
                 replacements[state_name] = spec.compute_gridpoints(**shock_kw)
 
         if not replacements:
-            return self._base_state_action_space
+            new_states = dict(self._base_state_action_space.states)
+            new_state_action_space = self._base_state_action_space
+        else:
+            new_states = dict(self._base_state_action_space.states) | replacements
+            new_state_action_space = self._base_state_action_space.replace(
+                states=MappingProxyType(new_states)
+            )
+        
+        avail_devices = jax.devices()
+        distributed_grids = {name:grid for name,grid in self.grids.items() if grid.distributed == True}
+        print(distributed_grids)
+        if len(distributed_grids) == 1:
+            n_points = distributed_grids[list(distributed_grids)[0]].to_jax().shape[0]
+            state_name = list(distributed_grids)[0]
+            if n_points % len(avail_devices) == 0:
+                mesh = jax.make_mesh((len(avail_devices),), ('X'), axis_types=(jax.sharding.AxisType.Auto),devices=avail_devices)
+                new_states[state_name] = jax.device_put(new_states[state_name], jax.NamedSharding(mesh=mesh, spec=jax.P('X',)))
+                new_state_action_space = self._base_state_action_space.replace(
+                states=MappingProxyType(new_states)
+                )
+            else:
+                raise PyLCMError(
+                "When distributing over one grid, the number of points in the grid "
+                "needs to be a multiple of the available devices. Gridpoints: "
+                f" {n_points} Available Devices: {len(avail_devices)}"
+            )
+        if len(distributed_grids) > 1:
+            permutations = reduce(mul, [grid.to_jax().shape[0] for grid in distributed_grids.values()])
+            print(permutations)
+            if permutations == len(avail_devices):
+                device_orders = _partitioning_algo(list(distributed_grids.values()), avail_devices)
+                print(device_orders)
+                for i, (state_name, grid) in enumerate(distributed_grids.items()):
+                    mesh = jax.make_mesh((grid.to_jax().shape[0],), ('X'), devices=device_orders[i])
+                    new_states[state_name] = jax.device_put(new_states[state_name],jax.NamedSharding(mesh=mesh, spec=jax.P('X',)))
+                    new_state_action_space = self._base_state_action_space.replace(
+                    states=MappingProxyType(new_states)
+                    )
+            else:
+                raise PyLCMError(
+                "When distributing over multiple grids, the product of the number of"
+                " points of the grids needs to match the number of available devices."
+                f" Gridpoints: {permutations} Available Devices: {len(avail_devices)}"
+                )
+        return new_state_action_space
 
-        new_states = dict(self._base_state_action_space.states) | replacements
-        return self._base_state_action_space.replace(
-            states=MappingProxyType(new_states)
-        )
+def _partitioning_algo(grids: list[Grid], devices: list):
+    number_devices = len(devices)
+    print(len(grids[0].to_jax()))
+    first_groups = [[] for i in range(len(grids[0].to_jax()))]
+    for i in range(grids[0].to_jax().shape[0]):
+        for j in range(number_devices//len(grids[0].to_jax())):
+            first_groups[i].append(devices[j+number_devices//grids[0].to_jax().shape[0]])
+    device_orders = [sum(first_groups, [])]
+    last_groups = []        
+    for grid in grids[1:]:
+        n_points = grid.to_jax().shape[0]
+        next_groups = [[] for i in range(n_points)]
+        for group in last_groups:
+            for i in range(n_points):
+                for j in range(len(group)/n_points):
+                    next_groups[i].append(devices[j+number_devices/n_points])
+        device_orders.append(sum(next_groups, []))
+        last_groups = next_groups
+    return device_orders
+        
+
 
 
 @dataclasses.dataclass(frozen=True)

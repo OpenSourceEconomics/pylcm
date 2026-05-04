@@ -49,14 +49,15 @@ def solve(
     # Compute V array shapes and build a consistent next_regime_to_V_arr
     # template.  Using the same pytree structure (keys and shapes) across
     # all periods avoids JIT re-compilation from pytree mismatches.
-    regime_V_shapes = _get_regime_V_shapes(
+    regime_V_shapes = _get_regime_V_shapes_and_shardings(
         internal_regimes=internal_regimes,
         internal_params=internal_params,
     )
+
     next_regime_to_V_arr = MappingProxyType(
         {
-            regime_name: jnp.zeros(shape)
-            for regime_name, shape in regime_V_shapes.items()
+            regime_name: jax.device_put(jnp.zeros(shape), device=sharding)
+            for regime_name, (shape, sharding) in regime_V_shapes.items()
         }
     )
 
@@ -70,7 +71,7 @@ def solve(
         max_compilation_workers=max_compilation_workers,
         logger=logger,
     )
-
+    
     solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
 
     # Async diagnostics accumulators: every `jnp.any(isnan)`,
@@ -359,7 +360,7 @@ def _func_dedup_key(*, func: Callable) -> Hashable:
     return id(func)
 
 
-def _get_regime_V_shapes(
+def _get_regime_V_shapes_and_shardings(
     *,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     internal_params: InternalParams,
@@ -377,14 +378,23 @@ def _get_regime_V_shapes(
         Dict of regime names to V array shapes.
 
     """
-    shapes: dict[RegimeName, tuple[int, ...]] = {}
+    shapes_and_shardings: dict[RegimeName, tuple[tuple[int, ...], jax.NamedSharding]] = {}
+    avail_devices = jax.devices() 
     for regime_name, regime in internal_regimes.items():
         state_action_space = regime.state_action_space(
             regime_params=internal_params[regime_name],
         )
-        shapes[regime_name] = tuple(len(v) for v in state_action_space.states.values())
-    return shapes
-
+        spec = []
+        for name in state_action_space.states:
+            if regime.grids[name].distributed:
+                spec.append('X') 
+            else:
+                spec.append(None)
+        shape = tuple(len(v) for v in state_action_space.states.values())
+        mesh = jax.make_mesh((len(avail_devices),), ('X'), axis_types=(jax.sharding.AxisType.Auto),devices=avail_devices)
+        sharding = jax.NamedSharding(mesh, spec= jax.P(*spec))
+        shapes_and_shardings[regime_name] = (shape, sharding)
+    return shapes_and_shardings
 
 @dataclass(frozen=True)
 class _DiagnosticRow:
