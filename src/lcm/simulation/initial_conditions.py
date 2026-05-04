@@ -7,7 +7,7 @@ Consolidates initial condition construction (`build_initial_states`) and validat
 
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
-from typing import Never
+from typing import Never, cast
 
 import jax
 import numpy as np
@@ -25,6 +25,7 @@ from lcm.interfaces import InternalRegime
 from lcm.regime_building.Q_and_F import _get_feasibility
 from lcm.typing import (
     ActionName,
+    FlatRegimeParams,
     InternalParams,
     RegimeName,
     RegimeNamesToIds,
@@ -579,11 +580,21 @@ def _check_regime_feasibility(  # noqa: C901
     if not action_names:
         return None
 
-    grids = MappingProxyType(
-        {name: spec.to_jax() for name, spec in internal_regime.grids.items()}
+    # Build the state-action space with runtime-supplied grid points
+    # substituted. The base grid's `to_jax()` raises for runtime-supplied
+    # `IrregSpacedGrid`s declared with `pass_points_at_runtime=True`, so the
+    # validator must read points from `state_action_space(regime_params=...)`.
+    state_action_space = internal_regime.state_action_space(
+        regime_params=cast("FlatRegimeParams", MappingProxyType(dict(regime_params))),
     )
-
-    flat_actions = _build_flat_action_grid(action_names=action_names, grids=grids)
+    action_grids: dict[str, Array] = {
+        **state_action_space.discrete_actions,
+        **state_action_space.continuous_actions,
+    }
+    flat_actions = _build_flat_action_grid(
+        action_names=action_names,
+        grids=MappingProxyType(action_grids),
+    )
 
     filtered_params = {k: v for k, v in regime_params.items() if k in accepted}
     state_names = list(internal_regime.variable_info.query("is_state").index)

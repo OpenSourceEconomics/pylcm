@@ -245,12 +245,12 @@ class InternalRegime:
     """Flat resolved fixed params for this regime, used by to_dataframe targets."""
 
     def state_action_space(self, regime_params: FlatRegimeParams) -> StateActionSpace:
-        """Return the state-action space with runtime state grids filled in.
+        """Return the state-action space with runtime grids filled in.
 
-        For IrregSpacedGrid with runtime-supplied points, the grid points come from
-        params as `{state_name}__points`. For _ShockGrid with runtime-supplied params,
-        the grid points are computed from shock params in the params dict or
-        resolved_fixed_params.
+        For IrregSpacedGrid (state or continuous action) with runtime-supplied
+        points, the grid points come from params as `{name}__points`. For
+        `_ShockGrid` with runtime-supplied params, the grid points are computed
+        from shock params in the params dict or `resolved_fixed_params`.
 
         Args:
             regime_params: Flat regime parameters supplied at runtime.
@@ -260,37 +260,62 @@ class InternalRegime:
 
         """
         all_params = {**self.resolved_fixed_params, **regime_params}
-        replacements: dict[str, ContinuousState | DiscreteState] = {}
-        for state_name, spec in self.grids.items():
-            if state_name not in self._base_state_action_space.states:
+        state_replacements: dict[str, ContinuousState | DiscreteState] = {}
+        action_replacements: dict[str, ContinuousAction] = {}
+        for name, spec in self.grids.items():
+            in_states = name in self._base_state_action_space.states
+            in_continuous_actions = (
+                name in self._base_state_action_space.continuous_actions
+            )
+            if not (in_states or in_continuous_actions):
                 continue
             if isinstance(spec, IrregSpacedGrid) and spec.pass_points_at_runtime:
-                points_key = f"{state_name}__points"
+                points_key = f"{name}__points"
                 if points_key not in all_params:
                     continue
-                replacements[state_name] = cast(
-                    "ContinuousState", all_params[points_key]
-                )
-            elif isinstance(spec, _ShockGrid) and spec.params_to_pass_at_runtime:
+                if in_states:
+                    state_replacements[name] = cast(
+                        "ContinuousState", all_params[points_key]
+                    )
+                else:
+                    action_replacements[name] = cast(
+                        "ContinuousAction", all_params[points_key]
+                    )
+            # `_ShockGrid` is state-only by construction (intrinsic
+            # transitions, forbidden as actions per AGENTS.md). The
+            # `in_states` gate makes that invariant explicit — a
+            # `_ShockGrid` reaching the action branch would be a model
+            # bug, not something this method should silently substitute.
+            elif (
+                in_states
+                and isinstance(spec, _ShockGrid)
+                and spec.params_to_pass_at_runtime
+            ):
                 all_present = all(
-                    f"{state_name}__{p}" in all_params
-                    for p in spec.params_to_pass_at_runtime
+                    f"{name}__{p}" in all_params for p in spec.params_to_pass_at_runtime
                 )
                 if not all_present:
                     continue
                 shock_kw: dict[str, float] = dict(spec.params)
                 for p in spec.params_to_pass_at_runtime:
-                    shock_kw[p] = cast("float", all_params[f"{state_name}__{p}"])
-                replacements[state_name] = spec.compute_gridpoints(**shock_kw)
+                    shock_kw[p] = cast("float", all_params[f"{name}__{p}"])
+                state_replacements[name] = spec.compute_gridpoints(**shock_kw)
 
-        if not replacements:
-            new_states = dict(self._base_state_action_space.states)
-            new_state_action_space = self._base_state_action_space
-        else:
-            new_states = dict(self._base_state_action_space.states) | replacements
-            new_state_action_space = self._base_state_action_space.replace(
-                states=MappingProxyType(new_states)
+        new_states = (
+            MappingProxyType(
+                dict(self._base_state_action_space.states) | state_replacements
             )
+            if state_replacements
+            else dict(self._base_state_action_space.states)
+        )
+        new_continuous_actions = (
+            MappingProxyType(
+                dict(self._base_state_action_space.continuous_actions)
+                | action_replacements
+            )
+            if action_replacements
+            else None
+        )
         
         avail_devices = jax.devices()
         distributed_grids = {name:grid for name,grid in self.grids.items() if grid.distributed == True}
@@ -301,9 +326,6 @@ class InternalRegime:
             if n_points % len(avail_devices) == 0:
                 mesh = jax.make_mesh((len(avail_devices),), ('X'), axis_types=(jax.sharding.AxisType.Auto),devices=avail_devices)
                 new_states[state_name] = jax.device_put(new_states[state_name], jax.NamedSharding(mesh=mesh, spec=jax.P('X',)))
-                new_state_action_space = self._base_state_action_space.replace(
-                states=MappingProxyType(new_states)
-                )
             else:
                 raise PyLCMError(
                 "When distributing over one grid, the number of points in the grid "
@@ -319,16 +341,16 @@ class InternalRegime:
                 for i, (state_name, grid) in enumerate(distributed_grids.items()):
                     mesh = jax.make_mesh((grid.to_jax().shape[0],), ('X'), devices=device_orders[i])
                     new_states[state_name] = jax.device_put(new_states[state_name],jax.NamedSharding(mesh=mesh, spec=jax.P('X',)))
-                    new_state_action_space = self._base_state_action_space.replace(
-                    states=MappingProxyType(new_states)
-                    )
             else:
                 raise PyLCMError(
                 "When distributing over multiple grids, the product of the number of"
                 " points of the grids needs to match the number of available devices."
                 f" Gridpoints: {permutations} Available Devices: {len(avail_devices)}"
                 )
-        return new_state_action_space
+        return self._base_state_action_space.replace(
+                states=MappingProxyType(new_states),
+                continuous_actions=MappingProxyType(new_continuous_actions)
+                )
 
 def _partitioning_algo(grids: list[Grid], devices: list):
     number_devices = len(devices)
