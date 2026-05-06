@@ -86,21 +86,19 @@ def solve(
     # intermediate buffers (V_arr-shaped, so model-dependent) so they
     # don't stack up across the loop. `block_until_ready` is a
     # *device-only* sync — no host transfer, no PCIe round-trip — so
-    # it doesn't re-introduce the per-period host stalls that #334
-    # removed; if `max_Q_over_a` (the dominant per-period kernel) is
-    # in flight, the call returns immediately when the small reduction
-    # is done.
+    # it doesn't introduce a host stall: if `max_Q_over_a` (the
+    # dominant per-period kernel) is in flight, the call returns
+    # immediately when the small reduction is done.
     #
     # One host transfer per stat at end of solve (`.item()` on the
     # running scalars) decides whether to enter the failure-path
     # localisation. On a healthy solve no per-row materialisation
     # happens.
     #
-    # Gate falls out of the public log level: `"off"` ⇒ nothing,
-    # `"warning"` / `"progress"` ⇒ NaN/Inf only, `"debug"` ⇒ adds the
-    # min/max/mean trio. `"off"` skips even the NaN fail-fast — that
-    # is the documented contract of `"off"` (suppress all output) and
-    # is what makes the level useful for tight estimation loops.
+    # Gate falls out of the public log level:
+    # - `"off"` ⇒ nothing (skips even the NaN fail-fast)
+    # - `"warning"` / `"progress"` ⇒ NaN/Inf only
+    # - `"debug"` ⇒ adds the min/max/mean trio
     diagnostics_enabled = logger.isEnabledFor(logging.WARNING)
     stats_enabled = logger.isEnabledFor(logging.DEBUG)
     diagnostic_rows: list[_DiagnosticRow] = []

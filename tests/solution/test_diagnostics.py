@@ -1,8 +1,7 @@
 """Tests for the post-loop diagnostics path in `solve_brute.solve`.
 
 These cover:
-- happy path at `log_level="warning"` runs without raising and without
-  the deferred-stack fan-in that previously OOMed at production sizes;
+- happy path at `log_level="warning"` runs without raising;
 - NaN-bearing solves raise `InvalidValueFunctionError` and the message
   identifies the offending `(regime, age)`;
 - `log_level="debug"` emits one stat line per `(regime, period)`;
