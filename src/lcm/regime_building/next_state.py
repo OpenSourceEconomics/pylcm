@@ -1,7 +1,7 @@
 """Generate function that compute the next states for solution and simulation."""
 
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 
 import jax
@@ -224,16 +224,11 @@ def _build_combined_simulation_function(
         target: tuple(inspect.signature(func).parameters)
         for target, func in per_target_funcs.items()
     }
-    all_args: list[str] = sorted({arg for args in target_args.values() for arg in args})
-
-    @with_signature(
-        args=dict.fromkeys(all_args, "Array"),
-        return_annotation="dict[str, Array]",
-        enforce=False,
+    all_args: tuple[str, ...] = tuple(
+        sorted({arg for args in target_args.values() for arg in args})
     )
-    def combined(*args: Array, **kwargs: Array) -> dict[str, Array]:
-        if args:
-            kwargs = {**dict(zip(all_args, args, strict=False)), **kwargs}
+
+    def _dispatch(kwargs: Mapping[str, Array]) -> dict[str, Array]:
         out: dict[str, Array] = {}
         for target, func in per_target_funcs.items():
             target_kwargs = {arg: kwargs[arg] for arg in target_args[target]}
@@ -242,6 +237,21 @@ def _build_combined_simulation_function(
                 out[qname_from_tree_path((target, next_state_name))] = value
         return out
 
+    # Generate a real function with named positional-or-keyword parameters so
+    # `vmap_1d` (and any other introspecting caller) sees a faithful signature
+    # rather than a `(*args, **kwargs)` shim. Mirrors the strategy used by
+    # `dataclasses` and `attrs` to synthesise typed `__init__` methods.
+    src = (
+        f"def combined({', '.join(all_args)}) -> 'dict[str, Array]':\n"
+        f"    return _dispatch({{{', '.join(f'{a!r}: {a}' for a in all_args)}}})\n"
+    )
+    namespace: dict[str, object] = {"_dispatch": _dispatch}
+    exec(src, namespace)  # noqa: S102
+    combined = namespace["combined"]
+    combined.__annotations__ = {
+        **dict.fromkeys(all_args, "Array"),
+        "return": "dict[str, Array]",
+    }
     return combined  # ty: ignore[invalid-return-type]
 
 
