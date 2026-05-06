@@ -294,6 +294,72 @@ initial_conditions = {
 - `model.n_periods` - Number of periods in the model (derived from `ages`)
 - `model.regime_names_to_ids` - Immutable mapping from regime names to integer indices
 
+## Testing
+
+### Test-Driven Development — always
+
+**Always write the test first, watch it fail, then implement.** No exceptions for new
+behavior or bug fixes. Tests are not an afterthought, they are the spec.
+
+The cycle:
+
+1. **Red.** Write a failing test that asserts the desired behavior in user-facing terms.
+   Run it. Confirm it fails for the *right* reason (the missing behavior — not a typo,
+   not an import error).
+1. **Green.** Write the smallest amount of code that makes the test pass.
+1. **Refactor.** Clean up while keeping the test green.
+
+Apply per case:
+
+- **New feature** → red-green-refactor.
+- **Bug fix** → reproduce as a failing test before writing the fix. The test then
+  prevents regression.
+- **Refactor (no behavior change)** → existing tests are the spec. Keep them green
+  before, during, and after. No new test needed if behavior is unchanged; if you find a
+  behavior gap, fill it with a new test *before* refactoring.
+
+### Test docstrings — describe behavior, not history
+
+Test docstrings state what *should* be true, in user-facing terms. Pretend the reader
+has never seen the PR. They should not need to.
+
+```python
+# Good — behavior, in plain language
+def test_simulate_with_chained_transitions_yields_expected_next_wealth():
+    """`next_wealth_t = wealth_t - c_t + 0.1 * next_aime_t` holds in simulation."""
+
+
+# Bad — rehearses the prior bug or implementation history
+def test_solve_resolves_chain_via_dags():
+    """Before the fix, `_resolve_fixed_params` raised
+    `InvalidParamsError: Missing required parameter: ...` because
+    `create_regime_params_template` classified ..."""
+```
+
+Rule of thumb: **would the docstring still make sense in 9 months without the PR
+context?** If not, rewrite it.
+
+### Concrete-value assertions
+
+Assert *what* the result is, not just that it didn't crash.
+
+```python
+# Good — analytical value with explicit tolerance
+np.testing.assert_allclose(curr["wealth"], expected_next_wealth, atol=1e-6)
+
+# Bad — passes whether the math is right or not
+assert not jnp.any(jnp.isnan(V_arr))
+assert df["wealth"].notna().all()
+```
+
+`not isnan` and `no exception raised` belong in CI smoke tests, not in the unit tests
+for the feature itself.
+
+### Mechanics
+
+- Use plain pytest functions, never test classes (`class TestFoo`)
+- Use `@pytest.mark.parametrize` for test variations
+
 ## Development Notes
 
 ### JAX Integration
@@ -400,11 +466,6 @@ Code structure should be self-evident from function names and ordering.
   backticks) for inline code, `$...$` for inline math, ```` ```{math} ```` fences for
   display math, and `[text](url)` for links. Never use rST-style ``` `` code `` ```,
   `:math:`, `:func:`, or `` `link <url>`_ ``.
-
-### Testing Style
-
-- Use plain pytest functions, never test classes (`class TestFoo`)
-- Use `@pytest.mark.parametrize` for test variations
 
 ### Plotting
 
