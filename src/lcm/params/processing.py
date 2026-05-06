@@ -5,9 +5,10 @@ from types import MappingProxyType
 from typing import Any, cast
 
 import numpy as np
+import pandas as pd
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
 
-from lcm.dtypes import safe_to_int32
+from lcm.dtypes import safe_to_float_dtype, safe_to_int32
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.interfaces import InternalRegime
 from lcm.params.mapping_leaf import MappingLeaf
@@ -116,7 +117,7 @@ def broadcast_to_template(
 
     for regime, leaves in result.items():
         for param_qname, value in leaves.items():
-            leaves[param_qname] = _cast_int_leaves_to_int32(
+            leaves[param_qname] = _cast_leaves_to_canonical_dtype(
                 value, name=f"{regime}{QNAME_DELIMITER}{param_qname}"
             )
 
@@ -126,36 +127,42 @@ def broadcast_to_template(
     )
 
 
-def _cast_int_leaves_to_int32(value: Any, *, name: str) -> Any:  # noqa: ANN401
-    """Normalise typed integer arrays in a params value to `jnp.int32`.
+def _cast_leaves_to_canonical_dtype(value: Any, *, name: str) -> Any:  # noqa: ANN401
+    """Normalise typed numeric arrays in a params value to canonical pylcm dtypes.
 
-    Only typed JAX or numpy integer arrays are cast — Python `int` / `bool`
-    leaves stay unmodified. JAX's weak-typing rules promote raw Python ints
-    correctly to whichever dtype the surrounding operation needs (e.g.
-    `discount_factor: 1` works in a float-typed function), so casting them
-    eagerly to `int32` would force premature dtype commitment. Typed
-    arrays (`jnp.array(..., dtype=jnp.int64)`) are strongly typed by JAX
-    and would otherwise leak their dtype into the AOT signature.
+    Casts typed JAX or numpy integer arrays to `jnp.int32`, and typed float
+    arrays to `canonical_float_dtype()`. Python `int` / `float` / `bool`
+    leaves stay unmodified — JAX's weak-typing rules promote them to
+    whichever dtype the surrounding operation needs (e.g. `discount_factor: 1`
+    works in a float-typed function), so eager casting would force
+    premature dtype commitment.
 
-    Walks `MappingLeaf` and `SequenceLeaf` recursively. Float and
-    non-numeric leaves pass through — float normalisation is Package B.
+    Walks `MappingLeaf` and `SequenceLeaf` recursively. Non-numeric
+    typed leaves pass through.
     """
     if isinstance(value, MappingLeaf):
         return MappingLeaf(
             {
-                k: _cast_int_leaves_to_int32(v, name=f"{name}.{k}")
+                k: _cast_leaves_to_canonical_dtype(v, name=f"{name}.{k}")
                 for k, v in value.data.items()
             }
         )
     if isinstance(value, SequenceLeaf):
         return SequenceLeaf(
             [
-                _cast_int_leaves_to_int32(v, name=f"{name}[{i}]")
+                _cast_leaves_to_canonical_dtype(v, name=f"{name}[{i}]")
                 for i, v in enumerate(value.data)
             ]
         )
-    if hasattr(value, "dtype") and np.issubdtype(value.dtype, np.integer):
-        return safe_to_int32(value, name=name)
+    # `pd.Series` leaves are reshaped by `convert_series_in_params` based on
+    # their multi-index; flattening here via `np.asarray` would lose that.
+    if isinstance(value, pd.Series):
+        return value
+    if hasattr(value, "dtype"):
+        if np.issubdtype(value.dtype, np.integer):
+            return safe_to_int32(value, name=name)
+        if np.issubdtype(value.dtype, np.floating):
+            return safe_to_float_dtype(value, name=name)
     return value
 
 

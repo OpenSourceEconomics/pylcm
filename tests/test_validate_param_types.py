@@ -2,10 +2,8 @@
 
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
-from lcm.exceptions import InvalidParamsError
 
 
 @categorical(ordered=True)
@@ -49,11 +47,11 @@ def _make_model() -> Model:
     )
 
 
-def test_numpy_array_param_rejected() -> None:
-    """Passing a numpy array as a param should raise InvalidParamsError."""
+def test_numpy_array_param_accepted_and_normalised() -> None:
+    """Numpy arrays are auto-converted to JAX at the params boundary."""
     model = _make_model()
-    with pytest.raises(InvalidParamsError, match=r"numpy\.ndarray"):
-        model.solve(params={"bonus": np.array(1.0), "discount_factor": 0.95})  # ty: ignore[invalid-argument-type]
+    # Should solve cleanly; the boundary cast normalises numpy -> JAX.
+    model.solve(params={"bonus": np.array(1.0), "discount_factor": 0.95})  # ty: ignore[invalid-argument-type]
 
 
 def test_jax_array_param_accepted() -> None:

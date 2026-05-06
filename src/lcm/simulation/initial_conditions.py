@@ -16,6 +16,7 @@ from jax import Array
 from jax import numpy as jnp
 
 from lcm.ages import PSEUDO_STATE_NAMES, AgeGrid
+from lcm.dtypes import canonical_float_dtype, safe_to_float_dtype
 from lcm.exceptions import (
     InvalidInitialConditionsError,
     format_messages,
@@ -77,9 +78,14 @@ def build_initial_states(
                         n_subjects, MISSING_CAT_CODE, dtype=target_dtype
                     )
             elif state_name in initial_states:
-                flat[key] = initial_states[state_name]
+                # Cast user-supplied continuous states to the canonical float
+                # dtype so the simulate state pool has one signature across
+                # periods regardless of the user-supplied dtype.
+                flat[key] = safe_to_float_dtype(
+                    initial_states[state_name], name=f"initial_states.{state_name}"
+                )
             else:
-                flat[key] = jnp.full(n_subjects, jnp.nan)
+                flat[key] = jnp.full(n_subjects, jnp.nan, dtype=canonical_float_dtype())
 
     return MappingProxyType(flat)
 

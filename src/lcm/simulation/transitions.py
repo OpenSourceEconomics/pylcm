@@ -287,18 +287,14 @@ def _update_states_for_subjects(
         for next_state_name, next_state_values in target_next_states.items():
             state_name = f"{target}__{next_state_name.removeprefix('next_')}"
             target_dtype = all_states[state_name].dtype
-            # Preserve storage dtype only when the transition output is the
-            # same numeric kind. Across kinds (e.g. int storage + float
-            # transition output) leave JAX's promotion in place; the
-            # cross-kind boundary cast belongs to Package B.
-            new_values = (
-                next_state_values.astype(target_dtype)
-                if next_state_values.dtype.kind == target_dtype.kind
-                else next_state_values
-            )
+            # Pin transition outputs to the storage dtype before `jnp.where`.
+            # Initial-condition boundary casts ensure storage already reflects
+            # the canonical dtype (int32 for discrete, `canonical_float_dtype()`
+            # for continuous), so this cast is value-preserving for any
+            # well-typed user transition.
             updated_states[state_name] = jnp.where(
                 subject_indices,
-                new_values,
+                next_state_values.astype(target_dtype),
                 all_states[state_name],
             )
 
