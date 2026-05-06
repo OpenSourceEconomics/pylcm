@@ -22,16 +22,10 @@ def create_regime_params_template(
 ) -> RegimeParamsTemplate:
     """Create parameter template from a regime specification.
 
-    Discover parameters from function signatures via `dags.tree`. Parameters are
-    function arguments that are not states, actions, other regime functions,
-    `next_<state>` transition outputs, or special variables (period, age,
-    E_next_V).
-
-    The `next_<state>` exemption lets a state transition consume the output of
-    another state transition: dags resolves the chain at evaluation time
-    (`get_next_state_function_for_solution` merges all transitions and DAG
-    functions into a single dict before calling `concatenate_functions`), so
-    these names must not surface as user-facing fixed_params.
+    Discover parameters from function signatures via `dags.tree`. Parameters
+    are function arguments that are not states, actions, regime functions,
+    `next_<state>` outputs, or special variables (`period`, `age`,
+    `E_next_V`).
 
     For `SolveSimulateFunctionPair` entries, the template contains the **union**
     of both variants' parameters so the user can provide a single flat params
@@ -48,11 +42,14 @@ def create_regime_params_template(
         The regime parameter template with type annotations as values.
 
     """
-    H_variables = {*regime.functions, "period", "age", "E_next_V"}
-    next_state_names = {f"next_{name}" for name in regime.states}
-    variables = (
-        H_variables | set(regime.actions) | set(regime.states) | next_state_names
-    )
+    H_variables = {
+        *regime.functions,
+        "period",
+        "age",
+        "E_next_V",
+        *(f"next_{name}" for name in regime.states),
+    }
+    variables = H_variables | set(regime.actions) | set(regime.states)
 
     function_params: dict[FunctionName, dict[str, str]] = {}
 
