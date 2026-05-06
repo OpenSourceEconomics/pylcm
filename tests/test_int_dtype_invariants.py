@@ -3,6 +3,7 @@
 from types import MappingProxyType
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from lcm import Model
@@ -108,11 +109,13 @@ def test_process_params_casts_int64_array_to_int32() -> None:
 def test_process_params_int_array_overflow_raises_with_qualified_name() -> None:
     """An out-of-int32-range int array surfaces the param's qualified name."""
     template = MappingProxyType({"regime_a": MappingProxyType({"big_param": "Array"})})
-    user_params = {"regime_a": {"big_param": jnp.asarray([0, 2**40], dtype=jnp.int64)}}
+    # Numpy here: under `jax_enable_x64=False`, `jnp.asarray(..., dtype=int64)`
+    # of an out-of-int32 value raises before our helper sees it.
+    user_params = {"regime_a": {"big_param": np.asarray([0, 2**40], dtype=np.int64)}}
 
     with pytest.raises(ValueError, match="big_param"):
         process_params(
-            params=user_params,
+            params=user_params,  # ty: ignore[invalid-argument-type]
             params_template=template,  # ty: ignore[invalid-argument-type]
         )
 

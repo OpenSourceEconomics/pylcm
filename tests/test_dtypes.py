@@ -30,7 +30,10 @@ def test_safe_to_int32_raises_on_python_int_overflow() -> None:
 
 def test_safe_to_int32_raises_on_array_overflow() -> None:
     """An int64 array containing values above int32 max raises with the leaf name."""
-    arr = jnp.asarray([1, 2, 2**32], dtype=jnp.int64)
+    # Use numpy here: `jnp.asarray(..., dtype=jnp.int64)` truncates to int32
+    # under `jax_enable_x64=False` and trips JAX's own overflow guard before
+    # `safe_to_int32` ever sees the value.
+    arr = np.asarray([1, 2, 2**32], dtype=np.int64)
     with pytest.raises(ValueError, match="regime"):
         safe_to_int32(arr, name="regime")
 
