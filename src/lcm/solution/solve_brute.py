@@ -419,16 +419,11 @@ class _DiagnosticRow:
     """Metadata captured during the backward-induction loop.
 
     Holds only Python-scalar metadata — no device-array references — so
-    every (regime, period) row stays at a few bytes. The expensive bits
-    (state-action space, next-period V mapping, params, the
-    `compute_intermediates` closure) are reconstructed lazily on the
+    every (regime, period) row stays at a few bytes regardless of grid
+    size. State-action space, next-period V mapping, regime params, and
+    the `compute_intermediates` closure are reconstructed lazily on the
     failure path from `internal_regimes`, `internal_params`, and the
-    partial `solution` that has been built up to that point.
-
-    The earlier design captured those device-backed objects directly on
-    each row, which pinned every period's V template in device memory
-    until the post-loop flush — at production grid sizes that hits OOM
-    well before the loop completes.
+    partial `solution` built up to that point.
     """
 
     regime_name: RegimeName
@@ -454,12 +449,10 @@ def _emit_post_loop_diagnostics(
 ) -> None:
     """Flush async diagnostics: raise on NaN, warn on Inf, log debug stats.
 
-    Two host transfers (the `.item()` calls on the running scalars)
-    decide whether we enter the per-row failure-path localisation. On
-    a healthy solve neither inner walk runs and no per-row scalar is
-    materialised — the property that lets a production-sized solve at
-    `log_level="warning"` fit on a 16 GB device that was OOMing on the
-    previous stack-and-flush pattern.
+    The two `.item()` calls on the running scalars decide whether to
+    enter the per-row failure-path localisation. On a healthy solve
+    neither inner walk runs and no per-row scalar is materialised, so
+    device memory stays bounded by the V templates currently in flight.
     """
     if running_any_nan.item():
         _raise_first_nan_row(
