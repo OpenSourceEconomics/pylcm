@@ -3,22 +3,18 @@
 When `Model(n_subjects=N)` is set, the first matching `simulate(...)` call
 parallel-compiles all simulate functions for batch shape `N`. Subsequent calls
 with size `N` reuse the cache; calls with a mismatching size warn once per size
-and fall back to the runtime-traced path.
-
-The AOT path pins integer dtypes to int32, which is incompatible with
-`jax_enable_x64=True`. The conftest enables x64 by default, so every test in
-this file disables it via the autouse `_disable_x64` fixture.
+and fall back to the runtime-traced path. AOT works under both `x64=False`
+and `x64=True` because integer leaves are normalised to `int32` at every
+boundary by `lcm.params.processing` and the simulate state pool.
 """
 
 import logging
-from collections.abc import Iterator
 from typing import Any
 
 import jax.numpy as jnp
 import jax.stages
 import pytest
 from jax import Array
-from jax import config as jax_config
 
 from lcm import Model
 from lcm.ages import AgeGrid
@@ -28,17 +24,6 @@ from tests.test_models.deterministic.regression import (
     get_params,
     working_life,
 )
-
-
-@pytest.fixture(autouse=True)
-def _disable_x64() -> Iterator[None]:
-    """Disable x64 for AOT tests (conftest enables it globally)."""
-    previous = jax_config.read("jax_enable_x64")
-    jax_config.update("jax_enable_x64", val=False)
-    try:
-        yield
-    finally:
-        jax_config.update("jax_enable_x64", val=previous)
 
 
 def _build_test_model(*, n_periods: int, n_subjects: int | None = None) -> Model:
