@@ -83,12 +83,13 @@ def solve(
     # Per-period `block_until_ready()` after the running update forces
     # the device kernel to finish before the next period dispatches.
     # This frees the per-period `isnan(V_arr)` / `isinf(V_arr)`
-    # intermediate buffers (~2 MB each at production grid sizes) so
-    # they don't stack up. `block_until_ready` is a *device-only* sync
-    # — no host transfer, no PCIe round-trip — so it doesn't
-    # re-introduce the per-period host stalls that #334 removed; if
-    # `max_Q_over_a` (the dominant per-period kernel) is in flight,
-    # the call returns immediately when the small reduction is done.
+    # intermediate buffers (V_arr-shaped, so model-dependent) so they
+    # don't stack up across the loop. `block_until_ready` is a
+    # *device-only* sync — no host transfer, no PCIe round-trip — so
+    # it doesn't re-introduce the per-period host stalls that #334
+    # removed; if `max_Q_over_a` (the dominant per-period kernel) is
+    # in flight, the call returns immediately when the small reduction
+    # is done.
     #
     # One host transfer per stat at end of solve (`.item()` on the
     # running scalars) decides whether to enter the failure-path
