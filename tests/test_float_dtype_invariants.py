@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from types import MappingProxyType
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 from jax import config as jax_config
 
@@ -136,13 +137,13 @@ def test_process_params_float_array_overflow_raises_with_qualified_name(
 ) -> None:
     """An out-of-float32 float64 *array* raises naming the qualified leaf."""
     template = MappingProxyType({"regime_a": MappingProxyType({"schedule": "Array"})})
-    user_params = {
-        "regime_a": {"schedule": jnp.asarray([0.0, 1e40], dtype=jnp.float64)}
-    }
+    # Numpy here: under `jax_enable_x64=False`, `jnp.asarray(..., dtype=float64)`
+    # of an out-of-float32 value saturates to ±inf at construction time.
+    user_params = {"regime_a": {"schedule": np.asarray([0.0, 1e40], dtype=np.float64)}}
 
     with pytest.raises(OverflowError, match="schedule"):
         process_params(
-            params=user_params,
+            params=user_params,  # ty: ignore[invalid-argument-type]
             params_template=template,  # ty: ignore[invalid-argument-type]
         )
 
