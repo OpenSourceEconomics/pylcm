@@ -66,13 +66,9 @@ def build_initial_states(
             key = f"{regime_name}__{state_name}"
             grid = internal_regime.grids[state_name]
             if isinstance(grid, DiscreteGrid):
-                # Match the grid's index dtype so the state is index-stable
-                # across the simulate loop. Without this, period-0 dispatch
-                # carries the user-supplied dtype (often int32) but post-
-                # transition states are promoted to the grid dtype (int64
-                # under x64), forcing JAX to compile two argmax variants
-                # per regime and breaking AOT-compiled programs that key
-                # on a single signature.
+                # Cast user-supplied discrete states to the grid's index
+                # dtype so every period's argmax sees a single signature
+                # for that state.
                 target_dtype = grid.to_jax().dtype
                 if state_name in initial_states:
                     flat[key] = initial_states[state_name].astype(target_dtype)

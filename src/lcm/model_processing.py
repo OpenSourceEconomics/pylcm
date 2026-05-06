@@ -10,6 +10,7 @@ import inspect
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
 
+import jax
 from dags import get_ancestors
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path
 from jax import Array
@@ -151,6 +152,7 @@ def validate_model_inputs(
 ) -> None:
     """Validate model constructor inputs."""
     _fail_if_invalid_n_subjects(n_subjects=n_subjects)
+    _fail_if_x64_with_aot(n_subjects=n_subjects)
 
     # Early exit if regimes are not lcm.Regime instances
     if not all(isinstance(regime, Regime) for regime in regimes.values()):
@@ -215,6 +217,27 @@ def _fail_if_invalid_n_subjects(*, n_subjects: int | None) -> None:
     if n_subjects <= 0:
         msg = f"n_subjects must be a positive integer, got {n_subjects}."
         raise ValueError(msg)
+
+
+def _fail_if_x64_with_aot(*, n_subjects: int | None) -> None:
+    """Reject `n_subjects` set under `jax_enable_x64=True`.
+
+    The AOT path pins integer dtypes to int32 (see `DiscreteGrid.to_jax`,
+    `build_initial_states`); under x64 mode, JAX's defaults promote int
+    intermediates to int64, so the cached AOT signature would not match the
+    runtime values. Use the lazy path (`n_subjects=None`) under x64 instead.
+    """
+    if n_subjects is None:
+        return
+    if jax.config.read("jax_enable_x64"):
+        msg = (
+            "n_subjects requires jax_enable_x64=False. The AOT simulate path pins "
+            "integer dtypes to int32; x64 mode promotes int intermediates to int64 "
+            "and breaks the cached AOT signature. Either disable x64 with "
+            "`jax.config.update('jax_enable_x64', False)` or use the lazy path "
+            "by leaving n_subjects unset."
+        )
+        raise ModelInitializationError(msg)
 
 
 def _validate_all_variables_used(regimes: Mapping[RegimeName, Regime]) -> list[str]:

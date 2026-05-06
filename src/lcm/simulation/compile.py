@@ -6,9 +6,9 @@ swapped for AOT-compiled programs sized for batch shape `N`. The existing
 simulate call sites then pick them up transparently — no signature changes
 downstream.
 
-Mirrors the pattern in `solve_brute._compile_all_functions`: deduplicate by
-callable identity, sequentially lower (tracing is not thread-safe), then
-parallel-compile via `ThreadPoolExecutor` (XLA releases the GIL).
+Compilation deduplicates callables by identity (only one program per unique
+callable), lowers them sequentially (JAX tracing is not thread-safe), then
+parallel-compiles them via a `ThreadPoolExecutor` (XLA releases the GIL).
 """
 
 import dataclasses
@@ -166,13 +166,11 @@ def _collect_unique_simulate_functions(
         # `sf.argmax_and_max_Q_over_a` has entries for *every* period
         # (pylcm builds them across the full age grid), but the regime is
         # only dispatched at runtime for periods in `regime.active_periods`.
-        # The unused entries can carry a stale `complete_targets` set
-        # whose shape doesn't match the regime's actual transitions
-        # (e.g. a forced-canwork regime's argmax for a pre-FRA period
-        # has choose targets in scope, even though the regime never
-        # reaches that period at runtime). Tracing those would surface
-        # `next_<state>` bookkeeping inconsistencies that the lazy path
-        # never trips. Restrict AOT to active periods to mirror runtime.
+        # Inactive-period entries can carry a `complete_targets` set whose
+        # shape doesn't match the regime's actual transitions for that
+        # period; tracing them would surface `next_<state>` bookkeeping
+        # mismatches the lazy path never reaches. Restrict AOT to active
+        # periods to mirror runtime.
         for period in regime.active_periods:
             argmax_func = sf.argmax_and_max_Q_over_a[period]
             active_next = _active_regimes_at_period(
@@ -198,6 +196,14 @@ def _collect_unique_simulate_functions(
                 )
                 unique[key] = (jax.jit(argmax_func), args, label)
 
+        # Dedup contract for `next_state` / `crtp`: pylcm's `process_regimes`
+        # builds these per regime (via `_build_next_state_vmapped` and the
+        # regime-specific transition-probs builder), so each regime ships a
+        # distinct callable object. Two regimes collide on the dedup key only
+        # when they truly share the same compiled program (and thus the same
+        # arg signature). The invariant is pinned by
+        # `test_simulate_functions_use_per_regime_callables` in
+        # `tests/regime_building/test_regime_processing.py`.
         if not regime.terminal:
             args = _build_next_state_args(
                 internal_regime=regime,
@@ -287,6 +293,12 @@ def _get_regime_V_shapes(
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     internal_params: InternalParams,
 ) -> dict[RegimeName, tuple[int, ...]]:
+    """Return per-regime V-array shape (one length per state grid).
+
+    Used to construct zero-shaped templates for `next_regime_to_V_arr`
+    when lowering each period's argmax — the abstract signature only
+    needs the shapes, not the values.
+    """
     shapes: dict[RegimeName, tuple[int, ...]] = {}
     for regime_name, regime in internal_regimes.items():
         space = regime.state_action_space(
@@ -365,14 +377,11 @@ def _build_next_state_args(
         n_initial_states=n_subjects,
     )
 
-    # `period` is passed as a plain Python int by `calculate_next_states`
-    # (transitions.py), which traces as the default-precision int. Match that
-    # here so the lowered shape signature lines up with the runtime call.
     return {
         **subject_states,
         **subject_actions,
         **stoch_keys,
-        "period": 0,
+        "period": jnp.int32(0),
         "age": ages.values[0],
         **regime_params,
     }
@@ -394,7 +403,7 @@ def _build_crtp_args(
     return {
         **subject_states,
         **subject_actions,
-        "period": 0,
+        "period": jnp.int32(0),
         "age": ages.values[0],
         **regime_params,
     }

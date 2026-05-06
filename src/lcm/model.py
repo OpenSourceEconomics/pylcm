@@ -2,6 +2,7 @@
 
 import dataclasses
 import logging
+import threading
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
@@ -90,15 +91,34 @@ class Model:
     n_subjects: int | None = None
     """Expected simulate batch size; enables AOT compile of simulate functions.
 
-    When set, the first matching `simulate(...)` call AOT-compiles all simulate
-    functions for batch shape `n_subjects` in parallel. Subsequent calls with the
-    same size reuse the compiled programs. Calls with a mismatching size warn
-    once per size and fall back to the runtime-traced path. `None` keeps the
-    purely lazy behaviour.
+    Dispatch by call shape:
+
+    - `None`: purely lazy behaviour, no AOT.
+    - First `simulate(...)` with `actual_n == n_subjects`: AOT-compiles all
+      simulate functions for that batch shape in parallel and caches them.
+    - Subsequent `simulate(...)` with the same matching size: reuses the
+      cached compiled programs.
+    - `simulate(...)` with a mismatching size: warns once per size and falls
+      back to the runtime-traced path.
+
+    Param-shape contract: the cache is keyed only on `n_subjects`. The shapes
+    and dtypes of `internal_params` leaves at the first matching call become
+    part of the AOT signature; subsequent calls must keep them stable. MSM-
+    style estimation (varying values, fixed shapes) is the target use case;
+    construct a fresh `Model` whenever a param array's shape or dtype changes.
     """
 
     _params_template: ParamsTemplate
     """Template for the model parameters."""
+
+    _simulate_compile_cache: dict[int, MappingProxyType[RegimeName, InternalRegime]]
+    """AOT-compiled `internal_regimes` per matching `n_subjects`."""
+
+    _warned_n_subjects: set[int]
+    """Mismatching `actual_n_subjects` already warned about (one warning each)."""
+
+    _simulate_compile_lock: threading.Lock
+    """Guards check-then-set on `_simulate_compile_cache` and `_warned_n_subjects`."""
 
     def __init__(
         self,
@@ -139,10 +159,9 @@ class Model:
         self.n_periods = ages.n_periods
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
         self.n_subjects = n_subjects
-        self._simulate_compile_cache: dict[
-            int, MappingProxyType[RegimeName, InternalRegime]
-        ] = {}
-        self._warned_n_subjects: set[int] = set()
+        self._simulate_compile_cache = {}
+        self._warned_n_subjects = set()
+        self._simulate_compile_lock = threading.Lock()
 
         validate_model_inputs(
             n_periods=self.n_periods,
@@ -171,6 +190,25 @@ class Model:
             regimes=self.regimes,
             regime_names_to_ids=self.regime_names_to_ids,
         )
+
+    def __getstate__(self) -> dict[str, object]:
+        """Drop AOT compile state from the pickle.
+
+        The threading lock isn't pickleable, and the cached compiled programs
+        can't survive a process boundary anyway.
+        """
+        state = self.__dict__.copy()
+        state.pop("_simulate_compile_lock", None)
+        state.pop("_simulate_compile_cache", None)
+        state.pop("_warned_n_subjects", None)
+        return state
+
+    def __setstate__(self, state: dict[str, object]) -> None:
+        """Restore AOT compile state to a fresh empty cache."""
+        self.__dict__.update(state)
+        self._simulate_compile_cache = {}
+        self._warned_n_subjects = set()
+        self._simulate_compile_lock = threading.Lock()
 
     def get_params_template(self) -> UserFacingParamsTemplate:
         """Get a human-readable params template.
@@ -273,35 +311,44 @@ class Model:
     ) -> MappingProxyType[RegimeName, InternalRegime]:
         """Return internal_regimes to use for simulate; AOT cache when matching.
 
-        Returns the original `internal_regimes` when `n_subjects` is `None` or
-        when the actual batch size mismatches the declared one (logging a
-        warning once per mismatching size). Otherwise builds and caches the
-        AOT-compiled regimes for the matching size.
+        Three dispatch cases:
+
+        - `n_subjects is None`: return the original `internal_regimes`
+          (purely lazy path).
+        - `actual_n_subjects != n_subjects`: return the original
+          `internal_regimes` and log a warning the first time each
+          mismatching size is seen.
+        - `actual_n_subjects == n_subjects`: return the cached AOT-compiled
+          regimes, building them on the first call.
         """
         if self.n_subjects is None:
             return self.internal_regimes
         if actual_n_subjects != self.n_subjects:
-            if actual_n_subjects not in self._warned_n_subjects:
+            with self._simulate_compile_lock:
+                already_warned = actual_n_subjects in self._warned_n_subjects
+                if not already_warned:
+                    self._warned_n_subjects.add(actual_n_subjects)
+            if not already_warned:
                 log.warning(
                     "simulate called with n_subjects=%d but model declared "
                     "n_subjects=%d; falling back to runtime compile.",
                     actual_n_subjects,
                     self.n_subjects,
                 )
-                self._warned_n_subjects.add(actual_n_subjects)
             return self.internal_regimes
-        if self.n_subjects not in self._simulate_compile_cache:
-            self._simulate_compile_cache[self.n_subjects] = (
-                compile_all_simulate_functions(
-                    internal_regimes=self.internal_regimes,
-                    internal_params=internal_params,
-                    ages=self.ages,
-                    n_subjects=self.n_subjects,
-                    max_compilation_workers=max_compilation_workers,
-                    logger=log,
+        with self._simulate_compile_lock:
+            if self.n_subjects not in self._simulate_compile_cache:
+                self._simulate_compile_cache[self.n_subjects] = (
+                    compile_all_simulate_functions(
+                        internal_regimes=self.internal_regimes,
+                        internal_params=internal_params,
+                        ages=self.ages,
+                        n_subjects=self.n_subjects,
+                        max_compilation_workers=max_compilation_workers,
+                        logger=log,
+                    )
                 )
-            )
-        return self._simulate_compile_cache[self.n_subjects]
+            return self._simulate_compile_cache[self.n_subjects]
 
     def simulate(
         self,

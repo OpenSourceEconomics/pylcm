@@ -10,6 +10,7 @@ from tests.test_models.deterministic.regression import get_model
 
 
 def test_discrete_grid_to_jax_is_int32() -> None:
+    """Every `DiscreteGrid.to_jax()` in the model returns an `int32` array."""
     model = get_model(n_periods=3)
     for regime in model.regimes.values():
         for grid in {**regime.states, **regime.actions}.values():
@@ -21,6 +22,7 @@ def test_discrete_grid_to_jax_is_int32() -> None:
 
 
 def test_build_initial_states_discrete_dtype_is_int32() -> None:
+    """`build_initial_states` casts every discrete state array to `int32`."""
     model = get_model(n_periods=3)
     initial_states = {
         "wealth": jnp.array([20.0, 50.0]),
@@ -38,4 +40,5 @@ def test_build_initial_states_discrete_dtype_is_int32() -> None:
 
 
 def test_missing_cat_code_is_int32_minimum() -> None:
+    """`MISSING_CAT_CODE` equals `iinfo(int32).min` — never a real category code."""
     assert jnp.iinfo(jnp.int32).min == MISSING_CAT_CODE
