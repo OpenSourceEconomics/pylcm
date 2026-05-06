@@ -4,12 +4,14 @@ from types import MappingProxyType
 
 import jax.numpy as jnp
 import numpy as np
+import pandas as pd
 import pytest
 
 from lcm import Model
 from lcm.ages import AgeGrid
 from lcm.params import MappingLeaf
 from lcm.params.processing import process_params
+from lcm.params.sequence_leaf import SequenceLeaf
 from lcm.simulation.initial_conditions import (
     MISSING_CAT_CODE,
     build_initial_states,
@@ -120,7 +122,8 @@ def test_process_params_int_array_overflow_raises_with_qualified_name() -> None:
         )
 
 
-def test_process_params_casts_int_array_inside_mapping_leaf_to_int32() -> None:
+@pytest.mark.parametrize("key", ["low", "high"])
+def test_process_params_casts_int_array_inside_mapping_leaf_to_int32(key: str) -> None:
     """`MappingLeaf` int arrays land at `jnp.int32` after params processing."""
     template = MappingProxyType(
         {"regime_a": MappingProxyType({"sched": "MappingLeaf"})}
@@ -141,9 +144,40 @@ def test_process_params_casts_int_array_inside_mapping_leaf_to_int32() -> None:
         params_template=template,  # ty: ignore[invalid-argument-type]
     )
 
-    leaf = out["regime_a"]["sched"]
-    assert leaf.data["low"].dtype == jnp.int32  # ty: ignore[unresolved-attribute]
-    assert leaf.data["high"].dtype == jnp.int32  # ty: ignore[unresolved-attribute]
+    assert (
+        out["regime_a"]["sched"].data[key].dtype  # ty: ignore[unresolved-attribute]
+        == jnp.int32
+    )
+
+
+@pytest.mark.parametrize("index", [0, 1])
+def test_process_params_casts_int_array_inside_sequence_leaf_to_int32(
+    index: int,
+) -> None:
+    """`SequenceLeaf` int arrays land at `jnp.int32` after params processing."""
+    template = MappingProxyType(
+        {"regime_a": MappingProxyType({"sched": "SequenceLeaf"})}
+    )
+    user_params = {
+        "regime_a": {
+            "sched": SequenceLeaf(
+                [
+                    jnp.asarray([0, 1], dtype=jnp.int64),
+                    jnp.asarray([10, 20], dtype=jnp.int64),
+                ]
+            )
+        }
+    }
+
+    out = process_params(
+        params=user_params,
+        params_template=template,  # ty: ignore[invalid-argument-type]
+    )
+
+    assert (
+        out["regime_a"]["sched"].data[index].dtype  # ty: ignore[unresolved-attribute]
+        == jnp.int32
+    )
 
 
 def test_simulate_accepts_int64_regime_initial_condition_and_round_trips() -> None:
@@ -186,4 +220,4 @@ def test_simulate_accepts_int64_regime_initial_condition_and_round_trips() -> No
         initial_conditions=initial_conditions_int64,
     ).to_dataframe()
 
-    assert df_int64["regime"].equals(df_int32["regime"])
+    pd.testing.assert_frame_equal(df_int64, df_int32, check_dtype=False)

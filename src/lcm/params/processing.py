@@ -1,4 +1,11 @@
-"""Process user-provided params into internal params."""
+"""Process user-provided params into internal params.
+
+`process_params` resolves user-supplied parameters against the model's
+template, then runs a boundary-cast pass that normalises typed integer
+leaves to `jnp.int32` (and integer arrays inside `MappingLeaf` /
+`SequenceLeaf`). Out-of-range values surface as `ValueError` with the
+offending leaf's qualified name.
+"""
 
 from collections.abc import Mapping
 from types import MappingProxyType
@@ -6,6 +13,7 @@ from typing import Any, cast
 
 import numpy as np
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
+from jax import Array
 
 from lcm.dtypes import safe_to_int32
 from lcm.exceptions import InvalidNameError, InvalidParamsError
@@ -38,7 +46,11 @@ def process_params(
     - Regime level: `{"regime_0": {"arg_0": 0.0}}` — propagates within regime_0
     - Function level: `{"regime_0": {"func": {"arg_0": 0.0}}}` — direct specification
 
-    The output always matches the params_template skeleton.
+    The output always matches the params_template skeleton. Typed integer
+    arrays in the user input — including those inside `MappingLeaf` /
+    `SequenceLeaf` containers — are cast to `jnp.int32` so the AOT signature
+    is stable across calls; Python scalars pass through to keep JAX weak-
+    typing semantics.
 
     Args:
         params: User-provided parameters dictionary.
@@ -50,6 +62,8 @@ def process_params(
     Raises:
         InvalidParamsError: If params contains unexpected keys or type mismatches.
         InvalidNameError: If the same parameter is specified at multiple levels.
+        ValueError: If a typed integer leaf carries a value outside the
+            int32 range; the message names the offending parameter qname.
 
     """
     return broadcast_to_template(params=params, template=params_template, required=True)
@@ -129,16 +143,20 @@ def broadcast_to_template(
 def _cast_int_leaves_to_int32(value: Any, *, name: str) -> Any:  # noqa: ANN401
     """Normalise typed integer arrays in a params value to `jnp.int32`.
 
-    Only typed JAX or numpy integer arrays are cast — Python `int` / `bool`
-    leaves stay unmodified. JAX's weak-typing rules promote raw Python ints
-    correctly to whichever dtype the surrounding operation needs (e.g.
-    `discount_factor: 1` works in a float-typed function), so casting them
-    eagerly to `int32` would force premature dtype commitment. Typed
-    arrays (`jnp.array(..., dtype=jnp.int64)`) are strongly typed by JAX
-    and would otherwise leak their dtype into the AOT signature.
+    Casts:
 
-    Walks `MappingLeaf` and `SequenceLeaf` recursively. Float and
-    non-numeric leaves pass through — float normalisation is Package B.
+    - Typed JAX or numpy integer arrays (`jnp.array(..., dtype=jnp.int64)`,
+      `np.array(...)`) — strongly typed by JAX, so cast to `int32` to keep
+      the AOT signature stable.
+    - Integer leaves inside `MappingLeaf` / `SequenceLeaf` — recurse.
+
+    Passes through unchanged:
+
+    - Python `int` / `bool` scalars — JAX's weak-typing rules let them
+      promote to whatever dtype the surrounding operation needs (e.g.
+      `discount_factor: 1` in a float-typed function).
+    - Float and non-numeric typed leaves — handled by a separate float-
+      normalisation pass.
     """
     if isinstance(value, MappingLeaf):
         return MappingLeaf(
@@ -154,7 +172,9 @@ def _cast_int_leaves_to_int32(value: Any, *, name: str) -> Any:  # noqa: ANN401
                 for i, v in enumerate(value.data)
             ]
         )
-    if hasattr(value, "dtype") and np.issubdtype(value.dtype, np.integer):
+    if isinstance(value, (Array, np.ndarray)) and np.issubdtype(
+        value.dtype, np.integer
+    ):
         return safe_to_int32(value, name=name)
     return value
 
