@@ -670,8 +670,7 @@ def _check_regime_feasibility(  # noqa: C901
     per_constraint_admits_any = _per_constraint_feasibility(
         internal_regime=internal_regime,
         subject_states=subject_states,
-        action_kwargs=action_kwargs,
-        filtered_params=filtered_params,
+        regime_params=regime_params,
         flat_actions=flat_actions,
         idx_arr=idx_arr,
         infeasible_indices=infeasible_indices,
@@ -687,12 +686,28 @@ def _check_regime_feasibility(  # noqa: C901
     )
 
 
+def _admits_any_action(
+    *,
+    feasibility_func: Callable[..., Array],
+    action_kwargs: Mapping[str, Array],
+    params: Mapping[str, object],
+) -> bool:
+    """Return True iff the feasibility function admits ≥ 1 action under params."""
+    if action_kwargs:
+
+        def _check_combo(action_kw: dict[str, Array]) -> Array:
+            return feasibility_func(**action_kw, **params)
+
+        per_combo = jax.vmap(_check_combo)(action_kwargs)
+        return bool(jnp.any(per_combo))
+    return bool(feasibility_func(**params))
+
+
 def _per_constraint_feasibility(
     *,
     internal_regime: InternalRegime,
     subject_states: Mapping[str, Array],
-    action_kwargs: Mapping[str, Array],
-    filtered_params: Mapping[str, object],
+    regime_params: Mapping[str, object],
     flat_actions: Mapping[ActionName, Array],
     idx_arr: Array,
     infeasible_indices: Sequence[int],
@@ -704,6 +719,11 @@ def _per_constraint_feasibility(
     least one action. Combined with the regime's feasibility verdict, this
     distinguishes "constraint X rejects every action by itself" from
     "constraints jointly reject everything despite each admitting some".
+
+    Each constraint's feasibility function has its own argument set (a
+    subset of the combined feasibility's union); filter `subject_states`,
+    `action_kwargs`, and `filtered_params` per constraint so dags doesn't
+    raise on stray kwargs.
     """
     constraints = internal_regime.simulate_functions.constraints
     functions = internal_regime.simulate_functions.functions
@@ -723,11 +743,25 @@ def _per_constraint_feasibility(
             functions=functions,
             constraints=MappingProxyType({name: constraint_func}),
         )
+        accepted = get_union_of_args([single_feasibility])
+        single_states = {k: v for k, v in infeasible_states.items() if k in accepted}
+        single_actions = {k: v for k, v in flat_actions.items() if k in accepted}
+        single_params = {k: v for k, v in regime_params.items() if k in accepted}
+        n = len(infeasible_indices)
+        if not single_states:
+            # Action-only / parameter-only constraint — identical for all subjects.
+            admits_any = _admits_any_action(
+                feasibility_func=single_feasibility,
+                action_kwargs=single_actions,
+                params=single_params,
+            )
+            out[name] = np.full(n, admits_any, dtype=bool)
+            continue
         any_feasible = _batched_feasibility_check(
             feasibility_func=single_feasibility,
-            subject_states=infeasible_states,
-            action_kwargs=action_kwargs,
-            filtered_params=filtered_params,
+            subject_states=single_states,
+            action_kwargs=single_actions,
+            filtered_params=single_params,
             flat_actions=flat_actions,
         )
         out[name] = np.asarray(any_feasible)
