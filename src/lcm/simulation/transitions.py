@@ -19,6 +19,8 @@ from lcm.state_action_space import _validate_all_states_present
 from lcm.typing import (
     ActionName,
     Bool1D,
+    ContinuousState,
+    DiscreteState,
     FlatRegimeParams,
     Int1D,
     RegimeName,
@@ -257,19 +259,23 @@ def draw_key_from_dict(
 def _update_states_for_subjects(
     *,
     all_states: MappingProxyType[str, Array],
-    computed_next_states: MappingProxyType[str, Array],
+    computed_next_states: MappingProxyType[
+        RegimeName, MappingProxyType[str, DiscreteState | ContinuousState]
+    ],
     subject_indices: Bool1D,
 ) -> MappingProxyType[str, Array]:
     """Update the global states dictionary with next states for specific subjects.
 
-    The transition functions add a 'next_' prefix to state variable names. This function
-    removes that prefix and updates only the entries corresponding to the specified
-    subjects, leaving other subjects' states unchanged.
+    Outputs from `get_next_state_function_for_simulation` are nested by target
+    regime, with inner keys carrying the `next_` prefix
+    (`{target: {next_<state>: array}}`). Strip the prefix and combine with the
+    target name into the flat `<target>__<state>` key used in `all_states`,
+    updating only the entries corresponding to the specified subjects.
 
     Args:
         all_states: Current states for all subjects across all regimes.
-        computed_next_states: Newly computed states (with 'next_' prefix) for specific
-            subjects.
+        computed_next_states: Newly computed states, nested by target regime
+            and keyed by `next_<state>`, for specific subjects.
         subject_indices: Indices of subjects whose states should be updated.
 
     Returns:
@@ -277,13 +283,13 @@ def _update_states_for_subjects(
 
     """
     updated_states = dict(all_states)
-    for next_state_name, next_state_values in computed_next_states.items():
-        # Namespaced outputs: "regime__next_wealth" → "regime__wealth"
-        state_name = next_state_name.replace("__next_", "__", 1)
-        updated_states[state_name] = jnp.where(
-            subject_indices,
-            next_state_values,
-            all_states[state_name],
-        )
+    for target, target_next_states in computed_next_states.items():
+        for next_state_name, next_state_values in target_next_states.items():
+            state_name = f"{target}__{next_state_name.removeprefix('next_')}"
+            updated_states[state_name] = jnp.where(
+                subject_indices,
+                next_state_values,
+                all_states[state_name],
+            )
 
     return MappingProxyType(updated_states)

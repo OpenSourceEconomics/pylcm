@@ -1,7 +1,6 @@
 """Generate function that compute the next states for solution and simulation."""
 
-import inspect
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from types import MappingProxyType
 
 import jax
@@ -74,9 +73,8 @@ def get_next_state_function_for_simulation(
     the per-target structure of {func}`get_next_state_function_for_solution`. This
     lets a transition function or auxiliary regime function consume another
     transition's `next_<state>` output via plain name resolution within the same
-    target's DAG. Per-target outputs are then merged into a single flat dict keyed
-    by `<target>__next_<state>`, matching the shape consumed downstream by
-    {func}`lcm.simulation.transitions._update_states_for_subjects`.
+    target's DAG. The combined function returns a nested mapping keyed by target
+    regime name, with each inner dict using unqualified `next_<state>` keys.
 
     Stochastic-transition wrappers expose `key_<target>__next_<state>` and
     `weight_<target>__next_<state>` as external arguments so callers can pass a
@@ -93,13 +91,14 @@ def get_next_state_function_for_simulation(
         Function that computes the next states. Depends on states and actions of the
         current period, and the regime parameters ("params"). The function also
         depends on the dictionary of random keys ("keys") for stochastic transitions.
+        Returns `{target_regime_name: {next_<state>: array}}`.
 
     """
     per_target_funcs: dict[RegimeName, Callable[..., dict[str, Array]]] = {}
-    for target, target_trans in transitions.items():
+    for target, target_transitions in transitions.items():
         extended = _extend_target_transitions_for_simulation(
             target=target,
-            target_trans=target_trans,
+            target_transitions=target_transitions,
             all_grids=all_grids,
             variable_info=variable_info,
             stochastic_transition_names=stochastic_transition_names,
@@ -112,7 +111,13 @@ def get_next_state_function_for_simulation(
             set_annotations=True,
         )
 
-    return _build_combined_simulation_function(per_target_funcs=per_target_funcs)
+    return concatenate_functions(
+        functions=per_target_funcs,
+        targets=list(per_target_funcs.keys()),
+        return_type="dict",
+        enforce_signature=False,
+        set_annotations=True,
+    )
 
 
 def get_next_stochastic_weights_function(
@@ -151,7 +156,7 @@ def get_next_stochastic_weights_function(
 def _extend_target_transitions_for_simulation(
     *,
     target: RegimeName,
-    target_trans: MappingProxyType[TransitionFunctionName, Callable[..., Array]],
+    target_transitions: MappingProxyType[TransitionFunctionName, Callable[..., Array]],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
     variable_info: pd.DataFrame,
     stochastic_transition_names: frozenset[TransitionFunctionName],
@@ -169,8 +174,8 @@ def _extend_target_transitions_for_simulation(
 
     Args:
         target: Target regime name.
-        target_trans: Mapping of unqualified `next_<state>` transition names to
-            functions, restricted to one target regime.
+        target_transitions: Mapping of unqualified `next_<state>` transition names
+            to functions, restricted to one target regime.
         all_grids: Immutable mapping of regime names to Grid spec objects.
         variable_info: Variable info of the current regime.
         stochastic_transition_names: Frozenset of stochastic transition function names.
@@ -181,8 +186,10 @@ def _extend_target_transitions_for_simulation(
     """
     shock_names: set[ShockName] = set(variable_info.query("is_shock").index.to_list())
     flat_grids = flatten_regime_namespace(all_grids)
-    extended: dict[TransitionFunctionName, Callable[..., Array]] = dict(target_trans)
-    for next_state_name in target_trans:
+    extended: dict[TransitionFunctionName, Callable[..., Array]] = dict(
+        target_transitions
+    )
+    for next_state_name in target_transitions:
         if next_state_name not in stochastic_transition_names:
             continue
         qname = qname_from_tree_path((target, next_state_name))
@@ -199,60 +206,6 @@ def _extend_target_transitions_for_simulation(
                 ].to_jax(),
             )
     return extended
-
-
-def _build_combined_simulation_function(
-    *,
-    per_target_funcs: dict[RegimeName, Callable[..., dict[str, Array]]],
-) -> NextStateSimulationFunction:
-    """Combine per-target simulation DAGs into one function with qualified outputs.
-
-    Each per-target callable returns `{next_<state>: array}` (unqualified). The
-    combined callable returns `{<target>__next_<state>: array}` after dispatching
-    inputs to the relevant per-target function based on its signature.
-
-    Args:
-        per_target_funcs: Mapping of target regime names to per-target simulation
-            DAGs returning unqualified `{next_<state>: array}` outputs.
-
-    Returns:
-        A single callable that takes the union of all per-target inputs and
-        returns target-qualified outputs.
-
-    """
-    target_args: dict[RegimeName, tuple[str, ...]] = {
-        target: tuple(inspect.signature(func).parameters)
-        for target, func in per_target_funcs.items()
-    }
-    all_args: tuple[str, ...] = tuple(
-        sorted({arg for args in target_args.values() for arg in args})
-    )
-
-    def _dispatch(kwargs: Mapping[str, Array]) -> dict[str, Array]:
-        out: dict[str, Array] = {}
-        for target, func in per_target_funcs.items():
-            target_kwargs = {arg: kwargs[arg] for arg in target_args[target]}
-            target_out = func(**target_kwargs)
-            for next_state_name, value in target_out.items():
-                out[qname_from_tree_path((target, next_state_name))] = value
-        return out
-
-    # Generate a real function with named positional-or-keyword parameters so
-    # `vmap_1d` (and any other introspecting caller) sees a faithful signature
-    # rather than a `(*args, **kwargs)` shim. Mirrors the strategy used by
-    # `dataclasses` and `attrs` to synthesise typed `__init__` methods.
-    src = (
-        f"def combined({', '.join(all_args)}) -> 'dict[str, Array]':\n"
-        f"    return _dispatch({{{', '.join(f'{a!r}: {a}' for a in all_args)}}})\n"
-    )
-    namespace: dict[str, object] = {"_dispatch": _dispatch}
-    exec(src, namespace)  # noqa: S102
-    combined = namespace["combined"]
-    combined.__annotations__ = {
-        **dict.fromkeys(all_args, "Array"),
-        "return": "dict[str, Array]",
-    }
-    return combined  # ty: ignore[invalid-return-type]
 
 
 def _create_discrete_stochastic_next_func(
