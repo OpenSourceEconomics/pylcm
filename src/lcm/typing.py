@@ -188,14 +188,17 @@ class StochasticNextFunction(Protocol):
 class NextStateSimulationFunction(Protocol):
     """The function that computes the next states during the simulation.
 
-    Only used for type checking.
+    Returns a nested mapping `{target_regime: {next_<state>: array}}`. Only
+    used for type checking.
 
     """
 
     def __call__(
         self,
         **kwargs: Array | Period | Age,
-    ) -> MappingProxyType[str, DiscreteState | ContinuousState]: ...
+    ) -> MappingProxyType[
+        RegimeName, MappingProxyType[str, DiscreteState | ContinuousState]
+    ]: ...
 
 
 class ActiveFunction(Protocol):
