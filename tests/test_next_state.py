@@ -55,10 +55,11 @@ def test_get_next_state_function_with_solve_target():
 
 
 def test_get_next_state_function_with_simulate_target():
-    """Outputs are namespaced by target regime: `<target>__<next_state>`.
+    """Outputs are nested by target regime: `{target: {next_state: array}}`.
 
     The combined function dispatches inputs to the per-target DAG and
-    qualifies each output with its target name, matching the format
+    returns a mapping from target regime name to that target's
+    `{next_<state>: array}` outputs, matching what
     `_update_states_for_subjects` consumes.
     """
 
@@ -91,9 +92,10 @@ def test_get_next_state_function_with_simulate_target():
 
     got = got_func(state=jnp.array([1.0, 2.0]))
 
-    assert set(got.keys()) == {"mock__next_a", "mock__next_b"}
-    assert jnp.array_equal(got["mock__next_a"], jnp.array([2.0, 4.0]))
-    assert jnp.array_equal(got["mock__next_b"], jnp.array([2.0, 3.0]))
+    assert set(got.keys()) == {"mock"}
+    assert set(got["mock"].keys()) == {"next_a", "next_b"}
+    assert jnp.array_equal(got["mock"]["next_a"], jnp.array([2.0, 4.0]))
+    assert jnp.array_equal(got["mock"]["next_b"], jnp.array([2.0, 3.0]))
 
 
 def test_create_stochastic_next_func():
