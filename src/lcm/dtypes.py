@@ -1,11 +1,13 @@
 """Boundary-cast helpers that pin user-supplied data to canonical pylcm dtypes.
 
-These helpers run **outside JIT** at every API boundary (params, initial
-conditions, regime-id arrays). They check the value fits the target dtype
-and raise a clearly-named error if not. Inside-JIT casts (e.g. on
-transition outputs landing in the simulate state pool) keep the silent
-saturation/wrap semantics — overflow there means a broken user transition,
-which is out of scope for the boundary helpers.
+Used at every API boundary that accepts user data (params, initial
+conditions, regime-id arrays) — always called from Python, never inside
+JIT. Each helper validates that the value fits the target dtype and
+raises a clearly-named error if not.
+
+Casts further down the simulate stack (e.g. transition outputs landing
+in the state pool) use plain `.astype` and rely on the boundary cast
+above them having already pinned the canonical dtype.
 """
 
 import jax

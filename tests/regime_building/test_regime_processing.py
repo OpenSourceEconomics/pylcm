@@ -4,12 +4,14 @@ from types import MappingProxyType
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
+import pytest
 from numpy.testing import assert_array_equal
 from pandas.testing import assert_frame_equal
 
 from lcm import Regime, categorical
 from lcm.ages import AgeGrid
 from lcm.grids import DiscreteGrid, LinSpacedGrid
+from lcm.interfaces import InternalRegime
 from lcm.regime_building.processing import (
     _rename_params_to_qnames,
     process_regimes,
@@ -178,15 +180,9 @@ def test_variable_info_with_continuous_constraint_has_unique_index():
     assert got.index.is_unique
 
 
-def test_simulate_functions_use_per_regime_callables():
-    """Each non-terminal regime gets a distinct `next_state` / `crtp` callable.
-
-    The simulate-AOT path in `lcm.simulation.compile` deduplicates by callable
-    identity for `next_state` and `compute_regime_transition_probs`. That is
-    only safe if `process_regimes` ships a fresh callable per regime — two
-    regimes sharing one callable would compile against the first regime's
-    state-action shapes and silently apply that program to the second.
-    """
+@pytest.fixture(name="two_non_terminal_internal_regimes")
+def _two_non_terminal_internal_regimes() -> MappingProxyType[str, InternalRegime]:
+    """Two non-terminal regimes that share underlying user functions."""
 
     def next_x(x):
         return x
@@ -213,26 +209,30 @@ def test_simulate_functions_use_per_regime_callables():
         functions={"utility": lambda x: x},
         active=lambda age: age >= 1,
     )
-
-    regimes = {"early": early, "late": late}
-    internal_regimes = process_regimes(
-        regimes=regimes,
+    return process_regimes(
+        regimes={"early": early, "late": late},
         ages=AgeGrid(start=0, stop=2, step="Y"),
         regime_names_to_ids=MappingProxyType({"early": 0, "late": 1}),
         enable_jit=True,
     )
 
-    early_next_state = internal_regimes["early"].simulate_functions.next_state
-    late_next_state = internal_regimes["late"].simulate_functions.next_state
-    assert id(early_next_state) != id(late_next_state)
 
-    early_crtp = internal_regimes[
-        "early"
-    ].simulate_functions.compute_regime_transition_probs
-    late_crtp = internal_regimes[
-        "late"
-    ].simulate_functions.compute_regime_transition_probs
-    assert id(early_crtp) != id(late_crtp)
+@pytest.mark.parametrize(
+    "attr",
+    ["next_state", "compute_regime_transition_probs"],
+)
+def test_simulate_functions_use_per_regime_callables(
+    two_non_terminal_internal_regimes: MappingProxyType[str, InternalRegime],
+    attr: str,
+) -> None:
+    """Two regimes built from shared user functions get distinct simulate callables."""
+    early_func = getattr(
+        two_non_terminal_internal_regimes["early"].simulate_functions, attr
+    )
+    late_func = getattr(
+        two_non_terminal_internal_regimes["late"].simulate_functions, attr
+    )
+    assert id(early_func) != id(late_func)
 
 
 def test_rename_params_to_qnames_with_partial():

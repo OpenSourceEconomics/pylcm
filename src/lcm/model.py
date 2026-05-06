@@ -118,7 +118,12 @@ class Model:
     """Mismatching `actual_n_subjects` already warned about (one warning each)."""
 
     _simulate_compile_lock: threading.Lock
-    """Guards check-then-set on `_simulate_compile_cache` and `_warned_n_subjects`."""
+    """Serialises mutations of `_simulate_compile_cache` and `_warned_n_subjects`.
+
+    The check-then-set on each container is held under this lock. The
+    consequent `log.warning` call sits outside the lock so concurrent
+    simulate() calls don't serialise on logging I/O.
+    """
 
     def __init__(
         self,
@@ -192,10 +197,12 @@ class Model:
         )
 
     def __getstate__(self) -> dict[str, object]:
-        """Drop AOT compile state from the pickle.
+        """Return a copy of `__dict__` with per-process AOT compile state removed.
 
-        The threading lock isn't pickleable, and the cached compiled programs
-        can't survive a process boundary anyway.
+        Drops `_simulate_compile_lock` (a `threading.Lock`, not pickleable),
+        `_simulate_compile_cache` (compiled XLA programs that can't survive
+        a process boundary), and `_warned_n_subjects` (its companion set).
+        `__setstate__` restores all three to their fresh state.
         """
         state = self.__dict__.copy()
         state.pop("_simulate_compile_lock", None)

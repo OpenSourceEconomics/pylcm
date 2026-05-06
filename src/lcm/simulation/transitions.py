@@ -237,8 +237,9 @@ def draw_key_from_dict(
     """
     regime_names = list(d)
     regime_transition_probs = jnp.array(list(d.values())).T
-    regime_ids = jnp.array(
-        [regime_names_to_ids[regime_name] for regime_name in regime_names]
+    regime_ids = jnp.asarray(
+        [regime_names_to_ids[regime_name] for regime_name in regime_names],
+        dtype=jnp.int32,
     )
 
     def random_id(

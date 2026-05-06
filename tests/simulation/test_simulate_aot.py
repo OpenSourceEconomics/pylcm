@@ -9,8 +9,11 @@ boundary by `lcm.params.processing` and the simulate state pool.
 """
 
 import logging
+import threading
+from dataclasses import dataclass
 from typing import Any
 
+import cloudpickle
 import jax.numpy as jnp
 import jax.stages
 import pytest
@@ -153,14 +156,25 @@ def test_simulate_first_matching_call_populates_aot_cache() -> None:
     assert n_subjects in model._simulate_compile_cache
 
 
-def test_simulate_warns_on_n_subjects_mismatch(
+_DECLARED_N = 4
+_ACTUAL_N = 7
+
+
+@dataclass(frozen=True)
+class _MismatchOutcome:
+    """Captured simulate-with-mismatch artefacts for assertion."""
+
+    warnings: list[logging.LogRecord]
+    model: Model
+
+
+@pytest.fixture(name="mismatch_outcome")
+def _mismatch_outcome(
     caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Mismatching size logs WARNING naming both N and M, falls back to lazy path."""
+) -> _MismatchOutcome:
+    """Run one mismatching `simulate(...)` and capture the WARNING records."""
     n_periods = 3
-    declared_n = 4
-    actual_n = 7
-    model = _build_test_model(n_periods=n_periods, n_subjects=declared_n)
+    model = _build_test_model(n_periods=n_periods, n_subjects=_DECLARED_N)
     params = get_params(n_periods=n_periods)
     period_to_regime_to_V_arr = model.solve(params=params)
 
@@ -168,20 +182,45 @@ def test_simulate_warns_on_n_subjects_mismatch(
         model.simulate(
             params=params,
             period_to_regime_to_V_arr=period_to_regime_to_V_arr,
-            initial_conditions=_build_initial_conditions(n_subjects=actual_n),
+            initial_conditions=_build_initial_conditions(n_subjects=_ACTUAL_N),
         )
 
-    mismatch_warnings = [
+    warnings = [
         r
         for r in caplog.records
         if r.levelno == logging.WARNING and "n_subjects" in r.getMessage()
     ]
-    assert len(mismatch_warnings) == 1
-    msg = mismatch_warnings[0].getMessage()
-    assert str(declared_n) in msg
-    assert str(actual_n) in msg
-    # Cache is NOT populated for mismatching size — fallback path was taken.
-    assert actual_n not in model._simulate_compile_cache
+    return _MismatchOutcome(warnings=warnings, model=model)
+
+
+def test_simulate_mismatch_emits_one_warning(
+    mismatch_outcome: _MismatchOutcome,
+) -> None:
+    """A single mismatching call logs exactly one WARNING."""
+    assert len(mismatch_outcome.warnings) == 1
+
+
+def test_simulate_mismatch_warning_names_declared_n(
+    mismatch_outcome: _MismatchOutcome,
+) -> None:
+    """The mismatch warning message contains the declared `n_subjects`."""
+    msg = mismatch_outcome.warnings[0].getMessage()
+    assert str(_DECLARED_N) in msg
+
+
+def test_simulate_mismatch_warning_names_actual_n(
+    mismatch_outcome: _MismatchOutcome,
+) -> None:
+    """The mismatch warning message contains the actual `n_subjects`."""
+    msg = mismatch_outcome.warnings[0].getMessage()
+    assert str(_ACTUAL_N) in msg
+
+
+def test_simulate_mismatch_does_not_populate_cache(
+    mismatch_outcome: _MismatchOutcome,
+) -> None:
+    """A mismatching `n_subjects` falls back to the lazy path — no cache entry."""
+    assert _ACTUAL_N not in mismatch_outcome.model._simulate_compile_cache
 
 
 def test_simulate_warns_only_once_per_mismatching_size(
@@ -189,12 +228,10 @@ def test_simulate_warns_only_once_per_mismatching_size(
 ) -> None:
     """Two calls with the same mismatching size produce only one WARNING."""
     n_periods = 3
-    declared_n = 4
-    actual_n = 7
-    model = _build_test_model(n_periods=n_periods, n_subjects=declared_n)
+    model = _build_test_model(n_periods=n_periods, n_subjects=_DECLARED_N)
     params = get_params(n_periods=n_periods)
     period_to_regime_to_V_arr = model.solve(params=params)
-    initial_conditions = _build_initial_conditions(n_subjects=actual_n)
+    initial_conditions = _build_initial_conditions(n_subjects=_ACTUAL_N)
 
     with caplog.at_level(logging.WARNING, logger="lcm"):
         model.simulate(
@@ -214,3 +251,36 @@ def test_simulate_warns_only_once_per_mismatching_size(
         if r.levelno == logging.WARNING and "n_subjects" in r.getMessage()
     ]
     assert len(mismatch_warnings) == 1
+
+
+def test_unpickled_model_can_simulate_with_aot() -> None:
+    """A cloudpickle round-tripped `Model` still drives `simulate(...)` with AOT."""
+    n_periods = 3
+    n_subjects = 4
+    model = _build_test_model(n_periods=n_periods, n_subjects=n_subjects)
+    params = get_params(n_periods=n_periods)
+    period_to_regime_to_V_arr = model.solve(params=params)
+    initial_conditions = _build_initial_conditions(n_subjects=n_subjects)
+
+    # Populate the AOT cache before pickling — confirms __getstate__ drops it.
+    model.simulate(
+        params=params,
+        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+        initial_conditions=initial_conditions,
+    )
+    assert n_subjects in model._simulate_compile_cache
+
+    restored = cloudpickle.loads(cloudpickle.dumps(model))
+
+    # The restored Model starts with empty AOT state and a fresh lock.
+    assert dict(restored._simulate_compile_cache) == {}
+    assert restored._warned_n_subjects == set()
+    assert isinstance(restored._simulate_compile_lock, type(threading.Lock()))
+
+    # Simulate works post-unpickle and re-populates the cache for that size.
+    restored.simulate(
+        params=params,
+        period_to_regime_to_V_arr=period_to_regime_to_V_arr,
+        initial_conditions=initial_conditions,
+    )
+    assert n_subjects in restored._simulate_compile_cache

@@ -196,14 +196,9 @@ def _collect_unique_simulate_functions(
                 )
                 unique[key] = (jax.jit(argmax_func), args, label)
 
-        # Dedup contract for `next_state` / `crtp`: pylcm's `process_regimes`
-        # builds these per regime (via `_build_next_state_vmapped` and the
-        # regime-specific transition-probs builder), so each regime ships a
-        # distinct callable object. Two regimes collide on the dedup key only
-        # when they truly share the same compiled program (and thus the same
-        # arg signature). The invariant is pinned by
-        # `test_simulate_functions_use_per_regime_callables` in
-        # `tests/regime_building/test_regime_processing.py`.
+        # `next_state` / `crtp` are keyed per-regime: each regime's lower-args
+        # depend on its own state-action shapes, so even when two regimes
+        # share a callable identity, their compiled programs are distinct.
         if not regime.terminal:
             args = _build_next_state_args(
                 internal_regime=regime,
@@ -211,7 +206,7 @@ def _collect_unique_simulate_functions(
                 ages=ages,
                 n_subjects=n_subjects,
             )
-            key = ("next_state", _func_dedup_key(func=sf.next_state))
+            key = ("next_state", regime_name, _func_dedup_key(func=sf.next_state))
             func_keys[(regime_name, "next_state", None)] = key
             if key not in unique:
                 # Re-wrap with `jax.jit`: when `fixed_params` are partialled
@@ -230,7 +225,11 @@ def _collect_unique_simulate_functions(
                 ages=ages,
                 n_subjects=n_subjects,
             )
-            key = ("crtp", _func_dedup_key(func=sf.compute_regime_transition_probs))
+            key = (
+                "crtp",
+                regime_name,
+                _func_dedup_key(func=sf.compute_regime_transition_probs),
+            )
             func_keys[(regime_name, "crtp", None)] = key
             if key not in unique:
                 unique[key] = (

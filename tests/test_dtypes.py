@@ -30,19 +30,31 @@ def _fixture_x64_enabled() -> Iterator[None]:
         jax_config.update("jax_enable_x64", val=previous)
 
 
-def test_safe_to_int32_casts_python_int_in_range() -> None:
-    """A Python int within int32 range becomes a `jnp.int32` 0-d array."""
-    out = safe_to_int32(7, name="x")
+@pytest.mark.parametrize(
+    "value",
+    [7, np.asarray([0, 1, -3], dtype=np.int64)],
+    ids=["python-int", "int64-array"],
+)
+def test_safe_to_int32_returns_int32(value: object) -> None:
+    """`safe_to_int32` returns a `jnp.int32` array for any in-range int input."""
+    out = safe_to_int32(value, name="x")
     assert out.dtype == jnp.int32
-    assert int(out) == 7
 
 
-def test_safe_to_int32_casts_int64_array_in_range() -> None:
-    """An int64 array within int32 range becomes int32 with the same values."""
-    arr = jnp.asarray([0, 1, -3], dtype=jnp.int64)
-    out = safe_to_int32(arr, name="x")
-    assert out.dtype == jnp.int32
-    np.testing.assert_array_equal(np.asarray(out), [0, 1, -3])
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (7, 7),
+        (np.asarray([0, 1, -3], dtype=np.int64), [0, 1, -3]),
+    ],
+    ids=["python-int", "int64-array"],
+)
+def test_safe_to_int32_preserves_in_range_values(
+    value: object, expected: object
+) -> None:
+    """`safe_to_int32` preserves element values for in-range inputs."""
+    out = safe_to_int32(value, name="x")
+    np.testing.assert_array_equal(np.asarray(out), expected)
 
 
 def test_safe_to_int32_raises_on_python_int_overflow() -> None:
