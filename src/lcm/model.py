@@ -221,13 +221,14 @@ class Model:
             )
         except InvalidValueFunctionError as exc:
             if log_path is not None and exc.partial_solution is not None:
-                save_solve_snapshot(
+                snap_dir = save_solve_snapshot(
                     model=self,
                     params=params,
                     period_to_regime_to_V_arr=exc.partial_solution,  # ty: ignore[invalid-argument-type]
                     log_path=Path(log_path),
                     log_keep_n_latest=log_keep_n_latest,
                 )
+                exc.add_note(f"Snapshot saved to {snap_dir}")
             raise
         if log_level == "debug" and log_path is not None:
             save_solve_snapshot(
@@ -331,13 +332,14 @@ class Model:
                 )
             except InvalidValueFunctionError as exc:
                 if log_path is not None and exc.partial_solution is not None:
-                    save_solve_snapshot(
+                    snap_dir = save_solve_snapshot(
                         model=self,
                         params=params,
                         period_to_regime_to_V_arr=exc.partial_solution,  # ty: ignore[invalid-argument-type]
                         log_path=Path(log_path),
                         log_keep_n_latest=log_keep_n_latest,
                     )
+                    exc.add_note(f"Snapshot saved to {snap_dir}")
                 raise
         result = simulate(
             internal_params=internal_params,
