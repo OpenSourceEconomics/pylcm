@@ -516,7 +516,7 @@ def _raise_at(
     # closures, but we have to do it by hand here to call the diagnostic
     # directly. Same merge order as `interfaces.state_action_space` and
     # `simulation.result`.
-    diag_params = MappingProxyType(
+    effective_regime_params = MappingProxyType(
         {**internal_regime.resolved_fixed_params, **regime_params}
     )
     state_action_space = internal_regime.state_action_space(regime_params=regime_params)
@@ -538,7 +538,7 @@ def _raise_at(
         compute_intermediates=compute_intermediates,
         state_action_space=state_action_space,
         next_regime_to_V_arr=next_regime_to_V_arr,
-        internal_params=diag_params,
+        internal_params=effective_regime_params,
         period=row.period,
     )
 
