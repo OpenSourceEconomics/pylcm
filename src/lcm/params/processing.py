@@ -1,10 +1,17 @@
 """Process user-provided params into internal params.
 
 `process_params` resolves user-supplied parameters against the model's
-template, then runs a boundary-cast pass that normalises typed integer
-leaves to `jnp.int32` (and integer arrays inside `MappingLeaf` /
-`SequenceLeaf`). Out-of-range values surface as `ValueError` with the
-offending leaf's qualified name.
+template, then runs a boundary-cast pass that normalises typed numeric
+leaves to canonical pylcm dtypes:
+
+- Typed integer leaves (and integer arrays inside `MappingLeaf` /
+  `SequenceLeaf`) cast to `jnp.int32`. Out-of-range values surface as
+  `ValueError`.
+- Typed float leaves (and float arrays inside `MappingLeaf` /
+  `SequenceLeaf`) cast to `canonical_float_dtype()`. Down-cast overflow
+  surfaces as `OverflowError`.
+
+Both errors name the offending leaf via its qualified path.
 """
 
 from collections.abc import Mapping
@@ -47,11 +54,17 @@ def process_params(
     - Regime level: `{"regime_0": {"arg_0": 0.0}}` — propagates within regime_0
     - Function level: `{"regime_0": {"func": {"arg_0": 0.0}}}` — direct specification
 
-    The output always matches the params_template skeleton. Typed integer
+    The output always matches the params_template skeleton. Typed numeric
     arrays in the user input — including those inside `MappingLeaf` /
-    `SequenceLeaf` containers — are cast to `jnp.int32` so the AOT signature
-    is stable across calls; Python scalars pass through to keep JAX weak-
-    typing semantics.
+    `SequenceLeaf` containers — are cast to canonical pylcm dtypes so the
+    AOT signature is stable across calls:
+
+    - Integer arrays cast to `jnp.int32`.
+    - Float arrays cast to `canonical_float_dtype()`.
+
+    Python scalars (`int` / `float` / `bool`) pass through to keep JAX
+    weak-typing semantics, and `pd.Series` leaves pass through to their
+    dedicated multi-index reshaper.
 
     Args:
         params: User-provided parameters dictionary.
@@ -65,6 +78,8 @@ def process_params(
         InvalidNameError: If the same parameter is specified at multiple levels.
         ValueError: If a typed integer leaf carries a value outside the
             int32 range; the message names the offending parameter qname.
+        OverflowError: If a typed float leaf would saturate to `±inf` on
+            down-cast to `float32`; the message names the offending qname.
 
     """
     return broadcast_to_template(params=params, template=params_template, required=True)
@@ -157,9 +172,9 @@ def _cast_leaves_to_canonical_dtype(value: Any, *, name: str) -> Any:  # noqa: A
     - Python `int` / `float` / `bool` scalars — JAX's weak-typing rules
       let them promote to whatever dtype the surrounding operation needs
       (e.g. `discount_factor: 1` in a float-typed function).
-    - `pd.Series` leaves — reshaped by `convert_series_in_params` based
-      on their multi-index, so flattening here via `np.asarray` would
-      lose that structure.
+    - `pd.Series` leaves — they carry multi-index structure that
+      `np.asarray` would flatten away, so the dtype cast is handled by
+      the dedicated multi-index reshaper instead.
     - Non-numeric typed leaves.
     """
     if isinstance(value, MappingLeaf):

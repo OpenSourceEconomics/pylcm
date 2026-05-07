@@ -3,11 +3,9 @@
 Used at every API boundary that accepts user data (params, initial
 conditions, regime-id arrays) — always called from Python, never inside
 JIT. Each helper validates that the value fits the target dtype and
-raises a clearly-named error if not.
-
-Casts further down the simulate stack (e.g. transition outputs landing
-in the state pool) use plain `.astype` and rely on the boundary cast
-above them having already pinned the canonical dtype.
+raises a clearly-named error if not. Once an input has crossed the
+boundary it carries the canonical dtype unchanged through the simulate
+stack; downstream code does not re-cast.
 """
 
 import jax
@@ -63,12 +61,14 @@ def safe_to_int32(value: object, *, name: str) -> Array:
 def safe_to_float_dtype(value: object, *, name: str) -> Array:
     """Cast a scalar, sequence, or array to the canonical float dtype.
 
-    When the cast is *down* (float64 -> float32 under `jax_enable_x64=False`),
-    check that no element exceeds `float32` magnitude — raising
-    `OverflowError` if so rather than letting JAX silently saturate to
-    `±inf`. Up-casts and same-width casts skip the range check; precision
-    loss within range is *not* an error (it is an inherent consequence of
-    `jax_enable_x64=False`).
+    Range check fires only on a down-cast:
+
+    - Down-cast (float64 → float32 under `jax_enable_x64=False`): raise
+      `OverflowError` if any element exceeds float32 magnitude rather
+      than letting JAX silently saturate to ``±inf``.
+    - Up-cast or same-width cast: skip the range check. Precision loss
+      within range is not an error — it is an inherent consequence of
+      `jax_enable_x64=False`.
 
     Args:
         value: A Python float, numpy/JAX scalar, or array-like.

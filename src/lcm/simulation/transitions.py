@@ -287,15 +287,9 @@ def _update_states_for_subjects(
     for target, target_next_states in computed_next_states.items():
         for next_state_name, next_state_values in target_next_states.items():
             state_name = f"{target}__{next_state_name.removeprefix('next_')}"
-            target_dtype = all_states[state_name].dtype
-            # Pin transition outputs to the storage dtype before `jnp.where`.
-            # Initial-condition boundary casts ensure storage already reflects
-            # the canonical dtype (int32 for discrete, `canonical_float_dtype()`
-            # for continuous), so this cast is value-preserving for any
-            # well-typed user transition.
             updated_states[state_name] = jnp.where(
                 subject_indices,
-                next_state_values.astype(target_dtype),
+                next_state_values,
                 all_states[state_name],
             )
 

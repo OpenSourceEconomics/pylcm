@@ -1,33 +1,10 @@
 """Tests for `lcm.dtypes` boundary-cast helpers."""
 
-from collections.abc import Iterator
-
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from jax import config as jax_config
 
 from lcm.dtypes import canonical_float_dtype, safe_to_float_dtype, safe_to_int32
-
-
-@pytest.fixture(name="x64_disabled")
-def _fixture_x64_disabled() -> Iterator[None]:
-    previous = jax_config.read("jax_enable_x64")
-    jax_config.update("jax_enable_x64", val=False)
-    try:
-        yield
-    finally:
-        jax_config.update("jax_enable_x64", val=previous)
-
-
-@pytest.fixture(name="x64_enabled")
-def _fixture_x64_enabled() -> Iterator[None]:
-    previous = jax_config.read("jax_enable_x64")
-    jax_config.update("jax_enable_x64", val=True)
-    try:
-        yield
-    finally:
-        jax_config.update("jax_enable_x64", val=previous)
 
 
 @pytest.mark.parametrize(
@@ -105,8 +82,15 @@ def test_safe_to_float_dtype_casts_python_float_to_canonical(
 def test_safe_to_float_dtype_casts_float64_array_to_float32(
     x64_disabled: None,  # noqa: ARG001
 ) -> None:
-    """A `float64` array within float32 range is downcast to `float32`."""
-    arr = jnp.asarray([0.1, 0.2, 0.3], dtype=jnp.float64)
+    """A `float64` array within float32 range is downcast to `float32`.
+
+    Build the input with `np.asarray` rather than `jnp.asarray` — under
+    `jax_enable_x64=False`, JAX silently truncates a `float64` request
+    to `float32` at construction time, so a JAX-built input would never
+    reach the helper as `float64` and the down-cast path would not be
+    exercised.
+    """
+    arr = np.asarray([0.1, 0.2, 0.3], dtype=np.float64)
     out = safe_to_float_dtype(arr, name="x")
     assert out.dtype == jnp.float32
 

@@ -1,17 +1,16 @@
 """Float dtypes follow `canonical_float_dtype()` across pylcm boundaries."""
 
-from collections.abc import Iterator
 from types import MappingProxyType
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from jax import config as jax_config
 
 from lcm.dtypes import canonical_float_dtype
 from lcm.grids import IrregSpacedGrid, LinSpacedGrid, LogSpacedGrid
 from lcm.params import MappingLeaf
 from lcm.params.processing import process_params
+from lcm.params.sequence_leaf import SequenceLeaf
 from lcm.simulation.initial_conditions import build_initial_states
 from tests.test_models.deterministic.regression import (
     RegimeId,
@@ -20,42 +19,26 @@ from tests.test_models.deterministic.regression import (
 )
 
 
-@pytest.fixture(name="x64_disabled")
-def _fixture_x64_disabled() -> Iterator[None]:
-    previous = jax_config.read("jax_enable_x64")
-    jax_config.update("jax_enable_x64", val=False)
-    try:
-        yield
-    finally:
-        jax_config.update("jax_enable_x64", val=previous)
-
-
-def test_build_initial_states_continuous_state_cast_to_canonical_dtype(
+def test_build_initial_states_casts_user_float64_to_canonical(
     x64_disabled: None,  # noqa: ARG001
 ) -> None:
-    """Continuous initial states land at `canonical_float_dtype()` for any input."""
+    """A float64 continuous initial state lands at `canonical_float_dtype()`."""
     model = get_model(n_periods=3)
-    # User passes float64 arrays under x64=False — should be cast to float32.
     initial_states = {
-        "wealth": jnp.asarray([20.0, 50.0], dtype=jnp.float64),
-        "age": jnp.asarray([18.0, 18.0], dtype=jnp.float64),
+        "wealth": np.asarray([20.0, 50.0], dtype=np.float64),
+        "age": np.asarray([18.0, 18.0], dtype=np.float64),
     }
     flat = build_initial_states(
-        initial_states=initial_states,
+        initial_states=initial_states,  # ty: ignore[invalid-argument-type]
         internal_regimes=model.internal_regimes,
     )
-    target = canonical_float_dtype()
-    for key, arr in flat.items():
-        if arr.dtype.kind == "f":
-            assert arr.dtype == target, (
-                f"Initial state {key} has dtype {arr.dtype}, expected {target}."
-            )
+    assert flat["working_life__wealth"].dtype == canonical_float_dtype()
 
 
-def test_build_initial_states_int_input_for_continuous_state_cast_to_canonical(
+def test_build_initial_states_casts_user_int_to_canonical(
     x64_disabled: None,  # noqa: ARG001
 ) -> None:
-    """Int initial-condition arrays for continuous states land at canonical float."""
+    """A continuous initial state given as int32 lands at `canonical_float_dtype()`."""
     model = get_model(n_periods=3)
     initial_states = {
         "wealth": jnp.asarray([20, 50], dtype=jnp.int32),
@@ -65,47 +48,54 @@ def test_build_initial_states_int_input_for_continuous_state_cast_to_canonical(
         initial_states=initial_states,
         internal_regimes=model.internal_regimes,
     )
-    target = canonical_float_dtype()
-    # All non-discrete state entries should be canonical-float now.
-    for key, arr in flat.items():
-        if "wealth" in key or "age" in key:
-            assert arr.dtype == target, (
-                f"Continuous state {key} has dtype {arr.dtype}, expected {target}."
-            )
+    assert flat["working_life__wealth"].dtype == canonical_float_dtype()
 
 
 def test_build_initial_states_missing_continuous_fallback_dtype_is_canonical(
     x64_disabled: None,  # noqa: ARG001
 ) -> None:
-    """Missing continuous states fall back to `nan` at the canonical float dtype."""
+    """A missing continuous state falls back to a canonical-dtype array."""
     model = get_model(n_periods=3)
-    initial_states = {
-        "wealth": jnp.asarray([20.0, 50.0]),
-        "age": jnp.asarray([18.0, 18.0]),
-    }
+    # Supply a placeholder state to set n_subjects without touching `wealth`.
     flat = build_initial_states(
-        initial_states=initial_states,
+        initial_states={"placeholder": jnp.asarray([0.0, 0.0])},
         internal_regimes=model.internal_regimes,
     )
-    # Find a fallback-NaN entry and check its dtype.
-    target = canonical_float_dtype()
-    nan_entries = [arr for arr in flat.values() if arr.dtype.kind == "f"]
-    assert nan_entries  # sanity
-    for arr in nan_entries:
-        assert arr.dtype == target
+    assert flat["working_life__wealth"].dtype == canonical_float_dtype()
+
+
+def test_build_initial_states_missing_continuous_fallback_values_are_nan(
+    x64_disabled: None,  # noqa: ARG001
+) -> None:
+    """A missing continuous state falls back to an all-NaN array.
+
+    Pinning only the dtype would let a regression that fills the fallback
+    with zeros (or anything else representable) pass; assert the values.
+    """
+    model = get_model(n_periods=3)
+    flat = build_initial_states(
+        initial_states={"placeholder": jnp.asarray([0.0, 0.0])},
+        internal_regimes=model.internal_regimes,
+    )
+    assert bool(jnp.all(jnp.isnan(flat["working_life__wealth"])))
 
 
 def test_process_params_casts_float64_array_to_canonical_under_no_x64(
     x64_disabled: None,  # noqa: ARG001
 ) -> None:
-    """A `float64` array param is downcast to `float32` under `jax_enable_x64=False`."""
+    """A `float64` array param is downcast to `float32` under `jax_enable_x64=False`.
+
+    Build with `np.asarray` rather than `jnp.asarray` — the JAX builder
+    silently truncates to `float32` under no-x64 at construction time, so a
+    JAX-built input would never reach the helper as `float64`.
+    """
     template = MappingProxyType({"regime_a": MappingProxyType({"schedule": "Array"})})
     user_params = {
-        "regime_a": {"schedule": jnp.asarray([0.1, 0.2, 0.3], dtype=jnp.float64)}
+        "regime_a": {"schedule": np.asarray([0.1, 0.2, 0.3], dtype=np.float64)}
     }
 
     out = process_params(
-        params=user_params,
+        params=user_params,  # ty: ignore[invalid-argument-type]
         params_template=template,  # ty: ignore[invalid-argument-type]
     )
 
@@ -127,7 +117,6 @@ def test_process_params_passes_python_float_through_for_jax_weak_typing(
         params_template=template,  # ty: ignore[invalid-argument-type]
     )
 
-    # Python float stays Python float; JAX weak-typing handles promotion at JIT.
     assert out["regime_a"]["discount_factor"] == 0.95
     assert isinstance(out["regime_a"]["discount_factor"], float)
 
@@ -135,10 +124,8 @@ def test_process_params_passes_python_float_through_for_jax_weak_typing(
 def test_process_params_float_array_overflow_raises_with_qualified_name(
     x64_disabled: None,  # noqa: ARG001
 ) -> None:
-    """An out-of-float32 float64 *array* raises naming the qualified leaf."""
+    """An out-of-float32 float64 array raises naming the qualified leaf."""
     template = MappingProxyType({"regime_a": MappingProxyType({"schedule": "Array"})})
-    # Numpy here: under `jax_enable_x64=False`, `jnp.asarray(..., dtype=float64)`
-    # of an out-of-float32 value saturates to ±inf at construction time.
     user_params = {"regime_a": {"schedule": np.asarray([0.0, 1e40], dtype=np.float64)}}
 
     with pytest.raises(OverflowError, match="schedule"):
@@ -151,7 +138,12 @@ def test_process_params_float_array_overflow_raises_with_qualified_name(
 def test_simulate_state_pool_dtype_stable_across_periods(
     x64_disabled: None,  # noqa: ARG001
 ) -> None:
-    """A multi-period simulate keeps every state's dtype stable across periods."""
+    """A multi-period simulate keeps every state's dtype stable across periods.
+
+    The intended invariant is per-state stability; failing on any single
+    state still gives an actionable signal because the assertion message
+    names the offending state and its observed dtypes.
+    """
     n_periods = 4
     model = get_model(n_periods=n_periods)
     params = get_params(n_periods=n_periods)
@@ -165,14 +157,13 @@ def test_simulate_state_pool_dtype_stable_across_periods(
         params=params, period_to_regime_to_V_arr=None, initial_conditions=initial
     )
 
-    # Build the per-period state-dtype matrix and assert stability.
     seen: dict[str, set] = {}
     for period_data in result.raw_results.values():
         for snap in period_data.values():
             for state_name, arr in snap.states.items():
                 seen.setdefault(state_name, set()).add(arr.dtype)
-    for state_name, dtypes in seen.items():
-        assert len(dtypes) == 1, f"State {state_name} drifted across periods: {dtypes}"
+    drifted = {name: dtypes for name, dtypes in seen.items() if len(dtypes) != 1}
+    assert not drifted, f"States drifted across periods: {drifted}"
 
 
 def test_solve_v_arrays_at_canonical_float_dtype(
@@ -182,24 +173,42 @@ def test_solve_v_arrays_at_canonical_float_dtype(
     model = get_model(n_periods=3)
     period_to_regime_to_V_arr = model.solve(params=get_params(n_periods=3))
     target = canonical_float_dtype()
-    for period_v in period_to_regime_to_V_arr.values():
-        for regime_name, v_arr in period_v.items():
-            assert v_arr.dtype == target, (
-                f"V[{regime_name}] dtype is {v_arr.dtype}, expected {target}."
-            )
+    wrong = {
+        (period, regime_name): v_arr.dtype
+        for period, period_v in period_to_regime_to_V_arr.items()
+        for regime_name, v_arr in period_v.items()
+        if v_arr.dtype != target
+    }
+    assert not wrong, f"V-arrays not at {target}: {wrong}"
 
 
-def test_continuous_grid_to_jax_dtype_is_canonical(
+@pytest.mark.parametrize(
+    "grid",
+    [
+        LinSpacedGrid(start=0, stop=1, n_points=5),
+        LogSpacedGrid(start=1, stop=10, n_points=5),
+        IrregSpacedGrid(points=(0.0, 0.5, 1.0)),
+    ],
+    ids=["linspaced", "logspaced", "irregspaced"],
+)
+def test_continuous_grid_to_jax_dtype_is_canonical_under_no_x64(
+    grid: LinSpacedGrid | LogSpacedGrid | IrregSpacedGrid,
     x64_disabled: None,  # noqa: ARG001
 ) -> None:
-    """Continuous grid `to_jax()` returns canonical-float arrays."""
-    target = canonical_float_dtype()
-    assert LinSpacedGrid(start=0, stop=1, n_points=5).to_jax().dtype == target
-    assert LogSpacedGrid(start=1, stop=10, n_points=5).to_jax().dtype == target
-    assert IrregSpacedGrid(points=(0.0, 0.5, 1.0)).to_jax().dtype == target
+    """Continuous grid `to_jax()` materialises at `float32` under no-x64.
+
+    Asserts the concrete target dtype rather than `canonical_float_dtype()`
+    so the test fails if a future grid implementation hardcodes `float64`
+    (which JAX would silently truncate to `float32` under no-x64; the
+    helper-side comparison would mask that, the literal-side comparison
+    surfaces it).
+    """
+    assert grid.to_jax().dtype == jnp.float32
 
 
+@pytest.mark.parametrize("key", ["low", "high"])
 def test_process_params_casts_float_array_inside_mapping_leaf_to_canonical(
+    key: str,
     x64_disabled: None,  # noqa: ARG001
 ) -> None:
     """`MappingLeaf` float arrays land at `canonical_float_dtype()`."""
@@ -210,8 +219,8 @@ def test_process_params_casts_float_array_inside_mapping_leaf_to_canonical(
         "regime_a": {
             "sched": MappingLeaf(
                 {
-                    "low": jnp.asarray([0.1, 0.2], dtype=jnp.float64),
-                    "high": jnp.asarray([0.5, 0.7], dtype=jnp.float64),
+                    "low": np.asarray([0.1, 0.2], dtype=np.float64),
+                    "high": np.asarray([0.5, 0.7], dtype=np.float64),
                 }
             )
         }
@@ -222,6 +231,38 @@ def test_process_params_casts_float_array_inside_mapping_leaf_to_canonical(
         params_template=template,  # ty: ignore[invalid-argument-type]
     )
 
-    leaf = out["regime_a"]["sched"]
-    assert leaf.data["low"].dtype == jnp.float32  # ty: ignore[unresolved-attribute]
-    assert leaf.data["high"].dtype == jnp.float32  # ty: ignore[unresolved-attribute]
+    assert (
+        out["regime_a"]["sched"].data[key].dtype  # ty: ignore[unresolved-attribute]
+        == jnp.float32
+    )
+
+
+@pytest.mark.parametrize("index", [0, 1])
+def test_process_params_casts_float_array_inside_sequence_leaf_to_canonical(
+    index: int,
+    x64_disabled: None,  # noqa: ARG001
+) -> None:
+    """`SequenceLeaf` float arrays land at `canonical_float_dtype()`."""
+    template = MappingProxyType(
+        {"regime_a": MappingProxyType({"sched": "SequenceLeaf"})}
+    )
+    user_params = {
+        "regime_a": {
+            "sched": SequenceLeaf(
+                [
+                    np.asarray([0.1, 0.2], dtype=np.float64),
+                    np.asarray([0.5, 0.7], dtype=np.float64),
+                ]
+            )
+        }
+    }
+
+    out = process_params(
+        params=user_params,
+        params_template=template,  # ty: ignore[invalid-argument-type]
+    )
+
+    assert (
+        out["regime_a"]["sched"].data[index].dtype  # ty: ignore[unresolved-attribute]
+        == jnp.float32
+    )

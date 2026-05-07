@@ -1,6 +1,8 @@
+from collections.abc import Iterator
 from dataclasses import make_dataclass
 
 import pytest
+from jax import config as jax_config
 
 # Module-level precision settings (updated by pytest_configure based on --precision)
 X64_ENABLED: bool = True
@@ -28,11 +30,31 @@ def pytest_configure(config):
     X64_ENABLED = config.getoption("--precision") == "64"
     DECIMAL_PRECISION = 12 if X64_ENABLED else 5
 
-    from jax import config as jax_config  # noqa: PLC0415
-
     jax_config.update("jax_enable_x64", val=X64_ENABLED)
 
 
 @pytest.fixture(scope="session")
 def binary_category_class():
     return make_dataclass("BinaryCategoryClass", [("cat0", int, 0), ("cat1", int, 1)])
+
+
+@pytest.fixture(name="x64_disabled")
+def _fixture_x64_disabled() -> Iterator[None]:
+    """Run the test with `jax_enable_x64=False`, restoring afterwards."""
+    previous = jax_config.read("jax_enable_x64")
+    jax_config.update("jax_enable_x64", val=False)
+    try:
+        yield
+    finally:
+        jax_config.update("jax_enable_x64", val=previous)
+
+
+@pytest.fixture(name="x64_enabled")
+def _fixture_x64_enabled() -> Iterator[None]:
+    """Run the test with `jax_enable_x64=True`, restoring afterwards."""
+    previous = jax_config.read("jax_enable_x64")
+    jax_config.update("jax_enable_x64", val=True)
+    try:
+        yield
+    finally:
+        jax_config.update("jax_enable_x64", val=previous)
