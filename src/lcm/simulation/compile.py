@@ -98,7 +98,12 @@ def compile_all_simulate_functions(
         start = time.monotonic()
         # `func` is a `jax.jit`-wrapped callable; ty sees only the abstract
         # Callable type, so it can't see `.lower(...)`.
-        lowered[key] = func.lower(**args)  # ty: ignore[unresolved-attribute]
+        lowered[key] = func.lower(**args)  # ty: ignore[unresolved-attribute, invalid-argument-type]
+        # Drop the concrete lower-args once the `Lowered` object has captured
+        # its abstract values. This releases V-shaped templates, per-regime
+        # subject-state/action zeros, and the regime-params view before the
+        # parallel compile pool starts piling Compiled kernels onto the heap.
+        unique[key] = (func, None, label)
         logger.info(
             "  lowered in %s", format_duration(seconds=time.monotonic() - start)
         )
@@ -129,6 +134,11 @@ def compile_all_simulate_functions(
         for future in as_completed(futures):
             k, c = future.result()
             compiled[k] = c
+            # Release the HLO module held by the `Lowered` object now that
+            # its `Compiled` counterpart is in `compiled`; otherwise every
+            # lowered intermediate stays resident until the slowest compile
+            # finishes.
+            del lowered[k]
 
     return _swap_in_compiled(
         internal_regimes=internal_regimes,
@@ -145,7 +155,7 @@ def _collect_unique_simulate_functions(
     n_subjects: int,
     regime_V_shapes: dict[RegimeName, tuple[int, ...]],
 ) -> tuple[
-    dict[Hashable, tuple[Callable, dict, str]],
+    dict[Hashable, tuple[Callable, dict | None, str]],
     dict[tuple[RegimeName, str, int | None], Hashable],
 ]:
     """Walk every regime/period and dedup the simulate functions to compile.
@@ -156,7 +166,7 @@ def _collect_unique_simulate_functions(
     separate compiled programs whose signature matches what runtime actually
     dispatches.
     """
-    unique: dict[Hashable, tuple[Callable, dict, str]] = {}
+    unique: dict[Hashable, tuple[Callable, dict | None, str]] = {}
     func_keys: dict[tuple[RegimeName, str, int | None], Hashable] = {}
 
     for regime_name, regime in internal_regimes.items():
