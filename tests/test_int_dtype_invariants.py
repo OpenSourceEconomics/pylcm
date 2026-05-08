@@ -79,8 +79,8 @@ def test_update_states_for_subjects_preserves_storage_dtype() -> None:
     assert updated["work__health"].dtype == jnp.int32
 
 
-def test_process_params_passes_python_int_through_for_jax_weak_typing() -> None:
-    """Python `int` params stay weak-typed so JAX promotes them per call site."""
+def test_process_params_casts_python_int_to_int32() -> None:
+    """A Python `int` param leaf is cast to `jnp.int32`."""
     template = MappingProxyType({"regime_a": MappingProxyType({"final_age": "int"})})
     user_params = {"regime_a": {"final_age": 65}}
 
@@ -89,9 +89,9 @@ def test_process_params_passes_python_int_through_for_jax_weak_typing() -> None:
         params_template=template,  # ty: ignore[invalid-argument-type]
     )
 
-    # Python int stays Python int; JAX weak-typing handles promotion at JIT.
-    assert out["regime_a"]["final_age"] == 65
-    assert isinstance(out["regime_a"]["final_age"], int)
+    final_age = out["regime_a"]["final_age"]
+    assert int(final_age) == 65
+    assert final_age.dtype == jnp.int32  # ty: ignore[unresolved-attribute]
 
 
 def test_process_params_casts_int64_array_to_int32() -> None:

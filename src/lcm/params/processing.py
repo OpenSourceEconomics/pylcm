@@ -1,10 +1,11 @@
 """Process user-provided params into internal params.
 
 `process_params` resolves user-supplied parameters against the model's
-template, then runs a boundary-cast pass that normalises typed integer
-leaves to `jnp.int32` (and integer arrays inside `MappingLeaf` /
-`SequenceLeaf`). Out-of-range values surface as `ValueError` with the
-offending leaf's qualified name.
+template, then runs a boundary-cast pass that normalises every integer
+leaf — Python `int`, typed JAX integer arrays, numpy integer arrays,
+and integers inside `MappingLeaf` / `SequenceLeaf` — to `jnp.int32`.
+Out-of-range values surface as `ValueError` with the offending leaf's
+qualified name.
 """
 
 from collections.abc import Mapping
@@ -46,11 +47,11 @@ def process_params(
     - Regime level: `{"regime_0": {"arg_0": 0.0}}` — propagates within regime_0
     - Function level: `{"regime_0": {"func": {"arg_0": 0.0}}}` — direct specification
 
-    The output always matches the params_template skeleton. Typed integer
-    arrays in the user input — including those inside `MappingLeaf` /
-    `SequenceLeaf` containers — are cast to `jnp.int32` so the AOT signature
-    is stable across calls; Python scalars pass through to keep JAX weak-
-    typing semantics.
+    The output always matches the params_template skeleton. Every integer
+    leaf — Python `int`, typed JAX or numpy integer arrays, and integers
+    inside `MappingLeaf` / `SequenceLeaf` — is cast to `jnp.int32` so the
+    AOT signature is stable across calls. Python `bool` and float leaves
+    are handled by the float-side cast pass.
 
     Args:
         params: User-provided parameters dictionary.
@@ -141,20 +142,21 @@ def broadcast_to_template(
 
 
 def _cast_int_leaves_to_int32(value: Any, *, name: str) -> Any:  # noqa: ANN401
-    """Normalise typed integer arrays in a params value to `jnp.int32`.
+    """Normalise integer leaves in a params value to `jnp.int32`.
 
     Casts:
 
+    - Python `int` scalars — to `jnp.int32` so the DAG sees a JAX scalar
+      with a pinned dtype rather than a Python int that JAX would
+      otherwise promote per call site.
     - Typed JAX or numpy integer arrays (`jnp.array(..., dtype=jnp.int64)`,
-      `np.array(...)`) — strongly typed by JAX, so cast to `int32` to keep
-      the AOT signature stable.
+      `np.array(...)`) — cast to `int32` to keep the AOT signature stable.
     - Integer leaves inside `MappingLeaf` / `SequenceLeaf` — recurse.
 
     Passes through unchanged:
 
-    - Python `int` / `bool` scalars — JAX's weak-typing rules let them
-      promote to whatever dtype the surrounding operation needs (e.g.
-      `discount_factor: 1` in a float-typed function).
+    - Python `bool` scalars — handled by the float-side cast pass once
+      it lands.
     - Float and non-numeric typed leaves — handled by a separate float-
       normalisation pass.
     """
@@ -172,6 +174,12 @@ def _cast_int_leaves_to_int32(value: Any, *, name: str) -> Any:  # noqa: ANN401
                 for i, v in enumerate(value.data)
             ]
         )
+    # `bool` is a subclass of `int`, so test for it first and short-circuit
+    # — bool handling lands with the float-side cast pass, not here.
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return safe_to_int32(value, name=name)
     if isinstance(value, (Array, np.ndarray)) and np.issubdtype(
         value.dtype, np.integer
     ):
