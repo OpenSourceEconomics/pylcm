@@ -40,23 +40,21 @@ import gc
 import time
 
 import cloudpickle
+from aca_model.agent.preferences import BenchmarkPrefType
+from aca_model.benchmark import (
+    create_benchmark_model,
+    get_benchmark_initial_conditions,
+    get_benchmark_params,
+)
 
 from benchmarks import _gpu_mem
+from lcm import DiscreteGrid
 
 _N_SUBJECTS = 1000
 
 
 def _build() -> tuple[object, object, object]:
     """Build the aca-baseline model, params, and initial conditions."""
-    from aca_model.agent.preferences import BenchmarkPrefType
-    from aca_model.benchmark import (
-        create_benchmark_model,
-        get_benchmark_initial_conditions,
-        get_benchmark_params,
-    )
-
-    from lcm import DiscreteGrid
-
     model = create_benchmark_model(
         n_subjects=_N_SUBJECTS,
         pref_type_grid=DiscreteGrid(BenchmarkPrefType),
