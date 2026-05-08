@@ -4,6 +4,7 @@ import dataclasses
 import logging
 import threading
 from collections.abc import Mapping
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from types import MappingProxyType
 
@@ -117,8 +118,21 @@ class Model:
     _warned_n_subjects: set[int]
     """Mismatching `actual_n_subjects` already warned about (one warning each)."""
 
+    _simulate_compile_future: (
+        Future[MappingProxyType[RegimeName, InternalRegime]] | None
+    )
+    """Pending background AOT compile started by `solve(...)`, or `None`.
+
+    `solve(...)` kicks off `compile_all_simulate_functions` in a single
+    background thread so XLA compilation overlaps with the GPU-bound
+    backward induction. `simulate(...)` awaits the future before
+    dispatching the AOT-compiled program. Cleared after the result lands
+    in `_simulate_compile_cache`.
+    """
+
     _simulate_compile_lock: threading.Lock
-    """Serialises mutations of `_simulate_compile_cache` and `_warned_n_subjects`.
+    """Serialises mutations of `_simulate_compile_cache`, `_warned_n_subjects`,
+    and `_simulate_compile_future`.
 
     The check-then-set on each container is held under this lock. The
     consequent `log.warning` call sits outside the lock so concurrent
@@ -166,6 +180,7 @@ class Model:
         self.n_subjects = n_subjects
         self._simulate_compile_cache = {}
         self._warned_n_subjects = set()
+        self._simulate_compile_future = None
         self._simulate_compile_lock = threading.Lock()
 
         validate_model_inputs(
@@ -201,13 +216,16 @@ class Model:
 
         Drops `_simulate_compile_lock` (a `threading.Lock`, not pickleable),
         `_simulate_compile_cache` (compiled XLA programs that can't survive
-        a process boundary), and `_warned_n_subjects` (its companion set).
+        a process boundary), `_warned_n_subjects` (its companion set), and
+        `_simulate_compile_future` (a `Future` tied to the originating thread
+        pool).
         `__setstate__` restores all three to their fresh state.
         """
         state = self.__dict__.copy()
         state.pop("_simulate_compile_lock", None)
         state.pop("_simulate_compile_cache", None)
         state.pop("_warned_n_subjects", None)
+        state.pop("_simulate_compile_future", None)
         return state
 
     def __setstate__(self, state: dict[str, object]) -> None:
@@ -215,6 +233,7 @@ class Model:
         self.__dict__.update(state)
         self._simulate_compile_cache = {}
         self._warned_n_subjects = set()
+        self._simulate_compile_future = None
         self._simulate_compile_lock = threading.Lock()
 
     def get_params_template(self) -> UserFacingParamsTemplate:
@@ -278,6 +297,11 @@ class Model:
             internal_params=internal_params,
             ages=self.ages,
         )
+        self._maybe_start_simulate_compile_async(
+            internal_params=internal_params,
+            max_compilation_workers=max_compilation_workers,
+            logger=get_logger(log_level=log_level),
+        )
         try:
             period_to_regime_to_V_arr = solve(
                 internal_params=internal_params,
@@ -308,6 +332,41 @@ class Model:
             )
         return period_to_regime_to_V_arr
 
+    def _maybe_start_simulate_compile_async(
+        self,
+        *,
+        internal_params: InternalParams,
+        max_compilation_workers: int | None,
+        logger: logging.Logger,
+    ) -> None:
+        """Spawn `compile_all_simulate_functions` in a background thread.
+
+        Called from `solve(...)` so the simulate-side XLA compilation runs in
+        parallel with the GPU-bound backward induction. No-op when
+        `n_subjects is None`, when the cache for this size is already
+        populated, or when a compile is already in flight.
+        """
+        if self.n_subjects is None:
+            return
+        with self._simulate_compile_lock:
+            if self.n_subjects in self._simulate_compile_cache:
+                return
+            if self._simulate_compile_future is not None:
+                return
+            executor = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="lcm-simulate-compile"
+            )
+            self._simulate_compile_future = executor.submit(
+                compile_all_simulate_functions,
+                internal_regimes=self.internal_regimes,
+                internal_params=internal_params,
+                ages=self.ages,
+                n_subjects=self.n_subjects,
+                max_compilation_workers=max_compilation_workers,
+                logger=logger,
+            )
+            executor.shutdown(wait=False)
+
     def _resolve_simulate_internal_regimes(
         self,
         *,
@@ -326,7 +385,8 @@ class Model:
           `internal_regimes` and log a warning the first time each
           mismatching size is seen.
         - `actual_n_subjects == n_subjects`: return the cached AOT-compiled
-          regimes, building them on the first call.
+          regimes. If `solve(...)` started a background compile, await it
+          here; otherwise compile synchronously.
         """
         if self.n_subjects is None:
             return self.internal_regimes
@@ -343,6 +403,16 @@ class Model:
                     self.n_subjects,
                 )
             return self.internal_regimes
+        with self._simulate_compile_lock:
+            if self.n_subjects in self._simulate_compile_cache:
+                return self._simulate_compile_cache[self.n_subjects]
+            future = self._simulate_compile_future
+        if future is not None:
+            compiled = future.result()
+            with self._simulate_compile_lock:
+                self._simulate_compile_cache[self.n_subjects] = compiled
+                self._simulate_compile_future = None
+            return compiled
         with self._simulate_compile_lock:
             if self.n_subjects not in self._simulate_compile_cache:
                 self._simulate_compile_cache[self.n_subjects] = (
