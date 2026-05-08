@@ -40,6 +40,7 @@ import gc
 import time
 
 import cloudpickle
+import jax
 from aca_model.agent.preferences import BenchmarkPrefType
 from aca_model.benchmark import (
     create_benchmark_model,
@@ -54,15 +55,24 @@ _N_SUBJECTS = 1000
 
 
 def _build() -> tuple[object, object, object]:
-    """Build the aca-baseline model, params, and initial conditions."""
-    model = create_benchmark_model(
-        n_subjects=_N_SUBJECTS,
-        pref_type_grid=DiscreteGrid(BenchmarkPrefType),
-    )
-    _, model_params = get_benchmark_params(model=model)
-    initial_conditions = get_benchmark_initial_conditions(
-        model=model, n_subjects=_N_SUBJECTS, seed=0
-    )
+    """Build the aca-baseline model, params, and initial conditions.
+
+    Wrapped in `jax.default_device(cpu)` so the boundary dtype casts in
+    `Model.__init__` (which lift `fixed_params` Python scalars to JAX
+    arrays via `jnp.asarray`) don't initialise CUDA in the parent
+    process. ASV forks the benchmark worker from the parent; an
+    inherited CUDA context is unusable in the child and surfaces as
+    `CUDA_ERROR_NOT_INITIALIZED` on the first device op.
+    """
+    with jax.default_device(jax.devices("cpu")[0]):
+        model = create_benchmark_model(
+            n_subjects=_N_SUBJECTS,
+            pref_type_grid=DiscreteGrid(BenchmarkPrefType),
+        )
+        _, model_params = get_benchmark_params(model=model)
+        initial_conditions = get_benchmark_initial_conditions(
+            model=model, n_subjects=_N_SUBJECTS, seed=0
+        )
     return model, model_params, initial_conditions
 
 
