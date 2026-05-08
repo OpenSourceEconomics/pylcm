@@ -85,7 +85,7 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
     @property
     def n_points(self) -> ScalarInt:
         """Return the total number of points in the grid."""
-        return sum((p.n_points for p in self.pieces), start=jnp.int32(0))
+        return self._piece_n_points.sum()
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
@@ -152,7 +152,7 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
     @property
     def n_points(self) -> ScalarInt:
         """Return the total number of points in the grid."""
-        return sum((p.n_points for p in self.pieces), start=jnp.int32(0))
+        return self._piece_n_points.sum()
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
