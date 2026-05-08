@@ -29,7 +29,7 @@ def _retired_utility(wealth: ContinuousState) -> FloatND:
     return jnp.log(wealth)
 
 
-def _build_tiny_model(*, enable_jit: bool = False, n_subjects: int | None = None):
+def _build_tiny_model(*, enable_jit: bool, n_subjects: int):
     def utility(consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
         return jnp.log(consumption + wealth)
 
@@ -77,7 +77,7 @@ def _initial_conditions():
 
 @pytest.fixture
 def model_and_params():
-    return _build_tiny_model()
+    return _build_tiny_model(enable_jit=False, n_subjects=2)
 
 
 @pytest.fixture

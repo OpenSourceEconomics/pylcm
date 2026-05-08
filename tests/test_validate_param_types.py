@@ -73,7 +73,7 @@ def test_jax_array_param_kept_at_canonical_dtype() -> None:
         params={"bonus": jnp.asarray(1.0), "discount_factor": 0.95}
     )
     bonus = internal["working"]["utility__bonus"]
-    assert bonus.dtype == canonical_float_dtype()  # ty: ignore[unresolved-attribute]
+    assert bonus.dtype == canonical_float_dtype()
 
 
 def test_python_float_param_cast_to_canonical_dtype() -> None:
@@ -82,4 +82,4 @@ def test_python_float_param_cast_to_canonical_dtype() -> None:
     internal = model._process_params(params={"bonus": 1.0, "discount_factor": 0.95})
     bonus = internal["working"]["utility__bonus"]
     assert float(bonus) == 1.0
-    assert bonus.dtype == canonical_float_dtype()  # ty: ignore[unresolved-attribute]
+    assert bonus.dtype == canonical_float_dtype()

@@ -46,10 +46,10 @@ def test_get_next_state_function_with_solve_target():
 
     got = got_func(
         **action,
-        **state,
-        period=1,
-        age=1.0,
-        **flat_regime_params,
+        **state,  # ty: ignore[invalid-argument-type]
+        period=1,  # ty: ignore[invalid-argument-type]
+        age=1.0,  # ty: ignore[invalid-argument-type]
+        **flat_regime_params,  # ty: ignore[invalid-argument-type]
     )
     assert got == {"next_wealth": 1.05 * (20 - 10)}
 

@@ -28,7 +28,7 @@ def canonical_float_dtype() -> jnp.dtype:
     return jnp.float64 if jax.config.read("jax_enable_x64") else jnp.float32
 
 
-def safe_to_int32(value: object, *, name: str) -> Array:
+def safe_to_int_dtype(value: object, *, name: str) -> Array:
     """Cast a scalar, sequence, or array to `jnp.int32`, checking int32 range.
 
     Args:

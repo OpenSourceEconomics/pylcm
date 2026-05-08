@@ -219,7 +219,10 @@ def save_simulate_snapshot(
     _save_pkl(snap_dir / "model.pkl", model)
     _save_pkl(snap_dir / "params.pkl", params)
     _save_pkl(snap_dir / "initial_conditions.pkl", initial_conditions)
-    _save_pkl(snap_dir / "result.pkl", _strip_V_arr_from_result(result, model=model))
+    _save_pkl(
+        snap_dir / "result.pkl",
+        _strip_V_arr_from_result(result=result, model=model),
+    )
     _save_h5(snap_dir / "arrays.h5", period_to_regime_to_V_arr)
     _write_metadata(
         snap_dir,
@@ -291,7 +294,7 @@ def _find_project_root() -> Path | None:
 
 
 def _strip_V_arr_from_result(
-    result: SimulationResult, *, model: Model
+    *, result: SimulationResult, model: Model
 ) -> SimulationResult:
     """Create a copy of result with value arrays and compiled callables stripped.
 

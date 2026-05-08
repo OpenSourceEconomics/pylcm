@@ -10,7 +10,7 @@ from typing import overload
 import jax.numpy as jnp
 
 from lcm.exceptions import GridInitializationError, format_messages
-from lcm.typing import Age, Float1D, Int1D
+from lcm.typing import Float1D, Int1D
 
 STEP_UNITS: MappingProxyType[str, Fraction] = MappingProxyType(
     {
@@ -129,7 +129,7 @@ class AgeGrid:
         """
         return self._exact_step_size
 
-    def period_to_age(self, period: int) -> Age:
+    def period_to_age(self, period: int) -> int | float:
         """Convert a period index to the corresponding age.
 
         Args:
@@ -151,7 +151,7 @@ class AgeGrid:
             return int(self._values[period])
         return float(self._values[period])
 
-    def age_to_period(self, age: Age) -> int:
+    def age_to_period(self, age: float) -> int:
         """Convert an age to the corresponding period index.
 
         Args:
@@ -172,12 +172,14 @@ class AgeGrid:
             raise ValueError(msg) from None
 
     @functools.cached_property
-    def _age_to_period_map(self) -> dict[Age, int]:
+    def _age_to_period_map(self) -> dict[int | float, int]:
         if self._is_integer:
             return {int(v): i for i, v in enumerate(self._exact_values)}
         return {float(v): i for i, v in enumerate(self._exact_values)}
 
-    def get_periods_where(self, predicate: Callable[[Age], bool]) -> tuple[int, ...]:
+    def get_periods_where(
+        self, predicate: Callable[[int | float], bool]
+    ) -> tuple[int, ...]:
         """Get period indices where predicate is True.
 
         Args:
@@ -187,7 +189,7 @@ class AgeGrid:
             Tuple of period indices where predicate(age) is True.
 
         """
-        _convert: Callable[[object], Age] = int if self._is_integer else float  # ty: ignore[invalid-assignment]
+        _convert: Callable[[object], int | float] = int if self._is_integer else float  # ty: ignore[invalid-assignment]
         return tuple(
             period
             for period in range(self.n_periods)

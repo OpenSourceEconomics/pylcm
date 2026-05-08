@@ -21,7 +21,7 @@ from tests.test_models.deterministic.regression import (
 
 
 def test_build_initial_states_casts_user_float64_to_canonical(
-    x64_disabled: None,  # noqa: ARG001
+    x64_disabled: None,
 ) -> None:
     """A float64 continuous initial state lands at `canonical_float_dtype()`."""
     model = get_model(n_periods=3)
@@ -36,9 +36,7 @@ def test_build_initial_states_casts_user_float64_to_canonical(
     assert flat["working_life__wealth"].dtype == canonical_float_dtype()
 
 
-def test_build_initial_states_casts_user_int_to_canonical(
-    x64_disabled: None,  # noqa: ARG001
-) -> None:
+def test_build_initial_states_casts_user_int_to_canonical(x64_disabled: None) -> None:
     """A continuous initial state given as int32 lands at `canonical_float_dtype()`."""
     model = get_model(n_periods=3)
     initial_states = {
@@ -53,7 +51,7 @@ def test_build_initial_states_casts_user_int_to_canonical(
 
 
 def test_build_initial_states_missing_continuous_fallback_dtype_is_canonical(
-    x64_disabled: None,  # noqa: ARG001
+    x64_disabled: None,
 ) -> None:
     """A missing continuous state falls back to a canonical-dtype array."""
     model = get_model(n_periods=3)
@@ -66,7 +64,7 @@ def test_build_initial_states_missing_continuous_fallback_dtype_is_canonical(
 
 
 def test_build_initial_states_missing_continuous_fallback_values_are_nan(
-    x64_disabled: None,  # noqa: ARG001
+    x64_disabled: None,
 ) -> None:
     """A missing continuous state falls back to an all-NaN array.
 
@@ -82,7 +80,7 @@ def test_build_initial_states_missing_continuous_fallback_values_are_nan(
 
 
 def test_process_params_casts_float64_array_to_canonical_under_no_x64(
-    x64_disabled: None,  # noqa: ARG001
+    x64_disabled: None,
 ) -> None:
     """A `float64` array param is downcast to `float32` under `jax_enable_x64=False`.
 
@@ -101,12 +99,10 @@ def test_process_params_casts_float64_array_to_canonical_under_no_x64(
     )
 
     schedule = out["regime_a"]["schedule"]
-    assert schedule.dtype == jnp.float32  # ty: ignore[unresolved-attribute]
+    assert schedule.dtype == jnp.float32
 
 
-def test_process_params_casts_python_float_to_canonical(
-    x64_disabled: None,  # noqa: ARG001
-) -> None:
+def test_process_params_casts_python_float_to_canonical(x64_disabled: None) -> None:
     """A Python `float` param leaf is cast to `canonical_float_dtype()`."""
     template = MappingProxyType(
         {"regime_a": MappingProxyType({"discount_factor": "float"})}
@@ -120,11 +116,11 @@ def test_process_params_casts_python_float_to_canonical(
 
     discount_factor = out["regime_a"]["discount_factor"]
     np.testing.assert_allclose(float(discount_factor), 0.95, rtol=1e-6)
-    assert discount_factor.dtype == canonical_float_dtype()  # ty: ignore[unresolved-attribute]
+    assert discount_factor.dtype == canonical_float_dtype()
 
 
 def test_process_params_float_array_overflow_raises_with_qualified_name(
-    x64_disabled: None,  # noqa: ARG001
+    x64_disabled: None,
 ) -> None:
     """An out-of-float32 float64 array raises naming the qualified leaf."""
     template = MappingProxyType({"regime_a": MappingProxyType({"schedule": "Array"})})
@@ -137,9 +133,7 @@ def test_process_params_float_array_overflow_raises_with_qualified_name(
         )
 
 
-def test_simulate_state_pool_dtype_stable_across_periods(
-    x64_disabled: None,  # noqa: ARG001
-) -> None:
+def test_simulate_state_pool_dtype_stable_across_periods(x64_disabled: None) -> None:
     """A multi-period simulate keeps every state's dtype stable across periods.
 
     The intended invariant is per-state stability; failing on any single
@@ -168,9 +162,7 @@ def test_simulate_state_pool_dtype_stable_across_periods(
     assert not drifted, f"States drifted across periods: {drifted}"
 
 
-def test_solve_v_arrays_at_canonical_float_dtype(
-    x64_disabled: None,  # noqa: ARG001
-) -> None:
+def test_solve_v_arrays_at_canonical_float_dtype(x64_disabled: None) -> None:
     """Every V-array returned by `model.solve()` is at `canonical_float_dtype()`."""
     model = get_model(n_periods=3)
     period_to_regime_to_V_arr = model.solve(params=get_params(n_periods=3))
@@ -195,7 +187,7 @@ def test_solve_v_arrays_at_canonical_float_dtype(
 )
 def test_continuous_grid_to_jax_dtype_is_canonical_under_no_x64(
     make_grid: Callable[[], LinSpacedGrid | LogSpacedGrid | IrregSpacedGrid],
-    x64_disabled: None,  # noqa: ARG001
+    x64_disabled: None,
 ) -> None:
     """Continuous grid `to_jax()` materialises at `float32` under no-x64.
 
@@ -216,7 +208,7 @@ def test_continuous_grid_to_jax_dtype_is_canonical_under_no_x64(
 @pytest.mark.parametrize("attr", ["start", "stop"])
 def test_uniform_grid_stores_endpoints_as_canonical_jax_scalar(
     attr: str,
-    x64_disabled: None,  # noqa: ARG001
+    x64_disabled: None,
 ) -> None:
     """`LinSpacedGrid` stores `start`/`stop` as JAX scalars at canonical dtype."""
     grid = LinSpacedGrid(start=0.0, stop=100.0, n_points=10)
@@ -225,9 +217,7 @@ def test_uniform_grid_stores_endpoints_as_canonical_jax_scalar(
     assert value.dtype == canonical_float_dtype()
 
 
-def test_irreg_grid_stores_points_as_canonical_jax_array(
-    x64_disabled: None,  # noqa: ARG001
-) -> None:
+def test_irreg_grid_stores_points_as_canonical_jax_array(x64_disabled: None) -> None:
     """`IrregSpacedGrid` stores `points` as a JAX array at canonical dtype."""
     grid = IrregSpacedGrid(points=(0.0, 0.5, 1.0))
     assert isinstance(grid.points, jnp.ndarray)
@@ -237,7 +227,7 @@ def test_irreg_grid_stores_points_as_canonical_jax_array(
 @pytest.mark.parametrize("key", ["low", "high"])
 def test_process_params_casts_float_array_inside_mapping_leaf_to_canonical(
     key: str,
-    x64_disabled: None,  # noqa: ARG001
+    x64_disabled: None,
 ) -> None:
     """`MappingLeaf` float arrays land at `canonical_float_dtype()`."""
     template = MappingProxyType(
@@ -268,7 +258,7 @@ def test_process_params_casts_float_array_inside_mapping_leaf_to_canonical(
 @pytest.mark.parametrize("index", [0, 1])
 def test_process_params_casts_float_array_inside_sequence_leaf_to_canonical(
     index: int,
-    x64_disabled: None,  # noqa: ARG001
+    x64_disabled: None,
 ) -> None:
     """`SequenceLeaf` float arrays land at `canonical_float_dtype()`."""
     template = MappingProxyType(

@@ -101,7 +101,7 @@ def test_process_params_casts_python_int_to_int32() -> None:
 
     final_age = out["regime_a"]["final_age"]
     assert int(final_age) == 65
-    assert final_age.dtype == jnp.int32  # ty: ignore[unresolved-attribute]
+    assert final_age.dtype == jnp.int32
 
 
 def test_process_params_casts_int64_array_to_int32() -> None:
@@ -115,7 +115,7 @@ def test_process_params_casts_int64_array_to_int32() -> None:
     )
 
     schedule = out["regime_a"]["schedule"]
-    assert schedule.dtype == jnp.int32  # ty: ignore[unresolved-attribute]
+    assert schedule.dtype == jnp.int32
 
 
 def test_process_params_int_array_overflow_raises_with_qualified_name() -> None:

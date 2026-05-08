@@ -8,17 +8,22 @@ from jax import Array
 
 from lcm.exceptions import GridInitializationError, format_messages
 from lcm.grids import coordinates as grid_coordinates
-from lcm.grids.continuous import ContinuousGrid, _to_jax_scalar
+from lcm.grids.continuous import ContinuousGrid
 from lcm.typing import (
     Float1D,
     Int1D,
     ScalarFloat,
+    ScalarInt,
 )
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, init=False)
 class Piece:
-    """A piece of a piecewise linearly spaced grid."""
+    """A piece of a piecewise linearly spaced grid.
+
+    `n_points` is stored as a `jnp.int32` JAX scalar, converted from the
+    Python literal supplied at construction.
+    """
 
     interval: str | portion.Interval
     """The interval for this piece.
@@ -26,8 +31,17 @@ class Piece:
     Can be a string like "[1, 4)" or a `portion.Interval`.
     """
 
-    n_points: int
-    """The number of grid points in this piece."""
+    n_points: ScalarInt
+    """The number of grid points in this piece (`jnp.int32` JAX scalar)."""
+
+    def __init__(
+        self,
+        *,
+        interval: str | portion.Interval,
+        n_points: int | ScalarInt,
+    ) -> None:
+        object.__setattr__(self, "interval", interval)
+        object.__setattr__(self, "n_points", jnp.int32(n_points))
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -69,25 +83,24 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
         _init_piecewise_grid_cache(self)
 
     @property
-    def n_points(self) -> int:
+    def n_points(self) -> ScalarInt:
         """Return the total number of points in the grid."""
-        return sum(p.n_points for p in self.pieces)
+        return sum((p.n_points for p in self.pieces), start=jnp.int32(0))
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
         piece_arrays = [
-            jnp.linspace(self._piece_starts[i], self._piece_stops[i], p.n_points)
+            jnp.linspace(self._piece_starts[i], self._piece_stops[i], int(p.n_points))
             for i, p in enumerate(self.pieces)
         ]
         return jnp.concatenate(piece_arrays)
 
     @overload
-    def get_coordinate(self, value: float | ScalarFloat) -> ScalarFloat: ...
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
     @overload
     def get_coordinate(self, value: Array) -> Array: ...
-    def get_coordinate(self, value: float | ScalarFloat | Array) -> ScalarFloat | Array:
+    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
-        value = _to_jax_scalar(value)
         piece_idx = jnp.searchsorted(self._breakpoints, value, side="right")
         local_coord = grid_coordinates.get_linspace_coordinate(
             value=value,
@@ -137,9 +150,9 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
         _init_piecewise_grid_cache(self)
 
     @property
-    def n_points(self) -> int:
+    def n_points(self) -> ScalarInt:
         """Return the total number of points in the grid."""
-        return sum(p.n_points for p in self.pieces)
+        return sum((p.n_points for p in self.pieces), start=jnp.int32(0))
 
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
@@ -154,12 +167,11 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
         return jnp.concatenate(piece_arrays)
 
     @overload
-    def get_coordinate(self, value: float | ScalarFloat) -> ScalarFloat: ...
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
     @overload
     def get_coordinate(self, value: Array) -> Array: ...
-    def get_coordinate(self, value: float | ScalarFloat | Array) -> ScalarFloat | Array:
+    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
-        value = _to_jax_scalar(value)
         piece_idx = jnp.searchsorted(self._breakpoints, value, side="right")
         local_coord = grid_coordinates.get_logspace_coordinate(
             value=value,
@@ -269,7 +281,7 @@ def _validate_piecewise_lin_spaced_grid(  # noqa: C901, PLR0912
             )
             continue
 
-        if not isinstance(piece.n_points, int) or piece.n_points < 2:  # noqa: PLR2004
+        if piece.n_points < 2:  # noqa: PLR2004
             error_messages.append(
                 f"pieces[{i}].n_points must be an int >= 2, but is {piece.n_points}"
             )

@@ -31,7 +31,7 @@ import pandas as pd
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
 from jax import Array
 
-from lcm.dtypes import safe_to_float_dtype, safe_to_int32
+from lcm.dtypes import safe_to_float_dtype, safe_to_int_dtype
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.interfaces import InternalRegime
 from lcm.params.mapping_leaf import MappingLeaf
@@ -208,11 +208,11 @@ def _cast_leaves_to_canonical_dtype(value: Any, *, name: str) -> Any:  # noqa: A
     - `MappingLeaf` / `SequenceLeaf`: recurse on contents.
     - Python `bool`: `jnp.bool_(value)` (must come before `int` —
       `True` is a Python `int` subclass).
-    - Python `int`: `safe_to_int32(value)` → `jnp.int32`.
+    - Python `int`: `safe_to_int_dtype(value)` → `jnp.int32`.
     - Python `float`: `safe_to_float_dtype(value)` → canonical float.
     - JAX or numpy array, dispatch on `dtype.kind`:
       - `"b"` (bool) → `jnp.asarray(..., dtype=jnp.bool_)`.
-      - `"i"` / `"u"` (signed/unsigned int) → `safe_to_int32`.
+      - `"i"` / `"u"` (signed/unsigned int) → `safe_to_int_dtype`.
       - `"f"` (float) → `safe_to_float_dtype`.
 
     Raises `InvalidParamsError` for:
@@ -249,7 +249,7 @@ def _cast_leaves_to_canonical_dtype(value: Any, *, name: str) -> Any:  # noqa: A
     if isinstance(value, bool):
         return jnp.bool_(value)
     if isinstance(value, int):
-        return safe_to_int32(value, name=name)
+        return safe_to_int_dtype(value, name=name)
     if isinstance(value, float):
         return safe_to_float_dtype(value, name=name)
     if isinstance(value, (Array, np.ndarray)):
@@ -257,7 +257,7 @@ def _cast_leaves_to_canonical_dtype(value: Any, *, name: str) -> Any:  # noqa: A
         if kind == "b":
             return jnp.asarray(value, dtype=jnp.bool_)
         if kind in ("i", "u"):
-            return safe_to_int32(value, name=name)
+            return safe_to_int_dtype(value, name=name)
         if kind == "f":
             return safe_to_float_dtype(value, name=name)
         msg = (

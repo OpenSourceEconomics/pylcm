@@ -15,7 +15,9 @@ from tests.conftest import DECIMAL_PRECISION
 
 
 def test_linspace():
-    calculated = linspace(start=jnp.asarray(1.0), stop=jnp.asarray(2.0), n_points=6)
+    calculated = linspace(
+        start=jnp.asarray(1.0), stop=jnp.asarray(2.0), n_points=jnp.int32(6)
+    )
     expected = np.array([1, 1.2, 1.4, 1.6, 1.8, 2])
     aaae(calculated, expected, decimal=DECIMAL_PRECISION)
 
@@ -29,7 +31,7 @@ def test_linspace_mapped_value():
         value=jnp.asarray(1.2),
         start=start,
         stop=stop,
-        n_points=6,
+        n_points=jnp.int32(6),
     )
     assert np.allclose(calculated, 1.0)
 
@@ -41,7 +43,7 @@ def test_linspace_mapped_value():
         value=jnp.asarray(1.3),
         start=start,
         stop=stop,
-        n_points=6,
+        n_points=jnp.int32(6),
     )
     assert np.allclose(calculated, 1.5)
 
@@ -50,13 +52,15 @@ def test_linspace_mapped_value():
         value=jnp.asarray(0.6),
         start=start,
         stop=stop,
-        n_points=6,
+        n_points=jnp.int32(6),
     )
     assert np.allclose(calculated, -2.0)
 
 
 def test_logspace():
-    calculated = logspace(start=jnp.asarray(1.0), stop=jnp.asarray(100.0), n_points=7)
+    calculated = logspace(
+        start=jnp.asarray(1.0), stop=jnp.asarray(100.0), n_points=jnp.int32(7)
+    )
     expected = np.array(
         [
             1.0,
@@ -77,7 +81,7 @@ def test_logspace_mapped_value():
         value=jnp.asarray((2.15443469 + 4.64158883) / 2),
         start=jnp.asarray(1.0),
         stop=jnp.asarray(100.0),
-        n_points=7,
+        n_points=jnp.int32(7),
     )
     assert np.allclose(calculated, 1.5)
 
@@ -88,7 +92,7 @@ def test_map_coordinates_linear():
     grid_info = {
         "start": jnp.asarray(0.0),
         "stop": jnp.asarray(1.0),
-        "n_points": 3,
+        "n_points": jnp.int32(3),
     }
 
     grid = linspace(**grid_info)  # [0, 0.5, 1]
@@ -113,7 +117,7 @@ def test_map_coordinates_logarithmic():
     grid_info = {
         "start": jnp.asarray(1.0),
         "stop": jnp.asarray(2.0),
-        "n_points": 3,
+        "n_points": jnp.int32(3),
     }
 
     grid = logspace(**grid_info)  # [1.0, 1.414213562373095, 2.0]
@@ -138,7 +142,7 @@ def test_map_coordinates_linear_outside_grid():
     grid_info = {
         "start": jnp.asarray(1.0),
         "stop": jnp.asarray(2.0),
-        "n_points": 2,
+        "n_points": jnp.int32(2),
     }
 
     grid = linspace(**grid_info)  # [1, 2]
@@ -148,7 +152,7 @@ def test_map_coordinates_linear_outside_grid():
     # Get coordinates corresponding to values outside the grid [1, 2]
     coordinates = jnp.array(
         [
-            get_linspace_coordinate(value=jnp.asarray(grid_val), **grid_info)  # ty: ignore[no-matching-overload]
+            get_linspace_coordinate(value=jnp.asarray(grid_val), **grid_info)
             for grid_val in [-1.0, 0.0, 3.0]
         ]
     )
@@ -164,21 +168,23 @@ def test_get_linspace_coordinate_with_array():
         value=values,
         start=jnp.asarray(1.0),
         stop=jnp.asarray(2.0),
-        n_points=6,
+        n_points=jnp.int32(6),
     )
     expected = jnp.array([0.0, 1.0, 2.5])
     aaae(coords, expected, decimal=DECIMAL_PRECISION)
 
 
 def test_get_logspace_coordinate_with_array():
-    grid = logspace(start=jnp.asarray(1.0), stop=jnp.asarray(100.0), n_points=7)
+    grid = logspace(
+        start=jnp.asarray(1.0), stop=jnp.asarray(100.0), n_points=jnp.int32(7)
+    )
     mid = (float(grid[1]) + float(grid[2])) / 2
     values = jnp.array([mid])
     coords = get_logspace_coordinate(
         value=values,
         start=jnp.asarray(1.0),
         stop=jnp.asarray(100.0),
-        n_points=7,
+        n_points=jnp.int32(7),
     )
     aaae(coords, jnp.array([1.5]), decimal=DECIMAL_PRECISION)
 

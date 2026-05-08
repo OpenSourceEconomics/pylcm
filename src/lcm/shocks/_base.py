@@ -11,7 +11,6 @@ from jax.scipy.stats.norm import cdf
 from lcm.exceptions import GridInitializationError
 from lcm.grids import ContinuousGrid
 from lcm.grids import coordinates as grid_coordinates
-from lcm.grids.continuous import _to_jax_scalar
 from lcm.typing import Float1D, FloatND, ScalarFloat
 
 
@@ -108,18 +107,16 @@ class _ShockGrid(ContinuousGrid):
         return self.get_gridpoints()
 
     @overload
-    def get_coordinate(self, value: float | ScalarFloat) -> ScalarFloat: ...
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
     @overload
     def get_coordinate(self, value: Array) -> Array: ...
-    def get_coordinate(self, value: float | ScalarFloat | Array) -> ScalarFloat | Array:
+    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
         if not self.is_fully_specified:
             raise GridInitializationError(
                 "Cannot compute coordinate for a ShockGrid without all shock params."
             )
-        return grid_coordinates.get_irreg_coordinate(
-            value=_to_jax_scalar(value), points=self.to_jax()
-        )
+        return grid_coordinates.get_irreg_coordinate(value=value, points=self.to_jax())
 
 
 def _validate_gauss_hermite_grid(

@@ -14,6 +14,7 @@ from lcm.grids.base import Grid
 from lcm.typing import (
     Float1D,
     ScalarFloat,
+    ScalarInt,
 )
 
 
@@ -30,19 +31,12 @@ class ContinuousGrid(Grid):
     """Size of the batches that are looped over during the solution."""
 
     @overload
-    def get_coordinate(self, value: float | ScalarFloat) -> ScalarFloat: ...
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
     @overload
     def get_coordinate(self, value: Array) -> Array: ...
     @abstractmethod
-    def get_coordinate(self, value: float | ScalarFloat | Array) -> ScalarFloat | Array:
+    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
-
-
-def _to_jax_scalar(value: float | ScalarFloat | Array) -> ScalarFloat | Array:
-    """Lift a Python `float` to a canonical-dtype JAX scalar; pass arrays through."""
-    if isinstance(value, (int, float)):
-        return jnp.asarray(value, dtype=canonical_float_dtype())
-    return value
 
 
 @dataclass(frozen=True, kw_only=True, init=False)
@@ -50,8 +44,8 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
     """Grid with start/stop/n_points for linearly or logarithmically spaced values.
 
     `start` and `stop` are stored as JAX scalars at `canonical_float_dtype()`,
-    converted from the Python literals supplied at construction. `n_points`
-    stays a Python `int` so it can size JAX arrays statically.
+    `n_points` as a `jnp.int32` JAX scalar — converted from the Python
+    literals (or other numeric inputs) supplied at construction.
     """
 
     start: ScalarFloat
@@ -60,15 +54,15 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
     stop: ScalarFloat
     """The stop value of the grid (JAX scalar at `canonical_float_dtype()`)."""
 
-    n_points: int
-    """The number of points in the grid."""
+    n_points: ScalarInt
+    """The number of points in the grid (`jnp.int32` JAX scalar)."""
 
     def __init__(
         self,
         *,
         start: float | ScalarFloat,
         stop: float | ScalarFloat,
-        n_points: int,
+        n_points: int | ScalarInt,
         batch_size: int = 0,
     ) -> None:
         _init_uniform_grid(
@@ -85,11 +79,11 @@ class UniformContinuousGrid(ContinuousGrid, ABC):
         """Convert the grid to a Jax array."""
 
     @overload
-    def get_coordinate(self, value: float | ScalarFloat) -> ScalarFloat: ...
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
     @overload
     def get_coordinate(self, value: Array) -> Array: ...
     @abstractmethod
-    def get_coordinate(self, value: float | ScalarFloat | Array) -> ScalarFloat | Array:
+    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
 
     def replace(self, **kwargs: float) -> UniformContinuousGrid:
@@ -126,13 +120,13 @@ class LinSpacedGrid(UniformContinuousGrid):
         )
 
     @overload
-    def get_coordinate(self, value: float | ScalarFloat) -> ScalarFloat: ...
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
     @overload
     def get_coordinate(self, value: Array) -> Array: ...
-    def get_coordinate(self, value: float | ScalarFloat | Array) -> ScalarFloat | Array:
+    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
         return grid_coordinates.get_linspace_coordinate(
-            value=_to_jax_scalar(value),
+            value=value,
             start=self.start,
             stop=self.stop,
             n_points=self.n_points,
@@ -155,7 +149,7 @@ class LogSpacedGrid(UniformContinuousGrid):
         *,
         start: float | ScalarFloat,
         stop: float | ScalarFloat,
-        n_points: int,
+        n_points: int | ScalarInt,
         batch_size: int = 0,
     ) -> None:
         _init_uniform_grid(
@@ -174,13 +168,13 @@ class LogSpacedGrid(UniformContinuousGrid):
         )
 
     @overload
-    def get_coordinate(self, value: float | ScalarFloat) -> ScalarFloat: ...
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
     @overload
     def get_coordinate(self, value: Array) -> Array: ...
-    def get_coordinate(self, value: float | ScalarFloat | Array) -> ScalarFloat | Array:
+    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
         return grid_coordinates.get_logspace_coordinate(
-            value=_to_jax_scalar(value),
+            value=value,
             start=self.start,
             stop=self.stop,
             n_points=self.n_points,
@@ -192,26 +186,32 @@ def _init_uniform_grid(
     *,
     start: float | ScalarFloat,
     stop: float | ScalarFloat,
-    n_points: int,
+    n_points: int | ScalarInt,
     batch_size: int,
     requires_positive_start: bool,
 ) -> None:
-    """Validate the user input and store fields on `grid`.
+    """Cast `start` / `stop` / `n_points` to canonical JAX scalars, validate, store.
 
-    Validation runs on the original Python values; once they pass, `start`
-    and `stop` are converted to JAX scalars at `canonical_float_dtype()`
-    so downstream code reads typed scalars.
+    `jnp.asarray(..., dtype=canonical_float_dtype())` and `jnp.int32(...)` lift
+    every numeric input at the boundary: Python literals from user
+    construction, JAX scalars from `dataclasses.replace` round-trips, anything
+    else raises here. The validator can then assume strict `ScalarFloat` /
+    `ScalarInt` types and only check value invariants (finiteness, ordering,
+    positivity).
     """
+    dtype = canonical_float_dtype()
+    start_jax = jnp.asarray(start, dtype=dtype)
+    stop_jax = jnp.asarray(stop, dtype=dtype)
+    n_points_jax = jnp.int32(n_points)
     _validate_continuous_grid(
-        start=start,
-        stop=stop,
-        n_points=n_points,
+        start=start_jax,
+        stop=stop_jax,
+        n_points=n_points_jax,
         requires_positive_start=requires_positive_start,
     )
-    dtype = canonical_float_dtype()
-    object.__setattr__(grid, "start", jnp.asarray(start, dtype=dtype))
-    object.__setattr__(grid, "stop", jnp.asarray(stop, dtype=dtype))
-    object.__setattr__(grid, "n_points", n_points)
+    object.__setattr__(grid, "start", start_jax)
+    object.__setattr__(grid, "stop", stop_jax)
+    object.__setattr__(grid, "n_points", n_points_jax)
     object.__setattr__(grid, "batch_size", batch_size)
 
 
@@ -299,10 +299,10 @@ class IrregSpacedGrid(ContinuousGrid):
         return self.points
 
     @overload
-    def get_coordinate(self, value: float | ScalarFloat) -> ScalarFloat: ...
+    def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
     @overload
     def get_coordinate(self, value: Array) -> Array: ...
-    def get_coordinate(self, value: float | ScalarFloat | Array) -> ScalarFloat | Array:
+    def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
         if self.points is None:
             raise GridInitializationError(
@@ -310,22 +310,21 @@ class IrregSpacedGrid(ContinuousGrid):
                 "initialization or use IrregSpacedGrid(n_points=...) and "
                 "supply points at runtime via params."
             )
-        return grid_coordinates.get_irreg_coordinate(
-            value=_to_jax_scalar(value), points=self.points
-        )
+        return grid_coordinates.get_irreg_coordinate(value=value, points=self.points)
 
 
 def _validate_continuous_grid(
     *,
-    start: float | ScalarFloat,
-    stop: float | ScalarFloat,
-    n_points: int,
+    start: ScalarFloat,
+    stop: ScalarFloat,
+    n_points: ScalarInt,
     requires_positive_start: bool = False,
 ) -> None:
     """Validate the continuous grid parameters.
 
-    Accepts Python ints/floats from user construction and JAX scalars from
-    `dataclasses.replace` round-trips on already-constructed grids.
+    `start` and `stop` are post-cast canonical-dtype JAX scalars (the
+    boundary cast in `_init_uniform_grid` already rejects non-numeric
+    inputs); the checks here cover only value invariants.
 
     Args:
         start: The start value of the grid.
@@ -340,32 +339,24 @@ def _validate_continuous_grid(
     """
     error_messages = []
 
-    valid_start_type = isinstance(start, int | float | Array)
-    if not valid_start_type:
-        error_messages.append("start must be a scalar int or float value")
-
-    valid_stop_type = isinstance(stop, int | float | Array)
-    if not valid_stop_type:
-        error_messages.append("stop must be a scalar int or float value")
-
     # Reject NaN/inf early — `start >= stop` returns False for NaN, so an
     # un-finite start would otherwise pass silently and produce a broken grid.
-    if valid_start_type and not jnp.isfinite(start):
+    start_finite = bool(jnp.isfinite(start))
+    if not start_finite:
         error_messages.append(f"start must be finite, got {start}")
-        valid_start_type = False
-    if valid_stop_type and not jnp.isfinite(stop):
+    stop_finite = bool(jnp.isfinite(stop))
+    if not stop_finite:
         error_messages.append(f"stop must be finite, got {stop}")
-        valid_stop_type = False
 
-    if not isinstance(n_points, int) or n_points < 1:
+    if n_points < 1:
         error_messages.append(
             f"n_points must be an int greater than 0 but is {n_points}",
         )
 
-    if valid_start_type and valid_stop_type and start >= stop:
+    if start_finite and stop_finite and start >= stop:
         error_messages.append("start must be less than stop")
 
-    if valid_start_type and requires_positive_start and start <= 0:
+    if start_finite and requires_positive_start and start <= 0:
         error_messages.append(
             f"start must be > 0 for a log-spaced grid (got {start}); "
             f"`log(x)` is undefined for `x <= 0`."
