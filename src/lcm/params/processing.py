@@ -1,23 +1,31 @@
 """Process user-provided params into internal params.
 
 `process_params` resolves user-supplied parameters against the model's
-template, then runs a boundary-cast pass that normalises typed numeric
-leaves to canonical pylcm dtypes:
+template, then runs a boundary-cast pass that normalises every numeric
+leaf to a canonical pylcm dtype:
 
-- Typed integer leaves (and integer arrays inside `MappingLeaf` /
-  `SequenceLeaf`) cast to `jnp.int32`. Out-of-range values surface as
-  `ValueError`.
-- Typed float leaves (and float arrays inside `MappingLeaf` /
-  `SequenceLeaf`) cast to `canonical_float_dtype()`. Down-cast overflow
-  surfaces as `OverflowError`.
+- Python `bool` (and `np.bool_` arrays) cast to `jnp.bool_`.
+- Python `int` and typed integer arrays cast to `jnp.int32`. Out-of-
+  range values surface as `ValueError`.
+- Python `float` and typed float arrays cast to `canonical_float_dtype()`.
+  Down-cast overflow surfaces as `OverflowError`.
+- `MappingLeaf` / `SequenceLeaf` containers recurse.
 
-Both errors name the offending leaf via its qualified path.
+The pass runs as the *last* step over `internal_params` — `pd.Series`
+leaves are reshaped to JAX arrays via `convert_series_in_params`
+beforehand, so by the time the cast walks the tree, every numeric leaf
+is either a JAX array, a numpy array, or a Python scalar.
+
+Anything else (`pd.Series` (defensive), strings, complex/object arrays,
+custom objects) raises `InvalidParamsError` with the offending leaf's
+qualified name.
 """
 
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, cast
 
+import jax.numpy as jnp
 import numpy as np
 import pandas as pd
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
@@ -54,17 +62,16 @@ def process_params(
     - Regime level: `{"regime_0": {"arg_0": 0.0}}` — propagates within regime_0
     - Function level: `{"regime_0": {"func": {"arg_0": 0.0}}}` — direct specification
 
-    The output always matches the params_template skeleton. Typed numeric
-    arrays in the user input — including those inside `MappingLeaf` /
-    `SequenceLeaf` containers — are cast to canonical pylcm dtypes so the
-    AOT signature is stable across calls:
+    The output always matches the params_template skeleton. Every numeric
+    leaf — Python `bool` / `int` / `float`, typed JAX or numpy arrays, and
+    numerics inside `MappingLeaf` / `SequenceLeaf` — is cast to the
+    canonical pylcm dtype so the AOT signature is stable across calls.
 
-    - Integer arrays cast to `jnp.int32`.
-    - Float arrays cast to `canonical_float_dtype()`.
-
-    Python scalars (`int` / `float` / `bool`) pass through to keep JAX
-    weak-typing semantics, and `pd.Series` leaves pass through to their
-    dedicated multi-index reshaper.
+    Callers that pass `pd.Series` leaves should orchestrate the steps
+    themselves: `broadcast_to_template` (resolve), `convert_series_in_params`
+    (multi-index reshape), then `cast_params_to_canonical_dtypes`. The
+    one-shot `process_params` raises on `pd.Series` because the dtype
+    cast does not know how to reshape multi-index data.
 
     Args:
         params: User-provided parameters dictionary.
@@ -74,7 +81,8 @@ def process_params(
         Immutable mapping with the same structure as params_template.
 
     Raises:
-        InvalidParamsError: If params contains unexpected keys or type mismatches.
+        InvalidParamsError: If params contains unexpected keys, type
+            mismatches, or unsupported leaf types.
         InvalidNameError: If the same parameter is specified at multiple levels.
         ValueError: If a typed integer leaf carries a value outside the
             int32 range; the message names the offending parameter qname.
@@ -82,7 +90,10 @@ def process_params(
             down-cast to `float32`; the message names the offending qname.
 
     """
-    return broadcast_to_template(params=params, template=params_template, required=True)
+    internal = broadcast_to_template(
+        params=params, template=params_template, required=True
+    )
+    return cast_params_to_canonical_dtypes(internal)
 
 
 def broadcast_to_template(
@@ -98,6 +109,10 @@ def broadcast_to_template(
     1. Exact match: `regime__function__param`
     2. Regime level: `regime__param`
     3. Model level: `param`
+
+    Returns the resolved structure with leaves left as the user supplied
+    them; dtype canonicalisation is a separate step
+    (`cast_params_to_canonical_dtypes`).
 
     Args:
         params: User-provided values at any nesting depth.
@@ -144,38 +159,70 @@ def broadcast_to_template(
     if unknown:
         raise InvalidParamsError(f"Unknown keys: {sorted(unknown)}")
 
-    for regime, leaves in result.items():
-        for param_qname, value in leaves.items():
-            leaves[param_qname] = _cast_leaves_to_canonical_dtype(
-                value, name=f"{regime}{QNAME_DELIMITER}{param_qname}"
-            )
-
     return cast(
         "InternalParams",
         MappingProxyType({k: MappingProxyType(v) for k, v in result.items()}),
     )
 
 
+def cast_params_to_canonical_dtypes(internal_params: InternalParams) -> InternalParams:
+    """Cast every numeric leaf of `internal_params` to its canonical pylcm dtype.
+
+    Runs as a separate pass so the orchestrator can interpose
+    `convert_series_in_params` between broadcast and cast — by the time
+    this pass walks the tree, no `pd.Series` leaf should remain.
+
+    Args:
+        internal_params: Output of `broadcast_to_template`, optionally
+            after `convert_series_in_params`.
+
+    Returns:
+        New immutable mapping with every leaf cast to its canonical dtype.
+
+    """
+    return cast(
+        "InternalParams",
+        MappingProxyType(
+            {
+                regime: MappingProxyType(
+                    {
+                        param_qname: _cast_leaves_to_canonical_dtype(
+                            value, name=f"{regime}{QNAME_DELIMITER}{param_qname}"
+                        )
+                        for param_qname, value in leaves.items()
+                    }
+                )
+                for regime, leaves in internal_params.items()
+            }
+        ),
+    )
+
+
 def _cast_leaves_to_canonical_dtype(value: Any, *, name: str) -> Any:  # noqa: ANN401
-    """Normalise typed numeric arrays in a params value to canonical pylcm dtypes.
+    """Cast a single params leaf to its canonical pylcm dtype.
+
+    Strict whitelist — every code path either casts or raises.
 
     Casts:
 
-    - Typed JAX or numpy integer arrays (`jnp.array(..., dtype=jnp.int64)`,
-      `np.array(...)`) — strongly typed by JAX, so cast to `int32` to keep
-      the AOT signature stable.
-    - Typed JAX or numpy float arrays — cast to `canonical_float_dtype()`.
-    - Numeric leaves inside `MappingLeaf` / `SequenceLeaf` — recurse.
+    - `MappingLeaf` / `SequenceLeaf`: recurse on contents.
+    - Python `bool`: `jnp.bool_(value)` (must come before `int` —
+      `True` is a Python `int` subclass).
+    - Python `int`: `safe_to_int32(value)` → `jnp.int32`.
+    - Python `float`: `safe_to_float_dtype(value)` → canonical float.
+    - JAX or numpy array, dispatch on `dtype.kind`:
+      - `"b"` (bool) → `jnp.asarray(..., dtype=jnp.bool_)`.
+      - `"i"` / `"u"` (signed/unsigned int) → `safe_to_int32`.
+      - `"f"` (float) → `safe_to_float_dtype`.
 
-    Passes through unchanged:
+    Raises `InvalidParamsError` for:
 
-    - Python `int` / `float` / `bool` scalars — JAX's weak-typing rules
-      let them promote to whatever dtype the surrounding operation needs
-      (e.g. `discount_factor: 1` in a float-typed function).
-    - `pd.Series` leaves — they carry multi-index structure that
-      `np.asarray` would flatten away, so the dtype cast is handled by
-      the dedicated multi-index reshaper instead.
-    - Non-numeric typed leaves.
+    - `pd.Series`: defensive — the orchestrator must run
+      `convert_series_in_params` before this pass.
+    - Array dtypes other than bool/int/float (e.g. complex, object,
+      string).
+    - Anything else (`str`, `None`, `dict`, lists, custom objects).
+
     """
     if isinstance(value, MappingLeaf):
         return MappingLeaf(
@@ -192,13 +239,38 @@ def _cast_leaves_to_canonical_dtype(value: Any, *, name: str) -> Any:  # noqa: A
             ]
         )
     if isinstance(value, pd.Series):
-        return value
+        msg = (
+            f"{name!r}: pd.Series leaf reached the dtype cast — "
+            f"`convert_series_in_params` must run between "
+            f"`broadcast_to_template` and `cast_params_to_canonical_dtypes`."
+        )
+        raise InvalidParamsError(msg)
+    # `bool` before `int` — `True` is a Python `int` subclass.
+    if isinstance(value, bool):
+        return jnp.bool_(value)
+    if isinstance(value, int):
+        return safe_to_int32(value, name=name)
+    if isinstance(value, float):
+        return safe_to_float_dtype(value, name=name)
     if isinstance(value, (Array, np.ndarray)):
-        if np.issubdtype(value.dtype, np.integer):
+        kind = value.dtype.kind
+        if kind == "b":
+            return jnp.asarray(value, dtype=jnp.bool_)
+        if kind in ("i", "u"):
             return safe_to_int32(value, name=name)
-        if np.issubdtype(value.dtype, np.floating):
+        if kind == "f":
             return safe_to_float_dtype(value, name=name)
-    return value
+        msg = (
+            f"{name!r}: array dtype {value.dtype} not supported "
+            f"(expected bool / int / float)."
+        )
+        raise InvalidParamsError(msg)
+    msg = (
+        f"{name!r}: unsupported leaf type {type(value).__name__} "
+        f"(expected bool / int / float / numpy or JAX array / "
+        f"MappingLeaf / SequenceLeaf)."
+    )
+    raise InvalidParamsError(msg)
 
 
 def _find_candidates(

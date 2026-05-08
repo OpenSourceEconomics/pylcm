@@ -20,6 +20,7 @@ from lcm.pandas_utils import convert_series_in_params, has_series
 from lcm.params import MappingLeaf
 from lcm.params.processing import (
     broadcast_to_template,
+    cast_params_to_canonical_dtypes,
     create_params_template,
 )
 from lcm.params.sequence_leaf import SequenceLeaf
@@ -128,6 +129,7 @@ def _build_regimes_and_template_with_fixed_params(
             regimes=regimes,
             regime_names_to_ids=regime_names_to_ids,
         )
+    fixed_internal = cast_params_to_canonical_dtypes(fixed_internal)
     _validate_param_types(fixed_internal)
 
     return (

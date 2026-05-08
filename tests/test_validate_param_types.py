@@ -76,9 +76,10 @@ def test_jax_array_param_kept_at_canonical_dtype() -> None:
     assert bonus.dtype == canonical_float_dtype()  # ty: ignore[unresolved-attribute]
 
 
-def test_python_float_param_passed_through_for_weak_typing() -> None:
-    """A Python `float` param survives processing as a Python `float`."""
+def test_python_float_param_cast_to_canonical_dtype() -> None:
+    """A Python `float` param is cast to `canonical_float_dtype()`."""
     model = _make_model()
     internal = model._process_params(params={"bonus": 1.0, "discount_factor": 0.95})
-    assert internal["working"]["utility__bonus"] == 1.0
-    assert isinstance(internal["working"]["utility__bonus"], float)
+    bonus = internal["working"]["utility__bonus"]
+    assert float(bonus) == 1.0
+    assert bonus.dtype == canonical_float_dtype()  # ty: ignore[unresolved-attribute]

@@ -26,6 +26,7 @@ type Bool1D = Bool[Array, "_"]  # noqa: F821
 # includes zero dimensional jax arrays.
 type ScalarInt = int | Int32[Scalar, ""]
 type ScalarFloat = float | Float[Scalar, ""]
+type ScalarBool = bool | Bool[Scalar, ""]
 
 type Period = int | Int1D
 type Age = int | float

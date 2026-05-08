@@ -103,10 +103,10 @@ def test_process_params_casts_float64_array_to_canonical_under_no_x64(
     assert schedule.dtype == jnp.float32  # ty: ignore[unresolved-attribute]
 
 
-def test_process_params_passes_python_float_through_for_jax_weak_typing(
+def test_process_params_casts_python_float_to_canonical(
     x64_disabled: None,  # noqa: ARG001
 ) -> None:
-    """Python `float` params stay weak-typed so JAX promotes them per call site."""
+    """A Python `float` param leaf is cast to `canonical_float_dtype()`."""
     template = MappingProxyType(
         {"regime_a": MappingProxyType({"discount_factor": "float"})}
     )
@@ -117,8 +117,9 @@ def test_process_params_passes_python_float_through_for_jax_weak_typing(
         params_template=template,  # ty: ignore[invalid-argument-type]
     )
 
-    assert out["regime_a"]["discount_factor"] == 0.95
-    assert isinstance(out["regime_a"]["discount_factor"], float)
+    discount_factor = out["regime_a"]["discount_factor"]
+    np.testing.assert_allclose(float(discount_factor), 0.95, rtol=1e-6)
+    assert discount_factor.dtype == canonical_float_dtype()  # ty: ignore[unresolved-attribute]
 
 
 def test_process_params_float_array_overflow_raises_with_qualified_name(
