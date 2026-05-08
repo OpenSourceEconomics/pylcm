@@ -8,7 +8,7 @@ from jax import Array
 
 from lcm.exceptions import GridInitializationError, format_messages
 from lcm.grids import coordinates as grid_coordinates
-from lcm.grids.continuous import ContinuousGrid
+from lcm.grids.continuous import ContinuousGrid, _to_jax_scalar
 from lcm.typing import (
     Float1D,
     Int1D,
@@ -87,6 +87,7 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
     def get_coordinate(self, value: Array) -> Array: ...
     def get_coordinate(self, value: float | ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
+        value = _to_jax_scalar(value)
         piece_idx = jnp.searchsorted(self._breakpoints, value, side="right")
         local_coord = grid_coordinates.get_linspace_coordinate(
             value=value,
@@ -158,6 +159,7 @@ class PiecewiseLogSpacedGrid(ContinuousGrid):
     def get_coordinate(self, value: Array) -> Array: ...
     def get_coordinate(self, value: float | ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
+        value = _to_jax_scalar(value)
         piece_idx = jnp.searchsorted(self._breakpoints, value, side="right")
         local_coord = grid_coordinates.get_logspace_coordinate(
             value=value,

@@ -38,6 +38,13 @@ class ContinuousGrid(Grid):
         """Return the generalized coordinate of a value in the grid."""
 
 
+def _to_jax_scalar(value: float | ScalarFloat | Array) -> ScalarFloat | Array:
+    """Lift a Python `float` to a canonical-dtype JAX scalar; pass arrays through."""
+    if isinstance(value, (int, float)):
+        return jnp.asarray(value, dtype=canonical_float_dtype())
+    return value
+
+
 @dataclass(frozen=True, kw_only=True, init=False)
 class UniformContinuousGrid(ContinuousGrid, ABC):
     """Grid with start/stop/n_points for linearly or logarithmically spaced values.
@@ -125,7 +132,10 @@ class LinSpacedGrid(UniformContinuousGrid):
     def get_coordinate(self, value: float | ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
         return grid_coordinates.get_linspace_coordinate(
-            value=value, start=self.start, stop=self.stop, n_points=self.n_points
+            value=_to_jax_scalar(value),
+            start=self.start,
+            stop=self.stop,
+            n_points=self.n_points,
         )
 
 
@@ -170,7 +180,10 @@ class LogSpacedGrid(UniformContinuousGrid):
     def get_coordinate(self, value: float | ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
         return grid_coordinates.get_logspace_coordinate(
-            value=value, start=self.start, stop=self.stop, n_points=self.n_points
+            value=_to_jax_scalar(value),
+            start=self.start,
+            stop=self.stop,
+            n_points=self.n_points,
         )
 
 
@@ -297,7 +310,9 @@ class IrregSpacedGrid(ContinuousGrid):
                 "initialization or use IrregSpacedGrid(n_points=...) and "
                 "supply points at runtime via params."
             )
-        return grid_coordinates.get_irreg_coordinate(value=value, points=self.points)
+        return grid_coordinates.get_irreg_coordinate(
+            value=_to_jax_scalar(value), points=self.points
+        )
 
 
 def _validate_continuous_grid(
