@@ -24,9 +24,9 @@ type Bool1D = Bool[Array, "_"]  # noqa: F821
 
 # Many JAX functions are designed to work with scalar numerical values. This also
 # includes zero dimensional jax arrays.
-type ScalarInt = int | Int32[Scalar, ""]
-type ScalarFloat = float | Float[Scalar, ""]
-type ScalarBool = bool | Bool[Scalar, ""]
+type ScalarInt = Int32[Scalar, ""]
+type ScalarFloat = Float[Scalar, ""]
+type ScalarBool = Bool[Scalar, ""]
 
 type Period = int | Int1D
 type Age = int | float

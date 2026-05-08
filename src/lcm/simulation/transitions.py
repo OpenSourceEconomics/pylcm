@@ -25,6 +25,8 @@ from lcm.typing import (
     Int1D,
     RegimeName,
     RegimeNamesToIds,
+    ScalarFloat,
+    ScalarInt,
 )
 from lcm.utils.namespace import flatten_regime_namespace
 
@@ -70,7 +72,7 @@ def calculate_next_states(
     internal_regime: InternalRegime,
     optimal_actions: MappingProxyType[ActionName, Array],
     period: int,
-    age: float,
+    age: ScalarInt | ScalarFloat,
     regime_params: FlatRegimeParams,
     states: MappingProxyType[str, Array],
     state_action_space: StateActionSpace,
@@ -148,7 +150,7 @@ def calculate_next_regime_membership(
     state_action_space: StateActionSpace,
     optimal_actions: MappingProxyType[ActionName, Array],
     period: int,
-    age: float,
+    age: ScalarInt | ScalarFloat,
     regime_params: FlatRegimeParams,
     regime_names_to_ids: MappingProxyType[RegimeName, int],
     new_subject_regime_ids: Int1D,

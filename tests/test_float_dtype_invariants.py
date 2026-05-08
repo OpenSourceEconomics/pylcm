@@ -1,5 +1,6 @@
 """Float dtypes follow `canonical_float_dtype()` across pylcm boundaries."""
 
+from collections.abc import Callable
 from types import MappingProxyType
 
 import jax.numpy as jnp
@@ -184,16 +185,16 @@ def test_solve_v_arrays_at_canonical_float_dtype(
 
 
 @pytest.mark.parametrize(
-    "grid",
+    "make_grid",
     [
-        LinSpacedGrid(start=0, stop=1, n_points=5),
-        LogSpacedGrid(start=1, stop=10, n_points=5),
-        IrregSpacedGrid(points=(0.0, 0.5, 1.0)),
+        lambda: LinSpacedGrid(start=0, stop=1, n_points=5),
+        lambda: LogSpacedGrid(start=1, stop=10, n_points=5),
+        lambda: IrregSpacedGrid(points=(0.0, 0.5, 1.0)),
     ],
     ids=["linspaced", "logspaced", "irregspaced"],
 )
 def test_continuous_grid_to_jax_dtype_is_canonical_under_no_x64(
-    grid: LinSpacedGrid | LogSpacedGrid | IrregSpacedGrid,
+    make_grid: Callable[[], LinSpacedGrid | LogSpacedGrid | IrregSpacedGrid],
     x64_disabled: None,  # noqa: ARG001
 ) -> None:
     """Continuous grid `to_jax()` materialises at `float32` under no-x64.
@@ -203,8 +204,34 @@ def test_continuous_grid_to_jax_dtype_is_canonical_under_no_x64(
     (which JAX would silently truncate to `float32` under no-x64; the
     helper-side comparison would mask that, the literal-side comparison
     surfaces it).
+
+    Grids are constructed inside the test body so the `x64_disabled`
+    fixture is in effect; grid dtype is now sticky to construction-time
+    `jax_enable_x64`.
     """
+    grid = make_grid()
     assert grid.to_jax().dtype == jnp.float32
+
+
+@pytest.mark.parametrize("attr", ["start", "stop"])
+def test_uniform_grid_stores_endpoints_as_canonical_jax_scalar(
+    attr: str,
+    x64_disabled: None,  # noqa: ARG001
+) -> None:
+    """`LinSpacedGrid` stores `start`/`stop` as JAX scalars at canonical dtype."""
+    grid = LinSpacedGrid(start=0.0, stop=100.0, n_points=10)
+    value = getattr(grid, attr)
+    assert isinstance(value, jnp.ndarray)
+    assert value.dtype == canonical_float_dtype()
+
+
+def test_irreg_grid_stores_points_as_canonical_jax_array(
+    x64_disabled: None,  # noqa: ARG001
+) -> None:
+    """`IrregSpacedGrid` stores `points` as a JAX array at canonical dtype."""
+    grid = IrregSpacedGrid(points=(0.0, 0.5, 1.0))
+    assert isinstance(grid.points, jnp.ndarray)
+    assert grid.points.dtype == canonical_float_dtype()
 
 
 @pytest.mark.parametrize("key", ["low", "high"])

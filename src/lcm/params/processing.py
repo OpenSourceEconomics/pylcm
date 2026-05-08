@@ -198,7 +198,7 @@ def cast_params_to_canonical_dtypes(internal_params: InternalParams) -> Internal
     )
 
 
-def _cast_leaves_to_canonical_dtype(value: Any, *, name: str) -> Any:  # noqa: ANN401
+def _cast_leaves_to_canonical_dtype(value: Any, *, name: str) -> Any:  # noqa: ANN401, C901, PLR0911
     """Cast a single params leaf to its canonical pylcm dtype.
 
     Strict whitelist — every code path either casts or raises.
