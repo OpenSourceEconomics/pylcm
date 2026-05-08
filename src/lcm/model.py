@@ -118,21 +118,9 @@ class Model:
     _warned_n_subjects: set[int]
     """Mismatching `actual_n_subjects` already warned about (one warning each)."""
 
-    _simulate_compile_future: (
-        Future[MappingProxyType[RegimeName, InternalRegime]] | None
-    )
-    """Pending background AOT compile started by `solve(...)`, or `None`.
-
-    `solve(...)` kicks off `compile_all_simulate_functions` in a single
-    background thread so XLA compilation overlaps with the GPU-bound
-    backward induction. `simulate(...)` awaits the future before
-    dispatching the AOT-compiled program. Cleared after the result lands
-    in `_simulate_compile_cache`.
-    """
-
     _simulate_compile_lock: threading.Lock
-    """Serialises mutations of `_simulate_compile_cache`, `_warned_n_subjects`,
-    and `_simulate_compile_future`.
+    """Serialises mutations of `_simulate_compile_cache` and
+    `_warned_n_subjects`.
 
     The check-then-set on each container is held under this lock. The
     consequent `log.warning` call sits outside the lock so concurrent
@@ -180,7 +168,6 @@ class Model:
         self.n_subjects = n_subjects
         self._simulate_compile_cache = {}
         self._warned_n_subjects = set()
-        self._simulate_compile_future = None
         self._simulate_compile_lock = threading.Lock()
 
         validate_model_inputs(
@@ -216,16 +203,13 @@ class Model:
 
         Drops `_simulate_compile_lock` (a `threading.Lock`, not pickleable),
         `_simulate_compile_cache` (compiled XLA programs that can't survive
-        a process boundary), `_warned_n_subjects` (its companion set), and
-        `_simulate_compile_future` (a `Future` tied to the originating thread
-        pool).
+        a process boundary), and `_warned_n_subjects` (its companion set).
         `__setstate__` restores all three to their fresh state.
         """
         state = self.__dict__.copy()
         state.pop("_simulate_compile_lock", None)
         state.pop("_simulate_compile_cache", None)
         state.pop("_warned_n_subjects", None)
-        state.pop("_simulate_compile_future", None)
         return state
 
     def __setstate__(self, state: dict[str, object]) -> None:
@@ -233,7 +217,6 @@ class Model:
         self.__dict__.update(state)
         self._simulate_compile_cache = {}
         self._warned_n_subjects = set()
-        self._simulate_compile_future = None
         self._simulate_compile_lock = threading.Lock()
 
     def get_params_template(self) -> UserFacingParamsTemplate:
@@ -297,17 +280,34 @@ class Model:
             internal_params=internal_params,
             ages=self.ages,
         )
-        self._maybe_start_simulate_compile_async(
+        return self._solve_compiled(
             internal_params=internal_params,
+            params=params,
+            log=get_logger(log_level=log_level),
+            log_level=log_level,
+            log_path=log_path,
+            log_keep_n_latest=log_keep_n_latest,
             max_compilation_workers=max_compilation_workers,
-            logger=get_logger(log_level=log_level),
         )
+
+    def _solve_compiled(
+        self,
+        *,
+        internal_params: InternalParams,
+        params: UserParams,
+        log: logging.Logger,
+        log_level: LogLevel,
+        log_path: str | Path | None,
+        log_keep_n_latest: int,
+        max_compilation_workers: int | None,
+    ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
+        """Run backward induction, persisting a snapshot on debug or NaN failure."""
         try:
             period_to_regime_to_V_arr = solve(
                 internal_params=internal_params,
                 ages=self.ages,
                 internal_regimes=self.internal_regimes,
-                logger=get_logger(log_level=log_level),
+                logger=log,
                 enable_jit=self.enable_jit,
                 max_compilation_workers=max_compilation_workers,
             )
@@ -332,61 +332,55 @@ class Model:
             )
         return period_to_regime_to_V_arr
 
-    def _maybe_start_simulate_compile_async(
+    def _spawn_simulate_compile(
         self,
         *,
+        n_subjects: int,
         internal_params: InternalParams,
         max_compilation_workers: int | None,
         logger: logging.Logger,
-    ) -> None:
-        """Spawn `compile_all_simulate_functions` in a background thread.
+    ) -> Future[MappingProxyType[RegimeName, InternalRegime]]:
+        """Submit `compile_all_simulate_functions` to a single-thread executor.
 
-        Called from `solve(...)` so the simulate-side XLA compilation runs in
-        parallel with the GPU-bound backward induction. No-op when
-        `n_subjects is None`, when the cache for this size is already
-        populated, or when a compile is already in flight.
+        Caller decides whether to spawn (`n_subjects` set, batch shape
+        matches, no cache hit). The returned `Future` runs in parallel with
+        whatever the caller does next — typically `_solve_compiled(...)`.
         """
-        if self.n_subjects is None:
-            return
-        with self._simulate_compile_lock:
-            if self.n_subjects in self._simulate_compile_cache:
-                return
-            if self._simulate_compile_future is not None:
-                return
-            executor = ThreadPoolExecutor(
-                max_workers=1, thread_name_prefix="lcm-simulate-compile"
-            )
-            self._simulate_compile_future = executor.submit(
-                compile_all_simulate_functions,
-                internal_regimes=self.internal_regimes,
-                internal_params=internal_params,
-                ages=self.ages,
-                n_subjects=self.n_subjects,
-                max_compilation_workers=max_compilation_workers,
-                logger=logger,
-            )
-            executor.shutdown(wait=False)
+        executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="lcm-simulate-compile"
+        )
+        future = executor.submit(
+            compile_all_simulate_functions,
+            internal_regimes=self.internal_regimes,
+            internal_params=internal_params,
+            ages=self.ages,
+            n_subjects=n_subjects,
+            max_compilation_workers=max_compilation_workers,
+            logger=logger,
+        )
+        executor.shutdown(wait=False)
+        return future
 
     def _resolve_simulate_internal_regimes(
         self,
         *,
+        compile_future: Future[MappingProxyType[RegimeName, InternalRegime]] | None,
         actual_n_subjects: int,
-        internal_params: InternalParams,
         log: logging.Logger,
-        max_compilation_workers: int | None,
     ) -> MappingProxyType[RegimeName, InternalRegime]:
         """Return internal_regimes to use for simulate; AOT cache when matching.
 
-        Three dispatch cases:
+        Dispatch by `n_subjects` and batch-shape match:
 
         - `n_subjects is None`: return the original `internal_regimes`
           (purely lazy path).
-        - `actual_n_subjects != n_subjects`: return the original
-          `internal_regimes` and log a warning the first time each
-          mismatching size is seen.
-        - `actual_n_subjects == n_subjects`: return the cached AOT-compiled
-          regimes. If `solve(...)` started a background compile, await it
-          here; otherwise compile synchronously.
+        - `actual_n_subjects != n_subjects`: warn once per mismatching size,
+          return the original `internal_regimes`.
+        - `actual_n_subjects == n_subjects`, `compile_future is not None`:
+          await it and cache the result.
+        - `actual_n_subjects == n_subjects`, `compile_future is None`: cache
+          must already hold the entry (caller spawned only on cache miss);
+          return the cached compiled regimes.
         """
         if self.n_subjects is None:
             return self.internal_regimes
@@ -403,28 +397,12 @@ class Model:
                     self.n_subjects,
                 )
             return self.internal_regimes
-        with self._simulate_compile_lock:
-            if self.n_subjects in self._simulate_compile_cache:
-                return self._simulate_compile_cache[self.n_subjects]
-            future = self._simulate_compile_future
-        if future is not None:
-            compiled = future.result()
+        if compile_future is not None:
+            compiled = compile_future.result()
             with self._simulate_compile_lock:
                 self._simulate_compile_cache[self.n_subjects] = compiled
-                self._simulate_compile_future = None
             return compiled
         with self._simulate_compile_lock:
-            if self.n_subjects not in self._simulate_compile_cache:
-                self._simulate_compile_cache[self.n_subjects] = (
-                    compile_all_simulate_functions(
-                        internal_regimes=self.internal_regimes,
-                        internal_params=internal_params,
-                        ages=self.ages,
-                        n_subjects=self.n_subjects,
-                        max_compilation_workers=max_compilation_workers,
-                        logger=log,
-                    )
-                )
             return self._simulate_compile_cache[self.n_subjects]
 
     def simulate(
@@ -507,33 +485,35 @@ class Model:
             ages=self.ages,
         )
         log = get_logger(log_level=log_level)
-        if period_to_regime_to_V_arr is None:
-            try:
-                period_to_regime_to_V_arr = solve(
-                    internal_params=internal_params,
-                    ages=self.ages,
-                    internal_regimes=self.internal_regimes,
-                    logger=log,
-                    enable_jit=self.enable_jit,
-                    max_compilation_workers=max_compilation_workers,
-                )
-            except InvalidValueFunctionError as exc:
-                if log_path is not None and exc.partial_solution is not None:
-                    snap_dir = save_solve_snapshot(
-                        model=self,
-                        params=params,
-                        period_to_regime_to_V_arr=exc.partial_solution,  # ty: ignore[invalid-argument-type]
-                        log_path=Path(log_path),
-                        log_keep_n_latest=log_keep_n_latest,
-                    )
-                    exc.add_note(f"Snapshot saved to {snap_dir}")
-                raise
         actual_n_subjects = len(next(iter(initial_conditions.values())))
+        n_subjects = self.n_subjects
+        compile_future: Future[MappingProxyType[RegimeName, InternalRegime]] | None = (
+            None
+        )
+        if n_subjects is not None and n_subjects == actual_n_subjects:
+            with self._simulate_compile_lock:
+                needs_compile = n_subjects not in self._simulate_compile_cache
+            if needs_compile:
+                compile_future = self._spawn_simulate_compile(
+                    n_subjects=n_subjects,
+                    internal_params=internal_params,
+                    max_compilation_workers=max_compilation_workers,
+                    logger=log,
+                )
+        if period_to_regime_to_V_arr is None:
+            period_to_regime_to_V_arr = self._solve_compiled(
+                internal_params=internal_params,
+                params=params,
+                log=log,
+                log_level=log_level,
+                log_path=log_path,
+                log_keep_n_latest=log_keep_n_latest,
+                max_compilation_workers=max_compilation_workers,
+            )
         simulate_internal_regimes = self._resolve_simulate_internal_regimes(
+            compile_future=compile_future,
             actual_n_subjects=actual_n_subjects,
-            internal_params=internal_params,
             log=log,
-            max_compilation_workers=max_compilation_workers,
         )
         result = simulate(
             internal_params=internal_params,
