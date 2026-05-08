@@ -156,6 +156,23 @@ def test_simulate_first_matching_call_populates_aot_cache() -> None:
     assert n_subjects in model._simulate_compile_cache
 
 
+def test_solve_with_n_subjects_kicks_off_background_simulate_compile() -> None:
+    """`solve(...)` spawns the simulate AOT compile in the background.
+
+    The follow-on `simulate(...)` then awaits the in-flight `Future` instead
+    of compiling synchronously, so XLA compilation overlaps with the
+    GPU-bound backward induction in production.
+    """
+    n_periods = 3
+    n_subjects = 4
+    model = _build_test_model(n_periods=n_periods, n_subjects=n_subjects)
+    params = get_params(n_periods=n_periods)
+
+    assert model._simulate_compile_future is None
+    model.solve(params=params)
+    assert model._simulate_compile_future is not None
+
+
 _DECLARED_N = 4
 _ACTUAL_N = 7
 
