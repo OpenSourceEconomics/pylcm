@@ -26,7 +26,7 @@ def linspace(
     endpoints.
 
     """
-    return jnp.linspace(start, stop, int(n_points))
+    return jnp.linspace(start, stop, n_points)  # ty: ignore[no-matching-overload]
 
 
 @overload
@@ -79,7 +79,7 @@ def logspace(
     """
     start_linear = jnp.log(start)
     stop_linear = jnp.log(stop)
-    grid = jnp.logspace(start_linear, stop_linear, int(n_points), base=jnp.e)
+    grid = jnp.logspace(start_linear, stop_linear, n_points, base=jnp.e)  # ty: ignore[invalid-argument-type]
     return grid.at[0].set(start).at[-1].set(stop)
 
 

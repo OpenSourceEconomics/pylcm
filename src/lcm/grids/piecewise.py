@@ -90,7 +90,7 @@ class PiecewiseLinSpacedGrid(ContinuousGrid):
     def to_jax(self) -> Float1D:
         """Convert the grid to a Jax array."""
         piece_arrays = [
-            jnp.linspace(self._piece_starts[i], self._piece_stops[i], int(p.n_points))
+            jnp.linspace(self._piece_starts[i], self._piece_stops[i], p.n_points)  # ty: ignore[no-matching-overload]
             for i, p in enumerate(self.pieces)
         ]
         return jnp.concatenate(piece_arrays)
