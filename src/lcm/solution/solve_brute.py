@@ -56,8 +56,8 @@ def solve(
 
     next_regime_to_V_arr = MappingProxyType(
         {
-            regime_name: jax.device_put(jnp.zeros(shape), device=sharding)
-            for regime_name, (shape, sharding) in regime_V_shapes.items()
+            regime_name: jax.device_put(jnp.zeros(shape))
+            for regime_name, shape in regime_V_shapes.items()
         }
     )
 
@@ -71,7 +71,7 @@ def solve(
         max_compilation_workers=max_compilation_workers,
         logger=logger,
     )
-    
+
     solution: dict[int, MappingProxyType[RegimeName, FloatND]] = {}
 
     # Async diagnostics accumulators: every `jnp.any(isnan)`,
@@ -134,7 +134,6 @@ def solve(
                 period=jnp.int32(period),
                 age=ages.values[period],
             )
-
             # Async reductions: gated on log level. `"off"` skips
             # everything — no kernel launches, no host syncs, no
             # NaN fail-fast. `"warning"` / `"progress"` launches the
@@ -325,9 +324,7 @@ def _compile_all_functions(
             compiled[func_id] = comp
 
     # Map back to (regime, period) keys.
-    return {
-        key: compiled[_func_dedup_key(func=func)] for key, func in all_functions.items()
-    }
+    return {key: func for key, func in all_functions.items()}
 
 
 def _resolve_compilation_workers(*, max_compilation_workers: int | None) -> int:
@@ -378,8 +375,10 @@ def _get_regime_V_shapes_and_shardings(
         Dict of regime names to V array shapes.
 
     """
-    shapes_and_shardings: dict[RegimeName, tuple[tuple[int, ...], jax.NamedSharding]] = {}
-    avail_devices = jax.devices() 
+    shapes_and_shardings: dict[
+        RegimeName, tuple[tuple[int, ...], jax.NamedSharding]
+    ] = {}
+    avail_devices = jax.devices()
     for regime_name, regime in internal_regimes.items():
         state_action_space = regime.state_action_space(
             regime_params=internal_params[regime_name],
@@ -387,14 +386,20 @@ def _get_regime_V_shapes_and_shardings(
         spec = []
         for name in state_action_space.states:
             if regime.grids[name].distributed:
-                spec.append('X') 
+                spec.append("X")
             else:
                 spec.append(None)
         shape = tuple(len(v) for v in state_action_space.states.values())
-        mesh = jax.make_mesh((len(avail_devices),), ('X'), axis_types=(jax.sharding.AxisType.Auto),devices=avail_devices)
-        sharding = jax.NamedSharding(mesh, spec= jax.P(*spec))
-        shapes_and_shardings[regime_name] = (shape, sharding)
+        mesh = jax.make_mesh(
+            (len(avail_devices),),
+            ("X"),
+            axis_types=(jax.sharding.AxisType.Auto),
+            devices=avail_devices,
+        )
+
+        shapes_and_shardings[regime_name] = shape
     return shapes_and_shardings
+
 
 @dataclass(frozen=True)
 class _DiagnosticRow:

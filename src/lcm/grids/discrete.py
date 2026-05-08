@@ -19,7 +19,9 @@ class DiscreteGrid(Grid):
 
     """
 
-    def __init__(self, category_class: type, batch_size: int = 0, distributed = False) -> None:
+    def __init__(
+        self, category_class: type, batch_size: int = 0, distributed=False
+    ) -> None:
         _validate_discrete_grid(category_class)
         names_and_values = get_field_names_and_values(category_class)
         self.__categories = tuple(names_and_values.keys())
@@ -47,7 +49,7 @@ class DiscreteGrid(Grid):
     def batch_size(self) -> int:
         """Return batch size during solution."""
         return self.__batch_size
-    
+
     @property
     def distributed(self) -> bool:
         """Return batch size during solution."""

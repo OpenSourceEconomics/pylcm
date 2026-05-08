@@ -16,7 +16,6 @@ class Grid(ABC):
 
         """
 
-    
     @property
     @abstractmethod
     def distributed(self) -> bool:
