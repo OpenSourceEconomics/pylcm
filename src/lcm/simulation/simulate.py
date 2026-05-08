@@ -112,8 +112,7 @@ def simulate(
     # Build reverse lookup for regime transition logging
     ids_to_names: dict[int, RegimeName] = {v: k for k, v in regime_names_to_ids.items()}
 
-    for period_idx, age in enumerate(ages.values):
-        period = jnp.int32(period_idx)
+    for period, age in enumerate(ages.values):
         period_start = time.monotonic()
 
         # Activate subjects whose starting period matches the current period
@@ -129,13 +128,13 @@ def simulate(
         active_regimes = {
             regime_name: regime
             for regime_name, regime in internal_regimes.items()
-            if period_idx in regime.active_periods
+            if period in regime.active_periods
         }
 
         active_regimes_next_period = tuple(
             regime_name
             for regime_name, regime in internal_regimes.items()
-            if period_idx + 1 in regime.active_periods
+            if period + 1 in regime.active_periods
         )
 
         log_period_header(logger=logger, age=age, n_active_regimes=len(active_regimes))
@@ -158,7 +157,7 @@ def simulate(
                 )
             )
             states = new_states
-            simulation_results[regime_name][period_idx] = result
+            simulation_results[regime_name][period] = result
 
             log_nan_in_V(
                 logger=logger, regime_name=regime_name, age=age, V_arr=result.V_arr
@@ -201,7 +200,7 @@ def _simulate_regime_in_period(
     *,
     regime_name: RegimeName,
     internal_regime: InternalRegime,
-    period: ScalarInt,
+    period: int,
     age: ScalarInt | ScalarFloat,
     states: MappingProxyType[str, Array],
     subject_regime_ids: Int1D,
@@ -255,16 +254,15 @@ def _simulate_regime_in_period(
     # We need to pass the value function array of the next period to the
     # argmax_and_max_Q_over_a function, as the current Q-function requires the
     # next period's value function. In the last period, we pass an empty dict.
-    period_idx = int(period)
     next_regime_to_V_arr = period_to_regime_to_V_arr.get(
-        period_idx + 1, MappingProxyType({})
+        period + 1, MappingProxyType({})
     )
 
     # The Q-function values contain the information of how much value each
     # action combination is worth. To find the optimal discrete action, we
     # therefore only need to maximize the Q-function values over all actions.
     argmax_and_max_Q_over_a = (
-        internal_regime.simulate_functions.argmax_and_max_Q_over_a[period_idx]
+        internal_regime.simulate_functions.argmax_and_max_Q_over_a[period]
     )
 
     indices_optimal_actions, V_arr = argmax_and_max_Q_over_a(
@@ -273,7 +271,7 @@ def _simulate_regime_in_period(
         **state_action_space.continuous_actions,
         next_regime_to_V_arr=next_regime_to_V_arr,
         **internal_params[regime_name],
-        period=period,
+        period=jnp.int32(period),
         age=age,
     )
     validate_V(V_arr=V_arr, age=age, regime_name=regime_name)

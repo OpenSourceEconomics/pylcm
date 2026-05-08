@@ -71,7 +71,7 @@ def calculate_next_states(
     *,
     internal_regime: InternalRegime,
     optimal_actions: MappingProxyType[ActionName, Array],
-    period: ScalarInt,
+    period: int,
     age: ScalarInt | ScalarFloat,
     regime_params: FlatRegimeParams,
     states: MappingProxyType[str, Array],
@@ -128,7 +128,7 @@ def calculate_next_states(
         **state_action_space.states,
         **optimal_actions,
         **stochastic_variables_keys,
-        period=period,
+        period=jnp.int32(period),
         age=age,
         **regime_params,
     )
@@ -149,7 +149,7 @@ def calculate_next_regime_membership(
     internal_regime: InternalRegime,
     state_action_space: StateActionSpace,
     optimal_actions: MappingProxyType[ActionName, Array],
-    period: ScalarInt,
+    period: int,
     age: ScalarInt | ScalarFloat,
     regime_params: FlatRegimeParams,
     regime_names_to_ids: MappingProxyType[RegimeName, int],
@@ -189,7 +189,7 @@ def calculate_next_regime_membership(
         internal_regime.simulate_functions.compute_regime_transition_probs(  # ty: ignore[call-non-callable]
             **state_action_space.states,
             **optimal_actions,
-            period=period,
+            period=jnp.int32(period),
             age=age,
             **regime_params,
         )
