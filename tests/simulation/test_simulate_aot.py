@@ -269,6 +269,30 @@ def test_simulate_warns_only_once_per_mismatching_size(
     assert len(mismatch_warnings) == 1
 
 
+def test_simulate_result_pickles_when_n_subjects_matches() -> None:
+    """`simulate(...)` returns a result that round-trips through cloudpickle.
+
+    With `n_subjects` matching the batch shape, the simulate path runs
+    AOT-compiled callables that wrap `LoadedExecutable` (unpicklable).
+    `to_dataframe` doesn't need those callables, so the returned result
+    must carry the lazy regimes — otherwise downstream pickling
+    (e.g. pytask handing the result to the next task) fails.
+    """
+    n_periods = 3
+    n_subjects = 4
+    model = _build_test_model(n_periods=n_periods, n_subjects=n_subjects)
+    params = get_params(n_periods=n_periods)
+
+    result = model.simulate(
+        params=params,
+        period_to_regime_to_V_arr=None,
+        initial_conditions=_build_initial_conditions(n_subjects=n_subjects),
+    )
+
+    restored = cloudpickle.loads(cloudpickle.dumps(result))
+    assert restored.n_subjects == n_subjects
+
+
 def test_unpickled_model_can_simulate_with_aot() -> None:
     """A cloudpickle round-tripped `Model` still drives `simulate(...)` with AOT."""
     n_periods = 3
