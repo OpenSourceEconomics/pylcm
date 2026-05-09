@@ -37,19 +37,19 @@ def test_get_next_state_function_with_solve_target():
     )
 
     flat_regime_params = {
-        "discount_factor": 1.0,
-        "utility__disutility_of_work": 1.0,
-        "next_wealth__interest_rate": 0.05,
+        "discount_factor": jnp.asarray(1.0),
+        "utility__disutility_of_work": jnp.asarray(1.0),
+        "next_wealth__interest_rate": jnp.asarray(0.05),
     }
-    action = {"labor_supply": 1, "consumption": 10}
-    state = {"wealth": 20}
+    action = {"labor_supply": jnp.asarray(1), "consumption": jnp.asarray(10.0)}
+    state = {"wealth": jnp.asarray(20.0)}
 
     got = got_func(
         **action,
-        **state,  # ty: ignore[invalid-argument-type]
-        period=1,  # ty: ignore[invalid-argument-type]
-        age=1.0,  # ty: ignore[invalid-argument-type]
-        **flat_regime_params,  # ty: ignore[invalid-argument-type]
+        **state,
+        period=jnp.int32(1),
+        age=jnp.asarray(1.0),
+        **flat_regime_params,
     )
     assert got == {"next_wealth": 1.05 * (20 - 10)}
 
