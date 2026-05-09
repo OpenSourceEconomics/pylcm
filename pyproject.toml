@@ -242,6 +242,9 @@ per-file-ignores."tests/*" = [
   "S301",    # Use of pickle
   "SLF001",  # Private member access
 ]
+per-file-ignores."tests/test_dtypes.py" = [
+  "ARG001", # Unused function argument (x64_enabled / x64_disabled fixtures)
+]
 per-file-ignores."tests/test_float_dtype_invariants.py" = [
   "ARG001", # Unused function argument (x64_disabled fixture)
 ]
