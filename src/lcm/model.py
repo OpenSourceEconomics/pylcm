@@ -526,6 +526,13 @@ class Model:
             simulation_output_dtypes=self.simulation_output_dtypes,
             seed=seed,
         )
+        # AOT-compiled regimes carry `jax.stages.Compiled` callables that
+        # wrap an unpicklable `LoadedExecutable`. `to_dataframe` only reads
+        # the lazy DAG functions / constraints / transitions on
+        # `simulate_functions`, never the compiled callables — so swap in
+        # the lazy regimes to keep the result cloudpickle-safe.
+        if simulate_internal_regimes is not self.internal_regimes:
+            result._internal_regimes = self.internal_regimes  # noqa: SLF001
         if log_level == "debug" and log_path is not None:
             save_simulate_snapshot(
                 model=self,
