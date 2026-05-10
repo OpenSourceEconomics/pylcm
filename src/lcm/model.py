@@ -4,7 +4,6 @@ import dataclasses
 import logging
 import threading
 from collections.abc import Mapping
-from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from types import MappingProxyType
 
@@ -96,7 +95,8 @@ class Model:
 
     - `None`: purely lazy behaviour, no AOT.
     - First `simulate(...)` with `actual_n == n_subjects`: AOT-compiles all
-      simulate functions for that batch shape in parallel and caches them.
+      simulate functions for that batch shape (blocks before solve runs)
+      and caches them.
     - Subsequent `simulate(...)` with the same matching size: reuses the
       cached compiled programs.
     - `simulate(...)` with a mismatching size: warns once per size and falls
@@ -157,8 +157,8 @@ class Model:
                 already has a conflicting entry.
             n_subjects: Expected simulate batch size; if set, the first matching
                 `simulate(...)` call AOT-compiles all simulate functions for
-                batch shape `n_subjects` in parallel. `None` keeps the purely
-                lazy behaviour.
+                batch shape `n_subjects` before backward induction starts.
+                `None` keeps the purely lazy behaviour.
 
         """
         self.description = description
@@ -332,39 +332,9 @@ class Model:
             )
         return period_to_regime_to_V_arr
 
-    def _spawn_simulate_compile(
-        self,
-        *,
-        n_subjects: int,
-        internal_params: InternalParams,
-        max_compilation_workers: int | None,
-        logger: logging.Logger,
-    ) -> Future[MappingProxyType[RegimeName, InternalRegime]]:
-        """Submit `compile_all_simulate_functions` to a single-thread executor.
-
-        Caller decides whether to spawn (`n_subjects` set, batch shape
-        matches, no cache hit). The returned `Future` runs in parallel with
-        whatever the caller does next — typically `_solve_compiled(...)`.
-        """
-        executor = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="lcm-simulate-compile"
-        )
-        future = executor.submit(
-            compile_all_simulate_functions,
-            internal_regimes=self.internal_regimes,
-            internal_params=internal_params,
-            ages=self.ages,
-            n_subjects=n_subjects,
-            max_compilation_workers=max_compilation_workers,
-            logger=logger,
-        )
-        executor.shutdown(wait=False)
-        return future
-
     def _resolve_simulate_internal_regimes(
         self,
         *,
-        compile_future: Future[MappingProxyType[RegimeName, InternalRegime]] | None,
         actual_n_subjects: int,
         log: logging.Logger,
     ) -> MappingProxyType[RegimeName, InternalRegime]:
@@ -376,11 +346,8 @@ class Model:
           (purely lazy path).
         - `actual_n_subjects != n_subjects`: warn once per mismatching size,
           return the original `internal_regimes`.
-        - `actual_n_subjects == n_subjects`, `compile_future is not None`:
-          await it and cache the result.
-        - `actual_n_subjects == n_subjects`, `compile_future is None`: cache
-          must already hold the entry (caller spawned only on cache miss);
-          return the cached compiled regimes.
+        - `actual_n_subjects == n_subjects`: return the cached compiled
+          regimes (caller must have populated the cache before calling).
         """
         if self.n_subjects is None:
             return self.internal_regimes
@@ -397,11 +364,6 @@ class Model:
                     self.n_subjects,
                 )
             return self.internal_regimes
-        if compile_future is not None:
-            compiled = compile_future.result()
-            with self._simulate_compile_lock:
-                self._simulate_compile_cache[self.n_subjects] = compiled
-            return compiled
         with self._simulate_compile_lock:
             return self._simulate_compile_cache[self.n_subjects]
 
@@ -487,19 +449,20 @@ class Model:
         log = get_logger(log_level=log_level)
         actual_n_subjects = len(next(iter(initial_conditions.values())))
         n_subjects = self.n_subjects
-        compile_future: Future[MappingProxyType[RegimeName, InternalRegime]] | None = (
-            None
-        )
         if n_subjects is not None and n_subjects == actual_n_subjects:
             with self._simulate_compile_lock:
                 needs_compile = n_subjects not in self._simulate_compile_cache
             if needs_compile:
-                compile_future = self._spawn_simulate_compile(
-                    n_subjects=n_subjects,
+                compiled = compile_all_simulate_functions(
+                    internal_regimes=self.internal_regimes,
                     internal_params=internal_params,
+                    ages=self.ages,
+                    n_subjects=n_subjects,
                     max_compilation_workers=max_compilation_workers,
                     logger=log,
                 )
+                with self._simulate_compile_lock:
+                    self._simulate_compile_cache[n_subjects] = compiled
         if period_to_regime_to_V_arr is None:
             period_to_regime_to_V_arr = self._solve_compiled(
                 internal_params=internal_params,
@@ -511,7 +474,6 @@ class Model:
                 max_compilation_workers=max_compilation_workers,
             )
         simulate_internal_regimes = self._resolve_simulate_internal_regimes(
-            compile_future=compile_future,
             actual_n_subjects=actual_n_subjects,
             log=log,
         )
