@@ -159,6 +159,12 @@ def broadcast_to_template(
     if unknown:
         raise InvalidParamsError(f"Unknown keys: {sorted(unknown)}")
 
+    for regime, leaves in result.items():
+        for param_qname, value in leaves.items():
+            leaves[param_qname] = _cast_int_leaves_to_int32(
+                value, name=f"{regime}{QNAME_DELIMITER}{param_qname}"
+            )
+
     return cast(
         "InternalParams",
         MappingProxyType({k: MappingProxyType(v) for k, v in result.items()}),
