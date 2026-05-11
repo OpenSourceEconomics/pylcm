@@ -49,13 +49,14 @@ def solve(
     # Compute V array shapes and build a consistent next_regime_to_V_arr
     # template.  Using the same pytree structure (keys and shapes) across
     # all periods avoids JIT re-compilation from pytree mismatches.
-    regime_V_shapes = _get_regime_V_shapes(
+    regime_V_shapes = _get_regime_V_shapes_and_shardings(
         internal_regimes=internal_regimes,
         internal_params=internal_params,
     )
+
     next_regime_to_V_arr = MappingProxyType(
         {
-            regime_name: jnp.zeros(shape)
+            regime_name: jax.device_put(jnp.zeros(shape))
             for regime_name, shape in regime_V_shapes.items()
         }
     )
@@ -146,7 +147,6 @@ def solve(
                 period=jnp.int32(period),
                 age=ages.values[period],
             )
-
             # Async reductions: gated on log level. `"off"` skips
             # everything — no kernel launches, no host syncs, no
             # NaN fail-fast. `"warning"` / `"progress"` folds two
@@ -351,9 +351,7 @@ def _compile_all_functions(
             compiled[func_id] = comp
 
     # Map back to (regime, period) keys.
-    return {
-        key: compiled[_func_dedup_key(func=func)] for key, func in all_functions.items()
-    }
+    return {key: func for key, func in all_functions.items()}
 
 
 def _resolve_compilation_workers(*, max_compilation_workers: int | None) -> int:
@@ -386,7 +384,7 @@ def _func_dedup_key(*, func: Callable) -> Hashable:
     return id(func)
 
 
-def _get_regime_V_shapes(
+def _get_regime_V_shapes_and_shardings(
     *,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     internal_params: InternalParams,
@@ -404,13 +402,30 @@ def _get_regime_V_shapes(
         Dict of regime names to V array shapes.
 
     """
-    shapes: dict[RegimeName, tuple[int, ...]] = {}
+    shapes_and_shardings: dict[
+        RegimeName, tuple[tuple[int, ...], jax.NamedSharding]
+    ] = {}
+    avail_devices = jax.devices()
     for regime_name, regime in internal_regimes.items():
         state_action_space = regime.state_action_space(
             regime_params=internal_params[regime_name],
         )
-        shapes[regime_name] = tuple(len(v) for v in state_action_space.states.values())
-    return shapes
+        spec = []
+        for name in state_action_space.states:
+            if regime.grids[name].distributed:
+                spec.append("X")
+            else:
+                spec.append(None)
+        shape = tuple(len(v) for v in state_action_space.states.values())
+        mesh = jax.make_mesh(
+            (len(avail_devices),),
+            ("X"),
+            axis_types=(jax.sharding.AxisType.Auto),
+            devices=avail_devices,
+        )
+
+        shapes_and_shardings[regime_name] = shape
+    return shapes_and_shardings
 
 
 @dataclass(frozen=True)
@@ -559,9 +574,9 @@ def _reconstruct_next_regime_to_V_arr(
 
     We rebuild the same mapping post-hoc from `solution`. The shapes come from
     the regime's state-action space at the supplied params — identical to what
-    `_get_regime_V_shapes` saw during solve setup.
+    `_get_regime_V_shapes_and_shardings` saw during solve setup.
     """
-    regime_V_shapes = _get_regime_V_shapes(
+    regime_V_shapes = _get_regime_V_shapes_and_shardings(
         internal_regimes=internal_regimes,
         internal_params=internal_params,
     )

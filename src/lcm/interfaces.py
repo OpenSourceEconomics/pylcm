@@ -1,11 +1,15 @@
 import dataclasses
 from collections.abc import Callable
+from functools import reduce
+from operator import mul
 from types import MappingProxyType
 from typing import cast
 
+import jax
 import pandas as pd
 from jax import Array
 
+from lcm.exceptions import PyLCMError
 from lcm.grids import Grid, IrregSpacedGrid
 from lcm.shocks import _ShockGrid
 from lcm.typing import (
@@ -294,15 +298,12 @@ class InternalRegime:
                     shock_kw[p] = cast("float", all_params[f"{name}__{p}"])
                 state_replacements[name] = spec.compute_gridpoints(**shock_kw)
 
-        if not state_replacements and not action_replacements:
-            return self._base_state_action_space
-
         new_states = (
             MappingProxyType(
                 dict(self._base_state_action_space.states) | state_replacements
             )
             if state_replacements
-            else None
+            else dict(self._base_state_action_space.states)
         )
         new_continuous_actions = (
             MappingProxyType(
@@ -310,11 +311,60 @@ class InternalRegime:
                 | action_replacements
             )
             if action_replacements
-            else None
+            else dict(self._base_state_action_space.continuous_actions)
         )
+
+        avail_devices = jax.devices()
+        distributed_grids = {
+            name: grid for name, grid in self.grids.items() if grid.distributed == True
+        }
+        if len(distributed_grids) == 1:
+            n_points = distributed_grids[list(distributed_grids)[0]].to_jax().shape[0]
+            state_name = list(distributed_grids)[0]
+            if n_points % len(avail_devices) == 0:
+                mesh = jax.make_mesh(
+                    (len(avail_devices),),
+                    ("X"),
+                    axis_types=(jax.sharding.AxisType.Auto),
+                    devices=avail_devices,
+                )
+                new_states[state_name] = jax.device_put(
+                    new_states[state_name],
+                    jax.NamedSharding(mesh=mesh, spec=jax.P("X")),
+                )
+            else:
+                raise PyLCMError(
+                    "When distributing over one grid, the number of points in the grid "
+                    "needs to be a multiple of the available devices. Gridpoints: "
+                    f" {n_points} Available Devices: {len(avail_devices)}"
+                )
+        if len(distributed_grids) > 1:
+            permutations = reduce(
+                mul, [grid.to_jax().shape[0] for grid in distributed_grids.values()]
+            )
+            if permutations == len(avail_devices):
+                mesh = jax.make_mesh(
+                    tuple(len(grid.to_jax()) for grid in distributed_grids.values()),
+                    tuple(distributed_grids.keys()),
+                    axis_types=tuple(
+                        jax.sharding.AxisType.Auto for grid in distributed_grids
+                    ),
+                    devices=avail_devices,
+                )
+                for state_name in distributed_grids:
+                    new_states[state_name] = jax.device_put(
+                        new_states[state_name],
+                        jax.NamedSharding(mesh=mesh, spec=jax.P(state_name)),
+                    )
+            else:
+                raise PyLCMError(
+                    "When distributing over multiple grids, the product of the number of"
+                    " points of the grids needs to match the number of available devices."
+                    f" Gridpoints: {permutations} Available Devices: {len(avail_devices)}"
+                )
         return self._base_state_action_space.replace(
-            states=new_states,
-            continuous_actions=new_continuous_actions,
+            states=MappingProxyType(new_states),
+            continuous_actions=MappingProxyType(new_continuous_actions),
         )
 
 
