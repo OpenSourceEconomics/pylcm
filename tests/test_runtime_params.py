@@ -313,3 +313,58 @@ def test_simulate_with_runtime_action_grid_no_nan() -> None:
     )
     df = result.to_dataframe()
     assert not df["value"].isna().any()
+
+
+# --- extra_param_names: scalar params consumed by user-side injection code ---
+
+
+def test_extra_param_names_added_to_template():
+    """`extra_param_names` show up in the action's template alongside `points`."""
+    model = _make_action_grid_model(
+        consumption_grid=IrregSpacedGrid(
+            n_points=5,
+            extra_param_names=("max_consumption",),
+        ),
+    )
+    alive_template = model._params_template["alive"]
+    assert alive_template["consumption"] == {
+        "points": "Float1D",
+        "max_consumption": "ScalarFloat",
+    }
+
+
+def test_extra_param_names_accepted_via_fixed_params():
+    """Model-level `fixed_params` with extra-grid-param keys broadcast cleanly."""
+    grid = IrregSpacedGrid(n_points=5, extra_param_names=("max_consumption",))
+    model_fixed = _make_action_grid_model(consumption_grid=grid)
+    # Build via fresh Model to inject `fixed_params`.
+    alive = model_fixed.regimes["alive"]
+    dead = model_fixed.regimes["dead"]
+    model = Model(
+        regimes={"alive": alive, "dead": dead},
+        ages=AgeGrid(start=0, stop=2, step="Y"),
+        regime_id_class=RegimeId,
+        fixed_params={"max_consumption": 5.0},
+    )
+    params = {
+        "discount_factor": 0.95,
+        "interest_rate": 0.05,
+        "alive": {"consumption": {"points": jnp.linspace(0.1, 5.0, 5)}},
+    }
+    period_to_regime_to_V_arr = model.solve(params=params, log_level="off")
+    assert len(period_to_regime_to_V_arr) > 0
+
+
+def test_extra_param_names_rejected_on_fixed_points_grid():
+    """`extra_param_names` is meaningless when points are baked in at construction."""
+    with pytest.raises(Exception, match="only valid when points are supplied"):
+        IrregSpacedGrid(points=[1.0, 2.0, 3.0], extra_param_names=("foo",))
+
+
+def test_extra_param_names_empty_by_default():
+    """No `extra_param_names` keeps the template's grid entry to just `points`."""
+    model = _make_action_grid_model(
+        consumption_grid=IrregSpacedGrid(n_points=5),
+    )
+    alive_template = model._params_template["alive"]
+    assert alive_template["consumption"] == {"points": "Float1D"}

@@ -227,10 +227,21 @@ class IrregSpacedGrid(ContinuousGrid):
     omitted and only `n_points` is given, the points must be supplied at
     runtime via the params.
 
+    `extra_param_names` declares additional scalar parameters consumed by
+    user-side code that *constructs* the runtime points (e.g., a grid
+    upper bound that changes across optimizer iterations). These names
+    enter the params template alongside `points` and pass through
+    `broadcast_to_template` even though no DAG function references them
+    — the user's injection code reads them from the resolved params /
+    `model.fixed_params` to derive the points before calling
+    `solve` / `simulate`.
+
     Example:
     --------
     Fixed grid: `IrregSpacedGrid(points=[-1.73, -0.58, 0.58, 1.73])` Grid that is only
     completed at runtime via params: `IrregSpacedGrid(n_points=4)`
+    Grid that pairs runtime `points` with an extra scalar bound:
+    `IrregSpacedGrid(n_points=4, extra_param_names=("max_consumption",))`
 
     """
 
@@ -240,12 +251,23 @@ class IrregSpacedGrid(ContinuousGrid):
     n_points: int
     """Number of points. Derived from `len(points)` when points are given."""
 
+    extra_param_names: tuple[str, ...]
+    """Names of additional scalar params surfaced in the template.
+
+    Only meaningful when points are supplied at runtime
+    (`pass_points_at_runtime=True`); pylcm itself never reads these
+    values — they're carried through the params machinery so user-side
+    injection code can pick them up without fighting the `Unknown keys`
+    validator.
+    """
+
     def __init__(
         self,
         *,
         points: Sequence[float] | Float1D | None = None,
         n_points: int | None = None,
         batch_size: int = 0,
+        extra_param_names: tuple[str, ...] = (),
     ) -> None:
         if points is not None:
             _validate_irreg_spaced_grid(points)
@@ -269,9 +291,16 @@ class IrregSpacedGrid(ContinuousGrid):
             )
         else:
             stored_points = None
+        if extra_param_names and stored_points is not None:
+            raise GridInitializationError(
+                "`extra_param_names` is only valid when points are supplied at "
+                "runtime (i.e. `points=None`); a fixed-points grid has no "
+                "user-side params to thread through."
+            )
         object.__setattr__(self, "points", stored_points)
         object.__setattr__(self, "n_points", n_points)
         object.__setattr__(self, "batch_size", batch_size)
+        object.__setattr__(self, "extra_param_names", tuple(extra_param_names))
 
     @property
     def pass_points_at_runtime(self) -> bool:

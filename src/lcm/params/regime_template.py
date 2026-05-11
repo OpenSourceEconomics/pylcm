@@ -92,7 +92,7 @@ def _add_runtime_grid_params(
             _fail_if_runtime_grid_shadows_function(
                 function_params=function_params, name=state_name, kind="state"
             )
-            function_params[state_name] = {"points": "Float1D"}
+            function_params[state_name] = _irreg_grid_template_entry(grid)
         elif isinstance(grid, _ShockGrid) and grid.params_to_pass_at_runtime:
             _fail_if_runtime_grid_shadows_function(
                 function_params=function_params,
@@ -108,7 +108,22 @@ def _add_runtime_grid_params(
             _fail_if_runtime_grid_shadows_function(
                 function_params=function_params, name=action_name, kind="action"
             )
-            function_params[action_name] = {"points": "Float1D"}
+            function_params[action_name] = _irreg_grid_template_entry(grid)
+
+
+def _irreg_grid_template_entry(grid: IrregSpacedGrid) -> dict[str, str]:
+    """Template slots for a runtime-points `IrregSpacedGrid`.
+
+    Always exposes `points: Float1D`. Each entry in
+    `grid.extra_param_names` adds a `ScalarFloat` slot so user-side
+    injection code can thread its scalar bounds through `fixed_params`
+    or per-iteration params without tripping `broadcast_to_template`'s
+    unknown-keys check.
+    """
+    entry: dict[str, str] = {"points": "Float1D"}
+    for name in grid.extra_param_names:
+        entry[name] = "ScalarFloat"
+    return entry
 
 
 def _fail_if_runtime_grid_shadows_function(
