@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 def validate_V(
     *,
     V_arr: Array,
-    age: ScalarInt | ScalarFloat,
+    age: float | ScalarInt | ScalarFloat,
     regime_name: RegimeName | None = None,
     partial_solution: object = None,
     compute_intermediates: Callable | None = None,
@@ -93,12 +93,11 @@ def validate_V(
         "(e.g. from a NaN survival probability or a NaN fixed param).\n"
         "- A per-target state_transitions dict omits a reachable target "
         "(non-zero transition probability to an incomplete target).\n\n"
-        "To diagnose, re-solve with debug logging:\n\n"
-        '  model.solve(params=params, log_level="debug", '
-        'log_path="./debug/")\n\n'
-        "The snapshot saved on failure contains diagnostics that pinpoint "
-        "where NaN enters (U, E[V], or regime transitions). See the "
-        "debugging guide:\n"
+        "See the [NOTE] below for the per-intermediate / per-axis "
+        "breakdown produced by `compute_intermediates`. When `log_path` "
+        "is configured, an additional [NOTE] points to the on-disk "
+        "snapshot directory written before this exception was raised. "
+        "Debugging guide:\n"
         "https://pylcm.readthedocs.io/en/latest/user_guide/debugging/"
     )
     exc.partial_solution = partial_solution
@@ -288,8 +287,8 @@ def validate_regime_transition_probs(
     regime_transition_probs: MappingProxyType[str, Array],
     active_regimes_next_period: tuple[RegimeName, ...],
     regime_name: RegimeName,
-    age: ScalarInt | ScalarFloat,
-    next_age: ScalarInt | ScalarFloat,
+    age: float | ScalarInt | ScalarFloat,
+    next_age: float | ScalarInt | ScalarFloat,
     state_action_values: MappingProxyType[str, Array] | None = None,
 ) -> None:
     """Validate regime transition probabilities.
@@ -373,7 +372,7 @@ def _format_sum_violation(
             {name: jnp.atleast_1d(arr) for name, arr in state_action_values.items()}
         )
     failing_mask = ~jnp.isclose(sum_all, 1.0)
-    failing_indices = jnp.where(failing_mask)[0]
+    failing_indices = jnp.where(failing_mask)[0].astype(jnp.int32)
     failing_sums = sum_all[failing_mask]
     n_failing = int(failing_indices.shape[0])
     n_show = min(n_failing, 5)
@@ -544,7 +543,7 @@ def _validate_no_reachable_incomplete_targets(
     regime_transition_probs: MappingProxyType[str, Array],
     active_regimes_next_period: tuple[RegimeName, ...],
     regime_name: RegimeName,
-    age: ScalarInt | ScalarFloat,
+    age: float | ScalarInt | ScalarFloat,
 ) -> None:
     """Check that targets with incomplete stochastic transitions are unreachable.
 

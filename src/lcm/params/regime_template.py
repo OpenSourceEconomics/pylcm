@@ -17,20 +17,18 @@ from lcm.typing import (
 )
 
 
-def create_regime_params_template(
-    regime: Regime,
-) -> RegimeParamsTemplate:
+def create_regime_params_template(regime: Regime) -> RegimeParamsTemplate:
     """Create parameter template from a regime specification.
 
-    Discover parameters from function signatures via `dags.tree`. Parameters are
-    function arguments that are not states, actions, other regime functions, or
-    special variables (period, age, E_next_V).
+    Discover parameters from function signatures via `dags.tree`. Parameters
+    are function arguments that are not states, actions, regime functions,
+    `next_<state>` outputs, or special variables (`period`, `age`, `E_next_V`).
 
     For `SolveSimulateFunctionPair` entries, the template contains the **union**
     of both variants' parameters so the user can provide a single flat params
     dict that satisfies both phases.
 
-    Grids with runtime-supplied values (IrregSpacedGrid without points,
+    Grids with runtime-supplied values (`IrregSpacedGrid` without points,
     `_ShockGrid` without full shock_params) add entries to the template under
     pseudo-function keys matching the state or action name.
 
@@ -41,8 +39,15 @@ def create_regime_params_template(
         The regime parameter template with type annotations as values.
 
     """
-    H_variables = {*regime.functions, "period", "age", "E_next_V"}
-    variables = H_variables | set(regime.actions) | set(regime.states)
+    variables = {
+        *set(regime.states),
+        *set(regime.actions),
+        *regime.functions,
+        *(f"next_{name}" for name in regime.states),
+        "period",
+        "age",
+        "E_next_V",
+    }
 
     function_params: dict[FunctionName, dict[str, str]] = {}
 

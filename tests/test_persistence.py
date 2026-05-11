@@ -29,7 +29,7 @@ def _retired_utility(wealth: ContinuousState) -> FloatND:
     return jnp.log(wealth)
 
 
-def _build_tiny_model():
+def _build_tiny_model(*, enable_jit: bool, n_subjects: int):
     def utility(consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
         return jnp.log(consumption + wealth)
 
@@ -60,7 +60,8 @@ def _build_tiny_model():
         regimes={"working": working, "retired": retired},
         ages=ages,
         regime_id_class=_RegimeId,
-        enable_jit=False,
+        enable_jit=enable_jit,
+        n_subjects=n_subjects,
     )
     params = {"discount_factor": 0.95}
     return model, params
@@ -76,7 +77,7 @@ def _initial_conditions():
 
 @pytest.fixture
 def model_and_params():
-    return _build_tiny_model()
+    return _build_tiny_model(enable_jit=False, n_subjects=2)
 
 
 @pytest.fixture
@@ -168,6 +169,30 @@ def test_simulate_with_solve_debug_persists_snapshot(tmp_path, model_and_params)
     snapshot = load_snapshot(dirs[0])
     assert isinstance(snapshot, SimulateSnapshot)
     assert snapshot.period_to_regime_to_V_arr is not None
+    assert snapshot.result is not None
+
+
+def test_simulate_debug_persists_snapshot_with_aot_compiled_regimes(tmp_path):
+    """Debug snapshot saves successfully when `n_subjects` triggers AOT compile.
+
+    AOT compilation produces `jax.stages.Compiled` callables on each
+    `InternalRegime.simulate_functions`; their backing `LoadedExecutable`
+    cannot be pickled. The snapshot path must strip those before pickling
+    `result.pkl`.
+    """
+    model, params = _build_tiny_model(enable_jit=True, n_subjects=2)
+    model.simulate(
+        params=params,
+        initial_conditions=_initial_conditions(),
+        period_to_regime_to_V_arr=None,
+        log_level="debug",
+        log_path=tmp_path,
+    )
+
+    dirs = sorted(tmp_path.glob("simulate_snapshot_*/"))
+    assert len(dirs) == 1
+    snapshot = load_snapshot(dirs[0])
+    assert isinstance(snapshot, SimulateSnapshot)
     assert snapshot.result is not None
 
 

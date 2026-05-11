@@ -14,7 +14,7 @@ def test_update_states_strips_next_prefix():
     )
     computed_next_states = MappingProxyType(
         {
-            "working__next_wealth": jnp.array([15.0, 25.0, 35.0]),
+            "working": MappingProxyType({"next_wealth": jnp.array([15.0, 25.0, 35.0])}),
         }
     )
     subject_indices = jnp.array([True, False, True])
@@ -38,8 +38,12 @@ def test_update_states_multiple_regimes_and_states():
     )
     computed_next_states = MappingProxyType(
         {
-            "working__next_wealth": jnp.array([15.0, 25.0]),
-            "working__next_health": jnp.array([1.5, 2.5]),
+            "working": MappingProxyType(
+                {
+                    "next_wealth": jnp.array([15.0, 25.0]),
+                    "next_health": jnp.array([1.5, 2.5]),
+                }
+            ),
         }
     )
     subject_indices = jnp.array([True, True])
@@ -64,7 +68,7 @@ def test_update_states_no_subjects_selected():
     )
     computed_next_states = MappingProxyType(
         {
-            "r__next_wealth": jnp.array([99.0, 99.0]),
+            "r": MappingProxyType({"next_wealth": jnp.array([99.0, 99.0])}),
         }
     )
     subject_indices = jnp.array([False, False])

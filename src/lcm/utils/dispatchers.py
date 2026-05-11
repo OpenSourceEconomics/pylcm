@@ -17,7 +17,10 @@ FunctionWithArrayReturn = TypeVar(
     "FunctionWithArrayReturn",
     bound=Callable[
         ...,
-        Array | tuple[Array, Array] | MappingProxyType[str, Array],
+        Array
+        | tuple[Array, Array]
+        | MappingProxyType[str, Array]
+        | MappingProxyType[str, MappingProxyType[str, Array]],
     ],
 )
 

@@ -1,6 +1,8 @@
 """Collection of classes that are used by the user to define the model and grids."""
 
 import dataclasses
+import logging
+import threading
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
@@ -22,7 +24,8 @@ from lcm.pandas_utils import (
     initial_conditions_from_dataframe,
 )
 from lcm.params.processing import (
-    process_params,
+    broadcast_to_template,
+    cast_params_to_canonical_dtypes,
 )
 from lcm.persistence import (
     save_simulate_snapshot,
@@ -30,6 +33,7 @@ from lcm.persistence import (
 )
 from lcm.regime import Regime
 from lcm.regime_building.processing import InternalRegime
+from lcm.simulation.compile import compile_all_simulate_functions
 from lcm.simulation.initial_conditions import validate_initial_conditions
 from lcm.simulation.result import SimulationResult, get_simulation_output_dtypes
 from lcm.simulation.simulate import simulate
@@ -85,8 +89,44 @@ class Model:
     fixed_params: UserParams
     """Parameters fixed at model initialization."""
 
+    n_subjects: int | None = None
+    """Expected simulate batch size; enables AOT compile of simulate functions.
+
+    Dispatch by call shape:
+
+    - `None`: purely lazy behaviour, no AOT.
+    - First `simulate(...)` with `actual_n == n_subjects`: AOT-compiles all
+      simulate functions for that batch shape (blocks before solve runs)
+      and caches them.
+    - Subsequent `simulate(...)` with the same matching size: reuses the
+      cached compiled programs.
+    - `simulate(...)` with a mismatching size: warns once per size and falls
+      back to the runtime-traced path.
+
+    Param-shape contract: the cache is keyed only on `n_subjects`. The shapes
+    and dtypes of `internal_params` leaves at the first matching call become
+    part of the AOT signature; subsequent calls must keep them stable. MSM-
+    style estimation (varying values, fixed shapes) is the target use case;
+    construct a fresh `Model` whenever a param array's shape or dtype changes.
+    """
+
     _params_template: ParamsTemplate
     """Template for the model parameters."""
+
+    _simulate_compile_cache: dict[int, MappingProxyType[RegimeName, InternalRegime]]
+    """AOT-compiled `internal_regimes` per matching `n_subjects`."""
+
+    _warned_n_subjects: set[int]
+    """Mismatching `actual_n_subjects` already warned about (one warning each)."""
+
+    _simulate_compile_lock: threading.Lock
+    """Serialises mutations of `_simulate_compile_cache` and
+    `_warned_n_subjects`.
+
+    The check-then-set on each container is held under this lock. The
+    consequent `log.warning` call sits outside the lock so concurrent
+    simulate() calls don't serialise on logging I/O.
+    """
 
     def __init__(
         self,
@@ -100,6 +140,7 @@ class Model:
         derived_categoricals: Mapping[FunctionName, DiscreteGrid] = MappingProxyType(
             {}
         ),
+        n_subjects: int | None = None,
     ) -> None:
         """Initialize the Model.
 
@@ -115,17 +156,26 @@ class Model:
                 not in states/actions. Broadcast to all regimes (merged with
                 each regime's own `derived_categoricals`). Raises if a regime
                 already has a conflicting entry.
+            n_subjects: Expected simulate batch size; if set, the first matching
+                `simulate(...)` call AOT-compiles all simulate functions for
+                batch shape `n_subjects` before backward induction starts.
+                `None` keeps the purely lazy behaviour.
 
         """
         self.description = description
         self.ages = ages
         self.n_periods = ages.n_periods
         self.fixed_params = ensure_containers_are_immutable(fixed_params)
+        self.n_subjects = n_subjects
+        self._simulate_compile_cache = {}
+        self._warned_n_subjects = set()
+        self._simulate_compile_lock = threading.Lock()
 
         validate_model_inputs(
             n_periods=self.n_periods,
             regimes=regimes,
             regime_id_class=regime_id_class,
+            n_subjects=n_subjects,
         )
         self.regime_names_to_ids = MappingProxyType(
             dict(
@@ -148,6 +198,27 @@ class Model:
             regimes=self.regimes,
             regime_names_to_ids=self.regime_names_to_ids,
         )
+
+    def __getstate__(self) -> dict[str, object]:
+        """Return a copy of `__dict__` with per-process AOT compile state removed.
+
+        Drops `_simulate_compile_lock` (a `threading.Lock`, not pickleable),
+        `_simulate_compile_cache` (compiled XLA programs that can't survive
+        a process boundary), and `_warned_n_subjects` (its companion set).
+        `__setstate__` restores all three to their fresh state.
+        """
+        state = self.__dict__.copy()
+        state.pop("_simulate_compile_lock", None)
+        state.pop("_simulate_compile_cache", None)
+        state.pop("_warned_n_subjects", None)
+        return state
+
+    def __setstate__(self, state: dict[str, object]) -> None:
+        """Restore AOT compile state to a fresh empty cache."""
+        self.__dict__.update(state)
+        self._simulate_compile_cache = {}
+        self._warned_n_subjects = set()
+        self._simulate_compile_lock = threading.Lock()
 
     def get_params_template(self) -> UserFacingParamsTemplate:
         """Get a human-readable params template.
@@ -210,24 +281,47 @@ class Model:
             internal_params=internal_params,
             ages=self.ages,
         )
+        return self._solve_compiled(
+            internal_params=internal_params,
+            params=params,
+            log=get_logger(log_level=log_level),
+            log_level=log_level,
+            log_path=log_path,
+            log_keep_n_latest=log_keep_n_latest,
+            max_compilation_workers=max_compilation_workers,
+        )
+
+    def _solve_compiled(
+        self,
+        *,
+        internal_params: InternalParams,
+        params: UserParams,
+        log: logging.Logger,
+        log_level: LogLevel,
+        log_path: str | Path | None,
+        log_keep_n_latest: int,
+        max_compilation_workers: int | None,
+    ) -> MappingProxyType[int, MappingProxyType[RegimeName, FloatND]]:
+        """Run backward induction, persisting a snapshot on debug or NaN failure."""
         try:
             period_to_regime_to_V_arr = solve(
                 internal_params=internal_params,
                 ages=self.ages,
                 internal_regimes=self.internal_regimes,
-                logger=get_logger(log_level=log_level),
+                logger=log,
                 enable_jit=self.enable_jit,
                 max_compilation_workers=max_compilation_workers,
             )
         except InvalidValueFunctionError as exc:
             if log_path is not None and exc.partial_solution is not None:
-                save_solve_snapshot(
+                snap_dir = save_solve_snapshot(
                     model=self,
                     params=params,
                     period_to_regime_to_V_arr=exc.partial_solution,  # ty: ignore[invalid-argument-type]
                     log_path=Path(log_path),
                     log_keep_n_latest=log_keep_n_latest,
                 )
+                exc.add_note(f"Snapshot saved to {snap_dir}")
             raise
         if log_level == "debug" and log_path is not None:
             save_solve_snapshot(
@@ -238,6 +332,41 @@ class Model:
                 log_keep_n_latest=log_keep_n_latest,
             )
         return period_to_regime_to_V_arr
+
+    def _resolve_simulate_internal_regimes(
+        self,
+        *,
+        actual_n_subjects: int,
+        log: logging.Logger,
+    ) -> MappingProxyType[RegimeName, InternalRegime]:
+        """Return internal_regimes to use for simulate; AOT cache when matching.
+
+        Dispatch by `n_subjects` and batch-shape match:
+
+        - `n_subjects is None`: return the original `internal_regimes`
+          (purely lazy path).
+        - `actual_n_subjects != n_subjects`: warn once per mismatching size,
+          return the original `internal_regimes`.
+        - `actual_n_subjects == n_subjects`: return the cached compiled
+          regimes (caller must have populated the cache before calling).
+        """
+        if self.n_subjects is None:
+            return self.internal_regimes
+        if actual_n_subjects != self.n_subjects:
+            with self._simulate_compile_lock:
+                already_warned = actual_n_subjects in self._warned_n_subjects
+                if not already_warned:
+                    self._warned_n_subjects.add(actual_n_subjects)
+            if not already_warned:
+                log.warning(
+                    "simulate called with n_subjects=%d but model declared "
+                    "n_subjects=%d; falling back to runtime compile.",
+                    actual_n_subjects,
+                    self.n_subjects,
+                )
+            return self.internal_regimes
+        with self._simulate_compile_lock:
+            return self._simulate_compile_cache[self.n_subjects]
 
     def simulate(
         self,
@@ -319,30 +448,40 @@ class Model:
             ages=self.ages,
         )
         log = get_logger(log_level=log_level)
-        if period_to_regime_to_V_arr is None:
-            try:
-                period_to_regime_to_V_arr = solve(
+        actual_n_subjects = len(next(iter(initial_conditions.values())))
+        n_subjects = self.n_subjects
+        if n_subjects is not None and n_subjects == actual_n_subjects:
+            with self._simulate_compile_lock:
+                needs_compile = n_subjects not in self._simulate_compile_cache
+            if needs_compile:
+                compiled = compile_all_simulate_functions(
+                    internal_regimes=self.internal_regimes,
                     internal_params=internal_params,
                     ages=self.ages,
-                    internal_regimes=self.internal_regimes,
-                    logger=log,
-                    enable_jit=self.enable_jit,
+                    n_subjects=n_subjects,
                     max_compilation_workers=max_compilation_workers,
+                    logger=log,
                 )
-            except InvalidValueFunctionError as exc:
-                if log_path is not None and exc.partial_solution is not None:
-                    save_solve_snapshot(
-                        model=self,
-                        params=params,
-                        period_to_regime_to_V_arr=exc.partial_solution,  # ty: ignore[invalid-argument-type]
-                        log_path=Path(log_path),
-                        log_keep_n_latest=log_keep_n_latest,
-                    )
-                raise
+                with self._simulate_compile_lock:
+                    self._simulate_compile_cache[n_subjects] = compiled
+        if period_to_regime_to_V_arr is None:
+            period_to_regime_to_V_arr = self._solve_compiled(
+                internal_params=internal_params,
+                params=params,
+                log=log,
+                log_level=log_level,
+                log_path=log_path,
+                log_keep_n_latest=log_keep_n_latest,
+                max_compilation_workers=max_compilation_workers,
+            )
+        simulate_internal_regimes = self._resolve_simulate_internal_regimes(
+            actual_n_subjects=actual_n_subjects,
+            log=log,
+        )
         result = simulate(
             internal_params=internal_params,
             initial_conditions=initial_conditions,
-            internal_regimes=self.internal_regimes,
+            internal_regimes=simulate_internal_regimes,
             regime_names_to_ids=self.regime_names_to_ids,
             logger=log,
             period_to_regime_to_V_arr=period_to_regime_to_V_arr,
@@ -350,6 +489,13 @@ class Model:
             simulation_output_dtypes=self.simulation_output_dtypes,
             seed=seed,
         )
+        # AOT-compiled regimes carry `jax.stages.Compiled` callables that
+        # wrap an unpicklable `LoadedExecutable`. `to_dataframe` only reads
+        # the lazy DAG functions / constraints / transitions on
+        # `simulate_functions`, never the compiled callables — so swap in
+        # the lazy regimes to keep the result cloudpickle-safe.
+        if simulate_internal_regimes is not self.internal_regimes:
+            result._internal_regimes = self.internal_regimes  # noqa: SLF001
         if log_level == "debug" and log_path is not None:
             save_simulate_snapshot(
                 model=self,
@@ -363,9 +509,15 @@ class Model:
         return result
 
     def _process_params(self, params: UserParams) -> InternalParams:
-        """Broadcast, convert Series, and validate user params."""
-        internal_params = process_params(
-            params=params, params_template=self._params_template
+        """Broadcast, convert Series, dtype-cast, and validate user params.
+
+        Step order matters: `convert_series_in_params` runs *between*
+        `broadcast_to_template` and `cast_params_to_canonical_dtypes` so
+        the dtype cast walks a uniform tree (no `pd.Series` to special-
+        case).
+        """
+        internal_params = broadcast_to_template(
+            params=params, template=self._params_template, required=True
         )
         if has_series(internal_params):
             internal_params = convert_series_in_params(
@@ -374,6 +526,7 @@ class Model:
                 regimes=self.regimes,
                 regime_names_to_ids=self.regime_names_to_ids,
             )
+        internal_params = cast_params_to_canonical_dtypes(internal_params)
         _validate_param_types(internal_params)
         return internal_params
 

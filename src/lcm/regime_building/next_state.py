@@ -6,7 +6,7 @@ from types import MappingProxyType
 import jax
 import pandas as pd
 from dags import concatenate_functions, with_signature
-from dags.tree import qname_from_tree_path, tree_path_from_qname
+from dags.tree import qname_from_tree_path
 from jax import Array
 
 from lcm.grids import Grid
@@ -69,6 +69,17 @@ def get_next_state_function_for_simulation(
 ) -> NextStateSimulationFunction:
     """Get function that computes the next states during the simulation.
 
+    Builds one DAG per target regime using unqualified `next_<state>` keys, mirroring
+    the per-target structure of {func}`get_next_state_function_for_solution`. This
+    lets a transition function or auxiliary regime function consume another
+    transition's `next_<state>` output via plain name resolution within the same
+    target's DAG. The combined function returns a nested mapping keyed by target
+    regime name, with each inner dict using unqualified `next_<state>` keys.
+
+    Stochastic-transition wrappers expose `key_<target>__next_<state>` and
+    `weight_<target>__next_<state>` as external arguments so callers can pass a
+    distinct random key and pre-computed weight per target.
+
     Args:
         transitions: Nested mapping of target regime names to transition functions.
         functions: Immutable mapping of auxiliary functions of a regime.
@@ -78,26 +89,31 @@ def get_next_state_function_for_simulation(
 
     Returns:
         Function that computes the next states. Depends on states and actions of the
-        current period, and the regime parameters ("params"). If target is "simulate",
-        the function also depends on the dictionary of random keys ("keys"), which
-        corresponds to the names of stochastic next functions.
+        current period, and the regime parameters ("params"). The function also
+        depends on the dictionary of random keys ("keys") for stochastic transitions.
+        Returns `{target_regime_name: {next_<state>: array}}`.
 
     """
-    flat_transitions = flatten_regime_namespace(transitions)
-
-    # For the simulation target, we need to extend the functions dictionary with
-    # stochastic next states functions and their weights.
-    extended_transitions = _extend_transitions_for_simulation(
-        all_grids=all_grids,
-        flat_transitions=flat_transitions,
-        variable_info=variable_info,
-        stochastic_transition_names=stochastic_transition_names,
-    )
-    functions_to_concatenate = extended_transitions | dict(functions)
+    per_target_funcs: dict[RegimeName, Callable[..., dict[str, Array]]] = {}
+    for target, target_transitions in transitions.items():
+        extended = _extend_target_transitions_for_simulation(
+            target=target,
+            target_transitions=target_transitions,
+            all_grids=all_grids,
+            variable_info=variable_info,
+            stochastic_transition_names=stochastic_transition_names,
+        )
+        per_target_funcs[target] = concatenate_functions(
+            functions=dict(extended) | dict(functions),
+            targets=list(extended.keys()),
+            return_type="dict",
+            enforce_signature=False,
+            set_annotations=True,
+        )
 
     return concatenate_functions(
-        functions=functions_to_concatenate,
-        targets=list(flat_transitions.keys()),
+        functions=per_target_funcs,
+        targets=list(per_target_funcs.keys()),
         return_type="dict",
         enforce_signature=False,
         set_annotations=True,
@@ -137,64 +153,59 @@ def get_next_stochastic_weights_function(
     )
 
 
-def _extend_transitions_for_simulation(
+def _extend_target_transitions_for_simulation(
     *,
+    target: RegimeName,
+    target_transitions: MappingProxyType[TransitionFunctionName, Callable[..., Array]],
     all_grids: MappingProxyType[RegimeName, MappingProxyType[StateOrActionName, Grid]],
-    flat_transitions: FunctionsMapping,
     variable_info: pd.DataFrame,
     stochastic_transition_names: frozenset[TransitionFunctionName],
 ) -> dict[TransitionFunctionName, Callable[..., Array]]:
-    """Extend the functions dictionary for the simulation target.
+    """Replace stochastic transitions for one target with realisation wrappers.
+
+    Deterministic transitions are passed through unchanged. Stochastic transitions
+    are replaced by wrappers that draw a realisation from a precomputed weight
+    vector and a random key. The wrapper's external argument names use
+    target-qualified form (`key_<target>__<next_state>`,
+    `weight_<target>__<next_state>`) so multi-target callers can supply distinct
+    random keys per target. The dict key keeps the unqualified `next_<state>` so
+    other transitions or regime functions in the same target's DAG can resolve
+    it by name.
 
     Args:
+        target: Target regime name.
+        target_transitions: Mapping of unqualified `next_<state>` transition names
+            to functions, restricted to one target regime.
         all_grids: Immutable mapping of regime names to Grid spec objects.
-        flat_transitions: Flattened mapping of transition names to functions.
         variable_info: Variable info of the current regime.
         stochastic_transition_names: Frozenset of stochastic transition function names.
 
     Returns:
-        Extended functions dictionary.
+        Extended transitions dictionary keyed by unqualified `next_<state>` names.
 
     """
     shock_names: set[ShockName] = set(variable_info.query("is_shock").index.to_list())
     flat_grids = flatten_regime_namespace(all_grids)
-    discrete_stochastic_targets = [
-        func_name
-        for func_name in flat_transitions
-        if tree_path_from_qname(func_name)[-1] in stochastic_transition_names
-        and tree_path_from_qname(func_name)[-1].removeprefix("next_") not in shock_names
-    ]
-    continuous_stochastic_targets = [
-        func_name
-        for func_name in flat_transitions
-        if tree_path_from_qname(func_name)[-1] in stochastic_transition_names
-        and tree_path_from_qname(func_name)[-1].removeprefix("next_") in shock_names
-    ]
-    # Handle stochastic next states functions
-    # ----------------------------------------------------------------------------------
-    # We generate stochastic next states functions that simulate the next state given
-    # a random key (think of a seed) and the weights corresponding to the labels of the
-    # stochastic variable. The weights are computed using the stochastic weight
-    # functions, which we add the to functions dict. `dags.concatenate_functions` then
-    # generates a function that computes the weights and simulates the next state in
-    # one go.
-    # ----------------------------------------------------------------------------------
-    discrete_stochastic_next = {
-        name: _create_discrete_stochastic_next_func(
-            name=name, labels=flat_grids[name.replace("next_", "")].to_jax()
-        )
-        for name in discrete_stochastic_targets
-    }
-    continuous_stochastic_next = {
-        name: _create_continuous_stochastic_next_func(name=name, flat_grids=flat_grids)
-        for name in continuous_stochastic_targets
-    }
-
-    # Overwrite regime transitions with generated stochastic next states functions
-    # ----------------------------------------------------------------------------------
-    return (
-        dict(flat_transitions) | discrete_stochastic_next | continuous_stochastic_next
+    extended: dict[TransitionFunctionName, Callable[..., Array]] = dict(
+        target_transitions
     )
+    for next_state_name in target_transitions:
+        if next_state_name not in stochastic_transition_names:
+            continue
+        qname = qname_from_tree_path((target, next_state_name))
+        raw_state_name = next_state_name.removeprefix("next_")
+        if raw_state_name in shock_names:
+            extended[next_state_name] = _create_continuous_stochastic_next_func(
+                name=qname, flat_grids=flat_grids
+            )
+        else:
+            extended[next_state_name] = _create_discrete_stochastic_next_func(
+                name=qname,
+                labels=flat_grids[
+                    qname_from_tree_path((target, raw_state_name))
+                ].to_jax(),
+            )
+    return extended
 
 
 def _create_discrete_stochastic_next_func(

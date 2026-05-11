@@ -4,31 +4,31 @@ from typing import Any, Protocol
 
 import pandas as pd
 from jax import Array
-from jaxtyping import Bool, Float, Int, Scalar
+from jaxtyping import Bool, Float, Int32, Scalar
 
 from lcm.params import MappingLeaf
 from lcm.params.sequence_leaf import SequenceLeaf
 
 type ContinuousState = Float[Array, "..."]
 type ContinuousAction = Float[Array, "..."]
-type DiscreteState = Int[Array, "..."]
-type DiscreteAction = Int[Array, "..."]
+type DiscreteState = Int32[Array, "..."]
+type DiscreteAction = Int32[Array, "..."]
 
 type FloatND = Float[Array, "..."]
-type IntND = Int[Array, "..."]
+type IntND = Int32[Array, "..."]
 type BoolND = Bool[Array, "..."]
 
 type Float1D = Float[Array, "_"]  # noqa: F821
-type Int1D = Int[Array, "_"]  # noqa: F821
+type Int1D = Int32[Array, "_"]  # noqa: F821
 type Bool1D = Bool[Array, "_"]  # noqa: F821
 
-# Many JAX functions are designed to work with scalar numerical values. This also
-# includes zero dimensional jax arrays.
-type ScalarInt = int | Int[Scalar, ""]
-type ScalarFloat = float | Float[Scalar, ""]
+# Zero-dimensional JAX scalars — pylcm's canonical scalar form post boundary cast.
+type ScalarInt = Int32[Scalar, ""]
+type ScalarFloat = Float[Scalar, ""]
+type ScalarBool = Bool[Scalar, ""]
 
-type Period = int | Int1D
-type Age = int | float
+type Period = ScalarInt
+type Age = ScalarInt | ScalarFloat
 type RegimeName = str
 type StateName = str
 type ActionName = str
@@ -54,7 +54,7 @@ type UserParams = Mapping[
 # Internal regime parameters: A flat mapping with function-qualified names.
 # Keys are always function-qualified (e.g., "utility__risk_aversion",
 # "H__discount_factor"). Values are scalars or arrays.
-type FlatRegimeParams = MappingProxyType[str, bool | float | Array]
+type FlatRegimeParams = MappingProxyType[str, Array]
 type InternalParams = MappingProxyType[RegimeName, FlatRegimeParams]
 
 # Immutable templates, used internally
@@ -188,14 +188,17 @@ class StochasticNextFunction(Protocol):
 class NextStateSimulationFunction(Protocol):
     """The function that computes the next states during the simulation.
 
-    Only used for type checking.
+    Returns a nested mapping `{target_regime: {next_<state>: array}}`. Only
+    used for type checking.
 
     """
 
     def __call__(
         self,
         **kwargs: Array | Period | Age,
-    ) -> MappingProxyType[str, DiscreteState | ContinuousState]: ...
+    ) -> MappingProxyType[
+        RegimeName, MappingProxyType[str, DiscreteState | ContinuousState]
+    ]: ...
 
 
 class ActiveFunction(Protocol):

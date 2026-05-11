@@ -3,7 +3,6 @@ from types import MappingProxyType
 
 import jax.numpy as jnp
 import pandas as pd
-from pybaum import tree_equal
 
 from lcm.ages import AgeGrid
 from lcm.grids import DiscreteGrid
@@ -13,10 +12,7 @@ from lcm.regime_building.next_state import (
     get_next_state_function_for_simulation,
     get_next_state_function_for_solution,
 )
-from lcm.typing import (
-    ContinuousState,
-    FloatND,
-)
+from lcm.typing import ContinuousState
 from tests.test_models.deterministic.regression import dead, working_life
 
 
@@ -41,32 +37,37 @@ def test_get_next_state_function_with_solve_target():
     )
 
     flat_regime_params = {
-        "discount_factor": 1.0,
-        "utility__disutility_of_work": 1.0,
-        "next_wealth__interest_rate": 0.05,
+        "discount_factor": jnp.asarray(1.0),
+        "utility__disutility_of_work": jnp.asarray(1.0),
+        "next_wealth__interest_rate": jnp.asarray(0.05),
     }
-    action = {"labor_supply": 1, "consumption": 10}
-    state = {"wealth": 20}
+    action = {"labor_supply": jnp.asarray(1), "consumption": jnp.asarray(10.0)}
+    state = {"wealth": jnp.asarray(20.0)}
 
     got = got_func(
         **action,
         **state,
-        period=1,
-        age=1.0,
+        period=jnp.int32(1),
+        age=jnp.asarray(1.0),
         **flat_regime_params,
     )
     assert got == {"next_wealth": 1.05 * (20 - 10)}
 
 
 def test_get_next_state_function_with_simulate_target():
+    """Outputs are nested by target regime: `{target: {next_state: array}}`.
+
+    The combined function dispatches inputs to the per-target DAG and
+    returns a mapping from target regime name to that target's
+    `{next_<state>: array}` outputs, matching what
+    `_update_states_for_subjects` consumes.
+    """
+
     def f_a(state: ContinuousState) -> ContinuousState:
-        return state[0]
+        return state * 2.0
 
     def f_b(state: ContinuousState) -> ContinuousState:
-        return None  # ty: ignore[invalid-return-type]
-
-    def f_weight_b(state: ContinuousState) -> FloatND:
-        return jnp.array([0.0, 1.0])
+        return state + 1.0
 
     @dataclass
     class MockCategory:
@@ -76,11 +77,12 @@ def test_get_next_state_function_with_simulate_target():
     all_grids = MappingProxyType(
         {"mock": MappingProxyType({"b": DiscreteGrid(MockCategory)})}
     )
-    variable_info = pd.DataFrame({"is_shock": [False]})
+    variable_info = pd.DataFrame({"is_shock": [False]}, index=["b"])
     transitions = MappingProxyType(
         {"mock": MappingProxyType({"next_a": f_a, "next_b": f_b})}
     )
-    functions = MappingProxyType({"utility": lambda: 0, "f_weight_b": f_weight_b})
+    functions = MappingProxyType({"utility": lambda: 0})
+
     got_func = get_next_state_function_for_simulation(
         transitions=transitions,  # ty: ignore[invalid-argument-type]
         functions=functions,  # ty: ignore[invalid-argument-type]
@@ -88,11 +90,12 @@ def test_get_next_state_function_with_simulate_target():
         variable_info=variable_info,
     )
 
-    key = jnp.arange(2, dtype="uint32")
-    got = got_func(state=jnp.arange(2), key_b=key)
+    got = got_func(state=jnp.array([1.0, 2.0]))
 
-    expected = {"a": jnp.array([0]), "b": jnp.array([1])}
-    assert tree_equal(expected, got)
+    assert set(got.keys()) == {"mock"}
+    assert set(got["mock"].keys()) == {"next_a", "next_b"}
+    assert jnp.array_equal(got["mock"]["next_a"], jnp.array([2.0, 4.0]))
+    assert jnp.array_equal(got["mock"]["next_b"], jnp.array([2.0, 3.0]))
 
 
 def test_create_stochastic_next_func():

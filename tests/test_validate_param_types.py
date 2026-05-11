@@ -1,11 +1,17 @@
-"""Test that numpy arrays in params are rejected after processing."""
+"""Tests for params accepted at the boundary by `_validate_param_types`.
+
+After `process_params` casts typed numeric arrays to canonical pylcm
+dtypes, every supported user input form (numpy arrays, JAX arrays,
+Python scalars) reaches the validator as a JAX array or Python scalar
+and is accepted.
+"""
 
 import jax.numpy as jnp
 import numpy as np
-import pytest
+from jax import Array
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
-from lcm.exceptions import InvalidParamsError
+from lcm.dtypes import canonical_float_dtype
 
 
 @categorical(ordered=True)
@@ -49,20 +55,31 @@ def _make_model() -> Model:
     )
 
 
-def test_numpy_array_param_rejected() -> None:
-    """Passing a numpy array as a param should raise InvalidParamsError."""
+def test_numpy_array_param_normalised_to_canonical_jax_array() -> None:
+    """A numpy array param is cast to a JAX array at `canonical_float_dtype()`."""
     model = _make_model()
-    with pytest.raises(InvalidParamsError, match=r"numpy\.ndarray"):
-        model.solve(params={"bonus": np.array(1.0), "discount_factor": 0.95})  # ty: ignore[invalid-argument-type]
+    internal = model._process_params(
+        params={"bonus": np.asarray(1.0, dtype=np.float64), "discount_factor": 0.95}  # ty: ignore[invalid-argument-type]
+    )
+    bonus = internal["working"]["utility__bonus"]
+    assert isinstance(bonus, Array)
+    assert bonus.dtype == canonical_float_dtype()
 
 
-def test_jax_array_param_accepted() -> None:
-    """JAX arrays should be accepted."""
+def test_jax_array_param_kept_at_canonical_dtype() -> None:
+    """A typed JAX array param is kept (or cast) at `canonical_float_dtype()`."""
     model = _make_model()
-    model.solve(params={"bonus": jnp.array(1.0), "discount_factor": 0.95})
+    internal = model._process_params(
+        params={"bonus": jnp.asarray(1.0), "discount_factor": 0.95}
+    )
+    bonus = internal["working"]["utility__bonus"]
+    assert bonus.dtype == canonical_float_dtype()
 
 
-def test_python_scalar_param_accepted() -> None:
-    """Python scalars should be accepted."""
+def test_python_float_param_cast_to_canonical_dtype() -> None:
+    """A Python `float` param is cast to `canonical_float_dtype()`."""
     model = _make_model()
-    model.solve(params={"bonus": 1.0, "discount_factor": 0.95})
+    internal = model._process_params(params={"bonus": 1.0, "discount_factor": 0.95})
+    bonus = internal["working"]["utility__bonus"]
+    assert float(bonus) == 1.0
+    assert bonus.dtype == canonical_float_dtype()

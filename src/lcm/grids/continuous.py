@@ -7,12 +7,14 @@ from typing import overload
 import jax.numpy as jnp
 from jax import Array
 
+from lcm.dtypes import canonical_float_dtype
 from lcm.exceptions import GridInitializationError, format_messages
 from lcm.grids import coordinates as grid_coordinates
 from lcm.grids.base import Grid
 from lcm.typing import (
     Float1D,
     ScalarFloat,
+    ScalarInt,
 )
 
 
@@ -39,24 +41,39 @@ class ContinuousGrid(Grid):
         """Return the generalized coordinate of a value in the grid."""
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True, init=False)
 class UniformContinuousGrid(ContinuousGrid, ABC):
-    """Grid with start/stop/n_points for linearly or logarithmically spaced values."""
+    """Grid with start/stop/n_points for linearly or logarithmically spaced values.
 
-    start: int | float
-    """The start value of the grid."""
+    `start` and `stop` are stored as JAX scalars at `canonical_float_dtype()`,
+    `n_points` as a `jnp.int32` JAX scalar — converted from the Python
+    literals (or other numeric inputs) supplied at construction.
+    """
 
-    stop: int | float
-    """The stop value of the grid."""
+    start: ScalarFloat
+    """The start value of the grid (JAX scalar at `canonical_float_dtype()`)."""
 
-    n_points: int
-    """The number of points in the grid."""
+    stop: ScalarFloat
+    """The stop value of the grid (JAX scalar at `canonical_float_dtype()`)."""
 
-    def __post_init__(self) -> None:
-        _validate_continuous_grid(
-            start=self.start,
-            stop=self.stop,
-            n_points=self.n_points,
+    n_points: ScalarInt
+    """The number of points in the grid (`jnp.int32` JAX scalar)."""
+
+    def __init__(
+        self,
+        *,
+        start: float | ScalarFloat,
+        stop: float | ScalarFloat,
+        n_points: int | ScalarInt,
+        batch_size: int = 0,
+    ) -> None:
+        _init_uniform_grid(
+            self,
+            start=start,
+            stop=stop,
+            n_points=n_points,
+            batch_size=batch_size,
+            requires_positive_start=False,
         )
 
     @abstractmethod
@@ -111,7 +128,10 @@ class LinSpacedGrid(UniformContinuousGrid):
     def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
         return grid_coordinates.get_linspace_coordinate(
-            value=value, start=self.start, stop=self.stop, n_points=self.n_points
+            value=value,
+            start=self.start,
+            stop=self.stop,
+            n_points=self.n_points,
         )
 
 
@@ -126,11 +146,20 @@ class LogSpacedGrid(UniformContinuousGrid):
 
     """
 
-    def __post_init__(self) -> None:
-        _validate_continuous_grid(
-            start=self.start,
-            stop=self.stop,
-            n_points=self.n_points,
+    def __init__(
+        self,
+        *,
+        start: float | ScalarFloat,
+        stop: float | ScalarFloat,
+        n_points: int | ScalarInt,
+        batch_size: int = 0,
+    ) -> None:
+        _init_uniform_grid(
+            self,
+            start=start,
+            stop=stop,
+            n_points=n_points,
+            batch_size=batch_size,
             requires_positive_start=True,
         )
 
@@ -147,19 +176,58 @@ class LogSpacedGrid(UniformContinuousGrid):
     def get_coordinate(self, value: ScalarFloat | Array) -> ScalarFloat | Array:
         """Return the generalized coordinate of a value in the grid."""
         return grid_coordinates.get_logspace_coordinate(
-            value=value, start=self.start, stop=self.stop, n_points=self.n_points
+            value=value,
+            start=self.start,
+            stop=self.stop,
+            n_points=self.n_points,
         )
 
 
-@dataclass(frozen=True, kw_only=True)
+def _init_uniform_grid(
+    grid: UniformContinuousGrid,
+    *,
+    start: float | ScalarFloat,
+    stop: float | ScalarFloat,
+    n_points: int | ScalarInt,
+    batch_size: int,
+    requires_positive_start: bool,
+) -> None:
+    """Cast `start` / `stop` / `n_points` to canonical JAX scalars, validate, store.
+
+    `jnp.asarray(..., dtype=canonical_float_dtype())` and `jnp.int32(...)` lift
+    every numeric input at the boundary: Python literals from user
+    construction, JAX scalars from `dataclasses.replace` round-trips, anything
+    else raises here. The validator can then assume strict `ScalarFloat` /
+    `ScalarInt` types and only check value invariants (finiteness, ordering,
+    positivity).
+    """
+    dtype = canonical_float_dtype()
+    start_jax = jnp.asarray(start, dtype=dtype)
+    stop_jax = jnp.asarray(stop, dtype=dtype)
+    n_points_jax = jnp.int32(n_points)
+    _validate_continuous_grid(
+        start=start_jax,
+        stop=stop_jax,
+        n_points=n_points_jax,
+        requires_positive_start=requires_positive_start,
+    )
+    object.__setattr__(grid, "start", start_jax)
+    object.__setattr__(grid, "stop", stop_jax)
+    object.__setattr__(grid, "n_points", n_points_jax)
+    object.__setattr__(grid, "batch_size", batch_size)
+
+
+@dataclass(frozen=True, kw_only=True, init=False)
 class IrregSpacedGrid(ContinuousGrid):
     """A grid of continuous values at irregular (user-specified) points.
 
     This grid type is useful for representing non-uniformly spaced points such as
     Gauss-Hermite quadrature nodes.
 
-    When `points` is omitted and only `n_points` is given, the `points` must be
-    supplied at runtime via the params.
+    `points` is stored as a JAX array at `canonical_float_dtype()`, converted
+    from the Python sequence supplied at construction. When `points` is
+    omitted and only `n_points` is given, the points must be supplied at
+    runtime via the params.
 
     Example:
     --------
@@ -168,31 +236,44 @@ class IrregSpacedGrid(ContinuousGrid):
 
     """
 
-    points: Sequence[float] | Float1D | None = None
+    points: Float1D | None
     """The grid points in ascending order, or `None` for runtime-supplied points."""
 
-    n_points: int | None = None
+    n_points: int
     """Number of points. Derived from `len(points)` when points are given."""
 
-    def __post_init__(self) -> None:
-        if self.points is not None:
-            _validate_irreg_spaced_grid(self.points)
-            # Derive n_points from points if not explicitly set
-            if self.n_points is None:
-                object.__setattr__(self, "n_points", len(self.points))
-            elif self.n_points != len(self.points):
+    def __init__(
+        self,
+        *,
+        points: Sequence[float] | Float1D | None = None,
+        n_points: int | None = None,
+        batch_size: int = 0,
+    ) -> None:
+        if points is not None:
+            _validate_irreg_spaced_grid(points)
+            derived_n = len(points)
+            if n_points is None:
+                n_points = derived_n
+            elif n_points != derived_n:
                 raise GridInitializationError(
-                    f"n_points ({self.n_points}) does not match "
-                    f"len(points) ({len(self.points)})"
+                    f"n_points ({n_points}) does not match len(points) ({derived_n})"
                 )
-        elif self.n_points is None:
+            stored_points: Float1D | None = jnp.asarray(
+                points, dtype=canonical_float_dtype()
+            )
+        elif n_points is None:
             raise GridInitializationError(
                 "Either points or n_points must be specified for IrregSpacedGrid."
             )
-        elif self.n_points < 2:  # noqa: PLR2004
+        elif n_points < 2:  # noqa: PLR2004
             raise GridInitializationError(
-                f"n_points must be at least 2, got {self.n_points}"
+                f"n_points must be at least 2, got {n_points}"
             )
+        else:
+            stored_points = None
+        object.__setattr__(self, "points", stored_points)
+        object.__setattr__(self, "n_points", n_points)
+        object.__setattr__(self, "batch_size", batch_size)
 
     @property
     def pass_points_at_runtime(self) -> bool:
@@ -217,7 +298,7 @@ class IrregSpacedGrid(ContinuousGrid):
                 f"read from `.states[name]` or `.continuous_actions[name]`. "
                 f"Use `.n_points` if only the shape is needed."
             )
-        return jnp.asarray(self.points)
+        return self.points
 
     @overload
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...
@@ -231,17 +312,21 @@ class IrregSpacedGrid(ContinuousGrid):
                 "initialization or use IrregSpacedGrid(n_points=...) and "
                 "supply points at runtime via params."
             )
-        return grid_coordinates.get_irreg_coordinate(value=value, points=self.to_jax())
+        return grid_coordinates.get_irreg_coordinate(value=value, points=self.points)
 
 
 def _validate_continuous_grid(
     *,
-    start: float,
-    stop: float,
-    n_points: int,
+    start: ScalarFloat,
+    stop: ScalarFloat,
+    n_points: ScalarInt,
     requires_positive_start: bool = False,
 ) -> None:
     """Validate the continuous grid parameters.
+
+    `start` and `stop` are post-cast canonical-dtype JAX scalars (the
+    boundary cast in `_init_uniform_grid` already rejects non-numeric
+    inputs); the checks here cover only value invariants.
 
     Args:
         start: The start value of the grid.
@@ -256,32 +341,24 @@ def _validate_continuous_grid(
     """
     error_messages = []
 
-    valid_start_type = isinstance(start, int | float)
-    if not valid_start_type:
-        error_messages.append("start must be a scalar int or float value")
-
-    valid_stop_type = isinstance(stop, int | float)
-    if not valid_stop_type:
-        error_messages.append("stop must be a scalar int or float value")
-
     # Reject NaN/inf early — `start >= stop` returns False for NaN, so an
     # un-finite start would otherwise pass silently and produce a broken grid.
-    if valid_start_type and not jnp.isfinite(start):
+    start_finite = bool(jnp.isfinite(start))
+    if not start_finite:
         error_messages.append(f"start must be finite, got {start}")
-        valid_start_type = False
-    if valid_stop_type and not jnp.isfinite(stop):
+    stop_finite = bool(jnp.isfinite(stop))
+    if not stop_finite:
         error_messages.append(f"stop must be finite, got {stop}")
-        valid_stop_type = False
 
-    if not isinstance(n_points, int) or n_points < 1:
+    if n_points < 1:
         error_messages.append(
             f"n_points must be an int greater than 0 but is {n_points}",
         )
 
-    if valid_start_type and valid_stop_type and start >= stop:
+    if start_finite and stop_finite and start >= stop:
         error_messages.append("start must be less than stop")
 
-    if valid_start_type and requires_positive_start and start <= 0:
+    if start_finite and requires_positive_start and start <= 0:
         error_messages.append(
             f"start must be > 0 for a log-spaced grid (got {start}); "
             f"`log(x)` is undefined for `x <= 0`."

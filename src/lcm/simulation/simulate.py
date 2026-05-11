@@ -31,6 +31,8 @@ from lcm.typing import (
     IntND,
     RegimeName,
     RegimeNamesToIds,
+    ScalarFloat,
+    ScalarInt,
 )
 from lcm.utils.error_handling import validate_V
 from lcm.utils.logging import (
@@ -99,7 +101,9 @@ def simulate(
     starting_periods = _compute_starting_periods(
         initial_ages=initial_states["age"], ages=ages
     )
-    subject_regime_ids = jnp.full_like(initial_conditions["regime"], MISSING_CAT_CODE)
+    subject_regime_ids = jnp.full_like(
+        initial_conditions["regime"], MISSING_CAT_CODE, dtype=jnp.int32
+    )
 
     # Forward simulation
     simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
@@ -197,7 +201,7 @@ def _simulate_regime_in_period(
     regime_name: RegimeName,
     internal_regime: InternalRegime,
     period: int,
-    age: float,
+    age: ScalarInt | ScalarFloat,
     states: MappingProxyType[str, Array],
     subject_regime_ids: Int1D,
     new_subject_regime_ids: Int1D,

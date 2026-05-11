@@ -52,7 +52,7 @@ def test_solve_brute():
     # ==================================================================================
     # create the params
     # ==================================================================================
-    internal_params = MappingProxyType({"discount_factor": 0.9})
+    internal_params = MappingProxyType({"discount_factor": jnp.asarray(0.9)})
 
     # ==================================================================================
     # create the list of state_action_spaces

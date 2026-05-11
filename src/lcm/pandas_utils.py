@@ -12,6 +12,7 @@ from dags.tree import qname_from_tree_path, tree_path_from_qname
 from jax import Array
 
 from lcm.ages import PSEUDO_STATE_NAMES, AgeGrid
+from lcm.dtypes import canonical_float_dtype
 from lcm.grids import DiscreteGrid, IrregSpacedGrid
 from lcm.params import MappingLeaf
 from lcm.params.sequence_leaf import SequenceLeaf
@@ -149,11 +150,12 @@ def initial_conditions_from_dataframe(  # noqa: C901
     initial_conditions: dict[str, Array] = {
         col: jnp.array(arr, dtype=jnp.int32)
         if col in discrete_state_names
-        else jnp.array(arr)
+        else jnp.array(arr, dtype=canonical_float_dtype())
         for col, arr in result_arrays.items()
     }
     initial_conditions["regime"] = jnp.array(
-        df["regime"].map(dict(regime_names_to_ids)).to_numpy()
+        df["regime"].map(dict(regime_names_to_ids)).to_numpy(),
+        dtype=jnp.int32,
     )
 
     return initial_conditions
@@ -370,12 +372,12 @@ def array_from_series(
 
     """
     if func is None:
-        return jnp.array(sr.to_numpy(), dtype=float)
+        return jnp.array(sr.to_numpy(), dtype=canonical_float_dtype())
 
     indexing_params = _get_func_indexing_params(func=func, array_param_name=param_name)
 
     if not indexing_params:
-        return jnp.array(sr.to_numpy(), dtype=float)
+        return jnp.array(sr.to_numpy(), dtype=canonical_float_dtype())
 
     grids = _resolve_categoricals(
         regimes=regimes,
@@ -705,7 +707,7 @@ def _scatter_series(
     shape = [m.size for m in level_mappings]
 
     if len(series) == 0:
-        return jnp.full(shape, fill_value)
+        return jnp.full(shape, fill_value, dtype=canonical_float_dtype())
 
     index_arrays = [
         _map_level(
@@ -716,7 +718,7 @@ def _scatter_series(
 
     result = np.full(shape, fill_value)
     result[tuple(index_arrays)] = series.to_numpy()
-    return jnp.array(result)
+    return jnp.array(result, dtype=canonical_float_dtype())
 
 
 def _map_level(*, mapping: _LevelMapping, level_values: pd.Index) -> np.ndarray:

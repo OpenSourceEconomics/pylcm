@@ -20,6 +20,7 @@ from lcm.pandas_utils import convert_series_in_params, has_series
 from lcm.params import MappingLeaf
 from lcm.params.processing import (
     broadcast_to_template,
+    cast_params_to_canonical_dtypes,
     create_params_template,
 )
 from lcm.params.sequence_leaf import SequenceLeaf
@@ -128,6 +129,7 @@ def _build_regimes_and_template_with_fixed_params(
             regimes=regimes,
             regime_names_to_ids=regime_names_to_ids,
         )
+    fixed_internal = cast_params_to_canonical_dtypes(fixed_internal)
     _validate_param_types(fixed_internal)
 
     return (
@@ -147,8 +149,11 @@ def validate_model_inputs(
     n_periods: int,
     regimes: Mapping[RegimeName, Regime],
     regime_id_class: type,
+    n_subjects: int | None = None,
 ) -> None:
     """Validate model constructor inputs."""
+    _fail_if_invalid_n_subjects(n_subjects=n_subjects)
+
     # Early exit if regimes are not lcm.Regime instances
     if not all(isinstance(regime, Regime) for regime in regimes.values()):
         raise ModelInitializationError(
@@ -199,6 +204,19 @@ def validate_model_inputs(
     if error_messages:
         msg = format_messages(error_messages)
         raise ModelInitializationError(msg)
+
+
+def _fail_if_invalid_n_subjects(*, n_subjects: int | None) -> None:
+    """Raise TypeError if non-int, ValueError if non-positive."""
+    if n_subjects is None:
+        return
+    # `bool` is a subclass of `int`; reject explicitly so True/False don't slip through.
+    if not isinstance(n_subjects, int) or isinstance(n_subjects, bool):
+        msg = f"n_subjects must be an int or None, got {type(n_subjects).__name__}."
+        raise TypeError(msg)
+    if n_subjects <= 0:
+        msg = f"n_subjects must be a positive integer, got {n_subjects}."
+        raise ValueError(msg)
 
 
 def _validate_all_variables_used(regimes: Mapping[RegimeName, Regime]) -> list[str]:
@@ -405,11 +423,11 @@ def _filter_kwargs_for_func(
 
 
 def _validate_param_types(internal_params: InternalParams) -> None:
-    """Raise if any param leaf is not a Python scalar or JAX array.
+    """Raise if any param leaf is not a JAX `Array` or container leaf.
 
-    After processing, every leaf value (including inside MappingLeaf /
-    SequenceLeaf containers) must be a Python scalar (float, int, bool) or a
-    JAX array. Notably, numpy arrays and pandas Series are not accepted.
+    Defense-in-depth check after `cast_params_to_canonical_dtypes`: by the
+    time this runs, every leaf must be a JAX `Array`, or a `MappingLeaf` /
+    `SequenceLeaf` whose contents recursively satisfy the same rule.
     """
     for regime_name, regime_params in internal_params.items():
         for key, value in regime_params.items():
@@ -417,7 +435,7 @@ def _validate_param_types(internal_params: InternalParams) -> None:
 
 
 def _check_leaf(value: object, path: str) -> None:
-    """Check a single leaf value, recursing into MappingLeaf/SequenceLeaf."""
+    """Check a single leaf, recursing into `MappingLeaf` / `SequenceLeaf`."""
     if isinstance(value, MappingLeaf):
         for k, v in value.data.items():
             _check_leaf(v, f"{path}.{k}")
@@ -426,17 +444,8 @@ def _check_leaf(value: object, path: str) -> None:
         for i, v in enumerate(value.data):
             _check_leaf(v, f"{path}[{i}]")
         return
-    if isinstance(value, (float, int, bool)):
+    if isinstance(value, Array):
         return
-    if hasattr(value, "dtype") and hasattr(value, "shape"):
-        if isinstance(value, Array):
-            return
-        type_name = type(value).__module__ + "." + type(value).__name__
-        msg = (
-            f"Parameter '{path}' is a {type_name} (shape {value.shape}). "
-            f"Use jnp.array() or pass a pd.Series with a named index."
-        )
-        raise InvalidParamsError(msg)
     type_name = type(value).__module__ + "." + type(value).__name__
-    msg = f"Parameter '{path}' has unexpected type {type_name}."
+    msg = f"Parameter {path!r} is a {type_name}, expected a JAX Array."
     raise InvalidParamsError(msg)
