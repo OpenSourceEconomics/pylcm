@@ -98,6 +98,56 @@ are then supplied via the params dict:
 IrregSpacedGrid(n_points=4)
 ```
 
+#### Runtime points driven by `extra_param_names`
+
+When the gridpoints depend on a value that varies across solver iterations — a borrowing
+limit, a per-iteration upper bound, a calibrated cap — declare the dependency explicitly
+with `extra_param_names`:
+
+```python
+IrregSpacedGrid(n_points=64, extra_param_names=("max_consumption",))
+```
+
+`extra_param_names` is only valid together with runtime points (`points=None`). Each
+name is added to the params template alongside the grid's `points` slot, and
+`broadcast_to_template` carries it through even though no DAG function references it.
+The names exist so user-side code that *constructs* the gridpoints can read them without
+tripping the template validator's `Unknown keys` check.
+
+The typical workflow looks like this. Declare the grid with `extra_param_names`,
+populate the extras (e.g. as `model.fixed_params["max_consumption"]`), then inject the
+points before solving or simulating:
+
+```python
+import jax.numpy as jnp
+from lcm import IrregSpacedGrid, Model
+
+
+def inject_consumption_points(*, params: dict, model: Model) -> dict:
+    """Fill the runtime `consumption` gridpoints on every non-terminal regime."""
+    max_consumption = jnp.asarray(model.fixed_params["max_consumption"])
+    out: dict = dict(params)
+    for regime_name, regime in model.regimes.items():
+        if regime.terminal:
+            continue
+        grid = regime.actions["consumption"]
+        assert isinstance(grid, IrregSpacedGrid) and grid.pass_points_at_runtime
+        points = jnp.geomspace(1e-3, max_consumption, num=grid.n_points)
+        regime_entry = dict(out.get(regime_name, {}))
+        regime_entry["consumption"] = {"points": points}
+        out[regime_name] = regime_entry
+    return out
+
+
+params = inject_consumption_points(params=model.get_params_template(), model=model)
+model.solve(params=params)
+```
+
+`extra_param_names` carries any number of scalars (`("max_consumption", "floor")`,
+etc.). The construction logic in the user-side helper is free to combine them however
+the model needs — pylcm only validates that each declared name is present in the
+resolved params.
+
 ### PiecewiseLinSpacedGrid
 
 Multiple linearly spaced segments joined at breakpoints. Dense where you need precision,
