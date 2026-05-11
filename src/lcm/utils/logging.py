@@ -60,7 +60,7 @@ def log_nan_in_V(
     *,
     logger: logging.Logger,
     regime_name: str,
-    age: ScalarInt | ScalarFloat,
+    age: float | ScalarInt | ScalarFloat,
     V_arr: FloatND,
 ) -> None:
     """Log a warning if V_arr contains NaN or Inf values.
@@ -79,7 +79,7 @@ def log_nan_in_V(
 def log_period_header(
     *,
     logger: logging.Logger,
-    age: ScalarInt | ScalarFloat,
+    age: float | ScalarInt | ScalarFloat,
     n_active_regimes: int,
 ) -> None:
     """Log the start of a period.

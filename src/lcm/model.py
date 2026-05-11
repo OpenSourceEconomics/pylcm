@@ -24,7 +24,8 @@ from lcm.pandas_utils import (
     initial_conditions_from_dataframe,
 )
 from lcm.params.processing import (
-    process_params,
+    broadcast_to_template,
+    cast_params_to_canonical_dtypes,
 )
 from lcm.persistence import (
     save_simulate_snapshot,
@@ -508,9 +509,15 @@ class Model:
         return result
 
     def _process_params(self, params: UserParams) -> InternalParams:
-        """Broadcast, convert Series, and validate user params."""
-        internal_params = process_params(
-            params=params, params_template=self._params_template
+        """Broadcast, convert Series, dtype-cast, and validate user params.
+
+        Step order matters: `convert_series_in_params` runs *between*
+        `broadcast_to_template` and `cast_params_to_canonical_dtypes` so
+        the dtype cast walks a uniform tree (no `pd.Series` to special-
+        case).
+        """
+        internal_params = broadcast_to_template(
+            params=params, template=self._params_template, required=True
         )
         if has_series(internal_params):
             internal_params = convert_series_in_params(
@@ -519,6 +526,7 @@ class Model:
                 regimes=self.regimes,
                 regime_names_to_ids=self.regime_names_to_ids,
             )
+        internal_params = cast_params_to_canonical_dtypes(internal_params)
         _validate_param_types(internal_params)
         return internal_params
 

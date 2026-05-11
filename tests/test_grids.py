@@ -167,34 +167,38 @@ def test_discrete_grid_ordered_false():
     assert grid.ordered is False
 
 
-def test_validate_continuous_grid_invalid_start():
-    error_msg = "start must be a scalar int or float value"
-    with pytest.raises(GridInitializationError, match=error_msg):
-        _validate_continuous_grid(start="a", stop=1, n_points=10)  # ty: ignore[invalid-argument-type]
+def test_lin_spaced_grid_rejects_non_numeric_start():
+    """Non-numeric `start` is rejected at the boundary cast."""
+    with pytest.raises((TypeError, ValueError)):
+        LinSpacedGrid(start="a", stop=1, n_points=10)  # ty: ignore[invalid-argument-type]
 
 
-def test_validate_continuous_grid_invalid_stop():
-    error_msg = "stop must be a scalar int or float value"
-    with pytest.raises(GridInitializationError, match=error_msg):
-        _validate_continuous_grid(start=1, stop="a", n_points=10)  # ty: ignore[invalid-argument-type]
+def test_lin_spaced_grid_rejects_non_numeric_stop():
+    """Non-numeric `stop` is rejected at the boundary cast."""
+    with pytest.raises((TypeError, ValueError)):
+        LinSpacedGrid(start=1, stop="a", n_points=10)  # ty: ignore[invalid-argument-type]
 
 
-def test_validate_continuous_grid_invalid_n_points():
-    error_msg = "n_points must be an int greater than 0 but is a"
-    with pytest.raises(GridInitializationError, match=error_msg):
-        _validate_continuous_grid(start=1, stop=2, n_points="a")  # ty: ignore[invalid-argument-type]
+def test_lin_spaced_grid_rejects_non_numeric_n_points():
+    """Non-numeric `n_points` is rejected at the boundary cast."""
+    with pytest.raises((TypeError, ValueError)):
+        LinSpacedGrid(start=1, stop=2, n_points="a")  # ty: ignore[invalid-argument-type]
 
 
 def test_validate_continuous_grid_negative_n_points():
     error_msg = "n_points must be an int greater than 0 but is -1"
     with pytest.raises(GridInitializationError, match=error_msg):
-        _validate_continuous_grid(start=1, stop=2, n_points=-1)
+        _validate_continuous_grid(
+            start=jnp.asarray(1.0), stop=jnp.asarray(2.0), n_points=jnp.int32(-1)
+        )
 
 
 def test_validate_continuous_grid_start_greater_than_stop():
     error_msg = "start must be less than stop"
     with pytest.raises(GridInitializationError, match=error_msg):
-        _validate_continuous_grid(start=2, stop=1, n_points=10)
+        _validate_continuous_grid(
+            start=jnp.asarray(2.0), stop=jnp.asarray(1.0), n_points=jnp.int32(10)
+        )
 
 
 def test_linspace_grid_creation():
@@ -229,12 +233,20 @@ def test_logspace_grid_rejects_negative_start():
 
 def test_validate_continuous_grid_rejects_nan_start():
     with pytest.raises(GridInitializationError, match="start must be finite"):
-        _validate_continuous_grid(start=float("nan"), stop=10, n_points=5)
+        _validate_continuous_grid(
+            start=jnp.asarray(float("nan")),
+            stop=jnp.asarray(10.0),
+            n_points=jnp.int32(5),
+        )
 
 
 def test_validate_continuous_grid_rejects_inf_stop():
     with pytest.raises(GridInitializationError, match="stop must be finite"):
-        _validate_continuous_grid(start=1, stop=float("inf"), n_points=5)
+        _validate_continuous_grid(
+            start=jnp.asarray(1.0),
+            stop=jnp.asarray(float("inf")),
+            n_points=jnp.int32(5),
+        )
 
 
 def test_irreg_spaced_grid_rejects_nan_points():
@@ -332,8 +344,9 @@ def test_linspaced_coordinates_match_other_grid_types(
     rtol = base_rtol * max_magnitude
 
     for value in all_test_values:
-        lin_coord = float(lin_grid.get_coordinate(value))
-        other_coord = float(other_grid.get_coordinate(value))
+        value_jax = jnp.asarray(value)
+        lin_coord = float(lin_grid.get_coordinate(value_jax))
+        other_coord = float(other_grid.get_coordinate(value_jax))
         assert np.isclose(lin_coord, other_coord, rtol=rtol), (
             f"Mismatch at value {value} for {grid_type} vs LinSpacedGrid "
             f"({start}, {stop}, {n_points}): "
@@ -583,7 +596,7 @@ def test_piecewise_log_spaced_grid_coordinate_at_gridpoints():
     grid = PiecewiseLogSpacedGrid(pieces=(Piece(interval="[1, 100]", n_points=3),))
     points = grid.to_jax()
     for i, p in enumerate(points):
-        coord = float(grid.get_coordinate(float(p)))
+        coord = float(grid.get_coordinate(p))
         assert coord == pytest.approx(i)
 
 
@@ -595,8 +608,8 @@ def test_piecewise_log_spaced_grid_coordinate_multi_piece():
             Piece(interval="[10, 100]", n_points=2),
         )
     )
-    assert float(grid.get_coordinate(10.0)) == pytest.approx(2.0)
-    assert float(grid.get_coordinate(100.0)) == pytest.approx(3.0)
+    assert float(grid.get_coordinate(jnp.asarray(10.0))) == pytest.approx(2.0)
+    assert float(grid.get_coordinate(jnp.asarray(100.0))) == pytest.approx(3.0)
 
 
 def _create_boundary_test_grid(grid_cls, boundary_style: str):
@@ -671,9 +684,9 @@ def test_piecewise_boundary_conditions(grid_cls, boundary_style: str):
 def test_piecewise_single_piece():
     """Test piecewise grid with single piece works correctly."""
     grid = PiecewiseLinSpacedGrid(pieces=(Piece(interval="[0, 10]", n_points=11),))
-    assert float(grid.get_coordinate(0.0)) == pytest.approx(0.0)
-    assert float(grid.get_coordinate(5.0)) == pytest.approx(5.0)
-    assert float(grid.get_coordinate(10.0)) == pytest.approx(10.0)
+    assert float(grid.get_coordinate(jnp.asarray(0.0))) == pytest.approx(0.0)
+    assert float(grid.get_coordinate(jnp.asarray(5.0))) == pytest.approx(5.0)
+    assert float(grid.get_coordinate(jnp.asarray(10.0))) == pytest.approx(10.0)
 
 
 def test_lin_spaced_grid_get_coordinate_with_array():

@@ -271,13 +271,9 @@ class InternalRegime:
                 if points_key not in all_params:
                     continue
                 if in_states:
-                    state_replacements[name] = cast(
-                        "ContinuousState", all_params[points_key]
-                    )
+                    state_replacements[name] = all_params[points_key]
                 else:
-                    action_replacements[name] = cast(
-                        "ContinuousAction", all_params[points_key]
-                    )
+                    action_replacements[name] = all_params[points_key]
             # `_ShockGrid` is state-only by construction (intrinsic
             # transitions, forbidden as actions per AGENTS.md). The
             # `in_states` gate makes that invariant explicit — a

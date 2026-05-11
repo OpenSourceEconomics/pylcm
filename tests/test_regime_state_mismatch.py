@@ -461,7 +461,7 @@ def test_mixed_ordered_flags_raises():
         b: int
         dead: int
 
-    def next_regime() -> ScalarInt:
+    def next_regime() -> int:
         return _RegimeId.dead
 
     a = Regime(
@@ -505,7 +505,7 @@ def test_both_ordered_same_categories_passes():
         b: int
         dead: int
 
-    def next_regime() -> ScalarInt:
+    def next_regime() -> int:
         return _RegimeId.dead
 
     a = Regime(

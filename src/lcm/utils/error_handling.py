@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 def validate_V(
     *,
     V_arr: Array,
-    age: ScalarInt | ScalarFloat,
+    age: float | ScalarInt | ScalarFloat,
     regime_name: RegimeName | None = None,
     partial_solution: object = None,
     compute_intermediates: Callable | None = None,
@@ -287,8 +287,8 @@ def validate_regime_transition_probs(
     regime_transition_probs: MappingProxyType[str, Array],
     active_regimes_next_period: tuple[RegimeName, ...],
     regime_name: RegimeName,
-    age: ScalarInt | ScalarFloat,
-    next_age: ScalarInt | ScalarFloat,
+    age: float | ScalarInt | ScalarFloat,
+    next_age: float | ScalarInt | ScalarFloat,
     state_action_values: MappingProxyType[str, Array] | None = None,
 ) -> None:
     """Validate regime transition probabilities.
@@ -543,7 +543,7 @@ def _validate_no_reachable_incomplete_targets(
     regime_transition_probs: MappingProxyType[str, Array],
     active_regimes_next_period: tuple[RegimeName, ...],
     regime_name: RegimeName,
-    age: ScalarInt | ScalarFloat,
+    age: float | ScalarInt | ScalarFloat,
 ) -> None:
     """Check that targets with incomplete stochastic transitions are unreachable.
 

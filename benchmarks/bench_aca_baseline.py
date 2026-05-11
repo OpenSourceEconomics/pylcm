@@ -47,14 +47,30 @@ _N_SUBJECTS = 1000
 
 
 def _build() -> tuple[object, object, object]:
-    """Build the aca-baseline model, params, and initial conditions."""
+    """Build the aca-baseline model, params, and initial conditions.
+
+    aca_model and lcm imports are deferred to the function body — ASV's
+    forkserver runs `preimport` to discover benchmarks across every
+    `bench_*.py` module before forking workers. Importing JAX at module
+    top loads the multithreaded XLA backend into the forkserver; every
+    subsequent `os.fork()` inherits a corrupted CUDA context and the
+    first device op in the worker aborts with
+    `CUDA_ERROR_NOT_INITIALIZED`. Per-call imports keep JAX out of the
+    forkserver and confine it to the worker process.
+    """
+    from aca_model.agent.preferences import BenchmarkPrefType
     from aca_model.benchmark import (
         create_benchmark_model,
         get_benchmark_initial_conditions,
         get_benchmark_params,
     )
 
-    model = create_benchmark_model(n_subjects=_N_SUBJECTS)
+    from lcm import DiscreteGrid
+
+    model = create_benchmark_model(
+        n_subjects=_N_SUBJECTS,
+        pref_type_grid=DiscreteGrid(BenchmarkPrefType),
+    )
     _, model_params = get_benchmark_params(model=model)
     initial_conditions = get_benchmark_initial_conditions(
         model=model, n_subjects=_N_SUBJECTS, seed=0

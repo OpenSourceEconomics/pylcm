@@ -22,13 +22,13 @@ type Float1D = Float[Array, "_"]  # noqa: F821
 type Int1D = Int32[Array, "_"]  # noqa: F821
 type Bool1D = Bool[Array, "_"]  # noqa: F821
 
-# Many JAX functions are designed to work with scalar numerical values. This also
-# includes zero dimensional jax arrays.
-type ScalarInt = int | Int32[Scalar, ""]
-type ScalarFloat = float | Float[Scalar, ""]
+# Zero-dimensional JAX scalars — pylcm's canonical scalar form post boundary cast.
+type ScalarInt = Int32[Scalar, ""]
+type ScalarFloat = Float[Scalar, ""]
+type ScalarBool = Bool[Scalar, ""]
 
-type Period = int | Int1D
-type Age = int | float
+type Period = ScalarInt
+type Age = ScalarInt | ScalarFloat
 type RegimeName = str
 type StateName = str
 type ActionName = str
@@ -54,7 +54,7 @@ type UserParams = Mapping[
 # Internal regime parameters: A flat mapping with function-qualified names.
 # Keys are always function-qualified (e.g., "utility__risk_aversion",
 # "H__discount_factor"). Values are scalars or arrays.
-type FlatRegimeParams = MappingProxyType[str, bool | float | Array]
+type FlatRegimeParams = MappingProxyType[str, Array]
 type InternalParams = MappingProxyType[RegimeName, FlatRegimeParams]
 
 # Immutable templates, used internally

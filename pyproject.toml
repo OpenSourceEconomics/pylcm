@@ -98,7 +98,7 @@ tests-cuda13 = { features = [ "tests", "cuda13" ], solve-group = "cuda13" }
 tests-metal = { features = [ "tests", "metal" ], solve-group = "metal" }
 type-checking = { features = [ "type-checking", "tests" ], solve-group = "default" }
 [tool.pixi.feature.benchmarks.pypi-dependencies]
-aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "f09b5e34102ff42f739b95be5a9d388795b734a1" }
+aca-model = { git = "https://github.com/OpenSourceEconomics/aca-model.git", rev = "9ac20430f499a8b1cdb056af85bc2a26e850bad2" }
 [tool.pixi.feature.cuda12]
 platforms = [ "linux-64" ]
 system-requirements = { cuda = "12" }
@@ -242,6 +242,15 @@ per-file-ignores."tests/*" = [
   "S301",    # Use of pickle
   "SLF001",  # Private member access
 ]
+per-file-ignores."tests/test_dtypes.py" = [
+  "ARG001", # Unused function argument (x64_enabled / x64_disabled fixtures)
+]
+per-file-ignores."tests/test_explicit_dtype_filter.py" = [
+  "ARG001", # Unused function argument (x64_disabled fixture)
+]
+per-file-ignores."tests/test_float_dtype_invariants.py" = [
+  "ARG001", # Unused function argument (x64_disabled fixture)
+]
 per-file-ignores."tests/test_next_state.py" = [
   "ARG001", # Unused function argument
   "ARG005", # Unused lambda argument
@@ -294,7 +303,15 @@ ini_options.addopts = [
   "--dist",
   "loadfile",
 ]
-ini_options.filterwarnings = []
+ini_options.filterwarnings = [
+  # JAX emits this UserWarning when user code asks for a dtype wider
+  # than the active x64 setting allows. Under `--precision=32` it
+  # surfaces every stray `jnp.int64` / `jnp.float64` / `dtype=int64`
+  # literal in src/ — the only files that legitimately trigger it are
+  # the dtype-invariant test modules, which opt out via a local
+  # `pytestmark` filter.
+  "error:Explicitly requested dtype.*:UserWarning",
+]
 ini_options.markers = [
   "illustrative: Tests are designed for illustrative purposes",
   "gpu: Tests that require a GPU (skipped on CPU-only machines)",

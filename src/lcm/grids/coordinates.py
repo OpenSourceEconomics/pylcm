@@ -1,27 +1,9 @@
 """Functions to generate and work with different kinds of grids.
 
-Grid generation functions must have the following signature:
-
-    Signature (start: ScalarFloat, stop: ScalarFloat, n_points: int) -> jax.Array
-
-They take start and end points and create a grid of points between them.
-
-
-Interpolation info functions must have the following signature:
-
-    Signature (
-        value: ScalarFloat,
-        start: ScalarFloat,
-        stop: ScalarFloat,
-        n_points: int
-    ) -> ScalarInt
-
-They take the information required to generate a grid, and return an index corresponding
-to the value, which is a point in the space but not necessarily a grid point.
-
-Some of the arguments will not be used by all functions but the aligned interface makes
-it easy to call functions interchangeably.
-
+These helpers operate on JAX scalars (`ScalarFloat` for endpoints/values,
+`ScalarInt` or Python `int` for `n_points`) — every production caller is
+either a `Grid` method that has already converted user input to a JAX
+scalar, or a piecewise dispatch that selects pieces via `searchsorted`.
 """
 
 from typing import overload
@@ -32,14 +14,19 @@ from jax import Array
 from lcm.typing import Float1D, ScalarFloat, ScalarInt
 
 
-def linspace(*, start: ScalarFloat, stop: ScalarFloat, n_points: int) -> Float1D:
+def linspace(
+    *,
+    start: ScalarFloat,
+    stop: ScalarFloat,
+    n_points: ScalarInt,
+) -> Float1D:
     """Wrapper around jnp.linspace.
 
     Returns a linearly spaced grid between start and stop with n_points, including both
     endpoints.
 
     """
-    return jnp.linspace(start, stop, n_points)
+    return jnp.linspace(start, stop, n_points)  # ty: ignore[no-matching-overload]
 
 
 @overload
@@ -70,7 +57,12 @@ def get_linspace_coordinate(
     return (value - start) / step_length
 
 
-def logspace(*, start: ScalarFloat, stop: ScalarFloat, n_points: int) -> Float1D:
+def logspace(
+    *,
+    start: ScalarFloat,
+    stop: ScalarFloat,
+    n_points: ScalarInt,
+) -> Float1D:
     """Wrapper around jnp.logspace.
 
     Returns a logarithmically spaced grid between start and stop with n_points,
@@ -87,7 +79,7 @@ def logspace(*, start: ScalarFloat, stop: ScalarFloat, n_points: int) -> Float1D
     """
     start_linear = jnp.log(start)
     stop_linear = jnp.log(stop)
-    grid = jnp.logspace(start_linear, stop_linear, n_points, base=jnp.e)
+    grid = jnp.logspace(start_linear, stop_linear, n_points, base=jnp.e)  # ty: ignore[invalid-argument-type]
     return grid.at[0].set(start).at[-1].set(stop)
 
 

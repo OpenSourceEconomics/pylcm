@@ -219,7 +219,10 @@ def save_simulate_snapshot(
     _save_pkl(snap_dir / "model.pkl", model)
     _save_pkl(snap_dir / "params.pkl", params)
     _save_pkl(snap_dir / "initial_conditions.pkl", initial_conditions)
-    _save_pkl(snap_dir / "result.pkl", _strip_V_arr_from_result(result))
+    _save_pkl(
+        snap_dir / "result.pkl",
+        _strip_V_arr_from_result(result=result, model=model),
+    )
     _save_h5(snap_dir / "arrays.h5", period_to_regime_to_V_arr)
     _write_metadata(
         snap_dir,
@@ -290,14 +293,22 @@ def _find_project_root() -> Path | None:
     return None
 
 
-def _strip_V_arr_from_result(result: SimulationResult) -> SimulationResult:
-    """Create a copy of result with value arrays replaced by an empty mapping.
+def _strip_V_arr_from_result(
+    *, result: SimulationResult, model: Model
+) -> SimulationResult:
+    """Create a copy of result with value arrays and compiled callables stripped.
 
-    Avoid storing period_to_regime_to_V_arr both in the pickle and in the HDF5 file.
-
+    `period_to_regime_to_V_arr` is dropped to avoid storing it both in the
+    pickle and in the HDF5 file. `_internal_regimes` is overwritten with the
+    model's lazy-path `internal_regimes`: when `Model(n_subjects=N)` is set
+    the result carries the AOT-compiled regimes, whose
+    `jax.stages.Compiled` callables hold a `LoadedExecutable` that cannot
+    be pickled. The lazy regimes carry the same metadata and cloud-pickle
+    cleanly (model.pkl uses the same set).
     """
     stripped = copy.copy(result)
     object.__setattr__(stripped, "_period_to_regime_to_V_arr", MappingProxyType({}))
+    object.__setattr__(stripped, "_internal_regimes", model.internal_regimes)
     return stripped
 
 

@@ -31,6 +31,8 @@ from lcm.typing import (
     IntND,
     RegimeName,
     RegimeNamesToIds,
+    ScalarFloat,
+    ScalarInt,
 )
 from lcm.utils.error_handling import validate_V
 from lcm.utils.logging import (
@@ -199,7 +201,7 @@ def _simulate_regime_in_period(
     regime_name: RegimeName,
     internal_regime: InternalRegime,
     period: int,
-    age: float,
+    age: ScalarInt | ScalarFloat,
     states: MappingProxyType[str, Array],
     subject_regime_ids: Int1D,
     new_subject_regime_ids: Int1D,

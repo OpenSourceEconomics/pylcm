@@ -25,6 +25,14 @@ from tests.test_models.deterministic.regression import (
     working_life,
 )
 
+# These tests deliberately pass `int64` inputs to verify the cast at
+# the barrier. Re-allow the JAX truncation warning that the
+# project-wide filter (see `pyproject.toml`) promotes to an error —
+# the legitimate trigger lives here.
+pytestmark = pytest.mark.filterwarnings(
+    "default:Explicitly requested dtype.*:UserWarning"
+)
+
 
 def test_discrete_grid_to_jax_is_int32() -> None:
     """Every `DiscreteGrid.to_jax()` in the model returns an `int32` array."""
@@ -61,13 +69,23 @@ def test_missing_cat_code_is_int32_minimum() -> None:
     assert jnp.iinfo(jnp.int32).min == MISSING_CAT_CODE
 
 
-def test_update_states_for_subjects_preserves_storage_dtype() -> None:
-    """A transition that returns int64 cannot promote the storage pool to int64."""
+def test_update_states_for_subjects_keeps_same_dtype_round_trip() -> None:
+    """Canonical-dtype transition outputs round-trip through the state pool.
+
+    With every input boundary pinned to the canonical dtype, a well-typed user
+    transition returns canonical-dtype outputs and `_update_states_for_subjects`
+    writes them through `jnp.where` without dtype change. This test pins the
+    contract for the int side; mixed-dtype inputs are out of scope — the
+    function does not defend against transitions that violate the canonical-
+    dtype invariant.
+    """
     all_states = MappingProxyType(
         {"work__health": jnp.asarray([0, 1, 0, 1], dtype=jnp.int32)}
     )
-    int64_next = jnp.asarray([1, 1, 1, 1], dtype=jnp.int64)
-    computed = MappingProxyType({"work": MappingProxyType({"next_health": int64_next})})
+    next_values = jnp.asarray([1, 1, 1, 1], dtype=jnp.int32)
+    computed = MappingProxyType(
+        {"work": MappingProxyType({"next_health": next_values})}
+    )
     subjects = jnp.asarray([True, False, True, False])
 
     updated = _update_states_for_subjects(
@@ -91,7 +109,7 @@ def test_process_params_casts_python_int_to_int32() -> None:
 
     final_age = out["regime_a"]["final_age"]
     assert int(final_age) == 65
-    assert final_age.dtype == jnp.int32  # ty: ignore[unresolved-attribute]
+    assert final_age.dtype == jnp.int32
 
 
 def test_process_params_casts_int64_array_to_int32() -> None:
@@ -105,7 +123,7 @@ def test_process_params_casts_int64_array_to_int32() -> None:
     )
 
     schedule = out["regime_a"]["schedule"]
-    assert schedule.dtype == jnp.int32  # ty: ignore[unresolved-attribute]
+    assert schedule.dtype == jnp.int32
 
 
 def test_process_params_int_array_overflow_raises_with_qualified_name() -> None:
