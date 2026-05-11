@@ -45,7 +45,7 @@ def test_get_Q_and_F_function():
     ages = AgeGrid(start=0, stop=4, step="Y")
     regimes = {"working_life": working_life, "dead": dead}
     regime_names_to_ids = MappingProxyType(
-        {name: idx for idx, name in enumerate(regimes.keys())}
+        {name: jnp.int32(idx) for idx, name in enumerate(regimes.keys())}
     )
     internal_regimes = process_regimes(
         regimes=regimes,
@@ -267,15 +267,15 @@ def _health_probs(health: DiscreteState, probs_array: FloatND) -> FloatND:
 
 @categorical(ordered=True)
 class _IncompleteTargetHealth:
-    bad: int = 0
-    good: int = 1
+    bad: ScalarInt
+    good: ScalarInt
 
 
 @categorical(ordered=False)
 class _IncompleteTargetRegimeId:
-    work: int
-    retire: int
-    dead: int
+    work: ScalarInt
+    retire: ScalarInt
+    dead: ScalarInt
 
 
 def _build_incomplete_target_model(

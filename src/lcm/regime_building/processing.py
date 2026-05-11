@@ -1261,9 +1261,10 @@ def _wrap_regime_transition_probs(
         A wrapped function that returns MappingProxyType[str, float|Array].
 
     """
-    # Get regime names in index order from regime_names_to_ids
+    # Get regime names in index order from regime_names_to_ids. Coerce
+    # `ScalarInt` ids to Python `int` so `sorted` has a comparable key.
     regime_names_by_id: list[tuple[int, str]] = sorted(
-        [(idx, name) for name, idx in regime_names_to_ids.items()],
+        [(int(idx), name) for name, idx in regime_names_to_ids.items()],
         key=lambda x: x[0],
     )
     regime_names = [name for _, name in regime_names_by_id]

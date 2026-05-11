@@ -34,6 +34,7 @@ from lcm.typing import (
     ScalarFloat,
     ScalarInt,
 )
+from lcm.utils.containers import invert_regime_ids
 from lcm.utils.error_handling import validate_V
 from lcm.utils.logging import (
     format_duration,
@@ -109,8 +110,10 @@ def simulate(
     simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {
         regime_name: {} for regime_name in internal_regimes
     }
-    # Build reverse lookup for regime transition logging
-    ids_to_names: dict[int, RegimeName] = {v: k for k, v in regime_names_to_ids.items()}
+    # Build reverse lookup for regime transition logging. `regime_names_to_ids`
+    # values are `ScalarInt` (jax 0-d arrays), which can't serve as dict keys
+    # directly; `invert_regime_ids` coerces them to Python `int`.
+    ids_to_names = invert_regime_ids(regime_names_to_ids)
 
     for period, age in enumerate(ages.values):
         period_start = time.monotonic()
@@ -209,7 +212,7 @@ def _simulate_regime_in_period(
         int, MappingProxyType[RegimeName, FloatND]
     ],
     internal_params: InternalParams,
-    regime_names_to_ids: MappingProxyType[RegimeName, int],
+    regime_names_to_ids: RegimeNamesToIds,
     active_regimes_next_period: tuple[RegimeName, ...],
     key: Array,
 ) -> tuple[PeriodRegimeSimulationData, MappingProxyType[str, Array], Int1D, Array]:

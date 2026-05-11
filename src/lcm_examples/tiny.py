@@ -30,14 +30,14 @@ from lcm.typing import (
 
 @categorical(ordered=True)
 class LaborSupply:
-    do_not_work: int
-    work: int
+    do_not_work: ScalarInt
+    work: ScalarInt
 
 
 @categorical(ordered=False)
 class RegimeId:
-    working_life: int
-    retirement: int
+    working_life: ScalarInt
+    retirement: ScalarInt
 
 
 def utility(

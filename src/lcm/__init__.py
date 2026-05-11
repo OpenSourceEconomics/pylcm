@@ -52,6 +52,7 @@ from lcm.persistence import (
 )
 from lcm.regime import MarkovTransition, Regime
 from lcm.simulation.result import SimulationResult
+from lcm.utils.containers import invert_regime_ids
 from lcm.utils.error_handling import validate_transition_probs
 
 # Register MappingProxyType as a JAX pytree so it can be used in JIT-traced functions.
@@ -80,6 +81,7 @@ __all__ = [
     "SolveSnapshot",
     "__version__",
     "categorical",
+    "invert_regime_ids",
     "load_snapshot",
     "load_solution",
     "save_solution",

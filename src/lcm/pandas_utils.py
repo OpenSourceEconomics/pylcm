@@ -658,7 +658,7 @@ def _build_outcome_mapping(
         return _LevelMapping(
             name="next_regime",
             size=len(regime_names_to_ids),
-            get_code_from_label=regime_names_to_ids.__getitem__,
+            get_code_from_label=lambda label: int(regime_names_to_ids[label]),
             valid_labels=tuple(regime_names_to_ids),
         )
 

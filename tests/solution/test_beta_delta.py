@@ -34,8 +34,8 @@ from lcm.typing import BoolND, ContinuousAction, ContinuousState, FloatND, Scala
 
 @categorical(ordered=False)
 class RegimeId:
-    working: int
-    dead: int
+    working: ScalarInt
+    dead: ScalarInt
 
 
 def utility(consumption: ContinuousAction) -> FloatND:

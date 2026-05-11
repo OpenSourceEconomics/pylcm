@@ -169,7 +169,7 @@ def test_model_requires_terminal_regime(binary_category_class):
 
     @categorical(ordered=False)
     class RegimeId:
-        test: int
+        test: ScalarInt
 
     regime = Regime(
         states={
@@ -194,7 +194,7 @@ def test_model_requires_non_terminal_regime(binary_category_class):
 
     @categorical(ordered=False)
     class RegimeId:
-        dead: int
+        dead: ScalarInt
 
     dead = Regime(
         transition=None,
@@ -224,9 +224,9 @@ def test_model_accepts_multiple_terminal_regimes(binary_category_class):
 
     @categorical(ordered=False)
     class RegimeId:
-        alive: int
-        dead1: int
-        dead2: int
+        alive: ScalarInt
+        dead1: ScalarInt
+        dead2: ScalarInt
 
     alive = Regime(
         states={
@@ -267,8 +267,8 @@ def test_model_regime_id_mapping_created_from_dict_keys(binary_category_class):
 
     @categorical(ordered=False)
     class RegimeId:
-        alive: int
-        dead: int
+        alive: ScalarInt
+        dead: ScalarInt
 
     alive = Regime(
         states={
@@ -302,8 +302,8 @@ def test_model_regime_name_validation(binary_category_class):
 
     @categorical(ordered=False)
     class RegimeId:
-        alive__bad: int
-        dead: int
+        alive__bad: ScalarInt
+        dead: ScalarInt
 
     alive = Regime(
         states={
@@ -336,14 +336,14 @@ def test_unused_state_raises_error():
 
     @categorical(ordered=False)
     class RegimeId:
-        working_life: int
-        retirement: int
+        working_life: ScalarInt
+        retirement: ScalarInt
 
     @categorical(ordered=False)
     class UnusedState:
-        low: int
-        medium: int
-        high: int
+        low: ScalarInt
+        medium: ScalarInt
+        high: ScalarInt
 
     # Define a regime where 'unused_state' is not used in any function
     working_life = Regime(
@@ -393,13 +393,13 @@ def test_unused_action_raises_error():
 
     @categorical(ordered=False)
     class RegimeId:
-        working_life: int
-        retirement: int
+        working_life: ScalarInt
+        retirement: ScalarInt
 
     @categorical(ordered=False)
     class UnusedAction:
-        option_a: int
-        option_b: int
+        option_a: ScalarInt
+        option_b: ScalarInt
 
     working_life = Regime(
         functions={
@@ -452,18 +452,18 @@ def test_constraint_depending_on_transition_output():
 
     @categorical(ordered=False)
     class RegimeId:
-        alive: int
-        dead: int
+        alive: ScalarInt
+        dead: ScalarInt
 
     @categorical(ordered=False)
     class EmploymentLastPeriod:
-        unemployed: int
-        employed: int
+        unemployed: ScalarInt
+        employed: ScalarInt
 
     @categorical(ordered=False)
     class EmploymentStatus:
-        not_employed: int
-        employed: int
+        not_employed: ScalarInt
+        employed: ScalarInt
 
     def next_regime(age: float, model_end_age: int) -> ScalarInt:
         return jnp.where(age == model_end_age, RegimeId.dead, RegimeId.alive)
@@ -533,18 +533,18 @@ def test_state_only_used_in_transitions():
 
     @categorical(ordered=False)
     class RegimeId:
-        alive: int
-        dead: int
+        alive: ScalarInt
+        dead: ScalarInt
 
     @categorical(ordered=False)
     class EmploymentLastPeriod:
-        unemployed: int
-        employed: int
+        unemployed: ScalarInt
+        employed: ScalarInt
 
     @categorical(ordered=False)
     class EmploymentStatus:
-        not_employed: int
-        employed: int
+        not_employed: ScalarInt
+        employed: ScalarInt
 
     def next_regime(age: float, model_end_age: int) -> ScalarInt:
         return jnp.where(age == model_end_age, RegimeId.dead, RegimeId.alive)
@@ -617,13 +617,13 @@ def test_state_only_in_transitions_with_terminal_regime():
 
     @categorical(ordered=False)
     class RegimeId:
-        alive: int
-        dead: int
+        alive: ScalarInt
+        dead: ScalarInt
 
     @categorical(ordered=False)
     class TypeVar:
-        low: int
-        high: int
+        low: ScalarInt
+        high: ScalarInt
 
     def utility(consumption, wealth):
         return jnp.log(consumption) + 0.01 * wealth

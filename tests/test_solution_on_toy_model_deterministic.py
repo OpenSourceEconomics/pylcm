@@ -30,20 +30,20 @@ from tests.conftest import DECIMAL_PRECISION
 
 @categorical(ordered=False)
 class DiscreteConsumption:
-    low: int
-    high: int
+    low: ScalarInt
+    high: ScalarInt
 
 
 @categorical(ordered=False)
 class LaborSupply:
-    do_not_work: int
-    work: int
+    do_not_work: ScalarInt
+    work: ScalarInt
 
 
 @categorical(ordered=False)
 class RegimeId:
-    alive: int
-    dead: int
+    alive: ScalarInt
+    dead: ScalarInt
 
 
 def utility(

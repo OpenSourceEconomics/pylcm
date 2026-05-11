@@ -39,7 +39,7 @@ def simulate_inputs():
     )
     regimes = {"working_life": updated_working_life, "dead": dead}
     regime_names_to_ids = MappingProxyType(
-        {name: idx for idx, name in enumerate(regimes.keys())}
+        {name: jnp.int32(idx) for idx, name in enumerate(regimes.keys())}
     )
     internal_regimes = process_regimes(
         regimes=regimes,

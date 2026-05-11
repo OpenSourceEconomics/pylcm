@@ -28,13 +28,19 @@ from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.grids import IrregSpacedGrid
 from lcm.grids.coordinates import get_irreg_coordinate
 from lcm.regime_building.ndimage import map_coordinates
-from lcm.typing import ContinuousAction, ContinuousState, DiscreteState, FloatND
+from lcm.typing import (
+    ContinuousAction,
+    ContinuousState,
+    DiscreteState,
+    FloatND,
+    ScalarInt,
+)
 
 
 @categorical(ordered=False)
 class RegimeId:
-    alive: int
-    dead: int
+    alive: ScalarInt
+    dead: ScalarInt
 
 
 def _utility(consumption: ContinuousAction) -> FloatND:
@@ -245,14 +251,14 @@ def test_simulate_with_constrained_action_grid(wealth_lo, consumption_lo, label)
 
 @categorical(ordered=False)
 class PrefType:
-    type_0: int
-    type_1: int
+    type_0: ScalarInt
+    type_1: ScalarInt
 
 
 @categorical(ordered=False)
 class AliveDeadRegimeId:
-    alive: int
-    dead: int
+    alive: ScalarInt
+    dead: ScalarInt
 
 
 def _crra_bequest(
@@ -442,8 +448,8 @@ def _runtime_state_grid_model() -> tuple[Model, dict, dict]:
 
     @categorical(ordered=False)
     class RuntimeRegimeId:
-        alive: int
-        dead: int
+        alive: ScalarInt
+        dead: ScalarInt
 
     def utility(consumption, wealth):
         return jnp.log(consumption) + 0.0 * wealth

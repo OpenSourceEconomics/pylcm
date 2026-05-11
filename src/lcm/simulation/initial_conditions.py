@@ -31,6 +31,7 @@ from lcm.typing import (
     RegimeName,
     RegimeNamesToIds,
 )
+from lcm.utils.containers import invert_regime_ids
 from lcm.utils.functools import get_union_of_args
 
 # Sentinel for categorical states not in initial conditions.  Using int32 min
@@ -119,10 +120,10 @@ def validate_initial_conditions(
         InvalidInitialConditionsError: If any validation check fails.
 
     """
-    # Build reverse lookup from regime IDs to names
-    ids_to_regime_names: dict[int, RegimeName] = {
-        v: k for k, v in regime_names_to_ids.items()
-    }
+    # Build reverse lookup from regime IDs to names. `regime_names_to_ids`
+    # values are `ScalarInt` (jax 0-d arrays), which can't serve as dict
+    # keys directly; `invert_regime_ids` coerces them to Python `int`.
+    ids_to_regime_names = invert_regime_ids(regime_names_to_ids)
 
     # Extract regime array
     regime_arr = initial_conditions.get("regime")
@@ -227,7 +228,7 @@ def _collect_state_name_errors(
     *,
     initial_states: Mapping[str, Array],
     regime_id_arr: Array,
-    ids_to_regime_names: dict[int, RegimeName],
+    ids_to_regime_names: MappingProxyType[int, RegimeName],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     valid_regime_names: set[RegimeName],
 ) -> list[str]:
@@ -285,7 +286,7 @@ def _collect_structural_errors(
     *,
     initial_states: Mapping[str, Array],
     regime_id_arr: Array,
-    ids_to_regime_names: dict[int, RegimeName],
+    ids_to_regime_names: MappingProxyType[int, RegimeName],
     regime_names_to_ids: RegimeNamesToIds,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     ages: AgeGrid,
@@ -437,7 +438,7 @@ def _validate_discrete_state_values(
     initial_states: Mapping[str, Array],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_id_arr: Array,
-    regime_names_to_ids: Mapping[RegimeName, int],
+    regime_names_to_ids: RegimeNamesToIds,
 ) -> None:
     """Validate that discrete state values are valid codes.
 
@@ -454,10 +455,12 @@ def _validate_discrete_state_values(
         InvalidInitialConditionsError: If any discrete state contains invalid codes.
 
     """
-    # Build per-state: valid codes + regime IDs that have this state
+    # Build per-state: valid codes + regime IDs that have this state.
+    # `regime_id` is `ScalarInt` (a 0-d jax array); coerce to Python `int`
+    # before set insertion.
     discrete_info: dict[str, tuple[set[int], set[int]]] = {}
     for regime_name, internal_regime in internal_regimes.items():
-        regime_id = regime_names_to_ids[regime_name]
+        regime_id = int(regime_names_to_ids[regime_name])
         for state_name in internal_regime.variable_info.query(
             "is_state and is_discrete"
         ).index:
