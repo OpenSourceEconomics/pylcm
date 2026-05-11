@@ -33,7 +33,6 @@ def categorical[T](*, ordered: bool) -> Callable[[type[T]], type[T]]:
 
         LaborSupply.work       # Array(0, dtype=int32)
         LaborSupply.retire     # Array(1, dtype=int32)
-        LaborSupply().work     # Array(0, dtype=int32)
 
     Args:
         ordered: Whether the categories have a meaningful ordering. Must be
