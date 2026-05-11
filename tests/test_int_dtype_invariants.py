@@ -25,6 +25,14 @@ from tests.test_models.deterministic.regression import (
     working_life,
 )
 
+# These tests deliberately pass `int64` inputs to verify the cast at
+# the barrier. Re-allow the JAX truncation warning that the
+# project-wide filter (see `pyproject.toml`) promotes to an error —
+# the legitimate trigger lives here.
+pytestmark = pytest.mark.filterwarnings(
+    "default:Explicitly requested dtype.*:UserWarning"
+)
+
 
 def test_discrete_grid_to_jax_is_int32() -> None:
     """Every `DiscreteGrid.to_jax()` in the model returns an `int32` array."""

@@ -19,6 +19,14 @@ from tests.test_models.deterministic.regression import (
     get_params,
 )
 
+# These tests deliberately pass `float64` inputs to verify the cast at
+# the barrier. Re-allow the JAX truncation warning that the
+# project-wide filter (see `pyproject.toml`) promotes to an error —
+# the legitimate trigger lives here.
+pytestmark = pytest.mark.filterwarnings(
+    "default:Explicitly requested dtype.*:UserWarning"
+)
+
 
 def test_build_initial_states_casts_user_float64_to_canonical(x64_disabled: None):
     """A float64 continuous initial state lands at `canonical_float_dtype()`."""

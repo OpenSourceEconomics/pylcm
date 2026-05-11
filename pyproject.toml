@@ -245,6 +245,9 @@ per-file-ignores."tests/*" = [
 per-file-ignores."tests/test_dtypes.py" = [
   "ARG001", # Unused function argument (x64_enabled / x64_disabled fixtures)
 ]
+per-file-ignores."tests/test_explicit_dtype_filter.py" = [
+  "ARG001", # Unused function argument (x64_disabled fixture)
+]
 per-file-ignores."tests/test_float_dtype_invariants.py" = [
   "ARG001", # Unused function argument (x64_disabled fixture)
 ]
@@ -300,7 +303,15 @@ ini_options.addopts = [
   "--dist",
   "loadfile",
 ]
-ini_options.filterwarnings = []
+ini_options.filterwarnings = [
+  # JAX emits this UserWarning when user code asks for a dtype wider
+  # than the active x64 setting allows. Under `--precision=32` it
+  # surfaces every stray `jnp.int64` / `jnp.float64` / `dtype=int64`
+  # literal in src/ — the only files that legitimately trigger it are
+  # the dtype-invariant test modules, which opt out via a local
+  # `pytestmark` filter.
+  "error:Explicitly requested dtype.*:UserWarning",
+]
 ini_options.markers = [
   "illustrative: Tests are designed for illustrative purposes",
   "gpu: Tests that require a GPU (skipped on CPU-only machines)",

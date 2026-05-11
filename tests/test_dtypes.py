@@ -6,6 +6,14 @@ import pytest
 
 from lcm.dtypes import canonical_float_dtype, safe_to_float_dtype, safe_to_int_dtype
 
+# Several tests here pass `int64` / `float64` inputs to verify the
+# barrier helpers cast them correctly. Re-allow the JAX truncation
+# warning that the project-wide filter (see `pyproject.toml`) promotes
+# to an error — the legitimate trigger lives here.
+pytestmark = pytest.mark.filterwarnings(
+    "default:Explicitly requested dtype.*:UserWarning"
+)
+
 
 @pytest.mark.parametrize(
     "value",
