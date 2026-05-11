@@ -71,7 +71,7 @@ def _build() -> tuple[object, object, object]:
         n_subjects=_N_SUBJECTS,
         pref_type_grid=DiscreteGrid(BenchmarkPrefType),
     )
-    _, _, model_params = get_benchmark_params(model=model)
+    model_params = get_benchmark_params(model=model)[2]
     initial_conditions = get_benchmark_initial_conditions(
         model=model, n_subjects=_N_SUBJECTS, seed=0
     )

@@ -103,13 +103,13 @@ def validate_category_class(category_class: type) -> list[str]:
     This validates that:
     - The class is a dataclass
     - It has at least one field
-    - All field values are `ScalarInt` (0-d `jnp.int32` scalars)
+    - All field values are `ScalarInt`s
     - All field values are unique
     - Field values are consecutive integers starting from 0
 
     Args:
         category_class: The category class to validate. Must be a dataclass with fields
-            whose values are unique `ScalarInt` scalars.
+            whose values are unique `ScalarInt`s.
 
     Returns:
         A list of error messages. Empty list if validation passes.
