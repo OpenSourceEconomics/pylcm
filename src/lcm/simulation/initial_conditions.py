@@ -64,10 +64,20 @@ def build_initial_states(
     for regime_name, internal_regime in internal_regimes.items():
         for state_name in _get_regime_state_names(internal_regime):
             key = f"{regime_name}__{state_name}"
-            if state_name in initial_states:
+            grid = internal_regime.grids[state_name]
+            if isinstance(grid, DiscreteGrid):
+                # Cast user-supplied discrete states to the grid's index
+                # dtype so every period's argmax sees a single signature
+                # for that state.
+                target_dtype = grid.to_jax().dtype
+                if state_name in initial_states:
+                    flat[key] = initial_states[state_name].astype(target_dtype)
+                else:
+                    flat[key] = jnp.full(
+                        n_subjects, MISSING_CAT_CODE, dtype=target_dtype
+                    )
+            elif state_name in initial_states:
                 flat[key] = initial_states[state_name]
-            elif isinstance(internal_regime.grids[state_name], DiscreteGrid):
-                flat[key] = jnp.full(n_subjects, MISSING_CAT_CODE, dtype=jnp.int32)
             else:
                 flat[key] = jnp.full(n_subjects, jnp.nan)
 
@@ -348,7 +358,7 @@ def _collect_structural_errors(
             active_mask = active_mask & (~in_regime | period_active)
 
         if not jnp.all(active_mask):
-            invalid_indices = jnp.where(~active_mask)[0]
+            invalid_indices = jnp.where(~active_mask)[0].astype(jnp.int32)
             invalid_combos = {
                 (ids_to_regime_names[int(regime_id_arr[i])], float(age_values[i]))
                 for i in invalid_indices
@@ -392,7 +402,7 @@ def _collect_feasibility_errors(
     errors: list[str] = []
     for regime_name, internal_regime in internal_regimes.items():
         regime_id = regime_names_to_ids[regime_name]
-        idx_arr = jnp.where(regime_id_arr == regime_id)[0]
+        idx_arr = jnp.where(regime_id_arr == regime_id)[0].astype(jnp.int32)
         subject_indices = idx_arr.tolist() if idx_arr.size > 0 else []
         if not subject_indices:
             continue
@@ -653,13 +663,105 @@ def _check_regime_feasibility(  # noqa: C901
     if not infeasible_indices:
         return None
 
+    per_constraint_admits_any = _per_constraint_feasibility(
+        internal_regime=internal_regime,
+        subject_states=subject_states,
+        regime_params=regime_params,
+        flat_actions=flat_actions,
+        idx_arr=idx_arr,
+        infeasible_indices=infeasible_indices,
+    )
+
     return _format_infeasibility_message(
         infeasible_indices=infeasible_indices,
         internal_regime=internal_regime,
         regime_name=regime_name,
         initial_states=initial_states,
         state_names=state_names,
+        per_constraint_admits_any=per_constraint_admits_any,
     )
+
+
+def _admits_any_action(
+    *,
+    feasibility_func: Callable[..., Array],
+    action_kwargs: Mapping[str, Array],
+    params: Mapping[str, object],
+) -> bool:
+    """Return True iff the feasibility function admits ≥ 1 action under params."""
+    if action_kwargs:
+
+        def _check_combo(action_kw: dict[str, Array]) -> Array:
+            return feasibility_func(**action_kw, **params)
+
+        per_combo = jax.vmap(_check_combo)(action_kwargs)
+        return bool(jnp.any(per_combo))
+    return bool(feasibility_func(**params))
+
+
+def _per_constraint_feasibility(
+    *,
+    internal_regime: InternalRegime,
+    subject_states: Mapping[str, Array],
+    regime_params: Mapping[str, object],
+    flat_actions: Mapping[ActionName, Array],
+    idx_arr: Array,
+    infeasible_indices: Sequence[int],
+) -> dict[str, np.ndarray]:
+    """Per-constraint feasibility for the infeasible subjects.
+
+    For each constraint, returns a boolean array (one entry per infeasible
+    subject) indicating whether that constraint *individually* admits at
+    least one action. Combined with the regime's feasibility verdict, this
+    distinguishes "constraint X rejects every action by itself" from
+    "constraints jointly reject everything despite each admitting some".
+
+    Each constraint's feasibility function has its own argument set (a
+    subset of the combined feasibility's union); filter `subject_states`,
+    `action_kwargs`, and `filtered_params` per constraint so dags doesn't
+    raise on stray kwargs.
+    """
+    constraints = internal_regime.simulate_functions.constraints
+    functions = internal_regime.simulate_functions.functions
+    if not constraints or not subject_states:
+        return {}
+
+    infeasible_positions = np.flatnonzero(
+        np.isin(np.asarray(idx_arr), np.asarray(infeasible_indices))
+    )
+    infeasible_states = {
+        name: arr[infeasible_positions] for name, arr in subject_states.items()
+    }
+
+    out: dict[str, np.ndarray] = {}
+    for name, constraint_func in constraints.items():
+        single_feasibility = _get_feasibility(
+            functions=functions,
+            constraints=MappingProxyType({name: constraint_func}),
+        )
+        accepted = get_union_of_args([single_feasibility])
+        single_states = {k: v for k, v in infeasible_states.items() if k in accepted}
+        single_actions = {k: v for k, v in flat_actions.items() if k in accepted}
+        single_params = {k: v for k, v in regime_params.items() if k in accepted}
+        n = len(infeasible_indices)
+        if not single_states:
+            # Action-only / parameter-only constraint — identical for all subjects.
+            admits_any = _admits_any_action(
+                feasibility_func=single_feasibility,
+                action_kwargs=single_actions,
+                params=single_params,
+            )
+            out[name] = np.full(n, admits_any, dtype=bool)
+            continue
+        any_feasible = _batched_feasibility_check(
+            feasibility_func=single_feasibility,
+            subject_states=single_states,
+            action_kwargs=single_actions,
+            filtered_params=single_params,
+            flat_actions=flat_actions,
+        )
+        out[name] = np.asarray(any_feasible)
+    return out
 
 
 def _raise_feasibility_type_error(
@@ -715,6 +817,7 @@ def _format_infeasibility_message(
     regime_name: RegimeName,
     initial_states: Mapping[str, Array],
     state_names: Sequence[str],
+    per_constraint_admits_any: Mapping[str, np.ndarray],
 ) -> str:
     """Format an error message for infeasible subjects.
 
@@ -724,6 +827,12 @@ def _format_infeasibility_message(
         regime_name: Name of the regime.
         initial_states: Mapping of state names to arrays.
         state_names: List of state variable names.
+        per_constraint_admits_any: Mapping from constraint name to a boolean
+            array (one entry per infeasible subject) — True where that
+            constraint *individually* admits at least one action. False
+            entries identify constraints that reject every action on their
+            own; rows with all-True entries are infeasible only because the
+            constraints jointly reject the action set.
 
     Returns:
         Formatted error message string.
@@ -745,9 +854,10 @@ def _format_infeasibility_message(
         if isinstance(grid, DiscreteGrid) and name in state_df.columns:
             state_df[name] = [grid.categories[int(v)] for v in state_df[name]]
 
-    # Constraint names
-    constraint_names = list(internal_regime.simulate_functions.constraints.keys())
-    constraints_str = "\n".join(f"  - {name}" for name in constraint_names)
+    # Append one boolean column per constraint: True = admits ≥ 1 action,
+    # False = rejects every action by itself for that subject.
+    for name, mask in per_constraint_admits_any.items():
+        state_df[name] = list(mask)
 
     # Truncate for large groups
     n = len(infeasible_indices)
@@ -761,10 +871,11 @@ def _format_infeasibility_message(
     return (
         f"All actions are infeasible for {n} subject(s) "
         f"in regime '{regime_name}'.\n\n"
-        f"Active constraints:\n{constraints_str}\n\n"
-        f"Infeasible subjects:\n{table_str}\n\n"
-        f"No action combination satisfies all constraints for these "
-        f"initial states."
+        f"Per-constraint admissibility (True = constraint admits ≥ 1 "
+        f"action by itself; False = constraint rejects every action):\n"
+        f"{table_str}\n\n"
+        f"No action combination satisfies all constraints jointly for "
+        f"these initial states."
     )
 
 

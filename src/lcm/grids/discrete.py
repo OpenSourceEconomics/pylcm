@@ -48,5 +48,13 @@ class DiscreteGrid(Grid):
         return self.__batch_size
 
     def to_jax(self) -> Int1D:
-        """Convert the grid to a Jax array."""
-        return jnp.array(self.codes)
+        """Convert the grid to a Jax array.
+
+        Discrete state/action codes are pinned to `int32` regardless of the
+        ambient `jax_enable_x64` setting. A single integer dtype across
+        transitions, V-array indexing, and action lookups keeps the JIT cache
+        unsplit and lets AOT-compiled programs ship one signature. `int32`
+        accommodates any realistic category count and matches the
+        `MISSING_CAT_CODE` sentinel.
+        """
+        return jnp.array(self.codes, dtype=jnp.int32)

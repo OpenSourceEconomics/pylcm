@@ -1,13 +1,26 @@
-"""Process user-provided params into internal params."""
+"""Process user-provided params into internal params.
+
+`process_params` resolves user-supplied parameters against the model's
+template, then runs a boundary-cast pass that normalises every integer
+leaf — Python `int`, typed JAX integer arrays, numpy integer arrays,
+and integers inside `MappingLeaf` / `SequenceLeaf` — to `jnp.int32`.
+Out-of-range values surface as `ValueError` with the offending leaf's
+qualified name.
+"""
 
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, cast
 
+import numpy as np
 from dags.tree import QNAME_DELIMITER, qname_from_tree_path, tree_path_from_qname
+from jax import Array
 
+from lcm.dtypes import safe_to_int32
 from lcm.exceptions import InvalidNameError, InvalidParamsError
 from lcm.interfaces import InternalRegime
+from lcm.params.mapping_leaf import MappingLeaf
+from lcm.params.sequence_leaf import SequenceLeaf
 from lcm.typing import (
     InternalParams,
     ParamsTemplate,
@@ -34,7 +47,11 @@ def process_params(
     - Regime level: `{"regime_0": {"arg_0": 0.0}}` — propagates within regime_0
     - Function level: `{"regime_0": {"func": {"arg_0": 0.0}}}` — direct specification
 
-    The output always matches the params_template skeleton.
+    The output always matches the params_template skeleton. Every integer
+    leaf — Python `int`, typed JAX or numpy integer arrays, and integers
+    inside `MappingLeaf` / `SequenceLeaf` — is cast to `jnp.int32` so the
+    AOT signature is stable across calls. Python `bool` and float leaves
+    are handled by the float-side cast pass.
 
     Args:
         params: User-provided parameters dictionary.
@@ -46,6 +63,8 @@ def process_params(
     Raises:
         InvalidParamsError: If params contains unexpected keys or type mismatches.
         InvalidNameError: If the same parameter is specified at multiple levels.
+        ValueError: If a typed integer leaf carries a value outside the
+            int32 range; the message names the offending parameter qname.
 
     """
     return broadcast_to_template(params=params, template=params_template, required=True)
@@ -110,10 +129,62 @@ def broadcast_to_template(
     if unknown:
         raise InvalidParamsError(f"Unknown keys: {sorted(unknown)}")
 
+    for regime, leaves in result.items():
+        for param_qname, value in leaves.items():
+            leaves[param_qname] = _cast_int_leaves_to_int32(
+                value, name=f"{regime}{QNAME_DELIMITER}{param_qname}"
+            )
+
     return cast(
         "InternalParams",
         MappingProxyType({k: MappingProxyType(v) for k, v in result.items()}),
     )
+
+
+def _cast_int_leaves_to_int32(value: Any, *, name: str) -> Any:  # noqa: ANN401
+    """Normalise integer leaves in a params value to `jnp.int32`.
+
+    Casts:
+
+    - Python `int` scalars — to `jnp.int32` so the DAG sees a JAX scalar
+      with a pinned dtype rather than a Python int that JAX would
+      otherwise promote per call site.
+    - Typed JAX or numpy integer arrays (`jnp.array(..., dtype=jnp.int64)`,
+      `np.array(...)`) — cast to `int32` to keep the AOT signature stable.
+    - Integer leaves inside `MappingLeaf` / `SequenceLeaf` — recurse.
+
+    Passes through unchanged:
+
+    - Python `bool` scalars — handled by the float-side cast pass once
+      it lands.
+    - Float and non-numeric typed leaves — handled by a separate float-
+      normalisation pass.
+    """
+    if isinstance(value, MappingLeaf):
+        return MappingLeaf(
+            {
+                k: _cast_int_leaves_to_int32(v, name=f"{name}.{k}")
+                for k, v in value.data.items()
+            }
+        )
+    if isinstance(value, SequenceLeaf):
+        return SequenceLeaf(
+            [
+                _cast_int_leaves_to_int32(v, name=f"{name}[{i}]")
+                for i, v in enumerate(value.data)
+            ]
+        )
+    # `bool` is a subclass of `int`, so test for it first and short-circuit
+    # — bool handling lands with the float-side cast pass, not here.
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return safe_to_int32(value, name=name)
+    if isinstance(value, (Array, np.ndarray)) and np.issubdtype(
+        value.dtype, np.integer
+    ):
+        return safe_to_int32(value, name=name)
+    return value
 
 
 def _find_candidates(

@@ -99,7 +99,9 @@ def simulate(
     starting_periods = _compute_starting_periods(
         initial_ages=initial_states["age"], ages=ages
     )
-    subject_regime_ids = jnp.full_like(initial_conditions["regime"], MISSING_CAT_CODE)
+    subject_regime_ids = jnp.full_like(
+        initial_conditions["regime"], MISSING_CAT_CODE, dtype=jnp.int32
+    )
 
     # Forward simulation
     simulation_results: dict[RegimeName, dict[int, PeriodRegimeSimulationData]] = {

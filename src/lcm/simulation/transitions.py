@@ -126,7 +126,7 @@ def calculate_next_states(
         **state_action_space.states,
         **optimal_actions,
         **stochastic_variables_keys,
-        period=period,
+        period=jnp.int32(period),
         age=age,
         **regime_params,
     )
@@ -187,7 +187,7 @@ def calculate_next_regime_membership(
         internal_regime.simulate_functions.compute_regime_transition_probs(  # ty: ignore[call-non-callable]
             **state_action_space.states,
             **optimal_actions,
-            period=period,
+            period=jnp.int32(period),
             age=age,
             **regime_params,
         )
@@ -237,8 +237,9 @@ def draw_key_from_dict(
     """
     regime_names = list(d)
     regime_transition_probs = jnp.array(list(d.values())).T
-    regime_ids = jnp.array(
-        [regime_names_to_ids[regime_name] for regime_name in regime_names]
+    regime_ids = jnp.asarray(
+        [regime_names_to_ids[regime_name] for regime_name in regime_names],
+        dtype=jnp.int32,
     )
 
     def random_id(
@@ -286,9 +287,19 @@ def _update_states_for_subjects(
     for target, target_next_states in computed_next_states.items():
         for next_state_name, next_state_values in target_next_states.items():
             state_name = f"{target}__{next_state_name.removeprefix('next_')}"
+            target_dtype = all_states[state_name].dtype
+            # Preserve storage dtype only when the transition output is the
+            # same numeric kind. Across kinds (e.g. int storage + float
+            # transition output) leave JAX's promotion in place; the
+            # cross-kind boundary cast belongs to Package B.
+            new_values = (
+                next_state_values.astype(target_dtype)
+                if next_state_values.dtype.kind == target_dtype.kind
+                else next_state_values
+            )
             updated_states[state_name] = jnp.where(
                 subject_indices,
-                next_state_values,
+                new_values,
                 all_states[state_name],
             )
 
