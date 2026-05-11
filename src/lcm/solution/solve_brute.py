@@ -56,8 +56,8 @@ def solve(
 
     next_regime_to_V_arr = MappingProxyType(
         {
-            regime_name: jax.device_put(jnp.zeros(shape))
-            for regime_name, shape in regime_V_shapes.items()
+            regime_name: jax.device_put(jnp.zeros(shape), sharding)
+            for regime_name, (shape, sharding) in regime_V_shapes.items()
         }
     )
 
@@ -351,7 +351,9 @@ def _compile_all_functions(
             compiled[func_id] = comp
 
     # Map back to (regime, period) keys.
-    return {key: func for key, func in all_functions.items()}
+    return {
+        key: compiled[_func_dedup_key(func=func)] for key, func in all_functions.items()
+    }
 
 
 def _resolve_compilation_workers(*, max_compilation_workers: int | None) -> int:
@@ -413,18 +415,21 @@ def _get_regime_V_shapes_and_shardings(
         spec = []
         for name in state_action_space.states:
             if regime.grids[name].distributed:
-                spec.append("X")
+                spec.append(name)
             else:
                 spec.append(None)
         shape = tuple(len(v) for v in state_action_space.states.values())
+        dist_shape = tuple(shape[i] for i in range(len(spec)) if spec[i] is not None)
         mesh = jax.make_mesh(
-            (len(avail_devices),),
-            ("X"),
-            axis_types=(jax.sharding.AxisType.Auto),
+            dist_shape,
+            (name for name in spec if name is not None),
+            axis_types=tuple(
+                jax.sharding.AxisType.Auto for i in range(len(dist_shape))
+            ),
             devices=avail_devices,
         )
-
-        shapes_and_shardings[regime_name] = shape
+        sharding = jax.sharding.NamedSharding(mesh=mesh, spec=jax.P(*spec))
+        shapes_and_shardings[regime_name] = (shape, sharding)
     return shapes_and_shardings
 
 

@@ -63,6 +63,13 @@ def build_initial_states(
     n_subjects = len(next(iter(initial_states.values())))
 
     for regime_name, internal_regime in internal_regimes.items():
+        # Logic for distribution of subjects over devices
+        distributed = any([grid.distributed for grid in internal_regime.grids.values()])
+        devices = jax.devices()
+        mesh = jax.make_mesh(
+            (len(devices),), ("X"), (jax.sharding.AxisType.Auto), devices=devices
+        )
+        sharding = jax.NamedSharding(mesh=mesh, spec=jax.P("X"))
         for state_name in _get_regime_state_names(internal_regime):
             key = f"{regime_name}__{state_name}"
             grid = internal_regime.grids[state_name]
@@ -86,6 +93,8 @@ def build_initial_states(
                 )
             else:
                 flat[key] = jnp.full(n_subjects, jnp.nan, dtype=canonical_float_dtype())
+            if distributed:
+                flat[key] = jax.device_put(flat[key], device=sharding)
 
     return MappingProxyType(flat)
 
