@@ -113,7 +113,7 @@ def simulate(
     # Build reverse lookup for regime transition logging. `regime_names_to_ids`
     # values are `ScalarInt` (jax 0-d arrays), which can't serve as dict keys
     # directly; `invert_regime_ids` coerces them to Python `int`.
-    ids_to_names = invert_regime_ids(regime_names_to_ids)
+    regime_ids_to_names = invert_regime_ids(regime_names_to_ids)
 
     for period, age in enumerate(ages.values):
         period_start = time.monotonic()
@@ -172,7 +172,7 @@ def simulate(
             logger=logger,
             prev_regime_ids=prev_regime_ids,
             new_regime_ids=subject_regime_ids,
-            ids_to_names=ids_to_names,
+            regime_ids_to_names=regime_ids_to_names,
         )
 
         elapsed = time.monotonic() - period_start
