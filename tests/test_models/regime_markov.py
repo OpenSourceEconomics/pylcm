@@ -9,19 +9,19 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.typing import DiscreteState, FloatND, Period
+from lcm.typing import DiscreteState, FloatND, Period, ScalarInt
 
 
 @categorical(ordered=True)
 class Health:
-    bad: int
-    good: int
+    bad: ScalarInt
+    good: ScalarInt
 
 
 @categorical(ordered=False)
 class RegimeId:
-    alive: int
-    dead: int
+    alive: ScalarInt
+    dead: ScalarInt
 
 
 def _next_regime_probs(

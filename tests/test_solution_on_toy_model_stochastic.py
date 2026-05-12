@@ -17,7 +17,7 @@ from lcm import (
     Model,
     categorical,
 )
-from lcm.typing import DiscreteState, FloatND
+from lcm.typing import DiscreteState, FloatND, ScalarInt
 from tests.conftest import DECIMAL_PRECISION
 from tests.test_solution_on_toy_model_deterministic import (
     RegimeId,
@@ -33,8 +33,8 @@ from tests.test_solution_on_toy_model_deterministic import (
 
 @categorical(ordered=False)
 class Health:
-    bad: int
-    good: int
+    bad: ScalarInt
+    good: ScalarInt
 
 
 def next_health(health: DiscreteState, probs_array: FloatND) -> FloatND:

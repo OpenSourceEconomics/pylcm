@@ -84,6 +84,19 @@ def get_field_names_and_values(dc: type) -> MappingProxyType[str, Any]:
     )
 
 
+def invert_regime_ids[K](mapping: Mapping[K, Any]) -> MappingProxyType[int, K]:
+    """Return the inverse of a regime-name → id mapping, with Python-`int` keys.
+
+    `@categorical` assigns `jnp.int32` scalars to class attributes, so
+    `regime_names_to_ids` values are 0-d jax arrays — which aren't
+    hashable and therefore can't serve as `dict` keys. This helper
+    coerces each value to a Python `int` so the inverted lookup
+    (`id → name`) is usable wherever JAX promotion isn't already
+    happening.
+    """
+    return MappingProxyType({int(v): k for k, v in mapping.items()})
+
+
 def first_non_none(*args: T | None) -> T:
     """Return the first non-None argument.
 

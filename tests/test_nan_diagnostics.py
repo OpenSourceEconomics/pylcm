@@ -96,8 +96,8 @@ def _build_nan_model() -> tuple[Model, dict]:
 
     @categorical(ordered=False)
     class _Rid:
-        non_terminal: int
-        terminal: int
+        non_terminal: ScalarInt
+        terminal: ScalarInt
 
     def utility(
         consumption: ContinuousAction,

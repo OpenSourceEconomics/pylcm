@@ -28,6 +28,7 @@ from lcm.typing import (
     DiscreteState,
     FloatND,
     Period,
+    ScalarInt,
 )
 from lcm_examples.mortality import (
     LaborSupply,
@@ -41,14 +42,14 @@ from lcm_examples.mortality import working_life as _base_working_life
 
 @categorical(ordered=True)
 class Health:
-    bad: int
-    good: int
+    bad: ScalarInt
+    good: ScalarInt
 
 
 @categorical(ordered=False)
 class PartnerStatus:
-    single: int
-    partnered: int
+    single: ScalarInt
+    partnered: ScalarInt
 
 
 def utility_working(

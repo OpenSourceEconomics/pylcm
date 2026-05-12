@@ -226,13 +226,13 @@ def _make_minimal_stochastic_model(next_draw: Callable[..., FloatND]) -> Model:
 
     @categorical(ordered=False)
     class ShockStatus:
-        bad: int
-        good: int
+        bad: ScalarInt
+        good: ScalarInt
 
     @categorical(ordered=False)
     class ShockRegimeId:
-        working_life: int
-        dead: int
+        working_life: ScalarInt
+        dead: ScalarInt
 
     def utility(consumption: ContinuousAction, draw: DiscreteState) -> FloatND:
         bonus = jnp.where(draw == ShockStatus.good, 1.0, 0.0)

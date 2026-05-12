@@ -37,8 +37,8 @@ from lcm_examples.mortality import (
 
 @categorical(ordered=False)
 class RegimeId:
-    working_life: int
-    dead: int
+    working_life: ScalarInt
+    dead: ScalarInt
 
 
 def wage(age: float) -> float | FloatND:

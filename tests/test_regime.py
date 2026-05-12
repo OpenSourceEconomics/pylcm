@@ -40,8 +40,8 @@ def test_regime_name_does_not_contain_separator():
 
     @categorical(ordered=False)
     class RegimeId:
-        work__test: int  # Contains separator - but RegimeId class has matching field
-        dead: int
+        work__test: ScalarInt  # Contains separator — validated at Model level
+        dead: ScalarInt
 
     working = Regime(
         functions={"utility": utility},
@@ -235,8 +235,8 @@ def test_get_all_functions_includes_identity_for_fixed_discrete_state():
 
     @categorical(ordered=False)
     class Edu:
-        low: int
-        high: int
+        low: ScalarInt
+        high: ScalarInt
 
     regime = Regime(
         transition=lambda: 0,
@@ -342,8 +342,8 @@ def test_discrete_state_grid_without_explicit_transition_raises():
 
     @categorical(ordered=False)
     class Status:
-        low: int
-        high: int
+        low: ScalarInt
+        high: ScalarInt
 
     with pytest.raises(
         RegimeInitializationError, match="must have an entry in state_transitions"
@@ -373,8 +373,8 @@ def test_regime_with_fixed_states_only():
 
     @categorical(ordered=False)
     class FixedRegimeId:
-        working_life: int
-        dead: int
+        working_life: ScalarInt
+        dead: ScalarInt
 
     def fixed_utility(
         consumption: ContinuousAction, wealth: ContinuousState

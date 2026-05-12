@@ -25,20 +25,21 @@ from lcm.typing import (
     DiscreteAction,
     FloatND,
     Period,
+    ScalarInt,
 )
 
 
 @categorical(ordered=True)
 class LaborSupply:
-    work: int
-    retire: int
+    work: ScalarInt
+    retire: ScalarInt
 
 
 @categorical(ordered=False)
 class RegimeId:
-    working_life: int
-    retirement: int
-    dead: int
+    working_life: ScalarInt
+    retirement: ScalarInt
+    dead: ScalarInt
 
 
 def utility_working(

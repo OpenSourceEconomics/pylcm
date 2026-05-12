@@ -6,7 +6,7 @@ import portion
 import pytest
 from numpy.testing import assert_array_almost_equal as aaae
 
-from lcm.exceptions import GridInitializationError
+from lcm.exceptions import CategoricalDefinitionError, GridInitializationError
 from lcm.grids import (
     DiscreteGrid,
     IrregSpacedGrid,
@@ -20,8 +20,24 @@ from lcm.grids import (
 )
 from lcm.grids.categorical import _validate_discrete_grid
 from lcm.grids.continuous import _validate_continuous_grid
+from lcm.typing import ScalarInt
 from lcm.utils.containers import get_field_names_and_values
 from tests.conftest import DECIMAL_PRECISION, X64_ENABLED
+
+
+def _make_dc(name: str, *fields: tuple[str, object]) -> type:
+    """Build a dataclass with `ScalarInt` class attrs.
+
+    Sidesteps `@dataclass(frozen=True)`'s rejection of `jax.Array`
+    defaults: we make the dataclass with no defaults, then write the
+    `ScalarInt` scalars onto the class via `type.__setattr__`.
+    `validate_category_class` reads field values via `getattr(cls, name)`,
+    so the class attrs are what get checked.
+    """
+    cls = make_dataclass(name, [(fname, ScalarInt) for fname, _ in fields])
+    for fname, fval in fields:
+        type.__setattr__(cls, fname, fval)
+    return cls
 
 
 def test_get_fields_with_defaults():
@@ -52,41 +68,43 @@ def test_validate_discrete_grid_empty():
 
 
 def test_validate_discrete_grid_non_scalar_input():
-    category_class = make_dataclass("Category", [("a", int, 1), ("b", str, "s")])
+    category_class = _make_dc("Category", ("a", jnp.int32(1)), ("b", "s"))
     error_msg = (
-        "Field values of the category_class can only be int "
-        r"values. The values to the following fields are not: \['b'\]"
+        "Field values of the category_class must be `ScalarInt` "
+        r"\(0-d int32 jax scalars\). The values to the following "
+        r"fields are not: \['b'\]"
     )
     with pytest.raises(GridInitializationError, match=error_msg):
         _validate_discrete_grid(category_class)
 
 
 def test_validate_discrete_grid_none_input():
-    category_class = make_dataclass("Category", [("a", int), ("b", int, 1)])
+    category_class = _make_dc("Category", ("a", None), ("b", jnp.int32(1)))
     error_msg = (
-        "Field values of the category_class can only be int "
-        r"values. The values to the following fields are not: \['a'\]"
+        "Field values of the category_class must be `ScalarInt` "
+        r"\(0-d int32 jax scalars\). The values to the following "
+        r"fields are not: \['a'\]"
     )
     with pytest.raises(GridInitializationError, match=error_msg):
         _validate_discrete_grid(category_class)
 
 
 def test_validate_discrete_grid_non_unique():
-    category_class = make_dataclass("Category", [("a", int, 1), ("b", int, 1)])
+    category_class = _make_dc("Category", ("a", jnp.int32(1)), ("b", jnp.int32(1)))
     error_msg = "Field values of the category_class must be unique."
     with pytest.raises(GridInitializationError, match=error_msg):
         _validate_discrete_grid(category_class)
 
 
 def test_validate_discrete_grid_non_consecutive_unordered():
-    category_class = make_dataclass("Category", [("a", int, 1), ("b", int, 0)])
+    category_class = _make_dc("Category", ("a", jnp.int32(1)), ("b", jnp.int32(0)))
     error_msg = "Field values of the category_class must be consecutive integers"
     with pytest.raises(GridInitializationError, match=error_msg):
         _validate_discrete_grid(category_class)
 
 
 def test_validate_discrete_grid_non_consecutive_jumps():
-    category_class = make_dataclass("Category", [("a", int, 0), ("b", int, 2)])
+    category_class = _make_dc("Category", ("a", jnp.int32(0)), ("b", jnp.int32(2)))
     error_msg = "Field values of the category_class must be consecutive integers"
     with pytest.raises(GridInitializationError, match=error_msg):
         _validate_discrete_grid(category_class)
@@ -94,7 +112,7 @@ def test_validate_discrete_grid_non_consecutive_jumps():
 
 def test_validate_category_class_valid():
     """Valid category class should return empty error list."""
-    category_class = make_dataclass("Category", [("a", int, 0), ("b", int, 1)])
+    category_class = _make_dc("Category", ("a", jnp.int32(0)), ("b", jnp.int32(1)))
     errors = validate_category_class(category_class)
     assert errors == []
 
@@ -113,7 +131,7 @@ def test_validate_category_class_not_dataclass():
 
 def test_validate_category_class_non_consecutive():
     """Non-consecutive values should return error."""
-    category_class = make_dataclass("Category", [("a", int, 0), ("b", int, 2)])
+    category_class = _make_dc("Category", ("a", jnp.int32(0)), ("b", jnp.int32(2)))
     errors = validate_category_class(category_class)
     assert len(errors) == 1
     assert "consecutive integers" in errors[0]
@@ -121,27 +139,28 @@ def test_validate_category_class_non_consecutive():
 
 def test_validate_category_class_not_starting_at_zero():
     """Values not starting at 0 should return error."""
-    category_class = make_dataclass("Category", [("a", int, 1), ("b", int, 2)])
+    category_class = _make_dc("Category", ("a", jnp.int32(1)), ("b", jnp.int32(2)))
     errors = validate_category_class(category_class)
     assert len(errors) == 1
     assert "consecutive integers starting from 0" in errors[0]
 
 
 def test_discrete_grid_creation():
-    category_class = make_dataclass(
-        "Category", [("a", int, 0), ("b", int, 1), ("c", int, 2)]
+    category_class = _make_dc(
+        "Category",
+        ("a", jnp.int32(0)),
+        ("b", jnp.int32(1)),
+        ("c", jnp.int32(2)),
     )
     grid = DiscreteGrid(category_class)
     assert np.allclose(grid.to_jax(), np.arange(3))
 
 
 def test_discrete_grid_invalid_category_class():
-    category_class = make_dataclass(
-        "Category", [("a", int, 0), ("b", str, "wrong_type")]
-    )
+    category_class = _make_dc("Category", ("a", jnp.int32(0)), ("b", "wrong_type"))
     with pytest.raises(
         GridInitializationError,
-        match="Field values of the category_class can only be int",
+        match="Field values of the category_class must be `ScalarInt`",
     ):
         DiscreteGrid(category_class)
 
@@ -149,9 +168,9 @@ def test_discrete_grid_invalid_category_class():
 def test_discrete_grid_ordered_true():
     @categorical(ordered=True)
     class OrderedCat:
-        low: int
-        medium: int
-        high: int
+        low: ScalarInt
+        medium: ScalarInt
+        high: ScalarInt
 
     grid = DiscreteGrid(OrderedCat)
     assert grid.ordered is True
@@ -160,11 +179,76 @@ def test_discrete_grid_ordered_true():
 def test_discrete_grid_ordered_false():
     @categorical(ordered=False)
     class UnorderedCat:
-        a: int
-        b: int
+        a: ScalarInt
+        b: ScalarInt
 
     grid = DiscreteGrid(UnorderedCat)
     assert grid.ordered is False
+
+
+# --- @categorical: ScalarInt annotation contract ---
+
+
+def test_categorical_rejects_int_annotation():
+    """Plain `int` annotations are rejected at decoration time."""
+    with pytest.raises(
+        CategoricalDefinitionError,
+        match=r"must annotate every field as `ScalarInt`",
+    ):
+        # `a: int` MUST stay — this is the rejected case under test.
+        @categorical(ordered=False)
+        class _Bad:
+            a: int
+
+
+def test_categorical_rejects_str_annotation():
+    """Non-`ScalarInt` annotations of any kind are rejected."""
+    with pytest.raises(
+        CategoricalDefinitionError,
+        match=r"must annotate every field as `ScalarInt`",
+    ):
+
+        @categorical(ordered=False)
+        class _Bad:
+            a: str
+
+
+def test_categorical_error_lists_all_offending_fields():
+    """The error message names every field with a wrong annotation."""
+    with pytest.raises(CategoricalDefinitionError, match=r"`x: int`.*`y: str`"):
+        # `x: int` / `y: str` MUST stay — both are rejected cases under test.
+        @categorical(ordered=False)
+        class _Bad:
+            x: int
+            y: str
+
+
+def test_categorical_class_attr_is_scalar_int():
+    """Class-level access returns a 0-d int32 jax scalar."""
+
+    @categorical(ordered=False)
+    class Cat:
+        first: ScalarInt
+        second: ScalarInt
+
+    assert Cat.first.shape == ()
+    assert Cat.first.dtype == jnp.int32
+    assert int(Cat.first) == 0
+    assert int(Cat.second) == 1
+
+
+def test_categorical_instance_attr_is_scalar_int():
+    """Instance-level access also returns a 0-d int32 jax scalar."""
+
+    @categorical(ordered=False)
+    class Cat:
+        first: ScalarInt
+        second: ScalarInt
+
+    instance = Cat()
+    assert instance.first.shape == ()
+    assert instance.first.dtype == jnp.int32
+    assert int(instance.second) == 1
 
 
 def test_lin_spaced_grid_rejects_non_numeric_start():

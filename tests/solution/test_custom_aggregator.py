@@ -19,14 +19,14 @@ from lcm.typing import (
 
 @categorical(ordered=False)
 class LaborSupply:
-    work: int
-    retire: int
+    work: ScalarInt
+    retire: ScalarInt
 
 
 @categorical(ordered=False)
 class RegimeId:
-    working_life: int
-    dead: int
+    working_life: ScalarInt
+    dead: ScalarInt
 
 
 def utility(
@@ -82,9 +82,9 @@ FINAL_AGE_ALIVE = START_AGE + N_PERIODS - 2  # = 2
 
 @categorical(ordered=False)
 class PrefType:
-    type_0: int
-    type_1: int
-    type_2: int
+    type_0: ScalarInt
+    type_1: ScalarInt
+    type_2: ScalarInt
 
 
 def discount_factor_from_type(

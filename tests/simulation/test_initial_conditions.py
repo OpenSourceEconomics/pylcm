@@ -1,7 +1,5 @@
 """Tests for initial conditions validation utilities."""
 
-from dataclasses import dataclass
-
 import jax.numpy as jnp
 import pytest
 
@@ -31,15 +29,15 @@ _TERMINAL = 1
 def model() -> Model:
     """Minimal model with two states (wealth, health) for initial states tests."""
 
-    @dataclass
+    @categorical(ordered=False)
     class Health:
-        healthy: int = 0
-        sick: int = 1
+        healthy: ScalarInt
+        sick: ScalarInt
 
-    @dataclass
+    @categorical(ordered=False)
     class RegimeId:
-        active: int = 0
-        terminal: int = 1
+        active: ScalarInt
+        terminal: ScalarInt
 
     def utility(wealth: ContinuousState, health: DiscreteState) -> FloatND:  # noqa: ARG001
         return jnp.array(0.0)
@@ -259,8 +257,8 @@ def _make_constraint_model(wealth_grid) -> Model:
 
     @categorical(ordered=False)
     class RegimeId:
-        working_life: int
-        dead: int
+        working_life: ScalarInt
+        dead: ScalarInt
 
     def utility(consumption: ContinuousAction) -> FloatND:
         return jnp.log(consumption)
@@ -443,8 +441,8 @@ def _make_constrained_asymmetric_model() -> Model:
 
     @categorical(ordered=False)
     class RegimeId:
-        alive: int
-        dead: int
+        alive: ScalarInt
+        dead: ScalarInt
 
     def utility(consumption: ContinuousAction) -> FloatND:
         return jnp.log(consumption)
@@ -500,15 +498,15 @@ def _make_asymmetric_state_model() -> Model:
     Ages 0, 1, 2.  alive is active for age < 2, dead is active for age >= 2.
     """
 
-    @dataclass
+    @categorical(ordered=False)
     class Health:
-        healthy: int = 0
-        sick: int = 1
+        healthy: ScalarInt
+        sick: ScalarInt
 
     @categorical(ordered=False)
     class RegimeId:
-        alive: int
-        dead: int
+        alive: ScalarInt
+        dead: ScalarInt
 
     def utility(
         wealth: ContinuousState,

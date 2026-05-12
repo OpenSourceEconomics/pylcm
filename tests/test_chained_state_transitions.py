@@ -15,14 +15,14 @@ from lcm.typing import DiscreteAction, FloatND, ScalarInt
 
 @categorical(ordered=False)
 class _LaborSupply:
-    work: int
-    rest: int
+    work: ScalarInt
+    rest: ScalarInt
 
 
 @categorical(ordered=False)
 class _RegimeId:
-    active: int
-    dead: int
+    active: ScalarInt
+    dead: ScalarInt
 
 
 def _next_aime(aime: float, labor_supply: DiscreteAction) -> FloatND:

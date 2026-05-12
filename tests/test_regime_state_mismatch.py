@@ -28,22 +28,22 @@ from lcm.typing import (
 
 @categorical(ordered=False)
 class HealthWorkingLife:
-    disabled: int
-    bad: int
-    good: int
+    disabled: ScalarInt
+    bad: ScalarInt
+    good: ScalarInt
 
 
 @categorical(ordered=False)
 class HealthRetirement:
-    bad: int
-    good: int
+    bad: ScalarInt
+    good: ScalarInt
 
 
 @categorical(ordered=False)
 class RegimeId:
-    working_life: int
-    retirement: int
-    dead: int
+    working_life: ScalarInt
+    retirement: ScalarInt
+    dead: ScalarInt
 
 
 def hm_utility_working(consumption: ContinuousAction, health: DiscreteState) -> FloatND:
@@ -140,13 +140,13 @@ def test_deterministic_target_only_state() -> None:
 
     @categorical(ordered=False)
     class HeirPresent:
-        no: int
-        yes: int
+        no: ScalarInt
+        yes: ScalarInt
 
     @categorical(ordered=False)
     class _RegimeId:
-        alive: int
-        dead: int
+        alive: ScalarInt
+        dead: ScalarInt
 
     def next_regime(age: float) -> ScalarInt:
         return jnp.where(age >= 1, _RegimeId.dead, _RegimeId.alive)
@@ -218,13 +218,13 @@ def test_stochastic_target_only_state() -> None:
 
     @categorical(ordered=False)
     class HeirPresent:
-        no: int
-        yes: int
+        no: ScalarInt
+        yes: ScalarInt
 
     @categorical(ordered=False)
     class _RegimeId:
-        alive: int
-        dead: int
+        alive: ScalarInt
+        dead: ScalarInt
 
     def next_regime(age: float) -> ScalarInt:
         return jnp.where(age >= 1, _RegimeId.dead, _RegimeId.alive)
@@ -389,19 +389,19 @@ def test_discrete_state_same_count_different_names():
 
     @categorical(ordered=False)
     class StatusA:
-        employed: int
-        unemployed: int
+        employed: ScalarInt
+        unemployed: ScalarInt
 
     @categorical(ordered=False)
     class StatusB:
-        married: int
-        single: int
+        married: ScalarInt
+        single: ScalarInt
 
     @categorical(ordered=False)
     class _RegimeId:
-        work: int
-        retire: int
-        dead: int
+        work: ScalarInt
+        retire: ScalarInt
+        dead: ScalarInt
 
     def next_regime(age: float) -> ScalarInt:
         return jnp.where(
@@ -447,21 +447,21 @@ def test_mixed_ordered_flags_raises():
 
     @categorical(ordered=True)
     class HealthOrdered:
-        bad: int
-        good: int
+        bad: ScalarInt
+        good: ScalarInt
 
     @categorical(ordered=False)
     class HealthUnordered:
-        bad: int
-        good: int
+        bad: ScalarInt
+        good: ScalarInt
 
     @categorical(ordered=False)
     class _RegimeId:
-        a: int
-        b: int
-        dead: int
+        a: ScalarInt
+        b: ScalarInt
+        dead: ScalarInt
 
-    def next_regime() -> int:
+    def next_regime() -> ScalarInt:
         return _RegimeId.dead
 
     a = Regime(
@@ -491,21 +491,21 @@ def test_both_ordered_same_categories_passes():
 
     @categorical(ordered=True)
     class HealthA:
-        bad: int
-        good: int
+        bad: ScalarInt
+        good: ScalarInt
 
     @categorical(ordered=True)
     class HealthB:
-        bad: int
-        good: int
+        bad: ScalarInt
+        good: ScalarInt
 
     @categorical(ordered=False)
     class _RegimeId:
-        a: int
-        b: int
-        dead: int
+        a: ScalarInt
+        b: ScalarInt
+        dead: ScalarInt
 
-    def next_regime() -> int:
+    def next_regime() -> ScalarInt:
         return _RegimeId.dead
 
     a = Regime(
@@ -619,9 +619,9 @@ def test_incomplete_per_target_reachable_target():
 
     @categorical(ordered=False)
     class _RegimeId:
-        regime_a: int
-        regime_b: int
-        dead: int
+        regime_a: ScalarInt
+        regime_b: ScalarInt
+        dead: ScalarInt
 
     def next_regime_a(age: float) -> ScalarInt:
         """A → B at age 1. B IS reachable."""
@@ -696,9 +696,9 @@ def test_complete_per_target_stochastic_cross_grid() -> None:
 
     @categorical(ordered=False)
     class _RegimeId:
-        regime_a: int
-        regime_b: int
-        dead: int
+        regime_a: ScalarInt
+        regime_b: ScalarInt
+        dead: ScalarInt
 
     def next_regime_a(age: float) -> ScalarInt:
         return jnp.where(
@@ -769,10 +769,10 @@ def test_incomplete_per_target_unreachable_target() -> None:
 
     @categorical(ordered=False)
     class _RegimeId:
-        regime_a: int
-        regime_b: int
-        regime_c: int
-        dead: int
+        regime_a: ScalarInt
+        regime_b: ScalarInt
+        regime_c: ScalarInt
+        dead: ScalarInt
 
     def next_regime_a(age: float) -> ScalarInt:
         """A → B at age 1, A otherwise. Never produces C."""

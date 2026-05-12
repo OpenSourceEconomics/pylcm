@@ -16,19 +16,25 @@ import pytest
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.exceptions import RegimeInitializationError
-from lcm.typing import ContinuousAction, DiscreteAction, DiscreteState, FloatND
+from lcm.typing import (
+    ContinuousAction,
+    DiscreteAction,
+    DiscreteState,
+    FloatND,
+    ScalarInt,
+)
 
 
 @categorical(ordered=False)
 class PrefType:
-    type_0: int
-    type_1: int
+    type_0: ScalarInt
+    type_1: ScalarInt
 
 
 @categorical(ordered=False)
 class RegimeId:
-    alive: int
-    dead: int
+    alive: ScalarInt
+    dead: ScalarInt
 
 
 def _per_type_scale_takes_pref_type(
@@ -163,8 +169,8 @@ def test_function_output_indexed_by_derived_categorical_raises():
 
     @categorical(ordered=False)
     class IsMarried:
-        single: int
-        married: int
+        single: ScalarInt
+        married: ScalarInt
 
     def _is_married(spousal_income: DiscreteState) -> DiscreteState:
         return jnp.int32(spousal_income > 0)
@@ -181,9 +187,9 @@ def test_function_output_indexed_by_derived_categorical_raises():
 
     @categorical(ordered=True)
     class SpousalIncome:
-        single: int
-        married_no_inc: int
-        married_has_inc: int
+        single: ScalarInt
+        married_no_inc: ScalarInt
+        married_has_inc: ScalarInt
 
     with pytest.raises(
         RegimeInitializationError,
@@ -209,8 +215,8 @@ def test_function_output_indexed_by_discrete_action_raises():
 
     @categorical(ordered=False)
     class WorkChoice:
-        no_work: int
-        work: int
+        no_work: ScalarInt
+        work: ScalarInt
 
     def _per_choice_scale(labor_supply: DiscreteAction, some_param: FloatND) -> FloatND:
         return jnp.abs(1.0 / (1.0 - some_param[labor_supply]))

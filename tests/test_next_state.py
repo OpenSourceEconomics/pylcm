@@ -1,18 +1,17 @@
-from dataclasses import dataclass
 from types import MappingProxyType
 
 import jax.numpy as jnp
 import pandas as pd
 
 from lcm.ages import AgeGrid
-from lcm.grids import DiscreteGrid
+from lcm.grids import DiscreteGrid, categorical
 from lcm.regime_building import process_regimes
 from lcm.regime_building.next_state import (
     _create_discrete_stochastic_next_func,
     get_next_state_function_for_simulation,
     get_next_state_function_for_solution,
 )
-from lcm.typing import ContinuousState
+from lcm.typing import ContinuousState, ScalarInt
 from tests.test_models.deterministic.regression import dead, working_life
 
 
@@ -20,7 +19,7 @@ def test_get_next_state_function_with_solve_target():
     ages = AgeGrid(start=0, stop=4, step="Y")
     regimes = {"working_life": working_life, "dead": dead}
     regime_names_to_ids = MappingProxyType(
-        {name: idx for idx, name in enumerate(regimes.keys())}
+        {name: jnp.int32(idx) for idx, name in enumerate(regimes.keys())}
     )
     internal_regimes = process_regimes(
         regimes=regimes,
@@ -69,10 +68,10 @@ def test_get_next_state_function_with_simulate_target():
     def f_b(state: ContinuousState) -> ContinuousState:
         return state + 1.0
 
-    @dataclass
+    @categorical(ordered=False)
     class MockCategory:
-        cat_0: int = 0
-        cat_1: int = 1
+        cat_0: ScalarInt
+        cat_1: ScalarInt
 
     all_grids = MappingProxyType(
         {"mock": MappingProxyType({"b": DiscreteGrid(MockCategory)})}

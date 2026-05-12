@@ -28,6 +28,7 @@ from lcm.typing import (
     FloatND,
     InternalParams,
     RegimeName,
+    RegimeNamesToIds,
     StateName,
     UserFunction,
 )
@@ -226,7 +227,7 @@ class SimulationResult:
 
 def get_simulation_output_dtypes(
     regimes: Mapping[RegimeName, Regime],
-    regime_names_to_ids: Mapping[RegimeName, int],
+    regime_names_to_ids: RegimeNamesToIds,
 ) -> MappingProxyType[str, pd.CategoricalDtype]:
     """Compute pandas CategoricalDtype for all discrete output columns.
 
