@@ -390,7 +390,7 @@ def _get_regime_V_shapes_and_shardings(
     *,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     internal_params: InternalParams,
-) -> dict[RegimeName, tuple[int, ...]]:
+) -> dict[RegimeName, tuple[tuple[int, ...], jax.NamedSharding]]:
     """Compute value function array shapes for all regimes.
 
     The V array has one dimension per state variable, with size equal to
@@ -424,7 +424,7 @@ def _get_regime_V_shapes_and_shardings(
         )
         mesh = jax.make_mesh(
             dist_shape,
-            (name for name in spec if name is not None),
+            tuple(name for name in spec if name is not None),
             axis_types=tuple(
                 jax.sharding.AxisType.Auto for i in range(len(dist_shape))
             ),

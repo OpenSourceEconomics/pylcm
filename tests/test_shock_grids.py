@@ -372,7 +372,7 @@ _NORMAL_MIXTURE_KWARGS = {
 def test_normal_mixture_transition_probs_rows_sum_to_one():
     """NormalMixture transition probability rows sum to 1."""
     grid = lcm.shocks.iid.NormalMixture(
-        n_points=7, batch_size=0, **_NORMAL_MIXTURE_KWARGS
+        n_points=7, batch_size=0, distributed=False, **_NORMAL_MIXTURE_KWARGS
     )
     P = grid.get_transition_probs()
     row_sums = P.sum(axis=1)
@@ -382,7 +382,9 @@ def test_normal_mixture_transition_probs_rows_sum_to_one():
 def test_iid_normal_mixture_stationary_moments():
     """IID NormalMixture stationary mean and std match mixture moments."""
     kwargs = _NORMAL_MIXTURE_KWARGS
-    grid = lcm.shocks.iid.NormalMixture(n_points=21, batch_size=0, **kwargs)
+    grid = lcm.shocks.iid.NormalMixture(
+        n_points=21, batch_size=0, distributed=False, **kwargs
+    )
     got_mean, got_std = _stationary_moments(
         grid.get_gridpoints(), grid.get_transition_probs()
     )
@@ -412,7 +414,7 @@ _TAUCHEN_NORMAL_MIXTURE_KWARGS = {
 def test_tauchen_normal_mixture_transition_probs_rows_sum_to_one():
     """TauchenNormalMixture transition probability rows sum to 1."""
     grid = lcm.shocks.ar1.TauchenNormalMixture(
-        n_points=7, batch_size=0, **_TAUCHEN_NORMAL_MIXTURE_KWARGS
+        n_points=7, batch_size=0, distributed=False, **_TAUCHEN_NORMAL_MIXTURE_KWARGS
     )
     P = grid.get_transition_probs()
     row_sums = P.sum(axis=1)
@@ -422,7 +424,9 @@ def test_tauchen_normal_mixture_transition_probs_rows_sum_to_one():
 def test_tauchen_normal_mixture_centers_on_unconditional_mean():
     """TauchenNormalMixture gridpoints center on (mu + mean_eps) / (1 - rho)."""
     kwargs = _TAUCHEN_NORMAL_MIXTURE_KWARGS
-    grid = lcm.shocks.ar1.TauchenNormalMixture(n_points=11, batch_size=0, **kwargs)
+    grid = lcm.shocks.ar1.TauchenNormalMixture(
+        n_points=11, batch_size=0, distributed=False, **kwargs
+    )
     points = grid.get_gridpoints()
     midpoint = (points[0] + points[-1]) / 2
     mean_eps = kwargs["p1"] * kwargs["mu1"] + (1 - kwargs["p1"]) * kwargs["mu2"]
@@ -433,7 +437,9 @@ def test_tauchen_normal_mixture_centers_on_unconditional_mean():
 def test_tauchen_normal_mixture_stationary_moments_and_autocorrelation():
     """TauchenNormalMixture stationary mean, std, and autocorrelation match theory."""
     kwargs = _TAUCHEN_NORMAL_MIXTURE_KWARGS
-    grid = lcm.shocks.ar1.TauchenNormalMixture(batch_size=0, n_points=21, **kwargs)
+    grid = lcm.shocks.ar1.TauchenNormalMixture(
+        batch_size=0, distributed=False, n_points=21, **kwargs
+    )
     points = grid.get_gridpoints()
     P = grid.get_transition_probs()
 

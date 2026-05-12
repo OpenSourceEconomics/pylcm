@@ -20,7 +20,7 @@ class DiscreteGrid(Grid):
     """
 
     def __init__(
-        self, category_class: type, batch_size: int = 0, distributed=False
+        self, category_class: type, batch_size: int = 0, *, distributed: bool = False
     ) -> None:
         _validate_discrete_grid(category_class)
         names_and_values = get_field_names_and_values(category_class)

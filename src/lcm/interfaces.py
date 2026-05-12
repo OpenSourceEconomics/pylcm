@@ -302,35 +302,33 @@ class InternalRegime:
                 state_replacements[name] = spec.compute_gridpoints(**shock_kw)
 
         new_states = (
-            MappingProxyType(
-                dict(self._base_state_action_space.states) | state_replacements
-            )
+            dict(self._base_state_action_space.states) | state_replacements
             if state_replacements
             else dict(self._base_state_action_space.states)
         )
         new_continuous_actions = (
-            MappingProxyType(
-                dict(self._base_state_action_space.continuous_actions)
-                | action_replacements
-            )
+            dict(self._base_state_action_space.continuous_actions) | action_replacements
             if action_replacements
             else dict(self._base_state_action_space.continuous_actions)
         )
-
-        
+        new_states = distribute_states_to_devices(
+            new_states=new_states, grids=self.grids
+        )
         return self._base_state_action_space.replace(
             states=MappingProxyType(new_states),
             continuous_actions=MappingProxyType(new_continuous_actions),
         )
 
-def distribute_states_to_devices(new_states, grids):
+
+def distribute_states_to_devices(
+    new_states: dict[StateName, ContinuousState],
+    grids: MappingProxyType[StateOrActionName, Grid],
+) -> dict[StateName, ContinuousState]:
 
     distributed_states = new_states
 
     avail_devices = jax.devices()
-    distributed_grids = {
-        name: grid for name, grid in grids.items() if grid.distributed
-    }
+    distributed_grids = {name: grid for name, grid in grids.items() if grid.distributed}
     if len(distributed_grids) == 1:
         state_name = next(iter(distributed_grids))
         n_points = distributed_grids[state_name].to_jax().shape[0]
@@ -338,7 +336,7 @@ def distribute_states_to_devices(new_states, grids):
             mesh = jax.make_mesh(
                 (len(avail_devices),),
                 ("X"),
-                axis_types=(jax.sharding.AxisType.Auto),
+                axis_types=(jax.sharding.AxisType.Auto,),
                 devices=avail_devices,
             )
             distributed_states[state_name] = jax.device_put(
@@ -355,7 +353,8 @@ def distribute_states_to_devices(new_states, grids):
         permutations = reduce(
             mul, [grid.to_jax().shape[0] for grid in distributed_grids.values()]
         )
-        if permutations == len(avail_devices):
+        if permutations <= len(avail_devices):
+            avail_devices = avail_devices[:permutations]
             mesh = jax.make_mesh(
                 tuple(len(grid.to_jax()) for grid in distributed_grids.values()),
                 tuple(distributed_grids.keys()),
@@ -372,11 +371,12 @@ def distribute_states_to_devices(new_states, grids):
         else:
             raise PyLCMError(
                 "When distributing over multiple grids, the product of the"
-                " number of points of the grids needs to match the number"
+                " number of points of the grids needs to be smaller than the number"
                 f" of available devices. Gridpoints: {permutations} Available"
                 f"Devices: {len(avail_devices)}"
             )
-        return distributed_states
+    return distributed_states
+
 
 @dataclasses.dataclass(frozen=True)
 class PeriodRegimeSimulationData:

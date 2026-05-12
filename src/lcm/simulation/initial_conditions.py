@@ -66,10 +66,10 @@ def build_initial_states(
 
     for regime_name, internal_regime in internal_regimes.items():
         # Logic for distribution of subjects over devices
-        distributed = any([grid.distributed for grid in internal_regime.grids.values()])
+        distributed = any(grid.distributed for grid in internal_regime.grids.values())
         devices = jax.devices()
         mesh = jax.make_mesh(
-            (len(devices),), ("X"), (jax.sharding.AxisType.Auto), devices=devices
+            (len(devices),), ("X"), (jax.sharding.AxisType.Auto,), devices=devices
         )
         sharding = jax.NamedSharding(mesh=mesh, spec=jax.P("X"))
         for state_name in _get_regime_state_names(internal_regime):

@@ -8,29 +8,34 @@ from lcm.grids.continuous import LinSpacedGrid
 from lcm.grids.discrete import DiscreteGrid
 from lcm.model import Model
 from lcm.regime import Regime
+from lcm.typing import ScalarInt
 
+# Run these tests on the CPU for parallelization, does not work if pytest runs
+# multiple workers, because jax will be initialized already
 try:
+    jax.config.update("jax_platform_name", "cpu")
     jax.config.update("jax_num_cpu_devices", 4)
-    _HAS_4_CPU = len(jax.devices()) >= 4
-except jax.errors.JaxRuntimeError:
-    _HAS_4_CPU = False
+    _PYTEST_PARALLEL = False
+except RuntimeError:
+    _PYTEST_PARALLEL = True
 
-_skip_no_4_cpu = pytest.mark.skipif(not _HAS_4_CPU, reason="requires 4 CPU's")
+_skip_pytest_parallel = pytest.mark.skipif(
+    _PYTEST_PARALLEL, reason="Can't set num cpus in pytest paralellel"
+)
 
 
 @pytest.fixture
 def distributed_model():
     @categorical(ordered=False)
     class RegimeId:
-        working_life: int
-        retirement: int
+        working_life: ScalarInt
+        retirement: ScalarInt
 
     @categorical(ordered=True)
     class Type:
-        low: int
-        high: int
+        low: ScalarInt
+        high: ScalarInt
 
-    # Define a regime where 'unused_state' is not used in any function
     working_life = Regime(
         functions={
             "utility": lambda wealth, consumption, type1, type2: (
@@ -78,7 +83,7 @@ def distributed_model():
     )
 
 
-@_skip_no_4_cpu
+@_skip_pytest_parallel
 def test_solution_running_on_multiple_cpus(distributed_model):
     """Test that distribution over multiple CPU's works."""
 
@@ -89,18 +94,18 @@ def test_solution_running_on_multiple_cpus(distributed_model):
     assert period_to_regime_to_V_arr[0]["working_life"].sharding.num_devices == 4
 
 
-@_skip_no_4_cpu
+@_skip_pytest_parallel
 def test_simulation_running_on_multiple_cpus(distributed_model):
     """Test that distribution over multiple CPU's works."""
 
     res = distributed_model.simulate(
         params={"discount_factor": 0.95},
         initial_conditions={
-            "age": jnp.full(4, 0),
-            "wealth": jnp.full(4, 100.0),
-            "type1": jnp.full(4, 1),
-            "type2": jnp.full(4, 1),
-            "regime": jnp.zeros(4, dtype=jnp.int32),
+            "age": jnp.full(36, 0),
+            "wealth": jnp.full(36, 100.0),
+            "type1": jnp.full(36, 1),
+            "type2": jnp.full(36, 1),
+            "regime": jnp.zeros(36, dtype=jnp.int32),
         },
         period_to_regime_to_V_arr=None,
         seed=12345,
