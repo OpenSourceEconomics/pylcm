@@ -414,12 +414,14 @@ def _get_regime_V_shapes_and_shardings(
         )
         spec = []
         for name in state_action_space.states:
-            if regime.grids[name].distributed:
+            if name in state_action_space.distributed_states:
                 spec.append(name)
             else:
                 spec.append(None)
         shape = tuple(len(v) for v in state_action_space.states.values())
-        dist_shape = tuple(shape[i] for i in range(len(spec)) if spec[i] is not None)
+        dist_shape = tuple(
+            len(v) for v in state_action_space.distributed_states.values()
+        )
         mesh = jax.make_mesh(
             dist_shape,
             (name for name in spec if name is not None),
@@ -581,13 +583,13 @@ def _reconstruct_next_regime_to_V_arr(
     the regime's state-action space at the supplied params — identical to what
     `_get_regime_V_shapes_and_shardings` saw during solve setup.
     """
-    regime_V_shapes = _get_regime_V_shapes_and_shardings(
+    regime_V_shapes_and_shardings = _get_regime_V_shapes_and_shardings(
         internal_regimes=internal_regimes,
         internal_params=internal_params,
     )
     later_periods = sorted(p for p in solution if p > period)
     result: dict[RegimeName, FloatND] = {}
-    for regime_name, shape in regime_V_shapes.items():
+    for regime_name, (shape, _sharding) in regime_V_shapes_and_shardings.items():
         rolled: FloatND | None = None
         for q in later_periods:
             if regime_name in solution[q]:

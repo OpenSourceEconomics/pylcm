@@ -63,6 +63,9 @@ class StateActionSpace:
     states: MappingProxyType[StateName, ContinuousState | DiscreteState]
     """Immutable mapping of state variable names to their values."""
 
+    distributed_states: MappingProxyType[StateName, ContinuousState | DiscreteState]
+    """Immutable mapping of distributed state variable names to their values."""
+
     discrete_actions: MappingProxyType[ActionName, DiscreteAction]
     """Immutable mapping of discrete action variable names to their values."""
 
@@ -314,59 +317,66 @@ class InternalRegime:
             else dict(self._base_state_action_space.continuous_actions)
         )
 
-        avail_devices = jax.devices()
-        distributed_grids = {
-            name: grid for name, grid in self.grids.items() if grid.distributed == True
-        }
-        if len(distributed_grids) == 1:
-            n_points = distributed_grids[list(distributed_grids)[0]].to_jax().shape[0]
-            state_name = list(distributed_grids)[0]
-            if n_points % len(avail_devices) == 0:
-                mesh = jax.make_mesh(
-                    (len(avail_devices),),
-                    ("X"),
-                    axis_types=(jax.sharding.AxisType.Auto),
-                    devices=avail_devices,
-                )
-                new_states[state_name] = jax.device_put(
-                    new_states[state_name],
-                    jax.NamedSharding(mesh=mesh, spec=jax.P("X")),
-                )
-            else:
-                raise PyLCMError(
-                    "When distributing over one grid, the number of points in the grid "
-                    "needs to be a multiple of the available devices. Gridpoints: "
-                    f" {n_points} Available Devices: {len(avail_devices)}"
-                )
-        if len(distributed_grids) > 1:
-            permutations = reduce(
-                mul, [grid.to_jax().shape[0] for grid in distributed_grids.values()]
-            )
-            if permutations == len(avail_devices):
-                mesh = jax.make_mesh(
-                    tuple(len(grid.to_jax()) for grid in distributed_grids.values()),
-                    tuple(distributed_grids.keys()),
-                    axis_types=tuple(
-                        jax.sharding.AxisType.Auto for grid in distributed_grids
-                    ),
-                    devices=avail_devices,
-                )
-                for state_name in distributed_grids:
-                    new_states[state_name] = jax.device_put(
-                        new_states[state_name],
-                        jax.NamedSharding(mesh=mesh, spec=jax.P(state_name)),
-                    )
-            else:
-                raise PyLCMError(
-                    "When distributing over multiple grids, the product of the number of"
-                    " points of the grids needs to match the number of available devices."
-                    f" Gridpoints: {permutations} Available Devices: {len(avail_devices)}"
-                )
+        
         return self._base_state_action_space.replace(
             states=MappingProxyType(new_states),
             continuous_actions=MappingProxyType(new_continuous_actions),
         )
 
+def distribute_states_to_devices(new_states, grids):
+
+    distributed_states = new_states
+
+    avail_devices = jax.devices()
+    distributed_grids = {
+        name: grid for name, grid in grids.items() if grid.distributed
+    }
+    if len(distributed_grids) == 1:
+        state_name = next(iter(distributed_grids))
+        n_points = distributed_grids[state_name].to_jax().shape[0]
+        if n_points % len(avail_devices) == 0:
+            mesh = jax.make_mesh(
+                (len(avail_devices),),
+                ("X"),
+                axis_types=(jax.sharding.AxisType.Auto),
+                devices=avail_devices,
+            )
+            distributed_states[state_name] = jax.device_put(
+                new_states[state_name],
+                jax.NamedSharding(mesh=mesh, spec=jax.P("X")),
+            )
+        else:
+            raise PyLCMError(
+                "When distributing over one grid, the number of points in the grid "
+                "needs to be a multiple of the available devices. Gridpoints: "
+                f" {n_points} Available Devices: {len(avail_devices)}"
+            )
+    if len(distributed_grids) > 1:
+        permutations = reduce(
+            mul, [grid.to_jax().shape[0] for grid in distributed_grids.values()]
+        )
+        if permutations == len(avail_devices):
+            mesh = jax.make_mesh(
+                tuple(len(grid.to_jax()) for grid in distributed_grids.values()),
+                tuple(distributed_grids.keys()),
+                axis_types=tuple(
+                    jax.sharding.AxisType.Auto for grid in distributed_grids
+                ),
+                devices=avail_devices,
+            )
+            for state_name in distributed_grids:
+                distributed_states[state_name] = jax.device_put(
+                    new_states[state_name],
+                    jax.NamedSharding(mesh=mesh, spec=jax.P(state_name)),
+                )
+        else:
+            raise PyLCMError(
+                "When distributing over multiple grids, the product of the"
+                " number of points of the grids needs to match the number"
+                f" of available devices. Gridpoints: {permutations} Available"
+                f"Devices: {len(avail_devices)}"
+            )
+        return distributed_states
 
 @dataclasses.dataclass(frozen=True)
 class PeriodRegimeSimulationData:

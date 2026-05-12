@@ -77,6 +77,7 @@ def test_solve_brute():
                 "wealth": jnp.array([0.0, 1.0, 2.0]),
             }
         ),
+        distributed_states=MappingProxyType({}),
         state_and_discrete_action_names=("lazy", "labor_supply", "wealth"),
     )
     # ==================================================================================
@@ -159,6 +160,7 @@ def test_solve_brute_single_period_Qc_arr():
             }
         ),
         states=MappingProxyType({}),
+        distributed_states=MappingProxyType({}),
         state_and_discrete_action_names=("a", "b", "c"),
     )
 
