@@ -35,6 +35,7 @@ from lcm.typing import (
     FloatND,
     Int1D,
     Period,
+    ScalarInt,
 )
 from lcm.utils.dispatchers import productmap
 
@@ -67,59 +68,62 @@ def calc_savingsgrid(x: Float1D) -> Float1D:
 
 @categorical(ordered=True)
 class LaborSupply:
-    do_not_work: int
-    part_time: int
-    full_time: int
+    do_not_work: ScalarInt
+    part_time: ScalarInt
+    full_time: ScalarInt
 
 
 @categorical(ordered=True)
 class Education:
-    low: int
-    high: int
+    low: ScalarInt
+    high: ScalarInt
 
 
 Effort = make_dataclass(
-    "HealthEffort", [("class" + str(i), int, int(i)) for i in range(40)]
+    "HealthEffort",
+    [(f"class{i}", ScalarInt) for i in range(40)],
 )
+for i in range(40):
+    type.__setattr__(Effort, f"class{i}", jnp.int32(i))
 
 
 @categorical(ordered=True)
 class Health:
-    bad: int
-    good: int
+    bad: ScalarInt
+    good: ScalarInt
 
 
 @categorical(ordered=True)
 class ProductivityType:
-    low: int
-    high: int
+    low: ScalarInt
+    high: ScalarInt
 
 
 @categorical(ordered=True)
 class HealthType:
-    low: int
-    high: int
+    low: ScalarInt
+    high: ScalarInt
 
 
 @categorical(ordered=True)
 class ProductivityShock:
-    val0: int
-    val1: int
-    val2: int
-    val3: int
-    val4: int
+    val0: ScalarInt
+    val1: ScalarInt
+    val2: ScalarInt
+    val3: ScalarInt
+    val4: ScalarInt
 
 
 @categorical(ordered=True)
 class DiscountType:
-    small: int
-    large: int
+    small: ScalarInt
+    large: ScalarInt
 
 
 @categorical(ordered=False)
 class RegimeId:
-    alive: int
-    dead: int
+    alive: ScalarInt
+    dead: ScalarInt
 
 
 def discount_factor(

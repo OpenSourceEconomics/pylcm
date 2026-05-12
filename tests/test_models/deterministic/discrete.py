@@ -32,21 +32,21 @@ from tests.test_models.deterministic.regression import (
 
 @categorical(ordered=True)
 class DiscreteConsumption:
-    low: int
-    high: int
+    low: ScalarInt
+    high: ScalarInt
 
 
 @categorical(ordered=True)
 class DiscreteWealth:
-    low: int
-    medium: int
-    high: int
+    low: ScalarInt
+    medium: ScalarInt
+    high: ScalarInt
 
 
 @categorical(ordered=False)
 class RegimeId:
-    working_life: int
-    dead: int
+    working_life: ScalarInt
+    dead: ScalarInt
 
 
 def utility_discrete(

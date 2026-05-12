@@ -1,10 +1,9 @@
 import logging
-from collections.abc import Mapping
 from typing import Literal
 
 import jax.numpy as jnp
 
-from lcm.typing import FloatND, Int1D, ScalarFloat, ScalarInt
+from lcm.typing import FloatND, Int1D, RegimeIdsToNames, ScalarFloat, ScalarInt
 
 type LogLevel = Literal["off", "warning", "progress", "debug"]
 
@@ -113,7 +112,7 @@ def log_regime_transitions(
     logger: logging.Logger,
     prev_regime_ids: Int1D,
     new_regime_ids: Int1D,
-    ids_to_names: Mapping[int, str],
+    regime_ids_to_names: RegimeIdsToNames,
 ) -> None:
     """Log regime transition counts at debug level.
 
@@ -121,18 +120,18 @@ def log_regime_transitions(
         logger: Logger instance.
         prev_regime_ids: Regime IDs before the transition.
         new_regime_ids: Regime IDs after the transition.
-        ids_to_names: Mapping from regime integer IDs to regime names.
+        regime_ids_to_names: Immutable mapping of regime integer IDs to regime names.
 
     """
     if not logger.isEnabledFor(logging.DEBUG):
         return
 
     parts: list[str] = []
-    for from_id, from_name in sorted(ids_to_names.items()):
+    for from_id, from_name in sorted(regime_ids_to_names.items()):
         mask = prev_regime_ids == from_id
         if not jnp.any(mask):
             continue
-        for to_id, to_name in sorted(ids_to_names.items()):
+        for to_id, to_name in sorted(regime_ids_to_names.items()):
             count = int(jnp.sum(mask & (new_regime_ids == to_id)))
             if count > 0:
                 parts.append(f"  - {from_name} \u2192 {to_name} = {count}")

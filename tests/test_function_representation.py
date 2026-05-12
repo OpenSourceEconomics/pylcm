@@ -15,14 +15,16 @@ from lcm.regime_building.V import (
     _get_lookup_function,
     get_V_interpolator,
 )
+from lcm.typing import ScalarInt
 from lcm.utils.dispatchers import productmap
 
 
 @pytest.fixture
 def binary_discrete_grid():
-    return DiscreteGrid(
-        make_dataclass("BinaryCategory", [("a", bool, False), ("b", bool, True)])
-    )
+    cls = make_dataclass("BinaryCategory", [("a", ScalarInt), ("b", ScalarInt)])
+    type.__setattr__(cls, "a", jnp.int32(0))
+    type.__setattr__(cls, "b", jnp.int32(1))
+    return DiscreteGrid(cls)
 
 
 @pytest.fixture

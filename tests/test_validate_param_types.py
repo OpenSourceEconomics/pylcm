@@ -12,21 +12,22 @@ from jax import Array
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.dtypes import canonical_float_dtype
+from lcm.typing import ScalarInt
 
 
 @categorical(ordered=True)
 class Health:
-    bad: int
-    good: int
+    bad: ScalarInt
+    good: ScalarInt
 
 
 @categorical(ordered=False)
 class RegimeId:
-    working: int
-    dead: int
+    working: ScalarInt
+    dead: ScalarInt
 
 
-def _next_regime() -> int:
+def _next_regime() -> ScalarInt:
     return RegimeId.dead
 
 

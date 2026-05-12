@@ -50,6 +50,16 @@ class GridInitializationError(PyLCMError):
     """Raised when there is an error in the grid initialization."""
 
 
+class CategoricalDefinitionError(PyLCMError):
+    """Raised when an `@categorical`-decorated class fails the contract.
+
+    `@categorical` requires every field to be annotated as `ScalarInt`
+    (the 0-d `jnp.int32` scalar pylcm produces for category codes).
+    Violations are caught at decoration time, before any grid, regime,
+    or derived-categorical mapping is built.
+    """
+
+
 class FunctionDispatchError(PyLCMError):
     """Raised when there is an error during the function dispatch."""
 

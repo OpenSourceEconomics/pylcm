@@ -27,9 +27,9 @@ from lcm_examples.mortality import (
 
 @categorical(ordered=False)
 class RegimeId:
-    working_life: int
-    retirement: int
-    dead: int
+    working_life: ScalarInt
+    retirement: ScalarInt
+    dead: ScalarInt
 
 
 def next_regime_from_working(

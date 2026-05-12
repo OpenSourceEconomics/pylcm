@@ -13,7 +13,7 @@ from lcm import (
     categorical,
 )
 from lcm.exceptions import InvalidRegimeTransitionProbabilitiesError
-from lcm.typing import DiscreteAction, FloatND
+from lcm.typing import DiscreteAction, FloatND, ScalarInt
 from lcm.utils.error_handling import (
     _format_sum_violation,
     validate_regime_transition_probs,
@@ -181,14 +181,14 @@ def test_format_sum_violation_with_scalar_input_and_state_action_values():
 
 @categorical(ordered=False)
 class _Action:
-    stay: int
-    leave: int
+    stay: ScalarInt
+    leave: ScalarInt
 
 
 @categorical(ordered=False)
 class _RegimeId:
-    active: int
-    terminal: int
+    active: ScalarInt
+    terminal: ScalarInt
 
 
 def _next_regime_only_fails_for_leave(action: DiscreteAction) -> FloatND:

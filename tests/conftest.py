@@ -1,8 +1,11 @@
 from collections.abc import Iterator
 from dataclasses import make_dataclass
 
+import jax.numpy as jnp
 import pytest
 from jax import config as jax_config
+
+from lcm.typing import ScalarInt
 
 # Module-level precision settings (updated by pytest_configure based on --precision)
 X64_ENABLED: bool = True
@@ -35,7 +38,12 @@ def pytest_configure(config):
 
 @pytest.fixture(scope="session")
 def binary_category_class():
-    return make_dataclass("BinaryCategoryClass", [("cat0", int, 0), ("cat1", int, 1)])
+    cls = make_dataclass(
+        "BinaryCategoryClass", [("cat0", ScalarInt), ("cat1", ScalarInt)]
+    )
+    type.__setattr__(cls, "cat0", jnp.int32(0))
+    type.__setattr__(cls, "cat1", jnp.int32(1))
+    return cls
 
 
 @pytest.fixture(name="x64_disabled")

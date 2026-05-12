@@ -152,7 +152,7 @@ def calculate_next_regime_membership(
     period: int,
     age: ScalarInt | ScalarFloat,
     regime_params: FlatRegimeParams,
-    regime_names_to_ids: MappingProxyType[RegimeName, int],
+    regime_names_to_ids: RegimeNamesToIds,
     new_subject_regime_ids: Int1D,
     active_regimes_next_period: tuple[RegimeName, ...],
     key: Array,

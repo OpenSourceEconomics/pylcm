@@ -11,13 +11,13 @@ from lcm import (
     Regime,
     categorical,
 )
-from lcm.typing import ContinuousAction, ContinuousState, FloatND
+from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 
 @categorical(ordered=False)
 class RegimeIdShock:
-    alive: int
-    dead: int
+    alive: ScalarInt
+    dead: ScalarInt
 
 
 def _utility(

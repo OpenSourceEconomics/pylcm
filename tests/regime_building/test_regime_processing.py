@@ -17,6 +17,7 @@ from lcm.regime_building.processing import (
     process_regimes,
 )
 from lcm.regime_building.variable_info import get_grids, get_variable_info
+from lcm.typing import ScalarInt
 from tests.regime_mock import RegimeMock
 from tests.test_models.deterministic.base import dead, working_life
 
@@ -112,7 +113,7 @@ def test_process_regimes():
     ages = AgeGrid(start=0, stop=4, step="Y")
     regimes = {"working_life": working_life, "dead": dead}
     regime_names_to_ids = MappingProxyType(
-        {name: idx for idx, name in enumerate(regimes.keys())}
+        {name: jnp.int32(idx) for idx, name in enumerate(regimes.keys())}
     )
     internal_regimes = process_regimes(
         regimes=regimes,
@@ -192,8 +193,8 @@ def _two_non_terminal_internal_regimes() -> MappingProxyType[str, InternalRegime
 
     @categorical(ordered=False)
     class TwoRegimeId:
-        early: int
-        late: int
+        early: ScalarInt
+        late: ScalarInt
 
     early = Regime(
         transition=regime_transition,
@@ -212,7 +213,9 @@ def _two_non_terminal_internal_regimes() -> MappingProxyType[str, InternalRegime
     return process_regimes(
         regimes={"early": early, "late": late},
         ages=AgeGrid(start=0, stop=2, step="Y"),
-        regime_names_to_ids=MappingProxyType({"early": 0, "late": 1}),
+        regime_names_to_ids=MappingProxyType(
+            {"early": jnp.int32(0), "late": jnp.int32(1)}
+        ),
         enable_jit=True,
     )
 

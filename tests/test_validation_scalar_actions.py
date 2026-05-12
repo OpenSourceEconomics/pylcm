@@ -16,13 +16,13 @@ import jax.numpy as jnp
 
 from lcm import AgeGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.params import MappingLeaf, as_leaf
-from lcm.typing import ContinuousAction, ContinuousState, FloatND
+from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 
 @categorical(ordered=False)
 class RegimeId:
-    alive: int
-    dead: int
+    alive: ScalarInt
+    dead: ScalarInt
 
 
 def _aggregate_with_ids(

@@ -15,7 +15,7 @@ from lcm import Model
 model = Model(
     regimes=regimes,  # dict mapping names to Regime instances
     ages=ages,  # AgeGrid defining the lifecycle timeline
-    regime_id_class=RegimeId,  # @categorical dataclass mapping names to int indices
+    regime_id_class=RegimeId,  # @categorical dataclass mapping names to ScalarInt indices
     enable_jit=True,  # controls JAX compilation (default: True)
     fixed_params={},  # optional params baked in at init time
     description="",  # optional description string
@@ -32,18 +32,22 @@ decorator to create it:
 
 ```python
 from lcm import categorical
+from lcm.typing import ScalarInt
 
 
 @categorical(ordered=False)
 class RegimeId:
-    retired: int
-    working: int
+    retired: ScalarInt
+    working: ScalarInt
 ```
 
 Rules:
 
+- Fields must be annotated as `ScalarInt` — the 0-d `jnp.int32` scalar pylcm produces
+  for category codes. Other annotations raise `CategoricalDefinitionError` at decoration
+  time.
 - Fields must match the keys of the `regimes` dict exactly (sorted alphabetically).
-- Values are auto-assigned as consecutive integers starting from 0.
+- Values are auto-assigned as consecutive `jnp.int32` scalars starting from 0.
 - Use `RegimeId.working` (class attribute access) to reference regime IDs in transition
   functions.
 
@@ -116,18 +120,19 @@ Use `model.get_params_template()` to get a mutable copy of the parameter templat
 ```python
 import jax.numpy as jnp
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm.typing import ScalarInt
 
 
 @categorical(ordered=False)
 class RegimeId:
-    retired: int
-    working: int
+    retired: ScalarInt
+    working: ScalarInt
 
 
 @categorical(ordered=True)
 class LaborSupply:
-    do_not_work: int
-    work: int
+    do_not_work: ScalarInt
+    work: ScalarInt
 
 
 def next_wealth(wealth, consumption, interest_rate):
