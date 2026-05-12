@@ -28,6 +28,7 @@ from lcm.typing import (
     ActionName,
     FlatRegimeParams,
     InternalParams,
+    RegimeIdsToNames,
     RegimeName,
     RegimeNamesToIds,
 )
@@ -228,7 +229,7 @@ def _collect_state_name_errors(
     *,
     initial_states: Mapping[str, Array],
     regime_id_arr: Array,
-    regime_ids_to_names: MappingProxyType[int, RegimeName],
+    regime_ids_to_names: RegimeIdsToNames,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     valid_regime_names: set[RegimeName],
 ) -> list[str]:
@@ -241,7 +242,7 @@ def _collect_state_name_errors(
     Args:
         initial_states: Mapping of state names to arrays.
         regime_id_arr: Array of integer regime IDs.
-        regime_ids_to_names: Mapping from integer IDs to regime names.
+        regime_ids_to_names: Immutable mapping of regime integer IDs to regime names.
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
         valid_regime_names: Set of valid regime names.
@@ -286,7 +287,7 @@ def _collect_structural_errors(
     *,
     initial_states: Mapping[str, Array],
     regime_id_arr: Array,
-    regime_ids_to_names: MappingProxyType[int, RegimeName],
+    regime_ids_to_names: RegimeIdsToNames,
     regime_names_to_ids: RegimeNamesToIds,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     ages: AgeGrid,
@@ -296,7 +297,7 @@ def _collect_structural_errors(
     Args:
         initial_states: Mapping of state names to arrays.
         regime_id_arr: Array of integer regime IDs.
-        regime_ids_to_names: Mapping from integer IDs to regime names.
+        regime_ids_to_names: Immutable mapping of regime integer IDs to regime names.
         regime_names_to_ids: Immutable mapping of regime names to integer IDs.
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
