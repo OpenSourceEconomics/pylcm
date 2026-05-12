@@ -19,6 +19,7 @@ from lcm.ages import PSEUDO_STATE_NAMES, AgeGrid
 from lcm.dtypes import canonical_float_dtype, safe_to_float_dtype
 from lcm.exceptions import (
     InvalidInitialConditionsError,
+    PyLCMError,
     format_messages,
 )
 from lcm.grids import DiscreteGrid
@@ -68,6 +69,12 @@ def build_initial_states(
         # Logic for distribution of subjects over devices
         distributed = any(grid.distributed for grid in internal_regime.grids.values())
         devices = jax.devices()
+        if distributed and n_subjects % len(devices) != 0:
+            raise PyLCMError(
+                "When using distributed grids, the number of subjects during the"
+                " simulation needs to be a multiple of the available devices. Subjects:"
+                f" {n_subjects} Available Devices: {len(devices)}"
+            )
         mesh = jax.make_mesh(
             (len(devices),), ("X"), (jax.sharding.AxisType.Auto,), devices=devices
         )
