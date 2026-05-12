@@ -67,14 +67,14 @@ def utility(
 
 @categorical(ordered=True)
 class Health:
-    bad: int = 0
-    good: int = 1
+    bad: ScalarInt
+    good: ScalarInt
 
 
 @categorical(ordered=False)
 class RegimeId:
-    alive: int
-    dead: int
+    alive: ScalarInt
+    dead: ScalarInt
 
 
 @functools.cache
@@ -120,9 +120,9 @@ def get_model(
 
 @categorical(ordered=False)
 class MultiRegimeId:
-    work: int
-    retire: int
-    dead: int
+    work: ScalarInt
+    retire: ScalarInt
+    dead: ScalarInt
 
 
 def _next_regime_multi(

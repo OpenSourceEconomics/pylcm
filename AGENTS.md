@@ -70,7 +70,9 @@ automation. Python 3.14+ is required.
 - `PiecewiseLogSpacedGrid`: Piecewise logarithmically spaced grid with breakpoints.
 - `AgeGrid`: Lifecycle age grid (start, stop, step or exact_values)
 - `@categorical(ordered=...)`: Decorator factory for creating categorical classes with
-  auto-assigned integer codes. Requires explicit `ordered=True` or `ordered=False`.
+  auto-assigned `ScalarInt` (0-d `jnp.int32`) codes. Requires explicit `ordered=True` or
+  `ordered=False`. Every field must be annotated as `ScalarInt` (from `lcm.typing`) —
+  other annotations raise `CategoricalDefinitionError` at decoration time.
 - **ShockGrids** (in `src/lcm/shocks/`): `Rouwenhorst`, `Tauchen`, `Normal`, `Uniform`.
   These have intrinsic transitions — do NOT accept entries in `state_transitions`.
   Import as modules (`import lcm.shocks.iid`) and use qualified access
@@ -189,8 +191,8 @@ from lcm import AgeGrid, categorical
 
 @categorical(ordered=False)
 class RegimeId:
-    working: int
-    retired: int
+    working: ScalarInt
+    retired: ScalarInt
 
 
 Model(
@@ -210,8 +212,8 @@ Model(
 - Must have at least one terminal regime and one non-terminal regime
 - `regime_id_class` must be a dataclass with fields matching regime names (use
   `@categorical`)
-- Field values must be consecutive integers starting from 0 (auto-assigned by
-  `@categorical`)
+- Field values are consecutive `ScalarInt` (0-d `jnp.int32`) scalars starting from 0,
+  auto-assigned by `@categorical`
 
 ### Core Methods
 

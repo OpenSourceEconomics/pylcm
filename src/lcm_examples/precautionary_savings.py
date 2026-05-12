@@ -74,8 +74,8 @@ def utility(consumption: ContinuousAction) -> FloatND:
 
 @categorical(ordered=False)
 class RegimeId:
-    alive: int
-    dead: int
+    alive: ScalarInt
+    dead: ScalarInt
 
 
 @functools.cache

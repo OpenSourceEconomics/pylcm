@@ -25,7 +25,11 @@ class DiscreteGrid(Grid):
         _validate_discrete_grid(category_class)
         names_and_values = get_field_names_and_values(category_class)
         self.__categories = tuple(names_and_values.keys())
-        self.__codes = tuple(names_and_values.values())
+        # Coerce `ScalarInt` field values to Python `int` for the `codes`
+        # property. `codes` is the Python-side API (the tuple flows into
+        # dict/set operations that need hashable members); the JAX-side
+        # representation comes from `to_jax()`.
+        self.__codes = tuple(int(v) for v in names_and_values.values())
         self.__ordered: bool = getattr(category_class, "_ordered", False)
         self.__batch_size: int = batch_size
         self.__distributed: bool = distributed

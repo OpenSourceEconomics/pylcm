@@ -28,9 +28,11 @@ from lcm.typing import (
     ActionName,
     FlatRegimeParams,
     InternalParams,
+    RegimeIdsToNames,
     RegimeName,
     RegimeNamesToIds,
 )
+from lcm.utils.containers import invert_regime_ids
 from lcm.utils.functools import get_union_of_args
 
 # Sentinel for categorical states not in initial conditions.  Using int32 min
@@ -128,10 +130,10 @@ def validate_initial_conditions(
         InvalidInitialConditionsError: If any validation check fails.
 
     """
-    # Build reverse lookup from regime IDs to names
-    ids_to_regime_names: dict[int, RegimeName] = {
-        v: k for k, v in regime_names_to_ids.items()
-    }
+    # Build reverse lookup from regime IDs to names. `regime_names_to_ids`
+    # values are `ScalarInt` (jax 0-d arrays), which can't serve as dict
+    # keys directly; `invert_regime_ids` coerces them to Python `int`.
+    regime_ids_to_names = invert_regime_ids(regime_names_to_ids)
 
     # Extract regime array
     regime_arr = initial_conditions.get("regime")
@@ -141,7 +143,7 @@ def validate_initial_conditions(
         )
 
     # Vectorized regime ID validity check
-    valid_ids_arr = jnp.array(sorted(ids_to_regime_names.keys()))
+    valid_ids_arr = jnp.array(sorted(regime_ids_to_names.keys()))
     invalid_mask = ~jnp.isin(regime_arr, valid_ids_arr)
     if jnp.any(invalid_mask):
         invalid_ids = sorted({int(i) for i in jnp.unique(regime_arr[invalid_mask])})
@@ -149,7 +151,7 @@ def validate_initial_conditions(
             format_messages(
                 [
                     f"Invalid regime IDs {invalid_ids}. "
-                    f"Valid IDs: {sorted(ids_to_regime_names.keys())}"
+                    f"Valid IDs: {sorted(regime_ids_to_names.keys())}"
                 ]
             )
         )
@@ -161,7 +163,7 @@ def validate_initial_conditions(
     structural_errors = _collect_structural_errors(
         initial_states=initial_states,
         regime_id_arr=regime_arr,
-        ids_to_regime_names=ids_to_regime_names,
+        regime_ids_to_names=regime_ids_to_names,
         regime_names_to_ids=regime_names_to_ids,
         internal_regimes=internal_regimes,
         ages=ages,
@@ -236,7 +238,7 @@ def _collect_state_name_errors(
     *,
     initial_states: Mapping[str, Array],
     regime_id_arr: Array,
-    ids_to_regime_names: dict[int, RegimeName],
+    regime_ids_to_names: RegimeIdsToNames,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     valid_regime_names: set[RegimeName],
 ) -> list[str]:
@@ -249,7 +251,7 @@ def _collect_state_name_errors(
     Args:
         initial_states: Mapping of state names to arrays.
         regime_id_arr: Array of integer regime IDs.
-        ids_to_regime_names: Mapping from integer IDs to regime names.
+        regime_ids_to_names: Immutable mapping of regime integer IDs to regime names.
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
         valid_regime_names: Set of valid regime names.
@@ -269,7 +271,7 @@ def _collect_state_name_errors(
     required_states: set[str] = set(PSEUDO_STATE_NAMES)
     used_ids = jnp.unique(regime_id_arr)
     used_regime_names = {
-        ids_to_regime_names[int(i)] for i in used_ids if int(i) in ids_to_regime_names
+        regime_ids_to_names[int(i)] for i in used_ids if int(i) in regime_ids_to_names
     } & valid_regime_names
     for regime_name in used_regime_names:
         required_states.update(_get_regime_state_names(internal_regimes[regime_name]))
@@ -294,7 +296,7 @@ def _collect_structural_errors(
     *,
     initial_states: Mapping[str, Array],
     regime_id_arr: Array,
-    ids_to_regime_names: dict[int, RegimeName],
+    regime_ids_to_names: RegimeIdsToNames,
     regime_names_to_ids: RegimeNamesToIds,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     ages: AgeGrid,
@@ -304,7 +306,7 @@ def _collect_structural_errors(
     Args:
         initial_states: Mapping of state names to arrays.
         regime_id_arr: Array of integer regime IDs.
-        ids_to_regime_names: Mapping from integer IDs to regime names.
+        regime_ids_to_names: Immutable mapping of regime integer IDs to regime names.
         regime_names_to_ids: Immutable mapping of regime names to integer IDs.
         internal_regimes: Immutable mapping of regime names to internal regime
             instances.
@@ -325,7 +327,7 @@ def _collect_structural_errors(
         _collect_state_name_errors(
             initial_states=initial_states,
             regime_id_arr=regime_id_arr,
-            ids_to_regime_names=ids_to_regime_names,
+            regime_ids_to_names=regime_ids_to_names,
             internal_regimes=internal_regimes,
             valid_regime_names=valid_regime_names,
         )
@@ -375,7 +377,7 @@ def _collect_structural_errors(
         if not jnp.all(active_mask):
             invalid_indices = jnp.where(~active_mask)[0].astype(jnp.int32)
             invalid_combos = {
-                (ids_to_regime_names[int(regime_id_arr[i])], float(age_values[i]))
+                (regime_ids_to_names[int(regime_id_arr[i])], float(age_values[i]))
                 for i in invalid_indices
             }
             details = "\n".join(
@@ -446,7 +448,7 @@ def _validate_discrete_state_values(
     initial_states: Mapping[str, Array],
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     regime_id_arr: Array,
-    regime_names_to_ids: Mapping[RegimeName, int],
+    regime_names_to_ids: RegimeNamesToIds,
 ) -> None:
     """Validate that discrete state values are valid codes.
 
@@ -463,10 +465,12 @@ def _validate_discrete_state_values(
         InvalidInitialConditionsError: If any discrete state contains invalid codes.
 
     """
-    # Build per-state: valid codes + regime IDs that have this state
+    # Build per-state: valid codes + regime IDs that have this state.
+    # `regime_id` is `ScalarInt` (a 0-d jax array); coerce to Python `int`
+    # before set insertion.
     discrete_info: dict[str, tuple[set[int], set[int]]] = {}
     for regime_name, internal_regime in internal_regimes.items():
-        regime_id = regime_names_to_ids[regime_name]
+        regime_id = int(regime_names_to_ids[regime_name])
         for state_name in internal_regime.variable_info.query(
             "is_state and is_discrete"
         ).index:

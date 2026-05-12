@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from types import MappingProxyType
 
 import jax.numpy as jnp
@@ -10,6 +9,7 @@ from lcm.interfaces import StateActionSpace
 from lcm.regime import Regime
 from lcm.regime_building.V import VInterpolationInfo, create_v_interpolation_info
 from lcm.state_action_space import create_state_action_space
+from lcm.typing import ScalarInt
 
 
 def _create_variable_info(
@@ -32,8 +32,8 @@ def _create_variable_info(
 def test_create_state_action_space_solution_discrete_action_continuous_state():
     @categorical(ordered=False)
     class WorkChoice:
-        no_work: int
-        work: int
+        no_work: ScalarInt
+        work: ScalarInt
 
     variable_info = _create_variable_info(
         continuous_states=["wealth"],
@@ -91,8 +91,8 @@ def test_create_state_action_space_solution_continuous_action():
 def test_state_action_space_replace_method():
     @categorical(ordered=False)
     class WorkChoice:
-        no_work: int
-        work: int
+        no_work: ScalarInt
+        work: ScalarInt
 
     variable_info = _create_variable_info(
         continuous_states=["wealth"],
@@ -121,10 +121,10 @@ def test_state_action_space_replace_method():
 
 
 def test_create_v_interpolation_info():
-    @dataclass
+    @categorical(ordered=False)
     class Health:
-        good: int = 0
-        bad: int = 1
+        good: ScalarInt
+        bad: ScalarInt
 
     regime = Regime(
         transition=lambda: 0,  # non-terminal

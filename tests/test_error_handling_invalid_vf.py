@@ -22,8 +22,8 @@ def n_periods() -> int:
 
 @categorical(ordered=False)
 class RegimeId:
-    non_terminal: int
-    terminal: int
+    non_terminal: ScalarInt
+    terminal: ScalarInt
 
 
 @pytest.fixture

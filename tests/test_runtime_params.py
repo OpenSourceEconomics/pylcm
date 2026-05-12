@@ -6,13 +6,13 @@ from numpy.testing import assert_array_almost_equal as aaae
 
 from lcm import AgeGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.grids import IrregSpacedGrid
-from lcm.typing import ContinuousAction, ContinuousState, FloatND
+from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 
 @categorical(ordered=False)
 class RegimeId:
-    alive: int
-    dead: int
+    alive: ScalarInt
+    dead: ScalarInt
 
 
 def _utility(consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:

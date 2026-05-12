@@ -16,13 +16,13 @@ import pytest
 
 from lcm import AgeGrid, LinSpacedGrid, Model, Regime, categorical
 from lcm.exceptions import InvalidValueFunctionError
-from lcm.typing import ContinuousAction, ContinuousState, FloatND
+from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 
 @categorical(ordered=False)
 class RegimeId:
-    alive: int
-    dead: int
+    alive: ScalarInt
+    dead: ScalarInt
 
 
 def _utility(consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:

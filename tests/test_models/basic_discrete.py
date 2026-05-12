@@ -1,22 +1,23 @@
 """Basic model with discrete + continuous states, no stochastic transitions."""
 
 from lcm import AgeGrid, DiscreteGrid, LinSpacedGrid, Model, Regime, categorical
+from lcm.typing import ScalarInt
 
 
 @categorical(ordered=True)
 class Health:
-    bad: int
-    good: int
+    bad: ScalarInt
+    good: ScalarInt
 
 
 @categorical(ordered=False)
 class RegimeId:
-    working_life: int
-    retirement: int
-    dead: int
+    working_life: ScalarInt
+    retirement: ScalarInt
+    dead: ScalarInt
 
 
-def _next_regime() -> int:
+def _next_regime() -> ScalarInt:
     return RegimeId.dead
 
 

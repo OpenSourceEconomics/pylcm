@@ -21,8 +21,8 @@ from lcm.typing import ContinuousAction, ContinuousState, FloatND, ScalarInt
 
 @categorical(ordered=False)
 class _RegimeId:
-    working: int
-    retired: int
+    working: ScalarInt
+    retired: ScalarInt
 
 
 def _retired_utility(wealth: ContinuousState) -> FloatND:

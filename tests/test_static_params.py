@@ -17,8 +17,8 @@ from tests.test_models.regime_markov import dead as markov_dead
 
 @categorical(ordered=False)
 class RegimeId:
-    alive: int
-    dead: int
+    alive: ScalarInt
+    dead: ScalarInt
 
 
 def _utility(consumption: ContinuousAction, wealth: ContinuousState) -> FloatND:
@@ -314,8 +314,8 @@ def test_mixed_series_and_scalar_fixed_params():
 
 @categorical(ordered=False)
 class _WealthGroup:
-    low: int
-    high: int
+    low: ScalarInt
+    high: ScalarInt
 
 
 def _wealth_group(wealth: ContinuousState) -> ScalarInt:
@@ -433,9 +433,9 @@ def test_model_broadcast_conflict_raises():
 
     @categorical(ordered=False)
     class _OtherGroup:
-        a: int
-        b: int
-        c: int
+        a: ScalarInt
+        b: ScalarInt
+        c: ScalarInt
 
     alive = Regime(
         functions={"utility": _utility_with_group, "wealth_group": _wealth_group},
@@ -466,18 +466,18 @@ def test_different_regime_derived_categoricals_with_model_broadcast():
 
     @categorical(ordered=False)
     class _GroupA:
-        x: int
-        y: int
+        x: ScalarInt
+        y: ScalarInt
 
     @categorical(ordered=False)
     class _GroupB:
-        p: int
-        q: int
+        p: ScalarInt
+        q: ScalarInt
 
     @categorical(ordered=False)
     class _Shared:
-        lo: int
-        hi: int
+        lo: ScalarInt
+        hi: ScalarInt
 
     alive = Regime(
         functions={"utility": lambda: 0.0},

@@ -23,6 +23,7 @@ from lcm.pandas_utils import (
     initial_conditions_from_dataframe,
 )
 from lcm.params.processing import broadcast_to_template
+from lcm.typing import ScalarInt
 from lcm.utils.error_handling import validate_transition_probs
 from tests.test_models.basic_discrete import (
     Health,
@@ -40,8 +41,8 @@ from tests.test_models.stochastic import get_model as get_stochastic_model
 
 @categorical(ordered=False)
 class Occupation:
-    blue_collar: int
-    white_collar: int
+    blue_collar: ScalarInt
+    white_collar: ScalarInt
 
 
 def test_to_categorical_dtype_returns_correct_type():
@@ -67,9 +68,9 @@ def test_to_categorical_dtype_is_not_ordered():
 def test_to_categorical_dtype_ordered():
     @categorical(ordered=True)
     class Severity:
-        mild: int
-        moderate: int
-        severe: int
+        mild: ScalarInt
+        moderate: ScalarInt
+        severe: ScalarInt
 
     result = Severity.to_categorical_dtype()  # ty: ignore[unresolved-attribute]
     assert result.ordered is True
@@ -108,8 +109,8 @@ def test_build_discrete_grid_lookup_ignores_continuous():
 def test_build_discrete_grid_lookup_inconsistent_raises():
     @categorical(ordered=False)
     class HealthAlt:
-        sick: int
-        healthy: int
+        sick: ScalarInt
+        healthy: ScalarInt
 
     regimes = {
         "a": Regime(
@@ -405,19 +406,19 @@ def test_round_trip_with_discrete_model():
 
 @categorical(ordered=True)
 class HealthWithDisability:
-    disabled: int
-    bad: int
-    good: int
+    disabled: ScalarInt
+    bad: ScalarInt
+    good: ScalarInt
 
 
 @categorical(ordered=False)
 class _HetRegimeId:
-    pre65: int
-    post65: int
-    dead: int
+    pre65: ScalarInt
+    post65: ScalarInt
+    dead: ScalarInt
 
 
-def _het_next_regime() -> int:
+def _het_next_regime() -> ScalarInt:
     return _HetRegimeId.dead
 
 
@@ -504,16 +505,16 @@ def test_initial_conditions_heterogeneous_state_sets() -> None:
 
     @categorical(ordered=False)
     class _Rid:
-        with_status: int
-        without_status: int
-        dead: int
+        with_status: ScalarInt
+        without_status: ScalarInt
+        dead: ScalarInt
 
     @categorical(ordered=False)
     class _Status:
-        low: int
-        high: int
+        low: ScalarInt
+        high: ScalarInt
 
-    def _next_regime() -> int:
+    def _next_regime() -> ScalarInt:
         return _Rid.dead
 
     def _utility_with_status(wealth: float, status: int) -> float:
@@ -577,11 +578,11 @@ def test_initial_conditions_shock_grid_heterogeneous_state_sets() -> None:
 
     @categorical(ordered=False)
     class _Rid:
-        earner: int
-        retiree: int
-        dead: int
+        earner: ScalarInt
+        retiree: ScalarInt
+        dead: ScalarInt
 
-    def _next_regime() -> int:
+    def _next_regime() -> ScalarInt:
         return _Rid.dead
 
     def _earner_utility(wealth: float, income: float) -> float:
@@ -656,10 +657,10 @@ def test_convert_series_next_function_no_outcome_axis() -> None:
 
     @categorical(ordered=False)
     class _RId:
-        a: int
-        dead: int
+        a: ScalarInt
+        dead: ScalarInt
 
-    def _next_regime() -> int:
+    def _next_regime() -> ScalarInt:
         return _RId.dead
 
     def _next_wealth(wealth: float, rate: float, period: int) -> float:  # noqa: ARG001
@@ -1665,8 +1666,8 @@ def test_convert_series_per_target_transition() -> None:
 
     @categorical(ordered=False)
     class _RId:
-        working: int
-        retired: int
+        working: ScalarInt
+        retired: ScalarInt
 
     def _health_probs(
         period: Period, health: DiscreteState, probs_array: FloatND
@@ -1763,19 +1764,19 @@ def test_convert_series_structured_derived_categoricals() -> None:
 
     @categorical(ordered=False)
     class _RId:
-        regime_a: int
-        regime_b: int
+        regime_a: ScalarInt
+        regime_b: ScalarInt
 
     @categorical(ordered=False)
     class _ChoiceA:
-        x: int
-        y: int
+        x: ScalarInt
+        y: ScalarInt
 
     @categorical(ordered=False)
     class _ChoiceB:
-        x: int
-        y: int
-        z: int
+        x: ScalarInt
+        y: ScalarInt
+        z: ScalarInt
 
     # "derived" is a DAG function output used as an index in both regimes,
     # but with different cardinalities (2 vs 3 categories). Since it's a
@@ -1843,8 +1844,8 @@ def test_convert_series_runtime_grid_param() -> None:
 
     @categorical(ordered=False)
     class _RId:
-        alive: int
-        dead: int
+        alive: ScalarInt
+        dead: ScalarInt
 
     alive = Regime(
         transition=lambda age: jnp.where(age >= 1, _RId.dead, _RId.alive),
@@ -1909,8 +1910,8 @@ def test_resolve_categoricals_conflict_raises() -> None:
 
     @categorical(ordered=False)
     class WrongPartner:
-        x: int
-        y: int
+        x: ScalarInt
+        y: ScalarInt
 
     conflicting_regime = dataclasses.replace(
         model.regimes["working_life"],
@@ -1935,19 +1936,19 @@ def test_convert_series_cross_grid_transition() -> None:
 
     @categorical(ordered=True)
     class _HealthPre:
-        disabled: int
-        bad: int
-        good: int
+        disabled: ScalarInt
+        bad: ScalarInt
+        good: ScalarInt
 
     @categorical(ordered=True)
     class _HealthPost:
-        bad: int
-        good: int
+        bad: ScalarInt
+        good: ScalarInt
 
     @categorical(ordered=False)
     class _RId:
-        pre65: int
-        post65: int
+        pre65: ScalarInt
+        post65: ScalarInt
 
     def _health_probs_same(
         period: Period, health: DiscreteState, health_trans_probs: FloatND
@@ -2032,8 +2033,8 @@ def test_resolve_categoricals_includes_derived_when_no_regime_name() -> None:
 
     @categorical(ordered=False)
     class ExtraVar:
-        a: int
-        b: int
+        a: ScalarInt
+        b: ScalarInt
 
     updated_regimes = {
         name: dataclasses.replace(

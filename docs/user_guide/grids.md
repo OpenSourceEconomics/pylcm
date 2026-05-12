@@ -43,12 +43,13 @@ categories:
 
 ```python
 from lcm import DiscreteGrid, categorical
+from lcm.typing import ScalarInt
 
 
 @categorical(ordered=True)
 class LaborSupply:
-    do_not_work: int
-    work: int
+    do_not_work: ScalarInt
+    work: ScalarInt
 
 
 actions = {"labor_supply": DiscreteGrid(LaborSupply)}
