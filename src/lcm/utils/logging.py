@@ -1,10 +1,9 @@
 import logging
-from collections.abc import Mapping
 from typing import Literal
 
 import jax.numpy as jnp
 
-from lcm.typing import FloatND, Int1D, ScalarFloat, ScalarInt
+from lcm.typing import FloatND, Int1D, RegimeIdsToNames, ScalarFloat, ScalarInt
 
 type LogLevel = Literal["off", "warning", "progress", "debug"]
 
@@ -113,7 +112,7 @@ def log_regime_transitions(
     logger: logging.Logger,
     prev_regime_ids: Int1D,
     new_regime_ids: Int1D,
-    regime_ids_to_names: Mapping[int, str],
+    regime_ids_to_names: RegimeIdsToNames,
 ) -> None:
     """Log regime transition counts at debug level.
 
@@ -121,7 +120,7 @@ def log_regime_transitions(
         logger: Logger instance.
         prev_regime_ids: Regime IDs before the transition.
         new_regime_ids: Regime IDs after the transition.
-        regime_ids_to_names: Mapping from regime integer IDs to regime names.
+        regime_ids_to_names: Immutable mapping of regime integer IDs to regime names.
 
     """
     if not logger.isEnabledFor(logging.DEBUG):
