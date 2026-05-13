@@ -12,7 +12,6 @@ import cloudpickle
 import jax.numpy as jnp
 import pandas as pd
 from dags import concatenate_functions
-from dags.tree import tree_path_from_qname
 from jax import Array
 
 from lcm.ages import AgeGrid
@@ -33,7 +32,6 @@ from lcm.typing import (
     UserFunction,
 )
 from lcm.utils.dispatchers import vmap_1d
-from lcm.utils.namespace import flatten_regime_namespace
 
 CLOUDPICKLE_IMPORT_ERROR_MSG = (
     "Pickling SimulationResult objects requires the optional dependency 'cloudpickle'. "
@@ -429,11 +427,13 @@ def _get_stochastic_weight_function_names(regime: InternalRegime) -> set[str]:
     for stochastic state transitions. They should not be exposed as available targets.
     """
     stochastic_transition_names = regime.simulate_functions.stochastic_transition_names
-    flat_transitions = flatten_regime_namespace(regime.simulate_functions.transitions)
     return {
-        f"weight_{name}"
-        for name in flat_transitions
-        if tree_path_from_qname(name)[-1] in stochastic_transition_names
+        f"weight_{target_regime}__{transition_name}"
+        for target_regime, target_transitions in (
+            regime.simulate_functions.transitions.items()
+        )
+        for transition_name in target_transitions
+        if transition_name in stochastic_transition_names
     }
 
 
