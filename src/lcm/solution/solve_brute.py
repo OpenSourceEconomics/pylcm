@@ -442,18 +442,21 @@ def _get_regime_V_shardings(
     shardings: dict[RegimeName, jax.NamedSharding] = {}
     avail_devices = jax.devices()
     for regime_name, regime in internal_regimes.items():
-        if any(grid.distributed for grid in regime.grids.values()):
+        curr_regime_grids = regime.grids
+        if any(grid.distributed for grid in curr_regime_grids.values()):
             state_action_space = regime.state_action_space(
                 regime_params=internal_params[regime_name],
             )
             spec = []
             for name in state_action_space.states:
-                if name in state_action_space.distributed_states:
+                if curr_regime_grids[name].distributed:
                     spec.append(name)
                 else:
                     spec.append(None)
             dist_shape = tuple(
-                len(v) for v in state_action_space.distributed_states.values()
+                len(v)
+                for name, v in state_action_space.states.items()
+                if curr_regime_grids[name].distributed
             )
             mesh = jax.make_mesh(
                 dist_shape,

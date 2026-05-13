@@ -30,7 +30,6 @@ def _make_state_action_space(
         states=MappingProxyType(
             {"wealth": jnp.linspace(1.0, 5.0, n_wealth)},
         ),
-        distributed_states=MappingProxyType({}),
         discrete_actions=MappingProxyType({}),
         continuous_actions=MappingProxyType(
             {"consumption": jnp.linspace(0.1, 2.0, n_consumption)},

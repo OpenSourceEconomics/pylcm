@@ -30,7 +30,7 @@ class ContinuousGrid(Grid):
     batch_size: int = 0
     """Size of the batches that are looped over during the solution."""
     distributed: bool = False
-    """Size of the batches that are looped over during the solution."""
+    """Whether to distribute the grid over the available devices."""
 
     @overload
     def get_coordinate(self, value: ScalarFloat) -> ScalarFloat: ...

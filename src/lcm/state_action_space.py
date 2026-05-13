@@ -37,20 +37,12 @@ def create_state_action_space(
             sn: _grid_to_jax_or_placeholder(grids[sn])
             for sn in variable_info.query("is_state").index
         }
-        distributed_states = {
-            sn: _grid_to_jax_or_placeholder(grids[sn])
-            for sn in variable_info.query("is_state").index
-            if grids[sn].distributed
-        }
     else:
         _validate_all_states_present(
             provided_states=states,
             required_state_names=set(variable_info.query("is_state").index),
         )
         _states = states
-        distributed_states = {
-            sn: state for sn, state in states.items() if grids[sn].distributed
-        }
     discrete_actions = {
         name: grids[name].to_jax()
         for name in variable_info.query("is_action & is_discrete").index
@@ -65,7 +57,6 @@ def create_state_action_space(
 
     return StateActionSpace(
         states=MappingProxyType(_states),
-        distributed_states=MappingProxyType(distributed_states),
         discrete_actions=MappingProxyType(discrete_actions),
         continuous_actions=MappingProxyType(continuous_actions),
         state_and_discrete_action_names=state_and_discrete_action_names,

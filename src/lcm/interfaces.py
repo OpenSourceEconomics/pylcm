@@ -63,9 +63,6 @@ class StateActionSpace:
     states: MappingProxyType[StateName, ContinuousState | DiscreteState]
     """Immutable mapping of state variable names to their values."""
 
-    distributed_states: MappingProxyType[StateName, ContinuousState | DiscreteState]
-    """Immutable mapping of distributed state variable names to their values."""
-
     discrete_actions: MappingProxyType[ActionName, DiscreteAction]
     """Immutable mapping of discrete action variable names to their values."""
 
