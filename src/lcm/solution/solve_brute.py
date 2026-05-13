@@ -11,8 +11,8 @@ import jax
 import jax.numpy as jnp
 
 from lcm.ages import AgeGrid
-from lcm.interfaces import InternalRegime
-from lcm.typing import FloatND, InternalParams, RegimeName
+from lcm.interfaces import InternalRegime, _build_regime_sharding
+from lcm.typing import FloatND, InternalParams, RegimeName, StateName
 from lcm.utils.error_handling import validate_V
 from lcm.utils.logging import (
     format_duration,
@@ -46,17 +46,19 @@ def solve(
         Immutable mapping of periods to regime value function arrays.
 
     """
-    # Compute V array shapes and build a consistent next_regime_to_V_arr
-    # template.  Using the same pytree structure (keys and shapes) across
-    # all periods avoids JIT re-compilation from pytree mismatches.
-    regime_V_shapes = _get_regime_V_shapes(
+    # Compute V array shapes (and their device shardings, if any) and build
+    # a consistent next_regime_to_V_arr template. Using the same pytree
+    # structure (keys and shapes) across all periods avoids JIT re-
+    # compilation from pytree mismatches.
+    regime_V_topology = _get_regime_V_shapes_and_shardings(
         internal_regimes=internal_regimes,
         internal_params=internal_params,
     )
+
     next_regime_to_V_arr = MappingProxyType(
         {
-            regime_name: jnp.zeros(shape)
-            for regime_name, shape in regime_V_shapes.items()
+            regime_name: _build_zero_v_array(topology=topology)
+            for regime_name, topology in regime_V_topology.items()
         }
     )
 
@@ -146,7 +148,6 @@ def solve(
                 period=jnp.int32(period),
                 age=ages.values[period],
             )
-
             # Async reductions: gated on log level. `"off"` skips
             # everything — no kernel launches, no host syncs, no
             # NaN fail-fast. `"warning"` / `"progress"` folds two
@@ -386,31 +387,61 @@ def _func_dedup_key(*, func: Callable) -> Hashable:
     return id(func)
 
 
-def _get_regime_V_shapes(
+@dataclass(frozen=True)
+class _RegimeVTopology:
+    """Shape and (optional) sharding of a single regime's V-array."""
+
+    shape: tuple[int, ...]
+    """V-array shape, with one entry per state."""
+
+    sharding: jax.NamedSharding | None
+    """Device sharding for the V-array, or `None` when no state is distributed."""
+
+
+def _get_regime_V_shapes_and_shardings(
     *,
     internal_regimes: MappingProxyType[RegimeName, InternalRegime],
     internal_params: InternalParams,
-) -> dict[RegimeName, tuple[int, ...]]:
-    """Compute value function array shapes for all regimes.
+) -> dict[RegimeName, _RegimeVTopology]:
+    """Compute V-array shapes and shardings for every regime.
 
-    The V array has one dimension per state variable, with size equal to
-    the number of grid points for that state.
+    The V-array has one dimension per state variable, sized by that state's
+    grid. When at least one state grid in a regime is distributed, the
+    V-array is sharded across devices along those axes; otherwise the
+    sharding is `None`.
 
     Args:
-        internal_regimes: The internal regimes.
+        internal_regimes: Immutable mapping of regime names to internal regimes.
         internal_params: Regime parameters (needed for runtime grid shapes).
 
     Returns:
-        Dict of regime names to V array shapes.
+        Dict of regime names to `_RegimeVTopology` (shape and sharding).
 
     """
-    shapes: dict[RegimeName, tuple[int, ...]] = {}
+    n_devices = len(jax.devices())
+    topology: dict[RegimeName, _RegimeVTopology] = {}
     for regime_name, regime in internal_regimes.items():
         state_action_space = regime.state_action_space(
             regime_params=internal_params[regime_name],
         )
-        shapes[regime_name] = tuple(len(v) for v in state_action_space.states.values())
-    return shapes
+        state_order: tuple[StateName, ...] = tuple(state_action_space.states.keys())
+        shape = tuple(len(v) for v in state_action_space.states.values())
+        sharding_plan = _build_regime_sharding(grids=regime.grids, n_devices=n_devices)
+        sharding = (
+            sharding_plan.v_array_sharding(state_order)
+            if sharding_plan is not None
+            else None
+        )
+        topology[regime_name] = _RegimeVTopology(shape=shape, sharding=sharding)
+    return topology
+
+
+def _build_zero_v_array(*, topology: _RegimeVTopology) -> jax.Array:
+    """Build the zero V-array template for a regime, sharded where requested."""
+    zeros = jnp.zeros(topology.shape)
+    if topology.sharding is None:
+        return zeros
+    return jax.device_put(zeros, topology.sharding)
 
 
 @dataclass(frozen=True)
@@ -557,23 +588,26 @@ def _reconstruct_next_regime_to_V_arr(
     holds its V from the smallest later period where it was active, falling
     back to a zeros template otherwise.
 
-    We rebuild the same mapping post-hoc from `solution`. The shapes come from
-    the regime's state-action space at the supplied params — identical to what
-    `_get_regime_V_shapes` saw during solve setup.
+    Rebuild the same mapping post-hoc from `solution`. Shape and device
+    sharding both come from `_get_regime_V_shapes_and_shardings` so the
+    reconstructed templates have the same pytree structure and placement as
+    the live ones in `solve()`.
     """
-    regime_V_shapes = _get_regime_V_shapes(
+    regime_V_topology = _get_regime_V_shapes_and_shardings(
         internal_regimes=internal_regimes,
         internal_params=internal_params,
     )
     later_periods = sorted(p for p in solution if p > period)
     result: dict[RegimeName, FloatND] = {}
-    for regime_name, shape in regime_V_shapes.items():
+    for regime_name, topology in regime_V_topology.items():
         rolled: FloatND | None = None
         for q in later_periods:
             if regime_name in solution[q]:
                 rolled = solution[q][regime_name]
                 break
-        result[regime_name] = rolled if rolled is not None else jnp.zeros(shape)
+        result[regime_name] = (
+            rolled if rolled is not None else _build_zero_v_array(topology=topology)
+        )
     return MappingProxyType(result)
 
 
