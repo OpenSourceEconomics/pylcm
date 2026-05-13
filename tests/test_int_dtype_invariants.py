@@ -16,7 +16,7 @@ from lcm.simulation.initial_conditions import (
     MISSING_CAT_CODE,
     build_initial_states,
 )
-from lcm.simulation.transitions import _update_states_for_subjects
+from lcm.simulation.transitions import _advance_states_for_subjects
 from tests.test_models.deterministic.regression import (
     RegimeId,
     dead,
@@ -53,15 +53,17 @@ def test_build_initial_states_discrete_dtype_is_int32() -> None:
         "wealth": jnp.array([20.0, 50.0]),
         "age": jnp.array([18.0, 18.0]),
     }
-    flat = build_initial_states(
+    states_per_regime = build_initial_states(
         initial_states=initial_states,
         internal_regimes=model.internal_regimes,
     )
-    for key, arr in flat.items():
-        if arr.dtype.kind == "i":
-            assert arr.dtype == jnp.int32, (
-                f"Initial state {key} has dtype {arr.dtype}, expected int32."
-            )
+    for regime_name, regime_states in states_per_regime.items():
+        for state_name, arr in regime_states.items():
+            if arr.dtype.kind == "i":
+                assert arr.dtype == jnp.int32, (
+                    f"Initial state {regime_name}.{state_name} has dtype "
+                    f"{arr.dtype}, expected int32."
+                )
 
 
 def test_missing_cat_code_is_int32_minimum() -> None:
@@ -69,32 +71,36 @@ def test_missing_cat_code_is_int32_minimum() -> None:
     assert jnp.iinfo(jnp.int32).min == MISSING_CAT_CODE
 
 
-def test_update_states_for_subjects_keeps_same_dtype_round_trip() -> None:
+def test_advance_states_for_subjects_keeps_same_dtype_round_trip() -> None:
     """Canonical-dtype transition outputs round-trip through the state pool.
 
     With every input boundary pinned to the canonical dtype, a well-typed user
-    transition returns canonical-dtype outputs and `_update_states_for_subjects`
+    transition returns canonical-dtype outputs and `_advance_states_for_subjects`
     writes them through `jnp.where` without dtype change. This test pins the
     contract for the int side; mixed-dtype inputs are out of scope — the
     function does not defend against transitions that violate the canonical-
     dtype invariant.
     """
-    all_states = MappingProxyType(
-        {"work__health": jnp.asarray([0, 1, 0, 1], dtype=jnp.int32)}
+    states_per_regime = MappingProxyType(
+        {
+            "work": MappingProxyType(
+                {"health": jnp.asarray([0, 1, 0, 1], dtype=jnp.int32)}
+            )
+        }
     )
     next_values = jnp.asarray([1, 1, 1, 1], dtype=jnp.int32)
-    computed = MappingProxyType(
-        {"work": MappingProxyType({"next_health": next_values})}
+    next_states_per_regime = MappingProxyType(
+        {"work": MappingProxyType({"health": next_values})}
     )
     subjects = jnp.asarray([True, False, True, False])
 
-    updated = _update_states_for_subjects(
-        all_states=all_states,
-        computed_next_states=computed,
+    next_states = _advance_states_for_subjects(
+        states_per_regime=states_per_regime,
+        next_states_per_regime=next_states_per_regime,
         subject_indices=subjects,
     )
 
-    assert updated["work__health"].dtype == jnp.int32
+    assert next_states["work"]["health"].dtype == jnp.int32
 
 
 def test_process_params_casts_python_int_to_int32() -> None:

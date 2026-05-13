@@ -45,6 +45,9 @@ type TransitionFunctionsMapping = MappingProxyType[
     RegimeName, MappingProxyType[TransitionFunctionName, InternalUserFunction]
 ]
 
+type RegimeStates = MappingProxyType[StateName, Array]
+type StatesPerRegime = MappingProxyType[RegimeName, RegimeStates]
+
 
 type _ParamsLeaf = bool | float | Array | pd.Series | MappingLeaf | SequenceLeaf
 type UserParams = Mapping[

@@ -88,19 +88,19 @@ def internal_params(model: Model) -> InternalParams:
 
 
 def test_build_initial_states_single_regime(model: Model) -> None:
-    """Single regime gets its states from flat dict."""
-    flat = {
+    """Each regime's state arrays land under its name in the nested carrier."""
+    initial = {
         "wealth": jnp.array([10.0, 50.0]),
         "health": jnp.array([0, 1]),
     }
     result = build_initial_states(
-        initial_states=flat, internal_regimes=model.internal_regimes
+        initial_states=initial, internal_regimes=model.internal_regimes
     )
 
-    assert "active__wealth" in result
-    assert "active__health" in result
-    # Terminal regime has no states, so no terminal__ keys should exist
-    assert not any(k.startswith("terminal__") for k in result)
+    assert "wealth" in result["active"]
+    assert "health" in result["active"]
+    # Terminal regime has no states, so its inner mapping is empty.
+    assert dict(result["terminal"]) == {}
 
 
 def test_validate_initial_conditions_valid_input(
